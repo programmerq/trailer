@@ -6,6 +6,8 @@
 #include <QPainter>
 #include <QPainterPath>
 
+#include <algorithm>
+
 namespace trailer {
 
 AnnotationOverlay::AnnotationOverlay(QWidget* parent) : QWidget(parent) {
@@ -127,6 +129,7 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
                 case AnnotationTool::Ellipse: return AnnotationType::Ellipse;
                 case AnnotationTool::Line:    return AnnotationType::Line;
                 case AnnotationTool::Arrow:   return AnnotationType::Arrow;
+                case AnnotationTool::Ink:     return AnnotationType::Ink;
                 default:                      return AnnotationType::Rectangle;
             }
         }();
@@ -135,6 +138,8 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
         if (preview.type == AnnotationType::Line ||
             preview.type == AnnotationType::Arrow) {
             preview.points = {m_dragStartDoc, m_dragCurrentDoc};
+        } else if (preview.type == AnnotationType::Ink) {
+            preview.points = m_inkPoints;
         }
         drawOne(preview);
     }
@@ -153,12 +158,19 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent* event) {
     m_dragStartDoc = toDoc(event->position());
     m_dragCurrentDoc = m_dragStartDoc;
     m_dragging = true;
+    m_inkPoints.clear();
+    if (m_tool == AnnotationTool::Ink) {
+        m_inkPoints.push_back(m_dragStartDoc);
+    }
     update();
 }
 
 void AnnotationOverlay::mouseMoveEvent(QMouseEvent* event) {
     if (!m_dragging) return;
     m_dragCurrentDoc = toDoc(event->position());
+    if (m_tool == AnnotationTool::Ink) {
+        m_inkPoints.push_back(m_dragCurrentDoc);
+    }
     update();
 }
 
@@ -183,12 +195,28 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
             a.type = AnnotationType::Arrow;
             a.points = {m_dragStartDoc, end};
             break;
+        case AnnotationTool::Ink: {
+            if (m_inkPoints.size() < 2) { m_inkPoints.clear(); update(); return; }
+            a.type = AnnotationType::Ink;
+            a.points = m_inkPoints;
+            qreal minX = m_inkPoints.front().x(), maxX = minX;
+            qreal minY = m_inkPoints.front().y(), maxY = minY;
+            for (const auto& p : m_inkPoints) {
+                minX = std::min(minX, p.x()); maxX = std::max(maxX, p.x());
+                minY = std::min(minY, p.y()); maxY = std::max(maxY, p.y());
+            }
+            a.bounds = QRectF(QPointF(minX, minY), QPointF(maxX, maxY));
+            m_inkPoints.clear();
+            break;
+        }
         default:
+            m_inkPoints.clear();
             update();
             return;
     }
 
-    if (a.bounds.width() < 1.0 && a.bounds.height() < 1.0) {
+    if (a.type != AnnotationType::Ink &&
+        a.bounds.width() < 1.0 && a.bounds.height() < 1.0) {
         update();
         return;
     }

@@ -1,5 +1,6 @@
 #include "ImageAdapter.h"
 
+#include "annotation/AnnotationStore.h"
 #include "ui/AnnotationOverlay.h"
 
 #include <QColor>
@@ -34,6 +35,48 @@ constexpr double kZoomStep = 1.1;
 constexpr double kZoomMin = 0.05;
 constexpr double kZoomMax = 32.0;
 constexpr size_t kMaxUndoSteps = 32;
+
+QImage flattenAnnotations(const QImage& base,
+                          const std::vector<Annotation>& anns) {
+    if (anns.empty() || base.isNull()) return base;
+    QImage flat = base.convertToFormat(QImage::Format_ARGB32);
+    QPainter p(&flat);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    for (const Annotation& a : anns) {
+        if (a.page != 0) continue;
+        QPen pen(a.style.stroke);
+        pen.setWidthF(a.style.strokeWidth);
+        p.setPen(pen);
+        p.setBrush(a.style.fill.alpha() > 0 ? QBrush(a.style.fill) : Qt::NoBrush);
+        switch (a.type) {
+            case AnnotationType::Rectangle: p.drawRect(a.bounds); break;
+            case AnnotationType::Ellipse:   p.drawEllipse(a.bounds); break;
+            case AnnotationType::Line:
+            case AnnotationType::Arrow: {
+                if (a.points.size() < 2) break;
+                p.drawLine(a.points[0], a.points[1]);
+                if (a.type == AnnotationType::Arrow) {
+                    const QLineF line(a.points[1], a.points[0]);
+                    QLineF l1 = line, l2 = line;
+                    l1.setLength(12.0); l2.setLength(12.0);
+                    l1.setAngle(line.angle() + 25.0);
+                    l2.setAngle(line.angle() - 25.0);
+                    p.drawLine(l1); p.drawLine(l2);
+                }
+                break;
+            }
+            case AnnotationType::Ink: {
+                if (a.points.size() < 2) break;
+                for (size_t i = 1; i < a.points.size(); ++i) {
+                    p.drawLine(a.points[i - 1], a.points[i]);
+                }
+                break;
+            }
+            default: break;
+        }
+    }
+    return flat;
+}
 
 }  // namespace
 
@@ -301,18 +344,22 @@ void ImageDocument::clearColourPreview() {
 bool ImageDocument::exportAs(const QString& destPath, const QString& format,
                              int quality) const {
     if (m_image.isNull()) return false;
+    const QImage out = flattenAnnotations(m_image, m_annotations.annotations());
     QImageWriter writer(destPath, format.toLatin1());
     if (quality >= 0) writer.setQuality(quality);
-    return writer.write(m_image);
+    return writer.write(out);
 }
 
 bool ImageDocument::save(const QString& newPath) {
     if (m_image.isNull() || m_animated) return false;
     const QString target = newPath.isEmpty() ? m_path : newPath;
     if (target.isEmpty()) return false;
+    const QImage out = flattenAnnotations(m_image, m_annotations.annotations());
     const QByteArray format = QFileInfo(target).suffix().toLatin1().toLower();
     QImageWriter writer(target, format.isEmpty() ? QByteArray("png") : format);
-    if (!writer.write(m_image)) return false;
+    if (!writer.write(out)) return false;
+    m_image = out;
+    m_annotations.clear();
     m_path = target;
     m_dirty = false;
     return true;

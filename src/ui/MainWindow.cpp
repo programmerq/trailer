@@ -6,6 +6,7 @@
 #include "MarkupToolbar.h"
 #include "SearchBar.h"
 #include "Sidebar.h"
+#include "annotation/AnnotationStore.h"
 #include "app/Application.h"
 #include "recent/RecentFiles.h"
 
@@ -853,6 +854,11 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     if (doc) {
         doc->setAnnotationStyle(m_markupToolbar->style());
         doc->setAnnotationTool(m_markupToolbar->activeTool());
+        if (auto* store = doc->annotations()) {
+            connect(store, &AnnotationStore::changed, this,
+                    [this, doc]() { updateTitleForDocument(doc); },
+                    Qt::UniqueConnection);
+        }
     }
 
     const bool hasPrint = doc && doc->supportsPrint();

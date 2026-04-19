@@ -44,7 +44,9 @@ public:
     void setAnnotationStyle(const AnnotationStyle& style) override;
 
     bool supportsEditing() const override { return !m_image.isNull() && !m_animated; }
-    bool isDirty() const override { return m_dirty; }
+    bool isDirty() const override {
+        return m_dirty || !m_annotations.annotations().empty();
+    }
     bool canUndo() const override { return !m_undoStack.empty(); }
     bool canRedo() const override { return !m_redoStack.empty(); }
     void undo() override;

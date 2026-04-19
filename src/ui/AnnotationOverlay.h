@@ -53,6 +53,7 @@ private:
     bool m_dragging = false;
     QPointF m_dragStartDoc;
     QPointF m_dragCurrentDoc;
+    std::vector<QPointF> m_inkPoints;
 
     std::function<QPointF(QPointF)> m_docToView;
     std::function<QPointF(QPointF)> m_viewToDoc;
