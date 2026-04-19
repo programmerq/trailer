@@ -7,3 +7,7 @@ cmake-build-*/
 .DS_Store
 CMakeUserPresets.json
 aqtinstall.log
+test.pdf
+test-*.pdf
+test-*.png
+test-*.jpg
