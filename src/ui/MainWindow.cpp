@@ -315,6 +315,9 @@ void MainWindow::buildToolsMenu(QMenu* toolsMenu) {
     m_exportAsAction = toolsMenu->addAction(tr("&Export As…"));
     connect(m_exportAsAction, &QAction::triggered, this, &MainWindow::onExportAs);
 
+    m_cropImageAction = toolsMenu->addAction(tr("Crop &Image…"));
+    connect(m_cropImageAction, &QAction::triggered, this, &MainWindow::onCropImage);
+
     m_insertPagesAction = toolsMenu->addAction(tr("&Insert Pages from File…"));
     connect(m_insertPagesAction, &QAction::triggered, this, &MainWindow::onInsertPages);
 
@@ -585,6 +588,52 @@ void MainWindow::onExportAs() {
     }
 }
 
+void MainWindow::onCropImage() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing()) return;
+    const QSize size = doc->imagePixelSize();
+    if (size.isEmpty()) return;
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Crop Image"));
+    auto* form = new QFormLayout(&dialog);
+
+    auto makeSpin = [&](int maxVal) {
+        auto* s = new QSpinBox(&dialog);
+        s->setRange(0, maxVal);
+        s->setSuffix(tr(" px"));
+        return s;
+    };
+    auto* leftSpin = makeSpin(size.width() - 1);
+    auto* topSpin = makeSpin(size.height() - 1);
+    auto* rightSpin = makeSpin(size.width() - 1);
+    auto* bottomSpin = makeSpin(size.height() - 1);
+
+    form->addRow(tr("Left"), leftSpin);
+    form->addRow(tr("Top"), topSpin);
+    form->addRow(tr("Right"), rightSpin);
+    form->addRow(tr("Bottom"), bottomSpin);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    form->addRow(buttons);
+
+    if (dialog.exec() != QDialog::Accepted) return;
+    const int x = leftSpin->value();
+    const int y = topSpin->value();
+    const int w = size.width() - x - rightSpin->value();
+    const int h = size.height() - y - bottomSpin->value();
+    if (w <= 0 || h <= 0 || !doc->cropToRect(x, y, w, h)) {
+        QMessageBox::warning(this, tr("Crop failed"),
+            tr("Could not crop: margins are too large."));
+        return;
+    }
+    m_sidebar->refreshThumbnails();
+    updateTitleForDocument(doc);
+}
+
 void MainWindow::onTakeScreenshot() {
     QScreen* screen = QGuiApplication::primaryScreen();
     if (!screen) return;
@@ -716,6 +765,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_adjustSizeAction->setEnabled(canEdit && isImage);
     m_adjustColourAction->setEnabled(canEdit && isImage);
     m_exportAsAction->setEnabled(doc != nullptr && isImage);
+    m_cropImageAction->setEnabled(canEdit && isImage);
     m_insertPagesAction->setEnabled(isPdfLike);
     m_cropPagesAction->setEnabled(isPdfLike);
 
