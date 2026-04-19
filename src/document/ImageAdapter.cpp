@@ -11,6 +11,7 @@
 #include <QMovie>
 #include <QPageLayout>
 #include <QPainter>
+#include <QPainterPath>
 #include <QPixmap>
 #include <QPrintDialog>
 #include <QPrinter>
@@ -36,6 +37,15 @@ constexpr double kZoomMin = 0.05;
 constexpr double kZoomMax = 32.0;
 constexpr size_t kMaxUndoSteps = 32;
 
+Qt::PenStyle toPenStyle(DashStyle d) {
+    switch (d) {
+        case DashStyle::Solid:  return Qt::SolidLine;
+        case DashStyle::Dashed: return Qt::DashLine;
+        case DashStyle::Dotted: return Qt::DotLine;
+    }
+    return Qt::SolidLine;
+}
+
 QImage flattenAnnotations(const QImage& base,
                           const std::vector<Annotation>& anns) {
     if (anns.empty() || base.isNull()) return base;
@@ -46,6 +56,7 @@ QImage flattenAnnotations(const QImage& base,
         if (a.page != 0) continue;
         QPen pen(a.style.stroke);
         pen.setWidthF(a.style.strokeWidth);
+        pen.setStyle(toPenStyle(a.style.dash));
         p.setPen(pen);
         p.setBrush(a.style.fill.alpha() > 0 ? QBrush(a.style.fill) : Qt::NoBrush);
         switch (a.type) {
@@ -74,6 +85,8 @@ QImage flattenAnnotations(const QImage& base,
             }
             case AnnotationType::Text: {
                 QFont f = p.font();
+                if (!a.style.fontFamily.isEmpty()) f.setFamily(a.style.fontFamily);
+                f.setWeight(static_cast<QFont::Weight>(a.style.fontWeight));
                 f.setPointSize(a.style.fontPointSize > 0 ? a.style.fontPointSize : 12);
                 p.setFont(f);
                 p.setPen(a.style.stroke);
@@ -82,7 +95,9 @@ QImage flattenAnnotations(const QImage& base,
             }
             case AnnotationType::Note: {
                 const QRectF icon(a.bounds.topLeft(), QSizeF(18.0, 18.0));
-                p.setBrush(QColor(255, 225, 120));
+                const QColor noteColour = a.style.fill.alpha() > 0
+                    ? a.style.fill : QColor(255, 225, 120);
+                p.setBrush(noteColour);
                 p.setPen(QPen(a.style.stroke, 1.0));
                 p.drawRect(icon);
                 QFont f = p.font();
@@ -90,6 +105,70 @@ QImage flattenAnnotations(const QImage& base,
                 f.setBold(true);
                 p.setFont(f);
                 p.drawText(icon, Qt::AlignCenter, QStringLiteral("N"));
+                break;
+            }
+            case AnnotationType::HighlightShape: {
+                QColor fill = a.style.fill.alpha() > 0 ? a.style.fill
+                                                       : a.style.stroke;
+                fill.setAlpha(a.style.fill.alpha() > 0 ? a.style.fill.alpha() : 90);
+                p.fillRect(a.bounds, fill);
+                p.setBrush(Qt::NoBrush);
+                p.drawRect(a.bounds);
+                break;
+            }
+            case AnnotationType::SpeechBubble: {
+                const double radius = std::min(12.0, std::min(a.bounds.width(),
+                                                              a.bounds.height()) / 4.0);
+                QPainterPath body;
+                body.addRoundedRect(a.bounds, radius, radius);
+                if (!a.points.empty()) {
+                    const QPointF tail = a.points.front();
+                    const QPointF anchor(a.bounds.left() + a.bounds.width() * 0.25,
+                                         a.bounds.bottom());
+                    const QPointF anchor2(anchor.x() + radius, a.bounds.bottom());
+                    QPainterPath tailPath;
+                    tailPath.moveTo(anchor);
+                    tailPath.lineTo(tail);
+                    tailPath.lineTo(anchor2);
+                    tailPath.closeSubpath();
+                    body.addPath(tailPath);
+                }
+                p.drawPath(body);
+                if (!a.text.isEmpty()) {
+                    QFont f = p.font();
+                    if (!a.style.fontFamily.isEmpty()) f.setFamily(a.style.fontFamily);
+                    f.setWeight(static_cast<QFont::Weight>(a.style.fontWeight));
+                    f.setPointSize(a.style.fontPointSize > 0 ? a.style.fontPointSize : 12);
+                    p.setFont(f);
+                    p.setPen(a.style.stroke);
+                    p.drawText(a.bounds.adjusted(8, 4, -8, -4),
+                               Qt::AlignCenter | Qt::TextWordWrap, a.text);
+                }
+                break;
+            }
+            case AnnotationType::ZoomLens: {
+                if (a.bounds.width() < 1 || a.bounds.height() < 1) break;
+                const double z = a.style.zoomFactor > 0 ? a.style.zoomFactor : 2.0;
+                const QSizeF srcSize(a.bounds.width() / z, a.bounds.height() / z);
+                const QPointF centre = a.bounds.center();
+                const QRectF src(centre.x() - srcSize.width() / 2,
+                                 centre.y() - srcSize.height() / 2,
+                                 srcSize.width(), srcSize.height());
+                const QRect srcRect = src.toRect().intersected(
+                    QRect(0, 0, base.width(), base.height()));
+                if (!srcRect.isEmpty()) {
+                    const QImage slice = base.copy(srcRect).scaled(
+                        a.bounds.size().toSize(), Qt::KeepAspectRatio,
+                        Qt::SmoothTransformation);
+                    p.save();
+                    QPainterPath clip;
+                    clip.addEllipse(a.bounds);
+                    p.setClipPath(clip);
+                    p.drawImage(a.bounds.topLeft(), slice);
+                    p.restore();
+                }
+                p.setBrush(Qt::NoBrush);
+                p.drawEllipse(a.bounds);
                 break;
             }
             default: break;
@@ -157,6 +236,14 @@ QWidget* ImageDocument::createView(QWidget* parent) {
             if (m_scale <= 0.0) return p;
             return QPointF(p.x() / m_scale, p.y() / m_scale);
         });
+        overlay->setSourceSampler(
+            [this](QRectF docRect, QSize outPx, int /*page*/) -> QImage {
+                if (m_image.isNull()) return {};
+                const QRect src = docRect.toRect().intersected(m_image.rect());
+                if (src.isEmpty()) return {};
+                return m_image.copy(src).scaled(
+                    outPx, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            });
         overlay->setGeometry(label->rect());
         overlay->show();
         m_overlay = overlay;

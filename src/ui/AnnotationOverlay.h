@@ -39,6 +39,13 @@ public:
         QPointF startDoc, QPointF endDoc, int page)>;
     void setTextSelectionProvider(TextSelectionProvider fn);
 
+    // Samples the underlying document at (docRect, page) and returns an
+    // image of the requested pixel size. Used by ZoomLens to draw a
+    // magnified view. If unset, ZoomLens renders as an empty circle.
+    using SourceSampler = std::function<QImage(
+        QRectF docRect, QSize outPixels, int page)>;
+    void setSourceSampler(SourceSampler fn);
+
 signals:
     void annotationCommitted(int id);
 
@@ -66,6 +73,7 @@ private:
     std::function<QPointF(QPointF)> m_docToView;
     std::function<QPointF(QPointF)> m_viewToDoc;
     TextSelectionProvider m_textSelection;
+    SourceSampler m_sourceSampler;
 };
 
 }  // namespace trailer

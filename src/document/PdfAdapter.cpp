@@ -15,6 +15,7 @@
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfDocument>
+#include <QPdfDocumentRenderOptions>
 #include <QPdfPageNavigator>
 #include <QPdfSearchModel>
 #include <QPdfView>
@@ -146,6 +147,24 @@ QWidget* PdfDocument::createView(QWidget* parent) {
         const QPointF origin = pageOriginInView();
         return QPointF((p.x() - origin.x()) / z, (p.y() - origin.y()) / z);
     });
+    overlay->setSourceSampler(
+        [this](QRectF docRect, QSize outPx, int page) -> QImage {
+            if (!m_doc || page < 0 || docRect.isEmpty()) return {};
+            const QSizeF pagePts = m_doc->pagePointSize(page);
+            if (pagePts.isEmpty()) return {};
+            const double sx = outPx.width() / docRect.width();
+            const double sy = outPx.height() / docRect.height();
+            const QSize fullPx(
+                std::max(1, static_cast<int>(pagePts.width() * sx)),
+                std::max(1, static_cast<int>(pagePts.height() * sy)));
+            QPdfDocumentRenderOptions opts;
+            opts.setScaledSize(fullPx);
+            opts.setScaledClipRect(QRect(
+                static_cast<int>(docRect.x() * sx),
+                static_cast<int>(docRect.y() * sy),
+                outPx.width(), outPx.height()));
+            return m_doc->render(page, outPx, opts);
+        });
     overlay->setTextSelectionProvider(
         [this](QPointF startDoc, QPointF endDoc, int page)
             -> std::vector<QRectF> {

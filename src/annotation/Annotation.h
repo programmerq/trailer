@@ -22,6 +22,9 @@ enum class AnnotationTool {
     Highlight,
     Underline,
     StrikeOut,
+    HighlightShape, // translucent filled rectangle (non-text)
+    SpeechBubble,
+    ZoomLens,
 };
 
 enum class AnnotationType {
@@ -29,12 +32,21 @@ enum class AnnotationType {
     Ellipse,
     Line,
     Arrow,
-    Ink,       // freehand stroke (polyline of points)
-    Text,      // free-text box
-    Note,      // sticky note (small icon + popup text)
-    Highlight, // text highlight (PDF text range)
+    Ink,            // freehand stroke (polyline of points)
+    Text,           // free-text box
+    Note,           // sticky note (small icon + popup text)
+    Highlight,      // text highlight (PDF text range)
     Underline,
     StrikeOut,
+    HighlightShape, // translucent filled shape
+    SpeechBubble,   // rounded rect with pointer tail
+    ZoomLens,       // circular magnifier
+};
+
+enum class DashStyle {
+    Solid,
+    Dashed,
+    Dotted,
 };
 
 struct AnnotationStyle {
@@ -42,6 +54,10 @@ struct AnnotationStyle {
     QColor fill = QColor(0, 0, 0, 0);  // transparent by default
     double strokeWidth = 2.0;
     int fontPointSize = 12;
+    DashStyle dash = DashStyle::Solid;
+    QString fontFamily;  // empty → painter default
+    int fontWeight = 50; // QFont::Normal
+    double zoomFactor = 2.0;  // used by ZoomLens
 };
 
 // Geometry is stored in document-native coordinates:

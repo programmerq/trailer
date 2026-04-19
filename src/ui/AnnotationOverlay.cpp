@@ -65,6 +65,11 @@ void AnnotationOverlay::setTextSelectionProvider(TextSelectionProvider fn) {
     m_textSelection = std::move(fn);
 }
 
+void AnnotationOverlay::setSourceSampler(SourceSampler fn) {
+    m_sourceSampler = std::move(fn);
+    update();
+}
+
 QRectF AnnotationOverlay::docRectToView(const QRectF& r) const {
     const QPointF tl = m_docToView(r.topLeft());
     const QPointF br = m_docToView(r.bottomRight());
@@ -80,9 +85,18 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
 
+    auto applyDash = [](QPen& pen, DashStyle d) {
+        switch (d) {
+            case DashStyle::Solid:  pen.setStyle(Qt::SolidLine); break;
+            case DashStyle::Dashed: pen.setStyle(Qt::DashLine); break;
+            case DashStyle::Dotted: pen.setStyle(Qt::DotLine); break;
+        }
+    };
+
     auto drawOne = [&](const Annotation& a) {
         QPen pen(a.style.stroke);
         pen.setWidthF(a.style.strokeWidth);
+        applyDash(pen, a.style.dash);
         p.setPen(pen);
         p.setBrush(a.style.fill.alpha() > 0 ? QBrush(a.style.fill) : Qt::NoBrush);
         const QRectF viewRect = docRectToView(a.bounds);
@@ -123,6 +137,8 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
             }
             case AnnotationType::Text: {
                 QFont f = p.font();
+                if (!a.style.fontFamily.isEmpty()) f.setFamily(a.style.fontFamily);
+                f.setWeight(static_cast<QFont::Weight>(a.style.fontWeight));
                 f.setPointSize(a.style.fontPointSize > 0 ? a.style.fontPointSize : 12);
                 p.setFont(f);
                 p.setPen(a.style.stroke);
@@ -140,6 +156,69 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
                 f.setBold(true);
                 p.setFont(f);
                 p.drawText(icon, Qt::AlignCenter, QStringLiteral("N"));
+                break;
+            }
+            case AnnotationType::HighlightShape: {
+                QColor fill = a.style.fill.alpha() > 0 ? a.style.fill
+                                                       : a.style.stroke;
+                fill.setAlpha(a.style.fill.alpha() > 0 ? a.style.fill.alpha() : 90);
+                p.fillRect(viewRect, fill);
+                p.setBrush(Qt::NoBrush);
+                p.drawRect(viewRect);
+                break;
+            }
+            case AnnotationType::SpeechBubble: {
+                const double radius = std::min(12.0, std::min(viewRect.width(),
+                                                              viewRect.height()) / 4.0);
+                QPainterPath body;
+                body.addRoundedRect(viewRect, radius, radius);
+                if (!a.points.empty()) {
+                    const QPointF tail = m_docToView(a.points.front());
+                    const QPointF anchor(viewRect.left() + viewRect.width() * 0.25,
+                                         viewRect.bottom());
+                    const QPointF anchor2(anchor.x() + radius, viewRect.bottom());
+                    QPainterPath tailPath;
+                    tailPath.moveTo(anchor);
+                    tailPath.lineTo(tail);
+                    tailPath.lineTo(anchor2);
+                    tailPath.closeSubpath();
+                    body.addPath(tailPath);
+                }
+                p.drawPath(body);
+                if (!a.text.isEmpty()) {
+                    QFont f = p.font();
+                    if (!a.style.fontFamily.isEmpty()) f.setFamily(a.style.fontFamily);
+                    f.setWeight(static_cast<QFont::Weight>(a.style.fontWeight));
+                    f.setPointSize(a.style.fontPointSize > 0 ? a.style.fontPointSize : 12);
+                    p.setFont(f);
+                    p.setPen(a.style.stroke);
+                    p.drawText(viewRect.adjusted(8, 4, -8, -4),
+                               Qt::AlignCenter | Qt::TextWordWrap, a.text);
+                }
+                break;
+            }
+            case AnnotationType::ZoomLens: {
+                p.save();
+                QPainterPath clip;
+                clip.addEllipse(viewRect);
+                p.setClipPath(clip);
+                if (m_sourceSampler && viewRect.width() > 1 && viewRect.height() > 1) {
+                    const double z = a.style.zoomFactor > 0 ? a.style.zoomFactor : 2.0;
+                    const QSizeF docSize(a.bounds.width() / z, a.bounds.height() / z);
+                    const QPointF center = a.bounds.center();
+                    const QRectF srcDoc(center.x() - docSize.width() / 2.0,
+                                        center.y() - docSize.height() / 2.0,
+                                        docSize.width(), docSize.height());
+                    const QSize outPx(std::max(1, static_cast<int>(viewRect.width())),
+                                      std::max(1, static_cast<int>(viewRect.height())));
+                    const QImage sampled = m_sourceSampler(srcDoc, outPx, a.page);
+                    if (!sampled.isNull()) {
+                        p.drawImage(viewRect, sampled);
+                    }
+                }
+                p.restore();
+                p.setBrush(Qt::NoBrush);
+                p.drawEllipse(viewRect);
                 break;
             }
             case AnnotationType::Highlight:
@@ -177,13 +256,17 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
 
     if (m_dragging) {
         Annotation preview;
+        preview.page = m_page;
         preview.type = [this]() {
             switch (m_tool) {
-                case AnnotationTool::Ellipse: return AnnotationType::Ellipse;
-                case AnnotationTool::Line:    return AnnotationType::Line;
-                case AnnotationTool::Arrow:   return AnnotationType::Arrow;
-                case AnnotationTool::Ink:     return AnnotationType::Ink;
-                default:                      return AnnotationType::Rectangle;
+                case AnnotationTool::Ellipse:        return AnnotationType::Ellipse;
+                case AnnotationTool::Line:           return AnnotationType::Line;
+                case AnnotationTool::Arrow:          return AnnotationType::Arrow;
+                case AnnotationTool::Ink:            return AnnotationType::Ink;
+                case AnnotationTool::HighlightShape: return AnnotationType::HighlightShape;
+                case AnnotationTool::SpeechBubble:   return AnnotationType::SpeechBubble;
+                case AnnotationTool::ZoomLens:       return AnnotationType::ZoomLens;
+                default:                             return AnnotationType::Rectangle;
             }
         }();
         preview.style = m_style;
@@ -293,6 +376,36 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
             a.type = AnnotationType::Note;
             a.bounds = QRectF(m_dragStartDoc, QSizeF(18.0, 18.0));
             a.text = text;
+            break;
+        }
+        case AnnotationTool::HighlightShape:
+            a.type = AnnotationType::HighlightShape;
+            break;
+        case AnnotationTool::SpeechBubble: {
+            QRectF rect = a.bounds;
+            if (rect.width() < 40.0 || rect.height() < 20.0) {
+                rect = QRectF(m_dragStartDoc, QSizeF(200.0, 80.0));
+            }
+            bool ok = false;
+            const QString text = QInputDialog::getMultiLineText(
+                this, tr("Speech Bubble"), tr("Text:"), QString(), &ok);
+            if (!ok) { update(); return; }
+            a.type = AnnotationType::SpeechBubble;
+            a.bounds = rect;
+            a.text = text;
+            const QPointF tail(rect.left() - 20.0, rect.bottom() + 30.0);
+            a.points = {tail};
+            break;
+        }
+        case AnnotationTool::ZoomLens: {
+            QRectF rect = a.bounds;
+            if (rect.width() < 20.0 || rect.height() < 20.0) {
+                const double side = 100.0;
+                rect = QRectF(m_dragStartDoc - QPointF(side / 2, side / 2),
+                              QSizeF(side, side));
+            }
+            a.type = AnnotationType::ZoomLens;
+            a.bounds = rect;
             break;
         }
         case AnnotationTool::Highlight:

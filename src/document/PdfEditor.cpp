@@ -291,6 +291,46 @@ QPDFObjectHandle buildAnnotation(const Annotation& a, double pageHeight) {
             dict.replaceKey("/Rect", rectArray(x1, py1, x1 + 18.0, py1 + 18.0));
             dict.replaceKey("/Name", QPDFObjectHandle::newName("/Note"));
             break;
+        case AnnotationType::HighlightShape: {
+            dict.replaceKey("/Subtype", QPDFObjectHandle::newName("/Square"));
+            dict.replaceKey("/Rect", rectArray(x1, py1, x2, py2));
+            QColor fill = a.style.fill.alpha() > 0 ? a.style.fill : a.style.stroke;
+            dict.replaceKey("/IC", colourArray(fill));
+            break;
+        }
+        case AnnotationType::SpeechBubble: {
+            dict.replaceKey("/Subtype", QPDFObjectHandle::newName("/FreeText"));
+            dict.replaceKey("/Rect", rectArray(x1, py1, x2, py2));
+            const int pt = a.style.fontPointSize > 0 ? a.style.fontPointSize : 12;
+            const QString da = QStringLiteral("/Helv %1 Tf 0 0 0 rg").arg(pt);
+            dict.replaceKey("/DA",
+                QPDFObjectHandle::newString(da.toStdString()));
+            if (!a.points.empty()) {
+                const QPointF tail = a.points.front();
+                const double tx = tail.x();
+                const double ty = flipY(tail.y());
+                const double ax = x1 + (x2 - x1) * 0.25;
+                const double ay = flipY(y2bot);
+                std::vector<QPDFObjectHandle> cl = {
+                    QPDFObjectHandle::newReal(tx, 3),
+                    QPDFObjectHandle::newReal(ty, 3),
+                    QPDFObjectHandle::newReal(ax, 3),
+                    QPDFObjectHandle::newReal(ay, 3),
+                };
+                dict.replaceKey("/CL", QPDFObjectHandle::newArray(cl));
+                std::vector<QPDFObjectHandle> le = {
+                    QPDFObjectHandle::newName("/OpenArrow"),
+                    QPDFObjectHandle::newName("/None"),
+                };
+                dict.replaceKey("/LE", QPDFObjectHandle::newArray(le));
+            }
+            break;
+        }
+        case AnnotationType::ZoomLens:
+            // No standard PDF subtype for zoom-lens; persist only as image
+            // flattening. Skip PDF serialisation (TODO: embed as /Stamp with
+            // appearance stream).
+            return {};
         case AnnotationType::Highlight:
         case AnnotationType::Underline:
         case AnnotationType::StrikeOut: {

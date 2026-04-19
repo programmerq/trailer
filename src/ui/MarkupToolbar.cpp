@@ -30,6 +30,9 @@ MarkupToolbar::MarkupToolbar(QWidget* parent) : QToolBar(parent) {
     makeToolAction(tr("Freehand"), AnnotationTool::Ink);
     makeToolAction(tr("Text"), AnnotationTool::Text);
     makeToolAction(tr("Note"), AnnotationTool::Note);
+    makeToolAction(tr("Bubble"), AnnotationTool::SpeechBubble);
+    makeToolAction(tr("Hl Shape"), AnnotationTool::HighlightShape);
+    makeToolAction(tr("Zoom Lens"), AnnotationTool::ZoomLens);
 
     addSeparator();
 
