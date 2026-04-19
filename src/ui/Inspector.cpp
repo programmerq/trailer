@@ -1,20 +1,24 @@
 #include "Inspector.h"
 
 #include "annotation/AnnotationStore.h"
+#include "document/IDocument.h"
 
 #include <QColorDialog>
 #include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QFileInfo>
 #include <QFont>
 #include <QFontComboBox>
 #include <QFormLayout>
 #include <QLabel>
+#include <QListWidget>
 #include <QPainter>
 #include <QPixmap>
 #include <QPlainTextEdit>
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QTabWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -61,7 +65,25 @@ Inspector::Inspector(QWidget* parent) : QDockWidget(tr("Inspector"), parent) {
     setObjectName(QStringLiteral("trailer.inspector"));
     setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 
-    m_stack = new QStackedWidget(this);
+    m_tabs = new QTabWidget(this);
+
+    auto* docTab = new QWidget(m_tabs);
+    auto* docLayout = new QFormLayout(docTab);
+    m_docNameLabel = new QLabel(docTab);
+    m_docPathLabel = new QLabel(docTab);
+    m_docPathLabel->setWordWrap(true);
+    m_docPathLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_docPagesLabel = new QLabel(docTab);
+    m_docSizeLabel = new QLabel(docTab);
+    m_docDirtyLabel = new QLabel(docTab);
+    docLayout->addRow(tr("Name:"), m_docNameLabel);
+    docLayout->addRow(tr("Path:"), m_docPathLabel);
+    docLayout->addRow(tr("Pages:"), m_docPagesLabel);
+    docLayout->addRow(tr("Dimensions:"), m_docSizeLabel);
+    docLayout->addRow(tr("Status:"), m_docDirtyLabel);
+    m_tabs->addTab(docTab, tr("Document"));
+
+    m_stack = new QStackedWidget(m_tabs);
 
     auto* empty = new QWidget(m_stack);
     auto* emptyLayout = new QVBoxLayout(empty);
@@ -209,25 +231,140 @@ Inspector::Inspector(QWidget* parent) : QDockWidget(tr("Inspector"), parent) {
     m_formIndex = m_stack->addWidget(form);
     m_stack->setCurrentIndex(m_emptyIndex);
 
-    setWidget(m_stack);
+    m_tabs->addTab(m_stack, tr("Properties"));
+
+    auto* listTab = new QWidget(m_tabs);
+    auto* listLayout = new QVBoxLayout(listTab);
+    listLayout->setContentsMargins(4, 4, 4, 4);
+    m_annotationList = new QListWidget(listTab);
+    listLayout->addWidget(m_annotationList);
+    m_tabs->addTab(listTab, tr("Annotations"));
+    connect(m_annotationList, &QListWidget::itemActivated, this,
+            [this](QListWidgetItem* item) {
+                if (!item || !m_store) return;
+                const int id = item->data(Qt::UserRole).toInt();
+                if (id <= 0) return;
+                setAnnotation(m_store, id);
+                m_tabs->setCurrentIndex(1);
+                emit annotationSelected(id);
+            });
+    connect(m_annotationList, &QListWidget::itemClicked, this,
+            [this](QListWidgetItem* item) {
+                if (!item || !m_store) return;
+                const int id = item->data(Qt::UserRole).toInt();
+                if (id <= 0) return;
+                emit annotationSelected(id);
+            });
+
+    setWidget(m_tabs);
+}
+
+void Inspector::setDocument(IDocument* doc) {
+    if (m_doc == doc) {
+        rebuildDocumentInfo();
+        rebuildAnnotationList();
+        return;
+    }
+    if (m_store) disconnect(m_store, nullptr, this, nullptr);
+    m_doc = doc;
+    m_store = doc ? doc->annotations() : nullptr;
+    m_id = 0;
+    if (m_store) {
+        connect(m_store, &AnnotationStore::changed, this, [this]() {
+            rebuildFromStore();
+            rebuildAnnotationList();
+            rebuildDocumentInfo();
+        }, Qt::UniqueConnection);
+    }
+    rebuildDocumentInfo();
+    rebuildAnnotationList();
+    rebuildFromStore();
 }
 
 void Inspector::setAnnotation(AnnotationStore* store, int id) {
-    if (m_store && m_store != store) {
-        disconnect(m_store, nullptr, this, nullptr);
+    if (store && store != m_store) {
+        if (m_store) disconnect(m_store, nullptr, this, nullptr);
+        m_store = store;
+        connect(m_store, &AnnotationStore::changed, this, [this]() {
+            rebuildFromStore();
+            rebuildAnnotationList();
+            rebuildDocumentInfo();
+        }, Qt::UniqueConnection);
     }
-    m_store = store;
     m_id = id;
-    if (m_store) {
-        connect(m_store, &AnnotationStore::changed, this,
-                &Inspector::rebuildFromStore, Qt::UniqueConnection);
-    }
     rebuildFromStore();
+    rebuildAnnotationList();
 }
 
 void Inspector::clearSelection() {
     m_id = 0;
     m_stack->setCurrentIndex(m_emptyIndex);
+    rebuildAnnotationList();
+}
+
+namespace {
+QString typeShortLabel(AnnotationType type) {
+    switch (type) {
+        case AnnotationType::Rectangle:      return Inspector::tr("Rect");
+        case AnnotationType::Ellipse:        return Inspector::tr("Ellipse");
+        case AnnotationType::Line:           return Inspector::tr("Line");
+        case AnnotationType::Arrow:          return Inspector::tr("Arrow");
+        case AnnotationType::Ink:            return Inspector::tr("Ink");
+        case AnnotationType::Text:           return Inspector::tr("Text");
+        case AnnotationType::Note:           return Inspector::tr("Note");
+        case AnnotationType::Highlight:      return Inspector::tr("Highlight");
+        case AnnotationType::Underline:      return Inspector::tr("Underline");
+        case AnnotationType::StrikeOut:      return Inspector::tr("Strikeout");
+        case AnnotationType::HighlightShape: return Inspector::tr("HlShape");
+        case AnnotationType::SpeechBubble:   return Inspector::tr("Bubble");
+        case AnnotationType::ZoomLens:       return Inspector::tr("Lens");
+    }
+    return {};
+}
+}  // namespace
+
+void Inspector::rebuildDocumentInfo() {
+    if (!m_doc) {
+        m_docNameLabel->setText(QString());
+        m_docPathLabel->setText(QString());
+        m_docPagesLabel->setText(QString());
+        m_docSizeLabel->setText(QString());
+        m_docDirtyLabel->setText(QString());
+        return;
+    }
+    m_docNameLabel->setText(m_doc->displayName());
+    m_docPathLabel->setText(m_doc->filePath());
+    const int pages = m_doc->pageCount();
+    m_docPagesLabel->setText(pages > 0 ? QString::number(pages)
+                                       : tr("—"));
+    const QSize px = m_doc->imagePixelSize();
+    if (px.isValid() && !px.isEmpty()) {
+        m_docSizeLabel->setText(tr("%1 × %2 px").arg(px.width()).arg(px.height()));
+    } else {
+        m_docSizeLabel->setText(tr("—"));
+    }
+    m_docDirtyLabel->setText(m_doc->isDirty() ? tr("Modified") : tr("Clean"));
+}
+
+void Inspector::rebuildAnnotationList() {
+    if (!m_annotationList) return;
+    const QSignalBlocker blk(m_annotationList);
+    m_annotationList->clear();
+    if (!m_store) return;
+    for (const Annotation& a : m_store->annotations()) {
+        QString summary = tr("p%1  %2").arg(a.page + 1).arg(typeShortLabel(a.type));
+        if (!a.text.isEmpty()) {
+            QString t = a.text;
+            t.replace(QChar('\n'), QChar(' '));
+            if (t.size() > 40) t = t.left(40) + QStringLiteral("…");
+            summary += QStringLiteral("  \u2014  ") + t;
+        }
+        auto* item = new QListWidgetItem(summary, m_annotationList);
+        item->setData(Qt::UserRole, a.id);
+        if (a.id == m_id) {
+            m_annotationList->setCurrentItem(item);
+        }
+    }
 }
 
 void Inspector::rebuildFromStore() {

@@ -865,7 +865,7 @@ void MainWindow::updateTitleForDocument(IDocument* doc) {
 void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_sidebar->setDocument(doc);
     m_animationBar->setDocument(doc);
-    m_inspector->clearSelection();
+    m_inspector->setDocument(doc);
 
     if (doc) {
         doc->setAnnotationStyle(m_markupToolbar->style());
