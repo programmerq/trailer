@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include "DocumentView.h"
+#include "Magnifier.h"
 #include "SearchBar.h"
 #include "Sidebar.h"
 #include "app/Application.h"
@@ -56,6 +57,8 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
 
     m_sidebar = new Sidebar(this);
     addDockWidget(Qt::LeftDockWidgetArea, m_sidebar);
+
+    m_magnifier = new Magnifier(this);
 
     buildMenus();
     rebuildRecentMenu();
@@ -200,6 +203,20 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
     connect(m_zoomFitAction, &QAction::triggered, this, [this]() {
         if (auto* doc = m_documentView->currentDocument()) doc->zoomFitWidth();
     });
+
+    viewMenu->addSeparator();
+
+    m_magnifierAction = viewMenu->addAction(tr("&Magnifier"));
+    m_magnifierAction->setCheckable(true);
+    m_magnifierAction->setShortcut(QKeySequence(Qt::Key_QuoteLeft));
+    connect(m_magnifierAction, &QAction::toggled, this, [this](bool on) {
+        if (on) {
+            m_magnifier->setTarget(m_documentView->currentWidget());
+            m_magnifier->activate();
+        } else {
+            m_magnifier->deactivate();
+        }
+    });
 }
 
 void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
@@ -221,6 +238,13 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_zoomOutAction->setEnabled(hasZoom);
     m_zoomActualAction->setEnabled(hasZoom);
     m_zoomFitAction->setEnabled(hasZoom);
+
+    m_magnifierAction->setEnabled(doc != nullptr);
+    if (!doc && m_magnifierAction->isChecked()) {
+        m_magnifierAction->setChecked(false);
+    } else if (m_magnifierAction->isChecked()) {
+        m_magnifier->setTarget(m_documentView->currentWidget());
+    }
 
     const bool hasModes = doc && doc->supportsViewModes();
     m_singlePageAction->setEnabled(hasModes);

@@ -14,6 +14,7 @@ namespace trailer {
 
 class Application;
 class DocumentView;
+class Magnifier;
 class SearchBar;
 class Sidebar;
 
@@ -48,6 +49,7 @@ private:
 
     Application* m_app;
     DocumentView* m_documentView = nullptr;
+    Magnifier* m_magnifier = nullptr;
     SearchBar* m_searchBar = nullptr;
     Sidebar* m_sidebar = nullptr;
     QMenu* m_recentMenu = nullptr;
@@ -61,6 +63,7 @@ private:
     QAction* m_zoomOutAction = nullptr;
     QAction* m_zoomActualAction = nullptr;
     QAction* m_zoomFitAction = nullptr;
+    QAction* m_magnifierAction = nullptr;
 
     QActionGroup* m_viewModeGroup = nullptr;
     QAction* m_singlePageAction = nullptr;
