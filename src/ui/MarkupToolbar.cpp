@@ -33,6 +33,12 @@ MarkupToolbar::MarkupToolbar(QWidget* parent) : QToolBar(parent) {
 
     addSeparator();
 
+    makeToolAction(tr("Highlight"), AnnotationTool::Highlight);
+    makeToolAction(tr("Underline"), AnnotationTool::Underline);
+    makeToolAction(tr("Strikeout"), AnnotationTool::StrikeOut);
+
+    addSeparator();
+
     auto* strokeBtn = new QToolButton(this);
     strokeBtn->setText(tr("Stroke"));
     strokeBtn->setAutoRaise(true);

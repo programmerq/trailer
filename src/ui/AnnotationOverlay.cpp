@@ -61,6 +61,10 @@ void AnnotationOverlay::setViewToDocument(std::function<QPointF(QPointF)> fn) {
     m_viewToDoc = std::move(fn);
 }
 
+void AnnotationOverlay::setTextSelectionProvider(TextSelectionProvider fn) {
+    m_textSelection = std::move(fn);
+}
+
 QRectF AnnotationOverlay::docRectToView(const QRectF& r) const {
     const QPointF tl = m_docToView(r.topLeft());
     const QPointF br = m_docToView(r.bottomRight());
@@ -136,6 +140,29 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
                 f.setBold(true);
                 p.setFont(f);
                 p.drawText(icon, Qt::AlignCenter, QStringLiteral("N"));
+                break;
+            }
+            case AnnotationType::Highlight:
+            case AnnotationType::Underline:
+            case AnnotationType::StrikeOut: {
+                const std::vector<QRectF>& rects =
+                    a.quads.empty() ? std::vector<QRectF>{a.bounds} : a.quads;
+                for (const QRectF& r : rects) {
+                    const QRectF vr = docRectToView(r);
+                    if (a.type == AnnotationType::Highlight) {
+                        QColor fill = a.style.stroke;
+                        fill.setAlpha(90);
+                        p.fillRect(vr, fill);
+                    } else {
+                        QPen thin(a.style.stroke);
+                        thin.setWidthF(std::max(1.0, a.style.strokeWidth));
+                        p.setPen(thin);
+                        const double y = (a.type == AnnotationType::Underline)
+                            ? vr.bottom() - 1.0
+                            : vr.center().y();
+                        p.drawLine(QPointF(vr.left(), y), QPointF(vr.right(), y));
+                    }
+                }
                 break;
             }
             default:
@@ -266,6 +293,28 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
             a.type = AnnotationType::Note;
             a.bounds = QRectF(m_dragStartDoc, QSizeF(18.0, 18.0));
             a.text = text;
+            break;
+        }
+        case AnnotationTool::Highlight:
+        case AnnotationTool::Underline:
+        case AnnotationTool::StrikeOut: {
+            a.type = (m_tool == AnnotationTool::Highlight) ? AnnotationType::Highlight
+                   : (m_tool == AnnotationTool::Underline) ? AnnotationType::Underline
+                                                           : AnnotationType::StrikeOut;
+            if (m_textSelection) {
+                a.quads = m_textSelection(m_dragStartDoc, end, m_page);
+            }
+            if (a.quads.empty()) {
+                if (a.bounds.width() < 1.0 && a.bounds.height() < 1.0) {
+                    update();
+                    return;
+                }
+                a.quads = {a.bounds};
+            } else {
+                QRectF bbox = a.quads.front();
+                for (const QRectF& r : a.quads) bbox = bbox.united(r);
+                a.bounds = bbox;
+            }
             break;
         }
         default:

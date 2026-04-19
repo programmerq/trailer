@@ -32,6 +32,13 @@ public:
     void setDocumentToView(std::function<QPointF(QPointF)> fn);
     void setViewToDocument(std::function<QPointF(QPointF)> fn);
 
+    // Supplies per-run text rects (in doc coords) for a selection between two
+    // points on a page. Used by the Highlight/Underline/StrikeOut tools. If
+    // unset or it returns empty, the markup falls back to the drag bbox.
+    using TextSelectionProvider = std::function<std::vector<QRectF>(
+        QPointF startDoc, QPointF endDoc, int page)>;
+    void setTextSelectionProvider(TextSelectionProvider fn);
+
 signals:
     void annotationCommitted(int id);
 
@@ -58,6 +65,7 @@ private:
 
     std::function<QPointF(QPointF)> m_docToView;
     std::function<QPointF(QPointF)> m_viewToDoc;
+    TextSelectionProvider m_textSelection;
 };
 
 }  // namespace trailer

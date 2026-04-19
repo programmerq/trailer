@@ -146,6 +146,18 @@ QWidget* PdfDocument::createView(QWidget* parent) {
         const QPointF origin = pageOriginInView();
         return QPointF((p.x() - origin.x()) / z, (p.y() - origin.y()) / z);
     });
+    overlay->setTextSelectionProvider(
+        [this](QPointF startDoc, QPointF endDoc, int page)
+            -> std::vector<QRectF> {
+            if (!m_doc || page < 0) return {};
+            const QPdfSelection sel = m_doc->getSelection(page, startDoc, endDoc);
+            if (!sel.isValid()) return {};
+            std::vector<QRectF> out;
+            for (const QPolygonF& poly : sel.bounds()) {
+                out.push_back(poly.boundingRect());
+            }
+            return out;
+        });
     overlay->setGeometry(view->viewport()->rect());
     overlay->show();
     m_overlay = overlay;

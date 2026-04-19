@@ -19,6 +19,9 @@ enum class AnnotationTool {
     Ink,
     Text,
     Note,
+    Highlight,
+    Underline,
+    StrikeOut,
 };
 
 enum class AnnotationType {
@@ -51,6 +54,7 @@ struct Annotation {
     AnnotationType type = AnnotationType::Rectangle;
     QRectF bounds;                // primary geometry; for Ink this is the bbox
     std::vector<QPointF> points;  // for Ink and Line endpoints
+    std::vector<QRectF> quads;    // per-run rects for Highlight/Underline/StrikeOut
     QString text;                 // Text / Note / and any user-attached comment
     AnnotationStyle style;
 };
