@@ -1,5 +1,7 @@
 #pragma once
 
+#include "annotation/Annotation.h"
+
 #include <QString>
 #include <memory>
 #include <vector>
@@ -30,6 +32,11 @@ public:
     // current MediaBox. Returns false if the resulting rectangle would be invalid.
     bool cropPage(int pageIndex, double leftPts, double topPts,
                   double rightPts, double bottomPts);
+
+    // Append in-memory annotations to each page's /Annots array. Caller
+    // supplies doc-native coords (PDF points, top-left origin); the writer
+    // flips to PDF convention (bottom-left) using each page's MediaBox.
+    bool writeAnnotations(const std::vector<Annotation>& annotations);
 
     bool save(const QString& path);
 

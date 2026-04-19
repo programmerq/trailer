@@ -499,6 +499,10 @@ bool PdfDocument::save(const QString& newPath) {
         return false;
     }
 
+    if (!m_editor->writeAnnotations(m_annotations.annotations())) {
+        return false;
+    }
+
     if (QFileInfo(targetPath).canonicalFilePath()
         == QFileInfo(m_path).canonicalFilePath() && !m_path.isEmpty()) {
         auto temp = std::make_unique<QTemporaryFile>(
@@ -552,6 +556,7 @@ bool PdfDocument::save(const QString& newPath) {
         }
     }
     m_dirty = false;
+    m_annotations.clear();
     return true;
 }
 
