@@ -4,6 +4,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QPageLayout>
 #include <QPageSize>
@@ -25,6 +26,39 @@ namespace {
 constexpr double kZoomStep = 1.1;
 constexpr double kZoomMin = 0.10;
 constexpr double kZoomMax = 16.0;
+
+class NavigablePdfView : public QPdfView {
+public:
+    explicit NavigablePdfView(QWidget* parent) : QPdfView(parent) {}
+
+protected:
+    void keyPressEvent(QKeyEvent* e) override {
+        if (pageMode() == QPdfView::PageMode::SinglePage) {
+            const int key = e->key();
+            QScrollBar* vbar = verticalScrollBar();
+            const bool atBottom = vbar->value() >= vbar->maximum();
+            const bool atTop = vbar->value() <= vbar->minimum();
+            auto* nav = pageNavigator();
+            const int current = nav->currentPage();
+            const int last = document() ? document()->pageCount() - 1 : 0;
+            if ((key == Qt::Key_Down || key == Qt::Key_PageDown ||
+                 key == Qt::Key_Space) && atBottom && current < last) {
+                nav->jump(current + 1, QPointF{}, zoomFactor());
+                verticalScrollBar()->setValue(verticalScrollBar()->minimum());
+                e->accept();
+                return;
+            }
+            if ((key == Qt::Key_Up || key == Qt::Key_PageUp) && atTop &&
+                current > 0) {
+                nav->jump(current - 1, QPointF{}, zoomFactor());
+                verticalScrollBar()->setValue(verticalScrollBar()->maximum());
+                e->accept();
+                return;
+            }
+        }
+        QPdfView::keyPressEvent(e);
+    }
+};
 }  // namespace
 
 PdfDocument::PdfDocument(QString path)
@@ -64,9 +98,10 @@ QWidget* PdfDocument::createView(QWidget* parent) {
         return container;
     }
 
-    auto* view = new QPdfView(parent);
+    auto* view = new NavigablePdfView(parent);
     view->setDocument(m_doc.get());
-    view->setZoomMode(QPdfView::ZoomMode::FitToWidth);
+    view->setZoomMode(QPdfView::ZoomMode::Custom);
+    view->setZoomFactor(1.0);
     m_view = view;
     if (m_searchModel) {
         view->setSearchModel(m_searchModel.get());

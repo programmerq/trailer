@@ -32,6 +32,9 @@ public:
     bool supportsPrint() const override { return !m_image.isNull(); }
     void print(QWidget* dialogParent) override;
 
+    bool supportsThumbnails() const override { return !m_image.isNull() && !m_animated; }
+    QImage renderThumbnail(int pageIndex, QSize targetSize) override;
+
     bool supportsEditing() const override { return !m_image.isNull() && !m_animated; }
     bool isDirty() const override { return m_dirty; }
     void rotatePage(int pageIndex, int degreesClockwise) override;

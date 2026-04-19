@@ -272,6 +272,13 @@ void ImageDocument::setAnimationPlaying(bool playing) {
     }
 }
 
+QImage ImageDocument::renderThumbnail(int pageIndex, QSize targetSize) {
+    if (pageIndex != 0 || m_image.isNull() || !targetSize.isValid()) {
+        return {};
+    }
+    return m_image.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+}
+
 void ImageDocument::print(QWidget* dialogParent) {
     if (m_image.isNull()) {
         return;
