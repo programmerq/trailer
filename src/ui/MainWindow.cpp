@@ -15,15 +15,27 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
+#include <QDateTime>
+#include <QDir>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
+#include <QGuiApplication>
+#include <QImageWriter>
 #include <QKeySequence>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QPixmap>
+#include <QScreen>
+#include <QSlider>
+#include <QSpinBox>
+#include <QStandardPaths>
+#include <QTemporaryFile>
 #include <QVBoxLayout>
 #include <QWidget>
+#include "document/ImageAdapter.h"
 
 namespace trailer {
 
@@ -284,13 +296,36 @@ void MainWindow::buildToolsMenu(QMenu* toolsMenu) {
     m_rotateRightAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
     connect(m_rotateRightAction, &QAction::triggered, this, &MainWindow::onRotateRight);
 
+    m_flipHorizontalAction = toolsMenu->addAction(tr("Flip &Horizontal"));
+    connect(m_flipHorizontalAction, &QAction::triggered, this, &MainWindow::onFlipHorizontal);
+
+    m_flipVerticalAction = toolsMenu->addAction(tr("Flip &Vertical"));
+    connect(m_flipVerticalAction, &QAction::triggered, this, &MainWindow::onFlipVertical);
+
     toolsMenu->addSeparator();
+
+    m_adjustSizeAction = toolsMenu->addAction(tr("Adjust Si&ze…"));
+    connect(m_adjustSizeAction, &QAction::triggered, this, &MainWindow::onAdjustSize);
+
+    m_adjustColourAction = toolsMenu->addAction(tr("Adjust Co&lour…"));
+    connect(m_adjustColourAction, &QAction::triggered, this, &MainWindow::onAdjustColour);
+
+    toolsMenu->addSeparator();
+
+    m_exportAsAction = toolsMenu->addAction(tr("&Export As…"));
+    connect(m_exportAsAction, &QAction::triggered, this, &MainWindow::onExportAs);
 
     m_insertPagesAction = toolsMenu->addAction(tr("&Insert Pages from File…"));
     connect(m_insertPagesAction, &QAction::triggered, this, &MainWindow::onInsertPages);
 
     m_cropPagesAction = toolsMenu->addAction(tr("&Crop Pages…"));
     connect(m_cropPagesAction, &QAction::triggered, this, &MainWindow::onCropPages);
+
+    toolsMenu->addSeparator();
+
+    m_screenshotAction = toolsMenu->addAction(tr("&Take Screenshot"));
+    m_screenshotAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_3));
+    connect(m_screenshotAction, &QAction::triggered, this, &MainWindow::onTakeScreenshot);
 }
 
 void MainWindow::onCropPages() {
@@ -400,6 +435,187 @@ void MainWindow::onRotateRight() {
     updateTitleForDocument(doc);
 }
 
+void MainWindow::onFlipHorizontal() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing()) return;
+    doc->flipHorizontal();
+    m_sidebar->refreshThumbnails();
+    updateTitleForDocument(doc);
+}
+
+void MainWindow::onFlipVertical() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing()) return;
+    doc->flipVertical();
+    m_sidebar->refreshThumbnails();
+    updateTitleForDocument(doc);
+}
+
+void MainWindow::onAdjustSize() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing()) return;
+    const QSize current = doc->imagePixelSize();
+    if (current.isEmpty()) return;
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Adjust Size"));
+    auto* form = new QFormLayout(&dialog);
+
+    auto* widthSpin = new QSpinBox(&dialog);
+    widthSpin->setRange(1, 32768);
+    widthSpin->setValue(current.width());
+    widthSpin->setSuffix(tr(" px"));
+
+    auto* heightSpin = new QSpinBox(&dialog);
+    heightSpin->setRange(1, 32768);
+    heightSpin->setValue(current.height());
+    heightSpin->setSuffix(tr(" px"));
+
+    auto* aspectCheck = new QCheckBox(tr("Keep aspect ratio"), &dialog);
+    aspectCheck->setChecked(true);
+    auto* smoothCheck = new QCheckBox(tr("Smooth scaling"), &dialog);
+    smoothCheck->setChecked(true);
+
+    const double aspect = static_cast<double>(current.width()) /
+                          static_cast<double>(current.height());
+    connect(widthSpin, QOverload<int>::of(&QSpinBox::valueChanged), &dialog,
+            [aspectCheck, heightSpin, aspect](int w) {
+                if (aspectCheck->isChecked() && aspect > 0.0) {
+                    QSignalBlocker b(heightSpin);
+                    heightSpin->setValue(qMax(1, qRound(w / aspect)));
+                }
+            });
+    connect(heightSpin, QOverload<int>::of(&QSpinBox::valueChanged), &dialog,
+            [aspectCheck, widthSpin, aspect](int h) {
+                if (aspectCheck->isChecked() && aspect > 0.0) {
+                    QSignalBlocker b(widthSpin);
+                    widthSpin->setValue(qMax(1, qRound(h * aspect)));
+                }
+            });
+
+    form->addRow(tr("Width"), widthSpin);
+    form->addRow(tr("Height"), heightSpin);
+    form->addRow(aspectCheck);
+    form->addRow(smoothCheck);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    form->addRow(buttons);
+
+    if (dialog.exec() != QDialog::Accepted) return;
+    if (!doc->resizeImage(widthSpin->value(), heightSpin->value(),
+                          smoothCheck->isChecked())) {
+        QMessageBox::warning(this, tr("Resize failed"),
+            tr("Could not resize this document."));
+        return;
+    }
+    m_sidebar->refreshThumbnails();
+    updateTitleForDocument(doc);
+}
+
+void MainWindow::onAdjustColour() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing()) return;
+
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Adjust Colour"));
+    auto* form = new QFormLayout(&dialog);
+
+    auto makeSlider = [&]() {
+        auto* s = new QSlider(Qt::Horizontal, &dialog);
+        s->setRange(-100, 100);
+        s->setValue(0);
+        s->setTickPosition(QSlider::TicksBelow);
+        s->setTickInterval(50);
+        s->setMinimumWidth(240);
+        return s;
+    };
+    auto* brightness = makeSlider();
+    auto* contrast = makeSlider();
+    auto* saturation = makeSlider();
+
+    form->addRow(tr("Brightness"), brightness);
+    form->addRow(tr("Contrast"), contrast);
+    form->addRow(tr("Saturation"), saturation);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    form->addRow(buttons);
+
+    if (dialog.exec() != QDialog::Accepted) return;
+    const double b = brightness->value() / 100.0;
+    const double c = contrast->value() / 100.0;
+    const double s = saturation->value() / 100.0;
+    if (b == 0.0 && c == 0.0 && s == 0.0) return;
+    if (!doc->adjustColour(b, c, s)) {
+        QMessageBox::warning(this, tr("Adjust Colour failed"),
+            tr("Could not adjust colour for this document."));
+        return;
+    }
+    m_sidebar->refreshThumbnails();
+    updateTitleForDocument(doc);
+}
+
+void MainWindow::onExportAs() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc) return;
+
+    QStringList filters;
+    filters << tr("PNG image (*.png)")
+            << tr("JPEG image (*.jpg *.jpeg)")
+            << tr("TIFF image (*.tif *.tiff)")
+            << tr("BMP image (*.bmp)")
+            << tr("WebP image (*.webp)");
+    QString selected;
+    const QString suggested = doc->filePath().isEmpty()
+        ? doc->displayName()
+        : QFileInfo(doc->filePath()).completeBaseName() + ".png";
+    const QString path = QFileDialog::getSaveFileName(
+        this, tr("Export As"), suggested, filters.join(";;"), &selected);
+    if (path.isEmpty()) return;
+    QString format = QFileInfo(path).suffix().toLower();
+    if (format.isEmpty()) format = "png";
+    if (!doc->exportAs(path, format)) {
+        QMessageBox::warning(this, tr("Export failed"),
+            tr("Could not export to %1").arg(path));
+    }
+}
+
+void MainWindow::onTakeScreenshot() {
+    QScreen* screen = QGuiApplication::primaryScreen();
+    if (!screen) return;
+    const QPixmap shot = screen->grabWindow(0);
+    if (shot.isNull()) {
+        QMessageBox::warning(this, tr("Screenshot failed"),
+            tr("Could not capture the screen."));
+        return;
+    }
+    const QString dir = QStandardPaths::writableLocation(
+        QStandardPaths::PicturesLocation);
+    const QString stamp = QDateTime::currentDateTime().toString(
+        QStringLiteral("yyyyMMdd-HHmmss"));
+    QTemporaryFile tmp(QDir(dir).filePath(
+        QStringLiteral("trailer-screenshot-%1.XXXXXX.png").arg(stamp)));
+    tmp.setAutoRemove(false);
+    if (!tmp.open()) {
+        QMessageBox::warning(this, tr("Screenshot failed"),
+            tr("Could not write screenshot."));
+        return;
+    }
+    const QString path = tmp.fileName();
+    tmp.close();
+    if (!shot.save(path, "PNG")) {
+        QMessageBox::warning(this, tr("Screenshot failed"),
+            tr("Could not write screenshot to %1").arg(path));
+        return;
+    }
+    m_app->openFiles({path});
+}
+
 void MainWindow::onSave() {
     auto* doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsEditing()) return;
@@ -418,11 +634,15 @@ void MainWindow::onSave() {
 void MainWindow::onSaveAs() {
     auto* doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsEditing()) return;
+    const bool isImage = dynamic_cast<ImageDocument*>(doc) != nullptr;
     const QString suggested = doc->filePath().isEmpty()
         ? doc->displayName()
         : doc->filePath();
+    const QString filter = isImage
+        ? tr("Images (*.png *.jpg *.jpeg *.bmp *.tiff *.tif *.webp)")
+        : tr("PDF documents (*.pdf)");
     const QString path = QFileDialog::getSaveFileName(
-        this, tr("Save As"), suggested, tr("PDF documents (*.pdf)"));
+        this, tr("Save As"), suggested, filter);
     if (path.isEmpty()) return;
     if (!doc->save(path)) {
         QMessageBox::warning(this, tr("Save failed"),
@@ -485,12 +705,19 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_nextPageAction->setEnabled(multiplePages);
 
     const bool canEdit = doc && doc->supportsEditing();
+    const bool isImage = dynamic_cast<ImageDocument*>(doc) != nullptr;
+    const bool isPdfLike = canEdit && !isImage;
     m_saveAction->setEnabled(canEdit);
     m_saveAsAction->setEnabled(canEdit);
     m_rotateLeftAction->setEnabled(canEdit);
     m_rotateRightAction->setEnabled(canEdit);
-    m_insertPagesAction->setEnabled(canEdit);
-    m_cropPagesAction->setEnabled(canEdit);
+    m_flipHorizontalAction->setEnabled(canEdit);
+    m_flipVerticalAction->setEnabled(canEdit);
+    m_adjustSizeAction->setEnabled(canEdit && isImage);
+    m_adjustColourAction->setEnabled(canEdit && isImage);
+    m_exportAsAction->setEnabled(doc != nullptr && isImage);
+    m_insertPagesAction->setEnabled(isPdfLike);
+    m_cropPagesAction->setEnabled(isPdfLike);
 
     syncViewModeActions(doc);
     updateTitleForDocument(doc);

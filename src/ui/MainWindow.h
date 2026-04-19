@@ -41,6 +41,12 @@ private slots:
     void onSaveAs();
     void onRotateLeft();
     void onRotateRight();
+    void onFlipHorizontal();
+    void onFlipVertical();
+    void onAdjustSize();
+    void onAdjustColour();
+    void onExportAs();
+    void onTakeScreenshot();
     void onInsertPages();
     void onCropPages();
     void onAbout();
@@ -69,6 +75,12 @@ private:
     QAction* m_saveAsAction = nullptr;
     QAction* m_rotateLeftAction = nullptr;
     QAction* m_rotateRightAction = nullptr;
+    QAction* m_flipHorizontalAction = nullptr;
+    QAction* m_flipVerticalAction = nullptr;
+    QAction* m_adjustSizeAction = nullptr;
+    QAction* m_adjustColourAction = nullptr;
+    QAction* m_exportAsAction = nullptr;
+    QAction* m_screenshotAction = nullptr;
     QAction* m_insertPagesAction = nullptr;
     QAction* m_cropPagesAction = nullptr;
     QAction* m_printAction = nullptr;
