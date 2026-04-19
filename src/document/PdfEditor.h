@@ -23,6 +23,7 @@ public:
     void rotatePage(int pageIndex, int degreesClockwise);
     void deletePages(std::vector<int> pageIndices);
     void movePage(int from, int to);
+    bool insertPagesFrom(const QString& sourcePath, int insertAtIndex);
 
     bool save(const QString& path);
 
@@ -30,6 +31,7 @@ public:
 
 private:
     std::unique_ptr<QPDF> m_qpdf;
+    std::vector<std::unique_ptr<QPDF>> m_sources;
     bool m_valid = false;
 };
 

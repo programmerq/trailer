@@ -278,6 +278,28 @@ void MainWindow::buildToolsMenu(QMenu* toolsMenu) {
     m_rotateRightAction = toolsMenu->addAction(tr("Rotate &Right"));
     m_rotateRightAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
     connect(m_rotateRightAction, &QAction::triggered, this, &MainWindow::onRotateRight);
+
+    toolsMenu->addSeparator();
+
+    m_insertPagesAction = toolsMenu->addAction(tr("&Insert Pages from File…"));
+    connect(m_insertPagesAction, &QAction::triggered, this, &MainWindow::onInsertPages);
+}
+
+void MainWindow::onInsertPages() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing()) return;
+    const QString path = QFileDialog::getOpenFileName(
+        this, tr("Insert Pages from File"), QString(),
+        tr("PDF documents (*.pdf)"));
+    if (path.isEmpty()) return;
+    const int insertAt = doc->currentPage() + 1;
+    if (!doc->insertPagesFrom(path, insertAt)) {
+        QMessageBox::warning(this, tr("Insert failed"),
+            tr("Could not insert pages from %1").arg(path));
+        return;
+    }
+    m_sidebar->refreshThumbnails();
+    onCurrentDocumentChanged(doc);
 }
 
 int MainWindow::selectedPageForEdit(IDocument* doc) const {
@@ -396,6 +418,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_saveAsAction->setEnabled(canEdit);
     m_rotateLeftAction->setEnabled(canEdit);
     m_rotateRightAction->setEnabled(canEdit);
+    m_insertPagesAction->setEnabled(canEdit);
 
     syncViewModeActions(doc);
     updateTitleForDocument(doc);

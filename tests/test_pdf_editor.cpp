@@ -35,6 +35,7 @@ private slots:
     void saveRoundTripsPreservingPageCount();
     void deletePagesReducesCount();
     void movePageReordersPages();
+    void insertPagesFromCombinesDocuments();
 };
 
 void TestPdfEditor::reportsInvalidForMissingFile() {
@@ -101,6 +102,24 @@ void TestPdfEditor::movePageReordersPages() {
     PdfEditor round;
     QVERIFY(round.load(dst));
     QCOMPARE(round.pageCount(), 3);
+}
+
+void TestPdfEditor::insertPagesFromCombinesDocuments() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString base = writeSamplePdf(dir.filePath("base.pdf"), 2);
+    const QString extra = writeSamplePdf(dir.filePath("extra.pdf"), 3);
+    const QString dst = dir.filePath("combined.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(base));
+    QVERIFY(editor.insertPagesFrom(extra, 1));
+    QCOMPARE(editor.pageCount(), 5);
+    QVERIFY(editor.save(dst));
+
+    PdfEditor round;
+    QVERIFY(round.load(dst));
+    QCOMPARE(round.pageCount(), 5);
 }
 
 QTEST_MAIN(TestPdfEditor)

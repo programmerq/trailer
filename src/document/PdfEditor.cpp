@@ -19,6 +19,7 @@ bool PdfEditor::load(const QString& path) {
     try {
         m_qpdf = std::make_unique<QPDF>();
         m_qpdf->processFile(path.toLocal8Bit().constData());
+        m_sources.clear();
         m_valid = true;
     } catch (const std::exception&) {
         m_valid = false;
@@ -87,6 +88,41 @@ void PdfEditor::movePage(int from, int to) {
                              remaining[static_cast<size_t>(adjusted)]);
         }
     } catch (const std::exception&) {
+    }
+}
+
+bool PdfEditor::insertPagesFrom(const QString& sourcePath, int insertAtIndex) {
+    if (!m_valid) return false;
+    try {
+        auto source = std::make_unique<QPDF>();
+        source->processFile(sourcePath.toLocal8Bit().constData());
+
+        QPDFPageDocumentHelper destHelper(*m_qpdf);
+        QPDFPageDocumentHelper sourceHelper(*source);
+        auto srcPages = sourceHelper.getAllPages();
+        if (srcPages.empty()) {
+            return false;
+        }
+
+        auto destPages = destHelper.getAllPages();
+        const int destCount = static_cast<int>(destPages.size());
+        const int clamped = std::clamp(insertAtIndex, 0, destCount);
+
+        if (clamped >= destCount) {
+            for (auto& p : srcPages) {
+                destHelper.addPage(p, /*first=*/false);
+            }
+        } else {
+            QPDFPageObjectHelper refPage = destPages[static_cast<size_t>(clamped)];
+            for (auto& p : srcPages) {
+                destHelper.addPageAt(p, /*before=*/true, refPage);
+            }
+        }
+
+        m_sources.push_back(std::move(source));
+        return true;
+    } catch (const std::exception&) {
+        return false;
     }
 }
 

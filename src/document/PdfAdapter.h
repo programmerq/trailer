@@ -56,6 +56,7 @@ public:
     void rotatePage(int pageIndex, int degreesClockwise) override;
     void deletePages(const std::vector<int>& pageIndices) override;
     void movePage(int from, int to) override;
+    bool insertPagesFrom(const QString& sourcePath, int insertAtIndex) override;
     bool save(const QString& newPath = {}) override;
 
     bool isValid() const { return m_valid; }
