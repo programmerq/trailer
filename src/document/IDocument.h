@@ -55,6 +55,11 @@ public:
     virtual void movePage(int /*from*/, int /*to*/) {}
     virtual bool insertPagesFrom(const QString& /*sourcePath*/, int /*insertAtIndex*/) { return false; }
     virtual bool extractPages(const std::vector<int>& /*pageIndices*/, const QString& /*destPath*/) const { return false; }
+    virtual bool cropPage(int /*pageIndex*/, double /*leftPts*/, double /*topPts*/,
+                          double /*rightPts*/, double /*bottomPts*/) { return false; }
+    virtual bool cropPages(const std::vector<int>& /*pageIndices*/,
+                           double /*leftPts*/, double /*topPts*/,
+                           double /*rightPts*/, double /*bottomPts*/) { return false; }
     virtual bool save(const QString& /*newPath*/ = {}) { return false; }
 
     virtual bool supportsAnimation() const { return false; }

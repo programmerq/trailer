@@ -126,6 +126,40 @@ bool PdfEditor::insertPagesFrom(const QString& sourcePath, int insertAtIndex) {
     }
 }
 
+bool PdfEditor::cropPage(int pageIndex, double leftPts, double topPts,
+                         double rightPts, double bottomPts) {
+    if (!m_valid) return false;
+    try {
+        auto pages = QPDFPageDocumentHelper(*m_qpdf).getAllPages();
+        if (pageIndex < 0 || pageIndex >= static_cast<int>(pages.size())) {
+            return false;
+        }
+        QPDFPageObjectHelper page = pages[static_cast<size_t>(pageIndex)];
+        QPDFObjectHandle media = page.getMediaBox(/*copy_if_shared=*/true);
+        if (!media.isArray() || media.getArrayNItems() < 4) {
+            return false;
+        }
+        const double mx0 = media.getArrayItem(0).getNumericValue();
+        const double my0 = media.getArrayItem(1).getNumericValue();
+        const double mx1 = media.getArrayItem(2).getNumericValue();
+        const double my1 = media.getArrayItem(3).getNumericValue();
+
+        const double nx0 = mx0 + leftPts;
+        const double ny0 = my0 + bottomPts;
+        const double nx1 = mx1 - rightPts;
+        const double ny1 = my1 - topPts;
+        if (nx1 - nx0 < 1.0 || ny1 - ny0 < 1.0) {
+            return false;
+        }
+        QPDFObjectHandle crop = QPDFObjectHandle::newArray(
+            QPDFObjectHandle::Rectangle(nx0, ny0, nx1, ny1));
+        page.getObjectHandle().replaceKey("/CropBox", crop);
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
 bool PdfEditor::extractPages(const std::vector<int>& pageIndices,
                              const QString& destPath) const {
     if (!m_valid || pageIndices.empty()) return false;

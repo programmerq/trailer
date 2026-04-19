@@ -58,6 +58,11 @@ public:
     void movePage(int from, int to) override;
     bool insertPagesFrom(const QString& sourcePath, int insertAtIndex) override;
     bool extractPages(const std::vector<int>& pageIndices, const QString& destPath) const override;
+    bool cropPage(int pageIndex, double leftPts, double topPts,
+                  double rightPts, double bottomPts) override;
+    bool cropPages(const std::vector<int>& pageIndices,
+                   double leftPts, double topPts,
+                   double rightPts, double bottomPts) override;
     bool save(const QString& newPath = {}) override;
 
     bool isValid() const { return m_valid; }

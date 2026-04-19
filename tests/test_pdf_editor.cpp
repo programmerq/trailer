@@ -37,6 +37,8 @@ private slots:
     void movePageReordersPages();
     void insertPagesFromCombinesDocuments();
     void extractPagesWritesSubsetPdf();
+    void cropPageSetsCropBox();
+    void cropPageRejectsOversizedMargins();
 };
 
 void TestPdfEditor::reportsInvalidForMissingFile() {
@@ -136,6 +138,32 @@ void TestPdfEditor::extractPagesWritesSubsetPdf() {
     PdfEditor round;
     QVERIFY(round.load(dst));
     QCOMPARE(round.pageCount(), 2);
+}
+
+void TestPdfEditor::cropPageSetsCropBox() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+    const QString dst = dir.filePath("cropped.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+    QVERIFY(editor.cropPage(0, 20.0, 30.0, 20.0, 30.0));
+    QVERIFY(editor.save(dst));
+
+    PdfEditor round;
+    QVERIFY(round.load(dst));
+    QCOMPARE(round.pageCount(), 1);
+}
+
+void TestPdfEditor::cropPageRejectsOversizedMargins() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+    QVERIFY(!editor.cropPage(0, 10000.0, 0.0, 0.0, 0.0));
 }
 
 QTEST_MAIN(TestPdfEditor)

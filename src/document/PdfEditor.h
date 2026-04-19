@@ -26,6 +26,11 @@ public:
     bool insertPagesFrom(const QString& sourcePath, int insertAtIndex);
     bool extractPages(const std::vector<int>& pageIndices, const QString& destPath) const;
 
+    // Cropping. Margins are in PDF points, measured inward from each edge of the
+    // current MediaBox. Returns false if the resulting rectangle would be invalid.
+    bool cropPage(int pageIndex, double leftPts, double topPts,
+                  double rightPts, double bottomPts);
+
     bool save(const QString& path);
 
     QPDF* qpdf() { return m_qpdf.get(); }

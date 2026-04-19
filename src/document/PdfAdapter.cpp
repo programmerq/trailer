@@ -322,6 +322,39 @@ bool PdfDocument::extractPages(const std::vector<int>& pageIndices,
     return m_editor->extractPages(pageIndices, destPath);
 }
 
+bool PdfDocument::cropPage(int pageIndex, double leftPts, double topPts,
+                           double rightPts, double bottomPts) {
+    if (!m_valid || !m_editor || !m_editor->isValid()) return false;
+    if (!m_editor->cropPage(pageIndex, leftPts, topPts, rightPts, bottomPts)) {
+        return false;
+    }
+    if (reloadViewerFromEditor()) {
+        m_dirty = true;
+        return true;
+    }
+    return false;
+}
+
+bool PdfDocument::cropPages(const std::vector<int>& pageIndices,
+                            double leftPts, double topPts,
+                            double rightPts, double bottomPts) {
+    if (!m_valid || !m_editor || !m_editor->isValid() || pageIndices.empty()) {
+        return false;
+    }
+    bool any = false;
+    for (int idx : pageIndices) {
+        if (m_editor->cropPage(idx, leftPts, topPts, rightPts, bottomPts)) {
+            any = true;
+        }
+    }
+    if (!any) return false;
+    if (reloadViewerFromEditor()) {
+        m_dirty = true;
+        return true;
+    }
+    return false;
+}
+
 bool PdfDocument::insertPagesFrom(const QString& sourcePath, int insertAtIndex) {
     if (!m_valid || !m_editor || !m_editor->isValid()) {
         return false;
