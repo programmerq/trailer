@@ -12,6 +12,7 @@
 #include <QPdfView>
 #include <QPrintDialog>
 #include <QPrinter>
+#include <QScrollBar>
 #include <QSizeF>
 #include <QVBoxLayout>
 
@@ -96,6 +97,8 @@ void PdfDocument::applyZoomFactor(double factor) {
     const double clamped = std::clamp(factor, kZoomMin, kZoomMax);
     m_view->setZoomMode(QPdfView::ZoomMode::Custom);
     m_view->setZoomFactor(clamped);
+    QScrollBar* hbar = m_view->horizontalScrollBar();
+    hbar->setValue((hbar->minimum() + hbar->maximum()) / 2);
 }
 
 void PdfDocument::zoomIn() {
