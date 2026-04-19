@@ -28,6 +28,7 @@ public:
 signals:
     void deletePagesRequested(const std::vector<int>& pageIndices);
     void movePageRequested(int from, int to);
+    void annotationSelected(int id);
 
 protected:
     bool eventFilter(QObject* watched, QEvent* event) override;

@@ -285,6 +285,7 @@ void Sidebar::onAnnotationActivated() {
     if (const Annotation* a = store->find(id)) {
         m_doc->goToPage(a->page);
     }
+    emit annotationSelected(id);
 }
 
 void Sidebar::onThumbnailActivated(const QModelIndex& index) {

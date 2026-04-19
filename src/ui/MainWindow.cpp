@@ -2,6 +2,7 @@
 
 #include "AnimationBar.h"
 #include "DocumentView.h"
+#include "Inspector.h"
 #include "Magnifier.h"
 #include "MarkupToolbar.h"
 #include "SearchBar.h"
@@ -83,6 +84,15 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
 
     m_sidebar = new Sidebar(this);
     addDockWidget(Qt::LeftDockWidgetArea, m_sidebar);
+    m_inspector = new Inspector(this);
+    addDockWidget(Qt::RightDockWidgetArea, m_inspector);
+    m_inspector->hide();
+    connect(m_sidebar, &Sidebar::annotationSelected, this, [this](int id) {
+        auto* doc = m_documentView->currentDocument();
+        if (!doc) return;
+        m_inspector->setAnnotation(doc->annotations(), id);
+        if (!m_inspector->isVisible()) m_inspector->show();
+    });
     connect(m_sidebar, &Sidebar::deletePagesRequested,
             this, [this](const std::vector<int>& rows) {
                 auto* doc = m_documentView->currentDocument();
@@ -245,6 +255,11 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
     m_markupToolbarAction->setText(tr("Toggle &Markup Toolbar"));
     m_markupToolbarAction->setShortcut(QKeySequence(tr("Ctrl+Shift+A")));
     viewMenu->addAction(m_markupToolbarAction);
+
+    m_inspectorAction = m_inspector->toggleViewAction();
+    m_inspectorAction->setText(tr("Toggle &Inspector"));
+    m_inspectorAction->setShortcut(QKeySequence(tr("Ctrl+Shift+I")));
+    viewMenu->addAction(m_inspectorAction);
 
     viewMenu->addSeparator();
 
@@ -850,6 +865,7 @@ void MainWindow::updateTitleForDocument(IDocument* doc) {
 void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_sidebar->setDocument(doc);
     m_animationBar->setDocument(doc);
+    m_inspector->clearSelection();
 
     if (doc) {
         doc->setAnnotationStyle(m_markupToolbar->style());

@@ -15,6 +15,7 @@ namespace trailer {
 class AnimationBar;
 class Application;
 class DocumentView;
+class Inspector;
 class Magnifier;
 class MarkupToolbar;
 class SearchBar;
@@ -69,6 +70,7 @@ private:
     Application* m_app;
     DocumentView* m_documentView = nullptr;
     AnimationBar* m_animationBar = nullptr;
+    Inspector* m_inspector = nullptr;
     Magnifier* m_magnifier = nullptr;
     MarkupToolbar* m_markupToolbar = nullptr;
     SearchBar* m_searchBar = nullptr;
@@ -101,6 +103,7 @@ private:
     QAction* m_zoomFitAction = nullptr;
     QAction* m_magnifierAction = nullptr;
     QAction* m_markupToolbarAction = nullptr;
+    QAction* m_inspectorAction = nullptr;
 
     QActionGroup* m_viewModeGroup = nullptr;
     QAction* m_singlePageAction = nullptr;
