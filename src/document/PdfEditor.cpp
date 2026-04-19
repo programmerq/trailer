@@ -126,6 +126,31 @@ bool PdfEditor::insertPagesFrom(const QString& sourcePath, int insertAtIndex) {
     }
 }
 
+bool PdfEditor::extractPages(const std::vector<int>& pageIndices,
+                             const QString& destPath) const {
+    if (!m_valid || pageIndices.empty()) return false;
+    try {
+        auto pages = QPDFPageDocumentHelper(*m_qpdf).getAllPages();
+        const int total = static_cast<int>(pages.size());
+
+        QPDF dest;
+        dest.emptyPDF();
+        QPDFPageDocumentHelper destHelper(dest);
+
+        for (int idx : pageIndices) {
+            if (idx < 0 || idx >= total) continue;
+            destHelper.addPage(pages[static_cast<size_t>(idx)], /*first=*/false);
+        }
+
+        QPDFWriter writer(dest, destPath.toLocal8Bit().constData());
+        writer.setStaticID(false);
+        writer.write();
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
 bool PdfEditor::save(const QString& path) {
     if (!m_valid) return false;
     try {

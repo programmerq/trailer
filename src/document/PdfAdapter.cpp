@@ -316,6 +316,12 @@ void PdfDocument::deletePages(const std::vector<int>& pageIndices) {
     }
 }
 
+bool PdfDocument::extractPages(const std::vector<int>& pageIndices,
+                               const QString& destPath) const {
+    if (!m_valid || !m_editor || !m_editor->isValid()) return false;
+    return m_editor->extractPages(pageIndices, destPath);
+}
+
 bool PdfDocument::insertPagesFrom(const QString& sourcePath, int insertAtIndex) {
     if (!m_valid || !m_editor || !m_editor->isValid()) {
         return false;

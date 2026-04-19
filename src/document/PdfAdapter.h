@@ -57,6 +57,7 @@ public:
     void deletePages(const std::vector<int>& pageIndices) override;
     void movePage(int from, int to) override;
     bool insertPagesFrom(const QString& sourcePath, int insertAtIndex) override;
+    bool extractPages(const std::vector<int>& pageIndices, const QString& destPath) const override;
     bool save(const QString& newPath = {}) override;
 
     bool isValid() const { return m_valid; }

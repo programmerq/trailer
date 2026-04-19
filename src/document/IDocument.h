@@ -54,6 +54,7 @@ public:
     virtual void deletePages(const std::vector<int>& /*pageIndices*/) {}
     virtual void movePage(int /*from*/, int /*to*/) {}
     virtual bool insertPagesFrom(const QString& /*sourcePath*/, int /*insertAtIndex*/) { return false; }
+    virtual bool extractPages(const std::vector<int>& /*pageIndices*/, const QString& /*destPath*/) const { return false; }
     virtual bool save(const QString& /*newPath*/ = {}) { return false; }
 
     virtual bool supportsAnimation() const { return false; }

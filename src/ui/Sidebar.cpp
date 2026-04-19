@@ -84,7 +84,7 @@ protected:
     }
 
     void dropEvent(QDropEvent* event) override {
-        if (!m_moveHandler) {
+        if (!m_moveHandler || event->source() != this) {
             QListView::dropEvent(event);
             return;
         }
@@ -162,7 +162,7 @@ Sidebar::Sidebar(QWidget* parent) : QDockWidget(tr("Sidebar"), parent) {
     m_thumbnails->setDragEnabled(true);
     m_thumbnails->setAcceptDrops(true);
     m_thumbnails->setDropIndicatorShown(true);
-    m_thumbnails->setDragDropMode(QAbstractItemView::InternalMove);
+    m_thumbnails->setDragDropMode(QAbstractItemView::DragDrop);
     m_thumbnails->setDefaultDropAction(Qt::MoveAction);
     static_cast<ThumbnailListView*>(m_thumbnails)->setMoveHandler(
         [this](int from, int to) { emit movePageRequested(from, to); });

@@ -36,6 +36,7 @@ private slots:
     void deletePagesReducesCount();
     void movePageReordersPages();
     void insertPagesFromCombinesDocuments();
+    void extractPagesWritesSubsetPdf();
 };
 
 void TestPdfEditor::reportsInvalidForMissingFile() {
@@ -120,6 +121,21 @@ void TestPdfEditor::insertPagesFromCombinesDocuments() {
     PdfEditor round;
     QVERIFY(round.load(dst));
     QCOMPARE(round.pageCount(), 5);
+}
+
+void TestPdfEditor::extractPagesWritesSubsetPdf() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 5);
+    const QString dst = dir.filePath("subset.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+    QVERIFY(editor.extractPages({1, 3}, dst));
+
+    PdfEditor round;
+    QVERIFY(round.load(dst));
+    QCOMPARE(round.pageCount(), 2);
 }
 
 QTEST_MAIN(TestPdfEditor)

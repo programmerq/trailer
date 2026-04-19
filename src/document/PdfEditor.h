@@ -24,6 +24,7 @@ public:
     void deletePages(std::vector<int> pageIndices);
     void movePage(int from, int to);
     bool insertPagesFrom(const QString& sourcePath, int insertAtIndex);
+    bool extractPages(const std::vector<int>& pageIndices, const QString& destPath) const;
 
     bool save(const QString& path);
 
