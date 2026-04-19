@@ -15,6 +15,8 @@ private slots:
     void annotationsOnPageFiltersByPage();
     void restoreBringsBackPriorSnapshot();
     void changedSignalFiresOnMutations();
+    void undoRedoReversesAddRemoveUpdate();
+    void redoStackClearsOnNewMutation();
 };
 
 namespace {
@@ -105,6 +107,50 @@ void TestAnnotationStore::changedSignalFiresOnMutations() {
     QCOMPARE(spy.count(), 2);
     store.clear();
     QCOMPARE(spy.count(), 2);  // no-op when already empty
+}
+
+void TestAnnotationStore::undoRedoReversesAddRemoveUpdate() {
+    AnnotationStore store;
+    QVERIFY(!store.canUndo());
+    QVERIFY(!store.canRedo());
+
+    const int id = store.add(makeRect(0, QRectF(0, 0, 10, 10)));
+    QVERIFY(store.canUndo());
+    QCOMPARE(store.count(), 1);
+
+    Annotation updated = *store.find(id);
+    updated.bounds = QRectF(1, 2, 3, 4);
+    QVERIFY(store.update(updated));
+    QCOMPARE(store.find(id)->bounds, QRectF(1, 2, 3, 4));
+
+    store.undo();  // revert update
+    QCOMPARE(store.find(id)->bounds, QRectF(0, 0, 10, 10));
+    QVERIFY(store.canRedo());
+
+    store.undo();  // revert add
+    QCOMPARE(store.count(), 0);
+
+    store.redo();  // re-add
+    QCOMPARE(store.count(), 1);
+    QVERIFY(store.find(id) != nullptr);
+
+    store.redo();  // re-apply update
+    QCOMPARE(store.find(id)->bounds, QRectF(1, 2, 3, 4));
+
+    store.undo();
+    store.undo();
+    QVERIFY(store.remove(id) == false);  // already gone
+}
+
+void TestAnnotationStore::redoStackClearsOnNewMutation() {
+    AnnotationStore store;
+    const int id = store.add(makeRect(0, QRectF(0, 0, 5, 5)));
+    store.undo();
+    QVERIFY(store.canRedo());
+    store.add(makeRect(0, QRectF(5, 5, 5, 5)));
+    QVERIFY(!store.canRedo());
+    QCOMPARE(store.count(), 1);
+    QVERIFY(store.find(id) == nullptr);
 }
 
 QTEST_MAIN(TestAnnotationStore)

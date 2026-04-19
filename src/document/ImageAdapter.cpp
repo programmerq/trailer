@@ -312,6 +312,10 @@ void ImageDocument::pushUndoSnapshot() {
 }
 
 void ImageDocument::undo() {
+    if (m_annotations.canUndo()) {
+        m_annotations.undo();
+        return;
+    }
     if (m_undoStack.empty()) return;
     m_redoStack.push_back(m_image);
     m_image = m_undoStack.back();
@@ -321,6 +325,10 @@ void ImageDocument::undo() {
 }
 
 void ImageDocument::redo() {
+    if (m_annotations.canRedo()) {
+        m_annotations.redo();
+        return;
+    }
     if (m_redoStack.empty()) return;
     m_undoStack.push_back(m_image);
     m_image = m_redoStack.back();

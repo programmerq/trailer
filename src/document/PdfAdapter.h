@@ -58,6 +58,10 @@ public:
     bool isDirty() const override {
         return m_dirty || !m_annotations.annotations().empty();
     }
+    bool canUndo() const override { return m_annotations.canUndo(); }
+    bool canRedo() const override { return m_annotations.canRedo(); }
+    void undo() override { m_annotations.undo(); }
+    void redo() override { m_annotations.redo(); }
     void rotatePage(int pageIndex, int degreesClockwise) override;
     void deletePages(const std::vector<int>& pageIndices) override;
     void movePage(int from, int to) override;

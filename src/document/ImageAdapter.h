@@ -47,8 +47,12 @@ public:
     bool isDirty() const override {
         return m_dirty || !m_annotations.annotations().empty();
     }
-    bool canUndo() const override { return !m_undoStack.empty(); }
-    bool canRedo() const override { return !m_redoStack.empty(); }
+    bool canUndo() const override {
+        return !m_undoStack.empty() || m_annotations.canUndo();
+    }
+    bool canRedo() const override {
+        return !m_redoStack.empty() || m_annotations.canRedo();
+    }
     void undo() override;
     void redo() override;
     void rotatePage(int pageIndex, int degreesClockwise) override;

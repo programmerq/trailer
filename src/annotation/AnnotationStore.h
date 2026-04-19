@@ -30,12 +30,22 @@ public:
     std::vector<Annotation> snapshot() const { return m_annotations; }
     void restore(std::vector<Annotation> snapshot);
 
+    bool canUndo() const { return !m_undoStack.empty(); }
+    bool canRedo() const { return !m_redoStack.empty(); }
+    void undo();
+    void redo();
+
 signals:
     void changed();
 
 private:
+    void pushHistory();
+
     std::vector<Annotation> m_annotations;
+    std::vector<std::vector<Annotation>> m_undoStack;
+    std::vector<std::vector<Annotation>> m_redoStack;
     int m_nextId = 1;
+    static constexpr size_t kMaxUndo = 64;
 };
 
 }  // namespace trailer
