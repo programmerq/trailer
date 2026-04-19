@@ -42,6 +42,9 @@ public:
     virtual void findNext() {}
     virtual void findPrevious() {}
     virtual void clearSearch() {}
+
+    virtual bool supportsPrint() const { return false; }
+    virtual void print(QWidget* /*dialogParent*/) {}
 };
 
 }  // namespace trailer

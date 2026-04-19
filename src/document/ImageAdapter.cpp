@@ -4,7 +4,12 @@
 #include <QImageReader>
 #include <QLabel>
 #include <QMovie>
+#include <QPageLayout>
+#include <QPainter>
 #include <QPixmap>
+#include <QPrintDialog>
+#include <QPrinter>
+#include <QRect>
 #include <QScrollArea>
 
 #include <algorithm>
@@ -102,6 +107,29 @@ void ImageDocument::zoomFitWidth() {
         return;
     }
     applyScale(static_cast<double>(available) / static_cast<double>(m_image.width()));
+}
+
+void ImageDocument::print(QWidget* dialogParent) {
+    if (m_image.isNull()) {
+        return;
+    }
+    QPrinter printer(QPrinter::HighResolution);
+    printer.setDocName(displayName());
+    QPrintDialog dialog(&printer, dialogParent);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+    QPainter painter;
+    if (!painter.begin(&printer)) {
+        return;
+    }
+    const QRect target = printer.pageLayout().paintRectPixels(printer.resolution());
+    const QImage scaled = m_image.scaled(
+        target.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    const int x = target.x() + (target.width() - scaled.width()) / 2;
+    const int y = target.y() + (target.height() - scaled.height()) / 2;
+    painter.drawImage(QPoint(x, y), scaled);
+    painter.end();
 }
 
 QStringList ImageAdapter::mimeTypes() const {

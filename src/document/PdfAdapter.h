@@ -45,6 +45,9 @@ public:
     void findPrevious() override;
     void clearSearch() override;
 
+    bool supportsPrint() const override { return m_valid; }
+    void print(QWidget* dialogParent) override;
+
     bool isValid() const { return m_valid; }
 
 private:

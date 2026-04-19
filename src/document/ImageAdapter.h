@@ -28,6 +28,9 @@ public:
     void zoomActual() override;
     void zoomFitWidth() override;
 
+    bool supportsPrint() const override { return !m_image.isNull(); }
+    void print(QWidget* dialogParent) override;
+
 private:
     void applyScale(double factor);
 

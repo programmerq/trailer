@@ -18,7 +18,7 @@ set(CMAKE_AUTOUIC ON)
 
 include(CompilerWarnings)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Test Pdf PdfWidgets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Test Pdf PdfWidgets PrintSupport)
 
 qt_standard_project_setup()
 
@@ -73,6 +73,7 @@ target_link_libraries(trailer_core
         Qt6::Widgets
         Qt6::Pdf
         Qt6::PdfWidgets
+        Qt6::PrintSupport
         tomlplusplus::tomlplusplus
 )
 trailer_set_warnings(trailer_core)

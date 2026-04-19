@@ -1,11 +1,17 @@
 #include "PdfAdapter.h"
 
 #include <QFileInfo>
+#include <QImage>
 #include <QLabel>
+#include <QPageLayout>
+#include <QPageSize>
+#include <QPainter>
 #include <QPdfDocument>
 #include <QPdfPageNavigator>
 #include <QPdfSearchModel>
 #include <QPdfView>
+#include <QPrintDialog>
+#include <QPrinter>
 #include <QSizeF>
 #include <QVBoxLayout>
 
@@ -183,6 +189,54 @@ void PdfDocument::clearSearch() {
     if (m_view) {
         m_view->setCurrentSearchResultIndex(-1);
     }
+}
+
+void PdfDocument::print(QWidget* dialogParent) {
+    if (!m_valid) {
+        return;
+    }
+
+    QPrinter printer(QPrinter::HighResolution);
+    printer.setDocName(displayName());
+    printer.setFromTo(1, m_doc->pageCount());
+    QPrintDialog dialog(&printer, dialogParent);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const int first = printer.fromPage() > 0 ? printer.fromPage() - 1 : 0;
+    const int last = printer.toPage() > 0 ? printer.toPage() - 1 : m_doc->pageCount() - 1;
+    if (first > last) {
+        return;
+    }
+
+    QPainter painter;
+    if (!painter.begin(&printer)) {
+        return;
+    }
+
+    const QRect target = printer.pageLayout().paintRectPixels(printer.resolution());
+    for (int page = first; page <= last; ++page) {
+        const QSizeF pagePts = m_doc->pagePointSize(page);
+        if (pagePts.isEmpty()) continue;
+
+        const double aspect = pagePts.width() / pagePts.height();
+        int w = target.width();
+        int h = static_cast<int>(w / aspect);
+        if (h > target.height()) {
+            h = target.height();
+            w = static_cast<int>(h * aspect);
+        }
+        const QImage img = m_doc->render(page, QSize(w, h));
+        const int x = target.x() + (target.width() - w) / 2;
+        const int y = target.y() + (target.height() - h) / 2;
+        painter.drawImage(QPoint(x, y), img);
+
+        if (page < last) {
+            printer.newPage();
+        }
+    }
+    painter.end();
 }
 
 QStringList PdfAdapter::mimeTypes() const {

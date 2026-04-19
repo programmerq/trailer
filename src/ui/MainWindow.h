@@ -52,6 +52,7 @@ private:
     Sidebar* m_sidebar = nullptr;
     QMenu* m_recentMenu = nullptr;
 
+    QAction* m_printAction = nullptr;
     QAction* m_findAction = nullptr;
     QAction* m_findNextAction = nullptr;
     QAction* m_findPreviousAction = nullptr;

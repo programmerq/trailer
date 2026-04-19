@@ -72,6 +72,15 @@ void MainWindow::buildMenus() {
     m_recentMenu = fileMenu->addMenu(tr("Open &Recent"));
     fileMenu->addSeparator();
 
+    m_printAction = fileMenu->addAction(tr("&Print…"));
+    m_printAction->setShortcut(QKeySequence::Print);
+    connect(m_printAction, &QAction::triggered, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) {
+            doc->print(this);
+        }
+    });
+    fileMenu->addSeparator();
+
     auto* closeAction = fileMenu->addAction(tr("&Close Window"));
     closeAction->setShortcut(QKeySequence::Close);
     connect(closeAction, &QAction::triggered, this, &QMainWindow::close);
@@ -195,6 +204,9 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
 
 void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_sidebar->setDocument(doc);
+
+    const bool hasPrint = doc && doc->supportsPrint();
+    m_printAction->setEnabled(hasPrint);
 
     const bool hasSearch = doc && doc->supportsSearch();
     m_findAction->setEnabled(hasSearch);

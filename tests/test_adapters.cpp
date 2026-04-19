@@ -26,6 +26,7 @@ private slots:
     void pdfDocumentAdvertisesCapabilities();
     void pdfDocumentRendersThumbnailsForValidFile();
     void pdfDocumentAcceptsSearchQueryWithoutView();
+    void printSupportReflectsValidity();
 };
 
 void TestAdapters::pdfAdapterAdvertisesPdfExtension() {
@@ -183,6 +184,24 @@ void TestAdapters::pdfDocumentAcceptsSearchQueryWithoutView() {
     missing.setSearchQuery("anything");
     missing.findNext();
     missing.clearSearch();
+}
+
+void TestAdapters::printSupportReflectsValidity() {
+    PdfDocument missing("/tmp/definitely-not-a-real-file.pdf");
+    QVERIFY(!missing.supportsPrint());
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString imagePath = dir.filePath("tiny.png");
+    QImage img(8, 8, QImage::Format_ARGB32);
+    img.fill(Qt::green);
+    QVERIFY(img.save(imagePath, "PNG"));
+
+    ImageDocument image(imagePath);
+    QVERIFY(image.supportsPrint());
+
+    ImageDocument missingImage("/tmp/not-an-image.png");
+    QVERIFY(!missingImage.supportsPrint());
 }
 
 QTEST_MAIN(TestAdapters)
