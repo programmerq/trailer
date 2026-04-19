@@ -12,6 +12,7 @@ class QMenu;
 
 namespace trailer {
 
+class AnimationBar;
 class Application;
 class DocumentView;
 class Magnifier;
@@ -49,6 +50,7 @@ private:
 
     Application* m_app;
     DocumentView* m_documentView = nullptr;
+    AnimationBar* m_animationBar = nullptr;
     Magnifier* m_magnifier = nullptr;
     SearchBar* m_searchBar = nullptr;
     Sidebar* m_sidebar = nullptr;

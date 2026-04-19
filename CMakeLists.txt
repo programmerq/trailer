@@ -56,6 +56,8 @@ set(TRAILER_SOURCES
     src/ui/DocumentView.h
     src/ui/MainWindow.cpp
     src/ui/MainWindow.h
+    src/ui/AnimationBar.cpp
+    src/ui/AnimationBar.h
     src/ui/Magnifier.cpp
     src/ui/Magnifier.h
     src/ui/SearchBar.cpp

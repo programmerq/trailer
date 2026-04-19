@@ -10,6 +10,7 @@
 #include <memory>
 
 class QLabel;
+class QMovie;
 class QScrollArea;
 
 namespace trailer {
@@ -31,6 +32,13 @@ public:
     bool supportsPrint() const override { return !m_image.isNull(); }
     void print(QWidget* dialogParent) override;
 
+    bool supportsAnimation() const override { return m_animated && m_frameCount > 1; }
+    int frameCount() const override { return m_frameCount; }
+    int currentFrame() const override;
+    void setCurrentFrame(int frame) override;
+    bool isAnimationPlaying() const override;
+    void setAnimationPlaying(bool playing) override;
+
 private:
     void applyScale(double factor);
 
@@ -38,7 +46,9 @@ private:
     QImage m_image;
     QPointer<QScrollArea> m_scroll;
     QPointer<QLabel> m_label;
+    QPointer<QMovie> m_movie;
     double m_scale = 1.0;
+    int m_frameCount = 0;
     bool m_animated = false;
 };
 

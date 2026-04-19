@@ -33,7 +33,10 @@ ImageDocument::ImageDocument(QString path) : m_path(std::move(path)) {
     QImageReader reader(m_path);
     reader.setAutoTransform(true);
     m_animated = reader.supportsAnimation() && reader.imageCount() > 1;
-    if (!m_animated) {
+    if (m_animated) {
+        m_frameCount = reader.imageCount();
+        m_image = reader.read();
+    } else {
         m_image = reader.read();
     }
 }
@@ -57,6 +60,7 @@ QWidget* ImageDocument::createView(QWidget* parent) {
 
     if (m_animated) {
         auto* movie = new QMovie(m_path, QByteArray(), label);
+        m_movie = movie;
         label->setMovie(movie);
         if (movie->isValid()) {
             movie->start();
@@ -107,6 +111,41 @@ void ImageDocument::zoomFitWidth() {
         return;
     }
     applyScale(static_cast<double>(available) / static_cast<double>(m_image.width()));
+}
+
+int ImageDocument::currentFrame() const {
+    return m_movie ? m_movie->currentFrameNumber() : 0;
+}
+
+void ImageDocument::setCurrentFrame(int frame) {
+    if (!m_movie || frame < 0 || (m_frameCount > 0 && frame >= m_frameCount)) {
+        return;
+    }
+    if (m_movie->state() == QMovie::Running) {
+        m_movie->setPaused(true);
+    }
+    m_movie->jumpToFrame(frame);
+}
+
+bool ImageDocument::isAnimationPlaying() const {
+    return m_movie && m_movie->state() == QMovie::Running;
+}
+
+void ImageDocument::setAnimationPlaying(bool playing) {
+    if (!m_movie) {
+        return;
+    }
+    if (playing) {
+        if (m_movie->state() == QMovie::Paused) {
+            m_movie->setPaused(false);
+        } else if (m_movie->state() == QMovie::NotRunning) {
+            m_movie->start();
+        }
+    } else {
+        if (m_movie->state() == QMovie::Running) {
+            m_movie->setPaused(true);
+        }
+    }
 }
 
 void ImageDocument::print(QWidget* dialogParent) {

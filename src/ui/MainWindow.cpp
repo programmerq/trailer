@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "AnimationBar.h"
 #include "DocumentView.h"
 #include "Magnifier.h"
 #include "SearchBar.h"
@@ -51,8 +52,12 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
     connect(m_documentView, &DocumentView::currentDocumentChanged,
             this, &MainWindow::onCurrentDocumentChanged);
 
+    m_animationBar = new AnimationBar(center);
+    m_animationBar->hide();
+
     centerLayout->addWidget(m_searchBar);
     centerLayout->addWidget(m_documentView, 1);
+    centerLayout->addWidget(m_animationBar);
     setCentralWidget(center);
 
     m_sidebar = new Sidebar(this);
@@ -221,6 +226,7 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
 
 void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_sidebar->setDocument(doc);
+    m_animationBar->setDocument(doc);
 
     const bool hasPrint = doc && doc->supportsPrint();
     m_printAction->setEnabled(hasPrint);

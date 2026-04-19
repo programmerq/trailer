@@ -45,6 +45,13 @@ public:
 
     virtual bool supportsPrint() const { return false; }
     virtual void print(QWidget* /*dialogParent*/) {}
+
+    virtual bool supportsAnimation() const { return false; }
+    virtual int frameCount() const { return 0; }
+    virtual int currentFrame() const { return 0; }
+    virtual void setCurrentFrame(int /*frame*/) {}
+    virtual bool isAnimationPlaying() const { return false; }
+    virtual void setAnimationPlaying(bool /*playing*/) {}
 };
 
 }  // namespace trailer
