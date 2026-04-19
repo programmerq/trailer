@@ -36,6 +36,12 @@ public:
     virtual QImage renderThumbnail(int /*pageIndex*/, QSize /*targetSize*/) { return {}; }
     virtual int currentPage() const { return 0; }
     virtual void goToPage(int /*pageIndex*/) {}
+
+    virtual bool supportsSearch() const { return false; }
+    virtual void setSearchQuery(const QString& /*query*/) {}
+    virtual void findNext() {}
+    virtual void findPrevious() {}
+    virtual void clearSearch() {}
 };
 
 }  // namespace trailer

@@ -25,6 +25,7 @@ private slots:
     void imageDocumentZoomResizesPixmap();
     void pdfDocumentAdvertisesCapabilities();
     void pdfDocumentRendersThumbnailsForValidFile();
+    void pdfDocumentAcceptsSearchQueryWithoutView();
 };
 
 void TestAdapters::pdfAdapterAdvertisesPdfExtension() {
@@ -154,6 +155,34 @@ void TestAdapters::pdfDocumentRendersThumbnailsForValidFile() {
 
     const QImage oob = doc.renderThumbnail(5, QSize(128, 160));
     QVERIFY(oob.isNull());
+}
+
+void TestAdapters::pdfDocumentAcceptsSearchQueryWithoutView() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("searchable.pdf");
+
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 800, 200), Qt::AlignCenter, "trailer");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    QVERIFY(doc.supportsSearch());
+    doc.setSearchQuery("trailer");
+    doc.findNext();
+    doc.findPrevious();
+    doc.clearSearch();
+
+    PdfDocument missing("/tmp/definitely-not-a-real-file.pdf");
+    QVERIFY(!missing.isValid());
+    missing.setSearchQuery("anything");
+    missing.findNext();
+    missing.clearSearch();
 }
 
 QTEST_MAIN(TestAdapters)

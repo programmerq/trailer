@@ -9,6 +9,7 @@
 #include <memory>
 
 class QPdfDocument;
+class QPdfSearchModel;
 class QPdfView;
 
 namespace trailer {
@@ -38,6 +39,12 @@ public:
     int currentPage() const override;
     void goToPage(int pageIndex) override;
 
+    bool supportsSearch() const override { return true; }
+    void setSearchQuery(const QString& query) override;
+    void findNext() override;
+    void findPrevious() override;
+    void clearSearch() override;
+
     bool isValid() const { return m_valid; }
 
 private:
@@ -46,8 +53,10 @@ private:
 
     QString m_path;
     std::unique_ptr<QPdfDocument> m_doc;
+    std::unique_ptr<QPdfSearchModel> m_searchModel;
     QPointer<QPdfView> m_view;
     ViewMode m_viewMode = ViewMode::Continuous;
+    int m_currentResult = -1;
     bool m_valid = false;
 };
 

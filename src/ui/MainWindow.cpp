@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 
 #include "DocumentView.h"
+#include "SearchBar.h"
 #include "Sidebar.h"
 #include "app/Application.h"
 #include "recent/RecentFiles.h"
@@ -14,6 +15,8 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QVBoxLayout>
+#include <QWidget>
 
 namespace trailer {
 
@@ -23,10 +26,33 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
     setWindowTitle(tr("Trailer"));
     resize(1100, 750);
 
-    m_documentView = new DocumentView(this);
-    setCentralWidget(m_documentView);
+    auto* center = new QWidget(this);
+    auto* centerLayout = new QVBoxLayout(center);
+    centerLayout->setContentsMargins(0, 0, 0, 0);
+    centerLayout->setSpacing(0);
+
+    m_searchBar = new SearchBar(center);
+    m_searchBar->hide();
+    connect(m_searchBar, &SearchBar::queryChanged, this, [this](const QString& q) {
+        if (auto* doc = m_documentView->currentDocument()) {
+            doc->setSearchQuery(q);
+        }
+    });
+    connect(m_searchBar, &SearchBar::findNextRequested, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) doc->findNext();
+    });
+    connect(m_searchBar, &SearchBar::findPreviousRequested, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) doc->findPrevious();
+    });
+    connect(m_searchBar, &SearchBar::dismissed, this, &MainWindow::hideSearchBar);
+
+    m_documentView = new DocumentView(center);
     connect(m_documentView, &DocumentView::currentDocumentChanged,
             this, &MainWindow::onCurrentDocumentChanged);
+
+    centerLayout->addWidget(m_searchBar);
+    centerLayout->addWidget(m_documentView, 1);
+    setCentralWidget(center);
 
     m_sidebar = new Sidebar(this);
     addDockWidget(Qt::LeftDockWidgetArea, m_sidebar);
@@ -55,6 +81,9 @@ void MainWindow::buildMenus() {
     quitAction->setMenuRole(QAction::QuitRole);
     connect(quitAction, &QAction::triggered, qApp, &QCoreApplication::quit);
 
+    auto* editMenu = menuBar()->addMenu(tr("&Edit"));
+    buildEditMenu(editMenu);
+
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
     buildViewMenu(viewMenu);
 
@@ -62,6 +91,41 @@ void MainWindow::buildMenus() {
     auto* aboutAction = helpMenu->addAction(tr("&About Trailer"));
     aboutAction->setMenuRole(QAction::AboutRole);
     connect(aboutAction, &QAction::triggered, this, &MainWindow::onAbout);
+}
+
+void MainWindow::buildEditMenu(QMenu* editMenu) {
+    m_findAction = editMenu->addAction(tr("&Find…"));
+    m_findAction->setShortcut(QKeySequence::Find);
+    connect(m_findAction, &QAction::triggered, this, &MainWindow::showSearchBar);
+
+    m_findNextAction = editMenu->addAction(tr("Find &Next"));
+    m_findNextAction->setShortcut(QKeySequence::FindNext);
+    connect(m_findNextAction, &QAction::triggered, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) doc->findNext();
+    });
+
+    m_findPreviousAction = editMenu->addAction(tr("Find &Previous"));
+    m_findPreviousAction->setShortcut(QKeySequence::FindPrevious);
+    connect(m_findPreviousAction, &QAction::triggered, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) doc->findPrevious();
+    });
+}
+
+void MainWindow::showSearchBar() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsSearch()) {
+        return;
+    }
+    m_searchBar->show();
+    m_searchBar->focusInput();
+}
+
+void MainWindow::hideSearchBar() {
+    m_searchBar->hide();
+    if (auto* doc = m_documentView->currentDocument()) {
+        doc->clearSearch();
+    }
+    m_documentView->setFocus();
 }
 
 void MainWindow::buildViewMenu(QMenu* viewMenu) {
@@ -131,6 +195,14 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
 
 void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_sidebar->setDocument(doc);
+
+    const bool hasSearch = doc && doc->supportsSearch();
+    m_findAction->setEnabled(hasSearch);
+    m_findNextAction->setEnabled(hasSearch);
+    m_findPreviousAction->setEnabled(hasSearch);
+    if (!hasSearch && m_searchBar->isVisible()) {
+        hideSearchBar();
+    }
 
     const bool hasZoom = doc && doc->supportsZoom();
     m_zoomInAction->setEnabled(hasZoom);

@@ -14,6 +14,7 @@ namespace trailer {
 
 class Application;
 class DocumentView;
+class SearchBar;
 class Sidebar;
 
 class MainWindow : public QMainWindow {
@@ -39,13 +40,21 @@ private slots:
 
 private:
     void buildMenus();
+    void buildEditMenu(QMenu* editMenu);
     void buildViewMenu(QMenu* viewMenu);
     void syncViewModeActions(IDocument* doc);
+    void showSearchBar();
+    void hideSearchBar();
 
     Application* m_app;
     DocumentView* m_documentView = nullptr;
+    SearchBar* m_searchBar = nullptr;
     Sidebar* m_sidebar = nullptr;
     QMenu* m_recentMenu = nullptr;
+
+    QAction* m_findAction = nullptr;
+    QAction* m_findNextAction = nullptr;
+    QAction* m_findPreviousAction = nullptr;
 
     QAction* m_zoomInAction = nullptr;
     QAction* m_zoomOutAction = nullptr;

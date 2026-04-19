@@ -4,6 +4,7 @@
 #include <QLabel>
 #include <QPdfDocument>
 #include <QPdfPageNavigator>
+#include <QPdfSearchModel>
 #include <QPdfView>
 #include <QSizeF>
 #include <QVBoxLayout>
@@ -52,6 +53,12 @@ QWidget* PdfDocument::createView(QWidget* parent) {
     view->setDocument(m_doc.get());
     view->setZoomMode(QPdfView::ZoomMode::FitToWidth);
     m_view = view;
+    if (m_searchModel) {
+        view->setSearchModel(m_searchModel.get());
+        if (m_currentResult >= 0) {
+            view->setCurrentSearchResultIndex(m_currentResult);
+        }
+    }
     applyViewMode();
     return view;
 }
@@ -132,6 +139,50 @@ void PdfDocument::goToPage(int pageIndex) {
         return;
     }
     m_view->pageNavigator()->jump(pageIndex, QPointF{}, m_view->zoomFactor());
+}
+
+void PdfDocument::setSearchQuery(const QString& query) {
+    if (!m_valid) {
+        return;
+    }
+    if (!m_searchModel) {
+        m_searchModel = std::make_unique<QPdfSearchModel>();
+        m_searchModel->setDocument(m_doc.get());
+    }
+    m_searchModel->setSearchString(query);
+    m_currentResult = query.isEmpty() ? -1 : 0;
+    if (m_view) {
+        m_view->setSearchModel(m_searchModel.get());
+        if (m_currentResult >= 0 && m_searchModel->rowCount({}) > 0) {
+            m_view->setCurrentSearchResultIndex(m_currentResult);
+        }
+    }
+}
+
+void PdfDocument::findNext() {
+    if (!m_view || !m_searchModel) return;
+    const int count = m_searchModel->rowCount({});
+    if (count <= 0) return;
+    m_currentResult = (m_currentResult + 1) % count;
+    m_view->setCurrentSearchResultIndex(m_currentResult);
+}
+
+void PdfDocument::findPrevious() {
+    if (!m_view || !m_searchModel) return;
+    const int count = m_searchModel->rowCount({});
+    if (count <= 0) return;
+    m_currentResult = (m_currentResult - 1 + count) % count;
+    m_view->setCurrentSearchResultIndex(m_currentResult);
+}
+
+void PdfDocument::clearSearch() {
+    if (m_searchModel) {
+        m_searchModel->setSearchString(QString());
+    }
+    m_currentResult = -1;
+    if (m_view) {
+        m_view->setCurrentSearchResultIndex(-1);
+    }
 }
 
 QStringList PdfAdapter::mimeTypes() const {
