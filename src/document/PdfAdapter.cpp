@@ -1,6 +1,11 @@
 #include "PdfAdapter.h"
 
+#include "ui/AnnotationOverlay.h"
+
 #include <QDir>
+#include <QEvent>
+#include <QObject>
+#include <QResizeEvent>
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
@@ -110,7 +115,62 @@ QWidget* PdfDocument::createView(QWidget* parent) {
         }
     }
     applyViewMode();
+
+    auto* overlay = new AnnotationOverlay(view->viewport());
+    overlay->setStore(&m_annotations);
+    overlay->setPage(view->pageNavigator()->currentPage());
+    auto pageOriginInView = [this]() -> QPointF {
+        if (!m_view) return {};
+        const int page = m_view->pageNavigator()->currentPage();
+        const QSizeF pt = m_doc->pagePointSize(page);
+        const double z = m_view->zoomFactor();
+        const QSize vp = m_view->viewport()->size();
+        const double pw = pt.width() * z;
+        const double ph = pt.height() * z;
+        const double ox = std::max(0.0, (vp.width() - pw) / 2.0)
+            - m_view->horizontalScrollBar()->value();
+        const double oy = std::max(0.0, (vp.height() - ph) / 2.0)
+            - m_view->verticalScrollBar()->value();
+        return QPointF(ox, oy);
+    };
+    overlay->setDocumentToView([this, pageOriginInView](QPointF p) {
+        if (!m_view) return p;
+        const double z = m_view->zoomFactor();
+        const QPointF origin = pageOriginInView();
+        return QPointF(origin.x() + p.x() * z, origin.y() + p.y() * z);
+    });
+    overlay->setViewToDocument([this, pageOriginInView](QPointF p) {
+        if (!m_view) return p;
+        const double z = m_view->zoomFactor();
+        if (z <= 0.0) return p;
+        const QPointF origin = pageOriginInView();
+        return QPointF((p.x() - origin.x()) / z, (p.y() - origin.y()) / z);
+    });
+    overlay->setGeometry(view->viewport()->rect());
+    overlay->show();
+    m_overlay = overlay;
+
+    QObject::connect(view->pageNavigator(), &QPdfPageNavigator::currentPageChanged,
+                     overlay, [overlay](int page) {
+                         if (overlay) overlay->setPage(page);
+                     });
+    QObject::connect(view->verticalScrollBar(), &QScrollBar::valueChanged,
+                     overlay, QOverload<>::of(&QWidget::update));
+    QObject::connect(view->horizontalScrollBar(), &QScrollBar::valueChanged,
+                     overlay, QOverload<>::of(&QWidget::update));
+    QObject::connect(view, &QPdfView::zoomFactorChanged,
+                     overlay, QOverload<>::of(&QWidget::update));
+    view->viewport()->installEventFilter(overlay);
+
     return view;
+}
+
+void PdfDocument::setAnnotationTool(AnnotationTool tool) {
+    if (m_overlay) m_overlay->setActiveTool(tool);
+}
+
+void PdfDocument::setAnnotationStyle(const AnnotationStyle& style) {
+    if (m_overlay) m_overlay->setStyle(style);
 }
 
 void PdfDocument::applyViewMode() {

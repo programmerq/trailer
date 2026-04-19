@@ -27,6 +27,19 @@ worked on.
     rotate opposite direction; undo delete = re-insert).
   - Snapshot-based with copy-on-write tricks in qpdf if possible.
 
+## Annotations
+
+- **PDF annotation persistence.** Shapes/text/notes drawn over a PDF live
+  only in memory — saving the document does not write them to the file.
+  Phase 4 increment 9 will serialise them as `/Annot` objects via qpdf.
+
+- **PDF multi-page / continuous-mode overlay.** The annotation overlay
+  uses the `pageNavigator()->currentPage()` for its page reference and
+  centres it in the viewport. In `Continuous` mode that means annotations
+  only draw correctly on whatever QPdfView reports as the current page;
+  coordinates can drift on other visible pages. Revisit with a per-page
+  overlay or a view-geometry query that Qt PDF does not yet expose.
+
 ## Screenshot
 
 - **Region / window / app pickers on Linux and Windows.** macOS uses

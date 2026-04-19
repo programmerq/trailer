@@ -3,6 +3,7 @@
 #include "IDocument.h"
 #include "IFormatAdapter.h"
 #include "PdfEditor.h"
+#include "annotation/AnnotationStore.h"
 
 #include <QPointer>
 #include <QString>
@@ -16,6 +17,8 @@ class QPdfSearchModel;
 class QPdfView;
 
 namespace trailer {
+
+class AnnotationOverlay;
 
 class PdfDocument : public IDocument {
 public:
@@ -52,7 +55,9 @@ public:
     void print(QWidget* dialogParent) override;
 
     bool supportsEditing() const override { return m_valid; }
-    bool isDirty() const override { return m_dirty; }
+    bool isDirty() const override {
+        return m_dirty || !m_annotations.annotations().empty();
+    }
     void rotatePage(int pageIndex, int degreesClockwise) override;
     void deletePages(const std::vector<int>& pageIndices) override;
     void movePage(int from, int to) override;
@@ -64,6 +69,10 @@ public:
                    double leftPts, double topPts,
                    double rightPts, double bottomPts) override;
     bool save(const QString& newPath = {}) override;
+
+    AnnotationStore* annotations() override { return &m_annotations; }
+    void setAnnotationTool(AnnotationTool tool) override;
+    void setAnnotationStyle(const AnnotationStyle& style) override;
 
     bool isValid() const { return m_valid; }
 
@@ -78,6 +87,8 @@ private:
     std::unique_ptr<PdfEditor> m_editor;
     std::unique_ptr<QTemporaryFile> m_previewFile;
     QPointer<QPdfView> m_view;
+    QPointer<AnnotationOverlay> m_overlay;
+    AnnotationStore m_annotations;
     ViewMode m_viewMode = ViewMode::Continuous;
     int m_currentResult = -1;
     bool m_valid = false;

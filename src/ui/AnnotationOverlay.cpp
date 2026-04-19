@@ -2,11 +2,14 @@
 
 #include "annotation/AnnotationStore.h"
 
+#include <QEvent>
 #include <QFont>
 #include <QInputDialog>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QResizeEvent>
+#include <QWidget>
 
 #include <algorithm>
 
@@ -166,6 +169,15 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
         }
         drawOne(preview);
     }
+}
+
+bool AnnotationOverlay::eventFilter(QObject* obj, QEvent* event) {
+    if (obj == parentWidget() && event->type() == QEvent::Resize) {
+        if (auto* w = qobject_cast<QWidget*>(obj)) {
+            setGeometry(w->rect());
+        }
+    }
+    return QWidget::eventFilter(obj, event);
 }
 
 void AnnotationOverlay::mousePressEvent(QMouseEvent* event) {
