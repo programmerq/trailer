@@ -1,7 +1,9 @@
 #include "ImageAdapter.h"
 
+#include <QColor>
 #include <QFileInfo>
 #include <QImageReader>
+#include <QImageWriter>
 #include <QLabel>
 #include <QMovie>
 #include <QPageLayout>
@@ -11,6 +13,9 @@
 #include <QPrinter>
 #include <QRect>
 #include <QScrollArea>
+#include <QTransform>
+
+#include <cmath>
 
 #include <algorithm>
 
@@ -111,6 +116,125 @@ void ImageDocument::zoomFitWidth() {
         return;
     }
     applyScale(static_cast<double>(available) / static_cast<double>(m_image.width()));
+}
+
+void ImageDocument::refreshView() {
+    if (!m_label || m_image.isNull()) return;
+    applyScale(m_scale);
+}
+
+void ImageDocument::rotatePage(int /*pageIndex*/, int degreesClockwise) {
+    if (m_image.isNull() || m_animated) return;
+    QTransform t;
+    t.rotate(degreesClockwise);
+    m_image = m_image.transformed(t, Qt::SmoothTransformation);
+    m_dirty = true;
+    refreshView();
+}
+
+void ImageDocument::flipHorizontal() {
+    if (m_image.isNull() || m_animated) return;
+    m_image = m_image.mirrored(/*horizontally=*/true, /*vertically=*/false);
+    m_dirty = true;
+    refreshView();
+}
+
+void ImageDocument::flipVertical() {
+    if (m_image.isNull() || m_animated) return;
+    m_image = m_image.mirrored(/*horizontally=*/false, /*vertically=*/true);
+    m_dirty = true;
+    refreshView();
+}
+
+bool ImageDocument::resizeImage(int width, int height, bool smoothScaling) {
+    if (m_image.isNull() || m_animated || width <= 0 || height <= 0) {
+        return false;
+    }
+    const Qt::TransformationMode mode =
+        smoothScaling ? Qt::SmoothTransformation : Qt::FastTransformation;
+    m_image = m_image.scaled(width, height, Qt::IgnoreAspectRatio, mode);
+    m_dirty = true;
+    refreshView();
+    return true;
+}
+
+bool ImageDocument::cropToRect(int x, int y, int width, int height) {
+    if (m_image.isNull() || m_animated) return false;
+    const QRect bounds(0, 0, m_image.width(), m_image.height());
+    const QRect rect = QRect(x, y, width, height).intersected(bounds);
+    if (rect.isEmpty()) return false;
+    m_image = m_image.copy(rect);
+    m_dirty = true;
+    refreshView();
+    return true;
+}
+
+bool ImageDocument::adjustColour(double brightness, double contrast,
+                                 double saturation) {
+    if (m_image.isNull() || m_animated) return false;
+
+    const double bAdd = std::clamp(brightness, -1.0, 1.0) * 255.0;
+    const double cFactor = (1.0 + std::clamp(contrast, -1.0, 1.0));
+    const double sFactor = (1.0 + std::clamp(saturation, -1.0, 1.0));
+    const double kLumR = 0.299;
+    const double kLumG = 0.587;
+    const double kLumB = 0.114;
+
+    QImage work = m_image.convertToFormat(QImage::Format_ARGB32);
+    const int h = work.height();
+    const int w = work.width();
+    for (int y = 0; y < h; ++y) {
+        auto* scanline = reinterpret_cast<QRgb*>(work.scanLine(y));
+        for (int x = 0; x < w; ++x) {
+            const QRgb px = scanline[x];
+            double r = qRed(px);
+            double g = qGreen(px);
+            double b = qBlue(px);
+            const int a = qAlpha(px);
+
+            // brightness: additive
+            r += bAdd; g += bAdd; b += bAdd;
+            // contrast: around mid-grey 128
+            r = (r - 128.0) * cFactor + 128.0;
+            g = (g - 128.0) * cFactor + 128.0;
+            b = (b - 128.0) * cFactor + 128.0;
+            // saturation: lerp between luma and colour
+            const double lum = r * kLumR + g * kLumG + b * kLumB;
+            r = lum + (r - lum) * sFactor;
+            g = lum + (g - lum) * sFactor;
+            b = lum + (b - lum) * sFactor;
+
+            scanline[x] = qRgba(
+                std::clamp(static_cast<int>(std::lround(r)), 0, 255),
+                std::clamp(static_cast<int>(std::lround(g)), 0, 255),
+                std::clamp(static_cast<int>(std::lround(b)), 0, 255),
+                a);
+        }
+    }
+    m_image = work;
+    m_dirty = true;
+    refreshView();
+    return true;
+}
+
+bool ImageDocument::exportAs(const QString& destPath, const QString& format,
+                             int quality) const {
+    if (m_image.isNull()) return false;
+    QImageWriter writer(destPath, format.toLatin1());
+    if (quality >= 0) writer.setQuality(quality);
+    return writer.write(m_image);
+}
+
+bool ImageDocument::save(const QString& newPath) {
+    if (m_image.isNull() || m_animated) return false;
+    const QString target = newPath.isEmpty() ? m_path : newPath;
+    if (target.isEmpty()) return false;
+    const QByteArray format = QFileInfo(target).suffix().toLatin1().toLower();
+    QImageWriter writer(target, format.isEmpty() ? QByteArray("png") : format);
+    if (!writer.write(m_image)) return false;
+    m_path = target;
+    m_dirty = false;
+    return true;
 }
 
 int ImageDocument::currentFrame() const {

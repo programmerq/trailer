@@ -32,6 +32,21 @@ public:
     bool supportsPrint() const override { return !m_image.isNull(); }
     void print(QWidget* dialogParent) override;
 
+    bool supportsEditing() const override { return !m_image.isNull() && !m_animated; }
+    bool isDirty() const override { return m_dirty; }
+    void rotatePage(int pageIndex, int degreesClockwise) override;
+    void flipHorizontal() override;
+    void flipVertical() override;
+    bool resizeImage(int width, int height, bool smoothScaling) override;
+    bool cropToRect(int x, int y, int width, int height) override;
+    QSize imagePixelSize() const override { return m_image.size(); }
+    bool adjustColour(double brightness, double contrast,
+                      double saturation) override;
+    bool exportAs(const QString& destPath, const QString& format,
+                  int quality = -1) const override;
+    bool save(const QString& newPath = {}) override;
+    int pageCount() const override { return m_image.isNull() ? 0 : 1; }
+
     bool supportsAnimation() const override { return m_animated && m_frameCount > 1; }
     int frameCount() const override { return m_frameCount; }
     int currentFrame() const override;
@@ -41,6 +56,7 @@ public:
 
 private:
     void applyScale(double factor);
+    void refreshView();
 
     QString m_path;
     QImage m_image;
@@ -50,6 +66,7 @@ private:
     double m_scale = 1.0;
     int m_frameCount = 0;
     bool m_animated = false;
+    bool m_dirty = false;
 };
 
 class ImageAdapter : public IFormatAdapter {

@@ -53,6 +53,15 @@ public:
     virtual void rotatePage(int /*pageIndex*/, int /*degreesClockwise*/) {}
     virtual void deletePages(const std::vector<int>& /*pageIndices*/) {}
     virtual void movePage(int /*from*/, int /*to*/) {}
+    virtual void flipHorizontal() {}
+    virtual void flipVertical() {}
+    virtual bool resizeImage(int /*width*/, int /*height*/, bool /*smoothScaling*/) { return false; }
+    virtual bool cropToRect(int /*x*/, int /*y*/, int /*width*/, int /*height*/) { return false; }
+    virtual QSize imagePixelSize() const { return {}; }
+    virtual bool adjustColour(double /*brightness*/, double /*contrast*/,
+                              double /*saturation*/) { return false; }
+    virtual bool exportAs(const QString& /*destPath*/, const QString& /*format*/,
+                          int /*quality*/ = -1) const { return false; }
     virtual bool insertPagesFrom(const QString& /*sourcePath*/, int /*insertAtIndex*/) { return false; }
     virtual bool extractPages(const std::vector<int>& /*pageIndices*/, const QString& /*destPath*/) const { return false; }
     virtual bool cropPage(int /*pageIndex*/, double /*leftPts*/, double /*topPts*/,

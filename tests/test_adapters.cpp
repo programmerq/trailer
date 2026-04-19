@@ -30,6 +30,13 @@ private slots:
     void pdfDocumentRotationMarksDirtyAndSaveClears();
     void pdfDocumentDeletePagesRemovesAndMarksDirty();
     void pdfDocumentMovePageReorders();
+    void imageDocumentRotateSwapsDimensionsAndMarksDirty();
+    void imageDocumentFlipHorizontalMarksDirty();
+    void imageDocumentResizeChangesPixelSize();
+    void imageDocumentCropReducesSize();
+    void imageDocumentAdjustColourModifiesPixels();
+    void imageDocumentSaveClearsDirty();
+    void imageDocumentExportAsJpegWritesFile();
 };
 
 void TestAdapters::pdfAdapterAdvertisesPdfExtension() {
@@ -289,6 +296,103 @@ void TestAdapters::pdfDocumentMovePageReorders() {
     doc.movePage(0, 2);
     QVERIFY(doc.isDirty());
     QCOMPARE(doc.pageCount(), 3);
+}
+
+namespace {
+
+QString writeTinyPng(const QString& path, int w = 32, int h = 24,
+                     QColor colour = Qt::blue) {
+    QImage img(w, h, QImage::Format_ARGB32);
+    img.fill(colour);
+    img.save(path, "PNG");
+    return path;
+}
+
+}  // namespace
+
+void TestAdapters::imageDocumentRotateSwapsDimensionsAndMarksDirty() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("r.png"), 40, 20);
+
+    ImageDocument doc(path);
+    QVERIFY(doc.supportsEditing());
+    QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+    doc.rotatePage(0, 90);
+    QVERIFY(doc.isDirty());
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+}
+
+void TestAdapters::imageDocumentFlipHorizontalMarksDirty() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("f.png"));
+
+    ImageDocument doc(path);
+    QVERIFY(!doc.isDirty());
+    doc.flipHorizontal();
+    QVERIFY(doc.isDirty());
+    doc.flipVertical();
+    QVERIFY(doc.isDirty());
+}
+
+void TestAdapters::imageDocumentResizeChangesPixelSize() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("s.png"), 64, 64);
+
+    ImageDocument doc(path);
+    QVERIFY(doc.resizeImage(16, 32, true));
+    QCOMPARE(doc.imagePixelSize(), QSize(16, 32));
+    QVERIFY(doc.isDirty());
+    QVERIFY(!doc.resizeImage(0, 10, true));
+}
+
+void TestAdapters::imageDocumentCropReducesSize() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("c.png"), 100, 80);
+
+    ImageDocument doc(path);
+    QVERIFY(doc.cropToRect(10, 10, 50, 40));
+    QCOMPARE(doc.imagePixelSize(), QSize(50, 40));
+    QVERIFY(doc.isDirty());
+    QVERIFY(!doc.cropToRect(1000, 1000, 10, 10));
+}
+
+void TestAdapters::imageDocumentAdjustColourModifiesPixels() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("a.png"), 8, 8, QColor(100, 100, 100));
+
+    ImageDocument doc(path);
+    QVERIFY(doc.adjustColour(0.5, 0.0, 0.0));
+    QVERIFY(doc.isDirty());
+}
+
+void TestAdapters::imageDocumentSaveClearsDirty() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("sv.png"));
+
+    ImageDocument doc(path);
+    doc.flipHorizontal();
+    QVERIFY(doc.isDirty());
+    QVERIFY(doc.save());
+    QVERIFY(!doc.isDirty());
+}
+
+void TestAdapters::imageDocumentExportAsJpegWritesFile() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeTinyPng(dir.filePath("src.png"));
+    const QString dst = dir.filePath("out.jpg");
+
+    ImageDocument doc(src);
+    QVERIFY(doc.exportAs(dst, "jpg", 90));
+    QVERIFY(QFileInfo(dst).size() > 0);
+    QImage reloaded(dst);
+    QVERIFY(!reloaded.isNull());
 }
 
 QTEST_MAIN(TestAdapters)
