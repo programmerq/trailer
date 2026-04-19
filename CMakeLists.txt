@@ -19,6 +19,7 @@ set(CMAKE_AUTOUIC ON)
 include(CompilerWarnings)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Test Pdf PdfWidgets PrintSupport)
+find_package(qpdf REQUIRED)
 
 qt_standard_project_setup()
 
@@ -44,6 +45,8 @@ set(TRAILER_SOURCES
     src/document/ImageAdapter.h
     src/document/PdfAdapter.cpp
     src/document/PdfAdapter.h
+    src/document/PdfEditor.cpp
+    src/document/PdfEditor.h
     src/document/StubAdapter.cpp
     src/document/StubAdapter.h
     src/recent/RecentFiles.cpp
@@ -78,6 +81,7 @@ target_link_libraries(trailer_core
         Qt6::Pdf
         Qt6::PdfWidgets
         Qt6::PrintSupport
+        qpdf::libqpdf
         tomlplusplus::tomlplusplus
 )
 trailer_set_warnings(trailer_core)

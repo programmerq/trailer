@@ -11,7 +11,8 @@ in Phase 1.
 ## Requirements
 
 - CMake 3.24+
-- Qt 6.5+ (Core, Gui, Widgets, Test, **Pdf**, **PdfWidgets**)
+- Qt 6.5+ (Core, Gui, Widgets, Test, **Pdf**, **PdfWidgets**, **PrintSupport**)
+- [qpdf](https://qpdf.sourceforge.io/) 11+ (lossless PDF page editing)
 - A C++20 compiler (MSVC 2022, GCC 11+, or Clang 14+)
 
 Qt PDF is not bundled in all distribution packages. If `find_package(Qt6
@@ -29,15 +30,19 @@ cmake --build build --parallel
 ### Platform notes
 
 **macOS.** Install Qt via the Qt online installer or Homebrew
-(`brew install qt`). Point CMake at the Qt install with
-`-DCMAKE_PREFIX_PATH=$(brew --prefix qt)` if it isn't auto-detected.
+(`brew install qt`). Install qpdf via `brew install qpdf`. Point CMake at
+the Qt install with `-DCMAKE_PREFIX_PATH=$(brew --prefix qt)` if it isn't
+auto-detected.
 
 **Windows.** Use the Qt online installer; open a Developer Command Prompt
 for VS 2022 and set `CMAKE_PREFIX_PATH` to your Qt install
-(e.g. `C:\Qt\6.5.3\msvc2022_64`).
+(e.g. `C:\Qt\6.5.3\msvc2022_64`). Install qpdf via
+[vcpkg](https://vcpkg.io) (`vcpkg install qpdf:x64-windows`) and pass
+`-DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake`.
 
 **Linux.** Install Qt via your distribution (`qt6-base-dev` on
-Debian/Ubuntu) or the Qt online installer.
+Debian/Ubuntu) or the Qt online installer. Install qpdf via
+`sudo apt-get install libqpdf-dev` (or equivalent).
 
 ## Run
 

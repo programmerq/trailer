@@ -44,9 +44,24 @@ jobs:
             libxcb-xinerama0 \
             libxcb-xkb1 \
             libxkbcommon-x11-0 \
-            libcups2-dev
+            libcups2-dev \
+            libqpdf-dev
+
+      - name: Install macOS build deps
+        if: runner.os == 'macOS'
+        run: brew install qpdf
+
+      - name: Install Windows build deps
+        if: runner.os == 'Windows'
+        run: vcpkg install qpdf:x64-windows
+        shell: pwsh
+
+      - name: Configure (Windows)
+        if: runner.os == 'Windows'
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
 
       - name: Configure
+        if: runner.os != 'Windows'
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
