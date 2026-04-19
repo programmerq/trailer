@@ -2,9 +2,11 @@
 
 #include "annotation/AnnotationStore.h"
 
+#include <QContextMenuEvent>
 #include <QEvent>
 #include <QFont>
 #include <QInputDialog>
+#include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -39,7 +41,15 @@ void AnnotationOverlay::setActiveTool(AnnotationTool tool) {
     m_tool = tool;
     const bool interactive = tool != AnnotationTool::None;
     setAttribute(Qt::WA_TransparentForMouseEvents, !interactive);
-    setCursor(interactive ? Qt::CrossCursor : Qt::ArrowCursor);
+    const Qt::CursorShape shape =
+        tool == AnnotationTool::None   ? Qt::ArrowCursor
+        : tool == AnnotationTool::Select ? Qt::IBeamCursor
+                                         : Qt::CrossCursor;
+    setCursor(shape);
+    if (tool != AnnotationTool::Select) {
+        m_pendingSelection.clear();
+    }
+    update();
 }
 
 void AnnotationOverlay::setStyle(const AnnotationStyle& style) {
@@ -254,6 +264,13 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
         drawOne(a);
     }
 
+    if (m_tool == AnnotationTool::Select && !m_pendingSelection.empty()) {
+        QColor selFill(80, 140, 220, 110);
+        for (const QRectF& r : m_pendingSelection) {
+            p.fillRect(docRectToView(r), selFill);
+        }
+    }
+
     if (m_dragging) {
         Annotation preview;
         preview.page = m_page;
@@ -291,14 +308,16 @@ bool AnnotationOverlay::eventFilter(QObject* obj, QEvent* event) {
 }
 
 void AnnotationOverlay::mousePressEvent(QMouseEvent* event) {
-    if (!m_store || m_tool == AnnotationTool::None ||
-        m_tool == AnnotationTool::Select) {
+    if (!m_store || m_tool == AnnotationTool::None) {
         event->ignore();
         return;
     }
     if (event->button() != Qt::LeftButton) {
         event->ignore();
         return;
+    }
+    if (m_tool == AnnotationTool::Select) {
+        m_pendingSelection.clear();
     }
     m_dragStartDoc = toDoc(event->position());
     m_dragCurrentDoc = m_dragStartDoc;
@@ -323,6 +342,15 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
     if (!m_dragging || event->button() != Qt::LeftButton) return;
     m_dragging = false;
     const QPointF end = toDoc(event->position());
+
+    if (m_tool == AnnotationTool::Select) {
+        m_pendingSelection.clear();
+        if (m_textSelection) {
+            m_pendingSelection = m_textSelection(m_dragStartDoc, end, m_page);
+        }
+        update();
+        return;
+    }
 
     Annotation a;
     a.page = m_page;
@@ -444,6 +472,37 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
 
     const int id = m_store->add(std::move(a));
     emit annotationCommitted(id);
+    update();
+}
+
+void AnnotationOverlay::contextMenuEvent(QContextMenuEvent* event) {
+    if (!m_store || m_tool != AnnotationTool::Select ||
+        m_pendingSelection.empty()) {
+        event->ignore();
+        return;
+    }
+    QMenu menu(this);
+    QAction* hi = menu.addAction(tr("Highlight"));
+    QAction* un = menu.addAction(tr("Underline"));
+    QAction* st = menu.addAction(tr("Strikeout"));
+    QAction* chosen = menu.exec(event->globalPos());
+    if (!chosen) return;
+
+    Annotation a;
+    a.page = m_page;
+    a.style = m_style;
+    a.quads = m_pendingSelection;
+    QRectF bbox = a.quads.front();
+    for (const QRectF& r : a.quads) bbox = bbox.united(r);
+    a.bounds = bbox;
+    if      (chosen == hi) a.type = AnnotationType::Highlight;
+    else if (chosen == un) a.type = AnnotationType::Underline;
+    else if (chosen == st) a.type = AnnotationType::StrikeOut;
+    else return;
+
+    const int id = m_store->add(std::move(a));
+    emit annotationCommitted(id);
+    m_pendingSelection.clear();
     update();
 }
 

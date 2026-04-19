@@ -54,6 +54,7 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void contextMenuEvent(QContextMenuEvent* event) override;
     bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
@@ -69,6 +70,9 @@ private:
     QPointF m_dragStartDoc;
     QPointF m_dragCurrentDoc;
     std::vector<QPointF> m_inkPoints;
+    // Pending text selection while Select tool is active; becomes the
+    // source range for the right-click markup menu.
+    std::vector<QRectF> m_pendingSelection;
 
     std::function<QPointF(QPointF)> m_docToView;
     std::function<QPointF(QPointF)> m_viewToDoc;
