@@ -26,8 +26,9 @@ AnnotationOverlay::AnnotationOverlay(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_NoSystemBackground, true);
     setAttribute(Qt::WA_TranslucentBackground, true);
     setMouseTracking(true);
-    m_docToView = [](QPointF p) { return p; };
-    m_viewToDoc = [](QPointF p) { return p; };
+    m_docToView  = [](QPointF p, int /*page*/) { return p; };
+    m_viewToDoc  = [](QPointF p, int /*page*/) { return p; };
+    m_pageAtView = [this](QPointF) { return m_page; };
 }
 
 void AnnotationOverlay::setStore(AnnotationStore* store) {
@@ -66,13 +67,17 @@ void AnnotationOverlay::setPage(int page) {
     update();
 }
 
-void AnnotationOverlay::setDocumentToView(std::function<QPointF(QPointF)> fn) {
+void AnnotationOverlay::setDocumentToView(DocToView fn) {
     m_docToView = std::move(fn);
     update();
 }
 
-void AnnotationOverlay::setViewToDocument(std::function<QPointF(QPointF)> fn) {
+void AnnotationOverlay::setViewToDocument(ViewToDoc fn) {
     m_viewToDoc = std::move(fn);
+}
+
+void AnnotationOverlay::setPageAtViewPoint(PageAtView fn) {
+    m_pageAtView = std::move(fn);
 }
 
 void AnnotationOverlay::setTextSelectionProvider(TextSelectionProvider fn) {
@@ -84,14 +89,22 @@ void AnnotationOverlay::setSourceSampler(SourceSampler fn) {
     update();
 }
 
-QRectF AnnotationOverlay::docRectToView(const QRectF& r) const {
-    const QPointF tl = m_docToView(r.topLeft());
-    const QPointF br = m_docToView(r.bottomRight());
+QRectF AnnotationOverlay::docRectToView(const QRectF& r, int page) const {
+    const QPointF tl = m_docToView(r.topLeft(), page);
+    const QPointF br = m_docToView(r.bottomRight(), page);
     return QRectF(tl, br).normalized();
 }
 
-QPointF AnnotationOverlay::toDoc(const QPointF& viewPt) const {
-    return m_viewToDoc(viewPt);
+QPointF AnnotationOverlay::toDoc(const QPointF& viewPt, int page) const {
+    return m_viewToDoc(viewPt, page);
+}
+
+int AnnotationOverlay::pageAt(const QPointF& viewPt) const {
+    if (m_pageAtView) {
+        const int p = m_pageAtView(viewPt);
+        if (p >= 0) return p;
+    }
+    return m_page;
 }
 
 void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
@@ -113,7 +126,8 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
         applyDash(pen, a.style.dash);
         p.setPen(pen);
         p.setBrush(a.style.fill.alpha() > 0 ? QBrush(a.style.fill) : Qt::NoBrush);
-        const QRectF viewRect = docRectToView(a.bounds);
+        const int page = a.page;
+        const QRectF viewRect = docRectToView(a.bounds, page);
         switch (a.type) {
             case AnnotationType::Rectangle:
                 p.drawRect(viewRect);
@@ -124,8 +138,8 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
             case AnnotationType::Line:
             case AnnotationType::Arrow: {
                 if (a.points.size() < 2) break;
-                const QPointF a0 = m_docToView(a.points[0]);
-                const QPointF a1 = m_docToView(a.points[1]);
+                const QPointF a0 = m_docToView(a.points[0], page);
+                const QPointF a1 = m_docToView(a.points[1], page);
                 p.drawLine(a0, a1);
                 if (a.type == AnnotationType::Arrow) {
                     const QLineF line(a1, a0);
@@ -142,9 +156,9 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
             }
             case AnnotationType::Ink: {
                 if (a.points.size() < 2) break;
-                QPainterPath path(m_docToView(a.points[0]));
+                QPainterPath path(m_docToView(a.points[0], page));
                 for (size_t i = 1; i < a.points.size(); ++i) {
-                    path.lineTo(m_docToView(a.points[i]));
+                    path.lineTo(m_docToView(a.points[i], page));
                 }
                 p.drawPath(path);
                 break;
@@ -160,7 +174,7 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
                 break;
             }
             case AnnotationType::Note: {
-                const QPointF tl = m_docToView(a.bounds.topLeft());
+                const QPointF tl = m_docToView(a.bounds.topLeft(), page);
                 const QRectF icon(tl.x(), tl.y(), 18.0, 18.0);
                 const QColor noteColour = a.style.fill.alpha() > 0
                     ? a.style.fill : QColor(255, 225, 120);
@@ -189,7 +203,7 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
                 QPainterPath body;
                 body.addRoundedRect(viewRect, radius, radius);
                 if (!a.points.empty()) {
-                    const QPointF tail = m_docToView(a.points.front());
+                    const QPointF tail = m_docToView(a.points.front(), page);
                     const QPointF anchor(viewRect.left() + viewRect.width() * 0.25,
                                          viewRect.bottom());
                     const QPointF anchor2(anchor.x() + radius, viewRect.bottom());
@@ -243,7 +257,7 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
                 const std::vector<QRectF>& rects =
                     a.quads.empty() ? std::vector<QRectF>{a.bounds} : a.quads;
                 for (const QRectF& r : rects) {
-                    const QRectF vr = docRectToView(r);
+                    const QRectF vr = docRectToView(r, page);
                     if (a.type == AnnotationType::Highlight) {
                         QColor fill = a.style.stroke;
                         fill.setAlpha(90);
@@ -266,20 +280,19 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
     };
 
     for (const Annotation& a : m_store->annotations()) {
-        if (a.page != m_page) continue;
         drawOne(a);
     }
 
     if (m_tool == AnnotationTool::Select && !m_pendingSelection.empty()) {
         QColor selFill(80, 140, 220, 110);
         for (const QRectF& r : m_pendingSelection) {
-            p.fillRect(docRectToView(r), selFill);
+            p.fillRect(docRectToView(r, m_page), selFill);
         }
     }
 
     if (m_dragging) {
         Annotation preview;
-        preview.page = m_page;
+        preview.page = m_dragPage;
         preview.type = [this]() {
             switch (m_tool) {
                 case AnnotationTool::Ellipse:        return AnnotationType::Ellipse;
@@ -362,7 +375,8 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent* event) {
     if (m_tool == AnnotationTool::Select) {
         m_pendingSelection.clear();
     }
-    m_dragStartDoc = toDoc(event->position());
+    m_dragPage = pageAt(event->position());
+    m_dragStartDoc = toDoc(event->position(), m_dragPage);
     m_dragCurrentDoc = m_dragStartDoc;
     m_dragging = true;
     m_inkPoints.clear();
@@ -374,7 +388,7 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent* event) {
 
 void AnnotationOverlay::mouseMoveEvent(QMouseEvent* event) {
     if (!m_dragging) return;
-    m_dragCurrentDoc = toDoc(event->position());
+    m_dragCurrentDoc = toDoc(event->position(), m_dragPage);
     if (m_tool == AnnotationTool::Ink) {
         m_inkPoints.push_back(m_dragCurrentDoc);
     }
@@ -384,19 +398,20 @@ void AnnotationOverlay::mouseMoveEvent(QMouseEvent* event) {
 void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
     if (!m_dragging || event->button() != Qt::LeftButton) return;
     m_dragging = false;
-    const QPointF end = toDoc(event->position());
+    const QPointF end = toDoc(event->position(), m_dragPage);
 
     if (m_tool == AnnotationTool::Select) {
         m_pendingSelection.clear();
         if (m_textSelection) {
-            m_pendingSelection = m_textSelection(m_dragStartDoc, end, m_page);
+            m_pendingSelection = m_textSelection(m_dragStartDoc, end, m_dragPage);
         }
+        m_page = m_dragPage;
         update();
         return;
     }
 
     Annotation a;
-    a.page = m_page;
+    a.page = m_dragPage;
     a.style = m_style;
     a.bounds = QRectF(m_dragStartDoc, end).normalized();
 
@@ -486,7 +501,7 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
                    : (m_tool == AnnotationTool::Underline) ? AnnotationType::Underline
                                                            : AnnotationType::StrikeOut;
             if (m_textSelection) {
-                a.quads = m_textSelection(m_dragStartDoc, end, m_page);
+                a.quads = m_textSelection(m_dragStartDoc, end, m_dragPage);
             }
             if (a.quads.empty()) {
                 if (a.bounds.width() < 1.0 && a.bounds.height() < 1.0) {
@@ -520,10 +535,11 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
 
 int AnnotationOverlay::hitTest(const QPointF& viewPt) const {
     if (!m_store) return 0;
+    const int page = (m_pageAtView ? m_pageAtView(viewPt) : m_page);
     const auto& all = m_store->annotations();
     for (auto it = all.rbegin(); it != all.rend(); ++it) {
-        if (it->page != m_page) continue;
-        if (docRectToView(it->bounds).contains(viewPt)) {
+        if (page >= 0 && it->page != page) continue;
+        if (docRectToView(it->bounds, it->page).contains(viewPt)) {
             return it->id;
         }
     }
@@ -566,7 +582,7 @@ void AnnotationOverlay::openInlineEditor(int annotationId) {
     edit->setFont(f);
     layout->addWidget(edit);
 
-    const QRectF viewRect = docRectToView(a->bounds);
+    const QRectF viewRect = docRectToView(a->bounds, a->page);
     frame->setGeometry(viewRect.toRect());
     frame->show();
     edit->setFocus();
@@ -610,7 +626,7 @@ void AnnotationOverlay::contextMenuEvent(QContextMenuEvent* event) {
     if (!chosen) return;
 
     Annotation a;
-    a.page = m_page;
+    a.page = m_dragPage;
     a.style = m_style;
     a.quads = m_pendingSelection;
     QRectF bbox = a.quads.front();

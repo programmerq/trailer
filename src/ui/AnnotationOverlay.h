@@ -27,10 +27,18 @@ public:
     void setPage(int page);
 
     // Mapping between document-native coordinates and overlay (view) pixels.
-    // For images: overlay coord = doc coord * scale. Callers must keep the
+    // The page parameter lets multi-page viewers (e.g. QPdfView in
+    // Continuous mode) resolve per-page offsets. Callers must keep the
     // callbacks in sync with the underlying view when the zoom changes.
-    void setDocumentToView(std::function<QPointF(QPointF)> fn);
-    void setViewToDocument(std::function<QPointF(QPointF)> fn);
+    using DocToView  = std::function<QPointF(QPointF docPt, int page)>;
+    using ViewToDoc  = std::function<QPointF(QPointF viewPt, int page)>;
+    using PageAtView = std::function<int(QPointF viewPt)>;
+    void setDocumentToView(DocToView fn);
+    void setViewToDocument(ViewToDoc fn);
+    // Resolves the page under a given view point. Used when the user starts
+    // a drag so new annotations land on the right page. If unset, the
+    // current m_page is used.
+    void setPageAtViewPoint(PageAtView fn);
 
     // Supplies per-run text rects (in doc coords) for a selection between two
     // points on a page. Used by the Highlight/Underline/StrikeOut tools. If
@@ -59,8 +67,9 @@ protected:
     bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
-    QRectF docRectToView(const QRectF& r) const;
-    QPointF toDoc(const QPointF& viewPt) const;
+    QRectF docRectToView(const QRectF& r, int page) const;
+    QPointF toDoc(const QPointF& viewPt, int page) const;
+    int pageAt(const QPointF& viewPt) const;
     int hitTest(const QPointF& viewPt) const;
     void openInlineEditor(int annotationId);
 
@@ -70,6 +79,7 @@ private:
     int m_page = 0;
 
     bool m_dragging = false;
+    int m_dragPage = 0;
     QPointF m_dragStartDoc;
     QPointF m_dragCurrentDoc;
     std::vector<QPointF> m_inkPoints;
@@ -77,8 +87,9 @@ private:
     // source range for the right-click markup menu.
     std::vector<QRectF> m_pendingSelection;
 
-    std::function<QPointF(QPointF)> m_docToView;
-    std::function<QPointF(QPointF)> m_viewToDoc;
+    DocToView m_docToView;
+    ViewToDoc m_viewToDoc;
+    PageAtView m_pageAtView;
     TextSelectionProvider m_textSelection;
     SourceSampler m_sourceSampler;
 

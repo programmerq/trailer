@@ -120,32 +120,77 @@ QWidget* PdfDocument::createView(QWidget* parent) {
     auto* overlay = new AnnotationOverlay(view->viewport());
     overlay->setStore(&m_annotations);
     overlay->setPage(view->pageNavigator()->currentPage());
-    auto pageOriginInView = [this]() -> QPointF {
-        if (!m_view) return {};
-        const int page = m_view->pageNavigator()->currentPage();
-        const QSizeF pt = m_doc->pagePointSize(page);
+    auto pageOriginInView = [this](int page) -> QPointF {
+        if (!m_view || !m_doc || page < 0) return {};
         const double z = m_view->zoomFactor();
+        const QMargins m = m_view->documentMargins();
+        const int spacing = m_view->pageSpacing();
         const QSize vp = m_view->viewport()->size();
-        const double pw = pt.width() * z;
-        const double ph = pt.height() * z;
-        const double ox = std::max(0.0, (vp.width() - pw) / 2.0)
-            - m_view->horizontalScrollBar()->value();
-        const double oy = std::max(0.0, (vp.height() - ph) / 2.0)
-            - m_view->verticalScrollBar()->value();
-        return QPointF(ox, oy);
+
+        double maxW = 0.0;
+        const int total = m_doc->pageCount();
+        for (int i = 0; i < total; ++i) {
+            maxW = std::max(maxW, m_doc->pagePointSize(i).width() * z);
+        }
+        const double pw = m_doc->pagePointSize(page).width() * z;
+
+        if (m_view->pageMode() == QPdfView::PageMode::SinglePage) {
+            const int cur = m_view->pageNavigator()->currentPage();
+            if (page != cur) return QPointF(-1e9, -1e9);
+            const double contentW = maxW + m.left() + m.right();
+            const double contentH = m_doc->pagePointSize(page).height() * z
+                + m.top() + m.bottom();
+            const double extraX = std::max(0.0, (vp.width() - contentW) / 2.0);
+            const double extraY = std::max(0.0, (vp.height() - contentH) / 2.0);
+            return QPointF(
+                extraX + m.left() + (maxW - pw) / 2.0
+                    - m_view->horizontalScrollBar()->value(),
+                extraY + m.top()
+                    - m_view->verticalScrollBar()->value());
+        }
+
+        double y = m.top();
+        for (int i = 0; i < page; ++i) {
+            y += m_doc->pagePointSize(i).height() * z + spacing;
+        }
+        double contentH = m.top() + m.bottom();
+        for (int i = 0; i < total; ++i) {
+            contentH += m_doc->pagePointSize(i).height() * z;
+            if (i > 0) contentH += spacing;
+        }
+        const double contentW = maxW + m.left() + m.right();
+        const double extraX = std::max(0.0, (vp.width() - contentW) / 2.0);
+        const double extraY = std::max(0.0, (vp.height() - contentH) / 2.0);
+        return QPointF(
+            extraX + m.left() + (maxW - pw) / 2.0
+                - m_view->horizontalScrollBar()->value(),
+            extraY + y - m_view->verticalScrollBar()->value());
     };
-    overlay->setDocumentToView([this, pageOriginInView](QPointF p) {
+    overlay->setDocumentToView([this, pageOriginInView](QPointF p, int page) {
         if (!m_view) return p;
         const double z = m_view->zoomFactor();
-        const QPointF origin = pageOriginInView();
+        const QPointF origin = pageOriginInView(page);
         return QPointF(origin.x() + p.x() * z, origin.y() + p.y() * z);
     });
-    overlay->setViewToDocument([this, pageOriginInView](QPointF p) {
+    overlay->setViewToDocument([this, pageOriginInView](QPointF p, int page) {
         if (!m_view) return p;
         const double z = m_view->zoomFactor();
         if (z <= 0.0) return p;
-        const QPointF origin = pageOriginInView();
+        const QPointF origin = pageOriginInView(page);
         return QPointF((p.x() - origin.x()) / z, (p.y() - origin.y()) / z);
+    });
+    overlay->setPageAtViewPoint([this, pageOriginInView](QPointF viewPt) -> int {
+        if (!m_view || !m_doc) return -1;
+        const double z = m_view->zoomFactor();
+        const int total = m_doc->pageCount();
+        for (int i = 0; i < total; ++i) {
+            const QPointF origin = pageOriginInView(i);
+            const QSizeF pt = m_doc->pagePointSize(i);
+            const QRectF rect(origin.x(), origin.y(),
+                              pt.width() * z, pt.height() * z);
+            if (rect.contains(viewPt)) return i;
+        }
+        return m_view->pageNavigator()->currentPage();
     });
     overlay->setSourceSampler(
         [this](QRectF docRect, QSize outPx, int page) -> QImage {

@@ -229,10 +229,10 @@ QWidget* ImageDocument::createView(QWidget* parent) {
     if (!m_animated && !m_image.isNull()) {
         auto* overlay = new AnnotationOverlay(label);
         overlay->setStore(&m_annotations);
-        overlay->setDocumentToView([this](QPointF p) {
+        overlay->setDocumentToView([this](QPointF p, int /*page*/) {
             return QPointF(p.x() * m_scale, p.y() * m_scale);
         });
-        overlay->setViewToDocument([this](QPointF p) {
+        overlay->setViewToDocument([this](QPointF p, int /*page*/) {
             if (m_scale <= 0.0) return p;
             return QPointF(p.x() / m_scale, p.y() / m_scale);
         });
