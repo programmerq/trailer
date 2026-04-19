@@ -3,6 +3,7 @@
 #include "AnimationBar.h"
 #include "DocumentView.h"
 #include "Magnifier.h"
+#include "MarkupToolbar.h"
 #include "SearchBar.h"
 #include "Sidebar.h"
 #include "app/Application.h"
@@ -99,6 +100,23 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
             });
 
     m_magnifier = new Magnifier(this);
+
+    m_markupToolbar = new MarkupToolbar(this);
+    addToolBar(Qt::TopToolBarArea, m_markupToolbar);
+    m_markupToolbar->hide();
+    connect(m_markupToolbar, &MarkupToolbar::activeToolChanged,
+            this, [this](AnnotationTool tool) {
+                if (auto* doc = m_documentView->currentDocument()) {
+                    doc->setAnnotationTool(tool);
+                    doc->setAnnotationStyle(m_markupToolbar->style());
+                }
+            });
+    connect(m_markupToolbar, &MarkupToolbar::styleChanged,
+            this, [this](const AnnotationStyle& style) {
+                if (auto* doc = m_documentView->currentDocument()) {
+                    doc->setAnnotationStyle(style);
+                }
+            });
 
     buildMenus();
     rebuildRecentMenu();
@@ -221,6 +239,11 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
     toggleSidebar->setText(tr("Toggle &Sidebar"));
     toggleSidebar->setShortcut(QKeySequence(tr("Ctrl+Shift+D")));
     viewMenu->addAction(toggleSidebar);
+
+    m_markupToolbarAction = m_markupToolbar->toggleViewAction();
+    m_markupToolbarAction->setText(tr("Toggle &Markup Toolbar"));
+    m_markupToolbarAction->setShortcut(QKeySequence(tr("Ctrl+Shift+A")));
+    viewMenu->addAction(m_markupToolbarAction);
 
     viewMenu->addSeparator();
 
@@ -826,6 +849,11 @@ void MainWindow::updateTitleForDocument(IDocument* doc) {
 void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_sidebar->setDocument(doc);
     m_animationBar->setDocument(doc);
+
+    if (doc) {
+        doc->setAnnotationStyle(m_markupToolbar->style());
+        doc->setAnnotationTool(m_markupToolbar->activeTool());
+    }
 
     const bool hasPrint = doc && doc->supportsPrint();
     m_printAction->setEnabled(hasPrint);

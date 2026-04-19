@@ -1,5 +1,7 @@
 #pragma once
 
+#include "annotation/Annotation.h"
+
 #include <QImage>
 #include <QSize>
 #include <QString>
@@ -8,6 +10,8 @@
 #include <vector>
 
 namespace trailer {
+
+class AnnotationStore;
 
 enum class ViewMode {
     SinglePage,
@@ -74,6 +78,10 @@ public:
                            double /*leftPts*/, double /*topPts*/,
                            double /*rightPts*/, double /*bottomPts*/) { return false; }
     virtual bool save(const QString& /*newPath*/ = {}) { return false; }
+
+    virtual AnnotationStore* annotations() { return nullptr; }
+    virtual void setAnnotationTool(AnnotationTool /*tool*/) {}
+    virtual void setAnnotationStyle(const AnnotationStyle& /*style*/) {}
 
     virtual bool supportsAnimation() const { return false; }
     virtual int frameCount() const { return 0; }

@@ -2,6 +2,7 @@
 
 #include "IDocument.h"
 #include "IFormatAdapter.h"
+#include "annotation/AnnotationStore.h"
 
 #include <QImage>
 #include <QPointer>
@@ -15,6 +16,8 @@ class QMovie;
 class QScrollArea;
 
 namespace trailer {
+
+class AnnotationOverlay;
 
 class ImageDocument : public IDocument {
 public:
@@ -35,6 +38,10 @@ public:
 
     bool supportsThumbnails() const override { return !m_image.isNull() && !m_animated; }
     QImage renderThumbnail(int pageIndex, QSize targetSize) override;
+
+    AnnotationStore* annotations() override { return &m_annotations; }
+    void setAnnotationTool(AnnotationTool tool) override;
+    void setAnnotationStyle(const AnnotationStyle& style) override;
 
     bool supportsEditing() const override { return !m_image.isNull() && !m_animated; }
     bool isDirty() const override { return m_dirty; }
@@ -75,6 +82,8 @@ private:
     QPointer<QScrollArea> m_scroll;
     QPointer<QLabel> m_label;
     QPointer<QMovie> m_movie;
+    QPointer<AnnotationOverlay> m_overlay;
+    AnnotationStore m_annotations;
     std::vector<QImage> m_undoStack;
     std::vector<QImage> m_redoStack;
     double m_scale = 1.0;

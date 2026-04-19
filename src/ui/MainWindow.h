@@ -16,6 +16,7 @@ class AnimationBar;
 class Application;
 class DocumentView;
 class Magnifier;
+class MarkupToolbar;
 class SearchBar;
 class Sidebar;
 
@@ -69,6 +70,7 @@ private:
     DocumentView* m_documentView = nullptr;
     AnimationBar* m_animationBar = nullptr;
     Magnifier* m_magnifier = nullptr;
+    MarkupToolbar* m_markupToolbar = nullptr;
     SearchBar* m_searchBar = nullptr;
     Sidebar* m_sidebar = nullptr;
     QMenu* m_recentMenu = nullptr;
@@ -98,6 +100,7 @@ private:
     QAction* m_zoomActualAction = nullptr;
     QAction* m_zoomFitAction = nullptr;
     QAction* m_magnifierAction = nullptr;
+    QAction* m_markupToolbarAction = nullptr;
 
     QActionGroup* m_viewModeGroup = nullptr;
     QAction* m_singlePageAction = nullptr;

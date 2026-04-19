@@ -9,6 +9,18 @@
 
 namespace trailer {
 
+enum class AnnotationTool {
+    None,
+    Select,
+    Rectangle,
+    Ellipse,
+    Line,
+    Arrow,
+    Ink,
+    Text,
+    Note,
+};
+
 enum class AnnotationType {
     Rectangle,
     Ellipse,

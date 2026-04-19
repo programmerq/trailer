@@ -64,8 +64,12 @@ set(TRAILER_SOURCES
     src/ui/MainWindow.h
     src/ui/AnimationBar.cpp
     src/ui/AnimationBar.h
+    src/ui/AnnotationOverlay.cpp
+    src/ui/AnnotationOverlay.h
     src/ui/Magnifier.cpp
     src/ui/Magnifier.h
+    src/ui/MarkupToolbar.cpp
+    src/ui/MarkupToolbar.h
     src/ui/SearchBar.cpp
     src/ui/SearchBar.h
     src/ui/Sidebar.cpp

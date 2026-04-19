@@ -1,5 +1,7 @@
 #include "ImageAdapter.h"
 
+#include "ui/AnnotationOverlay.h"
+
 #include <QColor>
 #include <QFileInfo>
 #include <QImageReader>
@@ -81,6 +83,22 @@ QWidget* ImageDocument::createView(QWidget* parent) {
     scroll->setWidget(label);
     m_scroll = scroll;
     m_label = label;
+
+    if (!m_animated && !m_image.isNull()) {
+        auto* overlay = new AnnotationOverlay(label);
+        overlay->setStore(&m_annotations);
+        overlay->setDocumentToView([this](QPointF p) {
+            return QPointF(p.x() * m_scale, p.y() * m_scale);
+        });
+        overlay->setViewToDocument([this](QPointF p) {
+            if (m_scale <= 0.0) return p;
+            return QPointF(p.x() / m_scale, p.y() / m_scale);
+        });
+        overlay->setGeometry(label->rect());
+        overlay->show();
+        m_overlay = overlay;
+    }
+
     return scroll;
 }
 
@@ -94,6 +112,9 @@ void ImageDocument::applyScale(double factor) {
         target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     m_label->setPixmap(scaled);
     m_label->adjustSize();
+    if (m_overlay) {
+        m_overlay->setGeometry(m_label->rect());
+    }
 }
 
 void ImageDocument::zoomIn() {
@@ -122,6 +143,14 @@ void ImageDocument::zoomFitWidth() {
 void ImageDocument::refreshView() {
     if (!m_label || m_image.isNull()) return;
     applyScale(m_scale);
+}
+
+void ImageDocument::setAnnotationTool(AnnotationTool tool) {
+    if (m_overlay) m_overlay->setActiveTool(tool);
+}
+
+void ImageDocument::setAnnotationStyle(const AnnotationStyle& style) {
+    if (m_overlay) m_overlay->setStyle(style);
 }
 
 void ImageDocument::pushUndoSnapshot() {
