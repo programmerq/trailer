@@ -1,5 +1,7 @@
 #include "PdfAdapter.h"
 
+#include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QImage>
 #include <QLabel>
@@ -14,6 +16,7 @@
 #include <QPrinter>
 #include <QScrollBar>
 #include <QSizeF>
+#include <QTemporaryFile>
 #include <QVBoxLayout>
 
 namespace trailer {
@@ -25,9 +28,14 @@ constexpr double kZoomMax = 16.0;
 }  // namespace
 
 PdfDocument::PdfDocument(QString path)
-    : m_path(std::move(path)), m_doc(std::make_unique<QPdfDocument>()) {
+    : m_path(std::move(path)),
+      m_doc(std::make_unique<QPdfDocument>()),
+      m_editor(std::make_unique<PdfEditor>()) {
     const QPdfDocument::Error error = m_doc->load(m_path);
     m_valid = (error == QPdfDocument::Error::None);
+    if (m_valid) {
+        m_editor->load(m_path);
+    }
 }
 
 PdfDocument::~PdfDocument() = default;
@@ -240,6 +248,123 @@ void PdfDocument::print(QWidget* dialogParent) {
         }
     }
     painter.end();
+}
+
+bool PdfDocument::reloadViewerFromEditor() {
+    if (!m_editor || !m_editor->isValid()) {
+        return false;
+    }
+    auto preview = std::make_unique<QTemporaryFile>(
+        QDir::tempPath() + QStringLiteral("/trailer-preview-XXXXXX.pdf"));
+    preview->setAutoRemove(true);
+    if (!preview->open()) {
+        return false;
+    }
+    const QString previewPath = preview->fileName();
+    preview->close();
+    if (!m_editor->save(previewPath)) {
+        return false;
+    }
+
+    const int savedPage = currentPage();
+    const double savedZoom = m_view ? m_view->zoomFactor() : 1.0;
+
+    m_doc->close();
+    const QPdfDocument::Error error = m_doc->load(previewPath);
+    if (error != QPdfDocument::Error::None) {
+        return false;
+    }
+
+    m_previewFile = std::move(preview);
+
+    if (m_searchModel) {
+        m_searchModel->setDocument(m_doc.get());
+    }
+    if (m_view) {
+        m_view->setDocument(m_doc.get());
+        if (savedPage >= 0 && savedPage < pageCount()) {
+            m_view->pageNavigator()->jump(savedPage, QPointF{}, savedZoom);
+        }
+    }
+    return true;
+}
+
+void PdfDocument::rotatePage(int pageIndex, int degreesClockwise) {
+    if (!m_valid || !m_editor || !m_editor->isValid()) {
+        return;
+    }
+    if (pageIndex < 0 || pageIndex >= pageCount()) {
+        return;
+    }
+    m_editor->rotatePage(pageIndex, degreesClockwise);
+    if (reloadViewerFromEditor()) {
+        m_dirty = true;
+    }
+}
+
+bool PdfDocument::save(const QString& newPath) {
+    if (!m_valid || !m_editor || !m_editor->isValid()) {
+        return false;
+    }
+    const QString targetPath = newPath.isEmpty() ? m_path : newPath;
+    if (targetPath.isEmpty()) {
+        return false;
+    }
+
+    if (QFileInfo(targetPath).canonicalFilePath()
+        == QFileInfo(m_path).canonicalFilePath() && !m_path.isEmpty()) {
+        auto temp = std::make_unique<QTemporaryFile>(
+            QDir::tempPath() + QStringLiteral("/trailer-save-XXXXXX.pdf"));
+        temp->setAutoRemove(true);
+        if (!temp->open()) {
+            return false;
+        }
+        const QString tempPath = temp->fileName();
+        temp->close();
+        if (!m_editor->save(tempPath)) {
+            return false;
+        }
+        m_doc->close();
+        if (!QFile::remove(targetPath) && QFile::exists(targetPath)) {
+            m_doc->load(m_path);
+            return false;
+        }
+        if (!QFile::rename(tempPath, targetPath)) {
+            m_doc->load(m_path);
+            return false;
+        }
+        temp->setAutoRemove(false);
+    } else {
+        if (!m_editor->save(targetPath)) {
+            return false;
+        }
+    }
+
+    m_path = targetPath;
+    m_editor = std::make_unique<PdfEditor>();
+    m_editor->load(m_path);
+
+    const int savedPage = currentPage();
+    const double savedZoom = m_view ? m_view->zoomFactor() : 1.0;
+
+    m_doc->close();
+    const QPdfDocument::Error error = m_doc->load(m_path);
+    if (error != QPdfDocument::Error::None) {
+        return false;
+    }
+    m_previewFile.reset();
+
+    if (m_searchModel) {
+        m_searchModel->setDocument(m_doc.get());
+    }
+    if (m_view) {
+        m_view->setDocument(m_doc.get());
+        if (savedPage >= 0 && savedPage < pageCount()) {
+            m_view->pageNavigator()->jump(savedPage, QPointF{}, savedZoom);
+        }
+    }
+    m_dirty = false;
+    return true;
 }
 
 QStringList PdfAdapter::mimeTypes() const {

@@ -16,6 +16,7 @@ public:
     explicit ThumbnailModel(QObject* parent = nullptr);
 
     void setDocument(IDocument* doc);
+    void refresh();
     void setThumbnailSize(QSize size);
     QSize thumbnailSize() const { return m_size; }
 

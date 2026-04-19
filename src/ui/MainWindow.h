@@ -37,6 +37,10 @@ protected:
 
 private slots:
     void onOpen();
+    void onSave();
+    void onSaveAs();
+    void onRotateLeft();
+    void onRotateRight();
     void onAbout();
     void onCurrentDocumentChanged(IDocument* doc);
 
@@ -44,9 +48,12 @@ private:
     void buildMenus();
     void buildEditMenu(QMenu* editMenu);
     void buildViewMenu(QMenu* viewMenu);
+    void buildToolsMenu(QMenu* toolsMenu);
     void syncViewModeActions(IDocument* doc);
     void showSearchBar();
     void hideSearchBar();
+    void updateTitleForDocument(IDocument* doc);
+    int selectedPageForEdit(IDocument* doc) const;
 
     Application* m_app;
     DocumentView* m_documentView = nullptr;
@@ -56,6 +63,10 @@ private:
     Sidebar* m_sidebar = nullptr;
     QMenu* m_recentMenu = nullptr;
 
+    QAction* m_saveAction = nullptr;
+    QAction* m_saveAsAction = nullptr;
+    QAction* m_rotateLeftAction = nullptr;
+    QAction* m_rotateRightAction = nullptr;
     QAction* m_printAction = nullptr;
     QAction* m_findAction = nullptr;
     QAction* m_findNextAction = nullptr;

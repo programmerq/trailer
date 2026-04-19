@@ -18,6 +18,7 @@ public:
     explicit Sidebar(QWidget* parent = nullptr);
 
     void setDocument(IDocument* doc);
+    void refreshThumbnails();
 
 private slots:
     void onThumbnailActivated(const QModelIndex& index);

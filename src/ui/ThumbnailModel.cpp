@@ -16,6 +16,12 @@ void ThumbnailModel::setDocument(IDocument* doc) {
     endResetModel();
 }
 
+void ThumbnailModel::refresh() {
+    beginResetModel();
+    m_cache.clear();
+    endResetModel();
+}
+
 void ThumbnailModel::setThumbnailSize(QSize size) {
     if (size == m_size) {
         return;

@@ -138,6 +138,12 @@ void Sidebar::setDocument(IDocument* doc) {
     }
 }
 
+void Sidebar::refreshThumbnails() {
+    if (!m_doc) return;
+    m_model->refresh();
+    syncSelectionFromDocument();
+}
+
 void Sidebar::onThumbnailActivated(const QModelIndex& index) {
     if (!m_doc || !index.isValid()) {
         return;

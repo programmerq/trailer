@@ -80,6 +80,15 @@ void MainWindow::buildMenus() {
     m_recentMenu = fileMenu->addMenu(tr("Open &Recent"));
     fileMenu->addSeparator();
 
+    m_saveAction = fileMenu->addAction(tr("&Save"));
+    m_saveAction->setShortcut(QKeySequence::Save);
+    connect(m_saveAction, &QAction::triggered, this, &MainWindow::onSave);
+
+    m_saveAsAction = fileMenu->addAction(tr("Save &As…"));
+    m_saveAsAction->setShortcut(QKeySequence::SaveAs);
+    connect(m_saveAsAction, &QAction::triggered, this, &MainWindow::onSaveAs);
+    fileMenu->addSeparator();
+
     m_printAction = fileMenu->addAction(tr("&Print…"));
     m_printAction->setShortcut(QKeySequence::Print);
     connect(m_printAction, &QAction::triggered, this, [this]() {
@@ -103,6 +112,9 @@ void MainWindow::buildMenus() {
 
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
     buildViewMenu(viewMenu);
+
+    auto* toolsMenu = menuBar()->addMenu(tr("&Tools"));
+    buildToolsMenu(toolsMenu);
 
     auto* helpMenu = menuBar()->addMenu(tr("&Help"));
     auto* aboutAction = helpMenu->addAction(tr("&About Trailer"));
@@ -242,6 +254,90 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
     });
 }
 
+void MainWindow::buildToolsMenu(QMenu* toolsMenu) {
+    m_rotateLeftAction = toolsMenu->addAction(tr("Rotate &Left"));
+    m_rotateLeftAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_L));
+    connect(m_rotateLeftAction, &QAction::triggered, this, &MainWindow::onRotateLeft);
+
+    m_rotateRightAction = toolsMenu->addAction(tr("Rotate &Right"));
+    m_rotateRightAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
+    connect(m_rotateRightAction, &QAction::triggered, this, &MainWindow::onRotateRight);
+}
+
+int MainWindow::selectedPageForEdit(IDocument* doc) const {
+    if (!doc) return -1;
+    const int page = doc->currentPage();
+    if (page >= 0 && page < doc->pageCount()) return page;
+    return -1;
+}
+
+void MainWindow::onRotateLeft() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing()) return;
+    const int page = selectedPageForEdit(doc);
+    if (page < 0) return;
+    doc->rotatePage(page, -90);
+    m_sidebar->refreshThumbnails();
+    updateTitleForDocument(doc);
+}
+
+void MainWindow::onRotateRight() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing()) return;
+    const int page = selectedPageForEdit(doc);
+    if (page < 0) return;
+    doc->rotatePage(page, 90);
+    m_sidebar->refreshThumbnails();
+    updateTitleForDocument(doc);
+}
+
+void MainWindow::onSave() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing()) return;
+    if (doc->filePath().isEmpty()) {
+        onSaveAs();
+        return;
+    }
+    if (!doc->save()) {
+        QMessageBox::warning(this, tr("Save failed"),
+            tr("Could not save to %1").arg(doc->filePath()));
+        return;
+    }
+    updateTitleForDocument(doc);
+}
+
+void MainWindow::onSaveAs() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing()) return;
+    const QString suggested = doc->filePath().isEmpty()
+        ? doc->displayName()
+        : doc->filePath();
+    const QString path = QFileDialog::getSaveFileName(
+        this, tr("Save As"), suggested, tr("PDF documents (*.pdf)"));
+    if (path.isEmpty()) return;
+    if (!doc->save(path)) {
+        QMessageBox::warning(this, tr("Save failed"),
+            tr("Could not save to %1").arg(path));
+        return;
+    }
+    updateTitleForDocument(doc);
+}
+
+void MainWindow::updateTitleForDocument(IDocument* doc) {
+    if (!doc) {
+        setWindowTitle(tr("Trailer"));
+        return;
+    }
+    const QString name = doc->displayName();
+    const QString marker = doc->isDirty() ? QStringLiteral("• ") : QString();
+    setWindowTitle(tr("%1%2 — Trailer").arg(marker, name));
+
+    const int idx = m_documentView->currentIndex();
+    if (idx >= 0) {
+        m_documentView->setTabText(idx, marker + name);
+    }
+}
+
 void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_sidebar->setDocument(doc);
     m_animationBar->setDocument(doc);
@@ -279,7 +375,14 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_previousPageAction->setEnabled(multiplePages);
     m_nextPageAction->setEnabled(multiplePages);
 
+    const bool canEdit = doc && doc->supportsEditing();
+    m_saveAction->setEnabled(canEdit);
+    m_saveAsAction->setEnabled(canEdit);
+    m_rotateLeftAction->setEnabled(canEdit);
+    m_rotateRightAction->setEnabled(canEdit);
+
     syncViewModeActions(doc);
+    updateTitleForDocument(doc);
 }
 
 void MainWindow::syncViewModeActions(IDocument* doc) {
@@ -344,9 +447,7 @@ void MainWindow::addDocument(std::unique_ptr<IDocument> document) {
     if (!document) {
         return;
     }
-    const QString title = document->displayName();
     m_documentView->addDocument(std::move(document));
-    setWindowTitle(title.isEmpty() ? tr("Trailer") : tr("%1 — Trailer").arg(title));
 }
 
 int MainWindow::documentCount() const {

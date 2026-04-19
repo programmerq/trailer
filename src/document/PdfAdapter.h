@@ -2,11 +2,14 @@
 
 #include "IDocument.h"
 #include "IFormatAdapter.h"
+#include "PdfEditor.h"
 
 #include <QPointer>
 #include <QString>
 #include <QStringList>
 #include <memory>
+
+class QTemporaryFile;
 
 class QPdfDocument;
 class QPdfSearchModel;
@@ -48,19 +51,28 @@ public:
     bool supportsPrint() const override { return m_valid; }
     void print(QWidget* dialogParent) override;
 
+    bool supportsEditing() const override { return m_valid; }
+    bool isDirty() const override { return m_dirty; }
+    void rotatePage(int pageIndex, int degreesClockwise) override;
+    bool save(const QString& newPath = {}) override;
+
     bool isValid() const { return m_valid; }
 
 private:
     void applyViewMode();
     void applyZoomFactor(double factor);
+    bool reloadViewerFromEditor();
 
     QString m_path;
     std::unique_ptr<QPdfDocument> m_doc;
     std::unique_ptr<QPdfSearchModel> m_searchModel;
+    std::unique_ptr<PdfEditor> m_editor;
+    std::unique_ptr<QTemporaryFile> m_previewFile;
     QPointer<QPdfView> m_view;
     ViewMode m_viewMode = ViewMode::Continuous;
     int m_currentResult = -1;
     bool m_valid = false;
+    bool m_dirty = false;
 };
 
 class PdfAdapter : public IFormatAdapter {

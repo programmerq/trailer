@@ -27,6 +27,7 @@ private slots:
     void pdfDocumentRendersThumbnailsForValidFile();
     void pdfDocumentAcceptsSearchQueryWithoutView();
     void printSupportReflectsValidity();
+    void pdfDocumentRotationMarksDirtyAndSaveClears();
 };
 
 void TestAdapters::pdfAdapterAdvertisesPdfExtension() {
@@ -202,6 +203,36 @@ void TestAdapters::printSupportReflectsValidity() {
 
     ImageDocument missingImage("/tmp/not-an-image.png");
     QVERIFY(!missingImage.supportsPrint());
+}
+
+void TestAdapters::pdfDocumentRotationMarksDirtyAndSaveClears() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("rot.pdf");
+
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 800, 200), Qt::AlignCenter, "hello");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    QVERIFY(doc.supportsEditing());
+    QVERIFY(!doc.isDirty());
+
+    doc.rotatePage(0, 90);
+    QVERIFY(doc.isDirty());
+    QCOMPARE(doc.pageCount(), 1);
+
+    QVERIFY(doc.save());
+    QVERIFY(!doc.isDirty());
+
+    PdfDocument round(path);
+    QVERIFY(round.isValid());
+    QCOMPARE(round.pageCount(), 1);
 }
 
 QTEST_MAIN(TestAdapters)

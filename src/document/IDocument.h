@@ -46,6 +46,11 @@ public:
     virtual bool supportsPrint() const { return false; }
     virtual void print(QWidget* /*dialogParent*/) {}
 
+    virtual bool supportsEditing() const { return false; }
+    virtual bool isDirty() const { return false; }
+    virtual void rotatePage(int /*pageIndex*/, int /*degreesClockwise*/) {}
+    virtual bool save(const QString& /*newPath*/ = {}) { return false; }
+
     virtual bool supportsAnimation() const { return false; }
     virtual int frameCount() const { return 0; }
     virtual int currentFrame() const { return 0; }
