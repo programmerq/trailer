@@ -1,0 +1,11 @@
+function(trailer_add_test name source)
+    qt_add_executable(${name} ${source})
+    target_link_libraries(${name} PRIVATE trailer_core Qt6::Test)
+    trailer_set_warnings(${name})
+    add_test(NAME ${name} COMMAND ${name})
+endfunction()
+
+trailer_add_test(test_settings   test_settings.cpp)
+trailer_add_test(test_recent     test_recent.cpp)
+trailer_add_test(test_app_paths  test_app_paths.cpp)
+trailer_add_test(test_registry   test_registry.cpp)
