@@ -71,6 +71,9 @@ private:
     QAction* m_singlePageAction = nullptr;
     QAction* m_twoPagesAction = nullptr;
     QAction* m_continuousAction = nullptr;
+
+    QAction* m_previousPageAction = nullptr;
+    QAction* m_nextPageAction = nullptr;
 };
 
 }  // namespace trailer

@@ -23,7 +23,7 @@ constexpr const char* kExtensions[] = {
     "ppm", "pgm", "pbm", "xbm", "xpm", "ico",
 };
 
-constexpr double kZoomStep = 1.25;
+constexpr double kZoomStep = 1.1;
 constexpr double kZoomMin = 0.05;
 constexpr double kZoomMax = 32.0;
 

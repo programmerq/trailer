@@ -182,29 +182,47 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
 
     viewMenu->addSeparator();
 
+    m_previousPageAction = viewMenu->addAction(tr("&Previous Page"));
+    m_previousPageAction->setShortcut(QKeySequence(Qt::Key_PageUp));
+    connect(m_previousPageAction, &QAction::triggered, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) {
+            doc->goToPage(doc->currentPage() - 1);
+        }
+    });
+
+    m_nextPageAction = viewMenu->addAction(tr("&Next Page"));
+    m_nextPageAction->setShortcut(QKeySequence(Qt::Key_PageDown));
+    connect(m_nextPageAction, &QAction::triggered, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) {
+            doc->goToPage(doc->currentPage() + 1);
+        }
+    });
+
+    viewMenu->addSeparator();
+
     m_zoomInAction = viewMenu->addAction(tr("Zoom &In"));
     m_zoomInAction->setShortcuts({
-        QKeySequence(tr("Ctrl+Alt++")),
-        QKeySequence(tr("Ctrl+Alt+=")),
+        QKeySequence::ZoomIn,
+        QKeySequence(Qt::CTRL | Qt::Key_Equal),
     });
     connect(m_zoomInAction, &QAction::triggered, this, [this]() {
         if (auto* doc = m_documentView->currentDocument()) doc->zoomIn();
     });
 
     m_zoomOutAction = viewMenu->addAction(tr("Zoom &Out"));
-    m_zoomOutAction->setShortcut(QKeySequence(tr("Ctrl+Alt+-")));
+    m_zoomOutAction->setShortcut(QKeySequence::ZoomOut);
     connect(m_zoomOutAction, &QAction::triggered, this, [this]() {
         if (auto* doc = m_documentView->currentDocument()) doc->zoomOut();
     });
 
     m_zoomActualAction = viewMenu->addAction(tr("&Actual Size"));
-    m_zoomActualAction->setShortcut(QKeySequence(tr("Ctrl+Alt+0")));
+    m_zoomActualAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
     connect(m_zoomActualAction, &QAction::triggered, this, [this]() {
         if (auto* doc = m_documentView->currentDocument()) doc->zoomActual();
     });
 
     m_zoomFitAction = viewMenu->addAction(tr("&Fit to Width"));
-    m_zoomFitAction->setShortcut(QKeySequence(tr("Ctrl+Alt+9")));
+    m_zoomFitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
     connect(m_zoomFitAction, &QAction::triggered, this, [this]() {
         if (auto* doc = m_documentView->currentDocument()) doc->zoomFitWidth();
     });
@@ -256,6 +274,10 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_singlePageAction->setEnabled(hasModes);
     m_continuousAction->setEnabled(hasModes);
     // m_twoPagesAction stays disabled pending implementation.
+
+    const bool multiplePages = doc && doc->pageCount() > 1;
+    m_previousPageAction->setEnabled(multiplePages);
+    m_nextPageAction->setEnabled(multiplePages);
 
     syncViewModeActions(doc);
 }

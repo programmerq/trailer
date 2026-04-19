@@ -18,7 +18,7 @@
 namespace trailer {
 
 namespace {
-constexpr double kZoomStep = 1.25;
+constexpr double kZoomStep = 1.1;
 constexpr double kZoomMin = 0.10;
 constexpr double kZoomMax = 16.0;
 }  // namespace

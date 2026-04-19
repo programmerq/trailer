@@ -3,12 +3,42 @@
 #include "ThumbnailModel.h"
 #include "document/IDocument.h"
 
+#include <QFontMetrics>
+#include <QItemSelectionModel>
 #include <QLabel>
 #include <QListView>
+#include <QResizeEvent>
 #include <QStackedWidget>
 #include <QVBoxLayout>
 
 namespace trailer {
+
+namespace {
+
+class CenteredThumbnailView : public QListView {
+public:
+    using QListView::QListView;
+
+protected:
+    void resizeEvent(QResizeEvent* event) override {
+        QListView::resizeEvent(event);
+        updateGrid();
+    }
+
+    void showEvent(QShowEvent* event) override {
+        QListView::showEvent(event);
+        updateGrid();
+    }
+
+private:
+    void updateGrid() {
+        const int width = viewport()->width();
+        const int height = iconSize().height() + fontMetrics().height() + 12;
+        setGridSize(QSize(width, height));
+    }
+};
+
+}  // namespace
 
 Sidebar::Sidebar(QWidget* parent) : QDockWidget(tr("Sidebar"), parent) {
     setObjectName(QStringLiteral("trailer.sidebar"));
@@ -28,7 +58,7 @@ Sidebar::Sidebar(QWidget* parent) : QDockWidget(tr("Sidebar"), parent) {
     m_placeholderIndex = m_stack->addWidget(placeholder);
 
     m_model = new ThumbnailModel(this);
-    m_thumbnails = new QListView(m_stack);
+    m_thumbnails = new CenteredThumbnailView(m_stack);
     m_thumbnails->setModel(m_model);
     m_thumbnails->setViewMode(QListView::IconMode);
     m_thumbnails->setFlow(QListView::TopToBottom);
@@ -39,10 +69,12 @@ Sidebar::Sidebar(QWidget* parent) : QDockWidget(tr("Sidebar"), parent) {
     m_thumbnails->setSpacing(6);
     m_thumbnails->setIconSize(m_model->thumbnailSize());
     m_thumbnails->setSelectionMode(QAbstractItemView::SingleSelection);
-    connect(m_thumbnails, &QListView::activated,
-            this, &Sidebar::onThumbnailActivated);
-    connect(m_thumbnails, &QListView::clicked,
-            this, &Sidebar::onThumbnailActivated);
+    m_thumbnails->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    connect(m_thumbnails->selectionModel(),
+            &QItemSelectionModel::currentChanged,
+            this, [this](const QModelIndex& current, const QModelIndex&) {
+                onThumbnailActivated(current);
+            });
     m_thumbnailsIndex = m_stack->addWidget(m_thumbnails);
 
     m_stack->setCurrentIndex(m_placeholderIndex);

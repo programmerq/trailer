@@ -8,6 +8,9 @@ DocumentView::DocumentView(QWidget* parent) : QTabWidget(parent) {
     setDocumentMode(true);
     connect(this, &QTabWidget::tabCloseRequested, this, &DocumentView::onTabCloseRequested);
     connect(this, &QTabWidget::currentChanged, this, [this](int) {
+        if (QWidget* w = currentWidget()) {
+            w->setFocus();
+        }
         emit currentDocumentChanged(currentDocument());
     });
 }
