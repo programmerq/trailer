@@ -32,6 +32,14 @@ void ThumbnailModel::setThumbnailSize(QSize size) {
     endResetModel();
 }
 
+Qt::ItemFlags ThumbnailModel::flags(const QModelIndex& index) const {
+    Qt::ItemFlags f = QAbstractListModel::flags(index);
+    if (index.isValid()) {
+        f |= Qt::ItemIsDragEnabled;
+    }
+    return f;
+}
+
 int ThumbnailModel::rowCount(const QModelIndex& parent) const {
     if (parent.isValid() || !m_doc || !m_doc->supportsThumbnails()) {
         return 0;

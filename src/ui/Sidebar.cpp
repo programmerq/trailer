@@ -3,6 +3,7 @@
 #include "ThumbnailModel.h"
 #include "document/IDocument.h"
 
+#include <QDropEvent>
 #include <QFontMetrics>
 #include <QItemSelectionModel>
 #include <QKeyEvent>
@@ -14,6 +15,8 @@
 #include <QStackedWidget>
 #include <QStyledItemDelegate>
 #include <QVBoxLayout>
+
+#include <functional>
 
 namespace trailer {
 
@@ -71,11 +74,58 @@ class ThumbnailListView : public QListView {
 public:
     using QListView::QListView;
 
+    using MoveHandler = std::function<void(int, int)>;
+    void setMoveHandler(MoveHandler h) { m_moveHandler = std::move(h); }
+
 protected:
     void resizeEvent(QResizeEvent* event) override {
         QListView::resizeEvent(event);
         scheduleDelayedItemsLayout();
     }
+
+    void dropEvent(QDropEvent* event) override {
+        if (!m_moveHandler) {
+            QListView::dropEvent(event);
+            return;
+        }
+        const auto selected = selectionModel()->selectedIndexes();
+        if (selected.size() != 1) {
+            event->ignore();
+            return;
+        }
+        const int from = selected.first().row();
+
+        const QModelIndex dropIndex = indexAt(event->position().toPoint());
+        int to = dropIndex.isValid() ? dropIndex.row() : model()->rowCount() - 1;
+        switch (dropIndicatorPosition()) {
+            case QAbstractItemView::AboveItem:
+                // insert before drop target
+                break;
+            case QAbstractItemView::BelowItem:
+                to += 1;
+                break;
+            case QAbstractItemView::OnItem:
+                // treat as before the target
+                break;
+            case QAbstractItemView::OnViewport:
+                to = model()->rowCount();
+                break;
+        }
+        if (to > from) {
+            to -= 1;  // account for the source being removed first
+        }
+        if (to < 0) to = 0;
+        const int last = model()->rowCount() - 1;
+        if (to > last) to = last;
+
+        if (from != to) {
+            m_moveHandler(from, to);
+        }
+        event->acceptProposedAction();
+    }
+
+private:
+    MoveHandler m_moveHandler;
 };
 
 }  // namespace
@@ -109,6 +159,13 @@ Sidebar::Sidebar(QWidget* parent) : QDockWidget(tr("Sidebar"), parent) {
     m_thumbnails->setIconSize(m_model->thumbnailSize());
     m_thumbnails->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_thumbnails->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_thumbnails->setDragEnabled(true);
+    m_thumbnails->setAcceptDrops(true);
+    m_thumbnails->setDropIndicatorShown(true);
+    m_thumbnails->setDragDropMode(QAbstractItemView::InternalMove);
+    m_thumbnails->setDefaultDropAction(Qt::MoveAction);
+    static_cast<ThumbnailListView*>(m_thumbnails)->setMoveHandler(
+        [this](int from, int to) { emit movePageRequested(from, to); });
     m_thumbnails->installEventFilter(this);
     connect(m_thumbnails->selectionModel(),
             &QItemSelectionModel::currentChanged,
