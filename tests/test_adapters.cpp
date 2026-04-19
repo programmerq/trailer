@@ -1,3 +1,5 @@
+#include "annotation/Annotation.h"
+#include "annotation/AnnotationStore.h"
 #include "document/DocumentRegistry.h"
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
@@ -38,6 +40,8 @@ private slots:
     void imageDocumentSaveClearsDirty();
     void imageDocumentExportAsJpegWritesFile();
     void imageDocumentUndoRestoresPriorState();
+    void imageDocumentSaveFlattensAnnotationsIntoPixels();
+    void imageDocumentAnnotationUndoTakesPrecedenceOverImageUndo();
 };
 
 void TestAdapters::pdfAdapterAdvertisesPdfExtension() {
@@ -413,6 +417,74 @@ void TestAdapters::imageDocumentUndoRestoresPriorState() {
     doc.redo();
     QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
     QVERIFY(!doc.canRedo());
+}
+
+void TestAdapters::imageDocumentSaveFlattensAnnotationsIntoPixels() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("flat.png"), 64, 48, Qt::blue);
+
+    ImageDocument doc(path);
+    QVERIFY(!doc.isDirty());
+
+    Annotation rect;
+    rect.page = 0;
+    rect.type = AnnotationType::Rectangle;
+    rect.bounds = QRectF(10, 10, 30, 20);
+    rect.style.stroke = QColor(255, 0, 0);
+    rect.style.strokeWidth = 3.0;
+    doc.annotations()->add(std::move(rect));
+    QVERIFY(doc.isDirty());
+
+    QVERIFY(doc.save());
+    QVERIFY(!doc.isDirty());
+
+    QImage reloaded(path);
+    QVERIFY(!reloaded.isNull());
+    QCOMPARE(reloaded.size(), QSize(64, 48));
+
+    bool foundRed = false;
+    for (int y = 8; y <= 12 && !foundRed; ++y) {
+        for (int x = 8; x <= 42 && !foundRed; ++x) {
+            const QColor c = reloaded.pixelColor(x, y);
+            if (c.red() > 180 && c.green() < 80 && c.blue() < 80) {
+                foundRed = true;
+            }
+        }
+    }
+    QVERIFY2(foundRed, "expected rectangle stroke to appear in saved pixels");
+
+    const QColor interior = reloaded.pixelColor(25, 20);
+    QVERIFY2(interior.blue() > 180 && interior.red() < 80,
+             "expected unstroked interior to remain the original blue");
+}
+
+void TestAdapters::imageDocumentAnnotationUndoTakesPrecedenceOverImageUndo() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("p.png"), 40, 20);
+
+    ImageDocument doc(path);
+    QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+
+    doc.rotatePage(0, 90);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+
+    Annotation rect;
+    rect.page = 0;
+    rect.type = AnnotationType::Rectangle;
+    rect.bounds = QRectF(2, 2, 10, 10);
+    doc.annotations()->add(std::move(rect));
+    QCOMPARE(doc.annotations()->count(), 1);
+
+    QVERIFY(doc.canUndo());
+    doc.undo();
+    QCOMPARE(doc.annotations()->count(), 0);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+
+    QVERIFY(doc.canUndo());
+    doc.undo();
+    QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
 }
 
 QTEST_MAIN(TestAdapters)
