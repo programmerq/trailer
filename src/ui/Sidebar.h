@@ -6,7 +6,9 @@
 #include <vector>
 
 class QListView;
+class QListWidget;
 class QStackedWidget;
+class QTabWidget;
 
 namespace trailer {
 
@@ -21,6 +23,7 @@ public:
 
     void setDocument(IDocument* doc);
     void refreshThumbnails();
+    void refreshAnnotations();
 
 signals:
     void deletePagesRequested(const std::vector<int>& pageIndices);
@@ -32,15 +35,18 @@ protected:
 private slots:
     void onThumbnailActivated(const QModelIndex& index);
     void syncSelectionFromDocument();
+    void onAnnotationActivated();
 
 private:
     IDocument* m_doc = nullptr;
     QStackedWidget* m_stack = nullptr;
+    QTabWidget* m_tabs = nullptr;
     QListView* m_thumbnails = nullptr;
+    QListWidget* m_annotations = nullptr;
     ThumbnailModel* m_model = nullptr;
     QTimer m_pageSyncTimer;
     int m_placeholderIndex = 0;
-    int m_thumbnailsIndex = 0;
+    int m_tabsIndex = 0;
     bool m_syncingSelection = false;
 };
 

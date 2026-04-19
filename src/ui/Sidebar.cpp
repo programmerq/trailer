@@ -1,6 +1,7 @@
 #include "Sidebar.h"
 
 #include "ThumbnailModel.h"
+#include "annotation/AnnotationStore.h"
 #include "document/IDocument.h"
 
 #include <QDropEvent>
@@ -9,11 +10,14 @@
 #include <QKeyEvent>
 #include <QLabel>
 #include <QListView>
+#include <QListWidget>
+#include <QListWidgetItem>
 #include <QPainter>
 #include <QPixmap>
 #include <QResizeEvent>
 #include <QStackedWidget>
 #include <QStyledItemDelegate>
+#include <QTabWidget>
 #include <QVBoxLayout>
 
 #include <functional>
@@ -173,7 +177,18 @@ Sidebar::Sidebar(QWidget* parent) : QDockWidget(tr("Sidebar"), parent) {
                 if (m_syncingSelection) return;
                 onThumbnailActivated(current);
             });
-    m_thumbnailsIndex = m_stack->addWidget(m_thumbnails);
+    m_annotations = new QListWidget(m_stack);
+    m_annotations->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_annotations->setWordWrap(true);
+    connect(m_annotations, &QListWidget::itemActivated,
+            this, &Sidebar::onAnnotationActivated);
+    connect(m_annotations, &QListWidget::itemClicked,
+            this, &Sidebar::onAnnotationActivated);
+
+    m_tabs = new QTabWidget(m_stack);
+    m_tabs->addTab(m_thumbnails, tr("Pages"));
+    m_tabs->addTab(m_annotations, tr("Annotations"));
+    m_tabsIndex = m_stack->addWidget(m_tabs);
 
     m_stack->setCurrentIndex(m_placeholderIndex);
     setWidget(m_stack);
@@ -187,14 +202,24 @@ void Sidebar::setDocument(IDocument* doc) {
     m_doc = doc;
     if (doc && doc->supportsThumbnails() && doc->pageCount() > 0) {
         m_model->setDocument(doc);
-        m_stack->setCurrentIndex(m_thumbnailsIndex);
+        m_stack->setCurrentIndex(m_tabsIndex);
         syncSelectionFromDocument();
         m_pageSyncTimer.start();
     } else {
         m_pageSyncTimer.stop();
         m_model->setDocument(nullptr);
-        m_stack->setCurrentIndex(m_placeholderIndex);
+        if (doc && doc->annotations()) {
+            m_stack->setCurrentIndex(m_tabsIndex);
+            m_tabs->setCurrentIndex(1);
+        } else {
+            m_stack->setCurrentIndex(m_placeholderIndex);
+        }
     }
+    if (auto* store = doc ? doc->annotations() : nullptr) {
+        connect(store, &AnnotationStore::changed, this,
+                &Sidebar::refreshAnnotations, Qt::UniqueConnection);
+    }
+    refreshAnnotations();
 }
 
 bool Sidebar::eventFilter(QObject* watched, QEvent* event) {
@@ -220,6 +245,46 @@ void Sidebar::refreshThumbnails() {
     if (!m_doc) return;
     m_model->refresh();
     syncSelectionFromDocument();
+}
+
+void Sidebar::refreshAnnotations() {
+    m_annotations->clear();
+    if (!m_doc) return;
+    auto* store = m_doc->annotations();
+    if (!store) return;
+    for (const Annotation& a : store->annotations()) {
+        QString label;
+        switch (a.type) {
+            case AnnotationType::Rectangle: label = tr("Rectangle"); break;
+            case AnnotationType::Ellipse:   label = tr("Ellipse"); break;
+            case AnnotationType::Line:      label = tr("Line"); break;
+            case AnnotationType::Arrow:     label = tr("Arrow"); break;
+            case AnnotationType::Ink:       label = tr("Freehand"); break;
+            case AnnotationType::Text:      label = tr("Text"); break;
+            case AnnotationType::Note:      label = tr("Note"); break;
+            case AnnotationType::Highlight: label = tr("Highlight"); break;
+            case AnnotationType::Underline: label = tr("Underline"); break;
+            case AnnotationType::StrikeOut: label = tr("Strikeout"); break;
+        }
+        const QString preview = a.text.isEmpty()
+            ? QString()
+            : QStringLiteral(" — %1").arg(a.text.left(60).replace('\n', ' '));
+        auto* item = new QListWidgetItem(
+            tr("p.%1  %2%3").arg(a.page + 1).arg(label).arg(preview),
+            m_annotations);
+        item->setData(Qt::UserRole, a.id);
+    }
+}
+
+void Sidebar::onAnnotationActivated() {
+    auto* item = m_annotations->currentItem();
+    if (!item || !m_doc) return;
+    const int id = item->data(Qt::UserRole).toInt();
+    auto* store = m_doc->annotations();
+    if (!store) return;
+    if (const Annotation* a = store->find(id)) {
+        m_doc->goToPage(a->page);
+    }
 }
 
 void Sidebar::onThumbnailActivated(const QModelIndex& index) {
