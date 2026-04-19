@@ -18,7 +18,7 @@ set(CMAKE_AUTOUIC ON)
 
 include(CompilerWarnings)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Test)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Test Pdf PdfWidgets)
 
 qt_standard_project_setup()
 
@@ -40,6 +40,10 @@ set(TRAILER_SOURCES
     src/document/DocumentRegistry.h
     src/document/IDocument.h
     src/document/IFormatAdapter.h
+    src/document/ImageAdapter.cpp
+    src/document/ImageAdapter.h
+    src/document/PdfAdapter.cpp
+    src/document/PdfAdapter.h
     src/document/StubAdapter.cpp
     src/document/StubAdapter.h
     src/recent/RecentFiles.cpp
@@ -63,6 +67,8 @@ target_link_libraries(trailer_core
         Qt6::Core
         Qt6::Gui
         Qt6::Widgets
+        Qt6::Pdf
+        Qt6::PdfWidgets
         tomlplusplus::tomlplusplus
 )
 trailer_set_warnings(trailer_core)

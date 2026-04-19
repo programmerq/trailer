@@ -11,8 +11,13 @@ in Phase 1.
 ## Requirements
 
 - CMake 3.24+
-- Qt 6.5+ (Core, Gui, Widgets, Test)
+- Qt 6.5+ (Core, Gui, Widgets, Test, **Pdf**, **PdfWidgets**)
 - A C++20 compiler (MSVC 2022, GCC 11+, or Clang 14+)
+
+Qt PDF is not bundled in all distribution packages. If `find_package(Qt6
+COMPONENTS Pdf)` fails, install it via the Qt online installer (check the
+"Qt PDF" box) or via [`aqtinstall`](https://github.com/miurahr/aqtinstall)
+(`aqt install-qt <host> desktop <version> <arch> -m qtpdf`).
 
 ## Build
 

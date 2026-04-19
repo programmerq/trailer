@@ -1,5 +1,7 @@
 #include "Application.h"
 
+#include "document/ImageAdapter.h"
+#include "document/PdfAdapter.h"
 #include "ui/MainWindow.h"
 
 #include <QFileOpenEvent>
@@ -14,6 +16,9 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv) {
     m_settings.load();
     m_recent.setMaxEntries(m_settings.recentMax());
     m_recent.load();
+
+    m_registry.registerAdapter(std::make_unique<PdfAdapter>());
+    m_registry.registerAdapter(std::make_unique<ImageAdapter>());
 }
 
 Application::~Application() = default;
