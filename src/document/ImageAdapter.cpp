@@ -169,10 +169,10 @@ bool ImageDocument::cropToRect(int x, int y, int width, int height) {
     return true;
 }
 
-bool ImageDocument::adjustColour(double brightness, double contrast,
-                                 double saturation) {
-    if (m_image.isNull() || m_animated) return false;
+namespace {
 
+QImage applyColourTransform(const QImage& src, double brightness,
+                            double contrast, double saturation) {
     const double bAdd = std::clamp(brightness, -1.0, 1.0) * 255.0;
     const double cFactor = (1.0 + std::clamp(contrast, -1.0, 1.0));
     const double sFactor = (1.0 + std::clamp(saturation, -1.0, 1.0));
@@ -180,7 +180,7 @@ bool ImageDocument::adjustColour(double brightness, double contrast,
     const double kLumG = 0.587;
     const double kLumB = 0.114;
 
-    QImage work = m_image.convertToFormat(QImage::Format_ARGB32);
+    QImage work = src.convertToFormat(QImage::Format_ARGB32);
     const int h = work.height();
     const int w = work.width();
     for (int y = 0; y < h; ++y) {
@@ -192,13 +192,10 @@ bool ImageDocument::adjustColour(double brightness, double contrast,
             double b = qBlue(px);
             const int a = qAlpha(px);
 
-            // brightness: additive
             r += bAdd; g += bAdd; b += bAdd;
-            // contrast: around mid-grey 128
             r = (r - 128.0) * cFactor + 128.0;
             g = (g - 128.0) * cFactor + 128.0;
             b = (b - 128.0) * cFactor + 128.0;
-            // saturation: lerp between luma and colour
             const double lum = r * kLumR + g * kLumG + b * kLumB;
             r = lum + (r - lum) * sFactor;
             g = lum + (g - lum) * sFactor;
@@ -211,10 +208,32 @@ bool ImageDocument::adjustColour(double brightness, double contrast,
                 a);
         }
     }
-    m_image = work;
+    return work;
+}
+
+}  // namespace
+
+bool ImageDocument::adjustColour(double brightness, double contrast,
+                                 double saturation) {
+    if (m_image.isNull() || m_animated) return false;
+    m_image = applyColourTransform(m_image, brightness, contrast, saturation);
     m_dirty = true;
     refreshView();
     return true;
+}
+
+void ImageDocument::previewColour(double brightness, double contrast,
+                                  double saturation) {
+    if (!m_label || m_image.isNull() || m_animated) return;
+    const QImage preview = applyColourTransform(
+        m_image, brightness, contrast, saturation);
+    const QSize target = preview.size() * m_scale;
+    m_label->setPixmap(QPixmap::fromImage(preview).scaled(
+        target, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+}
+
+void ImageDocument::clearColourPreview() {
+    refreshView();
 }
 
 bool ImageDocument::exportAs(const QString& destPath, const QString& format,

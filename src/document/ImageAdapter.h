@@ -45,6 +45,9 @@ public:
     QSize imagePixelSize() const override { return m_image.size(); }
     bool adjustColour(double brightness, double contrast,
                       double saturation) override;
+    void previewColour(double brightness, double contrast,
+                       double saturation);
+    void clearColourPreview();
     bool exportAs(const QString& destPath, const QString& format,
                   int quality = -1) const override;
     bool save(const QString& newPath = {}) override;

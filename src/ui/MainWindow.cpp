@@ -521,6 +521,7 @@ void MainWindow::onAdjustSize() {
 void MainWindow::onAdjustColour() {
     auto* doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsEditing()) return;
+    auto* imgDoc = dynamic_cast<ImageDocument*>(doc);
 
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Adjust Colour"));
@@ -543,13 +544,25 @@ void MainWindow::onAdjustColour() {
     form->addRow(tr("Contrast"), contrast);
     form->addRow(tr("Saturation"), saturation);
 
+    auto updatePreview = [imgDoc, brightness, contrast, saturation]() {
+        if (!imgDoc) return;
+        imgDoc->previewColour(brightness->value() / 100.0,
+                              contrast->value() / 100.0,
+                              saturation->value() / 100.0);
+    };
+    connect(brightness, &QSlider::valueChanged, &dialog, updatePreview);
+    connect(contrast, &QSlider::valueChanged, &dialog, updatePreview);
+    connect(saturation, &QSlider::valueChanged, &dialog, updatePreview);
+
     auto* buttons = new QDialogButtonBox(
         QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
     connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
     form->addRow(buttons);
 
-    if (dialog.exec() != QDialog::Accepted) return;
+    const int result = dialog.exec();
+    if (imgDoc) imgDoc->clearColourPreview();
+    if (result != QDialog::Accepted) return;
     const double b = brightness->value() / 100.0;
     const double c = contrast->value() / 100.0;
     const double s = saturation->value() / 100.0;
