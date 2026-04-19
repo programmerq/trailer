@@ -33,6 +33,9 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(tomlplusplus)
 
 set(TRAILER_SOURCES
+    src/annotation/Annotation.h
+    src/annotation/AnnotationStore.cpp
+    src/annotation/AnnotationStore.h
     src/app/Application.cpp
     src/app/Application.h
     src/app/CommandLine.cpp
