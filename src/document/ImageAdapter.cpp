@@ -72,6 +72,26 @@ QImage flattenAnnotations(const QImage& base,
                 }
                 break;
             }
+            case AnnotationType::Text: {
+                QFont f = p.font();
+                f.setPointSize(a.style.fontPointSize > 0 ? a.style.fontPointSize : 12);
+                p.setFont(f);
+                p.setPen(a.style.stroke);
+                p.drawText(a.bounds, Qt::AlignLeft | Qt::TextWordWrap, a.text);
+                break;
+            }
+            case AnnotationType::Note: {
+                const QRectF icon(a.bounds.topLeft(), QSizeF(18.0, 18.0));
+                p.setBrush(QColor(255, 225, 120));
+                p.setPen(QPen(a.style.stroke, 1.0));
+                p.drawRect(icon);
+                QFont f = p.font();
+                f.setPointSize(10);
+                f.setBold(true);
+                p.setFont(f);
+                p.drawText(icon, Qt::AlignCenter, QStringLiteral("N"));
+                break;
+            }
             default: break;
         }
     }

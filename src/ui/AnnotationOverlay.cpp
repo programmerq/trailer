@@ -2,6 +2,8 @@
 
 #include "annotation/AnnotationStore.h"
 
+#include <QFont>
+#include <QInputDialog>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
@@ -112,6 +114,27 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
                 p.drawPath(path);
                 break;
             }
+            case AnnotationType::Text: {
+                QFont f = p.font();
+                f.setPointSize(a.style.fontPointSize > 0 ? a.style.fontPointSize : 12);
+                p.setFont(f);
+                p.setPen(a.style.stroke);
+                p.drawText(viewRect, Qt::AlignLeft | Qt::TextWordWrap, a.text);
+                break;
+            }
+            case AnnotationType::Note: {
+                const QPointF tl = m_docToView(a.bounds.topLeft());
+                const QRectF icon(tl.x(), tl.y(), 18.0, 18.0);
+                p.setBrush(QColor(255, 225, 120));
+                p.setPen(QPen(a.style.stroke, 1.0));
+                p.drawRect(icon);
+                QFont f = p.font();
+                f.setPointSize(10);
+                f.setBold(true);
+                p.setFont(f);
+                p.drawText(icon, Qt::AlignCenter, QStringLiteral("N"));
+                break;
+            }
             default:
                 break;
         }
@@ -207,6 +230,30 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
             }
             a.bounds = QRectF(QPointF(minX, minY), QPointF(maxX, maxY));
             m_inkPoints.clear();
+            break;
+        }
+        case AnnotationTool::Text: {
+            QRectF rect = a.bounds;
+            if (rect.width() < 40.0 || rect.height() < 20.0) {
+                rect = QRectF(m_dragStartDoc, QSizeF(200.0, 40.0));
+            }
+            bool ok = false;
+            const QString text = QInputDialog::getMultiLineText(
+                this, tr("Text Annotation"), tr("Text:"), QString(), &ok);
+            if (!ok || text.isEmpty()) { update(); return; }
+            a.type = AnnotationType::Text;
+            a.bounds = rect;
+            a.text = text;
+            break;
+        }
+        case AnnotationTool::Note: {
+            bool ok = false;
+            const QString text = QInputDialog::getMultiLineText(
+                this, tr("Note"), tr("Note body:"), QString(), &ok);
+            if (!ok) { update(); return; }
+            a.type = AnnotationType::Note;
+            a.bounds = QRectF(m_dragStartDoc, QSizeF(18.0, 18.0));
+            a.text = text;
             break;
         }
         default:
