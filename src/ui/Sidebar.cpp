@@ -5,6 +5,7 @@
 
 #include <QFontMetrics>
 #include <QItemSelectionModel>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QListView>
 #include <QPainter>
@@ -106,8 +107,9 @@ Sidebar::Sidebar(QWidget* parent) : QDockWidget(tr("Sidebar"), parent) {
     m_thumbnails->setResizeMode(QListView::Adjust);
     m_thumbnails->setUniformItemSizes(false);
     m_thumbnails->setIconSize(m_model->thumbnailSize());
-    m_thumbnails->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_thumbnails->setSelectionMode(QAbstractItemView::ExtendedSelection);
     m_thumbnails->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_thumbnails->installEventFilter(this);
     connect(m_thumbnails->selectionModel(),
             &QItemSelectionModel::currentChanged,
             this, [this](const QModelIndex& current, const QModelIndex&) {
@@ -136,6 +138,25 @@ void Sidebar::setDocument(IDocument* doc) {
         m_model->setDocument(nullptr);
         m_stack->setCurrentIndex(m_placeholderIndex);
     }
+}
+
+bool Sidebar::eventFilter(QObject* watched, QEvent* event) {
+    if (watched == m_thumbnails && event->type() == QEvent::KeyPress) {
+        auto* key = static_cast<QKeyEvent*>(event);
+        if (key->key() == Qt::Key_Delete || key->key() == Qt::Key_Backspace) {
+            const auto selected = m_thumbnails->selectionModel()->selectedIndexes();
+            if (!selected.isEmpty()) {
+                std::vector<int> rows;
+                rows.reserve(selected.size());
+                for (const QModelIndex& idx : selected) {
+                    rows.push_back(idx.row());
+                }
+                emit deletePagesRequested(rows);
+                return true;
+            }
+        }
+    }
+    return QDockWidget::eventFilter(watched, event);
 }
 
 void Sidebar::refreshThumbnails() {

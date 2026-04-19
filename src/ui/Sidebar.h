@@ -3,6 +3,8 @@
 #include <QDockWidget>
 #include <QTimer>
 
+#include <vector>
+
 class QListView;
 class QStackedWidget;
 
@@ -19,6 +21,13 @@ public:
 
     void setDocument(IDocument* doc);
     void refreshThumbnails();
+
+signals:
+    void deletePagesRequested(const std::vector<int>& pageIndices);
+    void movePageRequested(int from, int to);
+
+protected:
+    bool eventFilter(QObject* watched, QEvent* event) override;
 
 private slots:
     void onThumbnailActivated(const QModelIndex& index);

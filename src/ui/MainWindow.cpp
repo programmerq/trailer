@@ -62,6 +62,22 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
 
     m_sidebar = new Sidebar(this);
     addDockWidget(Qt::LeftDockWidgetArea, m_sidebar);
+    connect(m_sidebar, &Sidebar::deletePagesRequested,
+            this, [this](const std::vector<int>& rows) {
+                auto* doc = m_documentView->currentDocument();
+                if (!doc || !doc->supportsEditing()) return;
+                doc->deletePages(rows);
+                m_sidebar->refreshThumbnails();
+                onCurrentDocumentChanged(doc);
+            });
+    connect(m_sidebar, &Sidebar::movePageRequested,
+            this, [this](int from, int to) {
+                auto* doc = m_documentView->currentDocument();
+                if (!doc || !doc->supportsEditing()) return;
+                doc->movePage(from, to);
+                m_sidebar->refreshThumbnails();
+                onCurrentDocumentChanged(doc);
+            });
 
     m_magnifier = new Magnifier(this);
 

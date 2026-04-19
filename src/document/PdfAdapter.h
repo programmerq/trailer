@@ -54,6 +54,8 @@ public:
     bool supportsEditing() const override { return m_valid; }
     bool isDirty() const override { return m_dirty; }
     void rotatePage(int pageIndex, int degreesClockwise) override;
+    void deletePages(const std::vector<int>& pageIndices) override;
+    void movePage(int from, int to) override;
     bool save(const QString& newPath = {}) override;
 
     bool isValid() const { return m_valid; }

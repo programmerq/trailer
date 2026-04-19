@@ -5,6 +5,8 @@
 #include <QString>
 #include <QWidget>
 
+#include <vector>
+
 namespace trailer {
 
 enum class ViewMode {
@@ -49,6 +51,8 @@ public:
     virtual bool supportsEditing() const { return false; }
     virtual bool isDirty() const { return false; }
     virtual void rotatePage(int /*pageIndex*/, int /*degreesClockwise*/) {}
+    virtual void deletePages(const std::vector<int>& /*pageIndices*/) {}
+    virtual void movePage(int /*from*/, int /*to*/) {}
     virtual bool save(const QString& /*newPath*/ = {}) { return false; }
 
     virtual bool supportsAnimation() const { return false; }

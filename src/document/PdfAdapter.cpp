@@ -302,6 +302,34 @@ void PdfDocument::rotatePage(int pageIndex, int degreesClockwise) {
     }
 }
 
+void PdfDocument::deletePages(const std::vector<int>& pageIndices) {
+    if (!m_valid || !m_editor || !m_editor->isValid() || pageIndices.empty()) {
+        return;
+    }
+    const int before = m_editor->pageCount();
+    if (static_cast<int>(pageIndices.size()) >= before) {
+        return;  // refuse to delete every page
+    }
+    m_editor->deletePages(pageIndices);
+    if (reloadViewerFromEditor()) {
+        m_dirty = true;
+    }
+}
+
+void PdfDocument::movePage(int from, int to) {
+    if (!m_valid || !m_editor || !m_editor->isValid()) {
+        return;
+    }
+    const int total = m_editor->pageCount();
+    if (from < 0 || from >= total || to < 0 || to >= total || from == to) {
+        return;
+    }
+    m_editor->movePage(from, to);
+    if (reloadViewerFromEditor()) {
+        m_dirty = true;
+    }
+}
+
 bool PdfDocument::save(const QString& newPath) {
     if (!m_valid || !m_editor || !m_editor->isValid()) {
         return false;

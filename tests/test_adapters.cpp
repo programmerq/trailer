@@ -28,6 +28,8 @@ private slots:
     void pdfDocumentAcceptsSearchQueryWithoutView();
     void printSupportReflectsValidity();
     void pdfDocumentRotationMarksDirtyAndSaveClears();
+    void pdfDocumentDeletePagesRemovesAndMarksDirty();
+    void pdfDocumentMovePageReorders();
 };
 
 void TestAdapters::pdfAdapterAdvertisesPdfExtension() {
@@ -233,6 +235,60 @@ void TestAdapters::pdfDocumentRotationMarksDirtyAndSaveClears() {
     PdfDocument round(path);
     QVERIFY(round.isValid());
     QCOMPARE(round.pageCount(), 1);
+}
+
+void TestAdapters::pdfDocumentDeletePagesRemovesAndMarksDirty() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("multi.pdf");
+
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        for (int i = 0; i < 4; ++i) {
+            painter.drawText(QRect(100, 100, 800, 200), Qt::AlignCenter,
+                             QStringLiteral("Page %1").arg(i + 1));
+            if (i < 3) writer.newPage();
+        }
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    QCOMPARE(doc.pageCount(), 4);
+
+    doc.deletePages({1, 3});
+    QVERIFY(doc.isDirty());
+    QCOMPARE(doc.pageCount(), 2);
+
+    QVERIFY(doc.save());
+    PdfDocument round(path);
+    QCOMPARE(round.pageCount(), 2);
+}
+
+void TestAdapters::pdfDocumentMovePageReorders() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("move.pdf");
+
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        for (int i = 0; i < 3; ++i) {
+            painter.drawText(QRect(100, 100, 800, 200), Qt::AlignCenter,
+                             QStringLiteral("Page %1").arg(i + 1));
+            if (i < 2) writer.newPage();
+        }
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QCOMPARE(doc.pageCount(), 3);
+    doc.movePage(0, 2);
+    QVERIFY(doc.isDirty());
+    QCOMPARE(doc.pageCount(), 3);
 }
 
 QTEST_MAIN(TestAdapters)
