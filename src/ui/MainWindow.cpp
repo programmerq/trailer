@@ -28,6 +28,8 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPixmap>
+#include <QProcess>
+#include <QRadioButton>
 #include <QScreen>
 #include <QSlider>
 #include <QSpinBox>
@@ -671,34 +673,96 @@ void MainWindow::onCropImage() {
     updateTitleForDocument(doc);
 }
 
-void MainWindow::onTakeScreenshot() {
-    QScreen* screen = QGuiApplication::primaryScreen();
-    if (!screen) return;
-    const QPixmap shot = screen->grabWindow(0);
-    if (shot.isNull()) {
-        QMessageBox::warning(this, tr("Screenshot failed"),
-            tr("Could not capture the screen."));
-        return;
-    }
+namespace {
+
+QString screenshotTargetPath() {
     const QString dir = QStandardPaths::writableLocation(
         QStandardPaths::PicturesLocation);
     const QString stamp = QDateTime::currentDateTime().toString(
         QStringLiteral("yyyyMMdd-HHmmss"));
-    QTemporaryFile tmp(QDir(dir).filePath(
-        QStringLiteral("trailer-screenshot-%1.XXXXXX.png").arg(stamp)));
-    tmp.setAutoRemove(false);
-    if (!tmp.open()) {
-        QMessageBox::warning(this, tr("Screenshot failed"),
-            tr("Could not write screenshot."));
+    return QDir(dir).filePath(
+        QStringLiteral("trailer-screenshot-%1.png").arg(stamp));
+}
+
+enum class ShotMode { Screen, Window, Region };
+
+}  // namespace
+
+void MainWindow::onTakeScreenshot() {
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Take Screenshot"));
+    auto* layout = new QVBoxLayout(&dialog);
+    auto* screenRadio = new QRadioButton(tr("Whole screen"), &dialog);
+    auto* windowRadio = new QRadioButton(tr("Single window (click to select)"), &dialog);
+    auto* regionRadio = new QRadioButton(tr("Region (drag to select)"), &dialog);
+    screenRadio->setChecked(true);
+    layout->addWidget(screenRadio);
+    layout->addWidget(windowRadio);
+    layout->addWidget(regionRadio);
+
+#ifndef Q_OS_MACOS
+    windowRadio->setEnabled(false);
+    regionRadio->setEnabled(false);
+    auto* note = new QLabel(
+        tr("Only whole-screen capture is supported on this platform. "
+           "Window and region capture are tracked in TODO.md."), &dialog);
+    note->setWordWrap(true);
+    layout->addWidget(note);
+#endif
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    ShotMode mode = ShotMode::Screen;
+    if (windowRadio->isChecked()) mode = ShotMode::Window;
+    else if (regionRadio->isChecked()) mode = ShotMode::Region;
+
+    const QString path = screenshotTargetPath();
+
+#ifdef Q_OS_MACOS
+    // Hide our window so it doesn't occlude the target, then use the native
+    // macOS capture tool for proper DPI handling and interactive selection.
+    hide();
+    QStringList args;
+    args << "-x";  // silent (no capture sound)
+    switch (mode) {
+        case ShotMode::Screen: break;
+        case ShotMode::Window: args << "-iW"; break;
+        case ShotMode::Region: args << "-i" << "-s"; break;
+    }
+    args << path;
+    QProcess proc;
+    proc.start("/usr/sbin/screencapture", args);
+    proc.waitForFinished(-1);
+    show();
+    raise();
+    activateWindow();
+    if (proc.exitCode() != 0 || !QFileInfo(path).exists()
+        || QFileInfo(path).size() == 0) {
+        // User cancelled (Esc) or no output — don't treat as an error.
         return;
     }
-    const QString path = tmp.fileName();
-    tmp.close();
-    if (!shot.save(path, "PNG")) {
-        QMessageBox::warning(this, tr("Screenshot failed"),
-            tr("Could not write screenshot to %1").arg(path));
+#else
+    if (mode != ShotMode::Screen) {
+        QMessageBox::information(this, tr("Unsupported"),
+            tr("Window/region capture is not yet supported on this platform."));
         return;
     }
+    QScreen* screen = QGuiApplication::primaryScreen();
+    if (!screen) return;
+    const QPixmap shot = screen->grabWindow(0);
+    if (shot.isNull() || !shot.save(path, "PNG")) {
+        QMessageBox::warning(this, tr("Screenshot failed"),
+            tr("Could not capture the screen."));
+        return;
+    }
+#endif
+
     m_app->openFiles({path});
 }
 
