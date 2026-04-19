@@ -31,6 +31,7 @@ constexpr const char* kExtensions[] = {
 constexpr double kZoomStep = 1.1;
 constexpr double kZoomMin = 0.05;
 constexpr double kZoomMax = 32.0;
+constexpr size_t kMaxUndoSteps = 32;
 
 }  // namespace
 
@@ -123,8 +124,35 @@ void ImageDocument::refreshView() {
     applyScale(m_scale);
 }
 
+void ImageDocument::pushUndoSnapshot() {
+    m_undoStack.push_back(m_image);
+    if (m_undoStack.size() > kMaxUndoSteps) {
+        m_undoStack.erase(m_undoStack.begin());
+    }
+    m_redoStack.clear();
+}
+
+void ImageDocument::undo() {
+    if (m_undoStack.empty()) return;
+    m_redoStack.push_back(m_image);
+    m_image = m_undoStack.back();
+    m_undoStack.pop_back();
+    m_dirty = !m_undoStack.empty() || m_dirty;
+    refreshView();
+}
+
+void ImageDocument::redo() {
+    if (m_redoStack.empty()) return;
+    m_undoStack.push_back(m_image);
+    m_image = m_redoStack.back();
+    m_redoStack.pop_back();
+    m_dirty = true;
+    refreshView();
+}
+
 void ImageDocument::rotatePage(int /*pageIndex*/, int degreesClockwise) {
     if (m_image.isNull() || m_animated) return;
+    pushUndoSnapshot();
     QTransform t;
     t.rotate(degreesClockwise);
     m_image = m_image.transformed(t, Qt::SmoothTransformation);
@@ -134,6 +162,7 @@ void ImageDocument::rotatePage(int /*pageIndex*/, int degreesClockwise) {
 
 void ImageDocument::flipHorizontal() {
     if (m_image.isNull() || m_animated) return;
+    pushUndoSnapshot();
     m_image = m_image.mirrored(/*horizontally=*/true, /*vertically=*/false);
     m_dirty = true;
     refreshView();
@@ -141,6 +170,7 @@ void ImageDocument::flipHorizontal() {
 
 void ImageDocument::flipVertical() {
     if (m_image.isNull() || m_animated) return;
+    pushUndoSnapshot();
     m_image = m_image.mirrored(/*horizontally=*/false, /*vertically=*/true);
     m_dirty = true;
     refreshView();
@@ -150,6 +180,7 @@ bool ImageDocument::resizeImage(int width, int height, bool smoothScaling) {
     if (m_image.isNull() || m_animated || width <= 0 || height <= 0) {
         return false;
     }
+    pushUndoSnapshot();
     const Qt::TransformationMode mode =
         smoothScaling ? Qt::SmoothTransformation : Qt::FastTransformation;
     m_image = m_image.scaled(width, height, Qt::IgnoreAspectRatio, mode);
@@ -163,6 +194,7 @@ bool ImageDocument::cropToRect(int x, int y, int width, int height) {
     const QRect bounds(0, 0, m_image.width(), m_image.height());
     const QRect rect = QRect(x, y, width, height).intersected(bounds);
     if (rect.isEmpty()) return false;
+    pushUndoSnapshot();
     m_image = m_image.copy(rect);
     m_dirty = true;
     refreshView();
@@ -216,6 +248,7 @@ QImage applyColourTransform(const QImage& src, double brightness,
 bool ImageDocument::adjustColour(double brightness, double contrast,
                                  double saturation) {
     if (m_image.isNull() || m_animated) return false;
+    pushUndoSnapshot();
     m_image = applyColourTransform(m_image, brightness, contrast, saturation);
     m_dirty = true;
     refreshView();

@@ -8,6 +8,7 @@
 #include <QString>
 #include <QStringList>
 #include <memory>
+#include <vector>
 
 class QLabel;
 class QMovie;
@@ -37,6 +38,10 @@ public:
 
     bool supportsEditing() const override { return !m_image.isNull() && !m_animated; }
     bool isDirty() const override { return m_dirty; }
+    bool canUndo() const override { return !m_undoStack.empty(); }
+    bool canRedo() const override { return !m_redoStack.empty(); }
+    void undo() override;
+    void redo() override;
     void rotatePage(int pageIndex, int degreesClockwise) override;
     void flipHorizontal() override;
     void flipVertical() override;
@@ -63,12 +68,15 @@ public:
 private:
     void applyScale(double factor);
     void refreshView();
+    void pushUndoSnapshot();
 
     QString m_path;
     QImage m_image;
     QPointer<QScrollArea> m_scroll;
     QPointer<QLabel> m_label;
     QPointer<QMovie> m_movie;
+    std::vector<QImage> m_undoStack;
+    std::vector<QImage> m_redoStack;
     double m_scale = 1.0;
     int m_frameCount = 0;
     bool m_animated = false;

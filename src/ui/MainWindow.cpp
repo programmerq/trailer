@@ -156,6 +156,30 @@ void MainWindow::buildMenus() {
 }
 
 void MainWindow::buildEditMenu(QMenu* editMenu) {
+    m_undoAction = editMenu->addAction(tr("&Undo"));
+    m_undoAction->setShortcut(QKeySequence::Undo);
+    connect(m_undoAction, &QAction::triggered, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) {
+            doc->undo();
+            m_sidebar->refreshThumbnails();
+            updateTitleForDocument(doc);
+            onCurrentDocumentChanged(doc);
+        }
+    });
+
+    m_redoAction = editMenu->addAction(tr("&Redo"));
+    m_redoAction->setShortcut(QKeySequence::Redo);
+    connect(m_redoAction, &QAction::triggered, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) {
+            doc->redo();
+            m_sidebar->refreshThumbnails();
+            updateTitleForDocument(doc);
+            onCurrentDocumentChanged(doc);
+        }
+    });
+
+    editMenu->addSeparator();
+
     m_findAction = editMenu->addAction(tr("&Find…"));
     m_findAction->setShortcut(QKeySequence::Find);
     connect(m_findAction, &QAction::triggered, this, &MainWindow::showSearchBar);
@@ -765,6 +789,9 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     const bool multiplePages = doc && doc->pageCount() > 1;
     m_previousPageAction->setEnabled(multiplePages);
     m_nextPageAction->setEnabled(multiplePages);
+
+    m_undoAction->setEnabled(doc && doc->canUndo());
+    m_redoAction->setEnabled(doc && doc->canRedo());
 
     const bool canEdit = doc && doc->supportsEditing();
     const bool isImage = dynamic_cast<ImageDocument*>(doc) != nullptr;

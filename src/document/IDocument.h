@@ -50,6 +50,10 @@ public:
 
     virtual bool supportsEditing() const { return false; }
     virtual bool isDirty() const { return false; }
+    virtual bool canUndo() const { return false; }
+    virtual bool canRedo() const { return false; }
+    virtual void undo() {}
+    virtual void redo() {}
     virtual void rotatePage(int /*pageIndex*/, int /*degreesClockwise*/) {}
     virtual void deletePages(const std::vector<int>& /*pageIndices*/) {}
     virtual void movePage(int /*from*/, int /*to*/) {}

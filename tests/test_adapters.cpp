@@ -37,6 +37,7 @@ private slots:
     void imageDocumentAdjustColourModifiesPixels();
     void imageDocumentSaveClearsDirty();
     void imageDocumentExportAsJpegWritesFile();
+    void imageDocumentUndoRestoresPriorState();
 };
 
 void TestAdapters::pdfAdapterAdvertisesPdfExtension() {
@@ -393,6 +394,25 @@ void TestAdapters::imageDocumentExportAsJpegWritesFile() {
     QVERIFY(QFileInfo(dst).size() > 0);
     QImage reloaded(dst);
     QVERIFY(!reloaded.isNull());
+}
+
+void TestAdapters::imageDocumentUndoRestoresPriorState() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("u.png"), 40, 20);
+
+    ImageDocument doc(path);
+    QVERIFY(!doc.canUndo());
+    doc.rotatePage(0, 90);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+    QVERIFY(doc.canUndo());
+    doc.undo();
+    QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+    QVERIFY(!doc.canUndo());
+    QVERIFY(doc.canRedo());
+    doc.redo();
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+    QVERIFY(!doc.canRedo());
 }
 
 QTEST_MAIN(TestAdapters)
