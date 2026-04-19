@@ -1,13 +1,13 @@
 #include "ImageAdapter.h"
 
 #include <QFileInfo>
-#include <QImage>
 #include <QImageReader>
 #include <QLabel>
 #include <QMovie>
 #include <QPixmap>
 #include <QScrollArea>
-#include <QVBoxLayout>
+
+#include <algorithm>
 
 namespace trailer {
 
@@ -18,11 +18,19 @@ constexpr const char* kExtensions[] = {
     "ppm", "pgm", "pbm", "xbm", "xpm", "ico",
 };
 
+constexpr double kZoomStep = 1.25;
+constexpr double kZoomMin = 0.05;
+constexpr double kZoomMax = 32.0;
+
 }  // namespace
 
 ImageDocument::ImageDocument(QString path) : m_path(std::move(path)) {
     QImageReader reader(m_path);
+    reader.setAutoTransform(true);
     m_animated = reader.supportsAnimation() && reader.imageCount() > 1;
+    if (!m_animated) {
+        m_image = reader.read();
+    }
 }
 
 QString ImageDocument::displayName() const {
@@ -48,20 +56,52 @@ QWidget* ImageDocument::createView(QWidget* parent) {
         if (movie->isValid()) {
             movie->start();
         }
+    } else if (!m_image.isNull()) {
+        label->setPixmap(QPixmap::fromImage(m_image));
+        label->adjustSize();
     } else {
-        QImageReader reader(m_path);
-        reader.setAutoTransform(true);
-        const QImage image = reader.read();
-        if (image.isNull()) {
-            label->setText(QObject::tr("Could not decode image:\n%1").arg(m_path));
-        } else {
-            label->setPixmap(QPixmap::fromImage(image));
-            label->adjustSize();
-        }
+        label->setText(QObject::tr("Could not decode image:\n%1").arg(m_path));
     }
 
     scroll->setWidget(label);
+    m_scroll = scroll;
+    m_label = label;
     return scroll;
+}
+
+void ImageDocument::applyScale(double factor) {
+    if (!m_label || m_image.isNull()) {
+        return;
+    }
+    m_scale = std::clamp(factor, kZoomMin, kZoomMax);
+    const QSize target = m_image.size() * m_scale;
+    const QPixmap scaled = QPixmap::fromImage(m_image).scaled(
+        target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    m_label->setPixmap(scaled);
+    m_label->adjustSize();
+}
+
+void ImageDocument::zoomIn() {
+    applyScale(m_scale * kZoomStep);
+}
+
+void ImageDocument::zoomOut() {
+    applyScale(m_scale / kZoomStep);
+}
+
+void ImageDocument::zoomActual() {
+    applyScale(1.0);
+}
+
+void ImageDocument::zoomFitWidth() {
+    if (!m_scroll || !m_label || m_image.isNull()) {
+        return;
+    }
+    const int available = m_scroll->viewport()->width();
+    if (available <= 0 || m_image.width() <= 0) {
+        return;
+    }
+    applyScale(static_cast<double>(available) / static_cast<double>(m_image.width()));
 }
 
 QStringList ImageAdapter::mimeTypes() const {

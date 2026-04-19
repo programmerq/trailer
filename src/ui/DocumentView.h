@@ -18,8 +18,11 @@ public:
 
     int documentCount() const { return static_cast<int>(m_documents.size()); }
 
+    IDocument* currentDocument() const;
+
 signals:
     void allTabsClosed();
+    void currentDocumentChanged(IDocument* document);
 
 private slots:
     void onTabCloseRequested(int index);

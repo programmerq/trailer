@@ -3,11 +3,13 @@
 #include "IDocument.h"
 #include "IFormatAdapter.h"
 
+#include <QPointer>
 #include <QString>
 #include <QStringList>
 #include <memory>
 
 class QPdfDocument;
+class QPdfView;
 
 namespace trailer {
 
@@ -20,12 +22,27 @@ public:
     QString filePath() const override;
     QWidget* createView(QWidget* parent) override;
 
+    bool supportsZoom() const override { return true; }
+    void zoomIn() override;
+    void zoomOut() override;
+    void zoomActual() override;
+    void zoomFitWidth() override;
+
+    bool supportsViewModes() const override { return true; }
+    ViewMode viewMode() const override { return m_viewMode; }
+    void setViewMode(ViewMode mode) override;
+
     int pageCount() const;
     bool isValid() const { return m_valid; }
 
 private:
+    void applyViewMode();
+    void applyZoomFactor(double factor);
+
     QString m_path;
     std::unique_ptr<QPdfDocument> m_doc;
+    QPointer<QPdfView> m_view;
+    ViewMode m_viewMode = ViewMode::Continuous;
     bool m_valid = false;
 };
 

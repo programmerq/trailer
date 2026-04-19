@@ -3,11 +3,16 @@
 #include <QFileInfo>
 #include <QLabel>
 #include <QPdfDocument>
-#include <QPdfPageNavigator>
 #include <QPdfView>
 #include <QVBoxLayout>
 
 namespace trailer {
+
+namespace {
+constexpr double kZoomStep = 1.25;
+constexpr double kZoomMin = 0.10;
+constexpr double kZoomMax = 16.0;
+}  // namespace
 
 PdfDocument::PdfDocument(QString path)
     : m_path(std::move(path)), m_doc(std::make_unique<QPdfDocument>()) {
@@ -43,9 +48,58 @@ QWidget* PdfDocument::createView(QWidget* parent) {
 
     auto* view = new QPdfView(parent);
     view->setDocument(m_doc.get());
-    view->setPageMode(QPdfView::PageMode::MultiPage);
     view->setZoomMode(QPdfView::ZoomMode::FitToWidth);
+    m_view = view;
+    applyViewMode();
     return view;
+}
+
+void PdfDocument::applyViewMode() {
+    if (!m_view) {
+        return;
+    }
+    switch (m_viewMode) {
+        case ViewMode::SinglePage:
+            m_view->setPageMode(QPdfView::PageMode::SinglePage);
+            break;
+        case ViewMode::TwoPages:
+        case ViewMode::Continuous:
+            m_view->setPageMode(QPdfView::PageMode::MultiPage);
+            break;
+    }
+}
+
+void PdfDocument::setViewMode(ViewMode mode) {
+    m_viewMode = mode;
+    applyViewMode();
+}
+
+void PdfDocument::applyZoomFactor(double factor) {
+    if (!m_view) {
+        return;
+    }
+    const double clamped = std::clamp(factor, kZoomMin, kZoomMax);
+    m_view->setZoomMode(QPdfView::ZoomMode::Custom);
+    m_view->setZoomFactor(clamped);
+}
+
+void PdfDocument::zoomIn() {
+    if (!m_view) return;
+    applyZoomFactor(m_view->zoomFactor() * kZoomStep);
+}
+
+void PdfDocument::zoomOut() {
+    if (!m_view) return;
+    applyZoomFactor(m_view->zoomFactor() / kZoomStep);
+}
+
+void PdfDocument::zoomActual() {
+    applyZoomFactor(1.0);
+}
+
+void PdfDocument::zoomFitWidth() {
+    if (!m_view) return;
+    m_view->setZoomMode(QPdfView::ZoomMode::FitToWidth);
 }
 
 QStringList PdfAdapter::mimeTypes() const {

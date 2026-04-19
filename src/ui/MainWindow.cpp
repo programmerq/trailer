@@ -6,7 +6,6 @@
 #include "recent/RecentFiles.h"
 
 #include <QAction>
-#include <QActionGroup>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QFileDialog>
@@ -26,12 +25,15 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
 
     m_documentView = new DocumentView(this);
     setCentralWidget(m_documentView);
+    connect(m_documentView, &DocumentView::currentDocumentChanged,
+            this, &MainWindow::onCurrentDocumentChanged);
 
     m_sidebar = new Sidebar(this);
     addDockWidget(Qt::LeftDockWidgetArea, m_sidebar);
 
     buildMenus();
     rebuildRecentMenu();
+    onCurrentDocumentChanged(nullptr);
 }
 
 void MainWindow::buildMenus() {
@@ -54,15 +56,106 @@ void MainWindow::buildMenus() {
     connect(quitAction, &QAction::triggered, qApp, &QCoreApplication::quit);
 
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
-    auto* toggleSidebar = m_sidebar->toggleViewAction();
-    toggleSidebar->setText(tr("Toggle &Sidebar"));
-    toggleSidebar->setShortcut(QKeySequence(tr("Ctrl+Shift+D")));
-    viewMenu->addAction(toggleSidebar);
+    buildViewMenu(viewMenu);
 
     auto* helpMenu = menuBar()->addMenu(tr("&Help"));
     auto* aboutAction = helpMenu->addAction(tr("&About Trailer"));
     aboutAction->setMenuRole(QAction::AboutRole);
     connect(aboutAction, &QAction::triggered, this, &MainWindow::onAbout);
+}
+
+void MainWindow::buildViewMenu(QMenu* viewMenu) {
+    auto* toggleSidebar = m_sidebar->toggleViewAction();
+    toggleSidebar->setText(tr("Toggle &Sidebar"));
+    toggleSidebar->setShortcut(QKeySequence(tr("Ctrl+Shift+D")));
+    viewMenu->addAction(toggleSidebar);
+
+    viewMenu->addSeparator();
+
+    m_singlePageAction = viewMenu->addAction(tr("Single Page"));
+    m_singlePageAction->setCheckable(true);
+    connect(m_singlePageAction, &QAction::triggered, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) {
+            doc->setViewMode(ViewMode::SinglePage);
+        }
+    });
+
+    m_twoPagesAction = viewMenu->addAction(tr("Two Pages"));
+    m_twoPagesAction->setCheckable(true);
+    m_twoPagesAction->setEnabled(false);  // TODO: implement two-page layout
+    m_twoPagesAction->setToolTip(tr("Two-page layout is not yet available."));
+
+    m_continuousAction = viewMenu->addAction(tr("Continuous"));
+    m_continuousAction->setCheckable(true);
+    connect(m_continuousAction, &QAction::triggered, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) {
+            doc->setViewMode(ViewMode::Continuous);
+        }
+    });
+
+    m_viewModeGroup = new QActionGroup(this);
+    m_viewModeGroup->setExclusive(true);
+    m_viewModeGroup->addAction(m_singlePageAction);
+    m_viewModeGroup->addAction(m_twoPagesAction);
+    m_viewModeGroup->addAction(m_continuousAction);
+
+    viewMenu->addSeparator();
+
+    m_zoomInAction = viewMenu->addAction(tr("Zoom &In"));
+    m_zoomInAction->setShortcuts({
+        QKeySequence(tr("Ctrl+Alt++")),
+        QKeySequence(tr("Ctrl+Alt+=")),
+    });
+    connect(m_zoomInAction, &QAction::triggered, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) doc->zoomIn();
+    });
+
+    m_zoomOutAction = viewMenu->addAction(tr("Zoom &Out"));
+    m_zoomOutAction->setShortcut(QKeySequence(tr("Ctrl+Alt+-")));
+    connect(m_zoomOutAction, &QAction::triggered, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) doc->zoomOut();
+    });
+
+    m_zoomActualAction = viewMenu->addAction(tr("&Actual Size"));
+    m_zoomActualAction->setShortcut(QKeySequence(tr("Ctrl+Alt+0")));
+    connect(m_zoomActualAction, &QAction::triggered, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) doc->zoomActual();
+    });
+
+    m_zoomFitAction = viewMenu->addAction(tr("&Fit to Width"));
+    m_zoomFitAction->setShortcut(QKeySequence(tr("Ctrl+Alt+9")));
+    connect(m_zoomFitAction, &QAction::triggered, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) doc->zoomFitWidth();
+    });
+}
+
+void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
+    const bool hasZoom = doc && doc->supportsZoom();
+    m_zoomInAction->setEnabled(hasZoom);
+    m_zoomOutAction->setEnabled(hasZoom);
+    m_zoomActualAction->setEnabled(hasZoom);
+    m_zoomFitAction->setEnabled(hasZoom);
+
+    const bool hasModes = doc && doc->supportsViewModes();
+    m_singlePageAction->setEnabled(hasModes);
+    m_continuousAction->setEnabled(hasModes);
+    // m_twoPagesAction stays disabled pending implementation.
+
+    syncViewModeActions(doc);
+}
+
+void MainWindow::syncViewModeActions(IDocument* doc) {
+    if (!doc || !doc->supportsViewModes()) {
+        m_singlePageAction->setChecked(false);
+        m_twoPagesAction->setChecked(false);
+        m_continuousAction->setChecked(false);
+        return;
+    }
+    switch (doc->viewMode()) {
+        case ViewMode::SinglePage: m_singlePageAction->setChecked(true); break;
+        case ViewMode::TwoPages:   m_twoPagesAction->setChecked(true);   break;
+        case ViewMode::Continuous: m_continuousAction->setChecked(true); break;
+    }
 }
 
 void MainWindow::rebuildRecentMenu() {
@@ -106,7 +199,7 @@ void MainWindow::onAbout() {
     QMessageBox::about(this, tr("About Trailer"),
         tr("<h3>Trailer</h3>"
            "<p>Cross-platform PDF and image workbench.</p>"
-           "<p>Version 0.1.0 (Phase 0)</p>"));
+           "<p>Version 0.1.0 (Phase 1)</p>"));
 }
 
 void MainWindow::addDocument(std::unique_ptr<IDocument> document) {

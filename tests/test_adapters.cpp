@@ -3,7 +3,9 @@
 #include "document/PdfAdapter.h"
 
 #include <QImage>
+#include <QLabel>
 #include <QObject>
+#include <QScrollArea>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -18,6 +20,8 @@ private slots:
     void registryRoutesPngToImageAdapter();
     void imageDocumentLoadsPng();
     void pdfDocumentReportsInvalidForMissingFile();
+    void imageDocumentZoomResizesPixmap();
+    void pdfDocumentAdvertisesCapabilities();
 };
 
 void TestAdapters::pdfAdapterAdvertisesPdfExtension() {
@@ -78,6 +82,46 @@ void TestAdapters::pdfDocumentReportsInvalidForMissingFile() {
 
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
     QVERIFY(view != nullptr);  // falls back to an error label
+}
+
+void TestAdapters::imageDocumentZoomResizesPixmap() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("tiny.png");
+
+    QImage img(32, 32, QImage::Format_ARGB32);
+    img.fill(Qt::blue);
+    QVERIFY(img.save(path, "PNG"));
+
+    ImageDocument doc(path);
+    QVERIFY(doc.supportsZoom());
+
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    QVERIFY(view != nullptr);
+
+    // Find the QLabel inside the QScrollArea that owns the pixmap.
+    auto* scroll = qobject_cast<QScrollArea*>(view.get());
+    QVERIFY(scroll != nullptr);
+    auto* label = qobject_cast<QLabel*>(scroll->widget());
+    QVERIFY(label != nullptr);
+
+    const QSize original = label->pixmap().size();
+    doc.zoomIn();
+    const QSize zoomed = label->pixmap().size();
+    QVERIFY(zoomed.width() > original.width());
+
+    doc.zoomActual();
+    QCOMPARE(label->pixmap().size(), original);
+}
+
+void TestAdapters::pdfDocumentAdvertisesCapabilities() {
+    PdfDocument doc("/tmp/does-not-exist.pdf");
+    QVERIFY(doc.supportsZoom());
+    QVERIFY(doc.supportsViewModes());
+    // Default mode for new PDFs is Continuous per PdfDocument's initial state.
+    QCOMPARE(doc.viewMode(), ViewMode::Continuous);
+    doc.setViewMode(ViewMode::SinglePage);
+    QCOMPARE(doc.viewMode(), ViewMode::SinglePage);
 }
 
 QTEST_MAIN(TestAdapters)

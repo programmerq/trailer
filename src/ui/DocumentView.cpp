@@ -7,6 +7,17 @@ DocumentView::DocumentView(QWidget* parent) : QTabWidget(parent) {
     setMovable(true);
     setDocumentMode(true);
     connect(this, &QTabWidget::tabCloseRequested, this, &DocumentView::onTabCloseRequested);
+    connect(this, &QTabWidget::currentChanged, this, [this](int) {
+        emit currentDocumentChanged(currentDocument());
+    });
+}
+
+IDocument* DocumentView::currentDocument() const {
+    const int index = currentIndex();
+    if (index < 0 || index >= static_cast<int>(m_documents.size())) {
+        return nullptr;
+    }
+    return m_documents[static_cast<size_t>(index)].get();
 }
 
 void DocumentView::addDocument(std::unique_ptr<IDocument> document) {

@@ -2,10 +2,12 @@
 
 #include "document/IDocument.h"
 
+#include <QActionGroup>
 #include <QMainWindow>
 #include <QStringList>
 #include <memory>
 
+class QAction;
 class QMenu;
 
 namespace trailer {
@@ -33,14 +35,27 @@ protected:
 private slots:
     void onOpen();
     void onAbout();
+    void onCurrentDocumentChanged(IDocument* doc);
 
 private:
     void buildMenus();
+    void buildViewMenu(QMenu* viewMenu);
+    void syncViewModeActions(IDocument* doc);
 
     Application* m_app;
     DocumentView* m_documentView = nullptr;
     Sidebar* m_sidebar = nullptr;
     QMenu* m_recentMenu = nullptr;
+
+    QAction* m_zoomInAction = nullptr;
+    QAction* m_zoomOutAction = nullptr;
+    QAction* m_zoomActualAction = nullptr;
+    QAction* m_zoomFitAction = nullptr;
+
+    QActionGroup* m_viewModeGroup = nullptr;
+    QAction* m_singlePageAction = nullptr;
+    QAction* m_twoPagesAction = nullptr;
+    QAction* m_continuousAction = nullptr;
 };
 
 }  // namespace trailer
