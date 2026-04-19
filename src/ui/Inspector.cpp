@@ -3,12 +3,16 @@
 #include "annotation/AnnotationStore.h"
 
 #include <QColorDialog>
+#include <QComboBox>
 #include <QDoubleSpinBox>
+#include <QFont>
+#include <QFontComboBox>
 #include <QFormLayout>
 #include <QLabel>
 #include <QPainter>
 #include <QPixmap>
 #include <QPlainTextEdit>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStackedWidget>
 #include <QToolButton>
@@ -21,16 +25,19 @@ namespace {
 
 QString typeLabel(AnnotationType type) {
     switch (type) {
-        case AnnotationType::Rectangle: return Inspector::tr("Rectangle");
-        case AnnotationType::Ellipse:   return Inspector::tr("Ellipse");
-        case AnnotationType::Line:      return Inspector::tr("Line");
-        case AnnotationType::Arrow:     return Inspector::tr("Arrow");
-        case AnnotationType::Ink:       return Inspector::tr("Freehand");
-        case AnnotationType::Text:      return Inspector::tr("Text");
-        case AnnotationType::Note:      return Inspector::tr("Note");
-        case AnnotationType::Highlight: return Inspector::tr("Highlight");
-        case AnnotationType::Underline: return Inspector::tr("Underline");
-        case AnnotationType::StrikeOut: return Inspector::tr("Strikeout");
+        case AnnotationType::Rectangle:      return Inspector::tr("Rectangle");
+        case AnnotationType::Ellipse:        return Inspector::tr("Ellipse");
+        case AnnotationType::Line:           return Inspector::tr("Line");
+        case AnnotationType::Arrow:          return Inspector::tr("Arrow");
+        case AnnotationType::Ink:            return Inspector::tr("Freehand");
+        case AnnotationType::Text:           return Inspector::tr("Text");
+        case AnnotationType::Note:           return Inspector::tr("Note");
+        case AnnotationType::Highlight:      return Inspector::tr("Highlight");
+        case AnnotationType::Underline:      return Inspector::tr("Underline");
+        case AnnotationType::StrikeOut:      return Inspector::tr("Strikeout");
+        case AnnotationType::HighlightShape: return Inspector::tr("Highlight Shape");
+        case AnnotationType::SpeechBubble:   return Inspector::tr("Speech Bubble");
+        case AnnotationType::ZoomLens:       return Inspector::tr("Zoom Lens");
     }
     return {};
 }
@@ -122,6 +129,23 @@ Inspector::Inspector(QWidget* parent) : QDockWidget(tr("Inspector"), parent) {
                 m_store->update(updated);
             });
 
+    m_dashCombo = new QComboBox(form);
+    m_dashCombo->addItem(tr("Solid"),  static_cast<int>(DashStyle::Solid));
+    m_dashCombo->addItem(tr("Dashed"), static_cast<int>(DashStyle::Dashed));
+    m_dashCombo->addItem(tr("Dotted"), static_cast<int>(DashStyle::Dotted));
+    layout->addRow(tr("Dash:"), m_dashCombo);
+    connect(m_dashCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) {
+                if (m_loading) return;
+                if (!m_store || m_id == 0) return;
+                const Annotation* a = m_store->find(m_id);
+                if (!a) return;
+                Annotation updated = *a;
+                updated.style.dash = static_cast<DashStyle>(
+                    m_dashCombo->currentData().toInt());
+                m_store->update(updated);
+            });
+
     m_fontSize = new QSpinBox(form);
     m_fontSize->setRange(6, 72);
     m_fontSize->setSuffix(tr(" pt"));
@@ -134,6 +158,37 @@ Inspector::Inspector(QWidget* parent) : QDockWidget(tr("Inspector"), parent) {
                 if (!a) return;
                 Annotation updated = *a;
                 updated.style.fontPointSize = v;
+                m_store->update(updated);
+            });
+
+    m_fontFamily = new QFontComboBox(form);
+    layout->addRow(tr("Font:"), m_fontFamily);
+    connect(m_fontFamily, &QFontComboBox::currentFontChanged, this,
+            [this](const QFont& f) {
+                if (m_loading) return;
+                if (!m_store || m_id == 0) return;
+                const Annotation* a = m_store->find(m_id);
+                if (!a) return;
+                Annotation updated = *a;
+                updated.style.fontFamily = f.family();
+                m_store->update(updated);
+            });
+
+    m_fontWeight = new QComboBox(form);
+    m_fontWeight->addItem(tr("Light"),    static_cast<int>(QFont::Light));
+    m_fontWeight->addItem(tr("Regular"),  static_cast<int>(QFont::Normal));
+    m_fontWeight->addItem(tr("Medium"),   static_cast<int>(QFont::Medium));
+    m_fontWeight->addItem(tr("Bold"),     static_cast<int>(QFont::Bold));
+    m_fontWeight->addItem(tr("Black"),    static_cast<int>(QFont::Black));
+    layout->addRow(tr("Weight:"), m_fontWeight);
+    connect(m_fontWeight, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this](int) {
+                if (m_loading) return;
+                if (!m_store || m_id == 0) return;
+                const Annotation* a = m_store->find(m_id);
+                if (!a) return;
+                Annotation updated = *a;
+                updated.style.fontWeight = m_fontWeight->currentData().toInt();
                 m_store->update(updated);
             });
 
@@ -191,11 +246,28 @@ void Inspector::rebuildFromStore() {
     applySwatch(m_strokeButton, a->style.stroke);
     applySwatch(m_fillButton, a->style.fill);
     m_strokeWidth->setValue(a->style.strokeWidth);
+    {
+        const int idx = m_dashCombo->findData(static_cast<int>(a->style.dash));
+        m_dashCombo->setCurrentIndex(idx >= 0 ? idx : 0);
+    }
     m_fontSize->setValue(a->style.fontPointSize > 0 ? a->style.fontPointSize : 12);
+    {
+        QSignalBlocker blk(m_fontFamily);
+        m_fontFamily->setCurrentFont(QFont(a->style.fontFamily));
+    }
+    {
+        const int idx = m_fontWeight->findData(a->style.fontWeight);
+        m_fontWeight->setCurrentIndex(idx >= 0 ? idx : 1);
+    }
     const bool hasText = a->type == AnnotationType::Text
-                      || a->type == AnnotationType::Note;
+                      || a->type == AnnotationType::Note
+                      || a->type == AnnotationType::SpeechBubble;
+    const bool hasFont = a->type == AnnotationType::Text
+                      || a->type == AnnotationType::SpeechBubble;
     m_text->setEnabled(hasText);
-    m_fontSize->setEnabled(a->type == AnnotationType::Text);
+    m_fontSize->setEnabled(hasFont);
+    m_fontFamily->setEnabled(hasFont);
+    m_fontWeight->setEnabled(hasFont);
     if (m_text->toPlainText() != a->text) {
         m_text->setPlainText(a->text);
     }

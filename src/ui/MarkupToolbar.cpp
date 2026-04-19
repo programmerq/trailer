@@ -3,6 +3,7 @@
 #include <QAction>
 #include <QActionGroup>
 #include <QColorDialog>
+#include <QComboBox>
 #include <QDoubleSpinBox>
 #include <QIcon>
 #include <QLabel>
@@ -99,6 +100,19 @@ MarkupToolbar::MarkupToolbar(QWidget* parent) : QToolBar(parent) {
             });
     addWidget(new QLabel(tr("Width "), this));
     addWidget(widthSpin);
+
+    auto* dashCombo = new QComboBox(this);
+    dashCombo->addItem(tr("Solid"),  static_cast<int>(DashStyle::Solid));
+    dashCombo->addItem(tr("Dashed"), static_cast<int>(DashStyle::Dashed));
+    dashCombo->addItem(tr("Dotted"), static_cast<int>(DashStyle::Dotted));
+    connect(dashCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+            this, [this, dashCombo](int) {
+                m_style.dash = static_cast<DashStyle>(
+                    dashCombo->currentData().toInt());
+                emit styleChanged(m_style);
+            });
+    addWidget(new QLabel(tr("Dash "), this));
+    addWidget(dashCombo);
 
     m_tool = AnnotationTool::Select;
 }

@@ -4,7 +4,9 @@
 #include <QPointer>
 
 class QColorDialog;
+class QComboBox;
 class QDoubleSpinBox;
+class QFontComboBox;
 class QLabel;
 class QPlainTextEdit;
 class QSpinBox;
@@ -40,7 +42,10 @@ private:
     QToolButton* m_strokeButton = nullptr;
     QToolButton* m_fillButton = nullptr;
     QDoubleSpinBox* m_strokeWidth = nullptr;
+    QComboBox* m_dashCombo = nullptr;
     QSpinBox* m_fontSize = nullptr;
+    QFontComboBox* m_fontFamily = nullptr;
+    QComboBox* m_fontWeight = nullptr;
     QPlainTextEdit* m_text = nullptr;
 };
 
