@@ -75,6 +75,14 @@ PdfDocument::PdfDocument(QString path)
     m_valid = (error == QPdfDocument::Error::None);
     if (m_valid) {
         m_editor->load(m_path);
+        for (Annotation& a : m_editor->readAnnotations()) {
+            m_annotations.add(std::move(a));
+        }
+        m_annotations.clearHistory();
+        QObject::connect(&m_annotations, &AnnotationStore::changed,
+                         m_doc.get(), [this]() {
+            m_annotationsModified = true;
+        });
     }
 }
 
@@ -621,6 +629,11 @@ bool PdfDocument::save(const QString& newPath) {
     }
     m_dirty = false;
     m_annotations.clear();
+    for (Annotation& a : m_editor->readAnnotations()) {
+        m_annotations.add(std::move(a));
+    }
+    m_annotations.clearHistory();
+    m_annotationsModified = false;
     return true;
 }
 

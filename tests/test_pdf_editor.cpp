@@ -39,6 +39,8 @@ private slots:
     void extractPagesWritesSubsetPdf();
     void cropPageSetsCropBox();
     void cropPageRejectsOversizedMargins();
+    void annotationRoundTripPreservesShapes();
+    void annotationRoundTripPreservesMarkup();
 };
 
 void TestPdfEditor::reportsInvalidForMissingFile() {
@@ -164,6 +166,118 @@ void TestPdfEditor::cropPageRejectsOversizedMargins() {
     PdfEditor editor;
     QVERIFY(editor.load(src));
     QVERIFY(!editor.cropPage(0, 10000.0, 0.0, 0.0, 0.0));
+}
+
+void TestPdfEditor::annotationRoundTripPreservesShapes() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 2);
+    const QString dst = dir.filePath("annotated.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    std::vector<Annotation> anns;
+    {
+        Annotation rect;
+        rect.page = 0;
+        rect.type = AnnotationType::Rectangle;
+        rect.bounds = QRectF(50, 60, 120, 80);
+        rect.style.stroke = QColor(200, 20, 20);
+        rect.style.strokeWidth = 2.0;
+        anns.push_back(rect);
+    }
+    {
+        Annotation ell;
+        ell.page = 1;
+        ell.type = AnnotationType::Ellipse;
+        ell.bounds = QRectF(100, 100, 80, 40);
+        anns.push_back(ell);
+    }
+    {
+        Annotation line;
+        line.page = 0;
+        line.type = AnnotationType::Line;
+        line.bounds = QRectF(10, 10, 40, 40);
+        line.points = {QPointF(10, 10), QPointF(50, 50)};
+        anns.push_back(line);
+    }
+    {
+        Annotation arrow;
+        arrow.page = 0;
+        arrow.type = AnnotationType::Arrow;
+        arrow.bounds = QRectF(0, 0, 30, 30);
+        arrow.points = {QPointF(0, 0), QPointF(30, 30)};
+        anns.push_back(arrow);
+    }
+    {
+        Annotation note;
+        note.page = 1;
+        note.type = AnnotationType::Note;
+        note.bounds = QRectF(10, 10, 18, 18);
+        note.text = "hello";
+        anns.push_back(note);
+    }
+
+    QVERIFY(editor.writeAnnotations(anns));
+    QVERIFY(editor.save(dst));
+
+    PdfEditor round;
+    QVERIFY(round.load(dst));
+    const auto got = round.readAnnotations();
+    QCOMPARE(got.size(), anns.size());
+
+    int rects = 0, ells = 0, lines = 0, arrows = 0, notes = 0;
+    for (const Annotation& a : got) {
+        switch (a.type) {
+            case AnnotationType::Rectangle: ++rects; break;
+            case AnnotationType::Ellipse:   ++ells;  break;
+            case AnnotationType::Line:      ++lines; break;
+            case AnnotationType::Arrow:     ++arrows; break;
+            case AnnotationType::Note:      ++notes; break;
+            default: break;
+        }
+    }
+    QCOMPARE(rects, 1);
+    QCOMPARE(ells, 1);
+    QCOMPARE(lines, 1);
+    QCOMPARE(arrows, 1);
+    QCOMPARE(notes, 1);
+
+    for (const Annotation& a : got) {
+        if (a.type == AnnotationType::Note) {
+            QCOMPARE(a.text, QStringLiteral("hello"));
+            QCOMPARE(a.page, 1);
+        }
+        if (a.type == AnnotationType::Line) {
+            QCOMPARE(a.points.size(), size_t{2});
+        }
+    }
+}
+
+void TestPdfEditor::annotationRoundTripPreservesMarkup() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+    const QString dst = dir.filePath("markup.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    Annotation hl;
+    hl.page = 0;
+    hl.type = AnnotationType::Highlight;
+    hl.bounds = QRectF(20, 40, 200, 20);
+    hl.quads = {QRectF(20, 40, 100, 20), QRectF(120, 40, 100, 20)};
+    QVERIFY(editor.writeAnnotations({hl}));
+    QVERIFY(editor.save(dst));
+
+    PdfEditor round;
+    QVERIFY(round.load(dst));
+    const auto got = round.readAnnotations();
+    QCOMPARE(got.size(), size_t{1});
+    QCOMPARE(got[0].type, AnnotationType::Highlight);
+    QCOMPARE(got[0].quads.size(), size_t{2});
 }
 
 QTEST_MAIN(TestPdfEditor)

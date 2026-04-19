@@ -34,6 +34,7 @@ public:
     bool canRedo() const { return !m_redoStack.empty(); }
     void undo();
     void redo();
+    void clearHistory() { m_undoStack.clear(); m_redoStack.clear(); }
 
 signals:
     void changed();

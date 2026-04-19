@@ -38,6 +38,11 @@ public:
     // flips to PDF convention (bottom-left) using each page's MediaBox.
     bool writeAnnotations(const std::vector<Annotation>& annotations);
 
+    // Parse /Annots arrays on every page and return an in-memory representation
+    // in doc-native coords (top-left origin). Only the subtypes this class
+    // writes are recognised; unknown subtypes are skipped silently.
+    std::vector<Annotation> readAnnotations() const;
+
     bool save(const QString& path);
 
     QPDF* qpdf() { return m_qpdf.get(); }

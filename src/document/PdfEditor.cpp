@@ -402,6 +402,165 @@ bool PdfEditor::writeAnnotations(const std::vector<Annotation>& annotations) {
     }
 }
 
+namespace {
+
+QColor colourFromArray(const QPDFObjectHandle& arr) {
+    if (!arr.isArray() || arr.getArrayNItems() < 3) return QColor();
+    const double r = arr.getArrayItem(0).getNumericValue();
+    const double g = arr.getArrayItem(1).getNumericValue();
+    const double b = arr.getArrayItem(2).getNumericValue();
+    QColor c;
+    c.setRgbF(static_cast<float>(std::clamp(r, 0.0, 1.0)),
+              static_cast<float>(std::clamp(g, 0.0, 1.0)),
+              static_cast<float>(std::clamp(b, 0.0, 1.0)));
+    return c;
+}
+
+QRectF rectFromArray(const QPDFObjectHandle& arr, double pageHeight) {
+    if (!arr.isArray() || arr.getArrayNItems() < 4) return {};
+    const double x1 = arr.getArrayItem(0).getNumericValue();
+    const double y1 = arr.getArrayItem(1).getNumericValue();
+    const double x2 = arr.getArrayItem(2).getNumericValue();
+    const double y2 = arr.getArrayItem(3).getNumericValue();
+    const double left = std::min(x1, x2);
+    const double right = std::max(x1, x2);
+    const double bottom = std::min(y1, y2);
+    const double top = std::max(y1, y2);
+    // Flip back to top-left origin.
+    return QRectF(QPointF(left, pageHeight - top),
+                  QPointF(right, pageHeight - bottom));
+}
+
+}  // namespace
+
+std::vector<Annotation> PdfEditor::readAnnotations() const {
+    std::vector<Annotation> out;
+    if (!m_valid) return out;
+    try {
+        auto pages = QPDFPageDocumentHelper(*m_qpdf).getAllPages();
+        const int total = static_cast<int>(pages.size());
+        for (int p = 0; p < total; ++p) {
+            QPDFPageObjectHelper& page = pages[static_cast<size_t>(p)];
+            QPDFObjectHandle media = page.getMediaBox(/*copy_if_shared=*/true);
+            if (!media.isArray() || media.getArrayNItems() < 4) continue;
+            const double my0 = media.getArrayItem(1).getNumericValue();
+            const double my1 = media.getArrayItem(3).getNumericValue();
+            const double pageHeight = my1 - my0;
+            auto flipY = [pageHeight](double y) { return pageHeight - y; };
+
+            QPDFObjectHandle annots = page.getObjectHandle().getKey("/Annots");
+            if (!annots.isArray()) continue;
+            const int n = annots.getArrayNItems();
+            for (int i = 0; i < n; ++i) {
+                QPDFObjectHandle entry = annots.getArrayItem(i);
+                if (!entry.isDictionary()) continue;
+                QPDFObjectHandle subtype = entry.getKey("/Subtype");
+                if (!subtype.isName()) continue;
+                const std::string st = subtype.getName();
+
+                Annotation a;
+                a.page = p;
+                a.bounds = rectFromArray(entry.getKey("/Rect"), pageHeight);
+                QColor stroke = colourFromArray(entry.getKey("/C"));
+                if (stroke.isValid()) a.style.stroke = stroke;
+                QPDFObjectHandle bs = entry.getKey("/BS");
+                if (bs.isDictionary()) {
+                    QPDFObjectHandle w = bs.getKey("/W");
+                    if (w.isNumber()) a.style.strokeWidth = w.getNumericValue();
+                }
+                QPDFObjectHandle contents = entry.getKey("/Contents");
+                if (contents.isString()) {
+                    a.text = QString::fromStdString(contents.getUTF8Value());
+                }
+
+                if (st == "/Square") {
+                    QPDFObjectHandle ic = entry.getKey("/IC");
+                    if (ic.isArray()) {
+                        QColor fill = colourFromArray(ic);
+                        if (fill.isValid()) {
+                            a.style.fill = fill;
+                            a.type = AnnotationType::HighlightShape;
+                        } else {
+                            a.type = AnnotationType::Rectangle;
+                        }
+                    } else {
+                        a.type = AnnotationType::Rectangle;
+                    }
+                } else if (st == "/Circle") {
+                    a.type = AnnotationType::Ellipse;
+                } else if (st == "/Line") {
+                    QPDFObjectHandle L = entry.getKey("/L");
+                    if (!L.isArray() || L.getArrayNItems() < 4) continue;
+                    const double x1 = L.getArrayItem(0).getNumericValue();
+                    const double y1 = L.getArrayItem(1).getNumericValue();
+                    const double x2 = L.getArrayItem(2).getNumericValue();
+                    const double y2 = L.getArrayItem(3).getNumericValue();
+                    a.points = {QPointF(x1, flipY(y1)), QPointF(x2, flipY(y2))};
+                    QPDFObjectHandle le = entry.getKey("/LE");
+                    bool isArrow = false;
+                    if (le.isArray() && le.getArrayNItems() >= 2) {
+                        const QPDFObjectHandle end = le.getArrayItem(1);
+                        if (end.isName() && end.getName() != "/None") isArrow = true;
+                    }
+                    a.type = isArrow ? AnnotationType::Arrow
+                                     : AnnotationType::Line;
+                } else if (st == "/Ink") {
+                    QPDFObjectHandle inkList = entry.getKey("/InkList");
+                    if (!inkList.isArray() || inkList.getArrayNItems() < 1) continue;
+                    QPDFObjectHandle stroke = inkList.getArrayItem(0);
+                    if (!stroke.isArray()) continue;
+                    const int sn = stroke.getArrayNItems();
+                    for (int k = 0; k + 1 < sn; k += 2) {
+                        const double x = stroke.getArrayItem(k).getNumericValue();
+                        const double y = stroke.getArrayItem(k + 1).getNumericValue();
+                        a.points.emplace_back(x, flipY(y));
+                    }
+                    if (a.points.size() < 2) continue;
+                    a.type = AnnotationType::Ink;
+                } else if (st == "/FreeText") {
+                    QPDFObjectHandle cl = entry.getKey("/CL");
+                    if (cl.isArray() && cl.getArrayNItems() >= 2) {
+                        const double tx = cl.getArrayItem(0).getNumericValue();
+                        const double ty = cl.getArrayItem(1).getNumericValue();
+                        a.points = {QPointF(tx, flipY(ty))};
+                        a.type = AnnotationType::SpeechBubble;
+                    } else {
+                        a.type = AnnotationType::Text;
+                    }
+                } else if (st == "/Text") {
+                    a.type = AnnotationType::Note;
+                } else if (st == "/Highlight" || st == "/Underline"
+                           || st == "/StrikeOut") {
+                    a.type = st == "/Highlight" ? AnnotationType::Highlight
+                           : st == "/Underline" ? AnnotationType::Underline
+                                                : AnnotationType::StrikeOut;
+                    QPDFObjectHandle qp = entry.getKey("/QuadPoints");
+                    if (qp.isArray()) {
+                        const int qn = qp.getArrayNItems();
+                        for (int k = 0; k + 7 < qn; k += 8) {
+                            const double x1 = qp.getArrayItem(k).getNumericValue();
+                            const double y1 = qp.getArrayItem(k + 1).getNumericValue();
+                            const double x2 = qp.getArrayItem(k + 2).getNumericValue();
+                            // (quad points: TL TR BL BR in PDF Y-up)
+                            const double y3 = qp.getArrayItem(k + 5).getNumericValue();
+                            a.quads.emplace_back(
+                                QPointF(std::min(x1, x2), flipY(y1)),
+                                QPointF(std::max(x1, x2), flipY(y3)));
+                        }
+                    }
+                    if (a.quads.empty()) a.quads.push_back(a.bounds);
+                } else {
+                    continue;
+                }
+                out.push_back(std::move(a));
+            }
+        }
+    } catch (const std::exception&) {
+        return out;
+    }
+    return out;
+}
+
 bool PdfEditor::save(const QString& path) {
     if (!m_valid) return false;
     try {

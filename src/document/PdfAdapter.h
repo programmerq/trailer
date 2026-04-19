@@ -56,7 +56,7 @@ public:
 
     bool supportsEditing() const override { return m_valid; }
     bool isDirty() const override {
-        return m_dirty || !m_annotations.annotations().empty();
+        return m_dirty || m_annotationsModified;
     }
     bool canUndo() const override { return m_annotations.canUndo(); }
     bool canRedo() const override { return m_annotations.canRedo(); }
@@ -97,6 +97,7 @@ private:
     int m_currentResult = -1;
     bool m_valid = false;
     bool m_dirty = false;
+    bool m_annotationsModified = false;
 };
 
 class PdfAdapter : public IFormatAdapter {
