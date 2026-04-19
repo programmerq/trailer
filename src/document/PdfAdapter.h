@@ -32,7 +32,12 @@ public:
     ViewMode viewMode() const override { return m_viewMode; }
     void setViewMode(ViewMode mode) override;
 
-    int pageCount() const;
+    bool supportsThumbnails() const override { return true; }
+    int pageCount() const override;
+    QImage renderThumbnail(int pageIndex, QSize targetSize) override;
+    int currentPage() const override;
+    void goToPage(int pageIndex) override;
+
     bool isValid() const { return m_valid; }
 
 private:

@@ -5,6 +5,8 @@
 #include <QImage>
 #include <QLabel>
 #include <QObject>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QScrollArea>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -22,6 +24,7 @@ private slots:
     void pdfDocumentReportsInvalidForMissingFile();
     void imageDocumentZoomResizesPixmap();
     void pdfDocumentAdvertisesCapabilities();
+    void pdfDocumentRendersThumbnailsForValidFile();
 };
 
 void TestAdapters::pdfAdapterAdvertisesPdfExtension() {
@@ -122,6 +125,35 @@ void TestAdapters::pdfDocumentAdvertisesCapabilities() {
     QCOMPARE(doc.viewMode(), ViewMode::Continuous);
     doc.setViewMode(ViewMode::SinglePage);
     QCOMPARE(doc.viewMode(), ViewMode::SinglePage);
+}
+
+void TestAdapters::pdfDocumentRendersThumbnailsForValidFile() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("tiny.pdf");
+
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, "Page 1");
+        writer.newPage();
+        painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, "Page 2");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    QVERIFY(doc.supportsThumbnails());
+    QCOMPARE(doc.pageCount(), 2);
+
+    const QImage thumb = doc.renderThumbnail(0, QSize(128, 160));
+    QVERIFY(!thumb.isNull());
+    QVERIFY(thumb.width() <= 128);
+    QVERIFY(thumb.height() <= 160);
+
+    const QImage oob = doc.renderThumbnail(5, QSize(128, 160));
+    QVERIFY(oob.isNull());
 }
 
 QTEST_MAIN(TestAdapters)

@@ -58,6 +58,8 @@ set(TRAILER_SOURCES
     src/ui/MainWindow.h
     src/ui/Sidebar.cpp
     src/ui/Sidebar.h
+    src/ui/ThumbnailModel.cpp
+    src/ui/ThumbnailModel.h
 )
 
 add_library(trailer_core STATIC ${TRAILER_SOURCES})

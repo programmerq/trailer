@@ -3,7 +3,9 @@
 #include <QFileInfo>
 #include <QLabel>
 #include <QPdfDocument>
+#include <QPdfPageNavigator>
 #include <QPdfView>
+#include <QSizeF>
 #include <QVBoxLayout>
 
 namespace trailer {
@@ -100,6 +102,36 @@ void PdfDocument::zoomActual() {
 void PdfDocument::zoomFitWidth() {
     if (!m_view) return;
     m_view->setZoomMode(QPdfView::ZoomMode::FitToWidth);
+}
+
+QImage PdfDocument::renderThumbnail(int pageIndex, QSize targetSize) {
+    if (!m_valid || pageIndex < 0 || pageIndex >= m_doc->pageCount()) {
+        return {};
+    }
+    const QSizeF pageSize = m_doc->pagePointSize(pageIndex);
+    if (pageSize.isEmpty() || !targetSize.isValid() || targetSize.isEmpty()) {
+        return {};
+    }
+    const double aspect = pageSize.width() / pageSize.height();
+    int w = targetSize.width();
+    int h = static_cast<int>(w / aspect);
+    if (h > targetSize.height()) {
+        h = targetSize.height();
+        w = static_cast<int>(h * aspect);
+    }
+    return m_doc->render(pageIndex, QSize(w, h));
+}
+
+int PdfDocument::currentPage() const {
+    if (!m_view) return 0;
+    return m_view->pageNavigator()->currentPage();
+}
+
+void PdfDocument::goToPage(int pageIndex) {
+    if (!m_view || pageIndex < 0 || pageIndex >= pageCount()) {
+        return;
+    }
+    m_view->pageNavigator()->jump(pageIndex, QPointF{}, m_view->zoomFactor());
 }
 
 QStringList PdfAdapter::mimeTypes() const {

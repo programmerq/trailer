@@ -1,5 +1,7 @@
 #pragma once
 
+#include <QImage>
+#include <QSize>
 #include <QString>
 #include <QWidget>
 
@@ -28,6 +30,12 @@ public:
     virtual bool supportsViewModes() const { return false; }
     virtual ViewMode viewMode() const { return ViewMode::SinglePage; }
     virtual void setViewMode(ViewMode /*mode*/) {}
+
+    virtual bool supportsThumbnails() const { return false; }
+    virtual int pageCount() const { return 0; }
+    virtual QImage renderThumbnail(int /*pageIndex*/, QSize /*targetSize*/) { return {}; }
+    virtual int currentPage() const { return 0; }
+    virtual void goToPage(int /*pageIndex*/) {}
 };
 
 }  // namespace trailer

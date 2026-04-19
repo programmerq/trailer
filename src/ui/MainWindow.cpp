@@ -130,6 +130,8 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
 }
 
 void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
+    m_sidebar->setDocument(doc);
+
     const bool hasZoom = doc && doc->supportsZoom();
     m_zoomInAction->setEnabled(hasZoom);
     m_zoomOutAction->setEnabled(hasZoom);
