@@ -5,12 +5,16 @@
 #include <QContextMenuEvent>
 #include <QEvent>
 #include <QFont>
+#include <QFrame>
 #include <QInputDialog>
+#include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPlainTextEdit>
 #include <QResizeEvent>
+#include <QVBoxLayout>
 #include <QWidget>
 
 #include <algorithm>
@@ -158,7 +162,9 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
             case AnnotationType::Note: {
                 const QPointF tl = m_docToView(a.bounds.topLeft());
                 const QRectF icon(tl.x(), tl.y(), 18.0, 18.0);
-                p.setBrush(QColor(255, 225, 120));
+                const QColor noteColour = a.style.fill.alpha() > 0
+                    ? a.style.fill : QColor(255, 225, 120);
+                p.setBrush(noteColour);
                 p.setPen(QPen(a.style.stroke, 1.0));
                 p.drawRect(icon);
                 QFont f = p.font();
@@ -302,6 +308,43 @@ bool AnnotationOverlay::eventFilter(QObject* obj, QEvent* event) {
     if (obj == parentWidget() && event->type() == QEvent::Resize) {
         if (auto* w = qobject_cast<QWidget*>(obj)) {
             setGeometry(w->rect());
+        }
+    }
+    if (m_inlineEditor && m_inlineEditorAnnotationId != 0) {
+        if (auto* edit = qobject_cast<QPlainTextEdit*>(obj)) {
+            if (event->type() == QEvent::KeyPress) {
+                auto* key = static_cast<QKeyEvent*>(event);
+                const bool commit = (key->key() == Qt::Key_Return ||
+                                     key->key() == Qt::Key_Enter) &&
+                                    (key->modifiers() & Qt::ControlModifier);
+                const bool cancel = key->key() == Qt::Key_Escape;
+                if (commit) {
+                    if (m_store) {
+                        if (const Annotation* a =
+                                m_store->find(m_inlineEditorAnnotationId)) {
+                            Annotation updated = *a;
+                            updated.text = edit->toPlainText();
+                            m_store->update(updated);
+                        }
+                    }
+                    m_inlineEditor->deleteLater();
+                    return true;
+                }
+                if (cancel) {
+                    m_inlineEditor->deleteLater();
+                    return true;
+                }
+            } else if (event->type() == QEvent::FocusOut) {
+                if (m_store) {
+                    if (const Annotation* a =
+                            m_store->find(m_inlineEditorAnnotationId)) {
+                        Annotation updated = *a;
+                        updated.text = edit->toPlainText();
+                        m_store->update(updated);
+                    }
+                }
+                m_inlineEditor->deleteLater();
+            }
         }
     }
     return QWidget::eventFilter(obj, event);
@@ -473,6 +516,84 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
     const int id = m_store->add(std::move(a));
     emit annotationCommitted(id);
     update();
+}
+
+int AnnotationOverlay::hitTest(const QPointF& viewPt) const {
+    if (!m_store) return 0;
+    const auto& all = m_store->annotations();
+    for (auto it = all.rbegin(); it != all.rend(); ++it) {
+        if (it->page != m_page) continue;
+        if (docRectToView(it->bounds).contains(viewPt)) {
+            return it->id;
+        }
+    }
+    return 0;
+}
+
+void AnnotationOverlay::openInlineEditor(int annotationId) {
+    if (!m_store) return;
+    const Annotation* a = m_store->find(annotationId);
+    if (!a) return;
+    if (m_inlineEditor) {
+        m_inlineEditor->deleteLater();
+        m_inlineEditor = nullptr;
+    }
+    if (a->type == AnnotationType::Note) {
+        bool ok = false;
+        const QString text = QInputDialog::getMultiLineText(
+            this, tr("Note"), tr("Note body:"), a->text, &ok);
+        if (!ok) return;
+        Annotation updated = *a;
+        updated.text = text;
+        m_store->update(updated);
+        return;
+    }
+    if (a->type != AnnotationType::Text &&
+        a->type != AnnotationType::SpeechBubble) {
+        return;
+    }
+
+    auto* frame = new QFrame(this);
+    frame->setFrameShape(QFrame::Box);
+    frame->setAutoFillBackground(true);
+    auto* layout = new QVBoxLayout(frame);
+    layout->setContentsMargins(2, 2, 2, 2);
+    auto* edit = new QPlainTextEdit(frame);
+    edit->setPlainText(a->text);
+    QFont f = edit->font();
+    if (!a->style.fontFamily.isEmpty()) f.setFamily(a->style.fontFamily);
+    f.setPointSize(a->style.fontPointSize > 0 ? a->style.fontPointSize : 12);
+    edit->setFont(f);
+    layout->addWidget(edit);
+
+    const QRectF viewRect = docRectToView(a->bounds);
+    frame->setGeometry(viewRect.toRect());
+    frame->show();
+    edit->setFocus();
+    edit->moveCursor(QTextCursor::End);
+
+    m_inlineEditor = frame;
+    m_inlineEditorAnnotationId = annotationId;
+
+    connect(edit, &QPlainTextEdit::destroyed, this, [this]() {
+        m_inlineEditor = nullptr;
+        m_inlineEditorAnnotationId = 0;
+    });
+
+    edit->installEventFilter(this);
+}
+
+void AnnotationOverlay::mouseDoubleClickEvent(QMouseEvent* event) {
+    if (event->button() != Qt::LeftButton) {
+        event->ignore();
+        return;
+    }
+    const int id = hitTest(event->position());
+    if (id == 0) {
+        event->ignore();
+        return;
+    }
+    openInlineEditor(id);
 }
 
 void AnnotationOverlay::contextMenuEvent(QContextMenuEvent* event) {

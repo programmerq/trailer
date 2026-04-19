@@ -54,12 +54,15 @@ protected:
     void mousePressEvent(QMouseEvent* event) override;
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
+    void mouseDoubleClickEvent(QMouseEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
     bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
     QRectF docRectToView(const QRectF& r) const;
     QPointF toDoc(const QPointF& viewPt) const;
+    int hitTest(const QPointF& viewPt) const;
+    void openInlineEditor(int annotationId);
 
     QPointer<AnnotationStore> m_store;
     AnnotationTool m_tool = AnnotationTool::None;
@@ -78,6 +81,9 @@ private:
     std::function<QPointF(QPointF)> m_viewToDoc;
     TextSelectionProvider m_textSelection;
     SourceSampler m_sourceSampler;
+
+    QPointer<QWidget> m_inlineEditor;
+    int m_inlineEditorAnnotationId = 0;
 };
 
 }  // namespace trailer
