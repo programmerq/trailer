@@ -802,7 +802,13 @@ void MainWindow::onSaveAs() {
     updateTitleForDocument(doc);
 }
 
+void MainWindow::updateUndoRedoActions(IDocument* doc) {
+    m_undoAction->setEnabled(doc && doc->canUndo());
+    m_redoAction->setEnabled(doc && doc->canRedo());
+}
+
 void MainWindow::updateTitleForDocument(IDocument* doc) {
+    updateUndoRedoActions(doc);
     if (!doc) {
         setWindowTitle(tr("Trailer"));
         return;
@@ -854,8 +860,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_previousPageAction->setEnabled(multiplePages);
     m_nextPageAction->setEnabled(multiplePages);
 
-    m_undoAction->setEnabled(doc && doc->canUndo());
-    m_redoAction->setEnabled(doc && doc->canRedo());
+    updateUndoRedoActions(doc);
 
     const bool canEdit = doc && doc->supportsEditing();
     const bool isImage = dynamic_cast<ImageDocument*>(doc) != nullptr;

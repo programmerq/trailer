@@ -62,6 +62,7 @@ private:
     void showSearchBar();
     void hideSearchBar();
     void updateTitleForDocument(IDocument* doc);
+    void updateUndoRedoActions(IDocument* doc);
     int selectedPageForEdit(IDocument* doc) const;
 
     Application* m_app;
