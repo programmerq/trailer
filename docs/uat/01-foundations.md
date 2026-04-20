@@ -18,7 +18,8 @@ Format described in [README.md](README.md).
 - The window title is `Trailer`.
 - Menu bar contains: `File`, `Edit`, `View`, `Tools`, `Help`.
 - No tabs are open; the central area shows no document.
-- The Markup Toolbar is visible but its controls are disabled.
+- The Markup Toolbar is hidden (toggle it on with `View > Toggle
+  Markup Toolbar` or `Ctrl+Shift+A`).
 - The Inspector dock is not visible.
 - The Sidebar dock is visible.
 
@@ -144,17 +145,20 @@ Format described in [README.md](README.md).
 - The window closes.
 - The process exits cleanly (if it was the last window).
 
-### UAT-FND-014 — Close Window with unsaved changes prompts
+### UAT-FND-014 — Close Window with unsaved changes (Known gap)
 
 **Preconditions:** A document is open with unsaved modifications (the
 tab title starts with `• `).
 **Steps:**
 1. `File > Close Window`.
-**Expected:**
+**Expected (future):**
 - A prompt asks whether to save, discard, or cancel.
 - `Save` writes the document and closes the window.
 - `Discard` closes without writing.
 - `Cancel` leaves the window open and the document untouched.
+
+**Current:** the window closes immediately with no prompt; unsaved
+edits are silently discarded. Cross-ref UAT-FND-092 and TODO.md.
 
 ### UAT-FND-015 — Quit via menu
 
@@ -201,17 +205,30 @@ tab title starts with `• `).
 ## Settings persistence
 
 Settings live at the OS-appropriate path (see [DESIGN.md](../../DESIGN.md)
-§5.4). Verifying the contents requires reading the file on disk.
+§5.4 and [src/settings/AppPaths.cpp](../../src/settings/AppPaths.cpp)):
+
+| Platform | Settings dir (contains `settings.toml`, `recent.json`) | Data dir |
+|---|---|---|
+| macOS | `~/Library/Application Support/Trailer/` | same |
+| Windows | `%APPDATA%\Trailer\` (Qt `AppDataLocation`) | same |
+| Linux | `${XDG_CONFIG_HOME:-~/.config}/trailer/` | `${XDG_DATA_HOME:-~/.local/share}/trailer/` |
+
+Note the lowercase `trailer` on Linux and the split of `settingsDir`
+vs `dataDir` — Phase 0 writes everything under `settingsDir`, so the
+Linux data dir may not yet exist.
+
+Verifying the contents requires reading the file on disk.
 
 ### UAT-FND-020 — `settings.toml` is created on first run
 
-**Preconditions:** Delete any existing Trailer config directory.
+**Preconditions:** Delete the Trailer directory at the platform-specific
+path above.
 **Steps:**
 1. Launch the app.
 2. Quit.
 3. Inspect the config directory on disk.
 **Expected:**
-- A `settings.toml` file exists.
+- A `settings.toml` file exists at the platform-specific settings dir.
 - It contains a `[general]` section with at minimum `theme` and
   `open_files_in` keys.
 - It contains a `[files]` section with `auto_save` and `recent_max`.
@@ -305,6 +322,17 @@ launched fresh.
 **Expected:**
 - The Recent list becomes empty.
 - On restart, the list is still empty.
+
+### UAT-FND-037 — Empty Recent menu
+
+**Preconditions:** A fresh profile (no `recent.json`), or click
+`Clear Menu` on an existing one.
+**Steps:**
+1. Open `File > Open Recent`.
+**Expected:**
+- The submenu contains a single disabled `(Empty)` entry and the
+  `Clear Menu` entry. No separator line is drawn between them when the
+  list is empty.
 
 ### UAT-FND-036 — Recent menu omits missing files on click
 
@@ -404,10 +432,11 @@ with one window and one open document.
 **Steps:**
 1. `File > Open…`, pick another file.
 **Expected:**
-- The new file replaces the current tab's contents (or opens in place
-  per whatever we choose — see design doc §5.1). The case exists so we
-  catch regressions to whichever behaviour we pick.
-- Only one window exists; no new window appears.
+- No new window appears.
+- **Current:** a new tab is added to the existing window (identical to
+  `"new_tab"` — [src/app/Application.cpp](../../src/app/Application.cpp)
+  treats both the same). The case exists so we catch regressions once
+  true replace-in-place lands. Cross-ref TODO.md.
 
 ---
 
@@ -422,8 +451,10 @@ default opener for the test file type, or reachable via Finder's
 1. Right-click a PDF in Finder, choose Open With → Trailer.
 **Expected:**
 - If Trailer is not running, it launches and opens the file.
-- If Trailer is running, the existing instance opens the file (no
-  second instance is spawned).
+- If Trailer is running, the existing instance opens the file via
+  `QFileOpenEvent` (no second instance is spawned). This is
+  macOS-specific — see UAT-XCT-050 for the Windows / Linux
+  counterpart.
 - The file appears in `File > Open Recent`.
 
 ### UAT-FND-061 — Drag file onto Trailer's Dock icon
@@ -470,3 +501,18 @@ not crash.
 1. Look for a Preferences / Settings menu entry.
 **Expected (future):** a Preferences dialog exposes every setting.
 **Current:** no such dialog. Users must edit `settings.toml` by hand.
+
+### UAT-FND-092 — Dirty-close confirmation prompt (Known gap)
+
+**Preconditions:** Open a document, edit it so the tab title starts
+with `• `.
+**Steps:**
+1. Close the tab via the tab's `×` button.
+2. Or close the window via `File > Close Window` / the red close button
+   / `Cmd+W` / `Ctrl+W`.
+3. Or quit via `File > Quit` / `Cmd+Q` / `Ctrl+Q`.
+**Expected (future):** a Save / Discard / Cancel prompt appears for
+each dirty document, and cancelling aborts the close.
+**Current:** close proceeds unconditionally; edits are discarded with
+no warning. Applies to tab close, window close, and quit. Cross-ref
+UAT-FND-014, UAT-VWR-011, UAT-XCT-041.

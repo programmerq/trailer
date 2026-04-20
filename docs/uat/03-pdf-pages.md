@@ -254,11 +254,13 @@ visible alongside.
 **Steps:**
 1. `Tools > Crop Pages…`.
 **Expected:**
-- A dialog appears with four margin inputs (top / right / bottom /
-  left) in millimetres (or the unit we pick — flag the actual behaviour).
-- Dialog shows a preview.
-- Dialog offers "Apply to: current page / all pages / page range" or
-  equivalent.
+- A dialog titled `Crop Pages` appears with four margin spin-boxes —
+  Left, Top, Right, Bottom — each suffixed `mm` and accepting
+  fractional values (0.0 – 500.0, one decimal).
+- An `Apply to all pages` checkbox, checked by default. Unchecking it
+  scopes the crop to the current page only. There is no page-range
+  picker yet.
+- OK / Cancel buttons.
 
 ### UAT-PDF-051 — Apply crop to current page
 

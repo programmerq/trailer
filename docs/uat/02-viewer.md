@@ -33,15 +33,18 @@ operations are in [03-pdf-pages.md](03-pdf-pages.md). Image edits are in
 - The Sidebar `Pages` tab shows a single thumbnail (or a placeholder —
   see UAT-VWR-082).
 
-### UAT-VWR-003 — Dialog filter lists supported types
+### UAT-VWR-003 — Dialog filter
 
 **Preconditions:** App launched.
 **Steps:**
 1. `File > Open…`.
 2. Inspect the file-type filter at the bottom of the dialog.
 **Expected:**
-- The filter includes at least: PDF, PNG, JPEG, TIFF, BMP, GIF, WebP.
-- A catch-all "All files" option also exists.
+- **Current:** the filter offers only `All files (*)` — users pick any
+  file and routing is performed by `DocumentRegistry` from the
+  extension / MIME type. Expanding the dropdown to per-type filters
+  (PDF, PNG, JPEG, TIFF, …) is a Known Gap tracked in TODO.md.
+- Native dialog chrome (sidebar, path bar) is provided by the OS.
 
 ### UAT-VWR-004 — Cancelling the dialog
 
@@ -87,7 +90,9 @@ operations are in [03-pdf-pages.md](03-pdf-pages.md). Image edits are in
 **Expected:**
 - That tab closes.
 - The remaining tab is active.
-- If the closed tab was dirty, the close prompts first (see UAT-FND-014).
+- **Current:** close is unconditional even if the tab is dirty — no
+  confirmation prompt. Cross-ref UAT-FND-092 (Known gap) for the
+  planned save/discard/cancel dialog.
 
 ### UAT-VWR-012 — Reorder tabs by dragging
 
@@ -245,7 +250,11 @@ functional.
 
 **Preconditions:** A PDF or image is open at 100% zoom.
 **Steps:**
-1. `View > Zoom In` (shortcut `Cmd++` / `Ctrl++`, also `Ctrl+=`).
+1. `View > Zoom In`. Two shortcuts are bound: the platform
+   `QKeySequence::ZoomIn` default (typically `Cmd++` on macOS,
+   `Ctrl++` on Windows/Linux) and the explicit `Ctrl+=` /
+   `Cmd+=` (for the common case of `+` requiring Shift on US
+   layouts). Try both.
 **Expected:**
 - The rendered content grows. Successive triggers continue to grow up
   to an internal ceiling (roughly 32× for images — above that the

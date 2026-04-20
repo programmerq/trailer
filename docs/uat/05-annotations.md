@@ -28,14 +28,15 @@ serialise them as `/Annot` objects.
 - Contains style controls: Stroke (colour), Fill (colour), Width
   (spinner, 0.5–20.0), Dash (dropdown: Solid, Dashed, Dotted).
 
-### UAT-ANN-002 — Toolbar hides with no document
+### UAT-ANN-002 — Toolbar hidden at launch
 
-**Preconditions:** App open, no tabs.
+**Preconditions:** Fresh app launch, no tabs.
 **Steps:**
-1. Check the toolbar.
+1. Look for the Markup Toolbar.
 **Expected:**
-- The toolbar is visible but its controls are disabled (or the toolbar
-  is hidden — document actual behaviour).
+- **Current:** the toolbar is hidden by default. Toggle it on via
+  `View > Toggle Markup Toolbar` (`Ctrl+Shift+A`). With no tabs, its
+  controls are disabled once shown. Cross-ref UAT-FND-001.
 
 ### UAT-ANN-003 — Toolbar state per tab
 
