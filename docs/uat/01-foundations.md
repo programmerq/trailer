@@ -1,0 +1,472 @@
+# UAT — Foundations
+
+Covers application launch, the window shell, settings, recent files, the
+command-line / file-open pipeline, and drag-and-drop into the app.
+Format described in [README.md](README.md).
+
+---
+
+## Application launch
+
+### UAT-FND-001 — Launch with no arguments
+
+**Preconditions:** App is installed / built. No other Trailer instance running.
+**Steps:**
+1. Run `trailer` with no arguments.
+**Expected:**
+- A single main window appears.
+- The window title is `Trailer`.
+- Menu bar contains: `File`, `Edit`, `View`, `Tools`, `Help`.
+- No tabs are open; the central area shows no document.
+- The Markup Toolbar is visible but its controls are disabled.
+- The Inspector dock is not visible.
+- The Sidebar dock is visible.
+
+### UAT-FND-002 — Launch with one file argument
+
+**Preconditions:** A readable PDF file exists at a known path.
+**Steps:**
+1. Run `trailer path/to/file.pdf`.
+**Expected:**
+- A single main window appears.
+- One tab is open, labelled with the file's basename.
+- The tab is the active tab.
+- The PDF renders in the central area.
+- `File > Open Recent` lists this file as the topmost entry.
+
+### UAT-FND-003 — Launch with multiple file arguments
+
+**Preconditions:** Two readable files exist (any mix of PDF / image).
+**Steps:**
+1. Run `trailer file1.pdf file2.png`.
+**Expected:**
+- One window opens with two tabs, in the order given on the command line.
+- The first argument's tab is the active tab.
+- Each tab shows its respective document.
+- Both files appear in `File > Open Recent`, most recent first.
+
+### UAT-FND-004 — Launch with an unsupported file
+
+**Preconditions:** A file with an unknown extension exists (e.g. `.xyz`).
+**Steps:**
+1. Run `trailer file.xyz`.
+**Expected:**
+- A tab opens for the file.
+- The central view displays an "Unsupported file type" message that
+  includes the path.
+- The document tab is not marked dirty.
+
+### UAT-FND-005 — `--help` prints usage and exits
+
+**Preconditions:** None.
+**Steps:**
+1. Run `trailer --help`.
+**Expected:**
+- Stdout shows usage text including the positional `[files...]` argument
+  and the `--help` / `--version` options.
+- The process exits with status 0.
+- No window appears.
+
+### UAT-FND-006 — `--version` prints a version string and exits
+
+**Preconditions:** None.
+**Steps:**
+1. Run `trailer --version`.
+**Expected:**
+- Stdout shows a version string.
+- Process exits with status 0.
+- No window appears.
+
+### UAT-FND-007 — Launch with a path that does not exist
+
+**Preconditions:** `/tmp/does-not-exist.pdf` is not a file.
+**Steps:**
+1. Run `trailer /tmp/does-not-exist.pdf`.
+**Expected:**
+- A window opens with a tab for the file.
+- The view displays an error / unsupported placeholder (the stub
+  adapter path).
+- The application does not crash.
+
+---
+
+## Window shell
+
+### UAT-FND-010 — Menu structure
+
+**Preconditions:** App launched (no document open).
+**Steps:**
+1. Click each top-level menu in turn.
+**Expected:**
+- `File` contains: `Open…`, `Open Recent ▸`, `Save`, `Save As…`,
+  `Print…`, `Close Window`, `Quit`.
+- `Edit` contains: `Undo`, `Redo`, `Find…`, `Find Next`, `Find Previous`.
+- `View` contains: `Toggle Sidebar`, `Toggle Markup Toolbar`,
+  `Toggle Inspector`, view mode group (`Single Page`, `Two Pages`,
+  `Continuous`), `Previous Page`, `Next Page`, `Zoom In`, `Zoom Out`,
+  `Actual Size`, `Fit to Width`, `Magnifier`.
+- `Tools` contains: `Rotate Left`, `Rotate Right`, `Flip Horizontal`,
+  `Flip Vertical`, `Adjust Size…`, `Adjust Colour…`, `Export As…`,
+  `Crop Image…`, `Insert Pages from File…`, `Crop Pages…`,
+  `Take Screenshot`.
+- `Help` contains: `About Trailer`.
+
+### UAT-FND-011 — Menu state with no document
+
+**Preconditions:** App launched, no tab open.
+**Steps:**
+1. Open each menu.
+**Expected:**
+- Document-specific actions are disabled: `Save`, `Save As…`, `Print…`,
+  `Undo`, `Redo`, `Find…`, `Find Next`, `Find Previous`, all of the
+  `Tools` menu except `Take Screenshot`, all `View` view-mode and page
+  navigation entries.
+- `Open…`, `Open Recent`, `Close Window`, `Quit`, the dock toggles,
+  `Take Screenshot`, and `About Trailer` remain enabled.
+
+### UAT-FND-012 — About dialog
+
+**Preconditions:** App launched.
+**Steps:**
+1. `Help > About Trailer`.
+**Expected:**
+- An About dialog appears containing the app name and version.
+- Closing the dialog returns focus to the main window.
+- **(Platform: macOS)** The menu item is reparented to the application
+  menu (`Trailer > About Trailer`) under macOS's standard menu role.
+
+### UAT-FND-013 — Close Window via menu
+
+**Preconditions:** One window open with no documents.
+**Steps:**
+1. `File > Close Window` (shortcut `Cmd+W` / `Ctrl+W`).
+**Expected:**
+- The window closes.
+- The process exits cleanly (if it was the last window).
+
+### UAT-FND-014 — Close Window with unsaved changes prompts
+
+**Preconditions:** A document is open with unsaved modifications (the
+tab title starts with `• `).
+**Steps:**
+1. `File > Close Window`.
+**Expected:**
+- A prompt asks whether to save, discard, or cancel.
+- `Save` writes the document and closes the window.
+- `Discard` closes without writing.
+- `Cancel` leaves the window open and the document untouched.
+
+### UAT-FND-015 — Quit via menu
+
+**Preconditions:** App launched.
+**Steps:**
+1. `File > Quit` (shortcut `Cmd+Q` / `Ctrl+Q`).
+**Expected:**
+- All windows close.
+- The process exits.
+- **(Platform: macOS)** This is reparented to `Trailer > Quit Trailer`.
+
+### UAT-FND-016 — Toggle Sidebar
+
+**Preconditions:** App launched.
+**Steps:**
+1. `View > Toggle Sidebar` (shortcut `Ctrl+Shift+D`).
+2. Repeat.
+**Expected:**
+- First trigger hides the Sidebar dock.
+- Second trigger shows it again.
+- The `Toggle Sidebar` menu item reflects current state with a check
+  mark.
+
+### UAT-FND-017 — Toggle Markup Toolbar
+
+**Preconditions:** App launched.
+**Steps:**
+1. `View > Toggle Markup Toolbar` (shortcut `Ctrl+Shift+A`).
+2. Repeat.
+**Expected:**
+- The toolbar hides and reappears. Menu item state toggles.
+
+### UAT-FND-018 — Toggle Inspector
+
+**Preconditions:** App launched.
+**Steps:**
+1. `View > Toggle Inspector` (shortcut `Ctrl+Shift+I`).
+2. Repeat.
+**Expected:**
+- The Inspector dock shows and hides. Menu item state toggles.
+
+---
+
+## Settings persistence
+
+Settings live at the OS-appropriate path (see [DESIGN.md](../../DESIGN.md)
+§5.4). Verifying the contents requires reading the file on disk.
+
+### UAT-FND-020 — `settings.toml` is created on first run
+
+**Preconditions:** Delete any existing Trailer config directory.
+**Steps:**
+1. Launch the app.
+2. Quit.
+3. Inspect the config directory on disk.
+**Expected:**
+- A `settings.toml` file exists.
+- It contains a `[general]` section with at minimum `theme` and
+  `open_files_in` keys.
+- It contains a `[files]` section with `auto_save` and `recent_max`.
+
+### UAT-FND-021 — Settings persist across restart
+
+**Preconditions:** Edit `settings.toml` to set `general.theme = "dark"`.
+**Steps:**
+1. Launch the app.
+2. Quit.
+3. Re-read `settings.toml`.
+**Expected:**
+- The `theme` value is still `"dark"`.
+- No settings keys have been silently dropped or reordered in a way
+  that changes semantic meaning.
+
+### UAT-FND-022 — Corrupt `settings.toml` falls back to defaults
+
+**Preconditions:** Write invalid TOML to `settings.toml`.
+**Steps:**
+1. Launch the app.
+**Expected:**
+- The app launches successfully.
+- In-memory settings are the built-in defaults.
+- The corrupt file is either left alone or rewritten with defaults (we
+  should pick one — until we do, either outcome is acceptable, but the
+  app must not crash).
+
+---
+
+## Recent files
+
+### UAT-FND-030 — Opening a file adds it to the Recent menu
+
+**Preconditions:** App launched, no files in Recent menu (or tracking
+starting state).
+**Steps:**
+1. `File > Open…`, pick any supported file.
+**Expected:**
+- `File > Open Recent` now has the just-opened file as the topmost entry.
+- The entry's label is the basename; hovering shows the full path in a
+  tooltip.
+
+### UAT-FND-031 — Recent menu entries open the file
+
+**Preconditions:** At least one entry in `File > Open Recent`.
+**Steps:**
+1. `File > Open Recent`, click an entry.
+**Expected:**
+- The file opens in a new tab (or the routing set by
+  `general.open_files_in`).
+- That entry bubbles to the top of the Recent list.
+
+### UAT-FND-032 — Recent menu deduplicates
+
+**Preconditions:** App launched.
+**Steps:**
+1. Open the same file three times (any mix of `File > Open…`, Recent
+   menu, CLI restart).
+**Expected:**
+- The file appears exactly once in `File > Open Recent`.
+- It is the topmost entry.
+
+### UAT-FND-033 — Recent menu respects `files.recent_max`
+
+**Preconditions:** Set `files.recent_max = 3` in `settings.toml`. App
+launched fresh.
+**Steps:**
+1. Open four distinct files in sequence.
+**Expected:**
+- `File > Open Recent` contains exactly three entries — the three
+  most-recently-opened files.
+- The fourth (oldest) is dropped.
+
+### UAT-FND-034 — Recent menu persists across restart
+
+**Preconditions:** App launched with some Recent entries.
+**Steps:**
+1. Note the current Recent entries in order.
+2. Quit.
+3. Relaunch.
+4. Open `File > Open Recent`.
+**Expected:**
+- The menu contains the same entries in the same order.
+
+### UAT-FND-035 — Recent menu Clear option
+
+**Preconditions:** `File > Open Recent` has ≥1 entry.
+**Steps:**
+1. Click the "Clear Menu" entry at the bottom of the submenu.
+**Expected:**
+- The Recent list becomes empty.
+- On restart, the list is still empty.
+
+### UAT-FND-036 — Recent menu omits missing files on click
+
+**Preconditions:** A file appears in Recent. Delete the file from disk
+while the app is running.
+**Steps:**
+1. Click the Recent entry for the deleted file.
+**Expected:**
+- The app shows an error or opens the stub view (the same path used
+  for a missing file given on the CLI).
+- The entry remains in Recent (we do not silently prune on every click).
+- The app does not crash.
+
+---
+
+## Drag and drop (application window)
+
+### UAT-FND-040 — Drop a file on an empty window opens it
+
+**Preconditions:** App launched, no tabs open.
+**Steps:**
+1. From a file manager, drag a PDF onto the main window.
+2. Release.
+**Expected:**
+- A new tab opens with that PDF active.
+- The file is added to `File > Open Recent`.
+
+### UAT-FND-041 — Drop a file on a window with open tabs
+
+**Preconditions:** App launched with one or more tabs already open.
+Setting `general.open_files_in = "new_tab"`.
+**Steps:**
+1. Drag a file onto the window.
+**Expected:**
+- A new tab is added to the *same* window.
+- The new tab becomes active.
+- Existing tabs are unchanged.
+
+### UAT-FND-042 — Drop multiple files at once
+
+**Preconditions:** App launched.
+**Steps:**
+1. Select three files in the file manager and drag them together onto
+   the window.
+**Expected:**
+- Three new tabs open.
+- All three files are in `File > Open Recent`.
+
+### UAT-FND-043 — Drop a folder
+
+**Preconditions:** App launched.
+**Steps:**
+1. Drag a folder onto the window.
+**Expected:**
+- Either (a) the folder is silently ignored, or (b) an error is shown.
+  The app must not crash. (This is an unspecified behaviour — the case
+  exists to catch regressions when we decide.)
+
+### UAT-FND-044 — Drop non-URL data (text)
+
+**Preconditions:** App launched.
+**Steps:**
+1. Drag selected text from another app onto the Trailer window.
+**Expected:**
+- Drop is rejected (no tab is opened).
+- App does not crash.
+
+---
+
+## Open-files-in routing
+
+### UAT-FND-050 — `open_files_in = "new_tab"` (default)
+
+**Preconditions:** `general.open_files_in = "new_tab"`. App launched
+with one window and one open document.
+**Steps:**
+1. `File > Open…`, pick another file.
+**Expected:**
+- A new tab appears in the same window.
+- The new tab is active.
+
+### UAT-FND-051 — `open_files_in = "new_window"`
+
+**Preconditions:** `general.open_files_in = "new_window"`. App launched
+with one window and one open document.
+**Steps:**
+1. `File > Open…`, pick another file.
+**Expected:**
+- A new main window opens.
+- The new window contains exactly one tab with the newly opened file.
+- The original window is unchanged.
+
+### UAT-FND-052 — `open_files_in = "same_window"`
+
+**Preconditions:** `general.open_files_in = "same_window"`. App launched
+with one window and one open document.
+**Steps:**
+1. `File > Open…`, pick another file.
+**Expected:**
+- The new file replaces the current tab's contents (or opens in place
+  per whatever we choose — see design doc §5.1). The case exists so we
+  catch regressions to whichever behaviour we pick.
+- Only one window exists; no new window appears.
+
+---
+
+## macOS Finder integration (Platform: macOS)
+
+### UAT-FND-060 — Open With → Trailer from Finder
+
+**Preconditions:** Trailer built as a `.app` bundle and set as the
+default opener for the test file type, or reachable via Finder's
+"Open With" menu.
+**Steps:**
+1. Right-click a PDF in Finder, choose Open With → Trailer.
+**Expected:**
+- If Trailer is not running, it launches and opens the file.
+- If Trailer is running, the existing instance opens the file (no
+  second instance is spawned).
+- The file appears in `File > Open Recent`.
+
+### UAT-FND-061 — Drag file onto Trailer's Dock icon
+
+**Preconditions:** Trailer is running.
+**Steps:**
+1. Drag a file from Finder onto the Trailer Dock icon.
+**Expected:**
+- The file opens in the running Trailer instance (via `QFileOpenEvent`).
+- Identical routing to Finder Open With.
+
+### UAT-FND-062 — Command-menu reparenting
+
+**Preconditions:** Trailer running on macOS.
+**Steps:**
+1. Look at the screen menu bar.
+**Expected:**
+- The menu sits at the top of the screen, not inside the window frame.
+- `Trailer > About Trailer` and `Trailer > Quit Trailer` appear under
+  the application menu.
+- `Trailer > Preferences…` may be absent (we don't yet have a
+  preferences UI — cross-ref Phase 8).
+
+---
+
+## Known gaps
+
+These cases describe behaviour that does not yet work. Include them so
+we notice the day they start working and can flip their status.
+
+### UAT-FND-090 — Tab drag-detach to new window (Known gap)
+
+**Preconditions:** App launched with two or more tabs in one window.
+**Steps:**
+1. Drag a tab out of the tab bar and drop it on empty space.
+**Expected (future):** a new window is created containing that tab.
+**Current:** the drag is ignored or the tab snaps back. The app does
+not crash.
+
+### UAT-FND-091 — Preferences dialog (Known gap)
+
+**Preconditions:** App launched.
+**Steps:**
+1. Look for a Preferences / Settings menu entry.
+**Expected (future):** a Preferences dialog exposes every setting.
+**Current:** no such dialog. Users must edit `settings.toml` by hand.
