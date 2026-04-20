@@ -69,6 +69,8 @@ jobs:
 
       - name: Test
         working-directory: build
-        run: ctest -C Release --output-on-failure
+        # UAT tests are labelled `uat` and run locally via
+        # scripts/run-uat.sh on tag. Exclude them from the commit/PR CI.
+        run: ctest -C Release --output-on-failure --label-exclude uat
         env:
           QT_QPA_PLATFORM: offscreen
