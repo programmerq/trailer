@@ -42,6 +42,12 @@ run_suite() {
 
 case "${1:-}" in
     --in-container)
+        # Build outside the mounted workspace. Otherwise the build
+        # dir gets reused across host and container runs and
+        # CMakeCache.txt pins itself to whichever side ran first,
+        # erroring on the other (the paths — /work/... vs
+        # /Users/... — don't match).
+        BUILD_DIR="${BUILD_DIR:-/tmp/trailer-build-uat}"
         run_suite
         ;;
     --host)
