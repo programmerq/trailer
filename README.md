@@ -34,11 +34,67 @@ cmake --build build --parallel
 the Qt install with `-DCMAKE_PREFIX_PATH=$(brew --prefix qt)` if it isn't
 auto-detected.
 
-**Windows.** Use the Qt online installer; open a Developer Command Prompt
-for VS 2022 and set `CMAKE_PREFIX_PATH` to your Qt install
-(e.g. `C:\Qt\6.5.3\msvc2022_64`). Install qpdf via
-[vcpkg](https://vcpkg.io) (`vcpkg install qpdf:x64-windows`) and pass
-`-DCMAKE_TOOLCHAIN_FILE=<vcpkg>/scripts/buildsystems/vcpkg.cmake`.
+**Windows.** The instructions below avoid the Qt online installer
+(which requires a free Qt Account). Both Qt 6 and qpdf are installed
+from source via [vcpkg](https://vcpkg.io). Run everything from a
+**Developer Command Prompt for VS 2022** so the MSVC toolchain is on
+`PATH`.
+
+1. Install prerequisites:
+   - Visual Studio 2022 with the "Desktop development with C++"
+     workload (MSVC, Windows SDK, CMake).
+   - [Git for Windows](https://git-scm.com/download/win).
+
+2. Install vcpkg (once per machine):
+
+   ```bat
+   git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
+   C:\vcpkg\bootstrap-vcpkg.bat
+   ```
+
+3. Build Qt 6 + qpdf from source via vcpkg. **This is slow** — the
+   first Qt build takes roughly one to three hours depending on the
+   machine; subsequent Trailer configures are cheap because vcpkg
+   caches the result.
+
+   ```bat
+   C:\vcpkg\vcpkg install ^
+       qtbase:x64-windows ^
+       qtpdf:x64-windows ^
+       qttools:x64-windows ^
+       qpdf:x64-windows
+   ```
+
+4. Configure and build Trailer, pointing CMake at the vcpkg toolchain:
+
+   ```bat
+   cmake -S . -B build ^
+       -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake ^
+       -DVCPKG_TARGET_TRIPLET=x64-windows ^
+       -DCMAKE_BUILD_TYPE=Release
+   cmake --build build --config Release --parallel
+   ```
+
+*Faster alternative — prebuilt Qt without the installer.* If the
+vcpkg Qt source build is too slow, grab the prebuilt Qt mirror via
+[`aqtinstall`](https://github.com/miurahr/aqtinstall) (also
+account-free):
+
+```bat
+pip install aqtinstall
+aqt install-qt windows desktop 6.5.3 win64_msvc2022_64 -m qtpdf
+```
+
+Then install only qpdf through vcpkg (step 3 shrinks to
+`vcpkg install qpdf:x64-windows`) and add `CMAKE_PREFIX_PATH` to the
+configure command:
+
+```bat
+cmake -S . -B build ^
+    -DCMAKE_PREFIX_PATH=C:\Qt\6.5.3\msvc2022_64 ^
+    -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake ^
+    -DCMAKE_BUILD_TYPE=Release
+```
 
 **Linux.** Install Qt via your distribution (`qt6-base-dev` on
 Debian/Ubuntu) or the Qt online installer. Install qpdf via
