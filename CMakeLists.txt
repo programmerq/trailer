@@ -19,7 +19,18 @@ set(CMAKE_AUTOUIC ON)
 include(CompilerWarnings)
 
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Test Pdf PdfWidgets PrintSupport)
-find_package(qpdf REQUIRED)
+# Prefer a CMake package config (e.g. vcpkg on Windows).  Fall back to
+# pkg-config so that Linux/macOS system packages (libqpdf-dev, brew qpdf)
+# are found without requiring a custom CMAKE_PREFIX_PATH.
+find_package(qpdf CONFIG QUIET)
+if(NOT qpdf_FOUND)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(QPDF REQUIRED IMPORTED_TARGET libqpdf)
+  # Expose the same target name used in target_link_libraries below.
+  if(NOT TARGET qpdf::libqpdf)
+    add_library(qpdf::libqpdf ALIAS PkgConfig::QPDF)
+  endif()
+endif()
 
 qt_standard_project_setup()
 
