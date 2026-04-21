@@ -404,7 +404,7 @@ bool PdfEditor::writeAnnotations(const std::vector<Annotation>& annotations) {
 
 namespace {
 
-QColor colourFromArray(const QPDFObjectHandle& arr) {
+QColor colourFromArray(QPDFObjectHandle arr) {
     if (!arr.isArray() || arr.getArrayNItems() < 3) return QColor();
     const double r = arr.getArrayItem(0).getNumericValue();
     const double g = arr.getArrayItem(1).getNumericValue();
@@ -416,7 +416,7 @@ QColor colourFromArray(const QPDFObjectHandle& arr) {
     return c;
 }
 
-QRectF rectFromArray(const QPDFObjectHandle& arr, double pageHeight) {
+QRectF rectFromArray(QPDFObjectHandle arr, double pageHeight) {
     if (!arr.isArray() || arr.getArrayNItems() < 4) return {};
     const double x1 = arr.getArrayItem(0).getNumericValue();
     const double y1 = arr.getArrayItem(1).getNumericValue();
@@ -499,7 +499,7 @@ std::vector<Annotation> PdfEditor::readAnnotations() const {
                     QPDFObjectHandle le = entry.getKey("/LE");
                     bool isArrow = false;
                     if (le.isArray() && le.getArrayNItems() >= 2) {
-                        const QPDFObjectHandle end = le.getArrayItem(1);
+                        QPDFObjectHandle end = le.getArrayItem(1);
                         if (end.isName() && end.getName() != "/None") isArrow = true;
                     }
                     a.type = isArrow ? AnnotationType::Arrow
