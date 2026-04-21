@@ -9,10 +9,19 @@ using namespace trailer;
 class TestAppPaths : public QObject {
     Q_OBJECT
 private slots:
+    void initTestCase();
     void settingsAndDataAreNonEmpty();
     void fileHelpersLiveUnderDirs();
     void platformShape();
 };
+
+void TestAppPaths::initTestCase() {
+    // Mirror the production Application constructor so that
+    // QStandardPaths returns the same platform-specific directory the
+    // real app would use (matters most on Windows and macOS).
+    QCoreApplication::setApplicationName(QStringLiteral("Trailer"));
+    QCoreApplication::setOrganizationName(QStringLiteral("Trailer"));
+}
 
 void TestAppPaths::settingsAndDataAreNonEmpty() {
     QVERIFY(!AppPaths::settingsDir().isEmpty());

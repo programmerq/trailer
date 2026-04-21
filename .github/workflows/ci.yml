@@ -68,6 +68,20 @@ jobs:
       - name: Build
         run: cmake --build build --config Release --parallel
 
+      - name: Deploy Qt DLLs for tests (Windows)
+        if: runner.os == 'Windows'
+        # windeployqt copies the platform plugin (qoffscreen.dll) and any other
+        # Qt DLLs needed at runtime into the same directory as the test binaries,
+        # so the offscreen QPA platform is discoverable without a full Qt install
+        # in PATH.
+        run: |
+          windeployqt --no-translations --no-system-d3d-compiler --no-opengl-sw --release build/Release/test_adapters.exe
+          # Explicitly include the offscreen platform plugin (used in CI headless
+          # tests via QT_QPA_PLATFORM=offscreen) which windeployqt omits by default.
+          New-Item -ItemType Directory -Force build/Release/platforms | Out-Null
+          Copy-Item "$env:QT_ROOT_DIR\plugins\platforms\qoffscreen.dll" build/Release/platforms/
+        shell: pwsh
+
       - name: Test
         working-directory: build
         # UAT tests are labelled `uat` and run locally via
