@@ -45,11 +45,12 @@ jobs:
             libxcb-xkb1 \
             libxkbcommon-x11-0 \
             libcups2-dev \
+            pkg-config \
             libqpdf-dev
 
       - name: Install macOS build deps
         if: runner.os == 'macOS'
-        run: brew install qpdf
+        run: brew install qpdf pkg-config
 
       - name: Install Windows build deps
         if: runner.os == 'Windows'
