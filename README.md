@@ -30,9 +30,9 @@ cmake --build build --parallel
 ### Platform notes
 
 **macOS.** Install Qt via the Qt online installer or Homebrew
-(`brew install qt`). Install qpdf via `brew install qpdf`. Point CMake at
-the Qt install with `-DCMAKE_PREFIX_PATH=$(brew --prefix qt)` if it isn't
-auto-detected.
+(`brew install qt`). Install qpdf and pkg-config via
+`brew install qpdf pkg-config`. Point CMake at the Qt install with
+`-DCMAKE_PREFIX_PATH=$(brew --prefix qt)` if it isn't auto-detected.
 
 **Windows.** The instructions below avoid the Qt online installer
 (which requires a free Qt Account). Both Qt 6 and qpdf are installed
@@ -97,8 +97,9 @@ cmake -S . -B build ^
 ```
 
 **Linux.** Install Qt via your distribution (`qt6-base-dev` on
-Debian/Ubuntu) or the Qt online installer. Install qpdf via
-`sudo apt-get install libqpdf-dev` (or equivalent).
+Debian/Ubuntu) or the Qt online installer. Install qpdf and pkg-config via
+`sudo apt-get install pkg-config libqpdf-dev` (or the equivalent for your
+distribution).
 
 ## Run
 
