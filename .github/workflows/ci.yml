@@ -21,7 +21,7 @@ jobs:
       - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.5.3'
+          version: '6.11.0'
           modules: 'qtpdf'
           cache: true
 
