@@ -82,6 +82,21 @@ jobs:
           Copy-Item "$env:QT_ROOT_DIR\plugins\platforms\qoffscreen.dll" build/Release/platforms/
         shell: pwsh
 
+      - name: Run test_adapters directly (Windows diagnostic)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        # Run the binary outside ctest so its stdout is not piped through ctest's
+        # block-buffered pipe – a crash before the buffer fills would otherwise
+        # produce no visible output at all.
+        run: |
+          Write-Host "=== test_adapters direct output ==="
+          & "build\Release\test_adapters.exe" "-v1" 2>&1
+          Write-Host "=== Exit code: $LASTEXITCODE ==="
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_DEBUG_PLUGINS: 1
+
       - name: Test
         working-directory: build
         # UAT tests are labelled `uat` and run locally via
