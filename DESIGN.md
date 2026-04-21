@@ -69,6 +69,178 @@ account system, no cloud).
 
 ---
 
+## 2.3 Design philosophy for ongoing development
+
+These principles apply to every phase and every feature. Contributors,
+reviewers, and AI coding agents should treat them as standing constraints,
+not aspirational notes.
+
+**The document is the UI.**
+Every piece of application chrome — toolbar, sidebar, status bar, panel — exists
+entirely in service of the document in front of the user. When in doubt, remove
+UI rather than add it. The document should feel like it *fills the room*, not
+like it is sitting inside an application container.
+
+**Progressive disclosure.**
+The full feature set (OCR, background removal, annotations, signatures, colour
+management) must never overwhelm a first-time user who just wants to read a PDF.
+The app should boot into a state that a technically unsophisticated user can
+navigate within five seconds. Advanced features reveal themselves at the moment
+of need — not up front.
+
+**Forgiveness and reversibility.**
+Destructive operations (delete page, crop, flatten, redact) must require
+explicit confirmation. Undo must work across all edit types. Auto-save snapshots
+exist locally and are transparent. Users should never be afraid of the app.
+
+**Zero jargon in the default surface.**
+Terms such as "colour space," "ICC profile," "DPI," "rasterize," and "flatten
+annotations" must not appear in menus or status bars visible to default users.
+These terms belong in the Advanced settings pane or developer documentation.
+Default-mode language should read like: *Save a copy*, *Print quality*,
+*Sharpen*.
+
+**Platform conventions are non-negotiable.**
+- macOS: `⌘W` closes a tab (not the window); the menu bar lives at the top of
+  the screen; files open into existing windows by default.
+- Windows: Alt-underlined keyboard accelerators in menus; title-bar controls on
+  the right; standard common-dialog patterns.
+- Linux: XDG-portal dialogs preferred; respect the active desktop environment's
+  window-management idioms.
+
+These conventions must be enforced as part of code review, not left to
+individual contributor judgment.
+
+**Keyboard-first, pointer-friendly.**
+Every action has a keyboard shortcut that is discoverable from the menu.
+Pointer targets meet a minimum of 44 × 44 pt (following platform HIG
+recommendations). Scroll, zoom, and pan are instant and smooth — jank at this
+layer destroys trust more than almost anything else.
+
+**Measured, not decorative.**
+Animations exist only to communicate state changes (panel opening, progress
+completion, drag-and-drop confirmation). No gratuitous transitions. Maximum
+duration: 150–200 ms. Prefer easing that decelerates (ease-out) to give a
+sense of physical weight without feeling sluggish. The "Reduce motion"
+setting (§6.12) must suppress all non-essential animation.
+
+---
+
+## 2.4 Designing for real, non-technical end users
+
+### 2.4.1 The developer and the user are not the same person
+
+The developer (or AI coding agent) is fluent in the codebase, knows what the
+app is *supposed* to do, and interprets ambiguous UI charitably. A real
+non-technical end user does not. They will:
+
+- Click where the developer never expected.
+- Read error messages literally and completely.
+- Abandon a flow at the first moment of uncertainty.
+- Blame themselves before blaming the software.
+
+This asymmetry is permanent and must be designed around, not explained away.
+
+AI coding agents are subject to the same limitation in a different direction:
+they can generate and evaluate code fluently but cannot simulate the reaction of
+a 58-year-old retired teacher trying to redact a name from a PDF for the first
+time. Neither developer intuition nor agent output is a substitute for exposure
+to real users.
+
+### 2.4.2 Practical guidelines
+
+**Write the walk-through before building the feature.**
+Before implementation starts, write down the steps a person who has never seen
+the app would take to accomplish the goal. If step 3 requires knowing what
+step 1 did, the design has failed. Refactor the design until the steps are
+self-evident.
+
+**Error messages must answer: "What do I do now?"**
+Not "what went wrong technically." The message "Could not open file" is
+incomplete. "Could not open file — the file may be damaged or in an unsupported
+format. Try exporting it from its original application first." is actionable.
+
+**Empty states must be welcoming and actionable.**
+No recent files, no search results, failed-to-open — each of these states must
+contain a clear, friendly suggestion. An icon and silence is not sufficient.
+
+**First-run experience has exactly one job.**
+The app should open with an unambiguous prompt: *Open a file* with a visible
+drag-target and a file-picker button. Nothing more. All preferences, settings,
+and advanced features are one deliberate navigation away, never in the way.
+
+**Every preference that can be mis-set should have a visible reset.**
+If a non-technical user can accidentally place a setting in a bad state, a
+"Reset to default" control should be adjacent. The privacy wipe in settings
+is a good model: one deliberate action, clearly labelled.
+
+**Don't trust developer intuition alone.**
+Informal hallway tests — "here is the app, try to crop this image" with someone
+who is not an engineer — routinely surface friction points that are completely
+invisible from inside the codebase. Encourage these tests at each phase
+milestone.
+
+---
+
+## 2.5 UX friction testing and personas
+
+### 2.5.1 The gap between agents and users
+
+No current LLM or automation agent navigates a native desktop GUI with the
+fluency of a real human user. Playwright/Selenium-style agents work for web
+apps but are awkward for Qt widgets. Vision-capable models can *review* a
+screenshot and identify layout problems but cannot yet fluidly interact with
+the app to discover flow friction under realistic conditions.
+
+This gap is a known and temporary limitation. The infrastructure to support
+richer agent-based UX testing should be designed *now*, even though the
+execution model is not yet mature.
+
+### 2.5.2 Persona-based critique (available today)
+
+A vision-capable LLM can be given a screenshot of any UI state plus a persona
+prompt and asked to narrate what a user with that persona would do next, what
+is confusing, and what they are afraid to click. This produces actionable
+feedback with zero additional tooling investment.
+
+**Defined personas for Trailer:**
+
+| Persona | Description | Key anxieties |
+|---|---|---|
+| **The office non-technical user** | Works with PDFs daily (invoices, contracts, forms) but has no image-editing background. Uses a Windows laptop. | "Will this break my file?" "Where did my changes go?" "I don't understand this error." |
+| **The older careful user** | Retired or semi-retired; cautious; double-checks everything; prefers explicit Save over auto-save. | "I need to know when it saves." "Small text is hard to read." "Too many options." |
+| **The power migrator** | Moving from macOS Preview or Adobe Acrobat Reader; has strong muscle memory; frustrated by missing keyboard shortcuts or changed terminology. | "Where is the equivalent of [feature]?" "Why is this in a different menu?" |
+| **The occasional user** | Opens the app once every few weeks to do one specific thing (sign a form, crop a screenshot). Has forgotten everything from last time. | "What does this button do again?" "I don't remember how I did this last time." |
+
+### 2.5.3 Process: screenshot audit at each milestone
+
+Before any phase milestone is declared complete:
+
+1. Take a screenshot (or short screen recording) of every distinct UI state
+   introduced by that phase: the default empty state, a document open, the
+   new feature in use, any dialog or confirmation prompt, and any error state
+   reachable through normal use.
+2. Run each screenshot through at least the *office non-technical user* and
+   *older careful user* persona critique prompts.
+3. File issues for any friction point that would cause a user in that persona
+   to hesitate, mis-navigate, or abandon the flow.
+4. Attach the screenshots as CI artifacts so reviewers can inspect them without
+   running the app.
+
+### 2.5.4 Long-term: structured agent UX test suites
+
+As multimodal and tool-using agents mature, the expectation is to extend this
+process into a repeatable agent test suite that walks through defined user
+flows and reports friction points in a structured format. The design of those
+flows, the defined personas above, and the screenshot infrastructure from
+§2.5.3 are the foundations that make this extension possible when the agent
+capability catches up.
+
+Contributions that improve the scaffolding for agent-driven UX testing are
+explicitly welcome.
+
+---
+
 ## 3. Recommended technology stack
 
 The agent may substitute equivalents, but these are the recommended choices.
