@@ -82,7 +82,7 @@ account-free):
 
 ```bat
 pip install aqtinstall
-aqt install-qt windows desktop 6.5.3 win64_msvc2022_64 -m qtpdf
+aqt install-qt windows desktop 6.8.0 win64_msvc2022_64 -m qtpdf
 ```
 
 Then install only qpdf through vcpkg (step 3 shrinks to
@@ -91,7 +91,7 @@ configure command:
 
 ```bat
 cmake -S . -B build ^
-    -DCMAKE_PREFIX_PATH=C:\Qt\6.5.3\msvc2022_64 ^
+    -DCMAKE_PREFIX_PATH=C:\Qt\6.8.0\msvc2022_64 ^
     -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake ^
     -DCMAKE_BUILD_TYPE=Release
 ```
