@@ -24,7 +24,6 @@ namespace trailer {
 AnnotationOverlay::AnnotationOverlay(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_TransparentForMouseEvents, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
-    setAttribute(Qt::WA_TranslucentBackground, true);
     setMouseTracking(true);
     m_docToView  = [](QPointF p, int /*page*/) { return p; };
     m_viewToDoc  = [](QPointF p, int /*page*/) { return p; };
