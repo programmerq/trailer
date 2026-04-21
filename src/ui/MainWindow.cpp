@@ -26,6 +26,7 @@
 #include <QGuiApplication>
 #include <QImageWriter>
 #include <QKeySequence>
+#include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
