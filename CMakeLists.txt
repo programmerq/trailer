@@ -122,5 +122,22 @@ set_target_properties(trailer PROPERTIES
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
 )
 
+# Linux-to-Windows mingw-w64 cross-compile workaround.
+# Arch's mingw-w64-gcc defaults to MSVCRT, and recent MSVCRT import
+# libs no longer export `__argc` as a data symbol, which Qt 6.10's
+# prebuilt libQt6EntryPoint.a references unconditionally. Rather
+# than patch the toolchain, skip Qt's WinMain wrapper and let
+# main() live in the console subsystem. QApplication reads the
+# command line via GetCommandLineW() internally, so this doesn't
+# change runtime behaviour — just adds a console window when the
+# cross-compiled .exe launches. Native Windows builds (vcpkg /
+# aqtinstall via the Windows CI matrix) are unaffected.
+if(MINGW AND CMAKE_CROSSCOMPILING)
+    set_target_properties(trailer PROPERTIES
+        WIN32_EXECUTABLE OFF
+        QT_NO_ENTRYPOINT ON
+    )
+endif()
+
 enable_testing()
 add_subdirectory(tests)
