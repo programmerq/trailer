@@ -54,6 +54,12 @@ private slots:
     void onCropPages();
     void onAbout();
     void onCurrentDocumentChanged(IDocument* doc);
+    // Invoked whenever the active document's annotation store mutates
+    // (add / remove / update / undo / redo). Refreshes the window
+    // title, dirty marker, and Undo/Redo action state. Must be a
+    // member function — not a lambda — so the Qt::UniqueConnection
+    // flag in the connect() call actually takes effect.
+    void onActiveAnnotationStoreChanged();
 
 private:
     void buildMenus();

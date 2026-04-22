@@ -270,11 +270,14 @@ void Inspector::setDocument(IDocument* doc) {
     m_store = doc ? doc->annotations() : nullptr;
     m_id = 0;
     if (m_store) {
+        // Qt::UniqueConnection is a no-op for lambdas (Qt rejects the
+        // call with a warning), so we rely on the explicit disconnect
+        // above to keep this connection unique.
         connect(m_store, &AnnotationStore::changed, this, [this]() {
             rebuildFromStore();
             rebuildAnnotationList();
             rebuildDocumentInfo();
-        }, Qt::UniqueConnection);
+        });
     }
     rebuildDocumentInfo();
     rebuildAnnotationList();
@@ -285,11 +288,12 @@ void Inspector::setAnnotation(AnnotationStore* store, int id) {
     if (store && store != m_store) {
         if (m_store) disconnect(m_store, nullptr, this, nullptr);
         m_store = store;
+        // See setDocument() for why this isn't Qt::UniqueConnection.
         connect(m_store, &AnnotationStore::changed, this, [this]() {
             rebuildFromStore();
             rebuildAnnotationList();
             rebuildDocumentInfo();
-        }, Qt::UniqueConnection);
+        });
     }
     m_id = id;
     rebuildFromStore();

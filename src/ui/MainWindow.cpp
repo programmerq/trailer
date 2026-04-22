@@ -872,8 +872,13 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
         doc->setAnnotationStyle(m_markupToolbar->style());
         doc->setAnnotationTool(m_markupToolbar->activeTool());
         if (auto* store = doc->annotations()) {
+            // Qt::UniqueConnection only works with pointer-to-member
+            // slots — lambdas are silently rejected with a warning.
+            // Connecting to a named slot lets this be called
+            // repeatedly (every tab switch, every reopen) without
+            // accumulating duplicate connections.
             connect(store, &AnnotationStore::changed, this,
-                    [this, doc]() { updateTitleForDocument(doc); },
+                    &MainWindow::onActiveAnnotationStoreChanged,
                     Qt::UniqueConnection);
         }
     }
@@ -931,6 +936,14 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
 
     syncViewModeActions(doc);
     updateTitleForDocument(doc);
+}
+
+void MainWindow::onActiveAnnotationStoreChanged() {
+    // The changed signal is connected to whichever document is
+    // current when it first becomes visible; the document's own
+    // lifetime outlives the tab it's shown in, so dispatch through
+    // the tab widget rather than capturing a pointer.
+    updateTitleForDocument(m_documentView->currentDocument());
 }
 
 void MainWindow::syncViewModeActions(IDocument* doc) {
