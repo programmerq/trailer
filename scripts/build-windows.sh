@@ -59,7 +59,7 @@ resolve_mingw_dll_dir() {
 }
 
 MINGW_DIRS=()
-for dll in libstdc++-6.dll libwinpthread-1.dll libgcc_s_seh-1.dll; do
+for dll in libstdc++-6.dll libwinpthread-1.dll libgcc_s_seh-1.dll zlib1.dll; do
     dir=$(resolve_mingw_dll_dir "$dll")
     if [[ -n "$dir" ]]; then
         # dedupe
@@ -70,6 +70,13 @@ for dll in libstdc++-6.dll libwinpthread-1.dll libgcc_s_seh-1.dll; do
         if [[ $already -eq 0 ]]; then MINGW_DIRS+=("$dir"); fi
     fi
 done
+# Ubuntu's libz-mingw-w64 drops zlib1.dll under
+# /usr/x86_64-w64-mingw32/bin, which isn't always on g++'s
+# -print-file-name search path. Add it as a fallback so collect_dlls
+# can find zlib1.dll (which qpdf30.dll pulls in dynamically).
+if [[ -d /usr/x86_64-w64-mingw32/bin ]]; then
+    MINGW_DIRS+=(/usr/x86_64-w64-mingw32/bin)
+fi
 
 QT_BIN=${QT_DIR:-/opt/qt/6.10.3/mingw_64}/bin
 QPDF_BIN=${QPDF_DIR:-/opt/qpdf}/bin
