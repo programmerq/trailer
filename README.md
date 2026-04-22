@@ -102,15 +102,12 @@ Debian/Ubuntu) or the Qt online installer. Install qpdf and pkg-config via
 distribution).
 
 **Cross-compile Windows from Linux.** A Docker-based mingw-w64 setup
-lives at [docker/windows/Dockerfile](docker/windows/Dockerfile) (Arch
-+ aqtinstall Qt 6 MinGW + the prebuilt qpdf mingw64 release). Run
-`scripts/build-windows.sh` — the script builds the image on first
-use, cross-compiles `trailer.exe`, and drops it plus required Qt and
-runtime DLLs into `build-windows/`. Intended for local use; not wired
-into CI. The cross-compiled binary runs in the console subsystem
-(a terminal window appears on launch) — a workaround for a CRT ABI
-mismatch between Arch's mingw-w64 and Qt's prebuilt EntryPoint
-library. Native Windows builds via vcpkg are unaffected.
+lives at [docker/windows/Dockerfile](docker/windows/Dockerfile)
+(Ubuntu 24.04 + aqtinstall Qt 6 MinGW + qpdf built from source
+against the same toolchain). Run `scripts/build-windows.sh` — the
+script builds the image on first use, cross-compiles `trailer.exe`,
+and drops it plus required Qt and runtime DLLs into `build-windows/`.
+Intended for local use; not wired into CI.
 
 ## Run
 
