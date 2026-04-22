@@ -23,6 +23,7 @@
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
 #include "ui/MarkupToolbar.h"
+#include "ui/SearchBar.h"
 
 #include <QAction>
 #include <QFont>
@@ -87,6 +88,24 @@ QString writePdfWithKeyword(const QString& path, const QString& keyword) {
     return path;
 }
 
+// Like writePdfWithKeyword, but stamps the keyword `count` times at
+// vertically staggered positions so there are multiple distinct
+// matches for Find Next / Find Previous to walk through.
+QString writePdfWithKeywordTimes(const QString& path, const QString& keyword, int count) {
+    QPdfWriter writer(path);
+    writer.setPageSize(QPageSize(QPageSize::A4));
+    QPainter p(&writer);
+    QFont font(QStringLiteral("Helvetica"));
+    font.setPointSize(24);
+    p.setFont(font);
+    for (int i = 0; i < count; ++i) {
+        p.drawText(300, 400 + i * 800,
+                   QStringLiteral("Trailer fixture hit #%1: %2").arg(i).arg(keyword));
+    }
+    p.end();
+    return path;
+}
+
 // Writes a one-page PDF that imitates the structure an OCR tool
 // (Tesseract → pdfsandwich, Acrobat OCR, etc.) produces: a scanned
 // raster on top, with an invisible text layer behind it carrying the
@@ -115,6 +134,16 @@ QString writeOcrLayerPdf(const QString& path, const QString& keyword) {
                QStringLiteral("OCR fixture — keyword: ") + keyword);
     p.end();
     return path;
+}
+
+// Sends a synthesized QKeyEvent directly to `target`. Same rationale
+// as sendMouse below — offscreen is happier with sendEvent than the
+// QTest::keyClick helpers.
+void sendKey(QWidget* target, Qt::Key key) {
+    QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier);
+    QApplication::sendEvent(target, &press);
+    QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier);
+    QApplication::sendEvent(target, &release);
 }
 
 // Sends a synthesized QMouseEvent directly to `target`. QTest::mouseClick
@@ -150,9 +179,13 @@ private slots:
 
     void uat_vwr_061_findMatchesInPdfText();
     void uat_vwr_061b_findMatchesInOcrLayerPdf();
+    void uat_vwr_062_findNextPrevWrap();
+    void uat_vwr_063_escapeClosesSearch();
+    void uat_vwr_065_searchWithNoMatches();
     void uat_ann_010_rectangleToolCreatesAnnotation();
     void uat_ann_012_lineToolCreatesAnnotation();
     void uat_ann_060_undoAddRectangle();
+    void uat_ann_063_redoAfterUndo();
 
 private:
     QTemporaryDir m_scratch;
@@ -274,6 +307,173 @@ void TestUatSearchAndMarkup::uat_vwr_061b_findMatchesInOcrLayerPdf() {
         5000);
 
     QTRY_VERIFY_WITH_TIMEOUT(view->currentSearchResultIndex() >= 0, 5000);
+}
+
+// UAT-VWR-062 — Find Next / Find Previous advance and wrap.
+//
+// With several matches in the document, verify that:
+//   * Return / Next bumps currentSearchResultIndex forward.
+//   * Pressing Next past the last match wraps back to 0.
+//   * Previous walks back and wraps at the beginning to rowCount-1.
+//
+// Drives the SearchBar signals directly (findNextRequested /
+// findPreviousRequested) — same path as the toolbar buttons and the
+// Edit > Find Next / Find Previous menu actions.
+void TestUatSearchAndMarkup::uat_vwr_062_findNextPrevWrap() {
+    QVERIFY(m_scratch.isValid());
+    const QString keyword = QStringLiteral("polaron");
+    const int copies = 3;
+    const QString pdfPath = writePdfWithKeywordTimes(
+        m_scratch.filePath(QStringLiteral("uat_vwr_062.pdf")), keyword, copies);
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+
+    QAction* findAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
+                                         QStringLiteral("&Find…"));
+    QVERIFY(findAction);
+    findAction->trigger();
+    QApplication::processEvents();
+
+    auto* lineEdit = mw->findChild<QLineEdit*>();
+    QVERIFY(lineEdit);
+    lineEdit->setText(keyword);
+
+    auto* view = mw->findChild<QPdfView*>();
+    QVERIFY(view);
+    // Wait for all `copies` matches to land. QPdfSearchModel streams
+    // rowsInserted as the worker finds each hit; if we only wait for
+    // rowCount > 0, the wrap assertion below races the worker.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view->searchModel() != nullptr
+            && view->searchModel()->rowCount(QModelIndex()) >= copies,
+        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(view->currentSearchResultIndex() >= 0, 5000);
+
+    auto* bar = mw->findChild<SearchBar*>();
+    QVERIFY(bar);
+    const int startIdx = view->currentSearchResultIndex();
+    QCOMPARE(startIdx, 0);
+
+    emit bar->findNextRequested();
+    QApplication::processEvents();
+    QCOMPARE(view->currentSearchResultIndex(), 1);
+
+    emit bar->findNextRequested();
+    QApplication::processEvents();
+    QCOMPARE(view->currentSearchResultIndex(), 2);
+
+    // Wrap forward.
+    emit bar->findNextRequested();
+    QApplication::processEvents();
+    QCOMPARE(view->currentSearchResultIndex(), 0);
+
+    // Wrap backward.
+    emit bar->findPreviousRequested();
+    QApplication::processEvents();
+    QCOMPARE(view->currentSearchResultIndex(), copies - 1);
+}
+
+// UAT-VWR-063 — Escape closes the search bar and clears highlights.
+void TestUatSearchAndMarkup::uat_vwr_063_escapeClosesSearch() {
+    QVERIFY(m_scratch.isValid());
+    const QString keyword = QStringLiteral("hippogryph");
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_vwr_063.pdf")), keyword);
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+
+    QAction* findAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
+                                         QStringLiteral("&Find…"));
+    findAction->trigger();
+    QApplication::processEvents();
+
+    auto* bar = mw->findChild<SearchBar*>();
+    QVERIFY(bar);
+    QVERIFY(bar->isVisible());
+
+    auto* lineEdit = mw->findChild<QLineEdit*>();
+    QVERIFY(lineEdit);
+    lineEdit->setText(keyword);
+
+    auto* view = mw->findChild<QPdfView*>();
+    QVERIFY(view);
+    QTRY_VERIFY_WITH_TIMEOUT(view->currentSearchResultIndex() >= 0, 5000);
+
+    // Send Escape to the SearchBar; its keyPressEvent emits dismissed,
+    // which MainWindow::hideSearchBar hears and in turn calls
+    // clearSearch on the current document.
+    sendKey(bar, Qt::Key_Escape);
+    QApplication::processEvents();
+
+    QVERIFY2(!bar->isVisible(),
+             "SearchBar should be hidden after Escape");
+    QCOMPARE(view->currentSearchResultIndex(), -1);
+}
+
+// UAT-VWR-065 — Typing a non-matching query is a harmless no-op.
+//
+// The search bar stays open, nothing crashes, the model reports zero
+// results, and the view does not promote any row to current. findNext
+// and findPrevious also no-op against an empty result set — this
+// exercises the count == 0 guard in PdfDocument::findNext/Previous.
+void TestUatSearchAndMarkup::uat_vwr_065_searchWithNoMatches() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_vwr_065.pdf")),
+        QStringLiteral("unicorn"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+
+    QAction* findAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
+                                         QStringLiteral("&Find…"));
+    findAction->trigger();
+    QApplication::processEvents();
+
+    auto* lineEdit = mw->findChild<QLineEdit*>();
+    QVERIFY(lineEdit);
+    lineEdit->setText(QStringLiteral("zzzz_no_such_word_zzzz"));
+
+    auto* view = mw->findChild<QPdfView*>();
+    QVERIFY(view);
+
+    // Give the async search a beat to run, then confirm it turned up
+    // nothing and the view wasn't nudged into a current-result state.
+    // QTRY_VERIFY with a shorter budget — we want to observe the
+    // steady state, not wait for something to happen.
+    QTest::qWait(500);
+    QVERIFY(view->searchModel() != nullptr);
+    QCOMPARE(view->searchModel()->rowCount(QModelIndex()), 0);
+    QCOMPARE(view->currentSearchResultIndex(), -1);
+
+    // Find Next / Previous against zero matches must stay -1 (not -1
+    // accidentally wrapped modulo zero, which would crash or go to an
+    // invalid index).
+    auto* bar = mw->findChild<SearchBar*>();
+    QVERIFY(bar);
+    emit bar->findNextRequested();
+    QApplication::processEvents();
+    QCOMPARE(view->currentSearchResultIndex(), -1);
+    emit bar->findPreviousRequested();
+    QApplication::processEvents();
+    QCOMPARE(view->currentSearchResultIndex(), -1);
 }
 
 // UAT-ANN-010 — Rectangle tool creates an annotation on click-drag.
@@ -412,6 +612,66 @@ void TestUatSearchAndMarkup::uat_ann_060_undoAddRectangle() {
     QApplication::processEvents();
 
     QCOMPARE(store->count(), baseline);
+}
+
+// UAT-ANN-063 — Redo after undo reapplies the change.
+//
+// Extends UAT-ANN-060 one step further: after the rectangle has been
+// undone, Edit > Redo must bring it back. This exercises the same
+// MainWindow::updateUndoRedoActions wiring that UAT-ANN-060 proved is
+// hooked up — Redo's enabled state flips to true as a side effect of
+// the AnnotationStore::changed signal from undo().
+void TestUatSearchAndMarkup::uat_ann_063_redoAfterUndo() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_063.pdf")),
+        QStringLiteral("fixture"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto* dv = mw->findChild<DocumentView*>();
+    IDocument* doc = dv->currentDocument();
+    QVERIFY(doc);
+    AnnotationStore* store = doc->annotations();
+    const int baseline = store->count();
+
+    auto* markup = mw->findChild<MarkupToolbar*>();
+    QAction* rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
+    QVERIFY(rectAction);
+    rectAction->setChecked(true);
+    QApplication::processEvents();
+
+    auto* overlay = mw->findChild<AnnotationOverlay*>();
+    QVERIFY(overlay);
+
+    dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
+    QCOMPARE(store->count(), baseline + 1);
+
+    QAction* undoAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
+                                         QStringLiteral("&Undo"));
+    QAction* redoAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
+                                         QStringLiteral("&Redo"));
+    QVERIFY(undoAction);
+    QVERIFY(redoAction);
+
+    undoAction->trigger();
+    QApplication::processEvents();
+    QCOMPARE(store->count(), baseline);
+
+    QVERIFY2(redoAction->isEnabled(),
+             "Redo action should be enabled after an undo");
+    redoAction->trigger();
+    QApplication::processEvents();
+    QCOMPARE(store->count(), baseline + 1);
+    QCOMPARE(store->annotations().back().type, AnnotationType::Rectangle);
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG
