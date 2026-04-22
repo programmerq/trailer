@@ -344,15 +344,47 @@ void PdfDocument::setSearchQuery(const QString& query) {
     if (!m_searchModel) {
         m_searchModel = std::make_unique<QPdfSearchModel>();
         m_searchModel->setDocument(m_doc.get());
+        // setSearchString dispatches the actual search to a worker
+        // thread — rowCount() is still 0 when this function returns.
+        // Without this hook, the synchronous
+        // setCurrentSearchResultIndex call below runs before any
+        // matches exist, so the view never highlights the first hit
+        // even when the model eventually populates. That's the
+        // "Find found nothing" bug on OCR'd PDFs.
+        //
+        // Using the search model as the context so the lambda is
+        // torn down automatically with it. PdfDocument itself isn't a
+        // QObject so we can't bind to a member slot directly.
+        QObject::connect(
+            m_searchModel.get(), &QAbstractItemModel::rowsInserted,
+            m_searchModel.get(),
+            [this](const QModelIndex&, int, int) { onSearchResultsPopulated(); });
     }
     m_searchModel->setSearchString(query);
     m_currentResult = query.isEmpty() ? -1 : 0;
     if (m_view) {
         m_view->setSearchModel(m_searchModel.get());
+        // Clear the view's current index so a late rowsInserted from
+        // the *previous* query can't be mistaken for in-flight user
+        // navigation by the onSearchResultsPopulated guard.
+        m_view->setCurrentSearchResultIndex(-1);
+        // Best-effort synchronous highlight for the cached-results
+        // case. The async rowsInserted signal handles the common
+        // "search still running" path.
         if (m_currentResult >= 0 && m_searchModel->rowCount({}) > 0) {
             m_view->setCurrentSearchResultIndex(m_currentResult);
         }
     }
+}
+
+void PdfDocument::onSearchResultsPopulated() {
+    if (!m_view || !m_searchModel) return;
+    if (m_currentResult < 0) return;
+    if (m_searchModel->rowCount({}) <= 0) return;
+    // Don't stomp on user navigation: if findNext/findPrevious bumped
+    // the index while the search was still populating, leave it alone.
+    if (m_view->currentSearchResultIndex() >= 0) return;
+    m_view->setCurrentSearchResultIndex(m_currentResult);
 }
 
 void PdfDocument::findNext() {

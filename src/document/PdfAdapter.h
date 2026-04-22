@@ -84,6 +84,12 @@ private:
     void applyViewMode();
     void applyZoomFactor(double factor);
     bool reloadViewerFromEditor();
+    // Called from the search model's rowsInserted signal on the GUI
+    // thread once the asynchronous search produces at least one hit.
+    // Pushes m_currentResult into the view so the match is highlighted
+    // and scrolled into view — this is where the "Find found nothing"
+    // bug on OCR'd PDFs used to live.
+    void onSearchResultsPopulated();
 
     QString m_path;
     std::unique_ptr<QPdfDocument> m_doc;

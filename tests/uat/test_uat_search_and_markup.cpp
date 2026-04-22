@@ -87,6 +87,36 @@ QString writePdfWithKeyword(const QString& path, const QString& keyword) {
     return path;
 }
 
+// Writes a one-page PDF that imitates the structure an OCR tool
+// (Tesseract → pdfsandwich, Acrobat OCR, etc.) produces: a scanned
+// raster on top, with an invisible text layer behind it carrying the
+// machine-readable text for search and copy. The trick is a pen with
+// alpha = 0, which makes QPainter emit real Tj text operators but
+// with fully-transparent ink — visually invisible, textually
+// searchable. If QPdfSearchModel still finds the keyword here, the
+// search-on-OCR path works end to end; if not, we've reproduced the
+// user's reported regression in a regression-gated fixture.
+QString writeOcrLayerPdf(const QString& path, const QString& keyword) {
+    QPdfWriter writer(path);
+    writer.setPageSize(QPageSize(QPageSize::A4));
+    QPainter p(&writer);
+
+    // 1. Raster: a light-grey rectangle stands in for a scanned page.
+    //    Real scans would be a QImage, but the shape of the PDF object
+    //    graph is the same — image first, text on top.
+    p.fillRect(0, 0, writer.width(), writer.height(), QColor(240, 240, 240));
+
+    // 2. Invisible text layer.
+    QFont font(QStringLiteral("Helvetica"));
+    font.setPointSize(24);
+    p.setFont(font);
+    p.setPen(QColor(0, 0, 0, 0));  // fully transparent — the OCR trick
+    p.drawText(300, 400,
+               QStringLiteral("OCR fixture — keyword: ") + keyword);
+    p.end();
+    return path;
+}
+
 // Sends a synthesized QMouseEvent directly to `target`. QTest::mouseClick
 // style helpers require the widget to be visible on a real display —
 // offscreen is finicky about that — but sendEvent is happy as long as
@@ -119,6 +149,7 @@ private slots:
     void init();
 
     void uat_vwr_061_findMatchesInPdfText();
+    void uat_vwr_061b_findMatchesInOcrLayerPdf();
     void uat_ann_010_rectangleToolCreatesAnnotation();
     void uat_ann_012_lineToolCreatesAnnotation();
     void uat_ann_060_undoAddRectangle();
@@ -140,14 +171,6 @@ void TestUatSearchAndMarkup::init() {
 // keyword in the search bar. Expect the PDF view's search model to
 // report at least one match. QPdfSearchModel runs its search on a
 // worker thread, so poll via QTRY_VERIFY.
-//
-// Known gap: this fixture is produced by QPdfWriter, which emits plain
-// Tj text runs. It does not exercise the OCR-layer case where text is
-// stored invisibly behind a scanned raster (the failure mode a user
-// reported on an EV1 brakes manual). A dedicated OCR fixture — e.g.
-// transparent text painted over an image — would go alongside this
-// case; leaving as a TODO until we have a reliable way to generate
-// such a PDF in-tree.
 void TestUatSearchAndMarkup::uat_vwr_061_findMatchesInPdfText() {
     QVERIFY(m_scratch.isValid());
     const QString keyword = QStringLiteral("zebranaut");
@@ -193,6 +216,64 @@ void TestUatSearchAndMarkup::uat_vwr_061_findMatchesInPdfText() {
         view->searchModel() != nullptr
             && view->searchModel()->rowCount(QModelIndex()) > 0,
         5000);
+
+    // The model having matches isn't enough: the view also has to be
+    // told which match is current so it scrolls to and emphasises the
+    // first hit. If currentSearchResultIndex stays at -1 after the
+    // async search populates, the user sees "nothing" — which is the
+    // exact regression this case guards against. Poll so a late assign
+    // from a rowsInserted slot still counts.
+    QTRY_VERIFY_WITH_TIMEOUT(view->currentSearchResultIndex() >= 0, 5000);
+}
+
+// UAT-VWR-061b — Find matches in a PDF whose text layer is invisible
+// (i.e. an OCR'd scan). This is what the user actually hit: searching
+// in a Tesseract/pdfsandwich output returned zero highlights even
+// though the text was selectable. The fixture paints the keyword with
+// a fully-transparent pen on top of a grey "scan" rectangle, which
+// reproduces the object-graph shape of a real OCR PDF: invisible Tj
+// operators over a raster. If QPdfSearchModel picks this up, the
+// search path is sound end to end.
+void TestUatSearchAndMarkup::uat_vwr_061b_findMatchesInOcrLayerPdf() {
+    QVERIFY(m_scratch.isValid());
+    const QString keyword = QStringLiteral("ocrphant");
+    const QString pdfPath = writeOcrLayerPdf(
+        m_scratch.filePath(QStringLiteral("uat_vwr_061b.pdf")), keyword);
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+
+    auto* dv = mw->findChild<DocumentView*>();
+    QVERIFY(dv);
+    IDocument* doc = dv->currentDocument();
+    QVERIFY(doc);
+    QVERIFY2(doc->supportsSearch(), "PDF document should report supportsSearch()");
+
+    QAction* findAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
+                                         QStringLiteral("&Find…"));
+    QVERIFY2(findAction, "Edit > Find… action not found");
+    findAction->trigger();
+    QApplication::processEvents();
+
+    auto* lineEdit = mw->findChild<QLineEdit*>();
+    QVERIFY2(lineEdit, "SearchBar QLineEdit not found");
+    lineEdit->setText(keyword);
+    QApplication::processEvents();
+
+    auto* view = mw->findChild<QPdfView*>();
+    QVERIFY2(view, "QPdfView not found in MainWindow children");
+
+    QTRY_VERIFY_WITH_TIMEOUT(
+        view->searchModel() != nullptr
+            && view->searchModel()->rowCount(QModelIndex()) > 0,
+        5000);
+
+    QTRY_VERIFY_WITH_TIMEOUT(view->currentSearchResultIndex() >= 0, 5000);
 }
 
 // UAT-ANN-010 — Rectangle tool creates an annotation on click-drag.
