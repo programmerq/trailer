@@ -15,3 +15,8 @@ function(trailer_add_uat_test name source)
 endfunction()
 
 trailer_add_uat_test(test_uat_foundations test_uat_foundations.cpp)
+trailer_add_uat_test(test_uat_search_and_markup test_uat_search_and_markup.cpp)
+# test_uat_search_and_markup links to Qt PDF for the search model and
+# the Annotation overlay needs Widgets (pulled in transitively via
+# trailer_core, but spell it out for the search-model header).
+target_link_libraries(test_uat_search_and_markup PRIVATE Qt6::Pdf Qt6::PdfWidgets)
