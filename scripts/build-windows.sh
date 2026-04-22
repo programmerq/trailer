@@ -33,12 +33,44 @@ BUILD_DIR="${BUILD_DIR:-/tmp/trailer-build-win}"
 # so the host can see it after the container exits.
 OUT_DIR="${OUT_DIR:-$REPO_ROOT/build-windows}"
 
-# Runtime DLL sources inside the container. Matches paths baked by
-# docker/windows/Dockerfile and Arch's mingw-w64-crt package.
+# Runtime DLL sources inside the container.
 #
 # Search order matters — we prefer the toolchain's runtime DLLs over
-# Qt's bundled ones so there's a single ABI for libgcc_s / libstdc++.
-MINGW_CRT_BIN=/usr/x86_64-w64-mingw32/bin
+# Qt's bundled ones so there's a single ABI for libgcc_s / libstdc++
+# matching what trailer.exe was compiled with. (This only matters if
+# the mingw toolchain version differs from Qt's — in the matched
+# setup docker/windows/Dockerfile produces, the two are
+# interchangeable.)
+#
+# Ubuntu's mingw packages scatter runtime DLLs across
+# /usr/lib/gcc/x86_64-w64-mingw32/<ver>-posix/ (libstdc++, libgcc)
+# and /usr/x86_64-w64-mingw32/lib/ (libwinpthread). Other distros
+# put them elsewhere. Resolve the paths via `g++ -print-file-name`
+# so the script works on any distro whose mingw matches Qt's
+# toolchain version.
+resolve_mingw_dll_dir() {
+    local dll=$1
+    local path
+    path=$(x86_64-w64-mingw32-g++ -print-file-name="$dll" 2>/dev/null || true)
+    if [[ -z "$path" || "$path" == "$dll" || ! -f "$path" ]]; then
+        return
+    fi
+    dirname "$path"
+}
+
+MINGW_DIRS=()
+for dll in libstdc++-6.dll libwinpthread-1.dll libgcc_s_seh-1.dll; do
+    dir=$(resolve_mingw_dll_dir "$dll")
+    if [[ -n "$dir" ]]; then
+        # dedupe
+        already=0
+        for existing in "${MINGW_DIRS[@]}"; do
+            if [[ "$existing" == "$dir" ]]; then already=1; break; fi
+        done
+        if [[ $already -eq 0 ]]; then MINGW_DIRS+=("$dir"); fi
+    fi
+done
+
 QT_BIN=${QT_DIR:-/opt/qt/6.10.3/mingw_64}/bin
 QPDF_BIN=${QPDF_DIR:-/opt/qpdf}/bin
 QT_PLUGINS_DIR=${QT_DIR:-/opt/qt/6.10.3/mingw_64}/plugins
@@ -62,7 +94,7 @@ collect_dlls() {
         while read -r dll; do
             if [[ -n "${seen[$dll]:-}" ]]; then continue; fi
             local candidate=""
-            for src in "$MINGW_CRT_BIN" "$QT_BIN" "$QPDF_BIN"; do
+            for src in "${MINGW_DIRS[@]}" "$QT_BIN" "$QPDF_BIN"; do
                 if [[ -f "$src/$dll" ]]; then
                     candidate="$src/$dll"
                     break
