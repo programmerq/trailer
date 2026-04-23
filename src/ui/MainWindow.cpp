@@ -27,6 +27,7 @@
 #include <QImageWriter>
 #include <QKeySequence>
 #include <QLabel>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -152,6 +153,11 @@ void MainWindow::buildMenus() {
     m_saveAsAction = fileMenu->addAction(tr("Save &As…"));
     m_saveAsAction->setShortcut(QKeySequence::SaveAs);
     connect(m_saveAsAction, &QAction::triggered, this, &MainWindow::onSaveAs);
+
+    m_exportPasswordProtectedAction = fileMenu->addAction(
+        tr("Export as &Password-Protected PDF…"));
+    connect(m_exportPasswordProtectedAction, &QAction::triggered,
+            this, &MainWindow::onExportPasswordProtected);
     fileMenu->addSeparator();
 
     m_printAction = fileMenu->addAction(tr("&Print…"));
@@ -842,6 +848,64 @@ void MainWindow::onSaveAs() {
     updateTitleForDocument(doc);
 }
 
+void MainWindow::onExportPasswordProtected() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsPasswordExport()) return;
+
+    // --- Step 1: pick a destination path ---
+    const QString suggested =
+        doc->filePath().isEmpty()
+            ? doc->displayName()
+            : QFileInfo(doc->filePath()).completeBaseName()
+                  + QStringLiteral("_protected.pdf");
+    const QString destPath = QFileDialog::getSaveFileName(
+        this, tr("Export as Password-Protected PDF"),
+        suggested, tr("PDF documents (*.pdf)"));
+    if (destPath.isEmpty()) return;
+
+    // --- Step 2: pick the password (two matching fields) ---
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Set PDF Password"));
+    auto* form = new QFormLayout(&dialog);
+
+    auto* pwEdit = new QLineEdit(&dialog);
+    pwEdit->setEchoMode(QLineEdit::Password);
+    pwEdit->setPlaceholderText(tr("Enter password"));
+
+    auto* confirmEdit = new QLineEdit(&dialog);
+    confirmEdit->setEchoMode(QLineEdit::Password);
+    confirmEdit->setPlaceholderText(tr("Confirm password"));
+
+    form->addRow(tr("Password:"), pwEdit);
+    form->addRow(tr("Confirm:"), confirmEdit);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const QString password = pwEdit->text();
+    if (password != confirmEdit->text()) {
+        QMessageBox::warning(this, tr("Password mismatch"),
+                             tr("The passwords do not match. Please try again."));
+        return;
+    }
+    if (password.isEmpty()) {
+        QMessageBox::warning(this, tr("Empty password"),
+                             tr("A password is required to protect the PDF."));
+        return;
+    }
+
+    // --- Step 3: write the encrypted PDF ---
+    if (!doc->exportWithPassword(destPath, password)) {
+        QMessageBox::warning(this, tr("Export failed"),
+            tr("Could not write password-protected PDF to:\n%1").arg(destPath));
+    }
+}
+
 void MainWindow::updateUndoRedoActions(IDocument* doc) {
     m_undoAction->setEnabled(doc && doc->canUndo());
     m_redoAction->setEnabled(doc && doc->canRedo());
@@ -930,6 +994,8 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_adjustSizeAction->setEnabled(canEdit && isImage);
     m_adjustColourAction->setEnabled(canEdit && isImage);
     m_exportAsAction->setEnabled(doc != nullptr && isImage);
+    m_exportPasswordProtectedAction->setEnabled(
+        doc && doc->supportsPasswordExport());
     m_cropImageAction->setEnabled(canEdit && isImage);
     m_insertPagesAction->setEnabled(isPdfLike);
     m_cropPagesAction->setEnabled(isPdfLike);

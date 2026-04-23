@@ -70,6 +70,13 @@ public:
                               double /*saturation*/) { return false; }
     virtual bool exportAs(const QString& /*destPath*/, const QString& /*format*/,
                           int /*quality*/ = -1) const { return false; }
+    // Write the document to destPath encrypted with `password`.
+    // Currently PDF-only (Phase 5). Non-const because the
+    // implementation may flush unsaved annotations into the underlying
+    // PDF before writing.
+    virtual bool supportsPasswordExport() const { return false; }
+    virtual bool exportWithPassword(const QString& /*destPath*/,
+                                    const QString& /*password*/) { return false; }
     virtual bool insertPagesFrom(const QString& /*sourcePath*/, int /*insertAtIndex*/) { return false; }
     virtual bool extractPages(const std::vector<int>& /*pageIndices*/, const QString& /*destPath*/) const { return false; }
     virtual bool cropPage(int /*pageIndex*/, double /*leftPts*/, double /*topPts*/,

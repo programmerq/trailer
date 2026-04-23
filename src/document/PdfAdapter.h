@@ -8,7 +8,9 @@
 #include <QPointer>
 #include <QString>
 #include <QStringList>
+#include <functional>
 #include <memory>
+#include <optional>
 
 class QTemporaryFile;
 
@@ -55,6 +57,11 @@ public:
     void print(QWidget* dialogParent) override;
 
     bool supportsEditing() const override { return m_valid; }
+    bool supportsPasswordExport() const override {
+        return m_valid && m_editor && m_editor->isValid();
+    }
+    bool exportWithPassword(const QString& destPath,
+                            const QString& password) override;
     bool isDirty() const override {
         return m_dirty || m_annotationsModified;
     }
@@ -80,6 +87,13 @@ public:
 
     bool isValid() const { return m_valid; }
 
+    // Phase 5: password-protected open flow. If load() hits
+    // IncorrectPassword, needsPassword() returns true and unlock() can
+    // be retried with a password from the user. Stays false for plain
+    // PDFs.
+    bool needsPassword() const { return m_needsPassword; }
+    bool unlock(const QString& password);
+
 private:
     void applyViewMode();
     void applyZoomFactor(double factor);
@@ -104,6 +118,7 @@ private:
     bool m_valid = false;
     bool m_dirty = false;
     bool m_annotationsModified = false;
+    bool m_needsPassword = false;
 };
 
 class PdfAdapter : public IFormatAdapter {
@@ -111,6 +126,20 @@ public:
     QStringList mimeTypes() const override;
     QStringList extensions() const override;
     std::unique_ptr<IDocument> open(const QString& path) override;
+
+    // Password-prompt hook. open() calls this when a PDF refuses to
+    // load for IncorrectPassword reasons. Return a populated optional
+    // to attempt an unlock; return std::nullopt to stop prompting
+    // (equivalent to the user clicking Cancel). `attempt` starts at 0
+    // so the hook can word the message differently after a failed try.
+    //
+    // The default hook uses QInputDialog on the active window. UAT
+    // tests install a shim here so they can exercise the retry loop
+    // without an interactive dialog.
+    using PasswordPrompt = std::function<std::optional<QString>(
+        const QString& path, int attempt)>;
+    static void setPasswordPrompt(PasswordPrompt prompt);
+    static PasswordPrompt passwordPrompt();
 };
 
 }  // namespace trailer

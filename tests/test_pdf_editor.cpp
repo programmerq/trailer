@@ -41,6 +41,9 @@ private slots:
     void cropPageRejectsOversizedMargins();
     void annotationRoundTripPreservesShapes();
     void annotationRoundTripPreservesMarkup();
+    void saveWithPasswordGatesLoad();
+    void saveWithPasswordEmptyOwnerUsesUserPassword();
+    void unlockRecoversLoadedButLockedEditor();
 };
 
 void TestPdfEditor::reportsInvalidForMissingFile() {
@@ -278,6 +281,87 @@ void TestPdfEditor::annotationRoundTripPreservesMarkup() {
     QCOMPARE(got.size(), size_t{1});
     QCOMPARE(got[0].type, AnnotationType::Highlight);
     QCOMPARE(got[0].quads.size(), size_t{2});
+}
+
+// ---------- Encryption (Phase 5) ------------------------------------------
+
+// Saving with a user password must produce a PDF that:
+//   (a) refuses to load without a password (isEncrypted() flips to true);
+//   (b) refuses with the wrong password;
+//   (c) opens with the right password via unlock().
+// This is the core round-trip guarantee the File > Export as Password-
+// Protected PDF… menu action depends on.
+void TestPdfEditor::saveWithPasswordGatesLoad() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+    const QString dst = dir.filePath("locked.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    EncryptionOptions enc;
+    enc.userPassword = QStringLiteral("open-sesame");
+    QVERIFY(editor.save(dst, enc));
+
+    // Fresh editor, no password: must fail *and* report encrypted.
+    PdfEditor probe;
+    QVERIFY(!probe.load(dst));
+    QVERIFY(probe.isEncrypted());
+
+    QVERIFY(!probe.unlock(QStringLiteral("wrong")));
+    QVERIFY(!probe.isValid());
+
+    QVERIFY(probe.unlock(QStringLiteral("open-sesame")));
+    QVERIFY(probe.isValid());
+    QCOMPARE(probe.pageCount(), 1);
+}
+
+// When ownerPassword is empty, qpdf uses userPassword for both. That
+// means a reader with userPassword can still do everything — the
+// "permissions only matter if owner ≠ user" rule. This is the
+// happiest path for the minimal UI (a single password field) and is
+// what we'll bind to the upcoming dialog.
+void TestPdfEditor::saveWithPasswordEmptyOwnerUsesUserPassword() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+    const QString dst = dir.filePath("single-password.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    EncryptionOptions enc;
+    enc.userPassword = QStringLiteral("one-word");
+    // leave ownerPassword empty on purpose
+    QVERIFY(editor.save(dst, enc));
+
+    PdfEditor probe;
+    QVERIFY(!probe.load(dst));
+    QVERIFY(probe.isEncrypted());
+    QVERIFY(probe.unlock(QStringLiteral("one-word")));
+}
+
+// unlock() on an already-valid editor must be a no-op; on a fresh
+// editor that never saw an encrypted file it must report no-op-false
+// (nothing to unlock). Guards the UI flow where the password dialog
+// is only shown when isEncrypted() is true after load().
+void TestPdfEditor::unlockRecoversLoadedButLockedEditor() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString plain = writeSamplePdf(dir.filePath("plain.pdf"), 1);
+
+    PdfEditor editor;
+    QVERIFY(editor.load(plain));
+    QVERIFY(editor.isValid());
+    QVERIFY(!editor.isEncrypted());
+
+    // unlock on an already-valid editor should succeed (idempotent).
+    QVERIFY(editor.unlock(QStringLiteral("irrelevant")));
+
+    PdfEditor empty;
+    // No load() — unlock has nothing to do and must say so.
+    QVERIFY(!empty.unlock(QStringLiteral("anything")));
 }
 
 QTEST_MAIN(TestPdfEditor)

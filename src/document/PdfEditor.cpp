@@ -1,6 +1,8 @@
 #include "PdfEditor.h"
 
+#include <qpdf/Constants.h>
 #include <qpdf/QPDF.hh>
+#include <qpdf/QPDFExc.hh>
 #include <qpdf/QPDFObjectHandle.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
 #include <qpdf/QPDFPageObjectHelper.hh>
@@ -16,15 +18,48 @@ PdfEditor::PdfEditor() : m_qpdf(std::make_unique<QPDF>()) {}
 PdfEditor::~PdfEditor() = default;
 
 bool PdfEditor::load(const QString& path) {
+    m_path = path;
+    m_sources.clear();
     try {
         m_qpdf = std::make_unique<QPDF>();
         m_qpdf->processFile(path.toLocal8Bit().constData());
-        m_sources.clear();
         m_valid = true;
+        m_encrypted = false;
+    } catch (const QPDFExc& e) {
+        // qpdf reports password-gated PDFs with a specific error code.
+        // Treat that as a recoverable state: stay loaded-but-locked,
+        // caller can retry via unlock(). Everything else (corrupt
+        // file, I/O error, etc.) is a hard failure.
+        if (e.getErrorCode() == qpdf_e_password) {
+            m_valid = false;
+            m_encrypted = true;
+        } else {
+            m_valid = false;
+            m_encrypted = false;
+        }
     } catch (const std::exception&) {
         m_valid = false;
+        m_encrypted = false;
     }
     return m_valid;
+}
+
+bool PdfEditor::unlock(const QString& password) {
+    if (m_valid) return true;     // already unlocked
+    if (!m_encrypted) return false;  // nothing to unlock
+    try {
+        m_qpdf = std::make_unique<QPDF>();
+        m_qpdf->processFile(m_path.toLocal8Bit().constData(),
+                            password.toUtf8().constData());
+        m_valid = true;
+        m_encrypted = false;
+        return true;
+    } catch (const std::exception&) {
+        // Wrong password: stay locked, caller can retry.
+        m_qpdf = std::make_unique<QPDF>();
+        m_valid = false;
+        return false;
+    }
 }
 
 int PdfEditor::pageCount() const {
@@ -562,10 +597,46 @@ std::vector<Annotation> PdfEditor::readAnnotations() const {
 }
 
 bool PdfEditor::save(const QString& path) {
+    return saveImpl(path, nullptr);
+}
+
+bool PdfEditor::save(const QString& path, const EncryptionOptions& enc) {
+    return saveImpl(path, &enc);
+}
+
+bool PdfEditor::saveImpl(const QString& path, const EncryptionOptions* enc) {
     if (!m_valid) return false;
     try {
         QPDFWriter writer(*m_qpdf, path.toLocal8Bit().constData());
         writer.setStaticID(false);
+        if (enc) {
+            // qpdf expects both passwords as C strings. An empty user
+            // password is the well-defined "anyone can open but
+            // permissions still apply" case.
+            const QByteArray user = enc->userPassword.toUtf8();
+            const QByteArray owner = enc->ownerPassword.isEmpty()
+                                         ? user
+                                         : enc->ownerPassword.toUtf8();
+            const qpdf_r3_print_e printLevel =
+                !enc->allowPrint
+                    ? qpdf_r3p_none
+                    : (enc->allowHighResPrint ? qpdf_r3p_full : qpdf_r3p_low);
+            // Use R6 (AES-256) — the only password scheme that's still
+            // considered secure and the only one the current PDF spec
+            // sanctions. Older Rx methods are available on qpdf via
+            // *Insecure-suffixed functions; we deliberately don't
+            // expose them.
+            writer.setR6EncryptionParameters(
+                user.constData(), owner.constData(),
+                enc->allowAccessibility,
+                enc->allowExtract,
+                enc->allowModify,          // allow_assemble
+                enc->allowAnnotate,
+                enc->allowFormFilling,
+                enc->allowModify,          // allow_modify_other
+                printLevel,
+                /*encrypt_metadata_aes=*/true);
+        }
         writer.write();
         return true;
     } catch (const std::exception&) {

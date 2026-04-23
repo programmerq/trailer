@@ -2,8 +2,11 @@
 
 #include "ui/AnnotationOverlay.h"
 
+#include <QApplication>
 #include <QDir>
 #include <QEvent>
+#include <QInputDialog>
+#include <QLineEdit>
 #include <QObject>
 #include <QResizeEvent>
 #include <QFile>
@@ -73,6 +76,11 @@ PdfDocument::PdfDocument(QString path)
       m_editor(std::make_unique<PdfEditor>()) {
     const QPdfDocument::Error error = m_doc->load(m_path);
     m_valid = (error == QPdfDocument::Error::None);
+    // Password-gated PDFs are a special kind of load failure: the
+    // caller (PdfAdapter::open) can recover by prompting for a
+    // password and calling unlock(). Everything else (corrupt,
+    // missing, unsupported scheme) stays permanently invalid.
+    m_needsPassword = (error == QPdfDocument::Error::IncorrectPassword);
     if (m_valid) {
         m_editor->load(m_path);
         for (Annotation& a : m_editor->readAnnotations()) {
@@ -84,6 +92,43 @@ PdfDocument::PdfDocument(QString path)
             m_annotationsModified = true;
         });
     }
+}
+
+bool PdfDocument::unlock(const QString& password) {
+    if (m_valid) return true;
+    if (!m_needsPassword) return false;
+
+    m_doc->setPassword(password);
+    const QPdfDocument::Error error = m_doc->load(m_path);
+    if (error != QPdfDocument::Error::None) {
+        // Wrong password or some other problem. Keep m_needsPassword
+        // true only if it's still a password issue so the caller can
+        // re-prompt; anything else becomes a hard failure.
+        m_needsPassword = (error == QPdfDocument::Error::IncorrectPassword);
+        return false;
+    }
+
+    m_valid = true;
+    m_needsPassword = false;
+
+    // Mirror the unlock on the qpdf-backed editor so edits and
+    // annotation round-tripping work. If the editor fails to load,
+    // editing just won't work — the viewer path still does.
+    m_editor->load(m_path);
+    if (m_editor->isEncrypted()) {
+        m_editor->unlock(password);
+    }
+    if (m_editor->isValid()) {
+        for (Annotation& a : m_editor->readAnnotations()) {
+            m_annotations.add(std::move(a));
+        }
+        m_annotations.clearHistory();
+        QObject::connect(&m_annotations, &AnnotationStore::changed,
+                         m_doc.get(), [this]() {
+            m_annotationsModified = true;
+        });
+    }
+    return true;
 }
 
 PdfDocument::~PdfDocument() = default;
@@ -669,6 +714,21 @@ bool PdfDocument::save(const QString& newPath) {
     return true;
 }
 
+bool PdfDocument::exportWithPassword(const QString& destPath,
+                                     const QString& password) {
+    if (!m_valid || !m_editor || !m_editor->isValid()) return false;
+    if (destPath.isEmpty()) return false;
+    // Write annotations into the editor's QPDF graph (same as save),
+    // then serialize to `destPath` with AES-256 encryption. We write to
+    // a separate destination only — never overwrite the source file —
+    // so the in-memory state remains unencrypted and further edits keep
+    // working normally.
+    if (!m_editor->writeAnnotations(m_annotations.annotations())) return false;
+    EncryptionOptions enc;
+    enc.userPassword = password;
+    return m_editor->save(destPath, enc);
+}
+
 QStringList PdfAdapter::mimeTypes() const {
     return {QStringLiteral("application/pdf")};
 }
@@ -677,8 +737,60 @@ QStringList PdfAdapter::extensions() const {
     return {QStringLiteral("pdf")};
 }
 
+namespace {
+
+// Default prompt. Pops a modal QInputDialog on the active window with
+// the password echo hidden. Returns nullopt if the user cancels or if
+// there's no window to parent to (e.g. offscreen UAT without an
+// installed test shim — we refuse to spin a dialog into the void).
+std::optional<QString> defaultPasswordPrompt(const QString& path, int attempt) {
+    QWidget* parent = QApplication::activeWindow();
+    if (!parent) return std::nullopt;
+    const int maxAttempts = 3;
+    const QString title = attempt == 0
+        ? QObject::tr("Password required")
+        : QObject::tr("Password required (%1 attempts left)")
+              .arg(maxAttempts - attempt);
+    const QString prompt = QObject::tr(
+        "“%1” is password-protected. Enter the password to open it.")
+        .arg(QFileInfo(path).fileName());
+    bool ok = false;
+    const QString pw = QInputDialog::getText(
+        parent, title, prompt, QLineEdit::Password, QString(), &ok);
+    if (!ok) return std::nullopt;
+    return pw;
+}
+
+PdfAdapter::PasswordPrompt& activePasswordPrompt() {
+    static PdfAdapter::PasswordPrompt prompt = defaultPasswordPrompt;
+    return prompt;
+}
+
+}  // namespace
+
+void PdfAdapter::setPasswordPrompt(PasswordPrompt prompt) {
+    activePasswordPrompt() = prompt ? std::move(prompt) : defaultPasswordPrompt;
+}
+
+PdfAdapter::PasswordPrompt PdfAdapter::passwordPrompt() {
+    return activePasswordPrompt();
+}
+
 std::unique_ptr<IDocument> PdfAdapter::open(const QString& path) {
-    return std::make_unique<PdfDocument>(path);
+    auto doc = std::make_unique<PdfDocument>(path);
+
+    // Password-gated PDF: prompt up to three times. Each iteration
+    // asks the currently-installed PasswordPrompt hook; a nullopt
+    // response ends the loop and leaves the document in its locked
+    // state (createView falls back to a "Could not open" label).
+    const int maxAttempts = 3;
+    auto& prompt = activePasswordPrompt();
+    for (int attempt = 0; attempt < maxAttempts && doc->needsPassword(); ++attempt) {
+        std::optional<QString> pw = prompt(path, attempt);
+        if (!pw) break;
+        doc->unlock(*pw);
+    }
+    return doc;
 }
 
 }  // namespace trailer
