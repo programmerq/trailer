@@ -98,6 +98,7 @@ private:
     QAction* m_cropImageAction = nullptr;
     QAction* m_insertPagesAction = nullptr;
     QAction* m_cropPagesAction = nullptr;
+    QAction* m_fillFormsAction = nullptr;
     QAction* m_printAction = nullptr;
     QAction* m_findAction = nullptr;
     QAction* m_findNextAction = nullptr;

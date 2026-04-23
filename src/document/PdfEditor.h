@@ -2,7 +2,9 @@
 
 #include "annotation/Annotation.h"
 
+#include <QRectF>
 #include <QString>
+#include <QStringList>
 #include <memory>
 #include <vector>
 
@@ -25,6 +27,30 @@ struct EncryptionOptions {
     bool allowAnnotate = true;
     bool allowFormFilling = true;
     bool allowAccessibility = true;
+};
+
+// A single AcroForm field as extracted from a PDF document. The id is
+// a stable index into the list returned by PdfEditor::readFormFields()
+// for a given load(); use it when calling setFormFieldValue().
+//
+// Coordinates are in PDF points (1/72 inch), bottom-left origin
+// (the PDF convention), so the overlay layer converts to screen
+// coords using each page's rendered size.
+enum class FormFieldType { Text, Checkbox, RadioButton, Dropdown, Unknown };
+
+struct FormField {
+    int id = -1;
+    int page = 0;
+    QRectF rectPts;          // bottom-left origin, PDF points
+    FormFieldType type = FormFieldType::Unknown;
+    QString name;            // fully-qualified internal name (/T hierarchy)
+    QString label;           // /TU alternative name (shown to the user)
+    QString value;           // current value; "Yes"/"Off" for checkboxes
+    QStringList options;     // non-empty for Dropdown fields
+    bool readOnly = false;
+    bool required = false;
+    bool multiline = false;  // text fields only
+    bool isPassword = false; // text fields only — mask input in the UI
 };
 
 class PdfEditor {
@@ -59,6 +85,20 @@ public:
     // in doc-native coords (top-left origin). Only the subtypes this class
     // writes are recognised; unknown subtypes are skipped silently.
     std::vector<Annotation> readAnnotations() const;
+
+    // AcroForm field access (Phase 5).
+    // Returns true if the document has any AcroForm fields — cheap check
+    // before calling the more expensive readFormFields().
+    bool hasFormFields() const;
+    // Parse the document's AcroForm tree and return every leaf field.
+    // Text, Checkbox, RadioButton, and Dropdown types are fully decoded;
+    // PushButton and unknown types are skipped.
+    std::vector<FormField> readFormFields() const;
+    // Set the /V entry (and trigger /NeedAppearances) for the field
+    // at index `id` in the readFormFields() list. Returns false if the
+    // id is out of range, the field is read-only, or the document is
+    // invalid. For checkboxes pass "Yes" or "Off".
+    bool setFormFieldValue(int id, const QString& value);
 
     bool save(const QString& path);
     // Overload that writes an AES-256 (R6) password-protected PDF.

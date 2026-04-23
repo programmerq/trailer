@@ -77,6 +77,8 @@ set(TRAILER_SOURCES
     src/ui/AnimationBar.h
     src/ui/AnnotationOverlay.cpp
     src/ui/AnnotationOverlay.h
+    src/ui/FormOverlay.cpp
+    src/ui/FormOverlay.h
     src/ui/Inspector.cpp
     src/ui/Inspector.h
     src/ui/Magnifier.cpp

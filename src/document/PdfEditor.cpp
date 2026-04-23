@@ -2,7 +2,10 @@
 
 #include <qpdf/Constants.h>
 #include <qpdf/QPDF.hh>
+#include <qpdf/QPDFAcroFormDocumentHelper.hh>
+#include <qpdf/QPDFAnnotationObjectHelper.hh>
 #include <qpdf/QPDFExc.hh>
+#include <qpdf/QPDFFormFieldObjectHelper.hh>
 #include <qpdf/QPDFObjectHandle.hh>
 #include <qpdf/QPDFPageDocumentHelper.hh>
 #include <qpdf/QPDFPageObjectHelper.hh>
@@ -595,6 +598,121 @@ std::vector<Annotation> PdfEditor::readAnnotations() const {
     }
     return out;
 }
+
+// ---------------------------------------------------------------------------
+// AcroForm field access (Phase 5)
+// ---------------------------------------------------------------------------
+
+bool PdfEditor::hasFormFields() const {
+    if (!m_valid) return false;
+    try {
+        QPDFAcroFormDocumentHelper afdh(*m_qpdf);
+        return !afdh.getFormFields().empty();
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+std::vector<FormField> PdfEditor::readFormFields() const {
+    std::vector<FormField> result;
+    if (!m_valid) return result;
+    try {
+        QPDFAcroFormDocumentHelper afdh(*m_qpdf);
+        QPDFPageDocumentHelper pdh(*m_qpdf);
+        auto pages = pdh.getAllPages();  // non-const — getAnnotations() is non-const
+        const int pageCount = static_cast<int>(pages.size());
+
+        // Build objId → page-index so we can locate each widget's page cheaply.
+        std::map<int, int> annotToPage;
+        for (int pi = 0; pi < pageCount; ++pi) {
+            for (auto& annot : pages[static_cast<size_t>(pi)].getAnnotations()) {
+                annotToPage[annot.getObjectHandle().getObjGen().getObj()] = pi;
+            }
+        }
+
+        int id = 0;
+        for (auto& field : afdh.getFormFields()) {
+            // Skip push-buttons — they have no user-editable value.
+            if (field.isPushbutton()) { ++id; continue; }
+
+            FormField ff;
+            ff.id = id++;
+            ff.name  = QString::fromStdString(field.getFullyQualifiedName());
+            ff.label = QString::fromStdString(field.getAlternativeName());
+
+            if (field.isText()) {
+                ff.type = FormFieldType::Text;
+                const int flags = field.getFlags();
+                ff.multiline  = (flags & ff_tx_multiline)  != 0;
+                ff.isPassword = (flags & ff_tx_password)   != 0;
+            } else if (field.isCheckbox()) {
+                ff.type = FormFieldType::Checkbox;
+            } else if (field.isRadioButton()) {
+                ff.type = FormFieldType::RadioButton;
+            } else if (field.isChoice()) {
+                ff.type = FormFieldType::Dropdown;
+                for (const auto& opt : field.getChoices())
+                    ff.options << QString::fromStdString(opt);
+            } else {
+                ff.type = FormFieldType::Unknown;
+            }
+
+            // Value
+            if (field.isCheckbox() || field.isRadioButton()) {
+                ff.value = field.isChecked()
+                    ? QStringLiteral("Yes") : QStringLiteral("Off");
+            } else {
+                ff.value = QString::fromStdString(field.getValueAsString());
+            }
+
+            // Common flags
+            const int flags = field.getFlags();
+            ff.readOnly = (flags & ff_all_read_only) != 0;
+            ff.required = (flags & ff_all_required)  != 0;
+
+            // Rect and page from the first widget annotation.
+            auto annots = afdh.getAnnotationsForField(field);
+            if (!annots.empty()) {
+                const auto r = annots.front().getRect();  // non-const method
+                ff.rectPts = QRectF(r.llx, r.lly,
+                                    r.urx - r.llx, r.ury - r.lly);
+                const int oid =
+                    annots.front().getObjectHandle().getObjGen().getObj();
+                const auto it = annotToPage.find(oid);
+                if (it != annotToPage.end()) ff.page = it->second;
+            }
+
+            result.push_back(std::move(ff));
+        }
+    } catch (const std::exception&) {}
+    return result;
+}
+
+bool PdfEditor::setFormFieldValue(int id, const QString& value) {
+    if (!m_valid) return false;
+    try {
+        QPDFAcroFormDocumentHelper afdh(*m_qpdf);
+        auto fields = afdh.getFormFields();
+        // id maps to the same positional walk used by readFormFields(),
+        // skipping push-buttons.
+        int idx = 0;
+        for (auto& field : fields) {
+            if (field.isPushbutton()) { ++idx; continue; }
+            if (idx == id) {
+                if (field.getFlags() & ff_all_read_only) return false;
+                field.setV(value.toStdString(), /*need_appearances=*/true);
+                afdh.setNeedAppearances(true);
+                return true;
+            }
+            ++idx;
+        }
+        return false;  // id out of range
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+// ---------------------------------------------------------------------------
 
 bool PdfEditor::save(const QString& path) {
     return saveImpl(path, nullptr);

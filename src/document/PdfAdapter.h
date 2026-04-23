@@ -21,6 +21,7 @@ class QPdfView;
 namespace trailer {
 
 class AnnotationOverlay;
+class FormOverlay;
 
 class PdfDocument : public IDocument {
 public:
@@ -62,6 +63,14 @@ public:
     }
     bool exportWithPassword(const QString& destPath,
                             const QString& password) override;
+
+    bool supportsFormFilling() const override {
+        return m_valid && m_editor && m_editor->isValid()
+               && m_editor->hasFormFields();
+    }
+    std::vector<FormField> formFields() const override;
+    bool setFormFieldValue(int id, const QString& value) override;
+    void setFormFillingActive(bool active) override;
     bool isDirty() const override {
         return m_dirty || m_annotationsModified;
     }
@@ -112,6 +121,7 @@ private:
     std::unique_ptr<QTemporaryFile> m_previewFile;
     QPointer<QPdfView> m_view;
     QPointer<AnnotationOverlay> m_overlay;
+    QPointer<FormOverlay> m_formOverlay;
     AnnotationStore m_annotations;
     ViewMode m_viewMode = ViewMode::Continuous;
     int m_currentResult = -1;

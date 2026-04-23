@@ -23,3 +23,6 @@ target_link_libraries(test_uat_search_and_markup PRIVATE Qt6::Pdf Qt6::PdfWidget
 
 trailer_add_uat_test(test_uat_password test_uat_password.cpp)
 target_link_libraries(test_uat_password PRIVATE Qt6::Pdf Qt6::PdfWidgets)
+
+trailer_add_uat_test(test_uat_forms test_uat_forms.cpp)
+target_link_libraries(test_uat_forms PRIVATE Qt6::Pdf Qt6::PdfWidgets)

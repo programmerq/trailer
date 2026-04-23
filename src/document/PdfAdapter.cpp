@@ -1,6 +1,7 @@
 #include "PdfAdapter.h"
 
 #include "ui/AnnotationOverlay.h"
+#include "ui/FormOverlay.h"
 
 #include <QApplication>
 #include <QDir>
@@ -290,6 +291,38 @@ QWidget* PdfDocument::createView(QWidget* parent) {
     QObject::connect(view, &QPdfView::zoomFactorChanged,
                      overlay, QOverload<>::of(&QWidget::update));
     view->viewport()->installEventFilter(overlay);
+
+    // --- Form overlay (Phase 5) ---
+    auto* formOverlay = new FormOverlay(view->viewport());
+    formOverlay->setDocumentToView([this, pageOriginInView](QPointF p, int page) {
+        if (!m_view) return p;
+        const double z = m_view->zoomFactor();
+        const QPointF origin = pageOriginInView(page);
+        return QPointF(origin.x() + p.x() * z, origin.y() + p.y() * z);
+    });
+    formOverlay->setPageSize([this](int page) -> QSizeF {
+        if (!m_doc || page < 0) return {};
+        return m_doc->pagePointSize(page);
+    });
+    if (m_editor && m_editor->isValid()) {
+        formOverlay->setFields(m_editor->readFormFields());
+    }
+    formOverlay->setGeometry(view->viewport()->rect());
+    formOverlay->hide();   // shown by MainWindow when form-filling is toggled on
+    m_formOverlay = formOverlay;
+
+    // Relayout form widgets on scroll / zoom / resize.
+    QObject::connect(view->verticalScrollBar(), &QScrollBar::valueChanged,
+                     formOverlay, &FormOverlay::relayout);
+    QObject::connect(view->horizontalScrollBar(), &QScrollBar::valueChanged,
+                     formOverlay, &FormOverlay::relayout);
+    QObject::connect(view, &QPdfView::zoomFactorChanged,
+                     formOverlay, &FormOverlay::relayout);
+    // When the user edits a widget, write the value back to the editor.
+    QObject::connect(formOverlay, &FormOverlay::fieldValueChanged,
+                     view, [this](int id, const QString& value) {
+                         setFormFieldValue(id, value);
+                     });
 
     return view;
 }
@@ -712,6 +745,35 @@ bool PdfDocument::save(const QString& newPath) {
     m_annotations.clearHistory();
     m_annotationsModified = false;
     return true;
+}
+
+std::vector<FormField> PdfDocument::formFields() const {
+    if (!m_valid || !m_editor || !m_editor->isValid()) return {};
+    return m_editor->readFormFields();
+}
+
+bool PdfDocument::setFormFieldValue(int id, const QString& value) {
+    if (!m_valid || !m_editor || !m_editor->isValid()) return false;
+    const bool ok = m_editor->setFormFieldValue(id, value);
+    if (ok) m_dirty = true;
+    return ok;
+}
+
+void PdfDocument::setFormFillingActive(bool active) {
+    if (m_formOverlay) {
+        if (active) {
+            // Refresh fields in case the document changed since
+            // the overlay was last populated.
+            if (m_editor && m_editor->isValid()) {
+                m_formOverlay->setFields(m_editor->readFormFields());
+            }
+            m_formOverlay->setGeometry(
+                m_view ? m_view->viewport()->rect() : QRect{});
+            m_formOverlay->show();
+        } else {
+            m_formOverlay->hide();
+        }
+    }
 }
 
 bool PdfDocument::exportWithPassword(const QString& destPath,

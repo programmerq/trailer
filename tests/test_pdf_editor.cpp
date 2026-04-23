@@ -1,5 +1,8 @@
 #include "document/PdfEditor.h"
 
+#include <qpdf/QPDF.hh>
+#include <qpdf/QPDFWriter.hh>
+
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfWriter>
@@ -25,6 +28,112 @@ QString writeSamplePdf(const QString& path, int pages) {
     return path;
 }
 
+// Build a one-page PDF that contains three AcroForm fields:
+//   id 0 – text      "fullname"  value "Alice"   label "Full Name"
+//   id 1 – checkbox  "agree"     value "Yes"
+//   id 2 – dropdown  "color"     opts [Red,Green,Blue]  value "Green"
+//
+// Uses the qpdf C++ API directly so we can produce form fields that
+// Qt's QPdfWriter doesn't expose.
+static QString writeFormPdf(const QString& path) {
+    QPDF pdf;
+    pdf.emptyPDF();
+
+    // Helper: [x0 y0 x1 y1] rectangle array (PDF bottom-left origin)
+    auto makeRect = [](double x0, double y0, double x1, double y1) {
+        QPDFObjectHandle r = QPDFObjectHandle::newArray();
+        r.appendItem(QPDFObjectHandle::newReal(x0));
+        r.appendItem(QPDFObjectHandle::newReal(y0));
+        r.appendItem(QPDFObjectHandle::newReal(x1));
+        r.appendItem(QPDFObjectHandle::newReal(y1));
+        return r;
+    };
+
+    // ---- page ----
+    QPDFObjectHandle pageDict = QPDFObjectHandle::newDictionary();
+    pageDict.replaceKey("/Type", QPDFObjectHandle::newName("/Page"));
+    QPDFObjectHandle mb = QPDFObjectHandle::newArray();
+    for (int v : {0, 0, 612, 792})
+        mb.appendItem(QPDFObjectHandle::newInteger(v));
+    pageDict.replaceKey("/MediaBox", mb);
+    QPDFObjectHandle pageObj = pdf.makeIndirectObject(pageDict);
+
+    // ---- text field ----
+    QPDFObjectHandle tf = QPDFObjectHandle::newDictionary();
+    tf.replaceKey("/Type",    QPDFObjectHandle::newName("/Annot"));
+    tf.replaceKey("/Subtype", QPDFObjectHandle::newName("/Widget"));
+    tf.replaceKey("/FT",      QPDFObjectHandle::newName("/Tx"));
+    tf.replaceKey("/T",       QPDFObjectHandle::newString("fullname"));
+    tf.replaceKey("/TU",      QPDFObjectHandle::newString("Full Name"));
+    tf.replaceKey("/V",       QPDFObjectHandle::newString("Alice"));
+    tf.replaceKey("/Rect",    makeRect(72, 720, 288, 744));
+    tf.replaceKey("/P",       pageObj);
+    QPDFObjectHandle tfObj = pdf.makeIndirectObject(tf);
+
+    // ---- checkbox ----
+    QPDFObjectHandle cb = QPDFObjectHandle::newDictionary();
+    cb.replaceKey("/Type",    QPDFObjectHandle::newName("/Annot"));
+    cb.replaceKey("/Subtype", QPDFObjectHandle::newName("/Widget"));
+    cb.replaceKey("/FT",      QPDFObjectHandle::newName("/Btn"));
+    cb.replaceKey("/T",       QPDFObjectHandle::newString("agree"));
+    cb.replaceKey("/V",       QPDFObjectHandle::newName("/Yes"));
+    cb.replaceKey("/AS",      QPDFObjectHandle::newName("/Yes"));
+    cb.replaceKey("/Rect",    makeRect(72, 680, 96, 704));
+    cb.replaceKey("/P",       pageObj);
+    QPDFObjectHandle cbObj = pdf.makeIndirectObject(cb);
+
+    // ---- dropdown / combo (/FT /Ch + combo flag) ----
+    QPDFObjectHandle dd = QPDFObjectHandle::newDictionary();
+    dd.replaceKey("/Type",    QPDFObjectHandle::newName("/Annot"));
+    dd.replaceKey("/Subtype", QPDFObjectHandle::newName("/Widget"));
+    dd.replaceKey("/FT",      QPDFObjectHandle::newName("/Ch"));
+    dd.replaceKey("/Ff",      QPDFObjectHandle::newInteger(131072)); // combo
+    dd.replaceKey("/T",       QPDFObjectHandle::newString("color"));
+    dd.replaceKey("/V",       QPDFObjectHandle::newString("Green"));
+    QPDFObjectHandle opts = QPDFObjectHandle::newArray();
+    for (const char* s : {"Red", "Green", "Blue"})
+        opts.appendItem(QPDFObjectHandle::newString(s));
+    dd.replaceKey("/Opt",  opts);
+    dd.replaceKey("/Rect", makeRect(72, 640, 288, 664));
+    dd.replaceKey("/P",    pageObj);
+    QPDFObjectHandle ddObj = pdf.makeIndirectObject(dd);
+
+    // ---- wire /Annots on the page ----
+    QPDFObjectHandle annots = QPDFObjectHandle::newArray();
+    annots.appendItem(tfObj);
+    annots.appendItem(cbObj);
+    annots.appendItem(ddObj);
+    pageDict.replaceKey("/Annots", annots);
+
+    // ---- /Pages ----
+    QPDFObjectHandle kids = QPDFObjectHandle::newArray();
+    kids.appendItem(pageObj);
+    QPDFObjectHandle pagesDict = QPDFObjectHandle::newDictionary();
+    pagesDict.replaceKey("/Type",  QPDFObjectHandle::newName("/Pages"));
+    pagesDict.replaceKey("/Kids",  kids);
+    pagesDict.replaceKey("/Count", QPDFObjectHandle::newInteger(1));
+    QPDFObjectHandle pagesObj = pdf.makeIndirectObject(pagesDict);
+    pageDict.replaceKey("/Parent", pagesObj);
+
+    // ---- AcroForm ----
+    QPDFObjectHandle acroFields = QPDFObjectHandle::newArray();
+    acroFields.appendItem(tfObj);
+    acroFields.appendItem(cbObj);
+    acroFields.appendItem(ddObj);
+    QPDFObjectHandle acroForm = QPDFObjectHandle::newDictionary();
+    acroForm.replaceKey("/Fields",         acroFields);
+    acroForm.replaceKey("/NeedAppearances", QPDFObjectHandle::newBool(true));
+
+    // ---- Catalog ----
+    QPDFObjectHandle root = pdf.getRoot();
+    root.replaceKey("/Pages",   pagesObj);
+    root.replaceKey("/AcroForm", acroForm);
+
+    QPDFWriter writer(pdf, path.toStdString().c_str());
+    writer.write();
+    return path;
+}
+
 }  // namespace
 
 class TestPdfEditor : public QObject {
@@ -44,6 +153,12 @@ private slots:
     void saveWithPasswordGatesLoad();
     void saveWithPasswordEmptyOwnerUsesUserPassword();
     void unlockRecoversLoadedButLockedEditor();
+
+    // Form field tests (Phase 5)
+    void formFieldsRoundTripsText();
+    void formFieldsRoundTripsCheckbox();
+    void formFieldsRoundTripsDropdown();
+    void setFormFieldValuePersists();
 };
 
 void TestPdfEditor::reportsInvalidForMissingFile() {
@@ -362,6 +477,106 @@ void TestPdfEditor::unlockRecoversLoadedButLockedEditor() {
     PdfEditor empty;
     // No load() — unlock has nothing to do and must say so.
     QVERIFY(!empty.unlock(QStringLiteral("anything")));
+}
+
+// ---------- Form fields (Phase 5) -----------------------------------------
+
+// readFormFields() must return the text field's name, label, type, and value.
+void TestPdfEditor::formFieldsRoundTripsText() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeFormPdf(dir.filePath("form.pdf"));
+
+    PdfEditor editor;
+    QVERIFY(editor.load(path));
+    QVERIFY(editor.hasFormFields());
+
+    const auto fields = editor.readFormFields();
+    QCOMPARE(static_cast<int>(fields.size()), 3);
+
+    const FormField* tf = nullptr;
+    for (const auto& f : fields) {
+        if (f.name == QStringLiteral("fullname")) { tf = &f; break; }
+    }
+    QVERIFY(tf != nullptr);
+    QCOMPARE(tf->type, FormFieldType::Text);
+    QCOMPARE(tf->value, QStringLiteral("Alice"));
+    QCOMPARE(tf->label, QStringLiteral("Full Name"));
+}
+
+// readFormFields() must recognise a checkbox and report "Yes" when checked.
+void TestPdfEditor::formFieldsRoundTripsCheckbox() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeFormPdf(dir.filePath("form.pdf"));
+
+    PdfEditor editor;
+    QVERIFY(editor.load(path));
+
+    const auto fields = editor.readFormFields();
+    const FormField* cb = nullptr;
+    for (const auto& f : fields) {
+        if (f.name == QStringLiteral("agree")) { cb = &f; break; }
+    }
+    QVERIFY(cb != nullptr);
+    QCOMPARE(cb->type, FormFieldType::Checkbox);
+    QCOMPARE(cb->value, QStringLiteral("Yes"));
+}
+
+// readFormFields() must decode a combo-box: type Dropdown, options list,
+// and the current value.
+void TestPdfEditor::formFieldsRoundTripsDropdown() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeFormPdf(dir.filePath("form.pdf"));
+
+    PdfEditor editor;
+    QVERIFY(editor.load(path));
+
+    const auto fields = editor.readFormFields();
+    const FormField* dd = nullptr;
+    for (const auto& f : fields) {
+        if (f.name == QStringLiteral("color")) { dd = &f; break; }
+    }
+    QVERIFY(dd != nullptr);
+    QCOMPARE(dd->type, FormFieldType::Dropdown);
+    QCOMPARE(dd->value, QStringLiteral("Green"));
+    QCOMPARE(dd->options.size(), 3);
+    QVERIFY(dd->options.contains(QStringLiteral("Red")));
+    QVERIFY(dd->options.contains(QStringLiteral("Green")));
+    QVERIFY(dd->options.contains(QStringLiteral("Blue")));
+}
+
+// setFormFieldValue() must persist a new text-field value across save/reload.
+void TestPdfEditor::setFormFieldValuePersists() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeFormPdf(dir.filePath("form.pdf"));
+    const QString dst = dir.filePath("form_filled.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    // Locate the "fullname" field and change its value.
+    const auto fields = editor.readFormFields();
+    int tfId = -1;
+    for (const auto& f : fields) {
+        if (f.name == QStringLiteral("fullname")) { tfId = f.id; break; }
+    }
+    QVERIFY(tfId >= 0);
+    QVERIFY(editor.setFormFieldValue(tfId, QStringLiteral("Bob")));
+    QVERIFY(editor.save(dst));
+
+    // Reload and verify the new value was stored.
+    PdfEditor round;
+    QVERIFY(round.load(dst));
+    const auto roundFields = round.readFormFields();
+    const FormField* tf = nullptr;
+    for (const auto& f : roundFields) {
+        if (f.name == QStringLiteral("fullname")) { tf = &f; break; }
+    }
+    QVERIFY(tf != nullptr);
+    QCOMPARE(tf->value, QStringLiteral("Bob"));
 }
 
 QTEST_MAIN(TestPdfEditor)

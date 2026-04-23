@@ -396,6 +396,15 @@ void MainWindow::buildToolsMenu(QMenu* toolsMenu) {
     m_cropPagesAction = toolsMenu->addAction(tr("&Crop Pages…"));
     connect(m_cropPagesAction, &QAction::triggered, this, &MainWindow::onCropPages);
 
+    m_fillFormsAction = toolsMenu->addAction(tr("&Fill Forms"));
+    m_fillFormsAction->setCheckable(true);
+    m_fillFormsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
+    connect(m_fillFormsAction, &QAction::toggled, this, [this](bool on) {
+        if (auto* doc = m_documentView->currentDocument()) {
+            doc->setFormFillingActive(on);
+        }
+    });
+
     toolsMenu->addSeparator();
 
     m_screenshotAction = toolsMenu->addAction(tr("&Take Screenshot"));
@@ -999,6 +1008,14 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_cropImageAction->setEnabled(canEdit && isImage);
     m_insertPagesAction->setEnabled(isPdfLike);
     m_cropPagesAction->setEnabled(isPdfLike);
+    const bool hasForms = doc && doc->supportsFormFilling();
+    if (!hasForms && m_fillFormsAction->isChecked()) {
+        // Deactivate fill-forms mode when switching to a document that
+        // doesn't support it, without triggering the toggled signal.
+        QSignalBlocker blk(m_fillFormsAction);
+        m_fillFormsAction->setChecked(false);
+    }
+    m_fillFormsAction->setEnabled(hasForms);
 
     syncViewModeActions(doc);
     updateTitleForDocument(doc);

@@ -9,6 +9,10 @@
 
 #include <vector>
 
+// Forward-declared so IDocument.h doesn't pull in PdfEditor.h.
+// Callers that need the full type include PdfEditor.h themselves.
+namespace trailer { struct FormField; }
+
 namespace trailer {
 
 class AnnotationStore;
@@ -77,6 +81,19 @@ public:
     virtual bool supportsPasswordExport() const { return false; }
     virtual bool exportWithPassword(const QString& /*destPath*/,
                                     const QString& /*password*/) { return false; }
+
+    // AcroForm filling (Phase 5). supportsFormFilling() is the cheap
+    // capability check; formFields() enumerates all leaf fields once;
+    // setFormFieldValue(id, value) writes to the in-memory QPDF graph
+    // (persisted on the next save()).
+    virtual bool supportsFormFilling() const { return false; }
+    virtual std::vector<FormField> formFields() const { return {}; }
+    virtual bool setFormFieldValue(int /*id*/, const QString& /*value*/) {
+        return false;
+    }
+    // Show or hide the interactive form overlay. Callers toggle this
+    // when the user enters / leaves form-filling mode.
+    virtual void setFormFillingActive(bool /*active*/) {}
     virtual bool insertPagesFrom(const QString& /*sourcePath*/, int /*insertAtIndex*/) { return false; }
     virtual bool extractPages(const std::vector<int>& /*pageIndices*/, const QString& /*destPath*/) const { return false; }
     virtual bool cropPage(int /*pageIndex*/, double /*leftPts*/, double /*topPts*/,
