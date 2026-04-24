@@ -128,4 +128,10 @@ CI runs the same matrix (Ubuntu / Windows / macOS) on every push and PR.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Trailer is MIT-licensed — see [LICENSE](LICENSE).
+
+Third-party components that ship with the binary (Qt, ONNX Runtime,
+qpdf, toml++, the PaddleOCR English dictionary) and the ONNX model
+weights Trailer downloads on first use (U²-Net, MobileSAM, PP-OCRv3)
+each carry their own license. They are enumerated in
+[THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
