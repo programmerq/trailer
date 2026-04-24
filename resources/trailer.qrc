@@ -1,3 +1,6 @@
 <!DOCTYPE RCC>
 <RCC version="1.0">
+    <qresource prefix="/ml">
+        <file alias="ppocr_en_dict.txt">ppocr_en_dict.txt</file>
+    </qresource>
 </RCC>

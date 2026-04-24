@@ -51,6 +51,7 @@ private slots:
     void onRemoveBackground();
     void onInstantAlpha();
     void onSmartLasso();
+    void onRecognizeText();
     void onExportAs();
     void onExportPasswordProtected();
     void onReduceFileSize();
@@ -112,6 +113,7 @@ private:
     QAction* m_removeBackgroundAction = nullptr;
     QAction* m_instantAlphaAction = nullptr;
     QAction* m_smartLassoAction = nullptr;
+    QAction* m_recognizeTextAction = nullptr;
     QAction* m_exportAsAction = nullptr;
     QAction* m_exportPasswordProtectedAction = nullptr;
     QAction* m_reduceFileSizeAction = nullptr;

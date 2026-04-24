@@ -613,6 +613,86 @@ smaller than the full image.
 
 ---
 
+## Recognize Text (Phase 6)
+
+Recognize Text uses PP-OCRv3 (PaddleOCR) to extract text from images.
+Two models are involved: a DBNet detector (~2.4 MB) and a CRNN
+recognizer (~8.9 MB). Both download on first use; subsequent runs
+reuse the on-disk cache under `AppPaths::modelsDir()`. Recognition
+runs on the UI thread behind a wait cursor — a ~2 MP scan finishes
+in 1–2 s on a modern CPU. OCR is a read-only operation; the document
+is never marked dirty by the feature.
+
+### UAT-IMG-120 — Recognize Text first-use download
+
+**Preconditions:** Image containing legible text open (e.g. a scan
+of a receipt or document). No PP-OCR files in the models cache.
+**Steps:**
+1. `Tools > Recognize Text…`.
+**Expected:**
+- Confirmation prompt mentioning the ~11 MB download (Apache 2.0).
+- On accept, a progress dialog shows both models downloading in
+  sequence; they land in the models cache with matching SHA-256.
+- A "Recognized Text" dialog opens listing the extracted lines.
+
+### UAT-IMG-121 — Recognize Text already-cached
+
+**Preconditions:** Both PP-OCR files present in the cache.
+**Steps:**
+1. `Tools > Recognize Text…`.
+**Expected:**
+- No confirmation prompt, no network activity, no progress dialog.
+- Wait cursor appears for ~1–2 s, then the results dialog opens.
+
+### UAT-IMG-122 — Copy extracted text
+
+**Preconditions:** Results dialog open with recognised lines.
+**Steps:**
+1. Press `Copy All`.
+**Expected:**
+- All recognised lines are placed on the clipboard, one per line.
+- No OS clipboard error dialog.
+
+### UAT-IMG-123 — Save extracted text to TXT
+
+**Preconditions:** Results dialog open with recognised lines.
+**Steps:**
+1. Press `Save as TXT…`.
+2. Choose a filename.
+**Expected:**
+- A UTF-8 `.txt` file is written with one recognised line per line.
+- The file opens cleanly in any text editor.
+
+### UAT-IMG-124 — Recognize Text on PDF (deferred)
+
+**Preconditions:** A PDF is the active document.
+**Expected:**
+- `Tools > Recognize Text…` is greyed out. Image-only in Phase 6;
+  PDF-page OCR is a later phase (see Known gaps).
+
+### UAT-IMG-125 — Recognize Text on a blank image
+
+**Preconditions:** An image with no text (e.g. a solid-colour
+swatch).
+**Steps:**
+1. `Tools > Recognize Text…`.
+**Expected:**
+- Results dialog opens with the summary line "No text was detected
+  in this image." and an empty text box.
+- No error dialog.
+
+### UAT-IMG-126 — Recognize Text is read-only
+
+**Preconditions:** Fresh image opened (no prior edits).
+**Steps:**
+1. `Tools > Recognize Text…`.
+2. Close the results dialog.
+**Expected:**
+- Tab is still clean (no dirty indicator).
+- `Edit > Undo` is disabled — OCR adds no undo entry.
+
+---
+
 ## Known gaps
 
 ### UAT-IMG-090 — PDF flip / colour adjust (Known gap)

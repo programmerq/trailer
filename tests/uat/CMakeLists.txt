@@ -40,3 +40,5 @@ trailer_add_uat_test(test_uat_background_removal test_uat_background_removal.cpp
 
 trailer_add_uat_test(test_uat_instant_alpha_and_smart_lasso
     test_uat_instant_alpha_and_smart_lasso.cpp)
+
+trailer_add_uat_test(test_uat_recognize_text test_uat_recognize_text.cpp)

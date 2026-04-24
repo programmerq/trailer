@@ -17,8 +17,10 @@
 #include "app/Application.h"
 #include "filters/ImageFilter.h"
 #include "ml/BackgroundRemover.h"
+#include "ml/OcrEngine.h"
 #include "ml/SamSession.h"
 #include "recent/RecentFiles.h"
+#include "OcrResultsDialog.h"
 #include "SamSegmentDialog.h"
 
 #include <QAction>
@@ -441,6 +443,10 @@ void MainWindow::buildToolsMenu(QMenu* toolsMenu) {
     m_smartLassoAction = toolsMenu->addAction(tr("Smart &Lasso…"));
     connect(m_smartLassoAction, &QAction::triggered,
             this, &MainWindow::onSmartLasso);
+
+    m_recognizeTextAction = toolsMenu->addAction(tr("Reco&gnize Text…"));
+    connect(m_recognizeTextAction, &QAction::triggered,
+            this, &MainWindow::onRecognizeText);
 
     toolsMenu->addSeparator();
 
@@ -893,6 +899,67 @@ bool ensureSamModelsReady(MainWindow* parent, SamSession& session) {
     return session.isModelReady();
 }
 
+// Shared helper: confirm + download PP-OCR (detector + Latin
+// recognizer). Same shape as ensureSamModelsReady above; broken out
+// so a future "OCR this PDF page" action can share the pre-flight.
+bool ensureOcrModelsReady(MainWindow* parent, OcrEngine& engine) {
+    if (engine.isModelReady()) return true;
+
+    const auto ack = QMessageBox::question(parent,
+        QObject::tr("Download Text Recognition Models"),
+        QObject::tr("Recognize Text needs the PP-OCRv3 detector + "
+                    "recognizer (~11 MB across two files, Apache 2.0). "
+                    "Continue?"),
+        QMessageBox::Yes | QMessageBox::No);
+    if (ack != QMessageBox::Yes) return false;
+
+    QProgressDialog progress(
+        QObject::tr("Downloading text-recognition models…"),
+        QObject::tr("Cancel"), 0, 100, parent);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    progress.setValue(0);
+    progress.show();
+
+    bool failed = false;
+    bool ready = false;
+    QString failureMessage;
+
+    QObject::connect(&engine, &OcrEngine::downloadProgress, &progress,
+        [&progress](qint64 received, qint64 total) {
+            if (total <= 0) {
+                progress.setRange(0, 0);
+                return;
+            }
+            progress.setRange(0, 100);
+            progress.setValue(static_cast<int>(received * 100 / total));
+        });
+    QObject::connect(&engine, &OcrEngine::modelsReady, &progress,
+        [&progress, &ready]() {
+            ready = true;
+            progress.setValue(progress.maximum());
+            progress.close();
+        });
+    QObject::connect(&engine, &OcrEngine::modelsUnavailable, &progress,
+        [&progress, &failed, &failureMessage](const QString& msg) {
+            failed = true;
+            failureMessage = msg;
+            progress.close();
+        });
+
+    engine.ensureModelsAvailable();
+    progress.exec();
+
+    if (progress.wasCanceled() && !ready) return false;
+    if (failed) {
+        QMessageBox::warning(parent, QObject::tr("Download Failed"),
+            QObject::tr("Could not fetch text-recognition models:\n%1")
+                .arg(failureMessage));
+        return false;
+    }
+    return engine.isModelReady();
+}
+
 }  // namespace
 
 void MainWindow::onInstantAlpha() {
@@ -964,6 +1031,31 @@ void MainWindow::onSmartLasso() {
     }
     m_sidebar->refreshThumbnails();
     updateTitleForDocument(doc);
+}
+
+void MainWindow::onRecognizeText() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc) return;
+    auto* imgDoc = dynamic_cast<ImageDocument*>(doc);
+    if (!imgDoc) return;
+    const QImage source = imgDoc->image();
+    if (source.isNull()) return;
+
+    OcrEngine engine(&m_app->modelRegistry());
+    if (!ensureOcrModelsReady(this, engine)) return;
+
+    // Inference runs on the UI thread. On a 2000×2800 scan the
+    // detector takes ~1 s and per-line recognition ~20 ms each —
+    // fine with a wait cursor for Phase 6D; a worker thread is a
+    // later polish item.
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const QVector<OcrEngine::TextBlock> blocks = engine.recognize(source);
+    QApplication::restoreOverrideCursor();
+
+    OcrResultsDialog dialog(doc->filePath().isEmpty() ? doc->displayName()
+                                                      : doc->filePath(),
+                            blocks, this);
+    dialog.exec();
 }
 
 void MainWindow::onExportAs() {
@@ -1379,6 +1471,10 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_removeBackgroundAction->setEnabled(canEdit && isImage);
     m_instantAlphaAction->setEnabled(canEdit && isImage);
     m_smartLassoAction->setEnabled(canEdit && isImage);
+    // Recognize Text only reads pixels, so it doesn't need
+    // supportsEditing() — any opened image qualifies, even a
+    // read-only-format one. PDFs are deferred to a later phase.
+    m_recognizeTextAction->setEnabled(doc != nullptr && isImage);
     m_exportAsAction->setEnabled(doc != nullptr && isImage);
     m_exportPasswordProtectedAction->setEnabled(
         doc && doc->supportsPasswordExport());

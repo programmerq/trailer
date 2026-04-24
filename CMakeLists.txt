@@ -76,6 +76,8 @@ set(TRAILER_SOURCES
     src/ml/ModelDownloader.h
     src/ml/ModelRegistry.cpp
     src/ml/ModelRegistry.h
+    src/ml/OcrEngine.cpp
+    src/ml/OcrEngine.h
     src/ml/OnnxSession.cpp
     src/ml/OnnxSession.h
     src/ml/SamSession.cpp
@@ -109,6 +111,8 @@ set(TRAILER_SOURCES
     src/ui/MarkupToolbar.h
     src/ui/MyCardDialog.cpp
     src/ui/MyCardDialog.h
+    src/ui/OcrResultsDialog.cpp
+    src/ui/OcrResultsDialog.h
     src/ui/SamSegmentDialog.cpp
     src/ui/SamSegmentDialog.h
     src/ui/SearchBar.cpp
@@ -123,7 +127,7 @@ set(TRAILER_SOURCES
     src/ui/ThumbnailModel.h
 )
 
-add_library(trailer_core STATIC ${TRAILER_SOURCES})
+add_library(trailer_core STATIC ${TRAILER_SOURCES} resources/trailer.qrc)
 target_include_directories(trailer_core PUBLIC src)
 target_link_libraries(trailer_core
     PUBLIC
@@ -142,7 +146,6 @@ trailer_set_warnings(trailer_core)
 
 qt_add_executable(trailer
     src/main.cpp
-    resources/trailer.qrc
 )
 target_link_libraries(trailer PRIVATE trailer_core)
 trailer_set_warnings(trailer)

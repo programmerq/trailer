@@ -102,31 +102,54 @@ void ModelRegistry::populateBuiltin() {
          QStringLiteral("Apache 2.0 (weights) / MIT (export)"),
          QStringLiteral("https://github.com/ChaoningZhang/MobileSAM"),
          QStringLiteral("Prompt decoder for Instant Alpha and Smart Lasso.")});
+    // PaddleOCR ONNX exports are hosted by the RapidOCR project on
+    // Hugging Face. The LFS oid on each file matches its SHA-256 so
+    // the download-path hash check is a straight string compare.
     add({ModelId::PpOcrDetector,
-         QStringLiteral("PP-OCRv4 Detector"),
+         QStringLiteral("PP-OCRv3 Detector (English)"),
          QStringLiteral("pp_ocr_det.onnx"),
-         {}, {}, 0,
+         QStringLiteral(
+             "https://huggingface.co/SWHL/RapidOCR/resolve/main/"
+             "PP-OCRv4/en_PP-OCRv3_det_infer.onnx"),
+         QStringLiteral(
+             "f139598bc2af4e4b6fe98dec11574e30edfdd91fc94ac1425c18ace3bd5a866b"),
+         2423224,
          QStringLiteral("Apache 2.0"),
          QStringLiteral("https://github.com/PaddlePaddle/PaddleOCR"),
-         QStringLiteral("Text detection (finds line boxes on a page).")});
+         QStringLiteral("Text detection (DBNet) — finds line boxes on a page.")});
     add({ModelId::PpOcrDirection,
-         QStringLiteral("PP-OCRv4 Direction"),
+         QStringLiteral("PP-OCR Direction Classifier"),
          QStringLiteral("pp_ocr_cls.onnx"),
-         {}, {}, 0,
+         QStringLiteral(
+             "https://huggingface.co/SWHL/RapidOCR/resolve/main/"
+             "PP-OCRv3/ch_ppocr_mobile_v2.0_cls_train.onnx"),
+         QStringLiteral(
+             "70581b300b83babd9e0dd1d7d74c5b006869e8796da277a70c2e405bf9d77c82"),
+         581639,
          QStringLiteral("Apache 2.0"),
          QStringLiteral("https://github.com/PaddlePaddle/PaddleOCR"),
-         QStringLiteral("Text orientation classifier (auto-rotates lines).")});
+         QStringLiteral("Text orientation classifier (auto-rotates 180° lines).")});
     add({ModelId::PpOcrRecognizerLatin,
-         QStringLiteral("PP-OCRv4 Recognizer (Latin)"),
+         QStringLiteral("PP-OCRv3 Recognizer (Latin)"),
          QStringLiteral("pp_ocr_rec_en.onnx"),
-         {}, {}, 0,
+         QStringLiteral(
+             "https://huggingface.co/SWHL/RapidOCR/resolve/main/"
+             "PP-OCRv3/en_PP-OCRv3_rec_infer.onnx"),
+         QStringLiteral(
+             "ef7abd8bd3629ae57ea2c28b425c1bd258a871b93fd2fe7c433946ade9b5d9ea"),
+         8967018,
          QStringLiteral("Apache 2.0"),
          QStringLiteral("https://github.com/PaddlePaddle/PaddleOCR"),
          QStringLiteral("Text recognition for Latin scripts (English, European languages).")});
     add({ModelId::PpOcrRecognizerCjk,
          QStringLiteral("PP-OCRv4 Recognizer (CJK)"),
          QStringLiteral("pp_ocr_rec_cjk.onnx"),
-         {}, {}, 0,
+         QStringLiteral(
+             "https://huggingface.co/SWHL/RapidOCR/resolve/main/"
+             "PP-OCRv4/ch_PP-OCRv4_rec_infer.onnx"),
+         QStringLiteral(
+             "48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b"),
+         10857958,
          QStringLiteral("Apache 2.0"),
          QStringLiteral("https://github.com/PaddlePaddle/PaddleOCR"),
          QStringLiteral("Text recognition for Chinese/Japanese/Korean scripts.")});
