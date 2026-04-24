@@ -72,8 +72,13 @@ public:
     virtual QSize imagePixelSize() const { return {}; }
     virtual bool adjustColour(double /*brightness*/, double /*contrast*/,
                               double /*saturation*/) { return false; }
+    // exportAs writes a copy in the requested format. `filterId` selects
+    // a colour filter from filters/ImageFilter.h (empty / "none" = no
+    // filter). Images use this to implement DESIGN §6.3.7 Quartz-
+    // equivalent filters at export time; other adapters ignore it.
     virtual bool exportAs(const QString& /*destPath*/, const QString& /*format*/,
-                          int /*quality*/ = -1) const { return false; }
+                          int /*quality*/ = -1,
+                          const QString& /*filterId*/ = {}) const { return false; }
     // Write a size-reduced copy of the document (linearize, compress
     // streams, generate object streams). Currently PDF-only. Returns
     // false for formats without a reducer.

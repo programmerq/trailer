@@ -15,12 +15,14 @@
 #include "Sidebar.h"
 #include "annotation/AnnotationStore.h"
 #include "app/Application.h"
+#include "filters/ImageFilter.h"
 #include "recent/RecentFiles.h"
 
 #include <QAction>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QCheckBox>
+#include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDoubleSpinBox>
@@ -41,6 +43,7 @@
 #include <QMimeData>
 #include <QPixmap>
 #include <QProcess>
+#include <QPushButton>
 #include <QRadioButton>
 #include <QScreen>
 #include <QSlider>
@@ -126,6 +129,15 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
     m_markupToolbar->hide();
     connect(m_markupToolbar, &MarkupToolbar::activeToolChanged,
             this, [this](AnnotationTool tool) {
+                if (tool == AnnotationTool::Redaction &&
+                    !confirmRedactionFirstUse()) {
+                    // User declined the warning — bounce back to the
+                    // Select tool so no redaction rectangle is
+                    // accidentally placed. setActiveTool() updates
+                    // both the toolbar check-state and our own view.
+                    m_markupToolbar->setActiveTool(AnnotationTool::Select);
+                    return;
+                }
                 if (auto* doc = m_documentView->currentDocument()) {
                     doc->setAnnotationTool(tool);
                     doc->setAnnotationStyle(m_markupToolbar->style());
@@ -706,6 +718,29 @@ void MainWindow::onExportAs() {
     auto* doc = m_documentView->currentDocument();
     if (!doc) return;
 
+    // Pre-dialog: let the user pick a Quartz-equivalent filter
+    // (DESIGN §6.3.7). Default is "None" so the old one-step flow is
+    // still a single Cancel-or-Enter away — users who don't know
+    // about filters pay no extra clicks.
+    QDialog dialog(this);
+    dialog.setWindowTitle(tr("Export As"));
+    auto* form = new QFormLayout(&dialog);
+
+    auto* filterCombo = new QComboBox(&dialog);
+    for (ImageFilter f : allFilters()) {
+        filterCombo->addItem(filterDisplayName(f), filterId(f));
+    }
+    filterCombo->setCurrentIndex(0);  // None
+    form->addRow(tr("Filter:"), filterCombo);
+
+    auto* buttons = new QDialogButtonBox(
+        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
+    form->addRow(buttons);
+    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    if (dialog.exec() != QDialog::Accepted) return;
+    const QString chosenFilterId = filterCombo->currentData().toString();
+
     QStringList filters;
     filters << tr("PNG image (*.png)")
             << tr("JPEG image (*.jpg *.jpeg)")
@@ -721,7 +756,7 @@ void MainWindow::onExportAs() {
     if (path.isEmpty()) return;
     QString format = QFileInfo(path).suffix().toLower();
     if (format.isEmpty()) format = "png";
-    if (!doc->exportAs(path, format)) {
+    if (!doc->exportAs(path, format, -1, chosenFilterId)) {
         QMessageBox::warning(this, tr("Export failed"),
             tr("Could not export to %1").arg(path));
     }
@@ -1262,6 +1297,34 @@ void MainWindow::onSignHere() {
 void MainWindow::onManageSignatures() {
     SignaturesDialog dialog(this);
     dialog.exec();
+}
+
+bool MainWindow::confirmRedactionFirstUse() {
+    Settings& s = m_app->settings();
+    if (s.redactionWarningAcknowledged()) return true;
+
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Warning);
+    box.setWindowTitle(tr("About redaction"));
+    box.setText(tr(
+        "Redaction in Trailer is not defence-grade."));
+    box.setInformativeText(tr(
+        "Painting the tool covers content with a black block. On save, "
+        "the affected page is rasterised and the original text and "
+        "glyphs are destroyed, not merely hidden. However, Trailer does "
+        "not touch other parts of the document such as bookmarks, "
+        "attachments, encrypted layers, or document metadata.\n\n"
+        "For high-stakes redaction (legal discovery, government "
+        "disclosure, journalism involving named sources), use a tool "
+        "that can scrub object streams and metadata as well."));
+    box.setStandardButtons(QMessageBox::Ok | QMessageBox::Cancel);
+    box.setDefaultButton(QMessageBox::Ok);
+    box.button(QMessageBox::Ok)->setText(tr("Use Redaction"));
+    if (box.exec() != QMessageBox::Ok) return false;
+
+    s.setRedactionWarningAcknowledged(true);
+    s.save();
+    return true;
 }
 
 void MainWindow::addDocument(std::unique_ptr<IDocument> document) {

@@ -73,6 +73,13 @@ private:
     void buildEditMenu(QMenu* editMenu);
     void buildViewMenu(QMenu* viewMenu);
     void buildToolsMenu(QMenu* toolsMenu);
+    // Shows the one-time "redaction is not defence-grade" warning
+    // (DESIGN §6.11.6) the first time the user activates the
+    // Redaction tool. Returns true if the user either already
+    // acknowledged or accepts now; false if they cancel. On accept,
+    // persists the acknowledgement in the Application settings so
+    // the modal never reappears.
+    bool confirmRedactionFirstUse();
     void syncViewModeActions(IDocument* doc);
     void showSearchBar();
     void hideSearchBar();

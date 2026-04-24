@@ -69,7 +69,8 @@ public:
                        double saturation);
     void clearColourPreview();
     bool exportAs(const QString& destPath, const QString& format,
-                  int quality = -1) const override;
+                  int quality = -1,
+                  const QString& filterId = {}) const override;
     bool save(const QString& newPath = {}) override;
     int pageCount() const override { return m_image.isNull() ? 0 : 1; }
 

@@ -1,6 +1,7 @@
 #include "ImageAdapter.h"
 
 #include "annotation/AnnotationStore.h"
+#include "filters/ImageFilter.h"
 #include "ui/AnnotationOverlay.h"
 
 #include <QColor>
@@ -484,9 +485,15 @@ void ImageDocument::clearColourPreview() {
 }
 
 bool ImageDocument::exportAs(const QString& destPath, const QString& format,
-                             int quality) const {
+                             int quality, const QString& filterId) const {
     if (m_image.isNull()) return false;
-    const QImage out = flattenAnnotations(m_image, m_annotations.annotations());
+    QImage out = flattenAnnotations(m_image, m_annotations.annotations());
+    if (!filterId.isEmpty()) {
+        // Apply colour filter after flattening so annotations are
+        // tinted along with the rest of the image — matches what the
+        // user sees on screen when they toggle a preview.
+        out = applyFilter(filterId, out);
+    }
     QImageWriter writer(destPath, format.toLatin1());
     if (quality >= 0) writer.setQuality(quality);
     return writer.write(out);

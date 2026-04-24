@@ -136,7 +136,17 @@ QAction* MarkupToolbar::makeToolAction(const QString& label, AnnotationTool tool
         m_tool = tool;
         emit activeToolChanged(tool);
     });
+    m_toolActions.insert(tool, action);
     return action;
+}
+
+void MarkupToolbar::setActiveTool(AnnotationTool tool) {
+    if (tool == m_tool) return;
+    auto it = m_toolActions.find(tool);
+    if (it == m_toolActions.end()) return;
+    // Flipping the action's checked state fires the toggled slot,
+    // which updates m_tool and re-emits activeToolChanged.
+    it.value()->setChecked(true);
 }
 
 }  // namespace trailer

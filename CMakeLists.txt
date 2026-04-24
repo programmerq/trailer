@@ -67,6 +67,8 @@ set(TRAILER_SOURCES
     src/document/PdfEditor.h
     src/document/StubAdapter.cpp
     src/document/StubAdapter.h
+    src/filters/ImageFilter.cpp
+    src/filters/ImageFilter.h
     src/recent/RecentFiles.cpp
     src/recent/RecentFiles.h
     src/settings/AppPaths.cpp

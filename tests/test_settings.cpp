@@ -25,6 +25,7 @@ void TestSettings::defaults() {
     QCOMPARE(s.openFilesIn(), OpenFilesIn::NewTab);
     QCOMPARE(s.autoSave(), true);
     QCOMPARE(s.recentMax(), 50);
+    QCOMPARE(s.redactionWarningAcknowledged(), false);
 }
 
 void TestSettings::roundTrip() {
@@ -38,6 +39,7 @@ void TestSettings::roundTrip() {
         s.setOpenFilesIn(OpenFilesIn::NewWindow);
         s.setAutoSave(false);
         s.setRecentMax(20);
+        s.setRedactionWarningAcknowledged(true);
         s.save();
     }
 
@@ -49,6 +51,7 @@ void TestSettings::roundTrip() {
     QCOMPARE(reloaded.openFilesIn(), OpenFilesIn::NewWindow);
     QCOMPARE(reloaded.autoSave(), false);
     QCOMPARE(reloaded.recentMax(), 20);
+    QCOMPARE(reloaded.redactionWarningAcknowledged(), true);
 }
 
 void TestSettings::missingFileYieldsDefaults() {

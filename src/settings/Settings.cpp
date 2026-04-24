@@ -94,6 +94,11 @@ void Settings::load() {
             m_recentMax = static_cast<int>(*v);
         }
     }
+    if (auto* redaction = tbl["redaction"].as_table()) {
+        if (auto v = (*redaction)["warning_acknowledged"].value<bool>()) {
+            m_redactionWarningAcknowledged = *v;
+        }
+    }
 }
 
 void Settings::save() const {
@@ -105,6 +110,9 @@ void Settings::save() const {
         {"files", toml::table{
             {"auto_save", m_autoSave},
             {"recent_max", static_cast<int64_t>(m_recentMax)},
+        }},
+        {"redaction", toml::table{
+            {"warning_acknowledged", m_redactionWarningAcknowledged},
         }},
     };
 
@@ -126,5 +134,8 @@ void Settings::setTheme(Theme value) { m_theme = value; }
 void Settings::setOpenFilesIn(OpenFilesIn value) { m_openFilesIn = value; }
 void Settings::setAutoSave(bool value) { m_autoSave = value; }
 void Settings::setRecentMax(int value) { m_recentMax = value; }
+void Settings::setRedactionWarningAcknowledged(bool value) {
+    m_redactionWarningAcknowledged = value;
+}
 
 }  // namespace trailer
