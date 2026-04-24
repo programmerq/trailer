@@ -73,6 +73,9 @@ set(TRAILER_SOURCES
     src/settings/AppPaths.h
     src/settings/Settings.cpp
     src/settings/Settings.h
+    src/signatures/Signature.h
+    src/signatures/SignatureStore.cpp
+    src/signatures/SignatureStore.h
     src/ui/DocumentView.cpp
     src/ui/DocumentView.h
     src/ui/MainWindow.cpp
@@ -97,6 +100,10 @@ set(TRAILER_SOURCES
     src/ui/SearchBar.h
     src/ui/Sidebar.cpp
     src/ui/Sidebar.h
+    src/ui/SignatureCaptureDialog.cpp
+    src/ui/SignatureCaptureDialog.h
+    src/ui/SignaturesDialog.cpp
+    src/ui/SignaturesDialog.h
     src/ui/ThumbnailModel.cpp
     src/ui/ThumbnailModel.h
 )

@@ -7,6 +7,7 @@
 #include "FormToolbar.h"
 #include "MarkupToolbar.h"
 #include "MyCardDialog.h"
+#include "SignaturesDialog.h"
 #include "cards/CardStore.h"
 #include "cards/MyCard.h"
 #include "document/PdfEditor.h"  // FormField definition for AutoFill
@@ -443,6 +444,11 @@ void MainWindow::buildToolsMenu(QMenu* toolsMenu) {
     m_myCardAction = toolsMenu->addAction(tr("My &Card…"));
     connect(m_myCardAction, &QAction::triggered,
             this, &MainWindow::onManageMyCard);
+
+    m_manageSignaturesAction = toolsMenu->addAction(
+        tr("Manage &Signatures…"));
+    connect(m_manageSignaturesAction, &QAction::triggered,
+            this, &MainWindow::onManageSignatures);
 
     toolsMenu->addSeparator();
 
@@ -1228,11 +1234,17 @@ void MainWindow::onManageMyCard() {
 
 void MainWindow::onSignHere() {
     // TODO: wire through to Sign tool task (Phase 5). Stub message
-    // until signature capture and placement land.
+    // until signature placement lands — users can already capture
+    // signatures via Tools > Manage Signatures…, placement follows.
     QMessageBox::information(this, tr("Sign Here"),
         tr("Signature placement is coming soon.\n"
-           "Capture a signature once under Tools > Manage Signatures "
-           "and then drop it anywhere on a PDF."));
+           "Capture signatures under Tools > Manage Signatures, then "
+           "drop them anywhere on a PDF once this feature ships."));
+}
+
+void MainWindow::onManageSignatures() {
+    SignaturesDialog dialog(this);
+    dialog.exec();
 }
 
 void MainWindow::addDocument(std::unique_ptr<IDocument> document) {
