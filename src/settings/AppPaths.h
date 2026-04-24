@@ -21,6 +21,12 @@ public:
     static QString pluginsDir();
     static QString logsDir();
 
+    // Cache directory for downloaded ONNX model weights
+    // (background removal, SAM, OCR, etc.). Models are large and
+    // version-pinned, so they live under the data dir alongside other
+    // long-lived artefacts — not the cache dir which the OS may purge.
+    static QString modelsDir();
+
     static void ensureDirExists(const QString& path);
 };
 

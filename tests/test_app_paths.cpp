@@ -42,6 +42,7 @@ void TestAppPaths::fileHelpersLiveUnderDirs() {
     QVERIFY(AppPaths::filtersDir().startsWith(data));
     QVERIFY(AppPaths::pluginsDir().startsWith(data));
     QVERIFY(AppPaths::logsDir().startsWith(data));
+    QVERIFY(AppPaths::modelsDir().startsWith(data));
 }
 
 void TestAppPaths::platformShape() {

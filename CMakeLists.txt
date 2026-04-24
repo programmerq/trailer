@@ -18,7 +18,8 @@ set(CMAKE_AUTOUIC ON)
 
 include(CompilerWarnings)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Test Pdf PdfWidgets PrintSupport)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Gui Widgets Network Test Pdf PdfWidgets PrintSupport)
+include(OnnxRuntime)
 # Prefer a CMake package config (e.g. vcpkg on Windows).  Fall back to
 # pkg-config so that Linux/macOS system packages (libqpdf-dev, brew qpdf)
 # are found without requiring a custom CMAKE_PREFIX_PATH.
@@ -69,6 +70,12 @@ set(TRAILER_SOURCES
     src/document/StubAdapter.h
     src/filters/ImageFilter.cpp
     src/filters/ImageFilter.h
+    src/ml/ModelDownloader.cpp
+    src/ml/ModelDownloader.h
+    src/ml/ModelRegistry.cpp
+    src/ml/ModelRegistry.h
+    src/ml/OnnxSession.cpp
+    src/ml/OnnxSession.h
     src/recent/RecentFiles.cpp
     src/recent/RecentFiles.h
     src/settings/AppPaths.cpp
@@ -116,12 +123,14 @@ target_link_libraries(trailer_core
     PUBLIC
         Qt6::Core
         Qt6::Gui
+        Qt6::Network
         Qt6::Widgets
         Qt6::Pdf
         Qt6::PdfWidgets
         Qt6::PrintSupport
         qpdf::libqpdf
         tomlplusplus::tomlplusplus
+        onnxruntime::onnxruntime
 )
 trailer_set_warnings(trailer_core)
 
@@ -131,6 +140,7 @@ qt_add_executable(trailer
 )
 target_link_libraries(trailer PRIVATE trailer_core)
 trailer_set_warnings(trailer)
+trailer_deploy_onnxruntime(trailer)
 
 set_target_properties(trailer PROPERTIES
     WIN32_EXECUTABLE ON
