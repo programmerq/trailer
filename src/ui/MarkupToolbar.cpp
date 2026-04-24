@@ -43,6 +43,14 @@ MarkupToolbar::MarkupToolbar(QWidget* parent) : QToolBar(parent) {
 
     addSeparator();
 
+    auto* redactAction =
+        makeToolAction(tr("Redact"), AnnotationTool::Redaction);
+    redactAction->setToolTip(
+        tr("Paint a permanent black block — content is rasterised on save. "
+           "Not a defence-grade redaction tool."));
+
+    addSeparator();
+
     auto* strokeBtn = new QToolButton(this);
     strokeBtn->setText(tr("Stroke"));
     strokeBtn->setAutoRaise(true);

@@ -339,6 +339,10 @@ void PdfDocument::setPendingAnnotationText(const QString& text) {
     if (m_overlay) m_overlay->setPendingTextPreset(text);
 }
 
+void PdfDocument::setPendingSignaturePath(const QString& path) {
+    if (m_overlay) m_overlay->setPendingSignaturePath(path);
+}
+
 void PdfDocument::applyViewMode() {
     if (!m_view) {
         return;
@@ -685,6 +689,17 @@ bool PdfDocument::save(const QString& newPath) {
         return false;
     }
 
+    // Order matters: apply redactions first so their rasterised page
+    // image replaces the old content stream before anything else runs.
+    // Then flatten signatures so they survive as page content when the
+    // file is re-read (readAnnotations does not reconstruct image
+    // stamps). Finally, write every other annotation as /Annot.
+    if (!m_editor->applyRedactions(m_annotations.annotations())) {
+        return false;
+    }
+    if (!m_editor->flattenSignatures(m_annotations.annotations())) {
+        return false;
+    }
     if (!m_editor->writeAnnotations(m_annotations.annotations())) {
         return false;
     }
@@ -789,6 +804,8 @@ bool PdfDocument::exportWithPassword(const QString& destPath,
     // a separate destination only — never overwrite the source file —
     // so the in-memory state remains unencrypted and further edits keep
     // working normally.
+    if (!m_editor->applyRedactions(m_annotations.annotations())) return false;
+    if (!m_editor->flattenSignatures(m_annotations.annotations())) return false;
     if (!m_editor->writeAnnotations(m_annotations.annotations())) return false;
     EncryptionOptions enc;
     enc.userPassword = password;
@@ -801,6 +818,8 @@ bool PdfDocument::reduceFileSize(const QString& destPath) {
     // Flush pending annotations first so the reduced output reflects
     // everything the user sees on screen. Linearization + object-
     // stream regeneration then re-packs the document.
+    if (!m_editor->applyRedactions(m_annotations.annotations())) return false;
+    if (!m_editor->flattenSignatures(m_annotations.annotations())) return false;
     if (!m_editor->writeAnnotations(m_annotations.annotations())) return false;
     return m_editor->saveReduced(destPath);
 }

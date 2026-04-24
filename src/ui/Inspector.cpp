@@ -42,6 +42,8 @@ QString typeLabel(AnnotationType type) {
         case AnnotationType::HighlightShape: return Inspector::tr("Highlight Shape");
         case AnnotationType::SpeechBubble:   return Inspector::tr("Speech Bubble");
         case AnnotationType::ZoomLens:       return Inspector::tr("Zoom Lens");
+        case AnnotationType::Signature:      return Inspector::tr("Signature");
+        case AnnotationType::Redaction:      return Inspector::tr("Redaction");
     }
     return {};
 }
@@ -322,6 +324,8 @@ QString typeShortLabel(AnnotationType type) {
         case AnnotationType::HighlightShape: return Inspector::tr("HlShape");
         case AnnotationType::SpeechBubble:   return Inspector::tr("Bubble");
         case AnnotationType::ZoomLens:       return Inspector::tr("Lens");
+        case AnnotationType::Signature:      return Inspector::tr("Sig");
+        case AnnotationType::Redaction:      return Inspector::tr("Redact");
     }
     return {};
 }

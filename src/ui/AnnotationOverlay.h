@@ -2,12 +2,15 @@
 
 #include "annotation/Annotation.h"
 
+#include <QImage>
 #include <QPointF>
 #include <QPointer>
 #include <QRectF>
+#include <QString>
 #include <QWidget>
 
 #include <functional>
+#include <unordered_map>
 
 namespace trailer {
 
@@ -28,6 +31,11 @@ public:
     // preset persists until tool changes or this is cleared.
     void setPendingTextPreset(const QString& text) { m_pendingTextPreset = text; }
     QString pendingTextPreset() const { return m_pendingTextPreset; }
+    // When the Signature tool is active, the next drag creates a
+    // Signature annotation referring to this PNG. Cleared (along with
+    // the tool) when the active tool moves away from Signature.
+    void setPendingSignaturePath(const QString& path) { m_pendingSignaturePath = path; }
+    QString pendingSignaturePath() const { return m_pendingSignaturePath; }
     void setStyle(const AnnotationStyle& style);
     const AnnotationStyle& style() const { return m_style; }
     void setPage(int page);
@@ -95,6 +103,12 @@ private:
     // Preset for the next Text annotation — bypasses the input dialog
     // when FormToolbar's Checkmark/X tools are active.
     QString m_pendingTextPreset;
+    // PNG path the Signature tool will use for the next placement.
+    QString m_pendingSignaturePath;
+    // Cache of decoded signature PNGs keyed by absolute path, so the
+    // overlay doesn't re-decode on every repaint. Mutable because
+    // paintEvent() is const-ish in spirit.
+    mutable std::unordered_map<std::string, QImage> m_signatureCache;
 
     DocToView m_docToView;
     ViewToDoc m_viewToDoc;

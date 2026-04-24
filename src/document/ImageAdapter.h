@@ -43,6 +43,7 @@ public:
     void setAnnotationTool(AnnotationTool tool) override;
     void setAnnotationStyle(const AnnotationStyle& style) override;
     void setPendingAnnotationText(const QString& text) override;
+    void setPendingSignaturePath(const QString& path) override;
 
     bool supportsEditing() const override { return !m_image.isNull() && !m_animated; }
     bool isDirty() const override {

@@ -25,6 +25,8 @@ enum class AnnotationTool {
     HighlightShape, // translucent filled rectangle (non-text)
     SpeechBubble,
     ZoomLens,
+    Signature,      // drag-place a saved signature PNG (§6.4.3)
+    Redaction,      // paints over a region; flattened permanently on save
 };
 
 enum class AnnotationType {
@@ -41,6 +43,8 @@ enum class AnnotationType {
     HighlightShape, // translucent filled shape
     SpeechBubble,   // rounded rect with pointer tail
     ZoomLens,       // circular magnifier
+    Signature,      // image-stamp of a saved signature PNG; flattened on save
+    Redaction,      // opaque black block; content beneath raster-flattened on save
 };
 
 enum class DashStyle {
@@ -72,6 +76,11 @@ struct Annotation {
     std::vector<QPointF> points;  // for Ink and Line endpoints
     std::vector<QRectF> quads;    // per-run rects for Highlight/Underline/StrikeOut
     QString text;                 // Text / Note / and any user-attached comment
+    // Absolute filesystem path to an image asset used for image-stamp
+    // annotations (currently Signature). Empty for everything else.
+    // Stored as a path rather than bytes so multiple signature
+    // annotations share one PNG on disk and saves don't bloat memory.
+    QString imagePath;
     AnnotationStyle style;
 };
 

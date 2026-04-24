@@ -99,6 +99,7 @@ public:
     void setAnnotationTool(AnnotationTool tool) override;
     void setAnnotationStyle(const AnnotationStyle& style) override;
     void setPendingAnnotationText(const QString& text) override;
+    void setPendingSignaturePath(const QString& path) override;
 
     bool isValid() const { return m_valid; }
 

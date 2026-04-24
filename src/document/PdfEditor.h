@@ -79,7 +79,34 @@ public:
     // Append in-memory annotations to each page's /Annots array. Caller
     // supplies doc-native coords (PDF points, top-left origin); the writer
     // flips to PDF convention (bottom-left) using each page's MediaBox.
+    // Signature annotations are skipped here — they must be burned into
+    // the page content stream via flattenSignatures() so they remain
+    // visible in readers that don't render annotation appearances.
     bool writeAnnotations(const std::vector<Annotation>& annotations);
+
+    // Flatten every Signature-typed annotation into its page's content
+    // stream by embedding the referenced PNG as an image XObject and
+    // emitting `q cm Do Q` drawing commands. The annotations themselves
+    // are not written to /Annots — the rasterised stamp is the
+    // permanent visual. Callers invoke this once, immediately before
+    // save() or exportWithPassword(). Returns true when all signatures
+    // were embedded (an empty signature list is success).
+    bool flattenSignatures(const std::vector<Annotation>& annotations);
+
+    // For every page that has at least one Redaction-typed annotation,
+    // render the current page contents to a raster image, paint opaque
+    // black over each redacted rectangle, and replace the page's
+    // content stream with just that image. The underlying text /
+    // glyph operators are discarded, so the redacted content is
+    // actually destroyed — not merely visually hidden. Per §6.11.6
+    // Trailer is not a defence-grade tool; the caller should warn
+    // users that non-page-content metadata (bookmarks, attached
+    // files, encrypted layers) is not touched by this pass.
+    //
+    // Returns true when all affected pages were rasterised (empty
+    // redaction list is success). Non-redaction annotations are
+    // untouched.
+    bool applyRedactions(const std::vector<Annotation>& annotations);
 
     // Parse /Annots arrays on every page and return an in-memory representation
     // in doc-native coords (top-left origin). Only the subtypes this class

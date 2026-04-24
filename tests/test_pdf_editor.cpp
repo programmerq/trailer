@@ -1,12 +1,19 @@
 #include "document/PdfEditor.h"
 
+#include <qpdf/Pl_String.hh>
 #include <qpdf/QPDF.hh>
+#include <qpdf/QPDFObjectHandle.hh>
+#include <qpdf/QPDFPageDocumentHelper.hh>
+#include <qpdf/QPDFPageObjectHelper.hh>
 #include <qpdf/QPDFWriter.hh>
 
+#include <QColor>
 #include <QFileInfo>
+#include <QImage>
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfWriter>
+#include <QRectF>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -164,6 +171,18 @@ private slots:
     // File-size reduction (Phase 5)
     void saveReducedProducesValidPdf();
     void saveReducedFailsOnInvalidEditor();
+
+    // Signature flattening (Phase 5)
+    void flattenSignaturesEmbedsImageXObject();
+    void flattenSignaturesWithMissingPngLeavesPageUntouched();
+    void flattenSignaturesIsNoOpWithoutSignatureAnnotations();
+    void saveSkipsSignatureAnnotationsInAnnots();
+
+    // Redaction (Phase 5)
+    void applyRedactionsReplacesPageContentWithRaster();
+    void applyRedactionsRemovesOriginalAnnotsOnRedactedPage();
+    void applyRedactionsIsNoOpWithoutRedactionAnnotations();
+    void applyRedactionsOnlyTouchesPagesWithRedactions();
 };
 
 void TestPdfEditor::reportsInvalidForMissingFile() {
@@ -612,6 +631,345 @@ void TestPdfEditor::saveReducedFailsOnInvalidEditor() {
     QVERIFY(dir.isValid());
     PdfEditor editor;  // never loaded
     QVERIFY(!editor.saveReduced(dir.filePath("out.pdf")));
+}
+
+namespace {
+
+// Drop a tiny PNG onto disk — arbitrary bytes in ARGB32 with partial
+// alpha so the SMask path gets exercised.
+QString writeSampleSignaturePng(const QString& path) {
+    QImage img(32, 16, QImage::Format_ARGB32);
+    img.fill(QColor(0, 0, 0, 0));
+    QPainter p(&img);
+    p.setPen(QColor(30, 30, 30, 220));
+    p.drawLine(2, 12, 28, 4);
+    p.drawLine(2, 8, 28, 14);
+    p.end();
+    img.save(path, "PNG");
+    return path;
+}
+
+// Read the first page's /Resources/XObject and return the keys.
+QStringList xobjectKeysOnFirstPage(const QString& pdfPath) {
+    QPDF pdf;
+    pdf.processFile(pdfPath.toLocal8Bit().constData());
+    auto pages = QPDFPageDocumentHelper(pdf).getAllPages();
+    if (pages.empty()) return {};
+    QPDFObjectHandle resources = pages.front().getAttribute("/Resources", true);
+    if (!resources.isDictionary()) return {};
+    QPDFObjectHandle xobj = resources.getKey("/XObject");
+    if (!xobj.isDictionary()) return {};
+    QStringList out;
+    for (const auto& key : xobj.getKeys()) {
+        out << QString::fromStdString(key);
+    }
+    return out;
+}
+
+}  // namespace
+
+void TestPdfEditor::flattenSignaturesEmbedsImageXObject() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+    const QString pngPath =
+        writeSampleSignaturePng(dir.filePath("sig.png"));
+    const QString dst = dir.filePath("signed.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    Annotation sig;
+    sig.page = 0;
+    sig.type = AnnotationType::Signature;
+    sig.bounds = QRectF(100, 100, 160, 60);
+    sig.imagePath = pngPath;
+
+    QVERIFY(editor.flattenSignatures({sig}));
+    QVERIFY(editor.save(dst));
+
+    // Round-trip: the saved PDF must load, still have one page, and
+    // its /Resources/XObject must contain a TrailerSig* entry.
+    PdfEditor round;
+    QVERIFY(round.load(dst));
+    QCOMPARE(round.pageCount(), 1);
+
+    const QStringList keys = xobjectKeysOnFirstPage(dst);
+    bool foundSig = false;
+    for (const QString& k : keys) {
+        if (k.startsWith(QStringLiteral("/TrailerSig"))) {
+            foundSig = true;
+            break;
+        }
+    }
+    QVERIFY2(foundSig, qPrintable("Expected /TrailerSig* key, got: "
+                                  + keys.join(", ")));
+
+    // Signatures are flattened, not stored as /Annot — readAnnotations
+    // must NOT bring them back as an annotation.
+    const auto reread = round.readAnnotations();
+    for (const Annotation& a : reread) {
+        QVERIFY(a.type != AnnotationType::Signature);
+    }
+}
+
+// Missing PNG path: flattenSignatures silently skips the annotation so
+// a stale signature reference doesn't corrupt the save.
+void TestPdfEditor::flattenSignaturesWithMissingPngLeavesPageUntouched() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+    const QString dst = dir.filePath("out.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    Annotation sig;
+    sig.page = 0;
+    sig.type = AnnotationType::Signature;
+    sig.bounds = QRectF(50, 50, 100, 30);
+    sig.imagePath = dir.filePath("nope-does-not-exist.png");
+
+    // Still reports success (missing PNG is a user error, not a
+    // corrupt-editor state) — but no XObject gets added to the page.
+    QVERIFY(editor.flattenSignatures({sig}));
+    QVERIFY(editor.save(dst));
+
+    const QStringList keys = xobjectKeysOnFirstPage(dst);
+    for (const QString& k : keys) {
+        QVERIFY2(!k.startsWith(QStringLiteral("/TrailerSig")),
+                 qPrintable("Unexpected sig XObject: " + k));
+    }
+}
+
+void TestPdfEditor::flattenSignaturesIsNoOpWithoutSignatureAnnotations() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 2);
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    // Empty list — success, no mutation.
+    QVERIFY(editor.flattenSignatures({}));
+
+    // List of non-signature types — also a no-op.
+    Annotation rect;
+    rect.page = 0;
+    rect.type = AnnotationType::Rectangle;
+    rect.bounds = QRectF(10, 10, 50, 50);
+    QVERIFY(editor.flattenSignatures({rect}));
+}
+
+// writeAnnotations handles the full annotation list but must leave
+// Signature typed entries out of each page's /Annots — they're in the
+// content stream, not the annotation tree.
+void TestPdfEditor::saveSkipsSignatureAnnotationsInAnnots() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+    const QString pngPath = writeSampleSignaturePng(dir.filePath("s.png"));
+    const QString dst = dir.filePath("mixed.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    Annotation rect;
+    rect.page = 0;
+    rect.type = AnnotationType::Rectangle;
+    rect.bounds = QRectF(10, 10, 40, 40);
+
+    Annotation sig;
+    sig.page = 0;
+    sig.type = AnnotationType::Signature;
+    sig.bounds = QRectF(80, 80, 120, 40);
+    sig.imagePath = pngPath;
+
+    QVERIFY(editor.flattenSignatures({rect, sig}));
+    QVERIFY(editor.writeAnnotations({rect, sig}));
+    QVERIFY(editor.save(dst));
+
+    PdfEditor round;
+    QVERIFY(round.load(dst));
+    const auto all = round.readAnnotations();
+    // Exactly one /Annot — the rectangle. Signature lives in content.
+    QCOMPARE(static_cast<int>(all.size()), 1);
+    QCOMPARE(all.front().type, AnnotationType::Rectangle);
+}
+
+namespace {
+
+// Returns true if the page's /Contents stream is a single draw of a
+// page-sized image XObject — i.e., the redaction rasterised the page.
+bool firstPageIsRasterFlattened(const QString& pdfPath) {
+    QPDF pdf;
+    pdf.processFile(pdfPath.toLocal8Bit().constData());
+    auto pages = QPDFPageDocumentHelper(pdf).getAllPages();
+    if (pages.empty()) return false;
+    std::string content;
+    Pl_String sink("content", nullptr, content);
+    pages.front().pipeContents(&sink);
+    // Raster-flattened content looks like: q W 0 0 H X Y cm /Name Do Q
+    // — a single draw of an image XObject.
+    return content.find("/TrailerRed") != std::string::npos
+        && content.find(" Do") != std::string::npos;
+}
+
+// Count /Annots entries on the first page.
+int firstPageAnnotCount(const QString& pdfPath) {
+    QPDF pdf;
+    pdf.processFile(pdfPath.toLocal8Bit().constData());
+    auto pages = QPDFPageDocumentHelper(pdf).getAllPages();
+    if (pages.empty()) return -1;
+    QPDFObjectHandle annots =
+        pages.front().getObjectHandle().getKey("/Annots");
+    if (!annots.isArray()) return 0;
+    return annots.getArrayNItems();
+}
+
+}  // namespace
+
+// Placing a redaction rectangle on page 0 must: replace the page's
+// content stream with a raster draw of a /TrailerRed* XObject, add
+// that XObject to /Resources/XObject, and wipe /Annots on that page.
+void TestPdfEditor::applyRedactionsReplacesPageContentWithRaster() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+    const QString dst = dir.filePath("redacted.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    Annotation r;
+    r.page = 0;
+    r.type = AnnotationType::Redaction;
+    r.bounds = QRectF(80, 80, 200, 60);
+
+    QVERIFY(editor.applyRedactions({r}));
+    QVERIFY(editor.save(dst));
+
+    PdfEditor round;
+    QVERIFY(round.load(dst));
+    QCOMPARE(round.pageCount(), 1);
+
+    const QStringList keys = xobjectKeysOnFirstPage(dst);
+    bool foundRed = false;
+    for (const QString& k : keys) {
+        if (k.startsWith(QStringLiteral("/TrailerRed"))) {
+            foundRed = true;
+            break;
+        }
+    }
+    QVERIFY2(foundRed, qPrintable("Expected /TrailerRed* key, got: "
+                                  + keys.join(", ")));
+    QVERIFY(firstPageIsRasterFlattened(dst));
+
+    // Round-tripped file must not re-materialise the redaction as an
+    // /Annot — the content is destroyed, not annotated.
+    const auto reread = round.readAnnotations();
+    for (const Annotation& a : reread) {
+        QVERIFY(a.type != AnnotationType::Redaction);
+    }
+}
+
+// applyRedactions must strip any /Annots already on the redacted page.
+// The page's content stream has been rasterised, so any surviving
+// annotations would reference destroyed coordinates. (writeAnnotations
+// is the step that re-adds list-supplied annotations — tested
+// separately. Here we exercise applyRedactions in isolation against a
+// source PDF with pre-existing form widgets.)
+void TestPdfEditor::applyRedactionsRemovesOriginalAnnotsOnRedactedPage() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // Use the form-widget fixture — it has three /Annots on page 0
+    // from the start, independent of anything the editor writes.
+    const QString src = writeFormPdf(dir.filePath("form.pdf"));
+    const QString dst = dir.filePath("out.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+    QVERIFY(firstPageAnnotCount(src) > 0);
+
+    Annotation red;
+    red.page = 0;
+    red.type = AnnotationType::Redaction;
+    red.bounds = QRectF(100, 100, 60, 30);
+
+    QVERIFY(editor.applyRedactions({red}));
+    QVERIFY(editor.save(dst));
+
+    QCOMPARE(firstPageAnnotCount(dst), 0);
+}
+
+void TestPdfEditor::applyRedactionsIsNoOpWithoutRedactionAnnotations() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 2);
+    const QString dst = dir.filePath("out.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    // Empty list — success, no mutation.
+    QVERIFY(editor.applyRedactions({}));
+
+    // Only non-redaction types — also success, no raster embedded.
+    Annotation rect;
+    rect.page = 0;
+    rect.type = AnnotationType::Rectangle;
+    rect.bounds = QRectF(10, 10, 50, 50);
+    QVERIFY(editor.applyRedactions({rect}));
+    QVERIFY(editor.save(dst));
+
+    const QStringList keys = xobjectKeysOnFirstPage(dst);
+    for (const QString& k : keys) {
+        QVERIFY2(!k.startsWith(QStringLiteral("/TrailerRed")),
+                 qPrintable("Unexpected redaction XObject: " + k));
+    }
+}
+
+// Redactions on page 1 must not touch page 0's content stream.
+void TestPdfEditor::applyRedactionsOnlyTouchesPagesWithRedactions() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 2);
+    const QString dst = dir.filePath("out.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    Annotation red;
+    red.page = 1;
+    red.type = AnnotationType::Redaction;
+    red.bounds = QRectF(60, 60, 80, 40);
+
+    QVERIFY(editor.applyRedactions({red}));
+    QVERIFY(editor.save(dst));
+
+    const QStringList keys = xobjectKeysOnFirstPage(dst);
+    for (const QString& k : keys) {
+        QVERIFY2(!k.startsWith(QStringLiteral("/TrailerRed")),
+                 qPrintable("Page 0 should be untouched, got: " + k));
+    }
+
+    // Page 1 must have been rasterised.
+    QPDF pdf;
+    pdf.processFile(dst.toLocal8Bit().constData());
+    auto pages = QPDFPageDocumentHelper(pdf).getAllPages();
+    QVERIFY(pages.size() >= 2);
+    QPDFObjectHandle resources = pages[1].getAttribute("/Resources", true);
+    QVERIFY(resources.isDictionary());
+    QPDFObjectHandle xobj = resources.getKey("/XObject");
+    QVERIFY(xobj.isDictionary());
+    bool foundRed = false;
+    for (const auto& key : xobj.getKeys()) {
+        if (QString::fromStdString(key).startsWith(QStringLiteral("/TrailerRed"))) {
+            foundRed = true;
+            break;
+        }
+    }
+    QVERIFY(foundRed);
 }
 
 QTEST_MAIN(TestPdfEditor)

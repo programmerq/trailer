@@ -1233,13 +1233,30 @@ void MainWindow::onManageMyCard() {
 }
 
 void MainWindow::onSignHere() {
-    // TODO: wire through to Sign tool task (Phase 5). Stub message
-    // until signature placement lands — users can already capture
-    // signatures via Tools > Manage Signatures…, placement follows.
-    QMessageBox::information(this, tr("Sign Here"),
-        tr("Signature placement is coming soon.\n"
-           "Capture signatures under Tools > Manage Signatures, then "
-           "drop them anywhere on a PDF once this feature ships."));
+    auto* doc = m_documentView->currentDocument();
+    if (!doc) return;
+
+    // Open the manager; the user's current selection is what the Sign
+    // tool will stamp on the next drag. An empty signatures folder
+    // lets the user "Add…" from inside the dialog before picking.
+    SignaturesDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const QString id = dialog.selectedId();
+    if (id.isEmpty()) return;
+
+    // Resolve the id to an absolute PNG path via a fresh store scan —
+    // the dialog only hands back the id so we don't leak internal
+    // layout details across the signal boundary.
+    SignatureStore store;
+    QString pngPath;
+    for (const Signature& s : store.loadAll()) {
+        if (s.id == id) { pngPath = s.pngPath; break; }
+    }
+    if (pngPath.isEmpty()) return;
+
+    doc->setPendingSignaturePath(pngPath);
+    doc->setAnnotationTool(AnnotationTool::Signature);
 }
 
 void MainWindow::onManageSignatures() {

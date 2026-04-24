@@ -146,6 +146,25 @@ QImage flattenAnnotations(const QImage& base,
                 }
                 break;
             }
+            case AnnotationType::Redaction: {
+                p.fillRect(a.bounds, Qt::black);
+                break;
+            }
+            case AnnotationType::Signature: {
+                if (a.imagePath.isEmpty() || a.bounds.isEmpty()) break;
+                QImage sig(a.imagePath);
+                if (sig.isNull()) break;
+                // Scale to fit preserving aspect ratio (matches the
+                // on-screen overlay preview).
+                const QImage scaled = sig.scaled(
+                    a.bounds.size().toSize(),
+                    Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                const QPointF topLeft(
+                    a.bounds.left() + (a.bounds.width() - scaled.width()) / 2.0,
+                    a.bounds.top() + (a.bounds.height() - scaled.height()) / 2.0);
+                p.drawImage(topLeft, scaled);
+                break;
+            }
             case AnnotationType::ZoomLens: {
                 if (a.bounds.width() < 1 || a.bounds.height() < 1) break;
                 const double z = a.style.zoomFactor > 0 ? a.style.zoomFactor : 2.0;
@@ -305,6 +324,10 @@ void ImageDocument::setAnnotationStyle(const AnnotationStyle& style) {
 
 void ImageDocument::setPendingAnnotationText(const QString& text) {
     if (m_overlay) m_overlay->setPendingTextPreset(text);
+}
+
+void ImageDocument::setPendingSignaturePath(const QString& path) {
+    if (m_overlay) m_overlay->setPendingSignaturePath(path);
 }
 
 void ImageDocument::pushUndoSnapshot() {

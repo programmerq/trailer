@@ -11,8 +11,17 @@
 #include <qpdf/QPDFPageObjectHelper.hh>
 #include <qpdf/QPDFWriter.hh>
 
+#include <QDir>
+#include <QImage>
+#include <QPainter>
+#include <QPdfDocument>
+#include <QTemporaryFile>
+
 #include <algorithm>
+#include <cstdio>
+#include <map>
 #include <set>
+#include <string>
 
 namespace trailer {
 
@@ -369,6 +378,17 @@ QPDFObjectHandle buildAnnotation(const Annotation& a, double pageHeight) {
             // flattening. Skip PDF serialisation (TODO: embed as /Stamp with
             // appearance stream).
             return {};
+        case AnnotationType::Signature:
+            // Signatures are flattened into the page's content stream via
+            // flattenSignatures(); not stored as /Annot objects. Skipping
+            // here keeps writeAnnotations() oblivious to the image stamp.
+            return {};
+        case AnnotationType::Redaction:
+            // Redactions are destroyed in applyRedactions() by replacing
+            // the page's content stream with a rasterised image.
+            // They must never reappear as /Annot entries — if they did,
+            // the "redacted" content would still be present on the page.
+            return {};
         case AnnotationType::Highlight:
         case AnnotationType::Underline:
         case AnnotationType::StrikeOut: {
@@ -401,6 +421,299 @@ QPDFObjectHandle buildAnnotation(const Annotation& a, double pageHeight) {
 }
 
 }  // namespace
+
+namespace {
+
+// Encode a QImage as two FlateDecode-ready raw byte buffers: one for the
+// RGB colour plane, one for the 8-bit alpha SMask. The alpha buffer is
+// empty when the input is fully opaque — callers then omit the SMask.
+struct EncodedSignature {
+    std::string rgb;
+    std::string alpha;
+    int width = 0;
+    int height = 0;
+};
+
+EncodedSignature encodeSignatureImage(const QImage& src) {
+    EncodedSignature out;
+    if (src.isNull()) return out;
+    QImage img = src.convertToFormat(QImage::Format_ARGB32);
+    const int w = img.width();
+    const int h = img.height();
+    out.width = w;
+    out.height = h;
+    out.rgb.reserve(static_cast<size_t>(w) * h * 3);
+    out.alpha.reserve(static_cast<size_t>(w) * h);
+    bool anyNonOpaque = false;
+    for (int y = 0; y < h; ++y) {
+        const auto* scan = reinterpret_cast<const QRgb*>(img.constScanLine(y));
+        for (int x = 0; x < w; ++x) {
+            const QRgb px = scan[x];
+            out.rgb.push_back(static_cast<char>(qRed(px)));
+            out.rgb.push_back(static_cast<char>(qGreen(px)));
+            out.rgb.push_back(static_cast<char>(qBlue(px)));
+            const int a = qAlpha(px);
+            if (a != 255) anyNonOpaque = true;
+            out.alpha.push_back(static_cast<char>(a));
+        }
+    }
+    if (!anyNonOpaque) out.alpha.clear();
+    return out;
+}
+
+// Create an indirect /XObject Image from a QImage. The caller owns the
+// lifetime (it's stored in the page resources). Raw pixel data is
+// handed to qpdf uncompressed — QPDFWriter compresses it with
+// /FlateDecode on save by default.
+QPDFObjectHandle makeSignatureXObject(QPDF& pdf, const QImage& src) {
+    EncodedSignature enc = encodeSignatureImage(src);
+    if (enc.width <= 0 || enc.height <= 0) return {};
+
+    QPDFObjectHandle stream =
+        QPDFObjectHandle::newStream(&pdf, enc.rgb);
+    QPDFObjectHandle d = stream.getDict();
+    d.replaceKey("/Type", QPDFObjectHandle::newName("/XObject"));
+    d.replaceKey("/Subtype", QPDFObjectHandle::newName("/Image"));
+    d.replaceKey("/Width", QPDFObjectHandle::newInteger(enc.width));
+    d.replaceKey("/Height", QPDFObjectHandle::newInteger(enc.height));
+    d.replaceKey("/ColorSpace", QPDFObjectHandle::newName("/DeviceRGB"));
+    d.replaceKey("/BitsPerComponent", QPDFObjectHandle::newInteger(8));
+
+    if (!enc.alpha.empty()) {
+        QPDFObjectHandle smask =
+            QPDFObjectHandle::newStream(&pdf, enc.alpha);
+        QPDFObjectHandle sd = smask.getDict();
+        sd.replaceKey("/Type", QPDFObjectHandle::newName("/XObject"));
+        sd.replaceKey("/Subtype", QPDFObjectHandle::newName("/Image"));
+        sd.replaceKey("/Width", QPDFObjectHandle::newInteger(enc.width));
+        sd.replaceKey("/Height", QPDFObjectHandle::newInteger(enc.height));
+        sd.replaceKey("/ColorSpace", QPDFObjectHandle::newName("/DeviceGray"));
+        sd.replaceKey("/BitsPerComponent", QPDFObjectHandle::newInteger(8));
+        d.replaceKey("/SMask", pdf.makeIndirectObject(smask));
+    }
+    return pdf.makeIndirectObject(stream);
+}
+
+}  // namespace
+
+bool PdfEditor::flattenSignatures(const std::vector<Annotation>& annotations) {
+    if (!m_valid) return false;
+    // Collect signatures per page so we only touch each page's
+    // resources and content stream once.
+    std::map<int, std::vector<const Annotation*>> byPage;
+    for (const Annotation& a : annotations) {
+        if (a.type != AnnotationType::Signature) continue;
+        if (a.imagePath.isEmpty()) continue;
+        byPage[a.page].push_back(&a);
+    }
+    if (byPage.empty()) return true;
+    try {
+        auto pages = QPDFPageDocumentHelper(*m_qpdf).getAllPages();
+        const int total = static_cast<int>(pages.size());
+        // Share one XObject across multiple placements of the same PNG.
+        std::map<QString, QPDFObjectHandle> xobjByPath;
+        int seq = 0;
+        for (auto& kv : byPage) {
+            const int pageIdx = kv.first;
+            if (pageIdx < 0 || pageIdx >= total) continue;
+            QPDFPageObjectHelper& page = pages[static_cast<size_t>(pageIdx)];
+            QPDFObjectHandle pageObj = page.getObjectHandle();
+            QPDFObjectHandle media = page.getMediaBox(/*copy_if_shared=*/true);
+            if (!media.isArray() || media.getArrayNItems() < 4) continue;
+            const double my0 = media.getArrayItem(1).getNumericValue();
+            const double my1 = media.getArrayItem(3).getNumericValue();
+            const double pageHeight = my1 - my0;
+
+            QPDFObjectHandle resources =
+                page.getAttribute("/Resources", /*copy_if_shared=*/true);
+            if (!resources.isDictionary()) {
+                resources = QPDFObjectHandle::newDictionary();
+            }
+            QPDFObjectHandle xobjDict = resources.getKey("/XObject");
+            if (!xobjDict.isDictionary()) {
+                xobjDict = QPDFObjectHandle::newDictionary();
+            }
+
+            std::string draw;
+            for (const Annotation* a : kv.second) {
+                auto it = xobjByPath.find(a->imagePath);
+                QPDFObjectHandle xobj;
+                if (it == xobjByPath.end()) {
+                    QImage img(a->imagePath);
+                    if (img.isNull()) continue;
+                    xobj = makeSignatureXObject(*m_qpdf, img);
+                    if (!xobj.isInitialized()) continue;
+                    xobjByPath[a->imagePath] = xobj;
+                } else {
+                    xobj = it->second;
+                }
+                const std::string resName =
+                    "/TrailerSig" + std::to_string(++seq);
+                xobjDict.replaceKey(resName, xobj);
+
+                // PDF coords: origin bottom-left. Our bounds use top-
+                // left origin so flip Y. The image transform `cm` is
+                // `sx 0 0 sy tx ty` to scale from 1×1 unit-space to the
+                // actual width/height and translate to (x, y_bottom).
+                const double w = a->bounds.width();
+                const double h = a->bounds.height();
+                const double x = a->bounds.left();
+                const double yTop = a->bounds.top();
+                const double y = pageHeight - yTop - h;
+
+                char buf[192];
+                std::snprintf(buf, sizeof(buf),
+                    "\nq %.3f 0 0 %.3f %.3f %.3f cm %s Do Q",
+                    w, h, x, y, resName.c_str());
+                draw += buf;
+            }
+
+            if (draw.empty()) continue;
+
+            resources.replaceKey("/XObject", xobjDict);
+            pageObj.replaceKey("/Resources", resources);
+
+            // Wrap the existing content with q/Q so our appended draw
+            // commands start from a clean graphics state. The page may
+            // have a single stream or an array; addPageContents handles
+            // both, and adds the new stream as a sibling rather than
+            // mutating the existing one.
+            QPDFObjectHandle prepend =
+                QPDFObjectHandle::newStream(m_qpdf.get(), std::string("q\n"));
+            QPDFObjectHandle append =
+                QPDFObjectHandle::newStream(m_qpdf.get(),
+                                            std::string("Q\n") + draw + "\n");
+            page.addPageContents(prepend, /*first=*/true);
+            page.addPageContents(append, /*first=*/false);
+        }
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+bool PdfEditor::applyRedactions(const std::vector<Annotation>& annotations) {
+    if (!m_valid) return false;
+    std::map<int, std::vector<const Annotation*>> byPage;
+    for (const Annotation& a : annotations) {
+        if (a.type == AnnotationType::Redaction) byPage[a.page].push_back(&a);
+    }
+    if (byPage.empty()) return true;
+
+    // Write the current editor state to a temp file so QPdfDocument can
+    // render it. Qt's QPdfDocument is file-backed; it doesn't accept
+    // qpdf's in-memory graph directly. Using a QTemporaryFile with
+    // RAII cleanup is safer than managing a path by hand.
+    QTemporaryFile snapshot(
+        QDir::tempPath() + QStringLiteral("/trailer-redact-XXXXXX.pdf"));
+    snapshot.setAutoRemove(true);
+    if (!snapshot.open()) return false;
+    const QString snapshotPath = snapshot.fileName();
+    snapshot.close();
+    try {
+        QPDFWriter writer(*m_qpdf, snapshotPath.toLocal8Bit().constData());
+        writer.setStaticID(false);
+        writer.write();
+    } catch (const std::exception&) {
+        return false;
+    }
+
+    QPdfDocument doc;
+    if (doc.load(snapshotPath) != QPdfDocument::Error::None) return false;
+
+    // Render at 200 DPI so redacted pages still look crisp at 100%
+    // zoom on a retina display. Higher values bloat file size; 200 is
+    // a good default for body text.
+    constexpr double kDpi = 200.0;
+    constexpr double kPtsPerInch = 72.0;
+    const double scale = kDpi / kPtsPerInch;
+
+    try {
+        auto pages = QPDFPageDocumentHelper(*m_qpdf).getAllPages();
+        const int total = static_cast<int>(pages.size());
+        for (const auto& kv : byPage) {
+            const int idx = kv.first;
+            if (idx < 0 || idx >= total) continue;
+            QPDFPageObjectHelper& page = pages[static_cast<size_t>(idx)];
+            QPDFObjectHandle pageObj = page.getObjectHandle();
+
+            QPDFObjectHandle media = page.getMediaBox(/*copy_if_shared=*/true);
+            if (!media.isArray() || media.getArrayNItems() < 4) continue;
+            const double mx0 = media.getArrayItem(0).getNumericValue();
+            const double my0 = media.getArrayItem(1).getNumericValue();
+            const double mx1 = media.getArrayItem(2).getNumericValue();
+            const double my1 = media.getArrayItem(3).getNumericValue();
+            const double widthPts  = mx1 - mx0;
+            const double heightPts = my1 - my0;
+            if (widthPts <= 0.0 || heightPts <= 0.0) continue;
+
+            const QSize pixelSize(
+                std::max(1, static_cast<int>(widthPts  * scale)),
+                std::max(1, static_cast<int>(heightPts * scale)));
+            QImage raster = doc.render(idx, pixelSize);
+            if (raster.isNull()) continue;
+            // Force an alpha channel so the image XObject's SMask stays
+            // consistent with the signature path — the format is cheap
+            // to produce and harmless when fully opaque.
+            raster = raster.convertToFormat(QImage::Format_ARGB32);
+
+            // Paint opaque black over each redaction. Input bounds are
+            // in doc-native points with top-left origin — raster
+            // pixels match the same orientation, so no Y flip needed.
+            {
+                QPainter p(&raster);
+                p.setPen(Qt::NoPen);
+                p.setBrush(Qt::black);
+                for (const Annotation* a : kv.second) {
+                    const QRectF r(a->bounds.left()   * scale,
+                                   a->bounds.top()    * scale,
+                                   a->bounds.width()  * scale,
+                                   a->bounds.height() * scale);
+                    p.drawRect(r);
+                }
+                p.end();
+            }
+
+            QPDFObjectHandle xobj = makeSignatureXObject(*m_qpdf, raster);
+            if (!xobj.isInitialized()) continue;
+
+            QPDFObjectHandle resources =
+                page.getAttribute("/Resources", /*copy_if_shared=*/true);
+            if (!resources.isDictionary()) {
+                resources = QPDFObjectHandle::newDictionary();
+            }
+            QPDFObjectHandle xobjDict = resources.getKey("/XObject");
+            if (!xobjDict.isDictionary()) {
+                xobjDict = QPDFObjectHandle::newDictionary();
+            }
+            const std::string resName = "/TrailerRed" + std::to_string(idx);
+            xobjDict.replaceKey(resName, xobj);
+            resources.replaceKey("/XObject", xobjDict);
+            pageObj.replaceKey("/Resources", resources);
+
+            // Replace the page content with a single full-page image
+            // draw. Coordinates are in PDF points with bottom-left
+            // origin, so translate by (mx0, my0) and scale by the
+            // MediaBox dimensions.
+            char buf[192];
+            std::snprintf(buf, sizeof(buf),
+                "q %.3f 0 0 %.3f %.3f %.3f cm %s Do Q\n",
+                widthPts, heightPts, mx0, my0, resName.c_str());
+            QPDFObjectHandle newContent =
+                QPDFObjectHandle::newStream(m_qpdf.get(), std::string(buf));
+            pageObj.replaceKey("/Contents", newContent);
+
+            // Kill any annotations on this page — they referenced
+            // content we just rasterised over. Users won't expect an
+            // Ink stroke or Text Box to survive a redaction pass on
+            // the same page.
+            pageObj.removeKey("/Annots");
+        }
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
 
 bool PdfEditor::writeAnnotations(const std::vector<Annotation>& annotations) {
     if (!m_valid) return false;

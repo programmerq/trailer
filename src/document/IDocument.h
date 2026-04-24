@@ -115,6 +115,9 @@ public:
     // Checkmark / X Mark tools to stamp ✓ / ✗ glyphs instead of
     // opening the multi-line input dialog. Empty clears the preset.
     virtual void setPendingAnnotationText(const QString& /*text*/) {}
+    // Preset for the next Signature annotation — points at the PNG
+    // file the Sign tool should stamp. Empty clears the preset.
+    virtual void setPendingSignaturePath(const QString& /*path*/) {}
 
     virtual bool supportsAnimation() const { return false; }
     virtual int frameCount() const { return 0; }

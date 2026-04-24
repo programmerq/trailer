@@ -59,6 +59,12 @@ void AnnotationOverlay::setActiveTool(AnnotationTool tool) {
         // skipping the dialog.
         m_pendingTextPreset.clear();
     }
+    if (tool != AnnotationTool::Signature) {
+        // Drop the saved-signature PNG pointer when the user switches
+        // away — otherwise a later Signature selection could surprise
+        // them with a stale image.
+        m_pendingSignaturePath.clear();
+    }
     update();
 }
 
@@ -193,6 +199,13 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
                 p.drawText(icon, Qt::AlignCenter, QStringLiteral("N"));
                 break;
             }
+            case AnnotationType::Redaction: {
+                // Provisional preview — rendered as a flat black block.
+                // On save the underlying page region is raster-flattened
+                // so the glyph content is actually destroyed (§6.11.6).
+                p.fillRect(viewRect, Qt::black);
+                break;
+            }
             case AnnotationType::HighlightShape: {
                 QColor fill = a.style.fill.alpha() > 0 ? a.style.fill
                                                        : a.style.stroke;
@@ -256,6 +269,39 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
                 p.drawEllipse(viewRect);
                 break;
             }
+            case AnnotationType::Signature: {
+                if (a.imagePath.isEmpty() || viewRect.isEmpty()) break;
+                const std::string key = a.imagePath.toStdString();
+                auto it = m_signatureCache.find(key);
+                if (it == m_signatureCache.end()) {
+                    QImage img(a.imagePath);
+                    if (img.isNull()) break;
+                    it = m_signatureCache.emplace(key, std::move(img)).first;
+                }
+                const QImage& img = it->second;
+                if (img.isNull()) break;
+                // Fit the PNG into the annotation rect while preserving
+                // aspect ratio. Signatures usually come out tall-and-wide
+                // rather than square, so centering keeps the ink where
+                // the user dragged.
+                const double srcAspect =
+                    static_cast<double>(img.width()) / std::max(1, img.height());
+                const double dstAspect = viewRect.width() / std::max(0.001, viewRect.height());
+                QRectF target = viewRect;
+                if (srcAspect > dstAspect) {
+                    const double h = viewRect.width() / srcAspect;
+                    target = QRectF(viewRect.left(),
+                                    viewRect.top() + (viewRect.height() - h) / 2.0,
+                                    viewRect.width(), h);
+                } else {
+                    const double w = viewRect.height() * srcAspect;
+                    target = QRectF(viewRect.left() + (viewRect.width() - w) / 2.0,
+                                    viewRect.top(),
+                                    w, viewRect.height());
+                }
+                p.drawImage(target, img);
+                break;
+            }
             case AnnotationType::Highlight:
             case AnnotationType::Underline:
             case AnnotationType::StrikeOut: {
@@ -307,6 +353,8 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
                 case AnnotationTool::HighlightShape: return AnnotationType::HighlightShape;
                 case AnnotationTool::SpeechBubble:   return AnnotationType::SpeechBubble;
                 case AnnotationTool::ZoomLens:       return AnnotationType::ZoomLens;
+                case AnnotationTool::Signature:      return AnnotationType::Signature;
+                case AnnotationTool::Redaction:      return AnnotationType::Redaction;
                 default:                             return AnnotationType::Rectangle;
             }
         }();
@@ -317,6 +365,8 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
             preview.points = {m_dragStartDoc, m_dragCurrentDoc};
         } else if (preview.type == AnnotationType::Ink) {
             preview.points = m_inkPoints;
+        } else if (preview.type == AnnotationType::Signature) {
+            preview.imagePath = m_pendingSignaturePath;
         }
         drawOne(preview);
     }
@@ -485,6 +535,9 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
         case AnnotationTool::HighlightShape:
             a.type = AnnotationType::HighlightShape;
             break;
+        case AnnotationTool::Redaction:
+            a.type = AnnotationType::Redaction;
+            break;
         case AnnotationTool::SpeechBubble: {
             QRectF rect = a.bounds;
             if (rect.width() < 40.0 || rect.height() < 20.0) {
@@ -510,6 +563,29 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
             }
             a.type = AnnotationType::ZoomLens;
             a.bounds = rect;
+            break;
+        }
+        case AnnotationTool::Signature: {
+            if (m_pendingSignaturePath.isEmpty()) {
+                // No signature picked — silently ignore the drag rather
+                // than dropping an empty stamp.
+                update();
+                return;
+            }
+            QRectF rect = a.bounds;
+            if (rect.width() < 10.0 || rect.height() < 10.0) {
+                // Treat a click (no drag) as "drop at natural size
+                // centred on the click". 160×60 doc units is roughly
+                // the aspect of a typed-signature capture — the render
+                // code recentres if the PNG is taller or wider.
+                const QSizeF defSize(160.0, 60.0);
+                rect = QRectF(m_dragStartDoc - QPointF(defSize.width() / 2.0,
+                                                      defSize.height() / 2.0),
+                              defSize);
+            }
+            a.type = AnnotationType::Signature;
+            a.bounds = rect;
+            a.imagePath = m_pendingSignaturePath;
             break;
         }
         case AnnotationTool::Highlight:
