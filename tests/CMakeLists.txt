@@ -13,5 +13,6 @@ trailer_add_test(test_adapters   test_adapters.cpp)
 trailer_add_test(test_pdf_editor test_pdf_editor.cpp)
 trailer_add_test(test_annotation_store test_annotation_store.cpp)
 trailer_add_test(test_form_toolbar test_form_toolbar.cpp)
+trailer_add_test(test_cards test_cards.cpp)
 
 add_subdirectory(uat)

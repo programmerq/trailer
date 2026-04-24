@@ -6,6 +6,10 @@
 #include "Magnifier.h"
 #include "FormToolbar.h"
 #include "MarkupToolbar.h"
+#include "MyCardDialog.h"
+#include "cards/CardStore.h"
+#include "cards/MyCard.h"
+#include "document/PdfEditor.h"  // FormField definition for AutoFill
 #include "SearchBar.h"
 #include "Sidebar.h"
 #include "annotation/AnnotationStore.h"
@@ -431,6 +435,14 @@ void MainWindow::buildToolsMenu(QMenu* toolsMenu) {
             doc->setFormFillingActive(on);
         }
     });
+
+    m_autoFillFormAction = toolsMenu->addAction(tr("&AutoFill Form"));
+    connect(m_autoFillFormAction, &QAction::triggered,
+            this, &MainWindow::onAutoFillCurrentForm);
+
+    m_myCardAction = toolsMenu->addAction(tr("My &Card…"));
+    connect(m_myCardAction, &QAction::triggered,
+            this, &MainWindow::onManageMyCard);
 
     toolsMenu->addSeparator();
 
@@ -1087,6 +1099,10 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
         m_fillFormsAction->setChecked(false);
     }
     m_fillFormsAction->setEnabled(hasForms);
+    m_autoFillFormAction->setEnabled(hasForms);
+    // My Card editor is always available — a user may want to edit
+    // their card even without a PDF open.
+    m_myCardAction->setEnabled(true);
 
     syncViewModeActions(doc);
     updateTitleForDocument(doc);
@@ -1159,14 +1175,55 @@ void MainWindow::onAbout() {
 }
 
 void MainWindow::onAutoFillCurrentForm() {
-    // TODO: wire through to AutoFill cards task (Phase 5). For now the
-    // toolbar button is informational — we surface the placeholder
-    // message so users discover the feature rather than silently
-    // failing.
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsFormFilling()) {
+        QMessageBox::information(this, tr("AutoFill"),
+            tr("This document has no fillable form fields."));
+        return;
+    }
+
+    CardStore store;
+    store.load();
+
+    // If the user has no card yet, open the dialog inline so AutoFill
+    // has something to work with on first use. They can still Cancel.
+    if (!store.hasActive()) {
+        MyCardDialog dialog(this);
+        if (dialog.exec() != QDialog::Accepted) return;
+        MyCard card = dialog.card();
+        if (card.label.isEmpty()) card.label = tr("My Card");
+        store.addCard(std::move(card));
+        store.save();
+    }
+
+    const MyCard card = store.activeCard();
+    const AutoFillResult r = autoFillDocument(doc, card);
+
     QMessageBox::information(this, tr("AutoFill"),
-        tr("AutoFill from \"My Card\" is coming soon.\n"
-           "Define a card under Preferences > My Card to populate "
-           "name, email, and address fields in one click."));
+        tr("Filled %1 of %2 text field(s) from \"%3\".")
+            .arg(r.filled)
+            .arg(r.examined)
+            .arg(card.label.isEmpty() ? tr("My Card") : card.label));
+}
+
+void MainWindow::onManageMyCard() {
+    CardStore store;
+    store.load();
+
+    MyCardDialog dialog(this);
+    if (store.hasActive()) {
+        dialog.setCard(store.activeCard());
+    }
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    MyCard card = dialog.card();
+    if (card.label.isEmpty()) card.label = tr("My Card");
+    if (store.hasActive()) {
+        store.replaceCard(store.activeIndex(), std::move(card));
+    } else {
+        store.addCard(std::move(card));
+    }
+    store.save();
 }
 
 void MainWindow::onSignHere() {

@@ -57,6 +57,7 @@ private slots:
     void onCropPages();
     void onAbout();
     void onAutoFillCurrentForm();
+    void onManageMyCard();
     void onSignHere();
     void onCurrentDocumentChanged(IDocument* doc);
     // Invoked whenever the active document's annotation store mutates
@@ -105,6 +106,8 @@ private:
     QAction* m_insertPagesAction = nullptr;
     QAction* m_cropPagesAction = nullptr;
     QAction* m_fillFormsAction = nullptr;
+    QAction* m_autoFillFormAction = nullptr;
+    QAction* m_myCardAction = nullptr;
     QAction* m_printAction = nullptr;
     QAction* m_findAction = nullptr;
     QAction* m_findNextAction = nullptr;

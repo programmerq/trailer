@@ -51,6 +51,10 @@ set(TRAILER_SOURCES
     src/app/Application.h
     src/app/CommandLine.cpp
     src/app/CommandLine.h
+    src/cards/CardStore.cpp
+    src/cards/CardStore.h
+    src/cards/MyCard.cpp
+    src/cards/MyCard.h
     src/document/DocumentRegistry.cpp
     src/document/DocumentRegistry.h
     src/document/IDocument.h
@@ -87,6 +91,8 @@ set(TRAILER_SOURCES
     src/ui/Magnifier.h
     src/ui/MarkupToolbar.cpp
     src/ui/MarkupToolbar.h
+    src/ui/MyCardDialog.cpp
+    src/ui/MyCardDialog.h
     src/ui/SearchBar.cpp
     src/ui/SearchBar.h
     src/ui/Sidebar.cpp

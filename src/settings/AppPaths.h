@@ -11,6 +11,7 @@ public:
 
     static QString settingsFile();
     static QString recentFile();
+    static QString cardsFile();
     static QString signaturesDir();
     static QString autofillDir();
     static QString versionsDir();
