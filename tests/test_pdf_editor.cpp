@@ -3,6 +3,7 @@
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFWriter.hh>
 
+#include <QFileInfo>
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfWriter>
@@ -159,6 +160,10 @@ private slots:
     void formFieldsRoundTripsCheckbox();
     void formFieldsRoundTripsDropdown();
     void setFormFieldValuePersists();
+
+    // File-size reduction (Phase 5)
+    void saveReducedProducesValidPdf();
+    void saveReducedFailsOnInvalidEditor();
 };
 
 void TestPdfEditor::reportsInvalidForMissingFile() {
@@ -577,6 +582,36 @@ void TestPdfEditor::setFormFieldValuePersists() {
     }
     QVERIFY(tf != nullptr);
     QCOMPARE(tf->value, QStringLiteral("Bob"));
+}
+
+// ---------- File-size reduction (Phase 5) ---------------------------------
+
+// saveReduced must produce a valid PDF with the same page count. We don't
+// assert the output is smaller — already-optimised inputs can even grow
+// slightly — just that the writer succeeds and qpdf can round-trip it.
+void TestPdfEditor::saveReducedProducesValidPdf() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 3);
+    const QString dst = dir.filePath("reduced.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+    QVERIFY(editor.saveReduced(dst));
+    QVERIFY(QFileInfo(dst).size() > 0);
+
+    PdfEditor round;
+    QVERIFY(round.load(dst));
+    QCOMPARE(round.pageCount(), 3);
+}
+
+// saveReduced must report failure rather than crashing when the editor
+// never loaded a file. Guards the menu action's enable state.
+void TestPdfEditor::saveReducedFailsOnInvalidEditor() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    PdfEditor editor;  // never loaded
+    QVERIFY(!editor.saveReduced(dir.filePath("out.pdf")));
 }
 
 QTEST_MAIN(TestPdfEditor)

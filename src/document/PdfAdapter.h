@@ -64,6 +64,11 @@ public:
     bool exportWithPassword(const QString& destPath,
                             const QString& password) override;
 
+    bool supportsFileSizeReduction() const override {
+        return m_valid && m_editor && m_editor->isValid();
+    }
+    bool reduceFileSize(const QString& destPath) override;
+
     bool supportsFormFilling() const override {
         return m_valid && m_editor && m_editor->isValid()
                && m_editor->hasFormFields();

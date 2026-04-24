@@ -49,6 +49,7 @@ private slots:
     void onAdjustColour();
     void onExportAs();
     void onExportPasswordProtected();
+    void onReduceFileSize();
     void onTakeScreenshot();
     void onCropImage();
     void onInsertPages();
@@ -94,6 +95,7 @@ private:
     QAction* m_adjustColourAction = nullptr;
     QAction* m_exportAsAction = nullptr;
     QAction* m_exportPasswordProtectedAction = nullptr;
+    QAction* m_reduceFileSizeAction = nullptr;
     QAction* m_screenshotAction = nullptr;
     QAction* m_cropImageAction = nullptr;
     QAction* m_insertPagesAction = nullptr;

@@ -722,6 +722,28 @@ bool PdfEditor::save(const QString& path, const EncryptionOptions& enc) {
     return saveImpl(path, &enc);
 }
 
+// Write a linearized, stream-compressed copy of the document.
+// qpdf's defaults already re-compress streams, but we ask explicitly so
+// the behaviour is obvious from the call site. Object streams cut the
+// indirect-object overhead that accumulates in docs that have been
+// round-tripped through other editors; linearization lets readers
+// show the first page before downloading the rest.
+bool PdfEditor::saveReduced(const QString& path) {
+    if (!m_valid) return false;
+    try {
+        QPDFWriter writer(*m_qpdf, path.toLocal8Bit().constData());
+        writer.setStaticID(false);
+        writer.setLinearization(true);
+        writer.setObjectStreamMode(qpdf_o_generate);
+        writer.setStreamDataMode(qpdf_s_compress);
+        writer.setCompressStreams(true);
+        writer.write();
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
 bool PdfEditor::saveImpl(const QString& path, const EncryptionOptions* enc) {
     if (!m_valid) return false;
     try {

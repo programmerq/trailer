@@ -791,6 +791,16 @@ bool PdfDocument::exportWithPassword(const QString& destPath,
     return m_editor->save(destPath, enc);
 }
 
+bool PdfDocument::reduceFileSize(const QString& destPath) {
+    if (!m_valid || !m_editor || !m_editor->isValid()) return false;
+    if (destPath.isEmpty()) return false;
+    // Flush pending annotations first so the reduced output reflects
+    // everything the user sees on screen. Linearization + object-
+    // stream regeneration then re-packs the document.
+    if (!m_editor->writeAnnotations(m_annotations.annotations())) return false;
+    return m_editor->saveReduced(destPath);
+}
+
 QStringList PdfAdapter::mimeTypes() const {
     return {QStringLiteral("application/pdf")};
 }

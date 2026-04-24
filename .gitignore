@@ -11,3 +11,4 @@ test.pdf
 test-*.pdf
 test-*.png
 test-*.jpg
+.claude/

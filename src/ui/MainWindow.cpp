@@ -28,6 +28,7 @@
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
+#include <QLocale>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -158,6 +159,11 @@ void MainWindow::buildMenus() {
         tr("Export as &Password-Protected PDF…"));
     connect(m_exportPasswordProtectedAction, &QAction::triggered,
             this, &MainWindow::onExportPasswordProtected);
+
+    m_reduceFileSizeAction = fileMenu->addAction(
+        tr("Reduce File &Size…"));
+    connect(m_reduceFileSizeAction, &QAction::triggered,
+            this, &MainWindow::onReduceFileSize);
     fileMenu->addSeparator();
 
     m_printAction = fileMenu->addAction(tr("&Print…"));
@@ -915,6 +921,48 @@ void MainWindow::onExportPasswordProtected() {
     }
 }
 
+void MainWindow::onReduceFileSize() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsFileSizeReduction()) return;
+
+    const QString suggested =
+        doc->filePath().isEmpty()
+            ? doc->displayName()
+            : QFileInfo(doc->filePath()).completeBaseName()
+                  + QStringLiteral("_reduced.pdf");
+    const QString destPath = QFileDialog::getSaveFileName(
+        this, tr("Reduce File Size"),
+        suggested, tr("PDF documents (*.pdf)"));
+    if (destPath.isEmpty()) return;
+
+    const qint64 originalSize = doc->filePath().isEmpty()
+        ? 0
+        : QFileInfo(doc->filePath()).size();
+
+    if (!doc->reduceFileSize(destPath)) {
+        QMessageBox::warning(this, tr("Reduce failed"),
+            tr("Could not write reduced PDF to:\n%1").arg(destPath));
+        return;
+    }
+
+    const qint64 newSize = QFileInfo(destPath).size();
+    if (originalSize > 0 && newSize > 0) {
+        const double pctDelta = 100.0 *
+            (static_cast<double>(originalSize - newSize) /
+             static_cast<double>(originalSize));
+        const QString message = pctDelta > 0.5
+            ? tr("Reduced from %1 to %2 (%3% smaller).")
+                  .arg(QLocale().formattedDataSize(originalSize),
+                       QLocale().formattedDataSize(newSize))
+                  .arg(pctDelta, 0, 'f', 1)
+            : tr("Output is %1. The source was already well-compressed "
+                 "— further reduction isn't possible without dropping "
+                 "content or down-sampling images.")
+                  .arg(QLocale().formattedDataSize(newSize));
+        QMessageBox::information(this, tr("File Size Reduced"), message);
+    }
+}
+
 void MainWindow::updateUndoRedoActions(IDocument* doc) {
     m_undoAction->setEnabled(doc && doc->canUndo());
     m_redoAction->setEnabled(doc && doc->canRedo());
@@ -1005,6 +1053,8 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_exportAsAction->setEnabled(doc != nullptr && isImage);
     m_exportPasswordProtectedAction->setEnabled(
         doc && doc->supportsPasswordExport());
+    m_reduceFileSizeAction->setEnabled(
+        doc && doc->supportsFileSizeReduction());
     m_cropImageAction->setEnabled(canEdit && isImage);
     m_insertPagesAction->setEnabled(isPdfLike);
     m_cropPagesAction->setEnabled(isPdfLike);

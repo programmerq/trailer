@@ -74,6 +74,11 @@ public:
                               double /*saturation*/) { return false; }
     virtual bool exportAs(const QString& /*destPath*/, const QString& /*format*/,
                           int /*quality*/ = -1) const { return false; }
+    // Write a size-reduced copy of the document (linearize, compress
+    // streams, generate object streams). Currently PDF-only. Returns
+    // false for formats without a reducer.
+    virtual bool supportsFileSizeReduction() const { return false; }
+    virtual bool reduceFileSize(const QString& /*destPath*/) { return false; }
     // Write the document to destPath encrypted with `password`.
     // Currently PDF-only (Phase 5). Non-const because the
     // implementation may flush unsaved annotations into the underlying

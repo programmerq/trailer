@@ -106,6 +106,14 @@ public:
     // it's binary-identical output otherwise.
     bool save(const QString& path, const EncryptionOptions& enc);
 
+    // Write a linearized + compressed version of the document. Streams
+    // are re-compressed, object streams are regenerated, and the file
+    // is linearized for fast web viewing. The output is not guaranteed
+    // to be smaller than the input (already-optimised inputs can even
+    // grow slightly), but for typical PDFs the reduction is
+    // substantial. Does not modify the in-memory state.
+    bool saveReduced(const QString& path);
+
     // After load(): true if the backing PDF required a password to
     // open. Phase 5 callers prompt the user when this is the case.
     bool isEncrypted() const { return m_encrypted; }
