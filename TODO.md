@@ -46,3 +46,135 @@ worked on.
   `screencapture -i`; Linux falls back to gnome-screenshot if available;
   Windows currently only supports full-screen. Native region-select
   overlays would be a follow-up.
+
+## UX polish pass (2026-04-24 HITL review)
+
+A human-in-the-loop walkthrough surfaced a batch of paper-cuts the
+automated UATs don't catch. These are grouped by theme so each can be
+picked up as a coherent increment rather than one sprawling "fix UX"
+task. When tackling any of these, land a UAT alongside it so the
+regression doesn't return the next time the surrounding code is
+rearranged.
+
+### Window / document model
+
+- **Window-per-file as the default.** Tabs are mostly in the way — each
+  opened document should get its own window by default. Preserve the
+  current `open_files_in` setting shape but flip the default from
+  `new_tab` to `new_window`.
+- **Thumbnail bar handles multi-item sets.** When the user opens several
+  single-page items together (e.g. a batch of images), put them in one
+  window and use the thumbnail sidebar to navigate between them — the
+  same surface already used for PDF pages. No tabs needed for that case
+  either.
+- Revisit `MainWindow`'s `QTabWidget` central-widget choice; a single
+  `DocumentView` per window plus the existing sidebar should be enough.
+
+### PDF text selection + text-aware markup (bug, high priority)
+
+- **Click-and-drag on a PDF with a text layer does not select text.**
+  Instead it starts drawing a rectangle in the last-used markup colour,
+  even when the markup toolbar is not visible. This is a regression from
+  whatever layer intercepts pointer events; probably the annotation
+  overlay is eating them unconditionally. The fix should:
+  - Default to QPdfView's native text selection when no markup tool is
+    active.
+  - Only swallow pointer events when a markup / shape tool is explicitly
+    selected.
+- **Underline and Highlight must be text-aware.** Today they are just
+  box-drawing tools that discard the non-edge parts of the rectangle.
+  They should use the PDF's text-layer hit-testing to select characters
+  / words / lines, the same primitive used for copy. Depends on the
+  fix above.
+- **Contextual tool availability.** For an image with no detected text,
+  hide text-centric markup (Underline, Highlight, Strikethrough). Keep
+  Redact available on images (it is inherently pixel-region based).
+  Re-expose Underline / Highlight on images once OCR results exist for
+  the page.
+
+### Annotation editing — selection, move, resize, restyle
+
+- **Annotations must be re-selectable after creation.** Currently the
+  only recourse is Undo. A shape (box, bubble, arrow, freehand stroke,
+  text) once placed can't be picked up to move, resize, recolour, or
+  delete. Needed:
+  - Hit-testing in `AnnotationOverlay` for existing primitives.
+  - Selection handles (drag, resize, rotate where sensible).
+  - An Inspector panel or contextual toolbar for properties (colour,
+    stroke width, fill, font).
+  - Keyboard: Delete/Backspace removes the selected annotation; arrow
+    keys nudge it.
+- **Markup toolbar default visibility.** When the active document can
+  receive edits (any PDF, any image), show the markup toolbar without
+  requiring a menu toggle. The toolbar becomes the discoverability
+  surface for the tools above.
+
+### Inline editing (no modal popups for things that live in the document)
+
+- **Text boxes edit in place.** Creating a text-box annotation currently
+  opens a modal dialog to capture the text. It should drop an editable
+  text element into the overlay and focus it — typing commits on blur
+  or Enter, Escape cancels. The dialog is a context-breaker.
+- **Signature placement uses a popover, not a dialog.** The signature
+  capture flow today is a modal dialog. Qt's `QMenu` with a custom
+  widget as a `QWidgetAction`, or a frameless `QDialog` anchored to the
+  signature-tool button, can stand in for the Apple popdown. This also
+  makes the thing feel like part of the document rather than a separate
+  mode.
+
+### High-fidelity signature + freehand capture (hardware input)
+
+- **Stop rasterising the signature to a tiny bitmap.** Store signatures
+  as vector strokes (polyline + per-sample pressure + timestamp) and
+  rasterise only at paint time for the target DPI. The canvas in the
+  capture surface should be as large as the popover allows, not a
+  shrunken swatch.
+- **Use hardware pressure + unaccelerated position where available.**
+  Qt exposes tablet input via `QTabletEvent` (pressure, tilt, tangential
+  pressure) and touch via `QTouchEvent` with per-point pressure on
+  supported hardware. We want:
+  - Physical / device coordinates (no OS pointer acceleration), which
+    tablet events deliver natively; for mouse fall back to the current
+    behaviour.
+  - Pressure recorded per sample, mapped to stroke width.
+  - Graceful fall-back to mouse — same code path, constant pressure.
+- **Apply the same to the freehand drawing tool.** Pressure-varying
+  stroke width when the user is drawing with a stylus or pressure-aware
+  trackpad.
+
+### AutoFill + AcroForm (bug + UX)
+
+- **AutoFill does not actually fill a PDF the test user tried.** Even
+  after populating the contact card, a PDF with genuine fillable fields
+  did not receive values. Needs investigation — probably a field-name
+  matching bug in the AutoFill mapper, or the FormOverlay is not being
+  re-synced from the underlying AcroForm after the card write.
+  Repro case: save the specific PDF the reviewer used into
+  `tests/data/` and drive it in a new UAT.
+- **AutoFill confirmation popup must go.** The "Filled N of M fields"
+  dialog after saving the My Card is a context-breaker. The card dialog
+  itself is "saved on Enter", so no confirmation is needed. If we want
+  to surface how many fields actually got filled, put a subtle status
+  line in the form toolbar, not a modal.
+- **My Card dialog feels "huge with tons of options".** Audit which
+  fields are genuinely useful for AutoFill (name, address lines,
+  city / state / ZIP, country, phone, email, signature) vs. fields we
+  speculatively added. Trim hard, and consider a progressive-disclosure
+  section for the long tail.
+
+### Cross-cutting polish items
+
+- **Designer / non-technical-user review.** The items above came out of
+  one ~15-minute walkthrough. A focused pass that watches a real user
+  drive the app end-to-end (open a file → markup → sign → save) will
+  surface more of these subtle behaviours. Schedule this before any 1.0
+  polish milestone. Watch for:
+  - Any modal dialog that interrupts work on the document.
+  - Tools that appear enabled but do nothing (or the wrong thing) for
+    the active document type.
+  - Any action that requires the user to already know where to look
+    (hidden toolbars, menu-only entry points for common tasks).
+  - Loss of direct manipulation (things the user made but can't then
+    grab, move, or edit).
+  - Feedback that's too loud (popups) or too quiet (no visible change
+    after a successful action).
