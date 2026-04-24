@@ -68,18 +68,38 @@ void ModelRegistry::populateBuiltin() {
          QStringLiteral("MIT"),
          QStringLiteral("https://github.com/ZhengPeng7/BiRefNet"),
          QStringLiteral("Background removal (higher quality, slower).")});
+    // MobileSAM is split across a one-shot image encoder (TinyViT,
+    // ~28 MB) and a per-click prompt decoder (~16 MB). The encoder
+    // runs once per image load; the decoder runs for each user click.
+    // Pre-exported ONNX artefacts live in Acly/MobileSAM on Hugging
+    // Face (MIT, derived from the Apache-2.0 upstream weights).
+    //
+    // We use the `_single` decoder variant: it bakes SAM's
+    // select_masks rule into the graph so we get the most-confident
+    // mask back directly — the right choice for both Instant Alpha
+    // (apply as alpha) and Smart Lasso (threshold → contour).
     add({ModelId::MobileSamEncoder,
          QStringLiteral("MobileSAM Encoder"),
          QStringLiteral("mobile_sam_encoder.onnx"),
-         {}, {}, 0,
-         QStringLiteral("Apache 2.0"),
+         QStringLiteral(
+             "https://huggingface.co/Acly/MobileSAM/resolve/main/"
+             "mobile_sam_image_encoder.onnx"),
+         QStringLiteral(
+             "580f5fb648ea1062c0aabc26217aed56921985f03f0cbbd852bba81d760cc749"),
+         28157093,
+         QStringLiteral("Apache 2.0 (weights) / MIT (export)"),
          QStringLiteral("https://github.com/ChaoningZhang/MobileSAM"),
          QStringLiteral("Image encoder for Instant Alpha and Smart Lasso.")});
     add({ModelId::MobileSamDecoder,
          QStringLiteral("MobileSAM Decoder"),
          QStringLiteral("mobile_sam_decoder.onnx"),
-         {}, {}, 0,
-         QStringLiteral("Apache 2.0"),
+         QStringLiteral(
+             "https://huggingface.co/Acly/MobileSAM/resolve/main/"
+             "sam_mask_decoder_single.onnx"),
+         QStringLiteral(
+             "93915fc7c993ab9d59ab8c9ccd3bce37f7509c81ab4150a74abd4d2abbd8570d"),
+         16501323,
+         QStringLiteral("Apache 2.0 (weights) / MIT (export)"),
          QStringLiteral("https://github.com/ChaoningZhang/MobileSAM"),
          QStringLiteral("Prompt decoder for Instant Alpha and Smart Lasso.")});
     add({ModelId::PpOcrDetector,

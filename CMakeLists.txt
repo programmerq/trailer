@@ -78,6 +78,8 @@ set(TRAILER_SOURCES
     src/ml/ModelRegistry.h
     src/ml/OnnxSession.cpp
     src/ml/OnnxSession.h
+    src/ml/SamSession.cpp
+    src/ml/SamSession.h
     src/recent/RecentFiles.cpp
     src/recent/RecentFiles.h
     src/settings/AppPaths.cpp
@@ -107,6 +109,8 @@ set(TRAILER_SOURCES
     src/ui/MarkupToolbar.h
     src/ui/MyCardDialog.cpp
     src/ui/MyCardDialog.h
+    src/ui/SamSegmentDialog.cpp
+    src/ui/SamSegmentDialog.h
     src/ui/SearchBar.cpp
     src/ui/SearchBar.h
     src/ui/Sidebar.cpp

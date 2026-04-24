@@ -19,5 +19,6 @@ trailer_add_test(test_image_filter test_image_filter.cpp)
 trailer_add_test(test_onnx_session test_onnx_session.cpp)
 trailer_add_test(test_model_registry test_model_registry.cpp)
 trailer_add_test(test_background_remover test_background_remover.cpp)
+trailer_add_test(test_sam_session test_sam_session.cpp)
 
 add_subdirectory(uat)

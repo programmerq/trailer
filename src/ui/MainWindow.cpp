@@ -17,7 +17,9 @@
 #include "app/Application.h"
 #include "filters/ImageFilter.h"
 #include "ml/BackgroundRemover.h"
+#include "ml/SamSession.h"
 #include "recent/RecentFiles.h"
+#include "SamSegmentDialog.h"
 
 #include <QAction>
 #include <QDragEnterEvent>
@@ -432,6 +434,14 @@ void MainWindow::buildToolsMenu(QMenu* toolsMenu) {
     connect(m_removeBackgroundAction, &QAction::triggered,
             this, &MainWindow::onRemoveBackground);
 
+    m_instantAlphaAction = toolsMenu->addAction(tr("&Instant Alpha…"));
+    connect(m_instantAlphaAction, &QAction::triggered,
+            this, &MainWindow::onInstantAlpha);
+
+    m_smartLassoAction = toolsMenu->addAction(tr("Smart &Lasso…"));
+    connect(m_smartLassoAction, &QAction::triggered,
+            this, &MainWindow::onSmartLasso);
+
     toolsMenu->addSeparator();
 
     m_exportAsAction = toolsMenu->addAction(tr("&Export As…"));
@@ -814,6 +824,142 @@ void MainWindow::onRemoveBackground() {
     if (!imgDoc->replaceImage(result)) {
         QMessageBox::warning(this, tr("Remove Background Failed"),
             tr("Could not apply the background-removed image."));
+        return;
+    }
+    m_sidebar->refreshThumbnails();
+    updateTitleForDocument(doc);
+}
+
+// Shared helper: confirm + download MobileSAM (encoder + decoder).
+// Returns true if both models are ready after the call; false if the
+// user declined, cancelled, or the download failed.
+namespace {
+
+bool ensureSamModelsReady(MainWindow* parent, SamSession& session) {
+    if (session.isModelReady()) return true;
+
+    const auto ack = QMessageBox::question(parent,
+        QObject::tr("Download MobileSAM"),
+        QObject::tr("Instant Alpha and Smart Lasso need the MobileSAM "
+                    "model (~44 MB across two files, Apache 2.0 / MIT). "
+                    "Continue?"),
+        QMessageBox::Yes | QMessageBox::No);
+    if (ack != QMessageBox::Yes) return false;
+
+    QProgressDialog progress(
+        QObject::tr("Downloading MobileSAM models…"),
+        QObject::tr("Cancel"), 0, 100, parent);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    progress.setValue(0);
+    progress.show();
+
+    bool failed = false;
+    bool ready = false;
+    QString failureMessage;
+
+    QObject::connect(&session, &SamSession::downloadProgress, &progress,
+        [&progress](qint64 received, qint64 total) {
+            if (total <= 0) {
+                progress.setRange(0, 0);
+                return;
+            }
+            progress.setRange(0, 100);
+            progress.setValue(static_cast<int>(received * 100 / total));
+        });
+    QObject::connect(&session, &SamSession::modelsReady, &progress,
+        [&progress, &ready]() {
+            ready = true;
+            progress.setValue(progress.maximum());
+            progress.close();
+        });
+    QObject::connect(&session, &SamSession::modelsUnavailable, &progress,
+        [&progress, &failed, &failureMessage](const QString& msg) {
+            failed = true;
+            failureMessage = msg;
+            progress.close();
+        });
+
+    session.ensureModelsAvailable();
+    progress.exec();
+
+    if (progress.wasCanceled() && !ready) return false;
+    if (failed) {
+        QMessageBox::warning(parent, QObject::tr("Download Failed"),
+            QObject::tr("Could not fetch MobileSAM:\n%1")
+                .arg(failureMessage));
+        return false;
+    }
+    return session.isModelReady();
+}
+
+}  // namespace
+
+void MainWindow::onInstantAlpha() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing()) return;
+    auto* imgDoc = dynamic_cast<ImageDocument*>(doc);
+    if (!imgDoc) return;
+
+    SamSession session(&m_app->modelRegistry());
+    if (!ensureSamModelsReady(this, session)) return;
+
+    SamSegmentDialog dialog(SamSegmentDialog::Mode::InstantAlpha,
+                            imgDoc->image(), &session, this);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const QImage result = dialog.resultImage();
+    if (result.isNull()) {
+        QMessageBox::warning(this, tr("Instant Alpha Failed"),
+            tr("No selection was produced. Try adding more points and "
+               "try again."));
+        return;
+    }
+    if (!imgDoc->replaceImage(result)) {
+        QMessageBox::warning(this, tr("Instant Alpha Failed"),
+            tr("Could not apply the selection to the current image."));
+        return;
+    }
+    m_sidebar->refreshThumbnails();
+    updateTitleForDocument(doc);
+}
+
+void MainWindow::onSmartLasso() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing()) return;
+    auto* imgDoc = dynamic_cast<ImageDocument*>(doc);
+    if (!imgDoc) return;
+
+    SamSession session(&m_app->modelRegistry());
+    if (!ensureSamModelsReady(this, session)) return;
+
+    SamSegmentDialog dialog(SamSegmentDialog::Mode::SmartLasso,
+                            imgDoc->image(), &session, this);
+    if (dialog.exec() != QDialog::Accepted) return;
+
+    const QPolygon poly = dialog.resultPolygon();
+    if (poly.isEmpty()) {
+        QMessageBox::warning(this, tr("Smart Lasso Failed"),
+            tr("No object outline was produced."));
+        return;
+    }
+
+    // Phase 6C ships Smart Lasso as a crop-to-object: we take the
+    // polygon's bounding rectangle and let ImageDocument's existing
+    // undo-safe cropToRect do the work. A true polygon mask + feather
+    // flow is a later phase; the SAM segmentation already gives us
+    // the outline on screen for users to review.
+    const QRect bounds = poly.boundingRect().intersected(
+        QRect(QPoint(), imgDoc->image().size()));
+    if (bounds.width() < 2 || bounds.height() < 2) {
+        QMessageBox::warning(this, tr("Smart Lasso Failed"),
+            tr("Selection is too small to crop to."));
+        return;
+    }
+    if (!imgDoc->cropToRect(bounds.x(), bounds.y(),
+                            bounds.width(), bounds.height())) {
+        QMessageBox::warning(this, tr("Smart Lasso Failed"),
+            tr("Could not crop to the selected object."));
         return;
     }
     m_sidebar->refreshThumbnails();
@@ -1231,6 +1377,8 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_adjustSizeAction->setEnabled(canEdit && isImage);
     m_adjustColourAction->setEnabled(canEdit && isImage);
     m_removeBackgroundAction->setEnabled(canEdit && isImage);
+    m_instantAlphaAction->setEnabled(canEdit && isImage);
+    m_smartLassoAction->setEnabled(canEdit && isImage);
     m_exportAsAction->setEnabled(doc != nullptr && isImage);
     m_exportPasswordProtectedAction->setEnabled(
         doc && doc->supportsPasswordExport());

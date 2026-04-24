@@ -486,6 +486,133 @@ populated).
 
 ---
 
+## Instant Alpha (Phase 6)
+
+Instant Alpha uses MobileSAM to turn a click on the subject into an
+alpha cut-out. The encoder (~28 MB) runs once per image; each click
+triggers the lighter decoder (~16 MB). Both models download on first
+use from the pinned MobileSAM manifest; subsequent runs reuse the
+on-disk cache under `AppPaths::modelsDir()`.
+
+### UAT-IMG-110 — Instant Alpha first-use download
+
+**Preconditions:** Image open. No MobileSAM files in the models
+cache (fresh install or cache wiped).
+**Steps:**
+1. `Tools > Instant Alpha…`.
+**Expected:**
+- A confirmation prompt mentioning that the MobileSAM encoder +
+  decoder (~45 MB) will be downloaded once.
+- On accept, a progress dialog shows download progress; both models
+  land in the models cache with matching SHA-256.
+- The Instant Alpha preview dialog opens with the image rendered and
+  the instructions for left-click/shift-click prompting.
+
+### UAT-IMG-111 — Instant Alpha already-cached
+
+**Preconditions:** Both MobileSAM files present in the models cache.
+**Steps:**
+1. `Tools > Instant Alpha…`.
+**Expected:**
+- No confirmation prompt, no network activity.
+- Preview dialog opens immediately with the image ready to prompt.
+
+### UAT-IMG-112 — Instant Alpha click prompting + apply
+
+**Preconditions:** Preview dialog open over an image with a clearly
+distinct subject (e.g. centred disc on dark background).
+**Steps:**
+1. Left-click on the subject.
+2. (Optional) Shift-click on background pixels to refine; right-click
+   to drop the nearest prompt.
+3. Press `OK`.
+**Expected:**
+- After each click a blue-tinted mask preview appears over the
+  subject within ~100 ms of the click (decoder latency).
+- `OK` closes the dialog and the background pixels become
+  transparent on the canvas.
+- Tab marks dirty, `Edit > Undo` is available.
+
+### UAT-IMG-113 — Instant Alpha on PDF (disabled)
+
+**Preconditions:** A PDF is the active document.
+**Expected:**
+- `Tools > Instant Alpha…` is greyed out (image-only feature).
+
+### UAT-IMG-114 — Instant Alpha undo
+
+**Preconditions:** Instant Alpha just applied.
+**Steps:**
+1. `Edit > Undo`.
+**Expected:**
+- The original opaque image returns.
+- `Edit > Redo` reapplies the alpha mask.
+
+---
+
+## Smart Lasso (Phase 6)
+
+Smart Lasso reuses the same MobileSAM pipeline as Instant Alpha but
+turns the segmentation mask into a polygon outline. Phase 6C ships
+Smart Lasso as a *crop-to-object*: accepting the selection crops the
+image to the polygon's bounding rectangle. A true polygon-mask +
+feather flow is a later phase.
+
+### UAT-IMG-115 — Smart Lasso first-use download
+
+**Preconditions:** Image open. No MobileSAM files in the models
+cache. (If the cache was populated during UAT-IMG-110, wipe it first
+via `AppPaths::modelsDir()`.)
+**Steps:**
+1. `Tools > Smart Lasso…`.
+**Expected:**
+- Same confirmation + progress flow as UAT-IMG-110 — Smart Lasso and
+  Instant Alpha share the MobileSAM manifest entries, so a
+  previously-downloaded cache is reused across both features.
+- On success, the Smart Lasso preview dialog opens.
+
+### UAT-IMG-116 — Smart Lasso click prompting + polygon preview
+
+**Preconditions:** Preview dialog open over an image with a clearly
+distinct subject.
+**Steps:**
+1. Left-click on the subject.
+2. (Optional) Shift-click / right-click to refine prompts.
+**Expected:**
+- A thin amber (255,200,40) polygon outline appears over the mask
+  preview, updating each time the prompts change.
+- The polygon traces the foreground object's boundary with
+  ≥ 3 vertices.
+
+### UAT-IMG-117 — Smart Lasso crop-to-object
+
+**Preconditions:** Polygon preview showing for a subject that is
+smaller than the full image.
+**Steps:**
+1. Press `OK`.
+**Expected:**
+- Dialog closes and the image is cropped to the polygon's bounding
+  rectangle; pixels outside that rect are discarded.
+- Inspector `Document` tab reports the new (smaller) dimensions.
+- Tab marks dirty; `Edit > Undo` restores the full image.
+
+### UAT-IMG-118 — Smart Lasso on PDF (disabled)
+
+**Preconditions:** A PDF is the active document.
+**Expected:**
+- `Tools > Smart Lasso…` is greyed out (image-only feature).
+
+### UAT-IMG-119 — Smart Lasso cancel
+
+**Preconditions:** Preview dialog open with a polygon showing.
+**Steps:**
+1. Press `Cancel` (or close the dialog).
+**Expected:**
+- Dialog closes without mutating the document.
+- Tab is not marked dirty; no undo entry is added.
+
+---
+
 ## Known gaps
 
 ### UAT-IMG-090 — PDF flip / colour adjust (Known gap)
