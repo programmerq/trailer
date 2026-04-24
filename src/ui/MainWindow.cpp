@@ -4,6 +4,7 @@
 #include "DocumentView.h"
 #include "Inspector.h"
 #include "Magnifier.h"
+#include "FormToolbar.h"
 #include "MarkupToolbar.h"
 #include "SearchBar.h"
 #include "Sidebar.h"
@@ -131,6 +132,21 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
                     doc->setAnnotationStyle(style);
                 }
             });
+
+    m_formToolbar = new FormToolbar(this);
+    addToolBar(Qt::TopToolBarArea, m_formToolbar);
+    m_formToolbar->hide();
+    connect(m_formToolbar, &FormToolbar::toolChanged,
+            this, [this](AnnotationTool tool, const QString& pendingText) {
+                if (auto* doc = m_documentView->currentDocument()) {
+                    doc->setAnnotationTool(tool);
+                    doc->setPendingAnnotationText(pendingText);
+                }
+            });
+    connect(m_formToolbar, &FormToolbar::autoFillRequested,
+            this, &MainWindow::onAutoFillCurrentForm);
+    connect(m_formToolbar, &FormToolbar::signHereRequested,
+            this, &MainWindow::onSignHere);
 
     buildMenus();
     rebuildRecentMenu();
@@ -268,6 +284,11 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
     m_markupToolbarAction->setText(tr("Toggle &Markup Toolbar"));
     m_markupToolbarAction->setShortcut(QKeySequence(tr("Ctrl+Shift+A")));
     viewMenu->addAction(m_markupToolbarAction);
+
+    m_formToolbarAction = m_formToolbar->toggleViewAction();
+    m_formToolbarAction->setText(tr("Show Form Filling &Toolbar"));
+    m_formToolbarAction->setShortcut(QKeySequence(tr("Ctrl+Shift+B")));
+    viewMenu->addAction(m_formToolbarAction);
 
     m_inspectorAction = m_inspector->toggleViewAction();
     m_inspectorAction->setText(tr("Toggle &Inspector"));
@@ -1135,6 +1156,26 @@ void MainWindow::onAbout() {
         tr("<h3>Trailer</h3>"
            "<p>Cross-platform PDF and image workbench.</p>"
            "<p>Version 0.1.0 (Phase 1)</p>"));
+}
+
+void MainWindow::onAutoFillCurrentForm() {
+    // TODO: wire through to AutoFill cards task (Phase 5). For now the
+    // toolbar button is informational — we surface the placeholder
+    // message so users discover the feature rather than silently
+    // failing.
+    QMessageBox::information(this, tr("AutoFill"),
+        tr("AutoFill from \"My Card\" is coming soon.\n"
+           "Define a card under Preferences > My Card to populate "
+           "name, email, and address fields in one click."));
+}
+
+void MainWindow::onSignHere() {
+    // TODO: wire through to Sign tool task (Phase 5). Stub message
+    // until signature capture and placement land.
+    QMessageBox::information(this, tr("Sign Here"),
+        tr("Signature placement is coming soon.\n"
+           "Capture a signature once under Tools > Manage Signatures "
+           "and then drop it anywhere on a PDF."));
 }
 
 void MainWindow::addDocument(std::unique_ptr<IDocument> document) {

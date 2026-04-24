@@ -111,6 +111,10 @@ public:
     virtual AnnotationStore* annotations() { return nullptr; }
     virtual void setAnnotationTool(AnnotationTool /*tool*/) {}
     virtual void setAnnotationStyle(const AnnotationStyle& /*style*/) {}
+    // Preset for the next Text annotation — used by FormToolbar's
+    // Checkmark / X Mark tools to stamp ✓ / ✗ glyphs instead of
+    // opening the multi-line input dialog. Empty clears the preset.
+    virtual void setPendingAnnotationText(const QString& /*text*/) {}
 
     virtual bool supportsAnimation() const { return false; }
     virtual int frameCount() const { return 0; }

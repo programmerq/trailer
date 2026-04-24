@@ -98,6 +98,7 @@ public:
     AnnotationStore* annotations() override { return &m_annotations; }
     void setAnnotationTool(AnnotationTool tool) override;
     void setAnnotationStyle(const AnnotationStyle& style) override;
+    void setPendingAnnotationText(const QString& text) override;
 
     bool isValid() const { return m_valid; }
 

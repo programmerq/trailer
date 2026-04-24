@@ -22,6 +22,12 @@ public:
     void setStore(AnnotationStore* store);
     void setActiveTool(AnnotationTool tool);
     AnnotationTool activeTool() const { return m_tool; }
+    // When non-empty, Text annotations drop with this preset content
+    // and skip the multi-line input dialog. Used by FormToolbar's
+    // Checkmark / X Mark tools to stamp ✓/✗ glyphs on the page. The
+    // preset persists until tool changes or this is cleared.
+    void setPendingTextPreset(const QString& text) { m_pendingTextPreset = text; }
+    QString pendingTextPreset() const { return m_pendingTextPreset; }
     void setStyle(const AnnotationStyle& style);
     const AnnotationStyle& style() const { return m_style; }
     void setPage(int page);
@@ -86,6 +92,9 @@ private:
     // Pending text selection while Select tool is active; becomes the
     // source range for the right-click markup menu.
     std::vector<QRectF> m_pendingSelection;
+    // Preset for the next Text annotation — bypasses the input dialog
+    // when FormToolbar's Checkmark/X tools are active.
+    QString m_pendingTextPreset;
 
     DocToView m_docToView;
     ViewToDoc m_viewToDoc;

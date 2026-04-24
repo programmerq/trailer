@@ -335,6 +335,10 @@ void PdfDocument::setAnnotationStyle(const AnnotationStyle& style) {
     if (m_overlay) m_overlay->setStyle(style);
 }
 
+void PdfDocument::setPendingAnnotationText(const QString& text) {
+    if (m_overlay) m_overlay->setPendingTextPreset(text);
+}
+
 void PdfDocument::applyViewMode() {
     if (!m_view) {
         return;

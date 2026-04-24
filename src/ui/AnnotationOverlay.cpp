@@ -53,6 +53,12 @@ void AnnotationOverlay::setActiveTool(AnnotationTool tool) {
     if (tool != AnnotationTool::Select) {
         m_pendingSelection.clear();
     }
+    if (tool != AnnotationTool::Text) {
+        // Drop the FormToolbar glyph preset when the user moves off the
+        // Text tool so a later plain "Text" selection isn't unexpectedly
+        // skipping the dialog.
+        m_pendingTextPreset.clear();
+    }
     update();
 }
 
@@ -441,13 +447,26 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
         }
         case AnnotationTool::Text: {
             QRectF rect = a.bounds;
-            if (rect.width() < 40.0 || rect.height() < 20.0) {
-                rect = QRectF(m_dragStartDoc, QSizeF(200.0, 40.0));
+            QString text;
+            if (!m_pendingTextPreset.isEmpty()) {
+                // FormToolbar path: drop a pre-set glyph (✓ / ✗)
+                // without prompting. Use a small square so the glyph
+                // sits where the user clicked rather than filling a
+                // wide multi-line box.
+                if (rect.width() < 10.0 || rect.height() < 10.0) {
+                    rect = QRectF(m_dragStartDoc - QPointF(10.0, 10.0),
+                                  QSizeF(24.0, 24.0));
+                }
+                text = m_pendingTextPreset;
+            } else {
+                if (rect.width() < 40.0 || rect.height() < 20.0) {
+                    rect = QRectF(m_dragStartDoc, QSizeF(200.0, 40.0));
+                }
+                bool ok = false;
+                text = QInputDialog::getMultiLineText(
+                    this, tr("Text Annotation"), tr("Text:"), QString(), &ok);
+                if (!ok || text.isEmpty()) { update(); return; }
             }
-            bool ok = false;
-            const QString text = QInputDialog::getMultiLineText(
-                this, tr("Text Annotation"), tr("Text:"), QString(), &ok);
-            if (!ok || text.isEmpty()) { update(); return; }
             a.type = AnnotationType::Text;
             a.bounds = rect;
             a.text = text;

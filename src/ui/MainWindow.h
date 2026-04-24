@@ -16,6 +16,7 @@ class AnimationBar;
 class Application;
 class DocumentView;
 class Inspector;
+class FormToolbar;
 class Magnifier;
 class MarkupToolbar;
 class SearchBar;
@@ -55,6 +56,8 @@ private slots:
     void onInsertPages();
     void onCropPages();
     void onAbout();
+    void onAutoFillCurrentForm();
+    void onSignHere();
     void onCurrentDocumentChanged(IDocument* doc);
     // Invoked whenever the active document's annotation store mutates
     // (add / remove / update / undo / redo). Refreshes the window
@@ -81,6 +84,7 @@ private:
     Inspector* m_inspector = nullptr;
     Magnifier* m_magnifier = nullptr;
     MarkupToolbar* m_markupToolbar = nullptr;
+    FormToolbar* m_formToolbar = nullptr;
     SearchBar* m_searchBar = nullptr;
     Sidebar* m_sidebar = nullptr;
     QMenu* m_recentMenu = nullptr;
@@ -114,6 +118,7 @@ private:
     QAction* m_zoomFitAction = nullptr;
     QAction* m_magnifierAction = nullptr;
     QAction* m_markupToolbarAction = nullptr;
+    QAction* m_formToolbarAction = nullptr;
     QAction* m_inspectorAction = nullptr;
 
     QActionGroup* m_viewModeGroup = nullptr;

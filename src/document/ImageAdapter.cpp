@@ -303,6 +303,10 @@ void ImageDocument::setAnnotationStyle(const AnnotationStyle& style) {
     if (m_overlay) m_overlay->setStyle(style);
 }
 
+void ImageDocument::setPendingAnnotationText(const QString& text) {
+    if (m_overlay) m_overlay->setPendingTextPreset(text);
+}
+
 void ImageDocument::pushUndoSnapshot() {
     m_undoStack.push_back(m_image);
     if (m_undoStack.size() > kMaxUndoSteps) {
