@@ -423,6 +423,69 @@ annotation.
 
 ---
 
+## Remove Background (Phase 6)
+
+Uses the U²-Net Portable ONNX model (~4.4 MB, Apache 2.0). The model is
+downloaded on first use and cached under `AppPaths::modelsDir()`.
+Thereafter invocations are offline.
+
+### UAT-IMG-100 — Remove Background first-use download
+
+**Preconditions:** Image open, model cache empty (first run, or the
+user deleted `<modelsDir>/u2netp.onnx`).
+**Steps:**
+1. `Tools > Remove Background`.
+**Expected:**
+- Confirmation dialog appears describing the ~4.4 MB download and the
+  Apache 2.0 licence. Accepting kicks off a progress dialog.
+- On success, the image alpha channel is replaced so the background
+  pixels are transparent and the foreground remains opaque.
+- Tab marked dirty; Undo is available.
+
+### UAT-IMG-101 — Remove Background already-cached
+
+**Preconditions:** Image open, model previously downloaded.
+**Steps:**
+1. `Tools > Remove Background`.
+**Expected:**
+- No download dialog. The action runs immediately (sub-second on a
+  modern CPU).
+- Alpha channel populated; tab dirty; undoable.
+
+### UAT-IMG-102 — Remove Background on PDF (disabled)
+
+**Preconditions:** PDF open.
+**Steps:**
+1. Inspect `Tools` menu.
+**Expected:**
+- `Remove Background` is greyed out for PDF documents (image-only
+  feature).
+
+### UAT-IMG-103 — Remove Background download cancel
+
+**Preconditions:** Image open, model cache empty.
+**Steps:**
+1. `Tools > Remove Background`.
+2. Accept the confirmation dialog.
+3. Click **Cancel** in the progress dialog before the download
+   completes.
+**Expected:**
+- The download is abandoned silently. The image is unchanged; dirty
+  state unchanged.
+- A subsequent invocation re-attempts the download.
+
+### UAT-IMG-104 — Remove Background undo
+
+**Preconditions:** Image with background removed (alpha channel
+populated).
+**Steps:**
+1. `Edit > Undo`.
+**Expected:**
+- The original opaque image returns.
+- Undo stack clears this entry; `Edit > Redo` is available.
+
+---
+
 ## Known gaps
 
 ### UAT-IMG-090 — PDF flip / colour adjust (Known gap)

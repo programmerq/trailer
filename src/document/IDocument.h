@@ -72,6 +72,12 @@ public:
     virtual QSize imagePixelSize() const { return {}; }
     virtual bool adjustColour(double /*brightness*/, double /*contrast*/,
                               double /*saturation*/) { return false; }
+    // Swap the entire image pixels with the provided replacement. Used
+    // by Phase 6 ML features (background removal, instant alpha, etc.)
+    // to apply their output as a single undo step. The replacement
+    // must have the same dimensions as the current image, or the call
+    // fails with false. Implemented only by raster adapters.
+    virtual bool replaceImage(const QImage& /*replacement*/) { return false; }
     // exportAs writes a copy in the requested format. `filterId` selects
     // a colour filter from filters/ImageFilter.h (empty / "none" = no
     // filter). Images use this to implement DESIGN §6.3.7 Quartz-

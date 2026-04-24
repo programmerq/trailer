@@ -484,6 +484,19 @@ void ImageDocument::clearColourPreview() {
     refreshView();
 }
 
+bool ImageDocument::replaceImage(const QImage& replacement) {
+    if (m_image.isNull() || m_animated || replacement.isNull()) return false;
+    // ML features produce ARGB32 output the same size as the input;
+    // anything else is a bug in the caller, so we hard-fail rather
+    // than silently resample.
+    if (replacement.size() != m_image.size()) return false;
+    pushUndoSnapshot();
+    m_image = replacement;
+    m_dirty = true;
+    refreshView();
+    return true;
+}
+
 bool ImageDocument::exportAs(const QString& destPath, const QString& format,
                              int quality, const QString& filterId) const {
     if (m_image.isNull()) return false;

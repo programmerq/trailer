@@ -16,6 +16,7 @@
 #include "annotation/AnnotationStore.h"
 #include "app/Application.h"
 #include "filters/ImageFilter.h"
+#include "ml/BackgroundRemover.h"
 #include "recent/RecentFiles.h"
 
 #include <QAction>
@@ -43,6 +44,7 @@
 #include <QMimeData>
 #include <QPixmap>
 #include <QProcess>
+#include <QProgressDialog>
 #include <QPushButton>
 #include <QRadioButton>
 #include <QScreen>
@@ -426,6 +428,10 @@ void MainWindow::buildToolsMenu(QMenu* toolsMenu) {
     m_adjustColourAction = toolsMenu->addAction(tr("Adjust Co&lour…"));
     connect(m_adjustColourAction, &QAction::triggered, this, &MainWindow::onAdjustColour);
 
+    m_removeBackgroundAction = toolsMenu->addAction(tr("Remove &Background"));
+    connect(m_removeBackgroundAction, &QAction::triggered,
+            this, &MainWindow::onRemoveBackground);
+
     toolsMenu->addSeparator();
 
     m_exportAsAction = toolsMenu->addAction(tr("&Export As…"));
@@ -708,6 +714,106 @@ void MainWindow::onAdjustColour() {
     if (!doc->adjustColour(b, c, s)) {
         QMessageBox::warning(this, tr("Adjust Colour failed"),
             tr("Could not adjust colour for this document."));
+        return;
+    }
+    m_sidebar->refreshThumbnails();
+    updateTitleForDocument(doc);
+}
+
+void MainWindow::onRemoveBackground() {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing()) return;
+    auto* imgDoc = dynamic_cast<ImageDocument*>(doc);
+    if (!imgDoc) return;
+
+    BackgroundRemover remover(&m_app->modelRegistry());
+
+    // If the model isn't cached, walk the user through a download
+    // step before doing any heavy work. The progress dialog is
+    // cancellable so a slow connection doesn't trap them.
+    if (!remover.isModelReady()) {
+        const QMessageBox::StandardButton ack = QMessageBox::question(
+            this, tr("Download Background Removal Model"),
+            tr("To remove backgrounds, Trailer needs to download the "
+               "U\u00b2-Net Portable model (~4.4 MB, Apache 2.0). "
+               "Continue?"),
+            QMessageBox::Yes | QMessageBox::No);
+        if (ack != QMessageBox::Yes) return;
+
+        QProgressDialog progress(
+            tr("Downloading U\u00b2-Net Portable…"),
+            tr("Cancel"), 0, 100, this);
+        progress.setWindowModality(Qt::WindowModal);
+        progress.setMinimumDuration(0);
+        progress.setValue(0);
+        progress.show();
+
+        bool failed = false;
+        bool ready = false;
+        QString failureMessage;
+
+        connect(&remover, &BackgroundRemover::downloadProgress, &progress,
+                [&progress](qint64 received, qint64 total) {
+                    if (total <= 0) {
+                        progress.setRange(0, 0);  // indeterminate
+                        return;
+                    }
+                    progress.setRange(0, 100);
+                    progress.setValue(static_cast<int>(received * 100 / total));
+                });
+        connect(&remover, &BackgroundRemover::modelReady, &progress,
+                [&progress, &ready]() {
+                    ready = true;
+                    progress.setValue(progress.maximum());
+                    progress.close();
+                });
+        connect(&remover, &BackgroundRemover::modelUnavailable, &progress,
+                [&progress, &failed, &failureMessage](const QString& msg) {
+                    failed = true;
+                    failureMessage = msg;
+                    progress.close();
+                });
+
+        remover.ensureModelAvailable();
+        progress.exec();
+
+        if (progress.wasCanceled() && !ready) {
+            // User dismissed the dialog before the download finished.
+            // Silently give up — the next attempt will resume.
+            return;
+        }
+        if (failed) {
+            QMessageBox::warning(this, tr("Download Failed"),
+                tr("Could not fetch the background-removal model:\n%1")
+                    .arg(failureMessage));
+            return;
+        }
+        if (!ready && !remover.isModelReady()) {
+            // Belt-and-braces: modelReady fires on the registry's
+            // event loop. If the progress dialog closed via the
+            // maximum-value setValue before modelReady hit, isModelReady
+            // should now be true. If somehow it isn't, bail politely.
+            return;
+        }
+    }
+
+    // Run inference on the UI thread. u2netp on 320x320 is sub-second
+    // on a modern CPU — fast enough that a wait-cursor is sufficient;
+    // no need to spin up a worker thread for Phase 6B.
+    QApplication::setOverrideCursor(Qt::WaitCursor);
+    const QImage result = remover.remove(imgDoc->image());
+    QApplication::restoreOverrideCursor();
+
+    if (result.isNull()) {
+        QMessageBox::warning(this, tr("Remove Background Failed"),
+            tr("Background removal did not produce an image. "
+               "The model may be missing or corrupt; try re-downloading "
+               "from Preferences \u2192 Models."));
+        return;
+    }
+    if (!imgDoc->replaceImage(result)) {
+        QMessageBox::warning(this, tr("Remove Background Failed"),
+            tr("Could not apply the background-removed image."));
         return;
     }
     m_sidebar->refreshThumbnails();
@@ -1124,6 +1230,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_flipVerticalAction->setEnabled(canEdit);
     m_adjustSizeAction->setEnabled(canEdit && isImage);
     m_adjustColourAction->setEnabled(canEdit && isImage);
+    m_removeBackgroundAction->setEnabled(canEdit && isImage);
     m_exportAsAction->setEnabled(doc != nullptr && isImage);
     m_exportPasswordProtectedAction->setEnabled(
         doc && doc->supportsPasswordExport());

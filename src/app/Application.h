@@ -1,6 +1,7 @@
 #pragma once
 
 #include "document/DocumentRegistry.h"
+#include "ml/ModelRegistry.h"
 #include "recent/RecentFiles.h"
 #include "settings/Settings.h"
 
@@ -26,6 +27,7 @@ public:
     Settings& settings() { return m_settings; }
     RecentFiles& recentFiles() { return m_recent; }
     DocumentRegistry& registry() { return m_registry; }
+    ModelRegistry& modelRegistry() { return m_modelRegistry; }
 
     MainWindow* ensureWindow();
 
@@ -41,6 +43,7 @@ private:
     Settings m_settings;
     RecentFiles m_recent;
     DocumentRegistry m_registry;
+    ModelRegistry m_modelRegistry;
     QList<QPointer<MainWindow>> m_windows;
 };
 

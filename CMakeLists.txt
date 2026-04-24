@@ -70,6 +70,8 @@ set(TRAILER_SOURCES
     src/document/StubAdapter.h
     src/filters/ImageFilter.cpp
     src/filters/ImageFilter.h
+    src/ml/BackgroundRemover.cpp
+    src/ml/BackgroundRemover.h
     src/ml/ModelDownloader.cpp
     src/ml/ModelDownloader.h
     src/ml/ModelRegistry.cpp

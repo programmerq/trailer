@@ -48,6 +48,7 @@ private slots:
     void onFlipVertical();
     void onAdjustSize();
     void onAdjustColour();
+    void onRemoveBackground();
     void onExportAs();
     void onExportPasswordProtected();
     void onReduceFileSize();
@@ -106,6 +107,7 @@ private:
     QAction* m_flipVerticalAction = nullptr;
     QAction* m_adjustSizeAction = nullptr;
     QAction* m_adjustColourAction = nullptr;
+    QAction* m_removeBackgroundAction = nullptr;
     QAction* m_exportAsAction = nullptr;
     QAction* m_exportPasswordProtectedAction = nullptr;
     QAction* m_reduceFileSizeAction = nullptr;

@@ -63,11 +63,17 @@ public:
     bool resizeImage(int width, int height, bool smoothScaling) override;
     bool cropToRect(int x, int y, int width, int height) override;
     QSize imagePixelSize() const override { return m_image.size(); }
+    // Read-only access to the current raster buffer. Used by Phase 6
+    // features (background removal, instant alpha, Smart Lasso) that
+    // feed pixels into ONNX models. Returns a shallow copy — QImage is
+    // copy-on-write, so this is cheap.
+    QImage image() const { return m_image; }
     bool adjustColour(double brightness, double contrast,
                       double saturation) override;
     void previewColour(double brightness, double contrast,
                        double saturation);
     void clearColourPreview();
+    bool replaceImage(const QImage& replacement) override;
     bool exportAs(const QString& destPath, const QString& format,
                   int quality = -1,
                   const QString& filterId = {}) const override;

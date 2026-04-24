@@ -35,3 +35,5 @@ target_link_libraries(test_uat_signature PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 
 trailer_add_uat_test(test_uat_redaction test_uat_redaction.cpp)
 target_link_libraries(test_uat_redaction PRIVATE Qt6::Pdf Qt6::PdfWidgets)
+
+trailer_add_uat_test(test_uat_background_removal test_uat_background_removal.cpp)
