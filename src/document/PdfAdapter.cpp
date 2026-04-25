@@ -795,6 +795,16 @@ void PdfDocument::setFormFillingActive(bool active) {
     }
 }
 
+void PdfDocument::refreshFormView() {
+    // Re-push field values into whichever widgets the overlay has
+    // already built. Called after bulk writes (AutoFill) so the user
+    // sees the new values immediately. Does not change the overlay's
+    // visibility — if form-filling is off the refresh is a no-op until
+    // the user toggles it on.
+    if (!m_formOverlay || !m_editor || !m_editor->isValid()) return;
+    m_formOverlay->setFields(m_editor->readFormFields());
+}
+
 bool PdfDocument::exportWithPassword(const QString& destPath,
                                      const QString& password) {
     if (!m_valid || !m_editor || !m_editor->isValid()) return false;

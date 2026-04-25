@@ -76,6 +76,7 @@ public:
     std::vector<FormField> formFields() const override;
     bool setFormFieldValue(int id, const QString& value) override;
     void setFormFillingActive(bool active) override;
+    void refreshFormView() override;
     bool isDirty() const override {
         return m_dirty || m_annotationsModified;
     }

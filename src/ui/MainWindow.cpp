@@ -55,6 +55,7 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QStandardPaths>
+#include <QStatusBar>
 #include <QTemporaryFile>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -1606,11 +1607,33 @@ void MainWindow::onAutoFillCurrentForm() {
     const MyCard card = store.activeCard();
     const AutoFillResult r = autoFillDocument(doc, card);
 
-    QMessageBox::information(this, tr("AutoFill"),
-        tr("Filled %1 of %2 text field(s) from \"%3\".")
-            .arg(r.filled)
-            .arg(r.examined)
-            .arg(card.label.isEmpty() ? tr("My Card") : card.label));
+    // Push the new values into the form overlay so the user sees them
+    // immediately. Also turn on form-filling mode — AutoFill is a
+    // strong signal that the user wants to interact with the form
+    // (either to spot-check what was filled or to finish remaining
+    // fields by hand).
+    doc->refreshFormView();
+    if (r.filled > 0 && !m_fillFormsAction->isChecked()) {
+        m_fillFormsAction->setChecked(true);  // triggers setFormFillingActive(true)
+    }
+
+    // Inline status message instead of a modal — the popup was a
+    // context-breaker on every invocation. "Filled 0 of N" still gets
+    // surfaced so the user knows nothing matched, but via the status
+    // bar which doesn't demand a click-through.
+    const QString label = card.label.isEmpty() ? tr("My Card") : card.label;
+    QString status;
+    if (r.filled == 0 && r.examined > 0) {
+        status = tr("AutoFill: \"%1\" matched none of the %2 text field(s). "
+                    "The PDF may use non-standard field names.")
+                    .arg(label).arg(r.examined);
+    } else if (r.filled == 0) {
+        status = tr("AutoFill: no text fields to fill in this document.");
+    } else {
+        status = tr("AutoFill: filled %1 of %2 text field(s) from \"%3\".")
+                    .arg(r.filled).arg(r.examined).arg(label);
+    }
+    statusBar()->showMessage(status, 8000);
 }
 
 void MainWindow::onManageMyCard() {

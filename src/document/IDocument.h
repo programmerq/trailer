@@ -110,6 +110,11 @@ public:
     // Show or hide the interactive form overlay. Callers toggle this
     // when the user enters / leaves form-filling mode.
     virtual void setFormFillingActive(bool /*active*/) {}
+    // Re-read field values from the underlying editor and push them
+    // into any visible form overlay. Use this after a bulk write (e.g.
+    // AutoFill) so widgets reflect the new values without having to
+    // toggle form-filling mode off and back on.
+    virtual void refreshFormView() {}
     virtual bool insertPagesFrom(const QString& /*sourcePath*/, int /*insertAtIndex*/) { return false; }
     virtual bool extractPages(const std::vector<int>& /*pageIndices*/, const QString& /*destPath*/) const { return false; }
     virtual bool cropPage(int /*pageIndex*/, double /*leftPts*/, double /*topPts*/,

@@ -40,7 +40,11 @@ QString canonicalise(const QString& raw) {
         spaced.append(c);
     }
     QString s = spaced.toLower();
-    static const QRegularExpression sep(QStringLiteral("[\\s_\\-/]+"));
+    // Common PDF hierarchy separators include "." (fully qualified
+    // AcroForm names like form1.BillingInfo.FirstName), along with
+    // whitespace and the usual word separators. Collapse them all to
+    // a single space so containsWord() can anchor on " word " pads.
+    static const QRegularExpression sep(QStringLiteral("[\\s_\\-/.]+"));
     s.replace(sep, QStringLiteral(" "));
     return s.trimmed();
 }
@@ -149,7 +153,14 @@ AutoFillResult autoFillDocument(IDocument* doc, const MyCard& card) {
     for (const auto& f : fields) {
         if (f.type != FormFieldType::Text) continue;
         r.examined++;
-        const QString v = autoFillValueFor(f.name, card);
+        // Try the fully-qualified /T name first; many real-world PDFs
+        // use an opaque hierarchical /T (e.g. "form1[0].#subform[0]
+        // .FirstName[0]") and expose the human-readable label via /TU
+        // ("First Name"). Fall back to /TU so both conventions work.
+        QString v = autoFillValueFor(f.name, card);
+        if (v.isEmpty() && !f.label.isEmpty()) {
+            v = autoFillValueFor(f.label, card);
+        }
         if (v.isEmpty()) continue;
         if (doc->setFormFieldValue(f.id, v)) r.filled++;
     }

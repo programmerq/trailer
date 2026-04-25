@@ -21,6 +21,7 @@ private slots:
     void matcherIgnoresUnknownFields();
     void matcherIsCaseAndSeparatorInsensitive();
     void matcherPrefersLine2OverLine1();
+    void matcherHandlesHierarchicalDotNames();
     void storeRoundTripsAllFields();
     void storeLoadHandlesMissingFileSilently();
     void storeRemoveClampsActiveIndex();
@@ -99,6 +100,26 @@ void TestCards::matcherIsCaseAndSeparatorInsensitive() {
     QCOMPARE(autoFillValueFor(QStringLiteral("zip code"), c), c.postalCode);
     QCOMPARE(autoFillValueFor(QStringLiteral("ZipCode"), c), c.postalCode);
     QCOMPARE(autoFillValueFor(QStringLiteral("ZIP_CODE"), c), c.postalCode);
+}
+
+void TestCards::matcherHandlesHierarchicalDotNames() {
+    // AcroForm allows hierarchical field names separated by "." —
+    // e.g. "form1.BillingAddress.FirstName". The canonicaliser must
+    // treat "." as a word separator so containsWord() can anchor on
+    // " first name " pads. Before the fix, the trailing "FirstName"
+    // lived inside "billing address.first name" and didn't match.
+    const MyCard c = sampleCard();
+    QCOMPARE(autoFillValueFor(
+                 QStringLiteral("form1.BillingAddress.FirstName"), c),
+             c.givenName);
+    QCOMPARE(autoFillValueFor(
+                 QStringLiteral("topmostSubform[0].Page1[0].f1_02[0]"), c),
+             QString());  // purely indexed → no match, still no crash
+    QCOMPARE(autoFillValueFor(QStringLiteral("order.customer.email"), c),
+             c.email);
+    QCOMPARE(autoFillValueFor(QStringLiteral("addr.zip_code"), c),
+             c.postalCode);
+    QCOMPARE(autoFillValueFor(QStringLiteral("shipping.City"), c), c.city);
 }
 
 void TestCards::matcherPrefersLine2OverLine1() {
