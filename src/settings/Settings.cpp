@@ -51,9 +51,12 @@ QString openFilesInToString(OpenFilesIn value) {
 }
 
 OpenFilesIn openFilesInFromString(const QString& value) {
-    if (value == QLatin1String("new_window"))  return OpenFilesIn::NewWindow;
+    if (value == QLatin1String("new_tab"))     return OpenFilesIn::NewTab;
     if (value == QLatin1String("same_window")) return OpenFilesIn::SameWindow;
-    return OpenFilesIn::NewTab;
+    // Default is window-per-file (see Settings.h). Any unrecognised
+    // or empty value falls through to the same NewWindow default so
+    // a typo in settings.toml doesn't silently flip behaviour.
+    return OpenFilesIn::NewWindow;
 }
 
 Settings::Settings() : Settings(AppPaths::settingsFile()) {}

@@ -29,6 +29,10 @@ MainWindow* Application::ensureWindow() {
             return ptr;
         }
     }
+    return ensureFreshWindow();
+}
+
+MainWindow* Application::ensureFreshWindow() {
     auto* window = new MainWindow(this);
     window->setAttribute(Qt::WA_DeleteOnClose);
     connect(window, &QObject::destroyed, this, &Application::onWindowDestroyed);
@@ -43,29 +47,36 @@ void Application::openFiles(const QStringList& paths) {
     }
 
     const OpenFilesIn mode = m_settings.openFilesIn();
-    MainWindow* target = nullptr;
 
-    switch (mode) {
-        case OpenFilesIn::NewWindow:
-            target = nullptr;
-            break;
-        case OpenFilesIn::SameWindow:
-        case OpenFilesIn::NewTab:
-            for (auto& ptr : m_windows) {
-                if (ptr) {
-                    target = ptr;
-                    break;
-                }
-            }
-            break;
-    }
-
-    if (!target) {
-        target = ensureWindow();
-    }
+    // Resolve the first-existing window once — used by SameWindow and
+    // NewTab modes. For NewWindow we don't reuse anything; every file
+    // gets a fresh window so closing it is "close this file" without
+    // touching unrelated work.
+    auto firstExistingWindow = [this]() -> MainWindow* {
+        for (auto& ptr : m_windows) {
+            if (ptr) return ptr;
+        }
+        return nullptr;
+    };
 
     for (const QString& path : paths) {
         auto doc = m_registry.open(path);
+
+        MainWindow* target = nullptr;
+        switch (mode) {
+            case OpenFilesIn::NewWindow:
+                // One window per file. Even when `paths` has multiple
+                // entries we spawn a separate window for each so the
+                // user can arrange them independently.
+                target = ensureFreshWindow();
+                break;
+            case OpenFilesIn::SameWindow:
+            case OpenFilesIn::NewTab:
+                target = firstExistingWindow();
+                if (!target) target = ensureWindow();
+                break;
+        }
+
         target->addDocument(std::move(doc));
         m_recent.add(path);
     }

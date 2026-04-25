@@ -49,7 +49,10 @@ public:
 private:
     QString m_filePath;
     Theme m_theme = Theme::System;
-    OpenFilesIn m_openFilesIn = OpenFilesIn::NewTab;
+    // Window-per-file is the default after the 2026-04-24 HITL review
+    // ("tabs are mostly in the way"). Tabs remain available as an opt-in
+    // by setting open_files_in = "new_tab" in settings.toml.
+    OpenFilesIn m_openFilesIn = OpenFilesIn::NewWindow;
     bool m_autoSave = true;
     int m_recentMax = 50;
     bool m_redactionWarningAcknowledged = false;

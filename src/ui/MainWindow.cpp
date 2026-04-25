@@ -92,6 +92,13 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
     m_documentView = new DocumentView(center);
     connect(m_documentView, &DocumentView::currentDocumentChanged,
             this, &MainWindow::onCurrentDocumentChanged);
+    // Window-per-file: when the last document in this window is
+    // closed, close the window too rather than leaving a ghost frame
+    // behind. For the legacy tab mode this still fires correctly —
+    // closing the final tab discards the now-empty window, which is
+    // also what the user expects.
+    connect(m_documentView, &DocumentView::allTabsClosed,
+            this, &MainWindow::close);
 
     m_animationBar = new AnimationBar(center);
     m_animationBar->hide();

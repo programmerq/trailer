@@ -29,7 +29,12 @@ public:
     DocumentRegistry& registry() { return m_registry; }
     ModelRegistry& modelRegistry() { return m_modelRegistry; }
 
+    // Return the first existing window, or spawn one if none exist.
+    // Idempotent: callers can use it to "make sure there's a window".
     MainWindow* ensureWindow();
+    // Always spawn a new empty window and return it. Used by the
+    // window-per-file open flow so each file gets its own frame.
+    MainWindow* ensureFreshWindow();
 
 protected:
     bool event(QEvent* event) override;

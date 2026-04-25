@@ -58,17 +58,25 @@ rearranged.
 
 ### Window / document model
 
-- **Window-per-file as the default.** Tabs are mostly in the way — each
-  opened document should get its own window by default. Preserve the
-  current `open_files_in` setting shape but flip the default from
-  `new_tab` to `new_window`.
-- **Thumbnail bar handles multi-item sets.** When the user opens several
-  single-page items together (e.g. a batch of images), put them in one
-  window and use the thumbnail sidebar to navigate between them — the
-  same surface already used for PDF pages. No tabs needed for that case
-  either.
-- Revisit `MainWindow`'s `QTabWidget` central-widget choice; a single
-  `DocumentView` per window plus the existing sidebar should be enough.
+- **Window-per-file is now the default** (2026-04-24 pass). `open_files_in`
+  defaults to `new_window`; `openFiles({a, b, c})` spawns three windows.
+  `DocumentView` sets `tabBarAutoHide` so single-doc windows show no tab
+  strip. Tabs remain available as an opt-in via `open_files_in = "new_tab"`.
+- **Still to do: thumbnail-bar handles multi-item sets.** When the user
+  opens several single-page items together (e.g. a batch of images),
+  the nicer UX is one window whose sidebar thumbnail bar navigates
+  between them, not N independent windows. Needs:
+  - `ThumbnailModel` gains a multi-document mode (today it wraps one
+    `IDocument` and renders `pageCount()` rows).
+  - `openFiles()` detects the "batch of single-page items" case and
+    routes all of them into one window.
+  - A window-level "document list" panel in `Sidebar` that switches
+    the active `IDocument` the way tabs used to.
+- Revisit whether `MainWindow`'s `QTabWidget` central widget should be
+  replaced with a plain `QStackedWidget` once the tab codepath has no
+  remaining users. The `QTabWidget` + `tabBarAutoHide` pair is fine for
+  now but carries tab-specific API no longer reached in the default
+  flow.
 
 ### PDF text selection + text-aware markup (bug, high priority)
 

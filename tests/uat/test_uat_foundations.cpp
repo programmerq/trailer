@@ -18,6 +18,8 @@
 #include <QPdfWriter>
 #include <QPageSize>
 #include <QPainter>
+#include <QTabBar>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QToolBar>
@@ -73,7 +75,9 @@ private slots:
 
     // Map to docs/uat/01-foundations.md
     void uat_fnd_001_launchWithNoArguments();
-    void uat_fnd_002_launchOpensFileInTab();
+    void uat_fnd_002_launchOpensFileInWindow();
+    void uat_fnd_003_singleDocumentHidesTabBar();
+    void uat_fnd_004_openingMultipleFilesSpawnsMultipleWindows();
     void uat_fnd_010_menuStructure();
     void uat_fnd_016_toggleSidebar();
 
@@ -134,7 +138,7 @@ void TestUatFoundations::uat_fnd_001_launchWithNoArguments() {
     QVERIFY2(!inspector->isVisible(), "Inspector dock should be hidden at launch");
 }
 
-void TestUatFoundations::uat_fnd_002_launchOpensFileInTab() {
+void TestUatFoundations::uat_fnd_002_launchOpensFileInWindow() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writeTinyPdf(m_scratch.filePath("uat_fnd_002.pdf"));
 
@@ -151,6 +155,66 @@ void TestUatFoundations::uat_fnd_002_launchOpensFileInTab() {
     const auto recent = app->recentFiles().entries();
     QVERIFY2(!recent.isEmpty(),
              "Recent files should contain at least one entry after openFiles");
+}
+
+// Window-per-file is the default (see TODO.md UX polish pass). A
+// window holding exactly one document should show no tab strip — the
+// tab bar is a distraction on single-doc frames. Qt's built-in
+// tabBarAutoHide handles this when count() <= 1.
+void TestUatFoundations::uat_fnd_003_singleDocumentHidesTabBar() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writeTinyPdf(m_scratch.filePath("uat_fnd_003.pdf"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+
+    auto* tabs = mw->findChild<QTabWidget*>();
+    QVERIFY2(tabs, "Expected a QTabWidget (DocumentView) inside MainWindow");
+    QCOMPARE(tabs->count(), 1);
+    QVERIFY2(tabs->tabBarAutoHide(),
+             "DocumentView must set tabBarAutoHide so single-doc windows "
+             "don't show a tab strip");
+    QVERIFY2(!tabs->tabBar()->isVisible(),
+             "With autoHide on and one tab, the tab bar must not be visible");
+}
+
+// Opening several files in a single openFiles() call should, under
+// the default NewWindow mode, spawn one window per file — not pile
+// them all into a single frame. The test confirms the count of
+// top-level MainWindows matches the number of paths.
+void TestUatFoundations::
+    uat_fnd_004_openingMultipleFilesSpawnsMultipleWindows() {
+    QVERIFY(m_scratch.isValid());
+    const QString p1 = writeTinyPdf(m_scratch.filePath("uat_fnd_004_a.pdf"));
+    const QString p2 = writeTinyPdf(m_scratch.filePath("uat_fnd_004_b.pdf"));
+    const QString p3 = writeTinyPdf(m_scratch.filePath("uat_fnd_004_c.pdf"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+
+    // Sanity: starting state has no MainWindows (init() closed them).
+    int baselineWindows = 0;
+    for (auto* w : QApplication::topLevelWidgets()) {
+        if (qobject_cast<MainWindow*>(w)) ++baselineWindows;
+    }
+    QCOMPARE(baselineWindows, 0);
+
+    app->openFiles({p1, p2, p3});
+    QApplication::processEvents();
+
+    int spawned = 0;
+    for (auto* w : QApplication::topLevelWidgets()) {
+        if (auto* mw = qobject_cast<MainWindow*>(w)) {
+            QCOMPARE(mw->documentCount(), 1);
+            ++spawned;
+        }
+    }
+    QCOMPARE(spawned, 3);
 }
 
 void TestUatFoundations::uat_fnd_010_menuStructure() {

@@ -6,6 +6,12 @@ DocumentView::DocumentView(QWidget* parent) : QTabWidget(parent) {
     setTabsClosable(true);
     setMovable(true);
     setDocumentMode(true);
+    // Window-per-file is the default now, so a single-document window
+    // should show no tab strip at all. The user only sees tabs when
+    // they have opted into the legacy "new_tab" open-files mode and
+    // actually have multiple tabs open. Built-in Qt support: the bar
+    // only appears when count() > 1.
+    setTabBarAutoHide(true);
     connect(this, &QTabWidget::tabCloseRequested, this, &DocumentView::onTabCloseRequested);
     connect(this, &QTabWidget::currentChanged, this, [this](int) {
         if (QWidget* w = currentWidget()) {
