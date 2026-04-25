@@ -149,6 +149,21 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
                     doc->setAnnotationStyle(m_markupToolbar->style());
                 }
             });
+    // When the toolbar is hidden, reset the active tool to Select so the
+    // annotation overlay stops capturing click-drags to draw shapes.
+    // Select routes drag events to QPdfDocument::getSelection (text
+    // selection); any other tool would consume the drag and paint a
+    // rectangle in the last-used stroke colour, which is what a user
+    // with a hidden toolbar would experience as "I can't select text
+    // any more". QToolBar::visibilityChanged fires for both the
+    // user-toggled hide and any programmatic one.
+    connect(m_markupToolbar, &QToolBar::visibilityChanged,
+            this, [this](bool visible) {
+                if (visible) return;
+                if (m_markupToolbar->activeTool() != AnnotationTool::Select) {
+                    m_markupToolbar->setActiveTool(AnnotationTool::Select);
+                }
+            });
     connect(m_markupToolbar, &MarkupToolbar::styleChanged,
             this, [this](const AnnotationStyle& style) {
                 if (auto* doc = m_documentView->currentDocument()) {

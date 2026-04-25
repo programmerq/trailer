@@ -186,6 +186,7 @@ private slots:
     void uat_ann_012_lineToolCreatesAnnotation();
     void uat_ann_060_undoAddRectangle();
     void uat_ann_063_redoAfterUndo();
+    void uat_ann_070_hidingToolbarRestoresTextSelection();
 
 private:
     QTemporaryDir m_scratch;
@@ -672,6 +673,74 @@ void TestUatSearchAndMarkup::uat_ann_063_redoAfterUndo() {
     QApplication::processEvents();
     QCOMPARE(store->count(), baseline + 1);
     QCOMPARE(store->annotations().back().type, AnnotationType::Rectangle);
+}
+
+// UAT-ANN-070 — Hiding the markup toolbar restores text selection.
+//
+// Regression test for the 2026-04-24 HITL walkthrough: with the
+// Rectangle tool active, hiding the markup toolbar left the overlay
+// in Rectangle mode so click-drag drew shapes instead of selecting
+// text. The fix resets the active tool to Select on hide so the
+// overlay's Select branch (which forwards drags to
+// QPdfDocument::getSelection) runs instead. We assert both ends:
+// (1) after hide, the overlay reports Select as the active tool, and
+// (2) a drag after the hide produces no new shape annotation.
+void TestUatSearchAndMarkup::uat_ann_070_hidingToolbarRestoresTextSelection() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_070.pdf")),
+        QStringLiteral("fixture"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto* dv = mw->findChild<DocumentView*>();
+    QVERIFY(dv);
+    IDocument* doc = dv->currentDocument();
+    QVERIFY(doc);
+    AnnotationStore* store = doc->annotations();
+    QVERIFY(store);
+
+    auto* markup = mw->findChild<MarkupToolbar*>();
+    QVERIFY(markup);
+
+    // 1. Show the toolbar and pick Rectangle — simulates a user who
+    //    has just drawn a shape and is now putting the toolbar away.
+    markup->show();
+    QApplication::processEvents();
+    QAction* rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
+    QVERIFY(rectAction);
+    rectAction->setChecked(true);
+    QApplication::processEvents();
+    QCOMPARE(markup->activeTool(), AnnotationTool::Rectangle);
+
+    auto* overlay = mw->findChild<AnnotationOverlay*>();
+    QVERIFY(overlay);
+    QCOMPARE(overlay->activeTool(), AnnotationTool::Rectangle);
+
+    // 2. Hide the toolbar. Bug: overlay stayed in Rectangle.
+    //    Fix: MainWindow reacts to visibilityChanged(false) and
+    //    bounces the toolbar to Select, which propagates through
+    //    activeToolChanged → doc->setAnnotationTool(Select).
+    const int shapesBefore = store->count();
+    markup->hide();
+    QApplication::processEvents();
+    QCOMPARE(markup->activeTool(), AnnotationTool::Select);
+    QCOMPARE(overlay->activeTool(), AnnotationTool::Select);
+
+    // 3. A click-drag with Select active must not create a shape
+    //    annotation. (The Select branch routes to the text-selection
+    //    callback; in this test fixture it returns empty, but the
+    //    store count is still the reliable signal.)
+    dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
+    QCOMPARE(store->count(), shapesBefore);
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG
