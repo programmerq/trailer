@@ -210,5 +210,18 @@ set_target_properties(trailer PROPERTIES
     MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/resources/macos/Info.plist.in"
 )
 
+# Installation rules (used by Linux packaging)
+if(UNIX AND NOT APPLE)
+    include(GNUInstallDirs)
+    install(TARGETS trailer DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES platform/linux/trailer.desktop
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+    install(FILES platform/linux/org.trailer.Trailer.metainfo.xml
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
+    install(FILES platform/linux/trailer-256.png
+            DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps
+            RENAME trailer.png)
+endif()
+
 enable_testing()
 add_subdirectory(tests)
