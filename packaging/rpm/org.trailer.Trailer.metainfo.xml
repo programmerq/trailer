@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.trailer.Trailer</id>
+  <metadata_license>MIT</metadata_license>
+  <project_license>MIT</project_license>
+  <name>Trailer</name>
+  <summary>Cross-platform PDF and image workbench</summary>
+  <description>
+    <p>Trailer is a fast, cross-platform viewer for PDF documents and images.</p>
+    <!-- TODO: Expand description with feature highlights once feature set is stable -->
+  </description>
+  <url type="homepage">https://github.com/trailer-app/trailer</url>
+  <!-- TODO: Add real homepage URL -->
+  <launchable type="desktop-id">trailer.desktop</launchable>
+  <provides>
+    <mediatype>application/pdf</mediatype>
+    <mediatype>image/png</mediatype>
+    <mediatype>image/jpeg</mediatype>
+    <mediatype>image/bmp</mediatype>
+    <mediatype>image/gif</mediatype>
+    <mediatype>image/tiff</mediatype>
+    <mediatype>image/webp</mediatype>
+  </provides>
+  <releases>
+    <release version="0.1.0" date="2026-04-26">
+      <description><p>Initial release.</p></description>
+    </release>
+  </releases>
+  <!-- TODO: Add <screenshots> section once app has a web presence -->
+  <content_rating type="oars-1.1" />
+</component>
