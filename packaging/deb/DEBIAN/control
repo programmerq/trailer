@@ -1,0 +1,11 @@
+Package: trailer
+Version: 0.1.0-1
+Section: graphics
+Priority: optional
+Architecture: amd64
+Depends: libqpdf29 | libqpdf32, libgl1, libglib2.0-0
+Maintainer: Trailer Contributors <TODO@trailer.example.com>
+Description: Cross-platform PDF and image workbench
+ Trailer is a fast, cross-platform viewer for PDF documents and images.
+ .
+ Supports PDF, PNG, JPEG, BMP, GIF, TIFF, WebP, and portable image formats.
