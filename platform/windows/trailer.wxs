@@ -1,0 +1,341 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Trailer Windows MSI installer — WiX 3.x source.
+  Built with wixl (msitools) via scripts/build-windows-msi.sh.
+
+  TODO: Replace placeholder icon with real .ico file
+  TODO: Add WiX UI extension for license agreement dialog (requires wixl UI
+        support or switch to WiX 4 / burn)
+  TODO: Evaluate WiX 4 (.NET-based, cross-platform) for future
+  TODO: Add Authenticode code signing to build-windows-msi-inner.sh once
+        a certificate is available
+  TODO: Add Windows packaging step to CI once signing cert is available
+-->
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+
+  <Product Id="*"
+           Name="Trailer"
+           Language="1033"
+           Version="0.1.0"
+           Manufacturer="Trailer Contributors"
+           UpgradeCode="{3FA7A361-D9B2-4F88-B8DC-1F2E9C4A5B30}">
+
+    <Package InstallerVersion="200"
+             Compressed="yes"
+             InstallScope="perMachine"
+             Description="Cross-platform PDF and image workbench"
+             Manufacturer="Trailer Contributors" />
+
+    <!-- Prevent downgrades -->
+    <MajorUpgrade
+        DowngradeErrorMessage="A newer version of Trailer is already installed. Please uninstall it before installing this version." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Add/Remove Programs metadata -->
+    <Property Id="ARPNOREPAIR" Value="1" Secure="yes" />
+    <Property Id="ARPNOMODIFY" Value="1" Secure="yes" />
+    <Property Id="ARPURLINFOABOUT" Value="https://example.com/trailer" />     <!-- TODO: real URL -->
+    <Property Id="ARPURLUPDATEINFO" Value="https://example.com/trailer/releases" /> <!-- TODO: real URL -->
+    <Property Id="ARPHELPLINK" Value="https://example.com/trailer/support" /> <!-- TODO: real URL -->
+
+    <!-- ═══════════════════════════════════════════════════
+         Directory tree
+         ═══════════════════════════════════════════════════ -->
+    <Directory Id="TARGETDIR" Name="SourceDir">
+      <Directory Id="ProgramFilesFolder">
+        <Directory Id="TrailerFolder" Name="Trailer">
+          <!-- platforms\ subdirectory for Qt platform plugin -->
+          <Directory Id="PlatformsFolder" Name="platforms" />
+        </Directory>
+      </Directory>
+      <Directory Id="ProgramMenuFolder">
+        <Directory Id="TrailerStartMenuFolder" Name="Trailer" />
+      </Directory>
+      <Directory Id="DesktopFolder" Name="Desktop" />
+    </Directory>
+
+    <!-- ═══════════════════════════════════════════════════
+         Components
+         ═══════════════════════════════════════════════════ -->
+
+    <!-- Main executable -->
+    <DirectoryRef Id="TrailerFolder">
+      <Component Id="TrailerExeComponent"
+                 Guid="{B1C2D3E4-F5A6-7B8C-9D0E-F1A2B3C4D5E6}">
+        <File Id="TrailerExe"
+              Source="build-windows/trailer.exe"
+              KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Qt platform plugin -->
+    <DirectoryRef Id="PlatformsFolder">
+      <Component Id="QWindowsDllComponent"
+                 Guid="{C2D3E4F5-A6B7-8C9D-0E1F-A2B3C4D5E6F7}">
+        <File Id="QWindowsDll"
+              Source="build-windows/platforms/qwindows.dll"
+              KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Shortcuts -->
+    <DirectoryRef Id="TrailerStartMenuFolder">
+      <Component Id="StartMenuShortcutComponent"
+                 Guid="{D3E4F5A6-B7C8-9D0E-1F2A-B3C4D5E6F7A8}">
+        <Shortcut Id="StartMenuShortcut"
+                  Name="Trailer"
+                  Description="Cross-platform PDF and image workbench"
+                  Target="[TrailerFolder]trailer.exe"
+                  WorkingDirectory="TrailerFolder" />
+        <RemoveFolder Id="RemoveTrailerStartMenuFolder"
+                      On="uninstall" />
+        <RegistryValue Root="HKCU"
+                       Key="SOFTWARE\Trailer"
+                       Name="StartMenuInstalled"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <DirectoryRef Id="DesktopFolder">
+      <Component Id="DesktopShortcutComponent"
+                 Guid="{E4F5A6B7-C8D9-0E1F-2A3B-C4D5E6F7A8B9}">
+        <Shortcut Id="DesktopShortcut"
+                  Name="Trailer"
+                  Description="Cross-platform PDF and image workbench"
+                  Target="[TrailerFolder]trailer.exe"
+                  WorkingDirectory="TrailerFolder" />
+        <RegistryValue Root="HKCU"
+                       Key="SOFTWARE\Trailer"
+                       Name="DesktopInstalled"
+                       Type="integer"
+                       Value="1"
+                       KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!-- Registered Applications + Capabilities (Default Programs) -->
+    <DirectoryRef Id="TARGETDIR">
+      <Component Id="CapabilitiesComponent"
+                 Guid="{F5A6B7C8-D9E0-1F2A-3B4C-D5E6F7A8B9C0}">
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\RegisteredApplications"
+                       Name="Trailer"
+                       Type="string"
+                       Value="SOFTWARE\Trailer\Capabilities"
+                       KeyPath="yes" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities"
+                       Name="ApplicationName"
+                       Type="string"
+                       Value="Trailer" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities"
+                       Name="ApplicationDescription"
+                       Type="string"
+                       Value="Cross-platform PDF and image workbench" />
+
+        <!-- File-type capability declarations -->
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities\FileAssociations"
+                       Name=".pdf"
+                       Type="string"
+                       Value="Trailer.PDF" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities\FileAssociations"
+                       Name=".png"
+                       Type="string"
+                       Value="Trailer.Image" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities\FileAssociations"
+                       Name=".jpg"
+                       Type="string"
+                       Value="Trailer.Image" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities\FileAssociations"
+                       Name=".jpeg"
+                       Type="string"
+                       Value="Trailer.Image" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities\FileAssociations"
+                       Name=".bmp"
+                       Type="string"
+                       Value="Trailer.Image" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities\FileAssociations"
+                       Name=".gif"
+                       Type="string"
+                       Value="Trailer.Image" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities\FileAssociations"
+                       Name=".tiff"
+                       Type="string"
+                       Value="Trailer.Image" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities\FileAssociations"
+                       Name=".tif"
+                       Type="string"
+                       Value="Trailer.Image" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities\FileAssociations"
+                       Name=".webp"
+                       Type="string"
+                       Value="Trailer.Image" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities\FileAssociations"
+                       Name=".ppm"
+                       Type="string"
+                       Value="Trailer.Image" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities\FileAssociations"
+                       Name=".pgm"
+                       Type="string"
+                       Value="Trailer.Image" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities\FileAssociations"
+                       Name=".pbm"
+                       Type="string"
+                       Value="Trailer.Image" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities\FileAssociations"
+                       Name=".xbm"
+                       Type="string"
+                       Value="Trailer.Image" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities\FileAssociations"
+                       Name=".xpm"
+                       Type="string"
+                       Value="Trailer.Image" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Trailer\Capabilities\FileAssociations"
+                       Name=".ico"
+                       Type="string"
+                       Value="Trailer.Image" />
+
+        <!-- ProgId registrations for file type handlers -->
+
+        <!-- PDF -->
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\Trailer.PDF"
+                       Type="string"
+                       Value="PDF Document" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\Trailer.PDF\DefaultIcon"
+                       Type="string"
+                       Value="[TrailerFolder]trailer.exe,0" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\Trailer.PDF\shell\open\command"
+                       Type="string"
+                       Value="&quot;[TrailerFolder]trailer.exe&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\.pdf\OpenWithProgids"
+                       Name="Trailer.PDF"
+                       Type="string"
+                       Value="" />
+
+        <!-- Images -->
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\Trailer.Image"
+                       Type="string"
+                       Value="Image File" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\Trailer.Image\DefaultIcon"
+                       Type="string"
+                       Value="[TrailerFolder]trailer.exe,0" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\Trailer.Image\shell\open\command"
+                       Type="string"
+                       Value="&quot;[TrailerFolder]trailer.exe&quot; &quot;%1&quot;" />
+
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\.png\OpenWithProgids"
+                       Name="Trailer.Image"
+                       Type="string"
+                       Value="" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\.jpg\OpenWithProgids"
+                       Name="Trailer.Image"
+                       Type="string"
+                       Value="" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\.jpeg\OpenWithProgids"
+                       Name="Trailer.Image"
+                       Type="string"
+                       Value="" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\.bmp\OpenWithProgids"
+                       Name="Trailer.Image"
+                       Type="string"
+                       Value="" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\.gif\OpenWithProgids"
+                       Name="Trailer.Image"
+                       Type="string"
+                       Value="" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\.tiff\OpenWithProgids"
+                       Name="Trailer.Image"
+                       Type="string"
+                       Value="" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\.tif\OpenWithProgids"
+                       Name="Trailer.Image"
+                       Type="string"
+                       Value="" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\.webp\OpenWithProgids"
+                       Name="Trailer.Image"
+                       Type="string"
+                       Value="" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\.ppm\OpenWithProgids"
+                       Name="Trailer.Image"
+                       Type="string"
+                       Value="" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\.pgm\OpenWithProgids"
+                       Name="Trailer.Image"
+                       Type="string"
+                       Value="" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\.pbm\OpenWithProgids"
+                       Name="Trailer.Image"
+                       Type="string"
+                       Value="" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\.xbm\OpenWithProgids"
+                       Name="Trailer.Image"
+                       Type="string"
+                       Value="" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\.xpm\OpenWithProgids"
+                       Name="Trailer.Image"
+                       Type="string"
+                       Value="" />
+        <RegistryValue Root="HKLM"
+                       Key="SOFTWARE\Classes\.ico\OpenWithProgids"
+                       Name="Trailer.Image"
+                       Type="string"
+                       Value="" />
+
+      </Component>
+    </DirectoryRef>
+
+    <!-- ═══════════════════════════════════════════════════
+         Feature tree
+         ═══════════════════════════════════════════════════ -->
+    <Feature Id="ProductFeature"
+             Title="Trailer"
+             Level="1">
+      <ComponentRef Id="TrailerExeComponent" />
+      <ComponentRef Id="QWindowsDllComponent" />
+      <ComponentRef Id="StartMenuShortcutComponent" />
+      <ComponentRef Id="DesktopShortcutComponent" />
+      <ComponentRef Id="CapabilitiesComponent" />
+      <ComponentGroupRef Id="DllComponents" />
+    </Feature>
+
+  </Product>
+</Wix>

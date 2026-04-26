@@ -101,6 +101,7 @@ RUN apt-get -o Acquire::AllowInsecureRepositories=true update \
         binutils-mingw-w64-x86-64 \
         libz-mingw-w64-dev \
         libz-mingw-w64 \
+        msitools \
     && rm -rf /var/lib/apt/lists/*
 
 # Ubuntu ships both -posix and -win32 variants and defaults to
