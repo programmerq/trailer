@@ -8,8 +8,16 @@ SRC=/src
 BUILD_DIR=/tmp/build-linux
 STAGING=/tmp/deb-staging
 QT_PREFIX=/opt/Qt/6.8.0/gcc_64
-PKG_VERSION=0.1.0-1
-DEB_OUT=/output/trailer_${PKG_VERSION}_amd64.deb
+PROJECT_VERSION=$(grep -E '^\s*VERSION [0-9]+\.[0-9]+\.[0-9]+' "$SRC/CMakeLists.txt" \
+    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+if [[ -z "$PROJECT_VERSION" ]]; then
+    echo "ERROR: could not extract project version from $SRC/CMakeLists.txt" >&2
+    exit 1
+fi
+DEB_REVISION=1
+PKG_VERSION="${PROJECT_VERSION}-${DEB_REVISION}"
+DEB_ARCH=$(dpkg --print-architecture)
+DEB_OUT="/output/trailer_${PKG_VERSION}_${DEB_ARCH}.deb"
 
 echo "==> Configuring CMake"
 cmake -B "$BUILD_DIR" \
@@ -61,7 +69,7 @@ bundle_libs() {
             queue+=("$lib")
         done < <(ldd "$current" 2>/dev/null \
             | awk '/=>/ { print $3 }' \
-            | grep -v '^(/lib\|/usr/lib\|not)')
+            | grep -Ev '^(/lib|/usr/lib|not$)')
     done
 }
 

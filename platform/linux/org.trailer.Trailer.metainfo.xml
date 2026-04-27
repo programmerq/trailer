@@ -10,7 +10,6 @@
     <!-- TODO: Expand description with feature highlights once feature set is stable -->
   </description>
   <url type="homepage">https://github.com/trailer-app/trailer</url>
-  <!-- TODO: Add real homepage URL -->
   <launchable type="desktop-id">trailer.desktop</launchable>
   <provides>
     <mediatype>application/pdf</mediatype>

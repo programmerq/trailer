@@ -3,7 +3,7 @@ Version: 0.1.0-1
 Section: graphics
 Priority: optional
 Architecture: amd64
-Depends: libqpdf29 | libqpdf32, libgl1, libglib2.0-0
+Depends: libqpdf29 | libqpdf32, libgl1, libglib2.0-0, libx11-6, libx11-xcb1, libxext6, libxkbcommon0, libxkbcommon-x11-0, libxcb1, libxcb-cursor0, libxcb-glx0, libxcb-icccm4, libxcb-image0, libxcb-keysyms1, libxcb-randr0, libxcb-render0, libxcb-render-util0, libxcb-shape0, libxcb-shm0, libxcb-sync1, libxcb-util1, libxcb-xfixes0, libxcb-xinerama0, libxcb-xkb1, libxrender1, libxi6, libsm6, libice6, libfontconfig1, libdbus-1-3, libwayland-client0, libwayland-egl1
 Maintainer: Trailer Contributors <TODO@trailer.example.com>
 Description: Cross-platform PDF and image workbench
  Trailer is a fast, cross-platform viewer for PDF documents and images.
