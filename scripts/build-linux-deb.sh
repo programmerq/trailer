@@ -5,7 +5,7 @@
 #   scripts/build-linux-deb.sh              # build image if needed, package inside it
 #   scripts/build-linux-deb.sh --rebuild    # force a clean image rebuild first
 #
-# Output: dist/trailer_0.1.0-1_amd64.deb
+# Output: dist/trailer_<version>-1_amd64.deb (version derived from CMakeLists.txt)
 #
 # Requires Docker. The Docker image installs Qt 6.8.0 via aqtinstall
 # (including the qtpdf module) — Qt is not available in standard Ubuntu
@@ -20,14 +20,23 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE=trailer-linux-deb-build
 DIST_DIR="$REPO_ROOT/dist"
 
+# Derive version from CMakeLists.txt so it stays in sync with the project.
+PROJECT_VERSION=$(grep -E '^\s*VERSION [0-9]+\.[0-9]+\.[0-9]+' "$REPO_ROOT/CMakeLists.txt" \
+    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+if [[ -z "$PROJECT_VERSION" ]]; then
+    echo "ERROR: could not extract project version from $REPO_ROOT/CMakeLists.txt" >&2
+    exit 1
+fi
+PKG_VERSION="${PROJECT_VERSION}-1"
+
 if ! command -v docker >/dev/null 2>&1; then
     echo "docker not found. Install Docker to use this script." >&2
     exit 127
 fi
 
 build_image() {
-    docker build -t "$IMAGE" -f - "$REPO_ROOT" <<'DOCKERFILE'
-FROM ubuntu:22.04
+    docker build --platform=linux/amd64 -t "$IMAGE" -f - "$REPO_ROOT" <<'DOCKERFILE'
+FROM --platform=linux/amd64 ubuntu:22.04
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -80,7 +89,7 @@ esac
 
 echo "==> Running DEB build inside container"
 mkdir -p "$DIST_DIR"
-docker run --rm \
+docker run --rm --platform=linux/amd64 \
     -v "$REPO_ROOT:/src" \
     -v "$DIST_DIR:/output" \
     -w /src \
@@ -89,8 +98,8 @@ docker run --rm \
 
 echo
 echo "==> Success!"
-echo "    Package: $DIST_DIR/trailer_0.1.0-1_amd64.deb"
+echo "    Package: $DIST_DIR/trailer_${PKG_VERSION}_amd64.deb"
 echo
 echo "To inspect:"
-echo "    dpkg --info $DIST_DIR/trailer_0.1.0-1_amd64.deb"
-echo "    dpkg -c     $DIST_DIR/trailer_0.1.0-1_amd64.deb"
+echo "    dpkg --info $DIST_DIR/trailer_${PKG_VERSION}_amd64.deb"
+echo "    dpkg -c     $DIST_DIR/trailer_${PKG_VERSION}_amd64.deb"
