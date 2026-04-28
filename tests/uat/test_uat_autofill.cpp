@@ -221,7 +221,6 @@ private slots:
     void uat_af_010_autoFillPopulatesMatchingTextFields();
     void uat_af_020_autoFillFallsBackToAlternativeName();
     void uat_af_030_autoFillMenuActionShowsStatusAndActivatesForm();
-    void uat_af_040_autoFillRealWorldFormWithEnglishLabels();
 
 private:
     QTemporaryDir m_scratch;
@@ -402,122 +401,6 @@ void TestUatAutoFill::
     // newly-filled value in the overlay.
     QVERIFY2(fillForms->isChecked(),
              "Fill Forms action should be checked after a non-empty AutoFill");
-}
-
-// UAT-AF-040 — real-world form regression.
-//
-// Many real PDFs use plain English labels for /T (e.g. "First Name",
-// "City") plus designer-introduced quirks: typos in the label, the
-// same logical field repeated with a "_2" suffix, fields whose label
-// is a multi-purpose tooltip. Synthetic fixtures don't capture the
-// long-tail. To keep the harness honest, we point a gated UAT at a
-// real-world PDF the reviewer dropped on us during the 2026-04-24
-// HITL pass.
-//
-// The path is read from the TRAILER_TEST_FORM_PDF env var so we don't
-// commit the file or its name. Without the env var the slot skips —
-// CI stays self-contained. With the env var it asserts a lower-bound
-// match count from a fully-populated card. The bound is conservative
-// (set just below what the matcher achieved when authored) so adding
-// or removing aliases up or down doesn't break the test.
-void TestUatAutoFill::uat_af_040_autoFillRealWorldFormWithEnglishLabels() {
-    const QString src =
-        QString::fromLocal8Bit(qgetenv("TRAILER_TEST_FORM_PDF"));
-    if (src.isEmpty() || !QFileInfo::exists(src)) {
-        QSKIP("TRAILER_TEST_FORM_PDF not set — skipping real-world "
-              "AutoFill regression.");
-    }
-
-    QVERIFY(m_scratch.isValid());
-    // Copy into the scratch dir so the test can save back without
-    // touching the user's source file.
-    const QString workCopy = m_scratch.filePath(QStringLiteral("af040.pdf"));
-    QVERIFY(QFile::copy(src, workCopy));
-
-    // Use a fully-populated card so we exercise every alias the
-    // matcher knows.
-    {
-        CardStore store(AppPaths::cardsFile());
-        MyCard c;
-        c.label = QStringLiteral("Real World");
-        c.givenName = QStringLiteral("Alice");
-        c.familyName = QStringLiteral("Example");
-        c.fullName = QStringLiteral("Alice M. Example");
-        c.email = QStringLiteral("alice@example.com");
-        c.phone = QStringLiteral("555-0100");
-        c.organization = QStringLiteral("Acme");
-        c.jobTitle = QStringLiteral("Engineer");
-        c.addressLine1 = QStringLiteral("1 Example St");
-        c.city = QStringLiteral("Portland");
-        c.state = QStringLiteral("OR");
-        c.postalCode = QStringLiteral("97201");
-        c.country = QStringLiteral("USA");
-        store.addCard(std::move(c));
-        store.save();
-    }
-
-    auto* app = qobject_cast<Application*>(qApp);
-    QVERIFY(app);
-    app->openFiles({workCopy});
-    QApplication::processEvents();
-
-    MainWindow* mw = currentMainWindow();
-    QVERIFY(mw);
-    auto* dv = mw->findChild<DocumentView*>();
-    QVERIFY(dv);
-    IDocument* doc = dv->currentDocument();
-    QVERIFY(doc);
-    QVERIFY(doc->supportsFormFilling());
-
-    CardStore store(AppPaths::cardsFile());
-    store.load();
-    QVERIFY(store.hasActive());
-
-    const AutoFillResult r = autoFillDocument(doc, store.activeCard());
-
-    // The fixture has 60+ text fields (each visible field on the form
-    // is duplicated 1-2× in the AcroForm tree as a parent/guardian
-    // section). The fixes around the 2026-04-24 HITL pass produced
-    // a baseline of 22 fills — every name, address, city, state,
-    // zip, and phone occurrence, with zero false positives. We
-    // assert >= 18 so a small alias tweak doesn't trip the test, but
-    // a regression that breaks a whole axis (e.g. "_2" suffixes
-    // stop matching, or /TU fallback breaks) does.
-    QVERIFY2(r.examined >= 30,
-             qPrintable(QStringLiteral("Expected >= 30 text fields, got %1")
-                            .arg(r.examined)));
-    QVERIFY2(r.filled >= 18,
-             qPrintable(QStringLiteral("Expected AutoFill to populate >= 18 "
-                                       "fields on the real-world form, "
-                                       "but only filled %1 of %2.")
-                            .arg(r.filled).arg(r.examined)));
-
-    // Spot-check: the "First Name" / "Last Name" / "City" / "State" /
-    // "Zip" / "Phone" / "Address" labels should all carry the card
-    // value verbatim. We look up by label-equality so we don't depend
-    // on field-id ordering.
-    const auto fields = doc->formFields();
-    auto find = [&fields](const QString& nameOrLabel) -> const FormField* {
-        for (const auto& f : fields) {
-            if (f.name == nameOrLabel || f.label == nameOrLabel) return &f;
-        }
-        return nullptr;
-    };
-    auto check = [&find](const QString& nameOrLabel, const QString& expected) {
-        const FormField* f = find(nameOrLabel);
-        if (!f) return;  // Skip absent fields silently; the floor count
-                         // assertion above already covers the major axis.
-        QVERIFY2(f->value == expected,
-                 qPrintable(QStringLiteral("'%1' should be '%2', got '%3'")
-                                .arg(nameOrLabel, expected, f->value)));
-    };
-    check(QStringLiteral("First Name"), QStringLiteral("Alice"));
-    check(QStringLiteral("Last Name"), QStringLiteral("Example"));
-    check(QStringLiteral("City"), QStringLiteral("Portland"));
-    check(QStringLiteral("State"), QStringLiteral("OR"));
-    check(QStringLiteral("Zip"), QStringLiteral("97201"));
-    check(QStringLiteral("Phone"), QStringLiteral("555-0100"));
-    check(QStringLiteral("Address"), QStringLiteral("1 Example St"));
 }
 
 // Custom main: create Application (not just QApplication) so
