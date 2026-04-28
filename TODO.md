@@ -150,25 +150,71 @@ rearranged.
   stroke width when the user is drawing with a stylus or pressure-aware
   trackpad.
 
-### AutoFill + AcroForm (bug + UX)
+### AcroForm fields — direct manipulation, not auto-magic
 
-- **AutoFill does not actually fill a PDF the test user tried.** Even
-  after populating the contact card, a PDF with genuine fillable fields
-  did not receive values. Needs investigation — probably a field-name
-  matching bug in the AutoFill mapper, or the FormOverlay is not being
-  re-synced from the underlying AcroForm after the card write.
-  Repro case: save the specific PDF the reviewer used into
-  `tests/data/` and drive it in a new UAT.
-- **AutoFill confirmation popup must go.** The "Filled N of M fields"
-  dialog after saving the My Card is a context-breaker. The card dialog
-  itself is "saved on Enter", so no confirmation is needed. If we want
-  to surface how many fields actually got filled, put a subtle status
-  line in the form toolbar, not a modal.
-- **My Card dialog feels "huge with tons of options".** Audit which
-  fields are genuinely useful for AutoFill (name, address lines,
-  city / state / ZIP, country, phone, email, signature) vs. fields we
-  speculatively added. Trim hard, and consider a progressive-disclosure
-  section for the long tail.
+The 2026-04-28 follow-up reframes this whole area: the user's actual
+need is "I see the field, I click it, I type." AutoFill (My Card →
+field-name matcher) is a gimmick dead end — even when it works it's
+solving a problem nobody asked us to solve, and any per-PDF tuning
+to make the matcher catch a specific form's quirks is wasted effort.
+The 2026-04-24 AutoFill fixes (commits a6ad259, c66091a area) still
+stand because they removed user-hostile behaviour (the modal popup,
+the silent stale overlay), but no further investment in the matcher
+is warranted.
+
+What to do instead:
+
+- **Form widgets visible by default on any fillable PDF.** Today the
+  form overlay is hidden until the user toggles `Tools → Fill Forms`.
+  That hides discoverability. When `doc->supportsFormFilling()` is
+  true on document load, turn the overlay on automatically. Keep the
+  menu item so users who want the cleaner read-only view can flip it
+  off. This single change is closer to what the user described than
+  any matcher refinement.
+- **A subtle visual cue for fillable regions.** Even with the overlay
+  active, blank `QLineEdit`s blend into a white page. A faint hover
+  or always-on outline on the widget rect (one-pixel light blue, say,
+  matching macOS Preview's convention) makes the affordance obvious.
+- **Tab navigates between fields in document order.** Verify this
+  works; if not, wire it up.
+- **Demote AutoFill in the menu.** It's still there for users who
+  want it, but it shouldn't be a peer of `Fill Forms` in the Tools
+  menu. Move it under `Tools → Forms →` as a sub-action, or behind a
+  preferences toggle.
+- **Trim My Card.** The 2026-04-24 review called it "huge with tons
+  of options." If AutoFill is deprioritised, the card is just the
+  signature-block source plus a few address bits. Audit hard.
+
+### Test-shape principle: synthesise variety, don't pin examples
+
+Captured 2026-04-28 after a near-miss with a real-world fixture.
+Pattern to avoid: writing a UAT whose floor is "this specific PDF
+the reviewer dropped on us yields N fills." Even gated on an env
+var that keeps the file out of the repo, the approach over-fits the
+test to one example — a regression in the matcher only trips the
+test if it happens to break THIS form, and a successful matcher
+change is hard to land because the floor was tuned to one corpus.
+
+Use generative fixtures instead:
+
+- A `writeRandomFormPdf(seed, recipe)` helper in the test harness
+  that emits a synthetic PDF with N text fields whose `/T` and `/TU`
+  are sampled from a corpus of real-world quirks (cryptic indices,
+  hierarchical dot-names, suffixed `_2/_3` duplicates, designer
+  typos, multi-purpose tooltip labels, etc.).
+- Assertions stated as **invariants**, not counts: "for every field
+  whose canonicalised name contains `email`, the recognized email
+  value is written" / "for every field whose canonicalised name
+  contains nothing recognisable, the value is empty after AutoFill."
+  Run across many seeds.
+- Keep `uat_af_010..030` (small, named cases — they document the
+  intended behaviour) but resist adding `uat_af_NNN_specific_form`
+  slots. If you find yourself wanting to, that's a signal the
+  generator needs a new quirk in its corpus.
+
+The same principle applies to OCR (don't pin to a single sample
+image), background removal (don't pin to a single subject photo),
+and any future feature where input variety is the whole point.
 
 ### Cross-cutting polish items
 
