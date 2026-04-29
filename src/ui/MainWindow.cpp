@@ -804,12 +804,15 @@ void MainWindow::onRemoveBackground() {
     auto* imgDoc = dynamic_cast<ImageDocument*>(doc);
     if (!imgDoc) return;
 
-    BackgroundRemover remover(&m_app->modelRegistry());
+    // Heap-allocate the remover so its lifetime spans the worker
+    // thread that captures this shared_ptr in the inference lambda
+    // below.
+    auto remover = std::make_shared<BackgroundRemover>(&m_app->modelRegistry());
 
     // If the model isn't cached, walk the user through a download
     // step before doing any heavy work. The progress dialog is
     // cancellable so a slow connection doesn't trap them.
-    if (!remover.isModelReady()) {
+    if (!remover->isModelReady()) {
         const QMessageBox::StandardButton ack = QMessageBox::question(
             this, tr("Download Background Removal Model"),
             tr("To remove backgrounds, Trailer needs to download the "
@@ -830,7 +833,7 @@ void MainWindow::onRemoveBackground() {
         bool ready = false;
         QString failureMessage;
 
-        connect(&remover, &BackgroundRemover::downloadProgress, &progress,
+        connect(remover.get(), &BackgroundRemover::downloadProgress, &progress,
                 [&progress](qint64 received, qint64 total) {
                     if (total <= 0) {
                         progress.setRange(0, 0);  // indeterminate
@@ -839,20 +842,20 @@ void MainWindow::onRemoveBackground() {
                     progress.setRange(0, 100);
                     progress.setValue(static_cast<int>(received * 100 / total));
                 });
-        connect(&remover, &BackgroundRemover::modelReady, &progress,
+        connect(remover.get(), &BackgroundRemover::modelReady, &progress,
                 [&progress, &ready]() {
                     ready = true;
                     progress.setValue(progress.maximum());
                     progress.close();
                 });
-        connect(&remover, &BackgroundRemover::modelUnavailable, &progress,
+        connect(remover.get(), &BackgroundRemover::modelUnavailable, &progress,
                 [&progress, &failed, &failureMessage](const QString& msg) {
                     failed = true;
                     failureMessage = msg;
                     progress.close();
                 });
 
-        remover.ensureModelAvailable();
+        remover->ensureModelAvailable();
         progress.exec();
 
         if (progress.wasCanceled() && !ready) {
@@ -866,7 +869,7 @@ void MainWindow::onRemoveBackground() {
                     .arg(failureMessage));
             return;
         }
-        if (!ready && !remover.isModelReady()) {
+        if (!ready && !remover->isModelReady()) {
             // Belt-and-braces: modelReady fires on the registry's
             // event loop. If the progress dialog closed via the
             // maximum-value setValue before modelReady hit, isModelReady
@@ -875,26 +878,52 @@ void MainWindow::onRemoveBackground() {
         }
     }
 
-    // Run inference on the UI thread. u2netp on 320x320 is sub-second
-    // on a modern CPU — fast enough that a wait-cursor is sufficient;
-    // no need to spin up a worker thread for Phase 6B.
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    const QImage result = remover.remove(imgDoc->image());
-    QApplication::restoreOverrideCursor();
+    // Inference goes on a worker thread. u2netp on 320x320 is sub-
+    // second on a modern CPU but larger canvases / older hardware can
+    // hit a couple of seconds. The dialog is indeterminate; cancel
+    // suppresses the result-application step but the worker thread
+    // itself runs to completion.
+    auto* progress = new QProgressDialog(
+        tr("Removing background…"), tr("Cancel"), 0, 0, this);
+    progress->setWindowModality(Qt::WindowModal);
+    progress->setMinimumDuration(0);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
 
-    if (result.isNull()) {
-        flashError(tr("Remove Background failed \u2014 model may be missing or "
-                      "corrupt; try re-downloading from Preferences \u2192 "
-                      "Models."));
-        return;
-    }
-    if (!imgDoc->replaceImage(result)) {
-        flashError(tr("Remove Background failed \u2014 could not apply the result "
-                      "to the document."));
-        return;
-    }
-    m_sidebar->refreshThumbnails();
-    updateTitleForDocument(doc);
+    auto* watcher = new QFutureWatcher<QImage>(this);
+    connect(progress, &QProgressDialog::canceled, watcher,
+            &QFutureWatcherBase::cancel);
+    connect(watcher, &QFutureWatcher<QImage>::finished, this,
+            [this, watcher, progress, doc, imgDoc, remover]() {
+                const bool wasCanceled = progress->wasCanceled();
+                progress->close();
+                progress->deleteLater();
+                QImage result;
+                if (!wasCanceled) result = watcher->result();
+                watcher->deleteLater();
+                if (wasCanceled) return;
+                if (result.isNull()) {
+                    flashError(tr("Remove Background failed — "
+                                  "model may be missing or corrupt; "
+                                  "try re-downloading from Preferences "
+                                  "→ Models."));
+                    return;
+                }
+                if (!imgDoc->replaceImage(result)) {
+                    flashError(tr("Remove Background failed — "
+                                  "could not apply the result to the "
+                                  "document."));
+                    return;
+                }
+                m_sidebar->refreshThumbnails();
+                updateTitleForDocument(doc);
+            });
+
+    const QImage source = imgDoc->image();
+    QFuture<QImage> future = QtConcurrent::run([source, remover]() {
+        return remover->remove(source);
+    });
+    watcher->setFuture(future);
 }
 
 // Shared helper: confirm + download MobileSAM (encoder + decoder).
