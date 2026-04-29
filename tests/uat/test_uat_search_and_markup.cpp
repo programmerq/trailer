@@ -26,6 +26,7 @@
 #include "ui/SearchBar.h"
 
 #include <QAction>
+#include <QDockWidget>
 #include <QFont>
 #include <QLineEdit>
 #include <QMenu>
@@ -197,6 +198,7 @@ private slots:
     void uat_ann_120_clickSelectsExistingAnnotation();
     void uat_ann_121_deleteRemovesSelectedAnnotation();
     void uat_ann_122_arrowKeyNudgesSelectedAnnotation();
+    void uat_ann_123_inspectorTracksSelectedAnnotation();
 
 private:
     QTemporaryDir m_scratch;
@@ -1185,6 +1187,45 @@ void TestUatSearchAndMarkup::uat_ann_122_arrowKeyNudgesSelectedAnnotation() {
     // The id is unchanged: nudging is an in-place update, not a
     // delete+add.
     QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
+}
+
+// UAT-ANN-123 — Selecting an annotation auto-shows the Inspector
+// pane so the user gets per-annotation colour / stroke / font
+// controls without an extra click.
+void TestUatSearchAndMarkup::uat_ann_123_inspectorTracksSelectedAnnotation() {
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch,
+                                                  QStringLiteral("123"));
+    QVERIFY(f.overlay);
+    QVERIFY(f.drawnId != 0);
+
+    auto* inspector = f.mw->findChild<QDockWidget*>(
+        QString(), Qt::FindDirectChildrenOnly);
+    Q_UNUSED(inspector);
+    // Locate the inspector dock by class name. There may be multiple
+    // dock widgets (sidebar, inspector); pick the one whose object
+    // class is "Inspector".
+    QDockWidget* inspectorDock = nullptr;
+    for (auto* d : f.mw->findChildren<QDockWidget*>()) {
+        if (QString::fromLatin1(d->metaObject()->className())
+                .endsWith(QStringLiteral("Inspector"))) {
+            inspectorDock = d;
+            break;
+        }
+    }
+    QVERIFY(inspectorDock);
+    // Inspector starts hidden in the constructor.
+    QVERIFY(!inspectorDock->isVisible());
+
+    sendMouse(f.overlay, QEvent::MouseButtonPress,
+              QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease,
+              QPoint(260, 295), Qt::LeftButton);
+    QApplication::processEvents();
+
+    QVERIFY2(f.overlay->selectedAnnotationId() == f.drawnId,
+             "Click should have selected the rectangle");
+    QVERIFY2(inspectorDock->isVisible(),
+             "Selecting an annotation should auto-show the Inspector");
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG

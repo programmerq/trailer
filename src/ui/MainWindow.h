@@ -53,6 +53,13 @@ public slots:
     // the same code path without waiting for the timer.
     void autoSaveDirtyDocs();
 
+private slots:
+    // Forward an AnnotationOverlay selection change to the Inspector
+    // pane. Connected with Qt::UniqueConnection per-overlay in
+    // onCurrentDocumentChanged so the Inspector always tracks the
+    // overlay belonging to the current document.
+    void onAnnotationSelectionChanged(int id);
+
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;

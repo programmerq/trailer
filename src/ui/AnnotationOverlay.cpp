@@ -475,7 +475,10 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent* event) {
         const int hitId = hitTest(event->position());
         if (hitId != 0) {
             const bool wasAlreadySelected = (m_selectedAnnotationId == hitId);
-            m_selectedAnnotationId = hitId;
+            if (!wasAlreadySelected) {
+                m_selectedAnnotationId = hitId;
+                emit selectionChanged(hitId);
+            }
             m_pendingSelection.clear();
             if (wasAlreadySelected && m_store) {
                 if (const Annotation* a = m_store->find(hitId)) {
@@ -496,6 +499,7 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent* event) {
         // the text-selection drag below run.
         if (m_selectedAnnotationId != 0) {
             m_selectedAnnotationId = 0;
+            emit selectionChanged(0);
             update();
         }
         m_pendingSelection.clear();
@@ -828,6 +832,7 @@ void AnnotationOverlay::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
         m_store->remove(m_selectedAnnotationId);
         m_selectedAnnotationId = 0;
+        emit selectionChanged(0);
         update();
         return;
     }

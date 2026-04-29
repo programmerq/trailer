@@ -2,6 +2,7 @@
 
 #include "AnimationBar.h"
 #include "DocumentView.h"
+#include "AnnotationOverlay.h"
 #include "Inspector.h"
 #include "Magnifier.h"
 #include "FormToolbar.h"
@@ -1663,6 +1664,15 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
                     &MainWindow::onActiveAnnotationStoreChanged,
                     Qt::UniqueConnection);
         }
+        // Forward annotation-selection changes from the doc's overlay
+        // to the Inspector. The overlay is a child of the doc's view
+        // widget; we re-find it on every focus change because the
+        // overlay can be torn down and rebuilt by the adapter.
+        if (auto* overlay = findChild<AnnotationOverlay*>()) {
+            connect(overlay, &AnnotationOverlay::selectionChanged,
+                    this, &MainWindow::onAnnotationSelectionChanged,
+                    Qt::UniqueConnection);
+        }
     }
 
     const bool hasPrint = doc && doc->supportsPrint();
@@ -1802,6 +1812,20 @@ void MainWindow::onActiveAnnotationStoreChanged() {
     // lifetime outlives the tab it's shown in, so dispatch through
     // the tab widget rather than capturing a pointer.
     updateTitleForDocument(m_documentView->currentDocument());
+}
+
+void MainWindow::onAnnotationSelectionChanged(int id) {
+    auto* doc = m_documentView->currentDocument();
+    if (!doc) {
+        m_inspector->clearSelection();
+        return;
+    }
+    if (id == 0) {
+        m_inspector->clearSelection();
+        return;
+    }
+    m_inspector->setAnnotation(doc->annotations(), id);
+    if (!m_inspector->isVisible()) m_inspector->show();
 }
 
 void MainWindow::syncViewModeActions(IDocument* doc) {

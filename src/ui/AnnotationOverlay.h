@@ -76,6 +76,11 @@ public:
 
 signals:
     void annotationCommitted(int id);
+    // Fires whenever m_selectedAnnotationId changes (including on
+    // clear-to-zero). MainWindow uses this to drive the Inspector
+    // pane's "Selection" section so the user gets per-annotation
+    // colour / stroke / font controls without an extra click.
+    void selectionChanged(int id);
 
 protected:
     void paintEvent(QPaintEvent* event) override;
