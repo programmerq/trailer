@@ -1315,9 +1315,54 @@ void MainWindow::onSaveAs() {
     auto* doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsEditing()) return;
     const bool isImage = dynamic_cast<ImageDocument*>(doc) != nullptr;
-    const QString suggested = doc->filePath().isEmpty()
+
+    // Suggest a filename that hints at what's been done to the
+    // document. A signature or any other annotation present means
+    // the user is producing a derivative — `_signed` or `_marked` —
+    // not a wholesale rewrite of the original. Plain saves keep the
+    // basename so an idempotent re-save doesn't pollute the picker
+    // history.
+    const QString basePath = doc->filePath().isEmpty()
         ? doc->displayName()
         : doc->filePath();
+    QFileInfo bi(basePath);
+    const QString stem = bi.completeBaseName().isEmpty()
+        ? basePath
+        : bi.completeBaseName();
+    const QString ext = bi.suffix().isEmpty()
+        ? (isImage ? QStringLiteral("png") : QStringLiteral("pdf"))
+        : bi.suffix();
+
+    QString suffix;
+    if (auto* store = doc->annotations()) {
+        bool hasSignature = false;
+        bool hasOther = false;
+        for (const auto& a : store->annotations()) {
+            if (a.type == AnnotationType::Signature) hasSignature = true;
+            else hasOther = true;
+        }
+        if (hasSignature) suffix = QStringLiteral("_signed");
+        else if (hasOther) suffix = QStringLiteral("_marked");
+    }
+
+    // Compose the full default path. Anchor to the user's last-saved
+    // directory so successive saves of related docs land together.
+    QString suggested;
+    if (!suffix.isEmpty()) {
+        suggested = stem + suffix + QLatin1Char('.') + ext;
+    } else {
+        suggested = bi.fileName().isEmpty() ? basePath : bi.fileName();
+    }
+    const QString lastDir = m_app->settings().lastSaveDir();
+    if (!lastDir.isEmpty() && QDir(lastDir).exists()) {
+        suggested = QDir(lastDir).filePath(QFileInfo(suggested).fileName());
+    } else if (!doc->filePath().isEmpty()) {
+        // First save with no recorded dir: anchor next to the
+        // original file rather than wherever Qt thinks the cwd is.
+        suggested = QFileInfo(doc->filePath()).absoluteDir()
+                        .filePath(QFileInfo(suggested).fileName());
+    }
+
     const QString filter = isImage
         ? tr("Images (*.png *.jpg *.jpeg *.bmp *.tiff *.tif *.webp)")
         : tr("PDF documents (*.pdf)");
@@ -1328,6 +1373,9 @@ void MainWindow::onSaveAs() {
         flashError(tr("Save failed — could not write to %1").arg(path));
         return;
     }
+    // Remember where the user landed for next time.
+    m_app->settings().setLastSaveDir(QFileInfo(path).absolutePath());
+    m_app->settings().save();
     updateTitleForDocument(doc);
 }
 

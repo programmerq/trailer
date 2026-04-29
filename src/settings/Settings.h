@@ -37,6 +37,13 @@ public:
     int recentMax() const { return m_recentMax; }
     void setRecentMax(int value);
 
+    // Directory the user last saved into. Used to seed Save-As file
+    // dialogs so successive saves of related documents land in the
+    // same folder rather than always defaulting to ~/Documents. The
+    // value is best-effort — empty string means "use platform default".
+    QString lastSaveDir() const { return m_lastSaveDir; }
+    void setLastSaveDir(const QString& value);
+
     // Whether the user has seen the one-time "redaction is not
     // defence-grade" warning (DESIGN §6.11.6). True = do not show
     // again; false = show on next redaction attempt. Convenience
@@ -70,6 +77,7 @@ private:
     OpenFilesIn m_openFilesIn = OpenFilesIn::NewWindow;
     bool m_autoSave = true;
     int m_recentMax = 50;
+    QString m_lastSaveDir;
     QHash<QString, bool> m_firstUseFlags;
 };
 

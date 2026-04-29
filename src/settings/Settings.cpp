@@ -88,6 +88,9 @@ void Settings::load() {
         if (auto v = (*general)["open_files_in"].value<std::string>()) {
             m_openFilesIn = openFilesInFromString(fromStd(*v));
         }
+        if (auto v = (*general)["last_save_dir"].value<std::string>()) {
+            m_lastSaveDir = fromStd(*v);
+        }
     }
     if (auto* files = tbl["files"].as_table()) {
         if (auto v = (*files)["auto_save"].value<bool>()) {
@@ -121,11 +124,16 @@ void Settings::save() const {
         firstUse.insert(toStd(it.key()), it.value());
     }
 
+    toml::table generalTbl{
+        {"theme", toStd(themeToString(m_theme))},
+        {"open_files_in", toStd(openFilesInToString(m_openFilesIn))},
+    };
+    if (!m_lastSaveDir.isEmpty()) {
+        generalTbl.insert("last_save_dir", toStd(m_lastSaveDir));
+    }
+
     toml::table tbl{
-        {"general", toml::table{
-            {"theme", toStd(themeToString(m_theme))},
-            {"open_files_in", toStd(openFilesInToString(m_openFilesIn))},
-        }},
+        {"general", std::move(generalTbl)},
         {"files", toml::table{
             {"auto_save", m_autoSave},
             {"recent_max", static_cast<int64_t>(m_recentMax)},
@@ -151,6 +159,8 @@ void Settings::setTheme(Theme value) { m_theme = value; }
 void Settings::setOpenFilesIn(OpenFilesIn value) { m_openFilesIn = value; }
 void Settings::setAutoSave(bool value) { m_autoSave = value; }
 void Settings::setRecentMax(int value) { m_recentMax = value; }
+void Settings::setLastSaveDir(const QString& value) { m_lastSaveDir = value; }
+
 void Settings::setFirstUseAcknowledged(const QString& key, bool value) {
     if (value) {
         m_firstUseFlags.insert(key, true);

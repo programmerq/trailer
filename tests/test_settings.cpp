@@ -42,6 +42,7 @@ void TestSettings::roundTrip() {
         s.setAutoSave(false);
         s.setRecentMax(20);
         s.setRedactionWarningAcknowledged(true);
+        s.setLastSaveDir(QStringLiteral("/some/where/Documents"));
         s.save();
     }
 
@@ -54,6 +55,8 @@ void TestSettings::roundTrip() {
     QCOMPARE(reloaded.autoSave(), false);
     QCOMPARE(reloaded.recentMax(), 20);
     QCOMPARE(reloaded.redactionWarningAcknowledged(), true);
+    QCOMPARE(reloaded.lastSaveDir(),
+             QStringLiteral("/some/where/Documents"));
 }
 
 void TestSettings::missingFileYieldsDefaults() {
