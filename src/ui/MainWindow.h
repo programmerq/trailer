@@ -4,6 +4,7 @@
 
 #include <QActionGroup>
 #include <QMainWindow>
+#include <QSet>
 #include <QStringList>
 #include <memory>
 
@@ -122,6 +123,11 @@ private:
     QAction* m_insertPagesAction = nullptr;
     QAction* m_cropPagesAction = nullptr;
     QAction* m_fillFormsAction = nullptr;
+    // Documents we've already auto-enabled Fill Forms for. Tracked so
+    // that toggling Fill Forms off, switching docs, and switching back
+    // does not re-enable it. Pointers may dangle when docs are closed,
+    // which is harmless: dangling entries are never dereferenced.
+    QSet<const IDocument*> m_autoEnabledFormDocs;
     QAction* m_autoFillFormAction = nullptr;
     QAction* m_myCardAction = nullptr;
     QAction* m_manageSignaturesAction = nullptr;

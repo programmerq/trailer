@@ -14,6 +14,22 @@ FormOverlay::FormOverlay(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_TransparentForMouseEvents, false);
     setAttribute(Qt::WA_NoSystemBackground, true);
     setAutoFillBackground(false);
+    // Faint blue outline on every field so the user can see what's
+    // editable without having to hover. The transparent background
+    // lets the underlying PDF appearance show through; on focus we
+    // darken the outline so the active field is easy to track. The
+    // selector list covers the only widget classes createWidgetForField
+    // returns — extend it when adding new field types.
+    setStyleSheet(QStringLiteral(
+        "QLineEdit, QComboBox {"
+        "  border: 1px solid rgba(0, 100, 200, 80);"
+        "  background: transparent;"
+        "  selection-background-color: rgba(0, 100, 200, 80);"
+        "}"
+        "QLineEdit:focus, QComboBox:focus {"
+        "  border: 1px solid rgba(0, 100, 200, 220);"
+        "  background: rgba(255, 255, 255, 200);"
+        "}"));
 }
 
 void FormOverlay::setDocumentToView(DocToView fn) {

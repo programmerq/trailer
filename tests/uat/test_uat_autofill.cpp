@@ -371,11 +371,15 @@ void TestUatAutoFill::
     MainWindow* mw = currentMainWindow();
     QVERIFY(mw);
 
-    // Fill Forms starts off; AutoFill should turn it on once it
-    // writes at least one value.
+    // As of UAT-FRM-040, opening a fillable PDF auto-enables Fill
+    // Forms — so it's already on before we trigger AutoFill. The
+    // interesting assertions below are that AutoFill itself doesn't
+    // pop a modal (no hang) and writes a status-bar line.
     QAction* fillForms = findMenuAction(mw, QStringLiteral("Fill Forms"));
     QVERIFY(fillForms);
-    QVERIFY(!fillForms->isChecked());
+    QVERIFY2(fillForms->isChecked(),
+             "Fill Forms must be auto-enabled on a fillable PDF "
+             "(see UAT-FRM-040)");
 
     QAction* autoFill = findMenuAction(mw, QStringLiteral("AutoFill Form"));
     QVERIFY(autoFill);
@@ -397,10 +401,9 @@ void TestUatAutoFill::
              qPrintable(QStringLiteral("expected 'filled 1 of 2' in: '%1'")
                             .arg(msg)));
 
-    // Form-filling mode should now be active so the user sees the
-    // newly-filled value in the overlay.
-    QVERIFY2(fillForms->isChecked(),
-             "Fill Forms action should be checked after a non-empty AutoFill");
+    // Fill Forms remains active after AutoFill — turning it on was a
+    // no-op because the auto-enable already did it.
+    QVERIFY(fillForms->isChecked());
 }
 
 // Custom main: create Application (not just QApplication) so

@@ -1515,6 +1515,16 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     }
     m_fillFormsAction->setEnabled(hasForms);
     m_autoFillFormAction->setEnabled(hasForms);
+    // Auto-enable Fill Forms the first time we see a fillable document
+    // so the user gets visible widgets + click-to-type without having
+    // to discover the menu toggle. We only do this once per document
+    // pointer — if the user explicitly toggles it off, we respect that
+    // for the rest of the document's lifetime.
+    if (hasForms && !m_autoEnabledFormDocs.contains(doc) &&
+        !m_fillFormsAction->isChecked()) {
+        m_autoEnabledFormDocs.insert(doc);
+        m_fillFormsAction->setChecked(true);  // → setFormFillingActive(true)
+    }
     // My Card editor is always available — a user may want to edit
     // their card even without a PDF open.
     m_myCardAction->setEnabled(true);

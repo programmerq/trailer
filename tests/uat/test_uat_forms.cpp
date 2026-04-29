@@ -26,8 +26,11 @@
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFWriter.hh>
 
+#include <QAction>
 #include <QDir>
 #include <QFileInfo>
+#include <QMenu>
+#include <QMenuBar>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -153,6 +156,8 @@ private slots:
     void uat_frm_010_formFieldsReportedOnOpen();
     void uat_frm_020_setFormFillingActiveShowsFields();
     void uat_frm_030_fillTextFieldPersistsAcrossSave();
+    void uat_frm_040_fillFormsAutoEnabledOnFillablePdf();
+    void uat_frm_041_fillFormsRespectsExplicitToggleOff();
 
 private:
     QTemporaryDir m_scratch;
@@ -295,6 +300,89 @@ void TestUatForms::uat_frm_030_fillTextFieldPersistsAcrossSave() {
         QVERIFY(tf != nullptr);
         QCOMPARE(tf->value, QStringLiteral("Charlie"));
     }
+}
+
+namespace {
+QAction* findFillFormsAction(MainWindow* mw) {
+    for (QAction* top : mw->menuBar()->actions()) {
+        QMenu* menu = top->menu();
+        if (!menu) continue;
+        for (QAction* a : menu->actions()) {
+            QString t = a->text();
+            t.remove(QLatin1Char('&'));
+            if (t == QStringLiteral("Fill Forms")) return a;
+        }
+    }
+    return nullptr;
+}
+}  // namespace
+
+// UAT-FRM-040 — Opening a fillable PDF auto-enables Fill Forms mode
+// so the user sees the editable widgets without having to discover the
+// menu toggle. This was the 2026-04-28 reframe of the AutoFill area:
+// users want "see the field, click, type", not matcher cleverness.
+void TestUatForms::uat_frm_040_fillFormsAutoEnabledOnFillablePdf() {
+    QVERIFY(m_scratch.isValid());
+    const QString path = writeFormPdf(
+        m_scratch.filePath(QStringLiteral("frm040.pdf")));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({path});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+
+    QAction* fillForms = findFillFormsAction(mw);
+    QVERIFY2(fillForms, "Tools > Fill Forms action not found");
+    QVERIFY2(fillForms->isEnabled(),
+             "Fill Forms must be enabled for a fillable PDF");
+    QVERIFY2(fillForms->isChecked(),
+             "Fill Forms must be auto-enabled the first time a fillable "
+             "PDF becomes the current document");
+}
+
+// UAT-FRM-041 — If the user explicitly toggles Fill Forms off for a
+// document, switching to another window and back must NOT re-enable
+// it. The auto-enable is once-per-document, not per-focus.
+void TestUatForms::uat_frm_041_fillFormsRespectsExplicitToggleOff() {
+    QVERIFY(m_scratch.isValid());
+    const QString path = writeFormPdf(
+        m_scratch.filePath(QStringLiteral("frm041.pdf")));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({path});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+
+    QAction* fillForms = findFillFormsAction(mw);
+    QVERIFY(fillForms);
+    QVERIFY(fillForms->isChecked());
+
+    // User explicitly toggles off.
+    fillForms->trigger();
+    QApplication::processEvents();
+    QVERIFY(!fillForms->isChecked());
+
+    // Force a re-evaluation of the current-document path: simulate the
+    // window losing and regaining its current doc by reissuing the
+    // signal. (In real life this fires on tab/window focus changes.)
+    auto* dv = mw->findChild<DocumentView*>();
+    QVERIFY(dv);
+    IDocument* doc = dv->currentDocument();
+    QVERIFY(doc);
+    QMetaObject::invokeMethod(dv, "currentDocumentChanged",
+                              Qt::DirectConnection,
+                              Q_ARG(trailer::IDocument*, doc));
+    QApplication::processEvents();
+
+    QVERIFY2(!fillForms->isChecked(),
+             "Re-emitting currentDocumentChanged for a doc the user has "
+             "already opted out on must not re-enable Fill Forms");
 }
 
 // Custom main: create Application (not just QApplication) so
