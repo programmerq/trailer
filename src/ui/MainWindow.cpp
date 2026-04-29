@@ -55,10 +55,13 @@
 #include <QSlider>
 #include <QSpinBox>
 #include <QCloseEvent>
+#include <QFuture>
+#include <QFutureWatcher>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTemporaryFile>
 #include <QTimer>
+#include <QtConcurrent>
 #include <QVBoxLayout>
 #include <QWidget>
 #include "document/ImageAdapter.h"
@@ -1096,21 +1099,54 @@ void MainWindow::onRecognizeText() {
     const QImage source = imgDoc->image();
     if (source.isNull()) return;
 
-    OcrEngine engine(&m_app->modelRegistry());
-    if (!ensureOcrModelsReady(this, engine)) return;
+    // The engine has to live for the duration of the worker thread,
+    // so it goes on the heap held by a shared_ptr captured by the
+    // lambda. ensureOcrModelsReady is itself an async-with-progress
+    // flow — block here until models land or the user cancels that
+    // dialog, then kick off the actual inference job below.
+    auto engine = std::make_shared<OcrEngine>(&m_app->modelRegistry());
+    if (!ensureOcrModelsReady(this, *engine)) return;
 
-    // Inference runs on the UI thread. On a 2000×2800 scan the
-    // detector takes ~1 s and per-line recognition ~20 ms each —
-    // fine with a wait cursor for Phase 6D; a worker thread is a
-    // later polish item.
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    const QVector<OcrEngine::TextBlock> blocks = engine.recognize(source);
-    QApplication::restoreOverrideCursor();
+    // Inference is the slow part — 1-5 s on a typical scan — so it
+    // runs on a worker thread. The progress dialog is indeterminate
+    // (we don't have stage-by-stage progress from OcrEngine yet);
+    // Cancel just stops us from opening the results dialog when the
+    // future completes — actual mid-inference cancellation is a
+    // follow-up.
+    auto* progress = new QProgressDialog(
+        tr("Recognising text…"), tr("Cancel"), 0, 0, this);
+    progress->setWindowModality(Qt::WindowModal);
+    progress->setMinimumDuration(0);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
 
-    OcrResultsDialog dialog(doc->filePath().isEmpty() ? doc->displayName()
-                                                      : doc->filePath(),
-                            blocks, this);
-    dialog.exec();
+    auto* watcher = new QFutureWatcher<QVector<OcrEngine::TextBlock>>(this);
+    connect(progress, &QProgressDialog::canceled, watcher,
+            &QFutureWatcherBase::cancel);
+    connect(watcher,
+            &QFutureWatcher<QVector<OcrEngine::TextBlock>>::finished,
+            this, [this, watcher, progress, doc]() {
+                const bool wasCanceled = progress->wasCanceled();
+                progress->close();
+                progress->deleteLater();
+                QVector<OcrEngine::TextBlock> blocks;
+                if (!wasCanceled) {
+                    blocks = watcher->result();
+                }
+                watcher->deleteLater();
+                if (wasCanceled) return;
+                OcrResultsDialog dialog(
+                    doc->filePath().isEmpty() ? doc->displayName()
+                                              : doc->filePath(),
+                    blocks, this);
+                dialog.exec();
+            });
+
+    QFuture<QVector<OcrEngine::TextBlock>> future =
+        QtConcurrent::run([source, engine]() {
+            return engine->recognize(source);
+        });
+    watcher->setFuture(future);
 }
 
 void MainWindow::onExportAs() {
