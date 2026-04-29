@@ -18,6 +18,7 @@
 #include "filters/ImageFilter.h"
 #include "ml/BackgroundRemover.h"
 #include "ml/OcrEngine.h"
+#include "platform/Share.h"
 #include "ml/SamSession.h"
 #include "recent/RecentFiles.h"
 #include "OcrResultsDialog.h"
@@ -270,6 +271,27 @@ void MainWindow::buildMenus() {
             doc->print(this);
         }
     });
+
+    // File → Share routes through the OS share-sheet (macOS native
+    // NSSharingServicePicker). Only shown on platforms that have a
+    // working implementation; the Linux/Windows stub returns
+    // isAvailable() == false until xdg-email / WinShare are wired
+    // up. The action is gated on a saved file because the share
+    // picker needs a real file path on disk.
+    if (ShareService::isAvailable()) {
+        m_shareAction = fileMenu->addAction(tr("&Share…"));
+        connect(m_shareAction, &QAction::triggered, this, [this]() {
+            auto* doc = m_documentView->currentDocument();
+            if (!doc) return;
+            const QString path = doc->filePath();
+            if (path.isEmpty() || doc->isDirty()) {
+                flashStatus(tr("Save the document before sharing."));
+                return;
+            }
+            ShareService::shareFile(path, this);
+        });
+    }
+
     fileMenu->addSeparator();
 
     auto* closeAction = fileMenu->addAction(tr("&Close Window"));
@@ -1587,6 +1609,12 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
 
     const bool hasPrint = doc && doc->supportsPrint();
     m_printAction->setEnabled(hasPrint);
+    if (m_shareAction) {
+        // Share needs a file on disk; disabled for unsaved /
+        // untitled docs. The user is told to save first via
+        // flashStatus when they pick the action with no path.
+        m_shareAction->setEnabled(doc && !doc->filePath().isEmpty());
+    }
 
     const bool hasSearch = doc && doc->supportsSearch();
     m_findAction->setEnabled(hasSearch);

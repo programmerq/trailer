@@ -125,7 +125,19 @@ set(TRAILER_SOURCES
     src/ui/SignaturesDialog.h
     src/ui/ThumbnailModel.cpp
     src/ui/ThumbnailModel.h
+    src/platform/Share.h
 )
+
+# Per-platform Share-sheet source. macOS uses Objective-C++ to drive
+# NSSharingServicePicker; everything else gets the stub that reports
+# isAvailable() == false so the menu item can hide cleanly.
+if(APPLE)
+    list(APPEND TRAILER_SOURCES src/platform/Share.mm)
+    set_source_files_properties(src/platform/Share.mm PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc")
+else()
+    list(APPEND TRAILER_SOURCES src/platform/Share_stub.cpp)
+endif()
 
 add_library(trailer_core STATIC ${TRAILER_SOURCES} resources/trailer.qrc)
 target_include_directories(trailer_core PUBLIC src)
@@ -143,6 +155,9 @@ target_link_libraries(trailer_core
         tomlplusplus::tomlplusplus
         onnxruntime::onnxruntime
 )
+if(APPLE)
+    target_link_libraries(trailer_core PUBLIC "-framework AppKit")
+endif()
 trailer_set_warnings(trailer_core)
 
 qt_add_executable(trailer

@@ -86,6 +86,7 @@ private slots:
     void uat_fnd_020_flashErrorRoutesToStatusBarNotModal();
     void uat_fnd_030_autoSaveWritesDirtyDocsWithPath();
     void uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs();
+    void uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms();
 
 private:
     QTemporaryDir m_scratch;
@@ -410,6 +411,32 @@ void TestUatFoundations::uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs() {
     QApplication::processEvents();
     QVERIFY2(!mw->statusBar()->currentMessage().contains(QStringLiteral("Auto-saved")),
              "When autoSave setting is off, no save should happen");
+}
+
+// UAT-FND-040 — File → Share is wired up on platforms that have a
+// native share-sheet (macOS via NSSharingServicePicker). Other
+// platforms hide the menu item until xdg-email / WinShare are
+// implemented. This test only checks the action presence; actually
+// firing the picker is platform-modal and not UAT-friendly.
+void TestUatFoundations::
+    uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms() {
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    MainWindow* mw = app->ensureWindow();
+    QVERIFY(mw);
+
+    QAction* shareAction = findMenuAction(mw->menuBar(),
+                                          QStringLiteral("&File"),
+                                          QStringLiteral("&Share…"));
+#ifdef Q_OS_MACOS
+    QVERIFY2(shareAction,
+             "File → Share… should be present on macOS where the "
+             "NSSharingServicePicker implementation lives");
+#else
+    QVERIFY2(!shareAction,
+             "File → Share… is hidden on platforms whose ShareService "
+             "stub returns isAvailable() == false");
+#endif
 }
 
 // Custom main: we need to set HOME (and XDG vars) before constructing

@@ -175,6 +175,7 @@ private:
     QAction* m_myCardAction = nullptr;
     QAction* m_manageSignaturesAction = nullptr;
     QAction* m_printAction = nullptr;
+    QAction* m_shareAction = nullptr;  // macOS-only; null on other platforms
     QAction* m_findAction = nullptr;
     QAction* m_findNextAction = nullptr;
     QAction* m_findPreviousAction = nullptr;
