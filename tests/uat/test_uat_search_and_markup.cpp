@@ -187,6 +187,9 @@ private slots:
     void uat_ann_060_undoAddRectangle();
     void uat_ann_063_redoAfterUndo();
     void uat_ann_070_hidingToolbarRestoresTextSelection();
+    void uat_ann_080_markupToolbarAutoShownOnEditableDoc();
+    void uat_ann_081_markupToolbarRespectsExplicitHide();
+    void uat_ann_082_textCentricToolsDisabledOnPlainImage();
 
 private:
     QTemporaryDir m_scratch;
@@ -741,6 +744,118 @@ void TestUatSearchAndMarkup::uat_ann_070_hidingToolbarRestoresTextSelection() {
     //    store count is still the reliable signal.)
     dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
     QCOMPARE(store->count(), shapesBefore);
+}
+
+// UAT-ANN-080 — Opening a fillable / annotatable document auto-shows
+// the markup toolbar so the user doesn't have to discover the View
+// menu to find their pen.
+void TestUatSearchAndMarkup::uat_ann_080_markupToolbarAutoShownOnEditableDoc() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_080.pdf")),
+        QStringLiteral("fixture"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+    auto* markup = mw->findChild<MarkupToolbar*>();
+    QVERIFY(markup);
+    QVERIFY2(markup->isVisible(),
+             "Markup toolbar must be visible after opening an annotatable doc");
+}
+
+// UAT-ANN-081 — A user who explicitly hides the markup toolbar must
+// not see it pop back open the next time they focus the same window.
+// The auto-show is once per document, not per focus.
+void TestUatSearchAndMarkup::uat_ann_081_markupToolbarRespectsExplicitHide() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_081.pdf")),
+        QStringLiteral("fixture"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+    auto* markup = mw->findChild<MarkupToolbar*>();
+    QVERIFY(markup);
+    QVERIFY(markup->isVisible());
+
+    // User hides it.
+    markup->hide();
+    QApplication::processEvents();
+
+    // Re-trigger the current-document path — same effect as a tab
+    // switch in the legacy NewTab mode, or any focus-driven refresh.
+    auto* dv = mw->findChild<DocumentView*>();
+    QVERIFY(dv);
+    IDocument* doc = dv->currentDocument();
+    QVERIFY(doc);
+    QMetaObject::invokeMethod(dv, "currentDocumentChanged",
+                              Qt::DirectConnection,
+                              Q_ARG(trailer::IDocument*, doc));
+    QApplication::processEvents();
+
+    QVERIFY2(!markup->isVisible(),
+             "Once the user has hidden the markup toolbar for a doc, "
+             "it must not auto-show again on subsequent focus changes");
+}
+
+// UAT-ANN-082 — Underline / Highlight / StrikeOut are text-aware
+// tools; they have nothing to bite on for a plain image with no OCR
+// run. They should be disabled, but Redact (which is pixel-region
+// based) should remain enabled.
+void TestUatSearchAndMarkup::uat_ann_082_textCentricToolsDisabledOnPlainImage() {
+    QVERIFY(m_scratch.isValid());
+    // A simple 200×100 PNG with no text — opens via ImageAdapter.
+    const QString imgPath = m_scratch.filePath(QStringLiteral("uat_ann_082.png"));
+    {
+        QImage img(200, 100, QImage::Format_RGB32);
+        img.fill(Qt::white);
+        QVERIFY(img.save(imgPath, "PNG"));
+    }
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+    auto* markup = mw->findChild<MarkupToolbar*>();
+    QVERIFY(markup);
+
+    auto find = [markup](const QString& label) -> QAction* {
+        return findToolAction(markup, label);
+    };
+    QAction* underline = find(QStringLiteral("Underline"));
+    QAction* highlight = find(QStringLiteral("Highlight"));
+    QAction* strike    = find(QStringLiteral("Strikeout"));
+    QAction* redact    = find(QStringLiteral("Redact"));
+    QAction* rect      = find(QStringLiteral("Rectangle"));
+    QVERIFY(underline);
+    QVERIFY(highlight);
+    QVERIFY(strike);
+    QVERIFY(redact);
+    QVERIFY(rect);
+
+    QVERIFY2(!underline->isEnabled(),
+             "Underline must be disabled on a plain image");
+    QVERIFY2(!highlight->isEnabled(),
+             "Highlight must be disabled on a plain image");
+    QVERIFY2(!strike->isEnabled(),
+             "Strikeout must be disabled on a plain image");
+    QVERIFY2(redact->isEnabled(),
+             "Redact must remain available on a plain image");
+    QVERIFY2(rect->isEnabled(),
+             "Rectangle (and other shape tools) remain available on images");
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG

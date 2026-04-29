@@ -128,6 +128,11 @@ private:
     // does not re-enable it. Pointers may dangle when docs are closed,
     // which is harmless: dangling entries are never dereferenced.
     QSet<const IDocument*> m_autoEnabledFormDocs;
+    // Same once-per-doc tracking for the markup toolbar's auto-show
+    // behaviour. The toolbar starts hidden; the first time a document
+    // that supports annotations becomes current, we show it. After that,
+    // the user's explicit hide/show choice is sticky for that document.
+    QSet<const IDocument*> m_autoShownMarkupDocs;
     QAction* m_autoFillFormAction = nullptr;
     QAction* m_myCardAction = nullptr;
     QAction* m_manageSignaturesAction = nullptr;

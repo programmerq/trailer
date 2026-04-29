@@ -149,4 +149,18 @@ void MarkupToolbar::setActiveTool(AnnotationTool tool) {
     it.value()->setChecked(true);
 }
 
+void MarkupToolbar::setToolEnabled(AnnotationTool tool, bool enabled) {
+    auto it = m_toolActions.find(tool);
+    if (it == m_toolActions.end()) return;
+    QAction* action = it.value();
+    if (action->isEnabled() == enabled) return;
+    action->setEnabled(enabled);
+    // If we just disabled the active tool, fall back to Select so the
+    // overlay isn't stuck consuming click-drags for a tool whose
+    // button is greyed out.
+    if (!enabled && tool == m_tool) {
+        setActiveTool(AnnotationTool::Select);
+    }
+}
+
 }  // namespace trailer

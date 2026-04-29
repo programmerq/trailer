@@ -73,6 +73,9 @@ public:
         return m_valid && m_editor && m_editor->isValid()
                && m_editor->hasFormFields();
     }
+    // PDFs always carry a text layer (even scan-only PDFs typically
+    // expose an empty layer). Text-aware markup tools are offered.
+    bool hasTextLayer() const override { return m_valid; }
     std::vector<FormField> formFields() const override;
     bool setFormFieldValue(int id, const QString& value) override;
     void setFormFillingActive(bool active) override;

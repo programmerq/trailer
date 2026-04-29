@@ -1529,6 +1529,28 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     // their card even without a PDF open.
     m_myCardAction->setEnabled(true);
 
+    // Auto-show the markup toolbar the first time we see a document
+    // that supports annotations. Same once-per-doc pattern as the form
+    // overlay above — an explicit hide by the user sticks. Documents
+    // without an AnnotationStore (Stub adapter) are excluded so we
+    // never show a toolbar that would be useless.
+    const bool canAnnotate = doc && doc->annotations() != nullptr;
+    if (canAnnotate && !m_autoShownMarkupDocs.contains(doc) &&
+        !m_markupToolbar->isVisible()) {
+        m_autoShownMarkupDocs.insert(doc);
+        m_markupToolbar->show();
+    }
+
+    // Gate text-aware markup tools on the document's text layer. PDFs
+    // always have one; bare images do not until OCR has been run with
+    // its results stored back into the document. Redact stays
+    // available on plain images — it operates on pixel rectangles, not
+    // glyphs.
+    const bool hasText = doc && doc->hasTextLayer();
+    m_markupToolbar->setToolEnabled(AnnotationTool::Underline, hasText);
+    m_markupToolbar->setToolEnabled(AnnotationTool::Highlight, hasText);
+    m_markupToolbar->setToolEnabled(AnnotationTool::StrikeOut, hasText);
+
     syncViewModeActions(doc);
     updateTitleForDocument(doc);
 }

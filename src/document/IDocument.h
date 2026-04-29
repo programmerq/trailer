@@ -56,6 +56,14 @@ public:
     virtual bool supportsPrint() const { return false; }
     virtual void print(QWidget* /*dialogParent*/) {}
 
+    // True when the document has selectable text content (a PDF text
+    // layer, or an image that has had OCR applied with results stored
+    // back into the document). Drives the gating of text-aware markup
+    // tools (Underline, Highlight, Strikeout) on the toolbar so they
+    // are not offered on bare images where they would do nothing
+    // meaningful.
+    virtual bool hasTextLayer() const { return false; }
+
     virtual bool supportsEditing() const { return false; }
     virtual bool isDirty() const { return false; }
     virtual bool canUndo() const { return false; }

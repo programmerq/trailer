@@ -26,6 +26,13 @@ public:
     // only if the tool actually changed.
     void setActiveTool(AnnotationTool tool);
 
+    // Enable or disable a single tool's QAction. Used by MainWindow to
+    // gate text-aware tools (Underline / Highlight / StrikeOut) on
+    // documents without a text layer. If the currently-active tool is
+    // disabled, the toolbar automatically falls back to Select so the
+    // user is not stranded in a now-greyed-out mode.
+    void setToolEnabled(AnnotationTool tool, bool enabled);
+
 signals:
     void activeToolChanged(AnnotationTool tool);
     void styleChanged(const AnnotationStyle& style);
