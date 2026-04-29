@@ -73,6 +73,17 @@ public:
     // future Inspector restyle. Tests use this to verify selection
     // happened without needing access to private state.
     int selectedAnnotationId() const { return m_selectedAnnotationId; }
+    // True when the user is currently dragging a resize handle. Used
+    // by tests to confirm the handle hit-test fired; in production
+    // it has no other consumer.
+    bool isResizingForTest() const {
+        return m_resizingHandle != ResizeHandle::None;
+    }
+    // View-space rect of the currently-selected annotation. Empty
+    // QRectF when nothing is selected. Used by tests to compute
+    // handle positions without depending on internal docRectToView
+    // arithmetic.
+    QRectF selectedViewRectForTest() const;
 
 signals:
     void annotationCommitted(int id);
@@ -150,6 +161,23 @@ private:
     bool m_movingSelected = false;
     QPointF m_moveStartDoc;
     QRectF m_moveOriginalBounds;
+
+    // Resize drag state. m_resizingHandle != None when the user is
+    // dragging one of the four corner handles; the bounds shift in
+    // doc-space according to which corner is being moved.
+    enum class ResizeHandle { None, TopLeft, TopRight, BottomLeft, BottomRight };
+    ResizeHandle m_resizingHandle = ResizeHandle::None;
+    QPointF m_resizeStartDoc;
+    QRectF m_resizeOriginalBounds;
+
+    // Helper: which corner-handle (if any) lives at this view-space
+    // point for the currently-selected annotation. Returns None
+    // when nothing's selected or the click missed the ~10 px handle
+    // hit zone.
+    ResizeHandle handleAt(const QPointF& viewPt) const;
+    // Compute the four handle rects in view space for the given
+    // annotation bounds.
+    QRectF handleRect(const QRectF& viewBounds, ResizeHandle which) const;
 };
 
 }  // namespace trailer

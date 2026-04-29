@@ -340,20 +340,34 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
     }
 
     // Selection affordance for the active annotation: a thin blue
-    // dashed rectangle just outside the bounds. Drawn on top of the
-    // shape so it sits above any fill / stroke. Visible whenever an
-    // annotation is selected, regardless of the active tool — the
-    // user can always see what would receive Delete or arrow nudges.
+    // dashed rectangle just outside the bounds plus four corner
+    // handles for resize. Drawn on top of the shape so it sits
+    // above any fill / stroke. Visible whenever an annotation is
+    // selected, regardless of the active tool.
     if (m_selectedAnnotationId != 0 && m_store) {
         if (const Annotation* sel = m_store->find(m_selectedAnnotationId)) {
             const QRectF view = docRectToView(sel->bounds, sel->page);
             const QRectF inflated = view.adjusted(-3, -3, 3, 3);
-            QPen pen(QColor(60, 120, 220, 220));
+            const QColor accent(60, 120, 220, 220);
+            QPen pen(accent);
             pen.setWidth(1);
             pen.setStyle(Qt::DashLine);
             p.setPen(pen);
             p.setBrush(Qt::NoBrush);
             p.drawRect(inflated);
+            // Resize handles: solid white interior, accent border,
+            // 10x10 view-space px. Easy to grab without the user
+            // having to hit a 1-pixel corner.
+            QPen hpen(accent);
+            hpen.setStyle(Qt::SolidLine);
+            hpen.setWidth(1);
+            p.setPen(hpen);
+            p.setBrush(QColor(255, 255, 255, 230));
+            for (auto h : {ResizeHandle::TopLeft, ResizeHandle::TopRight,
+                           ResizeHandle::BottomLeft,
+                           ResizeHandle::BottomRight}) {
+                p.drawRect(handleRect(view, h));
+            }
         }
     }
 
@@ -465,13 +479,28 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent* event) {
         event->ignore();
         return;
     }
-    // Select-tool press has two behaviours depending on what the user
-    // clicked: hitting an existing annotation selects (and may begin
-    // a move drag) it; hitting empty space clears any selection and
-    // falls through to text-selection. Selection is sticky between
-    // clicks until the user clicks empty space or invokes Esc /
-    // Delete.
+    // Select-tool press has three behaviours depending on what the
+    // user clicked: hitting a corner handle of the selected
+    // annotation begins a resize drag; hitting an existing
+    // annotation selects (and may begin a move drag) it; hitting
+    // empty space clears any selection and falls through to text-
+    // selection. Selection is sticky between clicks until the user
+    // clicks empty space or invokes Esc / Delete.
     if (m_tool == AnnotationTool::Select) {
+        // Check for a handle hit first — handles overlap the
+        // annotation's outer rect, so they need precedence over the
+        // body-hit-test that begins a move drag.
+        const ResizeHandle handle = handleAt(event->position());
+        if (handle != ResizeHandle::None && m_store) {
+            if (const Annotation* a = m_store->find(m_selectedAnnotationId)) {
+                m_resizingHandle = handle;
+                m_dragPage = a->page;
+                m_resizeStartDoc = toDoc(event->position(), a->page);
+                m_resizeOriginalBounds = a->bounds;
+                update();
+                return;
+            }
+        }
         const int hitId = hitTest(event->position());
         if (hitId != 0) {
             const bool wasAlreadySelected = (m_selectedAnnotationId == hitId);
@@ -516,6 +545,45 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent* event) {
 }
 
 void AnnotationOverlay::mouseMoveEvent(QMouseEvent* event) {
+    // Resize drag: shift the relevant corner of the original bounds
+    // by the cursor delta in doc space. Use the original bounds as
+    // the anchor so dragging a small distance resizes by exactly
+    // that distance (no drift accumulation).
+    if (m_resizingHandle != ResizeHandle::None && m_store &&
+        m_selectedAnnotationId != 0) {
+        const QPointF here = toDoc(event->position(), m_dragPage);
+        const QPointF delta = here - m_resizeStartDoc;
+        QRectF nb = m_resizeOriginalBounds;
+        switch (m_resizingHandle) {
+            case ResizeHandle::TopLeft:
+                nb.setTopLeft(nb.topLeft() + delta);
+                break;
+            case ResizeHandle::TopRight:
+                nb.setTopRight(nb.topRight() + delta);
+                break;
+            case ResizeHandle::BottomLeft:
+                nb.setBottomLeft(nb.bottomLeft() + delta);
+                break;
+            case ResizeHandle::BottomRight:
+                nb.setBottomRight(nb.bottomRight() + delta);
+                break;
+            default: break;
+        }
+        // Disallow degenerate / inverted bounds — the user's drag
+        // can't push a corner past its opposite. Clamp to a 1pt
+        // minimum so the resize handle doesn't lock when zero-size.
+        nb = nb.normalized();
+        if (nb.width() < 1.0)  nb.setWidth(1.0);
+        if (nb.height() < 1.0) nb.setHeight(1.0);
+        if (const Annotation* a = m_store->find(m_selectedAnnotationId)) {
+            Annotation updated = *a;
+            updated.bounds = nb;
+            m_store->update(updated);
+        }
+        update();
+        return;
+    }
+
     // Move-drag for the selected annotation runs alongside the
     // shape-creation drag tracked by m_dragging. We translate the
     // annotation's bounds in document space and emit an in-place
@@ -547,6 +615,14 @@ void AnnotationOverlay::mouseMoveEvent(QMouseEvent* event) {
 
 void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() != Qt::LeftButton) return;
+    // End-of-resize bookkeeping: same idea as the move drag —
+    // bounds were updated incrementally; clear the state on
+    // release.
+    if (m_resizingHandle != ResizeHandle::None) {
+        m_resizingHandle = ResizeHandle::None;
+        update();
+        return;
+    }
     // End-of-move bookkeeping: the bounds were updated incrementally
     // in mouseMoveEvent; release just clears the drag state. The
     // already-emitted store changed() signals took care of paint
@@ -849,6 +925,41 @@ void AnnotationOverlay::keyPressEvent(QKeyEvent* event) {
         default: break;
     }
     event->ignore();
+}
+
+QRectF AnnotationOverlay::selectedViewRectForTest() const {
+    if (m_selectedAnnotationId == 0 || !m_store) return {};
+    const Annotation* a = m_store->find(m_selectedAnnotationId);
+    if (!a) return {};
+    return docRectToView(a->bounds, a->page);
+}
+
+QRectF AnnotationOverlay::handleRect(const QRectF& viewBounds,
+                                     ResizeHandle which) const {
+    constexpr double kSize = 10.0;  // view-space px per side
+    constexpr double kHalf = kSize / 2.0;
+    QPointF c;
+    switch (which) {
+        case ResizeHandle::TopLeft:     c = viewBounds.topLeft(); break;
+        case ResizeHandle::TopRight:    c = viewBounds.topRight(); break;
+        case ResizeHandle::BottomLeft:  c = viewBounds.bottomLeft(); break;
+        case ResizeHandle::BottomRight: c = viewBounds.bottomRight(); break;
+        default: return {};
+    }
+    return QRectF(c.x() - kHalf, c.y() - kHalf, kSize, kSize);
+}
+
+AnnotationOverlay::ResizeHandle
+AnnotationOverlay::handleAt(const QPointF& viewPt) const {
+    if (m_selectedAnnotationId == 0 || !m_store) return ResizeHandle::None;
+    const Annotation* a = m_store->find(m_selectedAnnotationId);
+    if (!a) return ResizeHandle::None;
+    const QRectF view = docRectToView(a->bounds, a->page);
+    for (auto h : {ResizeHandle::TopLeft, ResizeHandle::TopRight,
+                   ResizeHandle::BottomLeft, ResizeHandle::BottomRight}) {
+        if (handleRect(view, h).contains(viewPt)) return h;
+    }
+    return ResizeHandle::None;
 }
 
 void AnnotationOverlay::nudgeSelected(double dx, double dy) {

@@ -199,6 +199,7 @@ private slots:
     void uat_ann_121_deleteRemovesSelectedAnnotation();
     void uat_ann_122_arrowKeyNudgesSelectedAnnotation();
     void uat_ann_123_inspectorTracksSelectedAnnotation();
+    void uat_ann_124_dragHandleResizesSelectedAnnotation();
 
 private:
     QTemporaryDir m_scratch;
@@ -1226,6 +1227,53 @@ void TestUatSearchAndMarkup::uat_ann_123_inspectorTracksSelectedAnnotation() {
              "Click should have selected the rectangle");
     QVERIFY2(inspectorDock->isVisible(),
              "Selecting an annotation should auto-show the Inspector");
+}
+
+// UAT-ANN-124 — Dragging the bottom-right resize handle of a
+// selected annotation expands its bounds. The id stays the same;
+// only the rectangle grows.
+void TestUatSearchAndMarkup::uat_ann_124_dragHandleResizesSelectedAnnotation() {
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch,
+                                                  QStringLiteral("124"));
+    QVERIFY(f.overlay);
+    QVERIFY(f.drawnId != 0);
+
+    // Select the rectangle first.
+    sendMouse(f.overlay, QEvent::MouseButtonPress,
+              QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease,
+              QPoint(260, 295), Qt::LeftButton);
+    QApplication::processEvents();
+    QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
+
+    // Original bounds in doc-space.
+    const QRectF before = f.store->find(f.drawnId)->bounds;
+    // Compute the bottom-right handle position from the overlay's
+    // current view-space mapping rather than assuming the doc→view
+    // transform is identity. The overlay exposes the selected
+    // annotation's view rect for this purpose.
+    const QRectF viewRect = f.overlay->selectedViewRectForTest();
+    QVERIFY2(!viewRect.isEmpty(),
+             "The selected annotation should report a non-empty view rect");
+    const QPoint brStart = viewRect.bottomRight().toPoint();
+    const QPoint brEnd = brStart + QPoint(40, 40);
+    sendMouse(f.overlay, QEvent::MouseButtonPress, brStart, Qt::LeftButton);
+    QApplication::processEvents();
+    QVERIFY2(f.overlay->isResizingForTest(),
+             "Press at the bottom-right handle should engage resize mode");
+    sendMouse(f.overlay, QEvent::MouseMove, brEnd, Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease, brEnd, Qt::LeftButton);
+    QApplication::processEvents();
+
+    const QRectF after = f.store->find(f.drawnId)->bounds;
+    QVERIFY2(after.width() > before.width(),
+             "Dragging the bottom-right handle outward should "
+             "increase the bounds width");
+    QVERIFY2(after.height() > before.height(),
+             "Dragging the bottom-right handle outward should "
+             "increase the bounds height");
+    // The id is preserved — resize is an in-place update.
+    QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG
