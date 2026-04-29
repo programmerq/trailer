@@ -20,6 +20,13 @@ public:
 
     IDocument* currentDocument() const;
 
+    // Iterate every document this view holds. The returned span is
+    // valid until the next addDocument / onTabCloseRequested call;
+    // callers must not retain the pointers across those operations.
+    // Used by MainWindow's close prompt to walk the dirty docs and
+    // by the auto-save timer to flush them all.
+    int documentAt(int index, IDocument** out) const;
+
 signals:
     void allTabsClosed();
     void currentDocumentChanged(IDocument* document);

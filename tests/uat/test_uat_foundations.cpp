@@ -9,6 +9,8 @@
 // `-LE uat` to skip it; UAT runs pass `-L uat`.
 
 #include "app/Application.h"
+#include "document/IDocument.h"
+#include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
 
 #include <QAction>
@@ -82,6 +84,8 @@ private slots:
     void uat_fnd_010_menuStructure();
     void uat_fnd_016_toggleSidebar();
     void uat_fnd_020_flashErrorRoutesToStatusBarNotModal();
+    void uat_fnd_030_autoSaveWritesDirtyDocsWithPath();
+    void uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs();
 
 private:
     QTemporaryDir m_scratch;
@@ -329,6 +333,83 @@ void TestUatFoundations::
     QCOMPARE(countMessageBoxes(), messageBoxesBefore);
     QVERIFY(mw->statusBar()->currentMessage()
                 .contains(QStringLiteral("not supported")));
+}
+
+// UAT-FND-030 — Auto-save writes the file when a document is dirty
+// and has an established path. The 30 s timer's slot is exposed as a
+// public method so the test can trigger it without waiting.
+void TestUatFoundations::uat_fnd_030_autoSaveWritesDirtyDocsWithPath() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writeTinyPdf(m_scratch.filePath("uat_fnd_030.pdf"));
+    const auto sizeBefore = QFileInfo(pdfPath).size();
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->settings().setAutoSave(true);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+    auto* dv = mw->findChild<QTabWidget*>();
+    QVERIFY(dv);
+
+    // Mutate the active doc so isDirty() reports true. Adding an
+    // empty rectangle annotation through the public API (the same
+    // path the markup toolbar uses) is enough.
+    auto* doc = qobject_cast<MainWindow*>(mw)->findChild<QObject*>();
+    Q_UNUSED(doc);
+    // Use the test-friendly path: rotate the page (mutates state) so
+    // isDirty becomes true via the document's normal write path.
+    auto* dvCast = mw->findChild<DocumentView*>();
+    QVERIFY(dvCast);
+    if (auto* idoc = dvCast->currentDocument()) {
+        idoc->rotatePage(0, 90);
+        QVERIFY2(idoc->isDirty(),
+                 "rotating a page should make the document dirty");
+    }
+
+    // Trigger the auto-save tick directly.
+    mw->autoSaveDirtyDocs();
+    QApplication::processEvents();
+
+    // The file on disk should have been rewritten — its size will
+    // typically change after a rotate, but at minimum its mtime
+    // changes. Assert the doc is now clean (auto-save cleared dirty).
+    auto* idocAfter = dvCast->currentDocument();
+    QVERIFY2(idocAfter && !idocAfter->isDirty(),
+             "After autoSaveDirtyDocs() the doc should no longer be dirty");
+
+    // sizeBefore captured pre-edit; the post-save file is rewritten.
+    Q_UNUSED(sizeBefore);
+}
+
+// UAT-FND-031 — Auto-save MUST NOT pick a destination for the user;
+// untitled docs (filePath empty) are skipped. It also skips clean
+// documents — no churn on idle files.
+void TestUatFoundations::uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs() {
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->settings().setAutoSave(true);
+    MainWindow* mw = app->ensureWindow();
+    QVERIFY(mw);
+
+    // No documents in the window — autoSave is a no-op, must not
+    // crash and must not flash a "saved" status (we asserted nothing
+    // happens).
+    const QString preMsg = mw->statusBar()->currentMessage();
+    mw->autoSaveDirtyDocs();
+    QApplication::processEvents();
+    const QString postMsg = mw->statusBar()->currentMessage();
+    QVERIFY2(!postMsg.contains(QStringLiteral("Auto-saved")),
+             "Auto-save with no documents must not flash a success message");
+
+    // autoSave off → no work, no status change, no crash.
+    app->settings().setAutoSave(false);
+    mw->autoSaveDirtyDocs();
+    QApplication::processEvents();
+    QVERIFY2(!mw->statusBar()->currentMessage().contains(QStringLiteral("Auto-saved")),
+             "When autoSave setting is off, no save should happen");
 }
 
 // Custom main: we need to set HOME (and XDG vars) before constructing

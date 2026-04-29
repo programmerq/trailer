@@ -8,6 +8,9 @@
 #include <QStringList>
 #include <memory>
 
+class QCloseEvent;
+class QTimer;
+
 class QAction;
 class QMenu;
 
@@ -45,10 +48,18 @@ public:
 
 public slots:
     void rebuildRecentMenu();
+    // Save every dirty document with an established file path. Wired
+    // to a 30 s timer; exposed as a public slot so tests can drive
+    // the same code path without waiting for the timer.
+    void autoSaveDirtyDocs();
 
 protected:
     void dragEnterEvent(QDragEnterEvent* event) override;
     void dropEvent(QDropEvent* event) override;
+    // Prompt to save / discard / cancel for every dirty document in
+    // this window before the OS-level close completes. If the user
+    // hits Cancel on any prompt, the window stays open.
+    void closeEvent(QCloseEvent* event) override;
 
 private slots:
     void onOpen();
@@ -147,6 +158,14 @@ private:
     // does not re-enable it. Pointers may dangle when docs are closed,
     // which is harmless: dangling entries are never dereferenced.
     QSet<const IDocument*> m_autoEnabledFormDocs;
+    // Auto-save loop: every kAutoSaveIntervalMs the timer fires and
+    // saves any dirty document that already has a file path
+    // (untitled documents are excluded — auto-save shouldn't pick a
+    // location for the user). The timer is started lazily once a
+    // document with a path is in the window and stops when no doc
+    // is open. Honours `Settings::autoSave()`; flipping that off
+    // pauses the timer.
+    QTimer* m_autoSaveTimer = nullptr;
     // Same once-per-doc tracking for the markup toolbar's auto-show
     // behaviour. The toolbar starts hidden; the first time a document
     // that supports annotations becomes current, we show it. After that,

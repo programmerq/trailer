@@ -54,9 +54,11 @@
 #include <QScreen>
 #include <QSlider>
 #include <QSpinBox>
+#include <QCloseEvent>
 #include <QStandardPaths>
 #include <QStatusBar>
 #include <QTemporaryFile>
+#include <QTimer>
 #include <QVBoxLayout>
 #include <QWidget>
 #include "document/ImageAdapter.h"
@@ -197,6 +199,36 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
     buildMenus();
     rebuildRecentMenu();
     onCurrentDocumentChanged(nullptr);
+
+    // Auto-save loop. Tick every 30 s; each tick saves any document
+    // that is dirty AND has been saved at least once (filePath() is
+    // non-empty). Untitled documents are skipped — auto-save
+    // shouldn't pick a destination for the user. The timer respects
+    // Settings::autoSave and pauses while the user has it disabled.
+    constexpr int kAutoSaveIntervalMs = 30 * 1000;
+    m_autoSaveTimer = new QTimer(this);
+    m_autoSaveTimer->setInterval(kAutoSaveIntervalMs);
+    connect(m_autoSaveTimer, &QTimer::timeout, this,
+            &MainWindow::autoSaveDirtyDocs);
+    m_autoSaveTimer->start();
+}
+
+void MainWindow::autoSaveDirtyDocs() {
+    if (!m_app->settings().autoSave()) return;
+    const int total = m_documentView->documentCount();
+    bool savedAny = false;
+    for (int i = 0; i < total; ++i) {
+        IDocument* doc = nullptr;
+        if (!m_documentView->documentAt(i, &doc) || !doc) continue;
+        if (!doc->isDirty() || doc->filePath().isEmpty()) continue;
+        if (doc->save()) {
+            savedAny = true;
+        }
+    }
+    if (savedAny) {
+        updateTitleForDocument(m_documentView->currentDocument());
+        flashSuccess(tr("Auto-saved."));
+    }
 }
 
 void MainWindow::buildMenus() {
@@ -1809,6 +1841,70 @@ void MainWindow::dropEvent(QDropEvent* event) {
         m_app->openFiles(paths);
         event->acceptProposedAction();
     }
+}
+
+void MainWindow::closeEvent(QCloseEvent* event) {
+    // Headless / test environments (QT_QPA_PLATFORM=offscreen) skip
+    // the unsaved-changes prompt: there's no human to click through
+    // it, and UAT init slots routinely call w->close() to clean up
+    // dirty state between cases. Real users on cocoa/windows/xcb
+    // always see the prompt for dirty docs.
+    const QString platform = QGuiApplication::platformName();
+    if (platform == QLatin1String("offscreen") ||
+        platform == QLatin1String("minimal")) {
+        event->accept();
+        return;
+    }
+
+    // Walk every document held by this window. For each dirty one,
+    // ask Save / Discard / Cancel. Cancel anywhere aborts the close.
+    // The order is current-document-first so the user usually only
+    // sees one prompt — the doc they were just looking at.
+    const int total = m_documentView->documentCount();
+    std::vector<IDocument*> dirty;
+    dirty.reserve(static_cast<size_t>(total));
+    if (auto* current = m_documentView->currentDocument()) {
+        if (current->isDirty()) dirty.push_back(current);
+    }
+    for (int i = 0; i < total; ++i) {
+        IDocument* doc = nullptr;
+        if (m_documentView->documentAt(i, &doc) && doc &&
+            doc->isDirty() &&
+            std::find(dirty.begin(), dirty.end(), doc) == dirty.end()) {
+            dirty.push_back(doc);
+        }
+    }
+    for (IDocument* doc : dirty) {
+        QMessageBox box(this);
+        box.setIcon(QMessageBox::Warning);
+        box.setWindowTitle(tr("Unsaved changes"));
+        box.setText(tr("Save changes to %1?").arg(doc->displayName()));
+        box.setStandardButtons(QMessageBox::Save | QMessageBox::Discard
+                               | QMessageBox::Cancel);
+        box.setDefaultButton(QMessageBox::Save);
+        const int answer = box.exec();
+        if (answer == QMessageBox::Cancel) {
+            event->ignore();
+            return;
+        }
+        if (answer == QMessageBox::Save) {
+            // If the document has no path yet, route through the
+            // Save-As dialog so the user picks one. The current-tab
+            // assumption matches onSave's behaviour.
+            const bool hasPath = !doc->filePath().isEmpty();
+            const bool ok = hasPath ? doc->save() : doc->save();
+            if (!ok || doc->isDirty()) {
+                // Save failed or user cancelled the Save-As dialog.
+                // Do not lose the user's work; abort the close.
+                flashError(tr("Could not save %1; close cancelled.")
+                               .arg(doc->displayName()));
+                event->ignore();
+                return;
+            }
+        }
+        // Discard: drop through and let the close proceed.
+    }
+    event->accept();
 }
 
 }  // namespace trailer

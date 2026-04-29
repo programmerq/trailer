@@ -29,6 +29,15 @@ IDocument* DocumentView::currentDocument() const {
     return m_documents[static_cast<size_t>(index)].get();
 }
 
+int DocumentView::documentAt(int index, IDocument** out) const {
+    if (index < 0 || index >= static_cast<int>(m_documents.size())) {
+        if (out) *out = nullptr;
+        return 0;
+    }
+    if (out) *out = m_documents[static_cast<size_t>(index)].get();
+    return 1;
+}
+
 void DocumentView::addDocument(std::unique_ptr<IDocument> document) {
     if (!document) {
         return;
