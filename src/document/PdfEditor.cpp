@@ -257,7 +257,75 @@ QPDFObjectHandle borderStyle(double width) {
     return bs;
 }
 
-QPDFObjectHandle buildAnnotation(const Annotation& a, double pageHeight) {
+// Build a Form XObject content stream that draws `a` as a stroke
+// (and optional fill) rectangle inside its /Rect bounds. Used for
+// Rectangle and HighlightShape annotations so external viewers
+// like Apple Preview render the shape from /AP rather than falling
+// back to a property-only render that may show blank.
+//
+// PDF coords are bottom-left origin; the caller passes already-
+// flipped (px1, py1)-(px2, py2). The XObject's /BBox uses the same
+// coords with /Matrix = identity so the stream draws absolutely.
+QPDFObjectHandle buildSquareAppearance(QPDF& pdf, const Annotation& a,
+                                       double px1, double py1,
+                                       double px2, double py2) {
+    const QColor& stroke = a.style.stroke;
+    const QColor& fill = a.style.fill;
+    const double sw = a.style.strokeWidth > 0.0 ? a.style.strokeWidth : 1.0;
+
+    // Inset by half the stroke width so the stroked outline fits
+    // entirely inside /Rect without clipping.
+    const double inset = sw / 2.0;
+    const double rx = px1 + inset;
+    const double ry = py1 + inset;
+    const double rw = (px2 - px1) - sw;
+    const double rh = (py2 - py1) - sw;
+
+    char buf[512];
+    int n = 0;
+    n += std::snprintf(buf + n, sizeof(buf) - n, "q\n");
+    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f RG\n",
+                       stroke.redF(), stroke.greenF(), stroke.blueF());
+    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f w\n", sw);
+    if (fill.isValid() && fill.alpha() > 0) {
+        n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f rg\n",
+                           fill.redF(), fill.greenF(), fill.blueF());
+        n += std::snprintf(buf + n, sizeof(buf) - n,
+                           "%.3f %.3f %.3f %.3f re B\n", rx, ry, rw, rh);
+    } else {
+        n += std::snprintf(buf + n, sizeof(buf) - n,
+                           "%.3f %.3f %.3f %.3f re S\n", rx, ry, rw, rh);
+    }
+    n += std::snprintf(buf + n, sizeof(buf) - n, "Q\n");
+
+    auto dict = QPDFObjectHandle::newDictionary();
+    dict.replaceKey("/Type", QPDFObjectHandle::newName("/XObject"));
+    dict.replaceKey("/Subtype", QPDFObjectHandle::newName("/Form"));
+    dict.replaceKey("/FormType", QPDFObjectHandle::newInteger(1));
+    dict.replaceKey("/Resources", QPDFObjectHandle::newDictionary());
+
+    auto bbox = QPDFObjectHandle::newArray();
+    bbox.appendItem(QPDFObjectHandle::newReal(px1, 3));
+    bbox.appendItem(QPDFObjectHandle::newReal(py1, 3));
+    bbox.appendItem(QPDFObjectHandle::newReal(px2, 3));
+    bbox.appendItem(QPDFObjectHandle::newReal(py2, 3));
+    dict.replaceKey("/BBox", bbox);
+
+    auto stream = QPDFObjectHandle::newStream(&pdf, std::string(buf, buf + n));
+    stream.replaceDict(dict);
+    return stream;
+}
+
+// Wrap an XObject in the standard /AP /N dictionary used by an
+// /Annot to point at its appearance stream.
+QPDFObjectHandle wrapAppearance(QPDFObjectHandle xobj) {
+    auto ap = QPDFObjectHandle::newDictionary();
+    ap.replaceKey("/N", xobj);
+    return ap;
+}
+
+QPDFObjectHandle buildAnnotation(QPDF& pdf, const Annotation& a,
+                                 double pageHeight) {
     auto dict = QPDFObjectHandle::newDictionary();
     dict.replaceKey("/Type", QPDFObjectHandle::newName("/Annot"));
     dict.replaceKey("/C", colourArray(a.style.stroke));
@@ -279,6 +347,12 @@ QPDFObjectHandle buildAnnotation(const Annotation& a, double pageHeight) {
         case AnnotationType::Rectangle:
             dict.replaceKey("/Subtype", QPDFObjectHandle::newName("/Square"));
             dict.replaceKey("/Rect", rectArray(x1, py1, x2, py2));
+            // /AP appearance stream so external viewers (Apple
+            // Preview, Acrobat in some configs) render the rectangle
+            // even when they don't reconstruct from /C and /BS.
+            dict.replaceKey("/AP", wrapAppearance(
+                pdf.makeIndirectObject(
+                    buildSquareAppearance(pdf, a, x1, py1, x2, py2))));
             break;
         case AnnotationType::Ellipse:
             dict.replaceKey("/Subtype", QPDFObjectHandle::newName("/Circle"));
@@ -343,6 +417,14 @@ QPDFObjectHandle buildAnnotation(const Annotation& a, double pageHeight) {
             dict.replaceKey("/Rect", rectArray(x1, py1, x2, py2));
             QColor fill = a.style.fill.alpha() > 0 ? a.style.fill : a.style.stroke;
             dict.replaceKey("/IC", colourArray(fill));
+            // /AP with the explicit fill colour; HighlightShape
+            // would otherwise rely on the reader respecting /IC,
+            // which Apple Preview doesn't always.
+            Annotation withFill = a;
+            withFill.style.fill = fill;
+            dict.replaceKey("/AP", wrapAppearance(
+                pdf.makeIndirectObject(
+                    buildSquareAppearance(pdf, withFill, x1, py1, x2, py2))));
             break;
         }
         case AnnotationType::SpeechBubble: {
@@ -731,7 +813,7 @@ bool PdfEditor::writeAnnotations(const std::vector<Annotation>& annotations) {
             const double pageHeight = my1 - my0;
             for (const Annotation& a : annotations) {
                 if (a.page != p) continue;
-                QPDFObjectHandle dict = buildAnnotation(a, pageHeight);
+                QPDFObjectHandle dict = buildAnnotation(*m_qpdf, a, pageHeight);
                 if (dict.isDictionary()) {
                     toAdd.push_back(m_qpdf->makeIndirectObject(dict));
                 }

@@ -37,18 +37,23 @@ worked on.
 
 ## Annotations
 
-- **PDF annotation persistence — DONE for the data, /AP gap remains.**
+- **PDF annotation persistence — DONE for the data, /AP partial.**
   The TODO entry that claimed "shapes/text/notes drawn over a PDF live
   only in memory" was stale: `PdfEditor::writeAnnotations` /
   `readAnnotations` round-trip 10 annotation subtypes (Rectangle,
   Ellipse, Line, Arrow, Ink, Text, Note, HighlightShape, SpeechBubble,
   Highlight, Underline, StrikeOut). Signature flattens into the
   content stream; Redaction destroys content; ZoomLens has no
-  standard PDF subtype and is intentionally skipped. The remaining
-  gap is **`/AP` appearance streams**: external viewers like Apple
-  Preview may show shapes blank without explicit appearances. Trailer
-  itself reads back via `readAnnotations` and renders via
-  AnnotationOverlay so the in-app view is always correct.
+  standard PDF subtype and is intentionally skipped.
+
+  **/AP appearance streams** are now emitted for **Rectangle and
+  HighlightShape** so Apple Preview renders them correctly without
+  reconstructing from /C and /BS. The remaining types (Ellipse,
+  Line, Arrow, Ink, FreeText, Highlight/Underline/StrikeOut quads)
+  still rely on the reader's property-based fallback. Each
+  follows the same `buildSquareAppearance` pattern with a
+  type-specific content stream — incremental work, not a
+  blocker for files Trailer itself reads back perfectly.
 
 - **PDF multi-page / continuous-mode overlay.** The annotation overlay
   uses the `pageNavigator()->currentPage()` for its page reference and

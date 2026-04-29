@@ -162,6 +162,7 @@ private slots:
     void annotationRoundTripPreservesTextAndSpeechBubble();
     void annotationRoundTripPreservesHighlightShape();
     void annotationRoundTripPreservesUnderlineAndStrikeOut();
+    void annotationRectangleEmitsAppearanceStream();
     void saveWithPasswordGatesLoad();
     void saveWithPasswordEmptyOwnerUsesUserPassword();
     void unlockRecoversLoadedButLockedEditor();
@@ -558,6 +559,53 @@ void TestPdfEditor::annotationRoundTripPreservesUnderlineAndStrikeOut() {
     }
     QCOMPARE(underlineCount, 1);
     QCOMPARE(strikeCount, 1);
+}
+
+// Apple Preview (and a few other viewers) renders shape annotations
+// from the /AP appearance stream rather than reconstructing from
+// /C and /BS. Without /AP, marked-up PDFs rendered there look
+// blank. The Rectangle writer emits a Form XObject in /AP /N; this
+// test verifies the entry is present after a save+reload.
+void TestPdfEditor::annotationRectangleEmitsAppearanceStream() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+    const QString dst = dir.filePath("rect_with_ap.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    Annotation rect;
+    rect.page = 0;
+    rect.type = AnnotationType::Rectangle;
+    rect.bounds = QRectF(50, 60, 120, 80);
+    rect.style.stroke = QColor(200, 20, 20);
+    rect.style.strokeWidth = 2.0;
+    QVERIFY(editor.writeAnnotations({rect}));
+    QVERIFY(editor.save(dst));
+
+    // Reopen via raw qpdf to inspect the saved /Annot for /AP /N.
+    QPDF reopened;
+    reopened.processFile(dst.toLocal8Bit().constData());
+    auto pages = QPDFPageDocumentHelper(reopened).getAllPages();
+    QVERIFY(!pages.empty());
+    QPDFObjectHandle annots =
+        pages.front().getObjectHandle().getKey("/Annots");
+    QVERIFY2(annots.isArray() && annots.getArrayNItems() >= 1,
+             "Expected at least one /Annot entry on the saved page");
+    QPDFObjectHandle entry = annots.getArrayItem(0);
+    QPDFObjectHandle ap = entry.getKey("/AP");
+    QVERIFY2(ap.isDictionary(),
+             "/AP must be present and a dictionary");
+    QPDFObjectHandle apN = ap.getKey("/N");
+    QVERIFY2(apN.isStream(),
+             "/AP /N must reference a Form XObject stream");
+    // The XObject's dict should declare /Subtype /Form.
+    QPDFObjectHandle apDict = apN.getDict();
+    QPDFObjectHandle subtype = apDict.getKey("/Subtype");
+    QVERIFY(subtype.isName());
+    QCOMPARE(QString::fromStdString(subtype.getName()),
+             QStringLiteral("/Form"));
 }
 
 // ---------- Encryption (Phase 5) ------------------------------------------
