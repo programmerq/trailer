@@ -97,14 +97,30 @@ void Settings::load() {
             m_recentMax = static_cast<int>(*v);
         }
     }
+    // Legacy [redaction] section. Older installs persisted this single
+    // first-use flag in its own table; new installs use the unified
+    // [first_use] table below. Read both for backwards compatibility,
+    // and write only the new table on save() so the old key fades out.
     if (auto* redaction = tbl["redaction"].as_table()) {
         if (auto v = (*redaction)["warning_acknowledged"].value<bool>()) {
-            m_redactionWarningAcknowledged = *v;
+            m_firstUseFlags.insert(QStringLiteral("redaction"), *v);
+        }
+    }
+    if (auto* firstUse = tbl["first_use"].as_table()) {
+        for (const auto& [k, node] : *firstUse) {
+            if (auto v = node.value<bool>()) {
+                m_firstUseFlags.insert(fromStd(std::string(k.str())), *v);
+            }
         }
     }
 }
 
 void Settings::save() const {
+    toml::table firstUse;
+    for (auto it = m_firstUseFlags.cbegin(); it != m_firstUseFlags.cend(); ++it) {
+        firstUse.insert(toStd(it.key()), it.value());
+    }
+
     toml::table tbl{
         {"general", toml::table{
             {"theme", toStd(themeToString(m_theme))},
@@ -114,9 +130,7 @@ void Settings::save() const {
             {"auto_save", m_autoSave},
             {"recent_max", static_cast<int64_t>(m_recentMax)},
         }},
-        {"redaction", toml::table{
-            {"warning_acknowledged", m_redactionWarningAcknowledged},
-        }},
+        {"first_use", std::move(firstUse)},
     };
 
     AppPaths::ensureDirExists(QFileInfo(m_filePath).absolutePath());
@@ -137,8 +151,12 @@ void Settings::setTheme(Theme value) { m_theme = value; }
 void Settings::setOpenFilesIn(OpenFilesIn value) { m_openFilesIn = value; }
 void Settings::setAutoSave(bool value) { m_autoSave = value; }
 void Settings::setRecentMax(int value) { m_recentMax = value; }
-void Settings::setRedactionWarningAcknowledged(bool value) {
-    m_redactionWarningAcknowledged = value;
+void Settings::setFirstUseAcknowledged(const QString& key, bool value) {
+    if (value) {
+        m_firstUseFlags.insert(key, true);
+    } else {
+        m_firstUseFlags.remove(key);
+    }
 }
 
 }  // namespace trailer

@@ -18,6 +18,7 @@
 #include <QPdfWriter>
 #include <QPageSize>
 #include <QPainter>
+#include <QStatusBar>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -80,6 +81,7 @@ private slots:
     void uat_fnd_004_openingMultipleFilesSpawnsMultipleWindows();
     void uat_fnd_010_menuStructure();
     void uat_fnd_016_toggleSidebar();
+    void uat_fnd_020_flashErrorRoutesToStatusBarNotModal();
 
 private:
     QTemporaryDir m_scratch;
@@ -276,6 +278,57 @@ void TestUatFoundations::uat_fnd_016_toggleSidebar() {
     toggle->trigger();
     QApplication::processEvents();
     QVERIFY2(sidebar->isVisible(), "Second trigger should show the Sidebar");
+}
+
+// UAT-FND-020 — flashError routes operation-failure feedback into the
+// status bar instead of popping a QMessageBox::warning modal. The
+// 2026-04-29 polish pass replaced a dozen-plus operation-failure
+// modals with status-bar messages so users dealing with a tax doc /
+// bill / court doc are not interrupted by a click-through every time
+// something doesn't work the first try.
+void TestUatFoundations::
+    uat_fnd_020_flashErrorRoutesToStatusBarNotModal() {
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    MainWindow* mw = app->ensureWindow();
+    QVERIFY(mw);
+
+    // Snapshot of any existing QMessageBox windows so we don't false-
+    // positive on a leftover from another test.
+    auto countMessageBoxes = []() {
+        int n = 0;
+        for (auto* w : QApplication::topLevelWidgets()) {
+            if (w->inherits("QMessageBox")) ++n;
+        }
+        return n;
+    };
+    const int messageBoxesBefore = countMessageBoxes();
+
+    mw->flashError(QStringLiteral("Crop failed — margins too large."));
+    QApplication::processEvents();
+
+    QVERIFY2(countMessageBoxes() == messageBoxesBefore,
+             "flashError must NOT spawn a QMessageBox");
+    const QString status = mw->statusBar()->currentMessage();
+    QVERIFY2(status.contains(QStringLiteral("Crop failed")),
+             qPrintable(QStringLiteral("status bar was: '%1'").arg(status)));
+    QVERIFY2(status.contains(QStringLiteral("⚠")),
+             "flashError prefixes the message with a warning glyph so the "
+             "bar visually changes character without stylesheet juggling");
+
+    // flashSuccess and flashStatus take parallel paths — confirm both
+    // also bypass any modal layer.
+    mw->flashSuccess(QStringLiteral("Saved."));
+    QApplication::processEvents();
+    QCOMPARE(countMessageBoxes(), messageBoxesBefore);
+    QVERIFY(mw->statusBar()->currentMessage().contains(QStringLiteral("Saved.")));
+    QVERIFY(mw->statusBar()->currentMessage().contains(QStringLiteral("✓")));
+
+    mw->flashStatus(QStringLiteral("Window/region capture not supported."));
+    QApplication::processEvents();
+    QCOMPARE(countMessageBoxes(), messageBoxesBefore);
+    QVERIFY(mw->statusBar()->currentMessage()
+                .contains(QStringLiteral("not supported")));
 }
 
 // Custom main: we need to set HOME (and XDG vars) before constructing

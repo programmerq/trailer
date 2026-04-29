@@ -577,8 +577,7 @@ void MainWindow::onCropPages() {
     }
 
     if (!anyApplied) {
-        QMessageBox::warning(this, tr("Crop failed"),
-            tr("Could not apply crop. Margins may be too large."));
+        flashError(tr("Crop failed — margins may be too large."));
         return;
     }
     m_sidebar->refreshThumbnails();
@@ -594,8 +593,7 @@ void MainWindow::onInsertPages() {
     if (path.isEmpty()) return;
     const int insertAt = doc->currentPage() + 1;
     if (!doc->insertPagesFrom(path, insertAt)) {
-        QMessageBox::warning(this, tr("Insert failed"),
-            tr("Could not insert pages from %1").arg(path));
+        flashError(tr("Insert failed — could not insert pages from %1").arg(path));
         return;
     }
     m_sidebar->refreshThumbnails();
@@ -701,8 +699,7 @@ void MainWindow::onAdjustSize() {
     if (dialog.exec() != QDialog::Accepted) return;
     if (!doc->resizeImage(widthSpin->value(), heightSpin->value(),
                           smoothCheck->isChecked())) {
-        QMessageBox::warning(this, tr("Resize failed"),
-            tr("Could not resize this document."));
+        flashError(tr("Resize failed — could not resize this document."));
         return;
     }
     m_sidebar->refreshThumbnails();
@@ -759,8 +756,7 @@ void MainWindow::onAdjustColour() {
     const double s = saturation->value() / 100.0;
     if (b == 0.0 && c == 0.0 && s == 0.0) return;
     if (!doc->adjustColour(b, c, s)) {
-        QMessageBox::warning(this, tr("Adjust Colour failed"),
-            tr("Could not adjust colour for this document."));
+        flashError(tr("Adjust Colour failed — could not adjust this document."));
         return;
     }
     m_sidebar->refreshThumbnails();
@@ -852,15 +848,14 @@ void MainWindow::onRemoveBackground() {
     QApplication::restoreOverrideCursor();
 
     if (result.isNull()) {
-        QMessageBox::warning(this, tr("Remove Background Failed"),
-            tr("Background removal did not produce an image. "
-               "The model may be missing or corrupt; try re-downloading "
-               "from Preferences \u2192 Models."));
+        flashError(tr("Remove Background failed \u2014 model may be missing or "
+                      "corrupt; try re-downloading from Preferences \u2192 "
+                      "Models."));
         return;
     }
     if (!imgDoc->replaceImage(result)) {
-        QMessageBox::warning(this, tr("Remove Background Failed"),
-            tr("Could not apply the background-removed image."));
+        flashError(tr("Remove Background failed \u2014 could not apply the result "
+                      "to the document."));
         return;
     }
     m_sidebar->refreshThumbnails();
@@ -1008,14 +1003,13 @@ void MainWindow::onInstantAlpha() {
 
     const QImage result = dialog.resultImage();
     if (result.isNull()) {
-        QMessageBox::warning(this, tr("Instant Alpha Failed"),
-            tr("No selection was produced. Try adding more points and "
-               "try again."));
+        flashError(tr("Instant Alpha failed — no selection was produced. "
+                      "Try adding more points."));
         return;
     }
     if (!imgDoc->replaceImage(result)) {
-        QMessageBox::warning(this, tr("Instant Alpha Failed"),
-            tr("Could not apply the selection to the current image."));
+        flashError(tr("Instant Alpha failed — could not apply the selection "
+                      "to the current image."));
         return;
     }
     m_sidebar->refreshThumbnails();
@@ -1037,8 +1031,7 @@ void MainWindow::onSmartLasso() {
 
     const QPolygon poly = dialog.resultPolygon();
     if (poly.isEmpty()) {
-        QMessageBox::warning(this, tr("Smart Lasso Failed"),
-            tr("No object outline was produced."));
+        flashError(tr("Smart Lasso failed — no object outline was produced."));
         return;
     }
 
@@ -1050,14 +1043,13 @@ void MainWindow::onSmartLasso() {
     const QRect bounds = poly.boundingRect().intersected(
         QRect(QPoint(), imgDoc->image().size()));
     if (bounds.width() < 2 || bounds.height() < 2) {
-        QMessageBox::warning(this, tr("Smart Lasso Failed"),
-            tr("Selection is too small to crop to."));
+        flashError(tr("Smart Lasso failed — selection is too small to crop to."));
         return;
     }
     if (!imgDoc->cropToRect(bounds.x(), bounds.y(),
                             bounds.width(), bounds.height())) {
-        QMessageBox::warning(this, tr("Smart Lasso Failed"),
-            tr("Could not crop to the selected object."));
+        flashError(tr("Smart Lasso failed — could not crop to the selected "
+                      "object."));
         return;
     }
     m_sidebar->refreshThumbnails();
@@ -1132,8 +1124,7 @@ void MainWindow::onExportAs() {
     QString format = QFileInfo(path).suffix().toLower();
     if (format.isEmpty()) format = "png";
     if (!doc->exportAs(path, format, -1, chosenFilterId)) {
-        QMessageBox::warning(this, tr("Export failed"),
-            tr("Could not export to %1").arg(path));
+        flashError(tr("Export failed — could not write to %1").arg(path));
     }
 }
 
@@ -1175,8 +1166,7 @@ void MainWindow::onCropImage() {
     const int w = size.width() - x - rightSpin->value();
     const int h = size.height() - y - bottomSpin->value();
     if (w <= 0 || h <= 0 || !doc->cropToRect(x, y, w, h)) {
-        QMessageBox::warning(this, tr("Crop failed"),
-            tr("Could not crop: margins are too large."));
+        flashError(tr("Crop failed — margins are too large."));
         return;
     }
     m_sidebar->refreshThumbnails();
@@ -1259,16 +1249,15 @@ void MainWindow::onTakeScreenshot() {
     }
 #else
     if (mode != ShotMode::Screen) {
-        QMessageBox::information(this, tr("Unsupported"),
-            tr("Window/region capture is not yet supported on this platform."));
+        flashStatus(tr("Window/region capture is not yet supported on this "
+                       "platform."));
         return;
     }
     QScreen* screen = QGuiApplication::primaryScreen();
     if (!screen) return;
     const QPixmap shot = screen->grabWindow(0);
     if (shot.isNull() || !shot.save(path, "PNG")) {
-        QMessageBox::warning(this, tr("Screenshot failed"),
-            tr("Could not capture the screen."));
+        flashError(tr("Screenshot failed — could not capture the screen."));
         return;
     }
 #endif
@@ -1284,8 +1273,7 @@ void MainWindow::onSave() {
         return;
     }
     if (!doc->save()) {
-        QMessageBox::warning(this, tr("Save failed"),
-            tr("Could not save to %1").arg(doc->filePath()));
+        flashError(tr("Save failed — could not write to %1").arg(doc->filePath()));
         return;
     }
     updateTitleForDocument(doc);
@@ -1305,8 +1293,7 @@ void MainWindow::onSaveAs() {
         this, tr("Save As"), suggested, filter);
     if (path.isEmpty()) return;
     if (!doc->save(path)) {
-        QMessageBox::warning(this, tr("Save failed"),
-            tr("Could not save to %1").arg(path));
+        flashError(tr("Save failed — could not write to %1").arg(path));
         return;
     }
     updateTitleForDocument(doc);
@@ -1365,8 +1352,8 @@ void MainWindow::onExportPasswordProtected() {
 
     // --- Step 3: write the encrypted PDF ---
     if (!doc->exportWithPassword(destPath, password)) {
-        QMessageBox::warning(this, tr("Export failed"),
-            tr("Could not write password-protected PDF to:\n%1").arg(destPath));
+        flashError(tr("Export failed — could not write password-protected "
+                      "PDF to %1").arg(destPath));
     }
 }
 
@@ -1389,8 +1376,8 @@ void MainWindow::onReduceFileSize() {
         : QFileInfo(doc->filePath()).size();
 
     if (!doc->reduceFileSize(destPath)) {
-        QMessageBox::warning(this, tr("Reduce failed"),
-            tr("Could not write reduced PDF to:\n%1").arg(destPath));
+        flashError(tr("Reduce File Size failed — could not write to %1")
+                       .arg(destPath));
         return;
     }
 
@@ -1408,7 +1395,7 @@ void MainWindow::onReduceFileSize() {
                  "— further reduction isn't possible without dropping "
                  "content or down-sampling images.")
                   .arg(QLocale().formattedDataSize(newSize));
-        QMessageBox::information(this, tr("File Size Reduced"), message);
+        flashSuccess(message);
     }
 }
 
@@ -1632,8 +1619,7 @@ void MainWindow::onAbout() {
 void MainWindow::onAutoFillCurrentForm() {
     auto* doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsFormFilling()) {
-        QMessageBox::information(this, tr("AutoFill"),
-            tr("This document has no fillable form fields."));
+        flashStatus(tr("AutoFill: this document has no fillable form fields."));
         return;
     }
 
@@ -1736,31 +1722,63 @@ void MainWindow::onManageSignatures() {
 }
 
 bool MainWindow::confirmRedactionFirstUse() {
+    return confirmFirstUse(QStringLiteral("redaction"),
+                           tr("About redaction"),
+                           tr("Redaction in Trailer is not defence-grade.\n\n"
+                              "Painting the tool covers content with a black "
+                              "block. On save, the affected page is rasterised "
+                              "and the original text and glyphs are destroyed, "
+                              "not merely hidden. However, Trailer does not "
+                              "touch other parts of the document such as "
+                              "bookmarks, attachments, encrypted layers, or "
+                              "document metadata.\n\n"
+                              "For high-stakes redaction (legal discovery, "
+                              "government disclosure, journalism involving "
+                              "named sources), use a tool that can scrub "
+                              "object streams and metadata as well."),
+                           tr("Use Redaction"));
+}
+
+bool MainWindow::confirmFirstUse(const QString& key,
+                                 const QString& title,
+                                 const QString& body,
+                                 const QString& acceptText) {
     Settings& s = m_app->settings();
-    if (s.redactionWarningAcknowledged()) return true;
+    if (s.firstUseAcknowledged(key)) return true;
 
     QMessageBox box(this);
     box.setIcon(QMessageBox::Warning);
-    box.setWindowTitle(tr("About redaction"));
-    box.setText(tr(
-        "Redaction in Trailer is not defence-grade."));
-    box.setInformativeText(tr(
-        "Painting the tool covers content with a black block. On save, "
-        "the affected page is rasterised and the original text and "
-        "glyphs are destroyed, not merely hidden. However, Trailer does "
-        "not touch other parts of the document such as bookmarks, "
-        "attachments, encrypted layers, or document metadata.\n\n"
-        "For high-stakes redaction (legal discovery, government "
-        "disclosure, journalism involving named sources), use a tool "
-        "that can scrub object streams and metadata as well."));
+    box.setWindowTitle(title);
+    // The body is shown as informative text so the box automatically
+    // wraps wide paragraphs nicely; the dialog title carries the
+    // headline.
+    box.setText(title);
+    box.setInformativeText(body);
     box.setStandardButtons(QMessageBox::Ok | QMessageBox::Cancel);
     box.setDefaultButton(QMessageBox::Ok);
-    box.button(QMessageBox::Ok)->setText(tr("Use Redaction"));
+    if (!acceptText.isEmpty()) {
+        box.button(QMessageBox::Ok)->setText(acceptText);
+    }
     if (box.exec() != QMessageBox::Ok) return false;
 
-    s.setRedactionWarningAcknowledged(true);
+    s.setFirstUseAcknowledged(key, true);
     s.save();
     return true;
+}
+
+void MainWindow::flashError(const QString& message) {
+    // 12 s gives a reader enough time to notice the message even if
+    // their eyes were on the document. The leading glyph differentiates
+    // an error from a neutral status without us toggling palette state.
+    statusBar()->showMessage(QStringLiteral("⚠ ") + message, 12000);
+}
+
+void MainWindow::flashSuccess(const QString& message) {
+    statusBar()->showMessage(QStringLiteral("✓ ") + message, 6000);
+}
+
+void MainWindow::flashStatus(const QString& message) {
+    statusBar()->showMessage(message, 4000);
 }
 
 void MainWindow::addDocument(std::unique_ptr<IDocument> document) {

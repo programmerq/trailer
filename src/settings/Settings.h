@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QHash>
 #include <QString>
 
 namespace trailer {
@@ -38,11 +39,25 @@ public:
 
     // Whether the user has seen the one-time "redaction is not
     // defence-grade" warning (DESIGN §6.11.6). True = do not show
-    // again; false = show on next redaction attempt.
+    // again; false = show on next redaction attempt. Convenience
+    // wrapper around the generic firstUseAcknowledged store.
     bool redactionWarningAcknowledged() const {
-        return m_redactionWarningAcknowledged;
+        return firstUseAcknowledged(QStringLiteral("redaction"));
     }
-    void setRedactionWarningAcknowledged(bool value);
+    void setRedactionWarningAcknowledged(bool value) {
+        setFirstUseAcknowledged(QStringLiteral("redaction"), value);
+    }
+
+    // Generic key→bool storage for one-time prompts. The redaction
+    // warning was the first; future first-use prompts (e.g. "this
+    // PDF was saved with form values that won't render in older
+    // viewers") can adopt the same surface without growing a new
+    // accessor pair every time. Keys are written under the
+    // [first_use] table in settings.toml; unknown keys load as false.
+    bool firstUseAcknowledged(const QString& key) const {
+        return m_firstUseFlags.value(key, false);
+    }
+    void setFirstUseAcknowledged(const QString& key, bool value);
 
     QString filePath() const { return m_filePath; }
 
@@ -55,7 +70,7 @@ private:
     OpenFilesIn m_openFilesIn = OpenFilesIn::NewWindow;
     bool m_autoSave = true;
     int m_recentMax = 50;
-    bool m_redactionWarningAcknowledged = false;
+    QHash<QString, bool> m_firstUseFlags;
 };
 
 QString themeToString(Theme value);

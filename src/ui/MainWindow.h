@@ -32,6 +32,17 @@ public:
     void addDocument(std::unique_ptr<IDocument> document);
     int documentCount() const;
 
+    // Lightweight status-bar feedback. Replaces operation-failure
+    // QMessageBox::warning calls so the user is not punched in the
+    // face by a modal every time a crop/save/export fails. Errors
+    // carry a longer timeout (12 s) so a user with their eyes on the
+    // document still has time to notice; success / neutral messages
+    // fade quickly. The error helper prefixes the message with a
+    // warning glyph; the success helper with a check.
+    void flashError(const QString& message);
+    void flashSuccess(const QString& message);
+    void flashStatus(const QString& message);
+
 public slots:
     void rebuildRecentMenu();
 
@@ -85,6 +96,14 @@ private:
     // persists the acknowledgement in the Application settings so
     // the modal never reappears.
     bool confirmRedactionFirstUse();
+    // Generalised one-time warning. `key` selects a flag in
+    // Settings::firstUseAcknowledged; once the user accepts, it is
+    // remembered across sessions and the dialog never shows again.
+    // `acceptText` is the label of the accept button — defaults to
+    // the standard "OK" if empty.
+    bool confirmFirstUse(const QString& key, const QString& title,
+                         const QString& body,
+                         const QString& acceptText = QString());
     void syncViewModeActions(IDocument* doc);
     void showSearchBar();
     void hideSearchBar();
