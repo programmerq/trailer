@@ -6,7 +6,6 @@
 #include <QEvent>
 #include <QFont>
 #include <QFrame>
-#include <QInputDialog>
 #include <QKeyEvent>
 #include <QMenu>
 #include <QMouseEvent>
@@ -380,6 +379,31 @@ bool AnnotationOverlay::eventFilter(QObject* obj, QEvent* event) {
     }
     if (m_inlineEditor && m_inlineEditorAnnotationId != 0) {
         if (auto* edit = qobject_cast<QPlainTextEdit*>(obj)) {
+            // Three terminations to handle:
+            //   commit  — Ctrl+Enter or focus loss → write text back
+            //   cancel  — Escape → discard the edit
+            // For a freshly-placed annotation, both "cancel" and
+            // "commit with empty text" remove the placeholder so the
+            // user is not left with an invisible stamp on the page.
+            auto finish = [this, edit](bool commitText) {
+                if (!m_store) return;
+                const int id = m_inlineEditorAnnotationId;
+                const Annotation* a = m_store->find(id);
+                if (!a) return;
+                const QString typed = edit->toPlainText();
+                if (m_inlineEditorIsNew &&
+                    (typed.isEmpty() || !commitText)) {
+                    // Nothing typed (or the user pressed Esc on a
+                    // fresh annotation): remove the placeholder.
+                    m_store->remove(id);
+                } else if (commitText) {
+                    Annotation updated = *a;
+                    updated.text = typed;
+                    m_store->update(updated);
+                }
+                // Edits to existing annotations that the user
+                // cancelled simply leave the original text in place.
+            };
             if (event->type() == QEvent::KeyPress) {
                 auto* key = static_cast<QKeyEvent*>(event);
                 const bool commit = (key->key() == Qt::Key_Return ||
@@ -387,30 +411,20 @@ bool AnnotationOverlay::eventFilter(QObject* obj, QEvent* event) {
                                     (key->modifiers() & Qt::ControlModifier);
                 const bool cancel = key->key() == Qt::Key_Escape;
                 if (commit) {
-                    if (m_store) {
-                        if (const Annotation* a =
-                                m_store->find(m_inlineEditorAnnotationId)) {
-                            Annotation updated = *a;
-                            updated.text = edit->toPlainText();
-                            m_store->update(updated);
-                        }
-                    }
+                    finish(/*commitText=*/true);
+                    m_inlineEditorIsNew = false;
                     m_inlineEditor->deleteLater();
                     return true;
                 }
                 if (cancel) {
+                    finish(/*commitText=*/false);
+                    m_inlineEditorIsNew = false;
                     m_inlineEditor->deleteLater();
                     return true;
                 }
             } else if (event->type() == QEvent::FocusOut) {
-                if (m_store) {
-                    if (const Annotation* a =
-                            m_store->find(m_inlineEditorAnnotationId)) {
-                        Annotation updated = *a;
-                        updated.text = edit->toPlainText();
-                        m_store->update(updated);
-                    }
-                }
+                finish(/*commitText=*/true);
+                m_inlineEditorIsNew = false;
                 m_inlineEditor->deleteLater();
             }
         }
@@ -497,7 +511,6 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
         }
         case AnnotationTool::Text: {
             QRectF rect = a.bounds;
-            QString text;
             if (!m_pendingTextPreset.isEmpty()) {
                 // FormToolbar path: drop a pre-set glyph (✓ / ✗)
                 // without prompting. Use a small square so the glyph
@@ -507,30 +520,42 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
                     rect = QRectF(m_dragStartDoc - QPointF(10.0, 10.0),
                                   QSizeF(24.0, 24.0));
                 }
-                text = m_pendingTextPreset;
-            } else {
-                if (rect.width() < 40.0 || rect.height() < 20.0) {
-                    rect = QRectF(m_dragStartDoc, QSizeF(200.0, 40.0));
-                }
-                bool ok = false;
-                text = QInputDialog::getMultiLineText(
-                    this, tr("Text Annotation"), tr("Text:"), QString(), &ok);
-                if (!ok || text.isEmpty()) { update(); return; }
+                a.type = AnnotationType::Text;
+                a.bounds = rect;
+                a.text = m_pendingTextPreset;
+                break;
             }
+            if (rect.width() < 40.0 || rect.height() < 20.0) {
+                rect = QRectF(m_dragStartDoc, QSizeF(200.0, 40.0));
+            }
+            // Drop an empty placeholder and focus an inline editor
+            // anchored at the rect. Modal QInputDialog is gone — the
+            // user types directly into the document. Ctrl+Enter or
+            // focus loss commits; Esc removes the placeholder
+            // (handled in eventFilter via the m_inlineEditorIsNew
+            // flag set below).
             a.type = AnnotationType::Text;
             a.bounds = rect;
-            a.text = text;
-            break;
+            a.text = QString();
+            const int newId = m_store->add(std::move(a));
+            m_inlineEditorIsNew = true;
+            openInlineEditor(newId);
+            update();
+            return;
         }
         case AnnotationTool::Note: {
-            bool ok = false;
-            const QString text = QInputDialog::getMultiLineText(
-                this, tr("Note"), tr("Note body:"), QString(), &ok);
-            if (!ok) { update(); return; }
+            // Same inline-editor pattern as Text. Note keeps a tiny
+            // 18×18 bounds in doc space (the rendered icon size); the
+            // inline editor frame is sized in view space anchored at
+            // the click so the user has room to type.
             a.type = AnnotationType::Note;
             a.bounds = QRectF(m_dragStartDoc, QSizeF(18.0, 18.0));
-            a.text = text;
-            break;
+            a.text = QString();
+            const int newId = m_store->add(std::move(a));
+            m_inlineEditorIsNew = true;
+            openInlineEditor(newId);
+            update();
+            return;
         }
         case AnnotationTool::HighlightShape:
             a.type = AnnotationType::HighlightShape;
@@ -543,16 +568,16 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
             if (rect.width() < 40.0 || rect.height() < 20.0) {
                 rect = QRectF(m_dragStartDoc, QSizeF(200.0, 80.0));
             }
-            bool ok = false;
-            const QString text = QInputDialog::getMultiLineText(
-                this, tr("Speech Bubble"), tr("Text:"), QString(), &ok);
-            if (!ok) { update(); return; }
             a.type = AnnotationType::SpeechBubble;
             a.bounds = rect;
-            a.text = text;
+            a.text = QString();
             const QPointF tail(rect.left() - 20.0, rect.bottom() + 30.0);
             a.points = {tail};
-            break;
+            const int newId = m_store->add(std::move(a));
+            m_inlineEditorIsNew = true;
+            openInlineEditor(newId);
+            update();
+            return;
         }
         case AnnotationTool::ZoomLens: {
             QRectF rect = a.bounds;
@@ -648,17 +673,8 @@ void AnnotationOverlay::openInlineEditor(int annotationId) {
         m_inlineEditor->deleteLater();
         m_inlineEditor = nullptr;
     }
-    if (a->type == AnnotationType::Note) {
-        bool ok = false;
-        const QString text = QInputDialog::getMultiLineText(
-            this, tr("Note"), tr("Note body:"), a->text, &ok);
-        if (!ok) return;
-        Annotation updated = *a;
-        updated.text = text;
-        m_store->update(updated);
-        return;
-    }
     if (a->type != AnnotationType::Text &&
+        a->type != AnnotationType::Note &&
         a->type != AnnotationType::SpeechBubble) {
         return;
     }
@@ -676,8 +692,17 @@ void AnnotationOverlay::openInlineEditor(int annotationId) {
     edit->setFont(f);
     layout->addWidget(edit);
 
-    const QRectF viewRect = docRectToView(a->bounds, a->page);
-    frame->setGeometry(viewRect.toRect());
+    QRect frameRect;
+    if (a->type == AnnotationType::Note) {
+        // Note bounds are a tiny 18×18 doc-space icon — give the
+        // popover a fixed view-space size anchored at the top-left
+        // of the icon so the user has room to type.
+        const QPointF tl = docRectToView(a->bounds, a->page).topLeft();
+        frameRect = QRect(tl.toPoint(), QSize(220, 96));
+    } else {
+        frameRect = docRectToView(a->bounds, a->page).toRect();
+    }
+    frame->setGeometry(frameRect);
     frame->show();
     edit->setFocus();
     edit->moveCursor(QTextCursor::End);

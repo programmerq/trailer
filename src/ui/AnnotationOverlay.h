@@ -118,6 +118,11 @@ private:
 
     QPointer<QWidget> m_inlineEditor;
     int m_inlineEditorAnnotationId = 0;
+    // True when openInlineEditor was triggered for a freshly-placed
+    // annotation (Text, Note, SpeechBubble drop). On cancel (Esc) we
+    // remove the placeholder rather than leaving an empty stamp on
+    // the page; on commit-with-empty-text we likewise delete it.
+    bool m_inlineEditorIsNew = false;
 };
 
 }  // namespace trailer

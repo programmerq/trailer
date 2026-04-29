@@ -36,6 +36,7 @@
 #include <QPdfSearchModel>
 #include <QPdfView>
 #include <QPdfWriter>
+#include <QPlainTextEdit>
 #include <QTemporaryDir>
 #include <QToolBar>
 #include <QtTest/QtTest>
@@ -190,6 +191,8 @@ private slots:
     void uat_ann_080_markupToolbarAutoShownOnEditableDoc();
     void uat_ann_081_markupToolbarRespectsExplicitHide();
     void uat_ann_082_textCentricToolsDisabledOnPlainImage();
+    void uat_ann_100_textDropOpensInlineEditor();
+    void uat_ann_101_emptyTextDropIsRemovedOnFocusOut();
 
 private:
     QTemporaryDir m_scratch;
@@ -856,6 +859,116 @@ void TestUatSearchAndMarkup::uat_ann_082_textCentricToolsDisabledOnPlainImage() 
              "Redact must remain available on a plain image");
     QVERIFY2(rect->isEnabled(),
              "Rectangle (and other shape tools) remain available on images");
+}
+
+// UAT-ANN-100 — Dropping a Text annotation no longer pops a modal
+// QInputDialog. Instead, an inline child widget (a QPlainTextEdit
+// inside a frame) is focused at the placement rect so the user types
+// directly into the document.
+void TestUatSearchAndMarkup::uat_ann_100_textDropOpensInlineEditor() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_100.pdf")),
+        QStringLiteral("fixture"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto* dv = mw->findChild<DocumentView*>();
+    QVERIFY(dv);
+    AnnotationStore* store = dv->currentDocument()->annotations();
+    QVERIFY(store);
+    const int before = store->count();
+
+    auto* markup = mw->findChild<MarkupToolbar*>();
+    QVERIFY(markup);
+    QAction* textAction = findToolAction(markup, QStringLiteral("Text"));
+    QVERIFY(textAction);
+    textAction->setChecked(true);
+    QApplication::processEvents();
+
+    auto* overlay = mw->findChild<AnnotationOverlay*>();
+    QVERIFY(overlay);
+
+    // Snapshot the QMessageBox/QInputDialog count so we can assert
+    // none appeared.
+    auto modalCount = []() {
+        int n = 0;
+        for (auto* w : QApplication::topLevelWidgets()) {
+            if (w->inherits("QDialog") || w->inherits("QMessageBox")) ++n;
+        }
+        return n;
+    };
+    const int modalsBefore = modalCount();
+
+    dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
+
+    // The drop should have:
+    //   1. added a placeholder annotation (count + 1)
+    //   2. NOT spawned a modal dialog (no QInputDialog)
+    //   3. created an inline editor child of the overlay
+    QCOMPARE(store->count(), before + 1);
+    QCOMPARE(modalCount(), modalsBefore);
+    auto* editor = overlay->findChild<QPlainTextEdit*>();
+    QVERIFY2(editor, "Expected an inline QPlainTextEdit anchored at the drop");
+}
+
+// UAT-ANN-101 — A Text drop with no typing must not leave a stamp on
+// the page. Closing the editor (focus out) without typing removes the
+// placeholder annotation.
+void TestUatSearchAndMarkup::uat_ann_101_emptyTextDropIsRemovedOnFocusOut() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_101.pdf")),
+        QStringLiteral("fixture"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto* dv = mw->findChild<DocumentView*>();
+    QVERIFY(dv);
+    AnnotationStore* store = dv->currentDocument()->annotations();
+    QVERIFY(store);
+    const int before = store->count();
+
+    auto* markup = mw->findChild<MarkupToolbar*>();
+    QVERIFY(markup);
+    QAction* textAction = findToolAction(markup, QStringLiteral("Text"));
+    QVERIFY(textAction);
+    textAction->setChecked(true);
+    QApplication::processEvents();
+
+    auto* overlay = mw->findChild<AnnotationOverlay*>();
+    QVERIFY(overlay);
+    dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
+
+    QCOMPARE(store->count(), before + 1);
+    auto* editor = overlay->findChild<QPlainTextEdit*>();
+    QVERIFY(editor);
+
+    // Send an Escape — the eventFilter discards a fresh empty
+    // annotation so the user is not left with an invisible Text
+    // stamp on the page.
+    sendKey(editor, Qt::Key_Escape);
+    QApplication::processEvents();
+
+    QVERIFY2(store->count() == before,
+             "An empty Text drop cancelled with Escape must not leave "
+             "an annotation behind");
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG
