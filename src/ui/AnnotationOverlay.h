@@ -68,6 +68,12 @@ public:
         QRectF docRect, QSize outPixels, int page)>;
     void setSourceSampler(SourceSampler fn);
 
+    // The id of the currently-selected annotation (0 = none). Public
+    // so MainWindow can wire keyboard shortcuts (Delete, arrows) and
+    // future Inspector restyle. Tests use this to verify selection
+    // happened without needing access to private state.
+    int selectedAnnotationId() const { return m_selectedAnnotationId; }
+
 signals:
     void annotationCommitted(int id);
 
@@ -77,6 +83,7 @@ protected:
     void mouseMoveEvent(QMouseEvent* event) override;
     void mouseReleaseEvent(QMouseEvent* event) override;
     void mouseDoubleClickEvent(QMouseEvent* event) override;
+    void keyPressEvent(QKeyEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
     bool eventFilter(QObject* obj, QEvent* event) override;
 
@@ -86,6 +93,10 @@ private:
     int pageAt(const QPointF& viewPt) const;
     int hitTest(const QPointF& viewPt) const;
     void openInlineEditor(int annotationId);
+    // Translate the bounds of the selected annotation by `dx`, `dy`
+    // doc-space points. No-op when nothing is selected. Emits the
+    // store's changed() signal so undo / dirty propagate normally.
+    void nudgeSelected(double dx, double dy);
 
     QPointer<AnnotationStore> m_store;
     AnnotationTool m_tool = AnnotationTool::None;
@@ -123,6 +134,17 @@ private:
     // remove the placeholder rather than leaving an empty stamp on
     // the page; on commit-with-empty-text we likewise delete it.
     bool m_inlineEditorIsNew = false;
+
+    // Annotation-editing selection state. m_selectedAnnotationId is
+    // the persistent "this is the active shape" pointer (0 = none).
+    // m_movingSelected and m_moveStartDoc cover the drag-to-move
+    // gesture: clicking on an already-selected annotation begins a
+    // move; subsequent mouse-move events translate its bounds; the
+    // mouse-release commits the new position to the store.
+    int m_selectedAnnotationId = 0;
+    bool m_movingSelected = false;
+    QPointF m_moveStartDoc;
+    QRectF m_moveOriginalBounds;
 };
 
 }  // namespace trailer

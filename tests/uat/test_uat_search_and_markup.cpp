@@ -194,6 +194,9 @@ private slots:
     void uat_ann_100_textDropOpensInlineEditor();
     void uat_ann_101_emptyTextDropIsRemovedOnFocusOut();
     void uat_ann_110_annotationsSurviveSaveReopen();
+    void uat_ann_120_clickSelectsExistingAnnotation();
+    void uat_ann_121_deleteRemovesSelectedAnnotation();
+    void uat_ann_122_arrowKeyNudgesSelectedAnnotation();
 
 private:
     QTemporaryDir m_scratch;
@@ -1045,6 +1048,143 @@ void TestUatSearchAndMarkup::uat_ann_110_annotationsSurviveSaveReopen() {
     }
     QVERIFY2(hasRect,
              "Restored annotation should be of type Rectangle");
+}
+
+namespace {
+
+// Helper: create a window with a PDF, draw a rectangle annotation
+// at viewport coordinates, return (mw, overlay, store, drawnId).
+struct AnnEditingFixture {
+    MainWindow* mw = nullptr;
+    AnnotationOverlay* overlay = nullptr;
+    AnnotationStore* store = nullptr;
+    int drawnId = 0;
+};
+
+AnnEditingFixture buildAnnEditingFixture(QTemporaryDir& scratch,
+                                         const QString& tag) {
+    AnnEditingFixture f;
+    const QString pdfPath = writePdfWithKeyword(
+        scratch.filePath(QStringLiteral("uat_ann_%1.pdf").arg(tag)),
+        QStringLiteral("fixture"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    if (!app) return f;
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    f.mw = nullptr;
+    for (auto* w : QApplication::topLevelWidgets()) {
+        if (auto* m = qobject_cast<MainWindow*>(w)) f.mw = m;
+    }
+    if (!f.mw) return f;
+    f.mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto* dv = f.mw->findChild<DocumentView*>();
+    if (!dv) return f;
+    f.store = dv->currentDocument()->annotations();
+    if (!f.store) return f;
+
+    auto* markup = f.mw->findChild<MarkupToolbar*>();
+    if (!markup) return f;
+    QAction* rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
+    if (!rectAction) return f;
+    rectAction->setChecked(true);
+    QApplication::processEvents();
+
+    f.overlay = f.mw->findChild<AnnotationOverlay*>();
+    if (!f.overlay) return f;
+    dragOnOverlay(f.overlay, QPoint(200, 250), QPoint(320, 340));
+    if (f.store->count() == 0) return f;
+    f.drawnId = f.store->annotations().back().id;
+
+    // Switch back to Select tool so subsequent clicks select rather
+    // than draw new rectangles.
+    QAction* selectAction = findToolAction(markup, QStringLiteral("Select"));
+    if (selectAction) {
+        selectAction->setChecked(true);
+        QApplication::processEvents();
+    }
+    return f;
+}
+
+}  // namespace
+
+// UAT-ANN-120 — Click on an existing annotation while the Select
+// tool is active selects it. The overlay reports the selected id;
+// the dashed selection ring around it is a visual affordance the
+// user sees but the test asserts on the data layer instead.
+void TestUatSearchAndMarkup::uat_ann_120_clickSelectsExistingAnnotation() {
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch,
+                                                  QStringLiteral("120"));
+    QVERIFY(f.overlay);
+    QVERIFY(f.drawnId != 0);
+    QCOMPARE(f.overlay->selectedAnnotationId(), 0);
+
+    // Click somewhere inside the rectangle's view-space bounds. The
+    // drag we used to draw it ran from (200,250) to (320,340) in
+    // view coords, so (260,295) is well inside.
+    sendMouse(f.overlay, QEvent::MouseButtonPress,
+              QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease,
+              QPoint(260, 295), Qt::LeftButton);
+    QApplication::processEvents();
+
+    QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
+}
+
+// UAT-ANN-121 — Delete on a selected annotation removes it. The
+// store's count goes back to where it was before the draw.
+void TestUatSearchAndMarkup::uat_ann_121_deleteRemovesSelectedAnnotation() {
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch,
+                                                  QStringLiteral("121"));
+    QVERIFY(f.overlay);
+    QVERIFY(f.drawnId != 0);
+    QCOMPARE(f.store->count(), 1);
+
+    // Click to select.
+    sendMouse(f.overlay, QEvent::MouseButtonPress,
+              QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease,
+              QPoint(260, 295), Qt::LeftButton);
+    QApplication::processEvents();
+    QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
+
+    // Delete key on the focused overlay removes it.
+    sendKey(f.overlay, Qt::Key_Delete);
+    QApplication::processEvents();
+
+    QCOMPARE(f.store->count(), 0);
+    QCOMPARE(f.overlay->selectedAnnotationId(), 0);
+}
+
+// UAT-ANN-122 — Arrow keys nudge the selected annotation by 1pt
+// (Shift = 10pt) without rebuilding it. The bounds shift; the id
+// stays the same.
+void TestUatSearchAndMarkup::uat_ann_122_arrowKeyNudgesSelectedAnnotation() {
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch,
+                                                  QStringLiteral("122"));
+    QVERIFY(f.overlay);
+    QVERIFY(f.drawnId != 0);
+
+    sendMouse(f.overlay, QEvent::MouseButtonPress,
+              QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease,
+              QPoint(260, 295), Qt::LeftButton);
+    QApplication::processEvents();
+    QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
+
+    const QRectF before = f.store->find(f.drawnId)->bounds;
+    sendKey(f.overlay, Qt::Key_Right);
+    QApplication::processEvents();
+    const QRectF after = f.store->find(f.drawnId)->bounds;
+
+    QVERIFY2(after.x() > before.x(),
+             "Right arrow should shift the bounds rightward in doc space");
+    // The id is unchanged: nudging is an in-place update, not a
+    // delete+add.
+    QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG

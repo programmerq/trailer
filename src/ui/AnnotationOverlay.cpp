@@ -24,6 +24,12 @@ AnnotationOverlay::AnnotationOverlay(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_TransparentForMouseEvents, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
     setMouseTracking(true);
+    // ClickFocus makes the overlay accept keyboard focus when the
+    // user clicks on an annotation. Without this, Delete / arrow
+    // nudge events would never reach keyPressEvent because focus
+    // would have stayed on whatever the previous widget was (PDF
+    // viewport, sidebar, etc.).
+    setFocusPolicy(Qt::ClickFocus);
     m_docToView  = [](QPointF p, int /*page*/) { return p; };
     m_viewToDoc  = [](QPointF p, int /*page*/) { return p; };
     m_pageAtView = [this](QPointF) { return m_page; };
@@ -333,6 +339,24 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
         drawOne(a);
     }
 
+    // Selection affordance for the active annotation: a thin blue
+    // dashed rectangle just outside the bounds. Drawn on top of the
+    // shape so it sits above any fill / stroke. Visible whenever an
+    // annotation is selected, regardless of the active tool — the
+    // user can always see what would receive Delete or arrow nudges.
+    if (m_selectedAnnotationId != 0 && m_store) {
+        if (const Annotation* sel = m_store->find(m_selectedAnnotationId)) {
+            const QRectF view = docRectToView(sel->bounds, sel->page);
+            const QRectF inflated = view.adjusted(-3, -3, 3, 3);
+            QPen pen(QColor(60, 120, 220, 220));
+            pen.setWidth(1);
+            pen.setStyle(Qt::DashLine);
+            p.setPen(pen);
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(inflated);
+        }
+    }
+
     if (m_tool == AnnotationTool::Select && !m_pendingSelection.empty()) {
         QColor selFill(80, 140, 220, 110);
         for (const QRectF& r : m_pendingSelection) {
@@ -441,7 +465,39 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent* event) {
         event->ignore();
         return;
     }
+    // Select-tool press has two behaviours depending on what the user
+    // clicked: hitting an existing annotation selects (and may begin
+    // a move drag) it; hitting empty space clears any selection and
+    // falls through to text-selection. Selection is sticky between
+    // clicks until the user clicks empty space or invokes Esc /
+    // Delete.
     if (m_tool == AnnotationTool::Select) {
+        const int hitId = hitTest(event->position());
+        if (hitId != 0) {
+            const bool wasAlreadySelected = (m_selectedAnnotationId == hitId);
+            m_selectedAnnotationId = hitId;
+            m_pendingSelection.clear();
+            if (wasAlreadySelected && m_store) {
+                if (const Annotation* a = m_store->find(hitId)) {
+                    // Begin a move-drag: track the press point and
+                    // the original bounds so mouseMoveEvent can
+                    // translate without accumulating drift.
+                    m_movingSelected = true;
+                    m_dragPage = a->page;
+                    m_moveStartDoc = toDoc(event->position(), a->page);
+                    m_moveOriginalBounds = a->bounds;
+                }
+            }
+            setFocus(Qt::MouseFocusReason);  // accept Delete / arrow keys
+            update();
+            return;
+        }
+        // Empty-space click: clear any annotation selection and let
+        // the text-selection drag below run.
+        if (m_selectedAnnotationId != 0) {
+            m_selectedAnnotationId = 0;
+            update();
+        }
         m_pendingSelection.clear();
     }
     m_dragPage = pageAt(event->position());
@@ -456,6 +512,27 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent* event) {
 }
 
 void AnnotationOverlay::mouseMoveEvent(QMouseEvent* event) {
+    // Move-drag for the selected annotation runs alongside the
+    // shape-creation drag tracked by m_dragging. We translate the
+    // annotation's bounds in document space and emit an in-place
+    // update; the store's changed() signal repaints automatically.
+    if (m_movingSelected && m_store && m_selectedAnnotationId != 0) {
+        const QPointF here = toDoc(event->position(), m_dragPage);
+        const QPointF delta = here - m_moveStartDoc;
+        if (const Annotation* a = m_store->find(m_selectedAnnotationId)) {
+            Annotation updated = *a;
+            updated.bounds = m_moveOriginalBounds.translated(delta);
+            // Translate auxiliary point lists too (Line/Arrow
+            // endpoints, Ink polyline) so moving doesn't snap back
+            // to the original anchors.
+            for (QPointF& p : updated.points) {
+                p += delta;
+            }
+            m_store->update(updated);
+        }
+        update();
+        return;
+    }
     if (!m_dragging) return;
     m_dragCurrentDoc = toDoc(event->position(), m_dragPage);
     if (m_tool == AnnotationTool::Ink) {
@@ -465,7 +542,17 @@ void AnnotationOverlay::mouseMoveEvent(QMouseEvent* event) {
 }
 
 void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
-    if (!m_dragging || event->button() != Qt::LeftButton) return;
+    if (event->button() != Qt::LeftButton) return;
+    // End-of-move bookkeeping: the bounds were updated incrementally
+    // in mouseMoveEvent; release just clears the drag state. The
+    // already-emitted store changed() signals took care of paint
+    // and dirty propagation.
+    if (m_movingSelected) {
+        m_movingSelected = false;
+        update();
+        return;
+    }
+    if (!m_dragging) return;
     m_dragging = false;
     const QPointF end = toDoc(event->position(), m_dragPage);
 
@@ -729,6 +816,48 @@ void AnnotationOverlay::mouseDoubleClickEvent(QMouseEvent* event) {
         return;
     }
     openInlineEditor(id);
+}
+
+void AnnotationOverlay::keyPressEvent(QKeyEvent* event) {
+    if (m_selectedAnnotationId == 0 || !m_store) {
+        event->ignore();
+        return;
+    }
+    // Delete / Backspace removes the selected annotation. The
+    // store's changed() signal repaints automatically.
+    if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
+        m_store->remove(m_selectedAnnotationId);
+        m_selectedAnnotationId = 0;
+        update();
+        return;
+    }
+    // Arrow keys nudge by 1 doc-space point (Shift = 10 pt). This
+    // is the keyboard equivalent of the drag-to-move gesture and
+    // gives the user precise positioning without touching the
+    // mouse.
+    const double step = (event->modifiers() & Qt::ShiftModifier) ? 10.0 : 1.0;
+    switch (event->key()) {
+        case Qt::Key_Left:  nudgeSelected(-step, 0.0); return;
+        case Qt::Key_Right: nudgeSelected(+step, 0.0); return;
+        case Qt::Key_Up:    nudgeSelected(0.0, -step); return;
+        case Qt::Key_Down:  nudgeSelected(0.0, +step); return;
+        default: break;
+    }
+    event->ignore();
+}
+
+void AnnotationOverlay::nudgeSelected(double dx, double dy) {
+    if (m_selectedAnnotationId == 0 || !m_store) return;
+    const Annotation* a = m_store->find(m_selectedAnnotationId);
+    if (!a) return;
+    Annotation updated = *a;
+    updated.bounds.translate(dx, dy);
+    for (QPointF& p : updated.points) {
+        p.rx() += dx;
+        p.ry() += dy;
+    }
+    m_store->update(updated);
+    update();
 }
 
 void AnnotationOverlay::contextMenuEvent(QContextMenuEvent* event) {
