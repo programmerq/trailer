@@ -79,16 +79,18 @@ rearranged.
   defaults to `new_window`; `openFiles({a, b, c})` spawns three windows.
   `DocumentView` sets `tabBarAutoHide` so single-doc windows show no tab
   strip. Tabs remain available as an opt-in via `open_files_in = "new_tab"`.
-- **Still to do: thumbnail-bar handles multi-item sets.** When the user
-  opens several single-page items together (e.g. a batch of images),
-  the nicer UX is one window whose sidebar thumbnail bar navigates
-  between them, not N independent windows. Needs:
-  - `ThumbnailModel` gains a multi-document mode (today it wraps one
-    `IDocument` and renders `pageCount()` rows).
-  - `openFiles()` detects the "batch of single-page items" case and
-    routes all of them into one window.
-  - A window-level "document list" panel in `Sidebar` that switches
-    the active `IDocument` the way tabs used to.
+- **Image-batch consolidation is partial.** `Application::openFiles`
+  now detects "all paths are images" and routes them into one window
+  so they share the QTabWidget tab strip — the user can flip through
+  them without arranging multiple frames. But the original ask was
+  "use the thumbnail bar for moving around," and the multi-document
+  ThumbnailModel mode is still TODO:
+  - `ThumbnailModel` is currently 1:1 with one `IDocument`. A
+    multi-doc mode would let the sidebar render "1 thumbnail per
+    document" instead of "1 thumbnail per page of one document."
+  - A window-level "document list" panel in `Sidebar` could replace
+    the tab strip for navigation. (Tabs work, the user feels the
+    strip is too clicky for a 5-photo batch.)
 - Revisit whether `MainWindow`'s `QTabWidget` central widget should be
   replaced with a plain `QStackedWidget` once the tab codepath has no
   remaining users. The `QTabWidget` + `tabBarAutoHide` pair is fine for

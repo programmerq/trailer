@@ -4,7 +4,9 @@
 #include "document/PdfAdapter.h"
 #include "ui/MainWindow.h"
 
+#include <QFileInfo>
 #include <QFileOpenEvent>
+#include <QSet>
 
 namespace trailer {
 
@@ -59,22 +61,57 @@ void Application::openFiles(const QStringList& paths) {
         return nullptr;
     };
 
+    // Heuristic from the 2026-04-24 HITL feedback: "if there are
+    // multiple single-page files open, like multiple images opened
+    // together, we'll use the thumbnail bar for moving around."
+    // The full thumbnail-bar mode is a bigger refactor, but the
+    // first half of the request — keep them in one window — is
+    // already supported by the QTabWidget central widget. When the
+    // user opens a batch of images, route them all into one fresh
+    // window so they share a tab strip rather than spawning N
+    // separate frames.
+    auto isImageBatch = [&paths]() -> bool {
+        if (paths.size() < 2) return false;
+        static const QSet<QString> imageExts = {
+            QStringLiteral("png"), QStringLiteral("jpg"),
+            QStringLiteral("jpeg"), QStringLiteral("bmp"),
+            QStringLiteral("tif"), QStringLiteral("tiff"),
+            QStringLiteral("webp"), QStringLiteral("gif"),
+            QStringLiteral("heic"), QStringLiteral("heif"),
+        };
+        for (const QString& p : paths) {
+            const QString ext = QFileInfo(p).suffix().toLower();
+            if (!imageExts.contains(ext)) return false;
+        }
+        return true;
+    };
+    const bool batchedImages =
+        mode == OpenFilesIn::NewWindow && isImageBatch();
+    MainWindow* batchTarget = batchedImages ? ensureFreshWindow() : nullptr;
+
     for (const QString& path : paths) {
         auto doc = m_registry.open(path);
 
         MainWindow* target = nullptr;
-        switch (mode) {
-            case OpenFilesIn::NewWindow:
-                // One window per file. Even when `paths` has multiple
-                // entries we spawn a separate window for each so the
-                // user can arrange them independently.
-                target = ensureFreshWindow();
-                break;
-            case OpenFilesIn::SameWindow:
-            case OpenFilesIn::NewTab:
-                target = firstExistingWindow();
-                if (!target) target = ensureWindow();
-                break;
+        if (batchTarget) {
+            // All images of this batch share one window so the user
+            // can flip through them via the tab strip without
+            // arranging multiple frames manually.
+            target = batchTarget;
+        } else {
+            switch (mode) {
+                case OpenFilesIn::NewWindow:
+                    // One window per file. Even when `paths` has
+                    // multiple entries we spawn a separate window for
+                    // each so the user can arrange them independently.
+                    target = ensureFreshWindow();
+                    break;
+                case OpenFilesIn::SameWindow:
+                case OpenFilesIn::NewTab:
+                    target = firstExistingWindow();
+                    if (!target) target = ensureWindow();
+                    break;
+            }
         }
 
         target->addDocument(std::move(doc));

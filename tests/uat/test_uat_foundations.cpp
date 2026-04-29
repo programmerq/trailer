@@ -19,6 +19,7 @@
 #include <QMenuBar>
 #include <QPdfWriter>
 #include <QPageSize>
+#include <QImage>
 #include <QPainter>
 #include <QStatusBar>
 #include <QTabBar>
@@ -81,6 +82,7 @@ private slots:
     void uat_fnd_002_launchOpensFileInWindow();
     void uat_fnd_003_singleDocumentHidesTabBar();
     void uat_fnd_004_openingMultipleFilesSpawnsMultipleWindows();
+    void uat_fnd_005_imageBatchSharesOneWindow();
     void uat_fnd_010_menuStructure();
     void uat_fnd_016_toggleSidebar();
     void uat_fnd_020_flashErrorRoutesToStatusBarNotModal();
@@ -222,6 +224,48 @@ void TestUatFoundations::
         }
     }
     QCOMPARE(spawned, 3);
+}
+
+// UAT-FND-005 — A batch of images opened together should share one
+// window (the QTabWidget central shows tabs when count > 1) so the
+// user can flip through them without arranging multiple frames.
+// PDF batches still spawn separate windows because PDFs are
+// typically multi-page documents that warrant their own frame.
+void TestUatFoundations::uat_fnd_005_imageBatchSharesOneWindow() {
+    QVERIFY(m_scratch.isValid());
+    auto writePng = [this](const QString& name) {
+        const QString path = m_scratch.filePath(name);
+        QImage img(80, 60, QImage::Format_RGB32);
+        img.fill(Qt::white);
+        img.save(path, "PNG");
+        return path;
+    };
+    const QString p1 = writePng(QStringLiteral("uat_fnd_005_a.png"));
+    const QString p2 = writePng(QStringLiteral("uat_fnd_005_b.png"));
+    const QString p3 = writePng(QStringLiteral("uat_fnd_005_c.png"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+
+    int baselineWindows = 0;
+    for (auto* w : QApplication::topLevelWidgets()) {
+        if (qobject_cast<MainWindow*>(w)) ++baselineWindows;
+    }
+    QCOMPARE(baselineWindows, 0);
+
+    app->openFiles({p1, p2, p3});
+    QApplication::processEvents();
+
+    int windowCount = 0;
+    int totalDocs = 0;
+    for (auto* w : QApplication::topLevelWidgets()) {
+        if (auto* mw = qobject_cast<MainWindow*>(w)) {
+            ++windowCount;
+            totalDocs += mw->documentCount();
+        }
+    }
+    QCOMPARE(windowCount, 1);
+    QCOMPARE(totalDocs, 3);
 }
 
 void TestUatFoundations::uat_fnd_010_menuStructure() {
