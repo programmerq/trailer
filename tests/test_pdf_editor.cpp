@@ -158,6 +158,10 @@ private slots:
     void cropPageRejectsOversizedMargins();
     void annotationRoundTripPreservesShapes();
     void annotationRoundTripPreservesMarkup();
+    void annotationRoundTripPreservesInk();
+    void annotationRoundTripPreservesTextAndSpeechBubble();
+    void annotationRoundTripPreservesHighlightShape();
+    void annotationRoundTripPreservesUnderlineAndStrikeOut();
     void saveWithPasswordGatesLoad();
     void saveWithPasswordEmptyOwnerUsesUserPassword();
     void unlockRecoversLoadedButLockedEditor();
@@ -420,6 +424,140 @@ void TestPdfEditor::annotationRoundTripPreservesMarkup() {
     QCOMPARE(got.size(), size_t{1});
     QCOMPARE(got[0].type, AnnotationType::Highlight);
     QCOMPARE(got[0].quads.size(), size_t{2});
+}
+
+void TestPdfEditor::annotationRoundTripPreservesInk() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+    const QString dst = dir.filePath("ink.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    Annotation ink;
+    ink.page = 0;
+    ink.type = AnnotationType::Ink;
+    ink.bounds = QRectF(40, 50, 120, 90);
+    ink.points = {QPointF(40, 50), QPointF(80, 90), QPointF(160, 140)};
+    ink.style.stroke = QColor(20, 60, 200);
+    ink.style.strokeWidth = 1.5;
+    QVERIFY(editor.writeAnnotations({ink}));
+    QVERIFY(editor.save(dst));
+
+    PdfEditor round;
+    QVERIFY(round.load(dst));
+    const auto got = round.readAnnotations();
+    QCOMPARE(got.size(), size_t{1});
+    QCOMPARE(got[0].type, AnnotationType::Ink);
+    QCOMPARE(got[0].points.size(), size_t{3});
+}
+
+void TestPdfEditor::annotationRoundTripPreservesTextAndSpeechBubble() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+    const QString dst = dir.filePath("text.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    Annotation text;
+    text.page = 0;
+    text.type = AnnotationType::Text;
+    text.bounds = QRectF(100, 100, 200, 40);
+    text.text = QStringLiteral("Hello, world!");
+
+    Annotation bubble;
+    bubble.page = 0;
+    bubble.type = AnnotationType::SpeechBubble;
+    bubble.bounds = QRectF(200, 200, 200, 80);
+    bubble.text = QStringLiteral("Talking head");
+    bubble.points = {QPointF(180, 290)};  // callout tail in doc coords
+
+    QVERIFY(editor.writeAnnotations({text, bubble}));
+    QVERIFY(editor.save(dst));
+
+    PdfEditor round;
+    QVERIFY(round.load(dst));
+    const auto got = round.readAnnotations();
+    QCOMPARE(got.size(), size_t{2});
+    int textCount = 0, bubbleCount = 0;
+    for (const Annotation& a : got) {
+        if (a.type == AnnotationType::Text) {
+            ++textCount;
+            QCOMPARE(a.text, QStringLiteral("Hello, world!"));
+        } else if (a.type == AnnotationType::SpeechBubble) {
+            ++bubbleCount;
+            QCOMPARE(a.text, QStringLiteral("Talking head"));
+            QCOMPARE(a.points.size(), size_t{1});
+        }
+    }
+    QCOMPARE(textCount, 1);
+    QCOMPARE(bubbleCount, 1);
+}
+
+void TestPdfEditor::annotationRoundTripPreservesHighlightShape() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+    const QString dst = dir.filePath("highlight_shape.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    Annotation hs;
+    hs.page = 0;
+    hs.type = AnnotationType::HighlightShape;
+    hs.bounds = QRectF(50, 50, 100, 60);
+    hs.style.stroke = QColor(255, 200, 0);
+    hs.style.fill = QColor(255, 255, 0, 128);  // translucent yellow
+    QVERIFY(editor.writeAnnotations({hs}));
+    QVERIFY(editor.save(dst));
+
+    PdfEditor round;
+    QVERIFY(round.load(dst));
+    const auto got = round.readAnnotations();
+    QCOMPARE(got.size(), size_t{1});
+    QCOMPARE(got[0].type, AnnotationType::HighlightShape);
+    QVERIFY(got[0].style.fill.isValid());
+}
+
+void TestPdfEditor::annotationRoundTripPreservesUnderlineAndStrikeOut() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+    const QString dst = dir.filePath("under_strike.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    Annotation under;
+    under.page = 0;
+    under.type = AnnotationType::Underline;
+    under.bounds = QRectF(20, 40, 200, 20);
+    under.quads = {QRectF(20, 40, 200, 20)};
+
+    Annotation strike;
+    strike.page = 0;
+    strike.type = AnnotationType::StrikeOut;
+    strike.bounds = QRectF(20, 100, 200, 20);
+    strike.quads = {QRectF(20, 100, 200, 20)};
+
+    QVERIFY(editor.writeAnnotations({under, strike}));
+    QVERIFY(editor.save(dst));
+
+    PdfEditor round;
+    QVERIFY(round.load(dst));
+    const auto got = round.readAnnotations();
+    QCOMPARE(got.size(), size_t{2});
+    int underlineCount = 0, strikeCount = 0;
+    for (const Annotation& a : got) {
+        if (a.type == AnnotationType::Underline) ++underlineCount;
+        if (a.type == AnnotationType::StrikeOut) ++strikeCount;
+    }
+    QCOMPARE(underlineCount, 1);
+    QCOMPARE(strikeCount, 1);
 }
 
 // ---------- Encryption (Phase 5) ------------------------------------------

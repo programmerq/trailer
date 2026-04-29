@@ -29,9 +29,18 @@ worked on.
 
 ## Annotations
 
-- **PDF annotation persistence.** Shapes/text/notes drawn over a PDF live
-  only in memory — saving the document does not write them to the file.
-  Phase 4 increment 9 will serialise them as `/Annot` objects via qpdf.
+- **PDF annotation persistence — DONE for the data, /AP gap remains.**
+  The TODO entry that claimed "shapes/text/notes drawn over a PDF live
+  only in memory" was stale: `PdfEditor::writeAnnotations` /
+  `readAnnotations` round-trip 10 annotation subtypes (Rectangle,
+  Ellipse, Line, Arrow, Ink, Text, Note, HighlightShape, SpeechBubble,
+  Highlight, Underline, StrikeOut). Signature flattens into the
+  content stream; Redaction destroys content; ZoomLens has no
+  standard PDF subtype and is intentionally skipped. The remaining
+  gap is **`/AP` appearance streams**: external viewers like Apple
+  Preview may show shapes blank without explicit appearances. Trailer
+  itself reads back via `readAnnotations` and renders via
+  AnnotationOverlay so the in-app view is always correct.
 
 - **PDF multi-page / continuous-mode overlay.** The annotation overlay
   uses the `pageNavigator()->currentPage()` for its page reference and

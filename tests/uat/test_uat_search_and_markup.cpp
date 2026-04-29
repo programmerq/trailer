@@ -193,6 +193,7 @@ private slots:
     void uat_ann_082_textCentricToolsDisabledOnPlainImage();
     void uat_ann_100_textDropOpensInlineEditor();
     void uat_ann_101_emptyTextDropIsRemovedOnFocusOut();
+    void uat_ann_110_annotationsSurviveSaveReopen();
 
 private:
     QTemporaryDir m_scratch;
@@ -969,6 +970,81 @@ void TestUatSearchAndMarkup::uat_ann_101_emptyTextDropIsRemovedOnFocusOut() {
     QVERIFY2(store->count() == before,
              "An empty Text drop cancelled with Escape must not leave "
              "an annotation behind");
+}
+
+// UAT-ANN-110 — End-to-end check that an annotation drawn in the UI
+// survives a save+reopen cycle. PdfEditor's writeAnnotations /
+// readAnnotations round-trip is unit-tested in test_pdf_editor.cpp;
+// this UAT closes the loop at the user-visible level: open → draw →
+// save → close → reopen → annotation is back.
+void TestUatSearchAndMarkup::uat_ann_110_annotationsSurviveSaveReopen() {
+    QVERIFY(m_scratch.isValid());
+    const QString srcPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_110_src.pdf")),
+        QStringLiteral("fixture"));
+    const QString dstPath = m_scratch.filePath(
+        QStringLiteral("uat_ann_110_marked.pdf"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({srcPath});
+    QApplication::processEvents();
+
+    {
+        MainWindow* mw = currentMainWindow();
+        QVERIFY(mw);
+        mw->resize(1100, 750);
+        QApplication::processEvents();
+
+        auto* dv = mw->findChild<DocumentView*>();
+        QVERIFY(dv);
+        IDocument* doc = dv->currentDocument();
+        QVERIFY(doc);
+        AnnotationStore* store = doc->annotations();
+        QVERIFY(store);
+
+        auto* markup = mw->findChild<MarkupToolbar*>();
+        QVERIFY(markup);
+        QAction* rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
+        QVERIFY(rectAction);
+        rectAction->setChecked(true);
+        QApplication::processEvents();
+
+        auto* overlay = mw->findChild<AnnotationOverlay*>();
+        QVERIFY(overlay);
+        dragOnOverlay(overlay, QPoint(150, 200), QPoint(280, 300));
+        QCOMPARE(store->count(), 1);
+
+        // Save to a side path so the source isn't touched.
+        QVERIFY2(doc->save(dstPath),
+                 "Save with annotations must succeed");
+        mw->close();
+        QApplication::processEvents();
+    }
+
+    // Reopen the saved file from scratch and confirm the annotation
+    // survived the write+reload cycle.
+    app->openFiles({dstPath});
+    QApplication::processEvents();
+
+    MainWindow* mw2 = currentMainWindow();
+    QVERIFY(mw2);
+    auto* dv2 = mw2->findChild<DocumentView*>();
+    QVERIFY(dv2);
+    IDocument* doc2 = dv2->currentDocument();
+    QVERIFY(doc2);
+    AnnotationStore* store2 = doc2->annotations();
+    QVERIFY(store2);
+
+    QVERIFY2(store2->count() >= 1,
+             "Saved-and-reopened PDF must restore the rectangle "
+             "annotation drawn in the previous session");
+    bool hasRect = false;
+    for (const auto& a : store2->annotations()) {
+        if (a.type == AnnotationType::Rectangle) hasRect = true;
+    }
+    QVERIFY2(hasRect,
+             "Restored annotation should be of type Rectangle");
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG
