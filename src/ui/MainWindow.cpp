@@ -485,6 +485,13 @@ void MainWindow::buildToolsMenu(QMenu* toolsMenu) {
     m_cropPagesAction = toolsMenu->addAction(tr("&Crop Pages…"));
     connect(m_cropPagesAction, &QAction::triggered, this, &MainWindow::onCropPages);
 
+    // Fill Forms stays at the top level — it's the primary affordance
+    // for working with a fillable PDF and the action that auto-toggles
+    // when an AcroForm is opened. AutoFill (My Card → field matcher)
+    // is a side feature and lives in a Forms submenu so the Tools menu
+    // doesn't crowd the form-filling area with two peers of unequal
+    // importance. My Card management lives next to AutoFill since it's
+    // only relevant if AutoFill is being used.
     m_fillFormsAction = toolsMenu->addAction(tr("&Fill Forms"));
     m_fillFormsAction->setCheckable(true);
     m_fillFormsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
@@ -494,11 +501,12 @@ void MainWindow::buildToolsMenu(QMenu* toolsMenu) {
         }
     });
 
-    m_autoFillFormAction = toolsMenu->addAction(tr("&AutoFill Form"));
+    QMenu* formsSubmenu = toolsMenu->addMenu(tr("&Forms"));
+    m_autoFillFormAction = formsSubmenu->addAction(tr("&AutoFill from My Card"));
     connect(m_autoFillFormAction, &QAction::triggered,
             this, &MainWindow::onAutoFillCurrentForm);
 
-    m_myCardAction = toolsMenu->addAction(tr("My &Card…"));
+    m_myCardAction = formsSubmenu->addAction(tr("My &Card…"));
     connect(m_myCardAction, &QAction::triggered,
             this, &MainWindow::onManageMyCard);
 

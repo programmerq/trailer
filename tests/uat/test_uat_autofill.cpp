@@ -52,17 +52,26 @@ MainWindow* currentMainWindow() {
     return nullptr;
 }
 
-// Walk every menu's actions and return the action whose visible text
-// matches, ignoring "&" accelerator hints. Case-sensitive.
+// Walk every menu's actions (including nested submenus) and return
+// the action whose visible text matches, ignoring "&" accelerator
+// hints. Case-sensitive.
+QAction* findMenuAction(QMenu* menu, const QString& text) {
+    for (QAction* sub : menu->actions()) {
+        QString t = sub->text();
+        t.remove(QLatin1Char('&'));
+        if (t == text) return sub;
+        if (QMenu* nested = sub->menu()) {
+            if (QAction* hit = findMenuAction(nested, text)) return hit;
+        }
+    }
+    return nullptr;
+}
+
 QAction* findMenuAction(MainWindow* mw, const QString& text) {
     for (QAction* a : mw->menuBar()->actions()) {
         QMenu* m = a->menu();
         if (!m) continue;
-        for (QAction* sub : m->actions()) {
-            QString t = sub->text();
-            t.remove(QLatin1Char('&'));
-            if (t == text) return sub;
-        }
+        if (QAction* hit = findMenuAction(m, text)) return hit;
     }
     return nullptr;
 }
@@ -267,7 +276,7 @@ void TestUatAutoFill::uat_af_010_autoFillPopulatesMatchingTextFields() {
     // Also verify the Tools > AutoFill Form action is present and
     // enabled — but don't trigger it, because it pops a modal
     // QMessageBox that blocks the offscreen test.
-    QAction* action = findMenuAction(mw, QStringLiteral("AutoFill Form"));
+    QAction* action = findMenuAction(mw, QStringLiteral("AutoFill from My Card"));
     QVERIFY(action);
     QVERIFY(action->isEnabled());
 
@@ -381,7 +390,7 @@ void TestUatAutoFill::
              "Fill Forms must be auto-enabled on a fillable PDF "
              "(see UAT-FRM-040)");
 
-    QAction* autoFill = findMenuAction(mw, QStringLiteral("AutoFill Form"));
+    QAction* autoFill = findMenuAction(mw, QStringLiteral("AutoFill from My Card"));
     QVERIFY(autoFill);
     QVERIFY(autoFill->isEnabled());
 

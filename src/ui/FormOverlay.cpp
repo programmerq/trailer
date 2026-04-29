@@ -54,6 +54,35 @@ void FormOverlay::setFields(const std::vector<FormField>& fields) {
         w->show();
         m_widgets.emplace_back(ff.id, w);
     }
+    // Tab moves between fields in reading order: page asc, then top of
+    // the page first (PDF y is bottom-left origin so "top" is the
+    // larger y), then left to right. The order m_fields arrived in is
+    // /AcroForm tree order, which is set by the form designer and
+    // often does not match what a human sees scanning the page —
+    // re-sort on visual position. The widgets themselves stay in
+    // m_widgets by id; we only rewire the focus chain.
+    std::vector<std::pair<int, QWidget*>> ordered = m_widgets;
+    auto fieldFor = [this](int id) -> const FormField* {
+        for (const auto& f : m_fields) if (f.id == id) return &f;
+        return nullptr;
+    };
+    std::sort(ordered.begin(), ordered.end(),
+        [&fieldFor](const auto& a, const auto& b) {
+            const FormField* fa = fieldFor(a.first);
+            const FormField* fb = fieldFor(b.first);
+            if (!fa || !fb) return false;
+            if (fa->page != fb->page) return fa->page < fb->page;
+            const double ya = fa->rectPts.center().y();
+            const double yb = fb->rectPts.center().y();
+            // Higher PDF y = higher on the page; sort descending so the
+            // top-most field is first in the tab cycle.
+            if (ya != yb) return ya > yb;
+            return fa->rectPts.center().x() < fb->rectPts.center().x();
+        });
+    for (size_t i = 1; i < ordered.size(); ++i) {
+        QWidget::setTabOrder(ordered[i - 1].second, ordered[i].second);
+    }
+
     relayout();
 }
 
