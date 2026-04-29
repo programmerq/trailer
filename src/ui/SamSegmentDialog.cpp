@@ -6,10 +6,12 @@
 #include <QBoxLayout>
 #include <QColor>
 #include <QDialogButtonBox>
+#include <QFuture>
 #include <QLabel>
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPainter>
+#include <QtConcurrent>
 #include <QPen>
 #include <QPushButton>
 #include <QResizeEvent>
@@ -232,19 +234,48 @@ SamSegmentDialog::SamSegmentDialog(Mode mode, const QImage& source,
     buttonRow->addWidget(box);
     layout->addLayout(buttonRow);
 
-    // Prepare the encoder up-front so the first click is responsive.
-    // This blocks the UI briefly (80-120 ms on CPU); acceptable as a
-    // one-shot setup cost.
-    QApplication::setOverrideCursor(Qt::WaitCursor);
-    const bool prepared = m_session && m_session->prepare(source);
-    QApplication::restoreOverrideCursor();
+    // Prepare the encoder on a worker thread. The dialog still
+    // shows immediately; the canvas is disabled until prepare()
+    // returns so the user can't click before the encoder is
+    // ready. This used to block the UI for 1-2 s on the dialog's
+    // first frame.
+    m_canvas->setEnabled(false);
+    m_hint->setText(tr("Preparing image…"));
+    m_prepareWatcher = new QFutureWatcher<bool>(this);
+    connect(m_prepareWatcher, &QFutureWatcherBase::finished,
+            this, &SamSegmentDialog::onPrepareFinished);
+    SamSession* sess = m_session;
+    QFuture<bool> future = QtConcurrent::run([sess, source]() {
+        return sess && sess->prepare(source);
+    });
+    m_prepareWatcher->setFuture(future);
+}
+
+SamSegmentDialog::~SamSegmentDialog() {
+    // The worker thread holds a pointer into m_session. Wait for it
+    // to finish before the SamSession (owned by MainWindow's slot
+    // stack frame) goes out of scope. Typically no-op because the
+    // user has been clicking around for longer than the encoder
+    // takes; only matters if the user dismisses the dialog within
+    // the first second of opening.
+    if (m_prepareWatcher) {
+        m_prepareWatcher->waitForFinished();
+    }
+}
+
+void SamSegmentDialog::onPrepareFinished() {
+    if (!m_prepareWatcher) return;
+    const bool prepared = m_prepareWatcher->result();
     if (!prepared) {
-        // Disable the whole canvas if we couldn't prepare. We still
-        // show the dialog so the error path has a "Cancel" exit.
         m_canvas->setEnabled(false);
         m_hint->setText(tr("Could not prepare the segmentation model "
                            "for this image. Cancel and try again."));
+        return;
     }
+    m_canvas->setEnabled(true);
+    m_hint->setText(tr(
+        "Click on the object you want to select. Shift-click adds an "
+        "exclusion point. Right-click removes the nearest point."));
 }
 
 void SamSegmentDialog::onClearClicked() {

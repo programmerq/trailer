@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QDialog>
+#include <QFutureWatcher>
 #include <QImage>
 #include <QPoint>
 #include <QPolygon>
@@ -86,9 +87,12 @@ public:
     // Populated when the user clicks OK. Empty in InstantAlpha mode.
     QPolygon resultPolygon() const { return m_polygon; }
 
+    ~SamSegmentDialog() override;
+
 private slots:
     void onPrompted();
     void onClearClicked();
+    void onPrepareFinished();
 
 private:
     void rebuildPreview();
@@ -101,6 +105,13 @@ private:
     QLabel* m_hint = nullptr;
     QPushButton* m_clearButton = nullptr;
     QPushButton* m_okButton = nullptr;
+
+    // Encoder runs on a worker thread so the dialog can show
+    // immediately. Until the watcher reports finished the canvas is
+    // disabled and the hint reads "Preparing image…". The dialog's
+    // destructor waits on this watcher so the worker can't outlive
+    // the SamSession it was given a pointer to.
+    QFutureWatcher<bool>* m_prepareWatcher = nullptr;
 
     QImage m_result;
     QPolygon m_polygon;
