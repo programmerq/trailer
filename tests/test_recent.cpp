@@ -14,6 +14,8 @@ private slots:
     void trimsToMaxEntries();
     void roundTripsToDisk();
     void clearEmptiesList();
+    void viewStateRoundTripsAndRestoresOnLookup();
+    void viewStateUpdateNoOpsForUnknownPath();
 };
 
 namespace {
@@ -90,6 +92,45 @@ void TestRecent::clearEmptiesList() {
     RecentFiles r(dir.filePath("recent.json"));
     r.add(touch(dir, "a.txt"));
     r.clear();
+    QVERIFY(r.entries().isEmpty());
+}
+
+void TestRecent::viewStateRoundTripsAndRestoresOnLookup() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString recentPath = dir.filePath("recent.json");
+    const QString docPath = touch(dir, "doc.pdf");
+
+    {
+        RecentFiles r(recentPath);
+        r.add(docPath);
+        // Simulate the user closing on page 42 with the sidebar
+        // hidden. zoom/scroll fields are intentionally non-zero so
+        // we can confirm the JSON round-trip carries them.
+        r.updateViewState(docPath, /*currentPage=*/42,
+                          /*zoomFactor=*/1.5, /*scrollY=*/120,
+                          /*sidebarVisible=*/false);
+        r.save();
+    }
+
+    RecentFiles reloaded(recentPath);
+    reloaded.load();
+    const RecentEntry e = reloaded.findByPath(docPath);
+    QVERIFY2(!e.path.isEmpty(),
+             "findByPath should locate the entry by canonical path");
+    QCOMPARE(e.currentPage, 42);
+    QCOMPARE(e.zoomFactor, 1.5);
+    QCOMPARE(e.scrollY, 120);
+    QCOMPARE(e.sidebarVisible, false);
+}
+
+void TestRecent::viewStateUpdateNoOpsForUnknownPath() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    RecentFiles r(dir.filePath("recent.json"));
+    // Updating a path that's not in the list must silently do
+    // nothing — closing a never-recented document shouldn't add it.
+    r.updateViewState(dir.filePath("ghost.pdf"), 7, 1.0, 0, true);
     QVERIFY(r.entries().isEmpty());
 }
 

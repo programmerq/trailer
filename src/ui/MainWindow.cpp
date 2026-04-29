@@ -1697,6 +1697,21 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     // their card even without a PDF open.
     m_myCardAction->setEnabled(true);
 
+    // Restore the user's last-known view-state (currently just
+    // currentPage; zoom/scroll/sidebar are tracked in RecentFiles
+    // for future expansion). One-shot per document — switching
+    // tabs after manual navigation must not bounce back to the
+    // saved page.
+    if (doc && !doc->filePath().isEmpty() &&
+        !m_restoredViewStateDocs.contains(doc)) {
+        m_restoredViewStateDocs.insert(doc);
+        const RecentEntry entry =
+            m_app->recentFiles().findByPath(doc->filePath());
+        if (entry.currentPage >= 0 && doc->pageCount() > entry.currentPage) {
+            doc->goToPage(entry.currentPage);
+        }
+    }
+
     // Auto-show the markup toolbar the first time we see a document
     // that supports annotations. Same once-per-doc pattern as the form
     // overlay above — an explicit hide by the user sticks. Documents
@@ -1985,6 +2000,26 @@ void MainWindow::dropEvent(QDropEvent* event) {
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
+    // Capture view-state for every document this window holds so the
+    // user picks up where they left off on next reopen. We do this
+    // before the save-prompt below — even if the user discards
+    // unsaved annotations, the page they were looking at is worth
+    // remembering. Sidebar visibility is per-window, so it gets
+    // the same value for every doc.
+    const bool sidebarVisible = m_sidebar && m_sidebar->isVisible();
+    const int total = m_documentView->documentCount();
+    bool anyCaptured = false;
+    for (int i = 0; i < total; ++i) {
+        IDocument* doc = nullptr;
+        if (!m_documentView->documentAt(i, &doc) || !doc) continue;
+        if (doc->filePath().isEmpty()) continue;
+        m_app->recentFiles().updateViewState(
+            doc->filePath(), doc->currentPage(),
+            /*zoomFactor=*/0.0, /*scrollY=*/0, sidebarVisible);
+        anyCaptured = true;
+    }
+    if (anyCaptured) m_app->recentFiles().save();
+
     // Headless / test environments (QT_QPA_PLATFORM=offscreen) skip
     // the unsaved-changes prompt: there's no human to click through
     // it, and UAT init slots routinely call w->close() to clean up
@@ -2001,7 +2036,6 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     // ask Save / Discard / Cancel. Cancel anywhere aborts the close.
     // The order is current-document-first so the user usually only
     // sees one prompt — the doc they were just looking at.
-    const int total = m_documentView->documentCount();
     std::vector<IDocument*> dirty;
     dirty.reserve(static_cast<size_t>(total));
     if (auto* current = m_documentView->currentDocument()) {

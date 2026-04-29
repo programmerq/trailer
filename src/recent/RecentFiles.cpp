@@ -46,6 +46,16 @@ void RecentFiles::load() {
         entry.displayName = obj.value(QStringLiteral("display_name")).toString();
         entry.openedAt = QDateTime::fromString(
             obj.value(QStringLiteral("opened_at")).toString(), Qt::ISODate);
+        // View-state fields are additive — old recent.json files load
+        // with the defaulted -1 / 0.0 / true values and behave as if
+        // no state was captured.
+        entry.currentPage = obj.value(QStringLiteral("current_page"))
+                                .toInt(-1);
+        entry.zoomFactor = obj.value(QStringLiteral("zoom_factor"))
+                               .toDouble(0.0);
+        entry.scrollY = obj.value(QStringLiteral("scroll_y")).toInt(0);
+        entry.sidebarVisible =
+            obj.value(QStringLiteral("sidebar_visible")).toBool(true);
         if (!entry.path.isEmpty()) {
             m_entries.append(entry);
         }
@@ -59,6 +69,21 @@ void RecentFiles::save() const {
         obj.insert(QStringLiteral("path"), entry.path);
         obj.insert(QStringLiteral("display_name"), entry.displayName);
         obj.insert(QStringLiteral("opened_at"), entry.openedAt.toString(Qt::ISODate));
+        // Skip emitting unset view-state fields so the JSON stays
+        // small for entries the user has never re-opened. Sidebar
+        // state is the exception: false is meaningful (user
+        // explicitly hid the sidebar) and the default (true) is
+        // also a real value, so always emit.
+        if (entry.currentPage >= 0) {
+            obj.insert(QStringLiteral("current_page"), entry.currentPage);
+        }
+        if (entry.zoomFactor > 0.0) {
+            obj.insert(QStringLiteral("zoom_factor"), entry.zoomFactor);
+        }
+        if (entry.scrollY != 0) {
+            obj.insert(QStringLiteral("scroll_y"), entry.scrollY);
+        }
+        obj.insert(QStringLiteral("sidebar_visible"), entry.sidebarVisible);
         arr.append(obj);
     }
 
@@ -95,6 +120,33 @@ void RecentFiles::add(const QString& path) {
 
 void RecentFiles::clear() {
     m_entries.clear();
+}
+
+void RecentFiles::updateViewState(const QString& path, int currentPage,
+                                  double zoomFactor, int scrollY,
+                                  bool sidebarVisible) {
+    if (path.isEmpty()) return;
+    const QString canonical = canonicalize(path);
+    for (RecentEntry& entry : m_entries) {
+        if (canonicalize(entry.path) == canonical) {
+            entry.currentPage = currentPage;
+            entry.zoomFactor = zoomFactor;
+            entry.scrollY = scrollY;
+            entry.sidebarVisible = sidebarVisible;
+            return;
+        }
+    }
+}
+
+RecentEntry RecentFiles::findByPath(const QString& path) const {
+    if (path.isEmpty()) return {};
+    const QString canonical = canonicalize(path);
+    for (const RecentEntry& entry : m_entries) {
+        if (canonicalize(entry.path) == canonical) {
+            return entry;
+        }
+    }
+    return {};
 }
 
 void RecentFiles::setMaxEntries(int value) {

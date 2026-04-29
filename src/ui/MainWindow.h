@@ -171,6 +171,10 @@ private:
     // that supports annotations becomes current, we show it. After that,
     // the user's explicit hide/show choice is sticky for that document.
     QSet<const IDocument*> m_autoShownMarkupDocs;
+    // Documents whose recent-file view state has already been
+    // restored on focus. Tracked per-document so a tab switch
+    // doesn't bounce the user back to the saved page mid-session.
+    QSet<const IDocument*> m_restoredViewStateDocs;
     QAction* m_autoFillFormAction = nullptr;
     QAction* m_myCardAction = nullptr;
     QAction* m_manageSignaturesAction = nullptr;
