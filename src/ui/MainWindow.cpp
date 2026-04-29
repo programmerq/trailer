@@ -10,6 +10,7 @@
 #include "SignaturesDialog.h"
 #include "cards/CardStore.h"
 #include "cards/MyCard.h"
+#include "document/PdfAdapter.h"
 #include "document/PdfEditor.h"  // FormField definition for AutoFill
 #include "SearchBar.h"
 #include "Sidebar.h"
@@ -1391,11 +1392,72 @@ void MainWindow::onSave() {
         onSaveAs();
         return;
     }
-    if (!doc->save()) {
-        flashError(tr("Save failed — could not write to %1").arg(doc->filePath()));
+    saveDocumentAsync(doc, doc->filePath());
+}
+
+void MainWindow::saveDocumentAsync(IDocument* doc, const QString& targetPath) {
+    if (!doc) return;
+
+    // Image saves are fast (QImage::save encodes a frame). Synchronous
+    // is fine — wrapping it adds latency without benefit. PDF saves
+    // can be 5-15 s on heavy redactions, so they go through the
+    // two-phase split so the UI thread stays responsive.
+    auto* pdfDoc = dynamic_cast<PdfDocument*>(doc);
+    if (!pdfDoc) {
+        if (!doc->save(targetPath)) {
+            flashError(tr("Save failed — could not write to %1").arg(targetPath));
+            return;
+        }
+        m_app->settings().setLastSaveDir(QFileInfo(targetPath).absolutePath());
+        m_app->settings().save();
+        updateTitleForDocument(doc);
+        flashSuccess(tr("Saved."));
         return;
     }
-    updateTitleForDocument(doc);
+
+    auto* progress = new QProgressDialog(
+        tr("Saving…"), tr("Cancel"), 0, 0, this);
+    progress->setWindowModality(Qt::WindowModal);
+    progress->setMinimumDuration(0);
+    progress->setAutoClose(false);
+    progress->setAutoReset(false);
+
+    using SaveResult = std::optional<PdfDocument::SaveContext>;
+    auto* watcher = new QFutureWatcher<SaveResult>(this);
+    connect(progress, &QProgressDialog::canceled, watcher,
+            &QFutureWatcherBase::cancel);
+    connect(watcher, &QFutureWatcher<SaveResult>::finished, this,
+            [this, watcher, progress, pdfDoc, doc, targetPath]() {
+                const bool wasCanceled = progress->wasCanceled();
+                progress->close();
+                progress->deleteLater();
+                SaveResult result;
+                if (!wasCanceled) result = watcher->result();
+                watcher->deleteLater();
+                if (wasCanceled) return;
+                if (!result) {
+                    flashError(tr("Save failed — could not write to %1")
+                                   .arg(targetPath));
+                    return;
+                }
+                // Worker phase succeeded; commit on the UI thread.
+                if (!pdfDoc->saveCommitOnUi(*result)) {
+                    flashError(tr("Save failed — could not finalise %1")
+                                   .arg(targetPath));
+                    return;
+                }
+                m_app->settings().setLastSaveDir(
+                    QFileInfo(targetPath).absolutePath());
+                m_app->settings().save();
+                updateTitleForDocument(doc);
+                flashSuccess(tr("Saved."));
+            });
+
+    QFuture<SaveResult> future = QtConcurrent::run(
+        [pdfDoc, targetPath]() -> SaveResult {
+            return pdfDoc->saveBeginQpdfPhase(targetPath);
+        });
+    watcher->setFuture(future);
 }
 
 void MainWindow::onSaveAs() {
@@ -1456,14 +1518,10 @@ void MainWindow::onSaveAs() {
     const QString path = QFileDialog::getSaveFileName(
         this, tr("Save As"), suggested, filter);
     if (path.isEmpty()) return;
-    if (!doc->save(path)) {
-        flashError(tr("Save failed — could not write to %1").arg(path));
-        return;
-    }
-    // Remember where the user landed for next time.
-    m_app->settings().setLastSaveDir(QFileInfo(path).absolutePath());
-    m_app->settings().save();
-    updateTitleForDocument(doc);
+    // saveDocumentAsync handles the success path: status bar, title
+    // refresh, lastSaveDir bookkeeping. PDFs go through the two-
+    // phase worker; images stay synchronous (fast).
+    saveDocumentAsync(doc, path);
 }
 
 void MainWindow::onExportPasswordProtected() {

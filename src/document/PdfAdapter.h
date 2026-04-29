@@ -99,6 +99,33 @@ public:
                    double rightPts, double bottomPts) override;
     bool save(const QString& newPath = {}) override;
 
+    // Two-phase save for off-thread execution. The first phase
+    // (saveBeginQpdfPhase) does only thread-safe qpdf work and may
+    // be called from a worker thread. The second phase
+    // (saveCommitOnUi) must run on the UI thread because it touches
+    // QPdfDocument and QPdfView. MainWindow uses these via
+    // QtConcurrent::run + QFutureWatcher to keep the UI responsive
+    // during multi-second saves on large or heavily-redacted PDFs.
+    // The synchronous save() above is kept for tests and for
+    // documents where blocking on save is acceptable; both APIs are
+    // exclusive (do not interleave calls).
+    struct SaveContext {
+        QString writePath;     // where the worker wrote the new bytes
+        QString targetPath;    // where they should end up (== writePath
+                               // for non-overwrite, != for overwrite)
+        bool sameFile = false;
+    };
+    // Computes the SaveContext (worker-safe), runs all qpdf
+    // operations, and writes to writePath. Returns nullopt on
+    // failure. Safe to call from any thread that is not interleaved
+    // with another save on this document.
+    std::optional<SaveContext> saveBeginQpdfPhase(const QString& newPath);
+    // Publishes a successful saveBeginQpdfPhase result: rename the
+    // temp file (for same-file overwrite), reload QPdfDocument and
+    // re-attach the view / search model. UI-thread only. Returns
+    // true on success.
+    bool saveCommitOnUi(const SaveContext& ctx);
+
     AnnotationStore* annotations() override { return &m_annotations; }
     void setAnnotationTool(AnnotationTool tool) override;
     void setAnnotationStyle(const AnnotationStyle& style) override;

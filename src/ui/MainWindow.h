@@ -115,6 +115,11 @@ private:
     bool confirmFirstUse(const QString& key, const QString& title,
                          const QString& body,
                          const QString& acceptText = QString());
+    // Save `doc` to `targetPath` without blocking the UI thread.
+    // PDFs use the two-phase split (worker thread for qpdf, UI
+    // thread for QPdfDocument reload); image saves run synchronously
+    // because they are fast.
+    void saveDocumentAsync(IDocument* doc, const QString& targetPath);
     void syncViewModeActions(IDocument* doc);
     void showSearchBar();
     void hideSearchBar();

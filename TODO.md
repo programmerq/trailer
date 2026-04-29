@@ -27,24 +27,13 @@ worked on.
     rotate opposite direction; undo delete = re-insert).
   - Snapshot-based with copy-on-write tricks in qpdf if possible.
 
-- **PDF save / export to a worker thread.** Today `PdfDocument::save`
-  blocks the UI thread for 5-15 s on a 50-page doc with redactions.
-  The naive wrap-in-QtConcurrent that worked for OCR (commit ca318b2)
-  and background removal (commit 33c4f1e) doesn't apply: save mixes
-  thread-safe qpdf work (`applyRedactions`, `flattenSignatures`,
-  `writeAnnotations`, `QPDFWriter::write`) with thread-unsafe
-  `QPdfDocument::close()`/`load()` calls used to refresh the in-place
-  view after an overwrite. The right shape is:
-  1. Split `PdfDocument::save` into a worker phase (qpdf-only) that
-     writes to a temp file, and a UI-thread phase (close/rename/load)
-     that publishes the temp once the worker finishes.
-  2. Wire `QFutureWatcher<bool>::finished` from the worker phase to
-     the UI-thread phase.
-  3. `QProgressDialog` over the worker phase only — the UI-thread
-     phase is fast.
-  Estimated 2-3 hours to do safely. The 2026-04-29 batch attempted
-  to land this same-shape-as-OCR but reverted on noticing the thread
-  safety issue.
+- ~~**PDF save / export to a worker thread.**~~ Done — split into
+  `PdfDocument::saveBeginQpdfPhase` (worker-thread qpdf phase) and
+  `saveCommitOnUi` (UI-thread file rename + `QPdfDocument` reload).
+  `MainWindow::saveDocumentAsync` orchestrates via
+  `QFutureWatcher` with a `QProgressDialog`. Image saves stay
+  synchronous because `QImage::save` is already fast and wrapping
+  it in QtConcurrent::run only adds latency.
 
 ## Annotations
 

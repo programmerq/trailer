@@ -681,12 +681,19 @@ void PdfDocument::movePage(int from, int to) {
 }
 
 bool PdfDocument::save(const QString& newPath) {
+    auto ctx = saveBeginQpdfPhase(newPath);
+    if (!ctx) return false;
+    return saveCommitOnUi(*ctx);
+}
+
+std::optional<PdfDocument::SaveContext>
+PdfDocument::saveBeginQpdfPhase(const QString& newPath) {
     if (!m_valid || !m_editor || !m_editor->isValid()) {
-        return false;
+        return std::nullopt;
     }
     const QString targetPath = newPath.isEmpty() ? m_path : newPath;
     if (targetPath.isEmpty()) {
-        return false;
+        return std::nullopt;
     }
 
     // Order matters: apply redactions first so their rasterised page
@@ -695,45 +702,64 @@ bool PdfDocument::save(const QString& newPath) {
     // file is re-read (readAnnotations does not reconstruct image
     // stamps). Finally, write every other annotation as /Annot.
     if (!m_editor->applyRedactions(m_annotations.annotations())) {
-        return false;
+        return std::nullopt;
     }
     if (!m_editor->flattenSignatures(m_annotations.annotations())) {
-        return false;
+        return std::nullopt;
     }
     if (!m_editor->writeAnnotations(m_annotations.annotations())) {
-        return false;
+        return std::nullopt;
     }
 
-    if (QFileInfo(targetPath).canonicalFilePath()
-        == QFileInfo(m_path).canonicalFilePath() && !m_path.isEmpty()) {
+    SaveContext ctx;
+    ctx.targetPath = targetPath;
+    ctx.sameFile = !m_path.isEmpty() &&
+        QFileInfo(targetPath).canonicalFilePath()
+            == QFileInfo(m_path).canonicalFilePath();
+
+    if (ctx.sameFile) {
+        // Stage to a temp file so a partial write doesn't clobber the
+        // original. The UI-phase rename is atomic.
         auto temp = std::make_unique<QTemporaryFile>(
             QDir::tempPath() + QStringLiteral("/trailer-save-XXXXXX.pdf"));
-        temp->setAutoRemove(true);
+        temp->setAutoRemove(false);  // we hand the file to the UI phase
         if (!temp->open()) {
-            return false;
+            return std::nullopt;
         }
-        const QString tempPath = temp->fileName();
+        ctx.writePath = temp->fileName();
         temp->close();
-        if (!m_editor->save(tempPath)) {
-            return false;
+        if (!m_editor->save(ctx.writePath)) {
+            QFile::remove(ctx.writePath);
+            return std::nullopt;
         }
-        m_doc->close();
-        if (!QFile::remove(targetPath) && QFile::exists(targetPath)) {
-            m_doc->load(m_path);
-            return false;
-        }
-        if (!QFile::rename(tempPath, targetPath)) {
-            m_doc->load(m_path);
-            return false;
-        }
-        temp->setAutoRemove(false);
     } else {
-        if (!m_editor->save(targetPath)) {
+        ctx.writePath = targetPath;
+        if (!m_editor->save(ctx.writePath)) {
+            return std::nullopt;
+        }
+    }
+    return ctx;
+}
+
+bool PdfDocument::saveCommitOnUi(const SaveContext& ctx) {
+    if (ctx.sameFile) {
+        // Tear down our QPdfDocument's open handle so we can rename
+        // over the file on Windows (Linux/macOS don't strictly need
+        // this but it matches behaviour).
+        m_doc->close();
+        if (QFile::exists(ctx.targetPath) && !QFile::remove(ctx.targetPath)) {
+            // Restore the original handle and bail; the staged temp
+            // is leaked on disk but the user's file is untouched.
+            m_doc->load(m_path);
+            return false;
+        }
+        if (!QFile::rename(ctx.writePath, ctx.targetPath)) {
+            m_doc->load(m_path);
             return false;
         }
     }
 
-    m_path = targetPath;
+    m_path = ctx.targetPath;
     m_editor = std::make_unique<PdfEditor>();
     m_editor->load(m_path);
 
