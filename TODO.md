@@ -39,11 +39,33 @@ worked on.
   - **Test on 1x, 2x, 3x displays** — manual; CI is offscreen
     only.
 
-- **PDF undo/redo.** Image edits have an undo stack; PDF edits do not
-  (cloning `QPDF` per mutation is expensive). Design options:
-  - Command pattern: record inverse of each operation (undo rotate =
-    rotate opposite direction; undo delete = re-insert).
-  - Snapshot-based with copy-on-write tricks in qpdf if possible.
+- **PDF undo/redo — rotate done, others scoped.** A
+  `PdfCommand` interface lives in `src/document/PdfCommands.h`,
+  paired with the first concrete command (`RotatePageCommand`).
+  `PdfDocument` keeps undo / redo stacks of `PdfCommand`s
+  parallel to the existing AnnotationStore undo log; the unified
+  `IDocument::undo` / `redo` route to the most-recently-touched
+  stack via an `m_lastUndoSource` heuristic.
+
+  Remaining qpdf mutations to wire up the same way:
+  - **DeletePagesCommand** — needs to capture
+    `QPDFObjectHandle` references before the delete so the
+    revert path can re-insert them at the original positions.
+    qpdf retains the underlying objects until garbage-collected
+    on save, so retained handles stay valid through the
+    in-memory session.
+  - **MovePageCommand** — trivial inverse: move(to, from).
+  - **InsertPagesCommand** — capture insert index + count;
+    revert deletes that range.
+  - **CropPageCommand** — capture original `/CropBox`; revert
+    re-sets it.
+
+  Better-but-bigger follow-up: merge the AnnotationStore log
+  and the PdfCommand stack into one chronological undo list so
+  multi-action undo always pops the most recent thing the user
+  did, regardless of which subsystem produced it. The
+  `m_lastUndoSource` heuristic gets it right for the common
+  one-action-back case but not for interleaved sequences.
 
 - ~~**PDF save / export to a worker thread.**~~ Done — split into
   `PdfDocument::saveBeginQpdfPhase` (worker-thread qpdf phase) and

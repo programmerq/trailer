@@ -1,3 +1,4 @@
+#include "document/PdfCommands.h"
 #include "document/PdfEditor.h"
 
 #include <qpdf/Pl_String.hh>
@@ -164,6 +165,7 @@ private slots:
     void annotationRoundTripPreservesUnderlineAndStrikeOut();
     void annotationRectangleEmitsAppearanceStream();
     void annotationEllipseAndLineAndInkEmitAppearanceStreams();
+    void rotatePageCommandIsReversible();
     void saveWithPasswordGatesLoad();
     void saveWithPasswordEmptyOwnerUsesUserPassword();
     void unlockRecoversLoadedButLockedEditor();
@@ -685,6 +687,53 @@ void TestPdfEditor::
         ++withAp;
     }
     QCOMPARE(withAp, 4);
+}
+
+// RotatePageCommand applies +90° on apply() and revert() should
+// restore the page to its original rotation. The test reads /Rotate
+// from a saved-and-reloaded file because that's what determines
+// what external viewers see.
+void TestPdfEditor::rotatePageCommandIsReversible() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+    const QString dst = dir.filePath("rotated.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    auto readRotation = [&editor]() -> int {
+        // Save to a tmp, reopen via raw qpdf, read /Rotate.
+        QTemporaryFile tmp(QDir::tempPath() + "/rot_check_XXXXXX.pdf");
+        tmp.setAutoRemove(true);
+        if (!tmp.open()) return -1;
+        const QString p = tmp.fileName();
+        tmp.close();
+        if (!editor.save(p)) return -1;
+        QPDF reopened;
+        reopened.processFile(p.toLocal8Bit().constData());
+        auto pages = QPDFPageDocumentHelper(reopened).getAllPages();
+        if (pages.empty()) return -1;
+        QPDFObjectHandle r = pages.front().getObjectHandle().getKey("/Rotate");
+        return r.isInteger() ? int(r.getIntValue()) : 0;
+    };
+
+    const int rot0 = readRotation();
+    QCOMPARE(rot0, 0);
+
+    RotatePageCommand cmd(0, 90);
+    QVERIFY(cmd.apply(editor));
+    QCOMPARE(readRotation(), 90);
+
+    QVERIFY(cmd.revert(editor));
+    QCOMPARE(readRotation(), 0);
+
+    // Re-apply confirms idempotence: apply→revert→apply lands at
+    // the same final rotation as a single apply.
+    QVERIFY(cmd.apply(editor));
+    QCOMPARE(readRotation(), 90);
+
+    Q_UNUSED(dst);
 }
 
 // ---------- Encryption (Phase 5) ------------------------------------------

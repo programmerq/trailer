@@ -2,6 +2,7 @@
 
 #include "IDocument.h"
 #include "IFormatAdapter.h"
+#include "PdfCommands.h"
 #include "PdfEditor.h"
 #include "annotation/AnnotationStore.h"
 
@@ -83,10 +84,16 @@ public:
     bool isDirty() const override {
         return m_dirty || m_annotationsModified;
     }
-    bool canUndo() const override { return m_annotations.canUndo(); }
-    bool canRedo() const override { return m_annotations.canRedo(); }
-    void undo() override { m_annotations.undo(); }
-    void redo() override { m_annotations.redo(); }
+    // PDF-level undo runs across two parallel stacks: the
+    // AnnotationStore for in-memory shape edits, and a separate
+    // PdfCommand stack for qpdf-level mutations (rotate today;
+    // delete / move / insert / crop are scoped for follow-up).
+    // Undo prefers the most recently-touched stack; the
+    // last-touched stack is tracked via m_lastUndoSource.
+    bool canUndo() const override;
+    bool canRedo() const override;
+    void undo() override;
+    void redo() override;
     void rotatePage(int pageIndex, int degreesClockwise) override;
     void deletePages(const std::vector<int>& pageIndices) override;
     void movePage(int from, int to) override;
@@ -167,6 +174,20 @@ private:
     bool m_dirty = false;
     bool m_annotationsModified = false;
     bool m_needsPassword = false;
+
+    // qpdf-mutation undo stacks. Each PdfCommand owns its own
+    // forward+revert state (e.g. a RotatePageCommand keeps the
+    // original page index and rotation delta). Pushing a new
+    // command clears the redo stack — the conventional behaviour
+    // when the user undoes, then makes a different change.
+    std::vector<std::unique_ptr<PdfCommand>> m_pdfUndoStack;
+    std::vector<std::unique_ptr<PdfCommand>> m_pdfRedoStack;
+    // Tracks which undo log got the most recent push so the
+    // unified IDocument::undo prefers the right stack. Annotations
+    // and qpdf commands aren't merged into one chronological log
+    // yet (TODO).
+    enum class UndoSource { None, Annotation, PdfCommand };
+    UndoSource m_lastUndoSource = UndoSource::None;
 };
 
 class PdfAdapter : public IFormatAdapter {

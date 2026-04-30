@@ -64,6 +64,8 @@ set(TRAILER_SOURCES
     src/document/ImageAdapter.h
     src/document/PdfAdapter.cpp
     src/document/PdfAdapter.h
+    src/document/PdfCommands.cpp
+    src/document/PdfCommands.h
     src/document/PdfEditor.cpp
     src/document/PdfEditor.h
     src/document/StubAdapter.cpp

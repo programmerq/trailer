@@ -91,6 +91,7 @@ PdfDocument::PdfDocument(QString path)
         QObject::connect(&m_annotations, &AnnotationStore::changed,
                          m_doc.get(), [this]() {
             m_annotationsModified = true;
+            m_lastUndoSource = UndoSource::Annotation;
         });
     }
 }
@@ -127,6 +128,7 @@ bool PdfDocument::unlock(const QString& password) {
         QObject::connect(&m_annotations, &AnnotationStore::changed,
                          m_doc.get(), [this]() {
             m_annotationsModified = true;
+            m_lastUndoSource = UndoSource::Annotation;
         });
     }
     return true;
@@ -593,9 +595,92 @@ void PdfDocument::rotatePage(int pageIndex, int degreesClockwise) {
     if (pageIndex < 0 || pageIndex >= pageCount()) {
         return;
     }
-    m_editor->rotatePage(pageIndex, degreesClockwise);
+    auto cmd = std::make_unique<RotatePageCommand>(pageIndex, degreesClockwise);
+    if (!cmd->apply(*m_editor)) return;
+    m_pdfUndoStack.push_back(std::move(cmd));
+    m_pdfRedoStack.clear();
+    m_lastUndoSource = UndoSource::PdfCommand;
     if (reloadViewerFromEditor()) {
         m_dirty = true;
+    }
+}
+
+bool PdfDocument::canUndo() const {
+    return m_annotations.canUndo() || !m_pdfUndoStack.empty();
+}
+
+bool PdfDocument::canRedo() const {
+    return m_annotations.canRedo() || !m_pdfRedoStack.empty();
+}
+
+void PdfDocument::undo() {
+    // Two parallel stacks; prefer the last-touched one so a
+    // user's most recent action is undone first. A small
+    // approximation of chronological undo until we unify the
+    // logs (TODO: PdfCommand + AnnotationStore should share one
+    // chronological list so multi-action undo always pops the
+    // most recent thing the user did).
+    if (m_lastUndoSource == UndoSource::PdfCommand &&
+        !m_pdfUndoStack.empty()) {
+        auto cmd = std::move(m_pdfUndoStack.back());
+        m_pdfUndoStack.pop_back();
+        cmd->revert(*m_editor);
+        m_pdfRedoStack.push_back(std::move(cmd));
+        reloadViewerFromEditor();
+        m_lastUndoSource = m_pdfUndoStack.empty()
+            ? (m_annotations.canUndo() ? UndoSource::Annotation
+                                       : UndoSource::None)
+            : UndoSource::PdfCommand;
+        return;
+    }
+    if (m_annotations.canUndo()) {
+        m_annotations.undo();
+        m_lastUndoSource = m_annotations.canUndo()
+            ? UndoSource::Annotation
+            : (m_pdfUndoStack.empty() ? UndoSource::None
+                                      : UndoSource::PdfCommand);
+        return;
+    }
+    if (!m_pdfUndoStack.empty()) {
+        // Fall-through case: lastSource was Annotation but the
+        // annotation log is now exhausted.
+        auto cmd = std::move(m_pdfUndoStack.back());
+        m_pdfUndoStack.pop_back();
+        cmd->revert(*m_editor);
+        m_pdfRedoStack.push_back(std::move(cmd));
+        reloadViewerFromEditor();
+        m_lastUndoSource = m_pdfUndoStack.empty()
+            ? UndoSource::None : UndoSource::PdfCommand;
+    }
+}
+
+void PdfDocument::redo() {
+    // Symmetric to undo. We don't track which stack got the most
+    // recent redo distinctly; if the user is redoing they almost
+    // always want the inverse of their most recent undo, and the
+    // last-source heuristic from undo() is the closest signal.
+    if (m_lastUndoSource == UndoSource::PdfCommand &&
+        !m_pdfRedoStack.empty()) {
+        auto cmd = std::move(m_pdfRedoStack.back());
+        m_pdfRedoStack.pop_back();
+        cmd->apply(*m_editor);
+        m_pdfUndoStack.push_back(std::move(cmd));
+        reloadViewerFromEditor();
+        m_lastUndoSource = UndoSource::PdfCommand;
+        return;
+    }
+    if (m_annotations.canRedo()) {
+        m_annotations.redo();
+        m_lastUndoSource = UndoSource::Annotation;
+        return;
+    }
+    if (!m_pdfRedoStack.empty()) {
+        auto cmd = std::move(m_pdfRedoStack.back());
+        m_pdfRedoStack.pop_back();
+        cmd->apply(*m_editor);
+        m_pdfUndoStack.push_back(std::move(cmd));
+        reloadViewerFromEditor();
+        m_lastUndoSource = UndoSource::PdfCommand;
     }
 }
 
