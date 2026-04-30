@@ -124,7 +124,14 @@ Drag files onto the running window to open them.
 ctest --test-dir build --output-on-failure
 ```
 
-CI runs the same matrix (Ubuntu / Windows / macOS) on every push and PR.
+CI runs the build + unit tests on Linux on every push and pull
+request (`.github/workflows/ci.yml`). The Windows binary is
+cross-compiled from Linux via the mingw-w64 toolchain in
+`docker/windows/Dockerfile`; that, plus the UAT suite, runs only
+on tag pushes (`.github/workflows/release.yml`). macOS builds are
+manual on a Mac developer machine — cross-compiling there from
+Linux is encumbered by SDK licensing and code-signing constraints,
+so it stays out of CI by design.
 
 ## Philosophy
 

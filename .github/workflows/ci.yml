@@ -1,3 +1,9 @@
+# Fast-feedback CI: lint + unit tests on Linux. Runs on every PR
+# and on pushes to main. The full cross-compile to Linux + Windows
+# artifacts lives in `release.yml` and only fires on tag pushes —
+# it's slow (Docker image build, mingw cross-link, dependency
+# walk) and not worth waiting through for every commit.
+
 name: CI
 
 on:
@@ -7,14 +13,9 @@ on:
     branches: [main]
 
 jobs:
-  build:
-    name: ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-22.04, windows-2022, macos-13]
-
+  build-and-test:
+    name: Linux build + unit tests
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
 
@@ -26,7 +27,6 @@ jobs:
           cache: true
 
       - name: Install Linux build deps
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -48,59 +48,23 @@ jobs:
             pkg-config \
             libqpdf-dev
 
-      - name: Install macOS build deps
-        if: runner.os == 'macOS'
-        run: brew install qpdf pkg-config
-
-      - name: Install Windows build deps
-        if: runner.os == 'Windows'
-        run: vcpkg install qpdf:x64-windows
-        shell: pwsh
-
-      - name: Configure (Windows)
-        if: runner.os == 'Windows'
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_TOOLCHAIN_FILE=C:/vcpkg/scripts/buildsystems/vcpkg.cmake
-
       - name: Configure
-        if: runner.os != 'Windows'
+        # The CompilerWarnings.cmake module enables -Wall -Wextra
+        # -Wpedantic and treats everything as an error in the
+        # trailer_core target — the build itself is the lint gate.
+        # Adding clang-format / clang-tidy passes is a follow-up
+        # once the project has a committed style config.
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 
       - name: Build
         run: cmake --build build --config Release --parallel
 
-      - name: Deploy Qt DLLs for tests (Windows)
-        if: runner.os == 'Windows'
-        # windeployqt copies the platform plugin (qoffscreen.dll) and any other
-        # Qt DLLs needed at runtime into the same directory as the test binaries,
-        # so the offscreen QPA platform is discoverable without a full Qt install
-        # in PATH.
-        run: |
-          windeployqt --no-translations --no-system-d3d-compiler --no-opengl-sw --release build/Release/test_adapters.exe
-          # Explicitly include the offscreen platform plugin (used in CI headless
-          # tests via QT_QPA_PLATFORM=offscreen) which windeployqt omits by default.
-          New-Item -ItemType Directory -Force build/Release/platforms | Out-Null
-          Copy-Item "$env:QT_ROOT_DIR\plugins\platforms\qoffscreen.dll" build/Release/platforms/
-        shell: pwsh
-
-      - name: Run test_adapters directly (Windows diagnostic)
-        if: runner.os == 'Windows'
-        continue-on-error: true
-        # Run the binary outside ctest so its stdout is not piped through ctest's
-        # block-buffered pipe – a crash before the buffer fills would otherwise
-        # produce no visible output at all.
-        run: |
-          Write-Host "=== test_adapters direct output ==="
-          & "build\Release\test_adapters.exe" "-v1" 2>&1
-          Write-Host "=== Exit code: $LASTEXITCODE ==="
-        shell: pwsh
-        env:
-          QT_QPA_PLATFORM: offscreen
-          QT_DEBUG_PLUGINS: 1
-
-      - name: Test
+      - name: Unit tests
+        # UAT tests (label `uat`) drive the full Application +
+        # MainWindow stack and need a windowed Qt platform plugin.
+        # The fast PR loop excludes them; they run on tag via
+        # release.yml's UAT step.
         working-directory: build
-        # UAT tests are labelled `uat` and run locally via
-        # scripts/run-uat.sh on tag. Exclude them from the commit/PR CI.
         run: ctest -C Release --output-on-failure --label-exclude uat
         env:
           QT_QPA_PLATFORM: offscreen

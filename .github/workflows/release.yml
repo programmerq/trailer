@@ -1,0 +1,179 @@
+# Tag-triggered release pipeline.
+#
+# Builds the Linux native binary on the host runner and the
+# Windows 64-bit binary via mingw-w64 in the existing Docker image
+# (docker/windows/Dockerfile + scripts/build-windows.sh). All work
+# happens on Linux runners — there is intentionally no macOS
+# runner. Cross-compiling to macOS from Linux is encumbered by
+# Apple's SDK licensing (the SDK is only legally redistributable
+# from a Mac you own) and macOS code-signing for distribution
+# requires `codesign` running on macOS. Producing a `.app` for
+# users is therefore a manual step performed on a Mac developer
+# machine; it's intentionally outside CI.
+#
+# UAT also runs at tag time — it's slow (driving the full Qt stack
+# under offscreen) and not worth blocking every PR on.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  linux-build:
+    name: Linux build
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.0'
+          modules: 'qtpdf'
+          cache: true
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgl1-mesa-dev \
+            libglu1-mesa-dev \
+            libxkbcommon-dev \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-sync1 \
+            libxcb-xfixes0 \
+            libxcb-xinerama0 \
+            libxcb-xkb1 \
+            libxkbcommon-x11-0 \
+            libcups2-dev \
+            pkg-config \
+            libqpdf-dev
+
+      - name: Configure
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Unit tests
+        working-directory: build
+        run: ctest -C Release --output-on-failure --label-exclude uat
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Stage Linux artifact
+        # Bundle the binary plus a minimal README so users who
+        # download the zip have something to read. Distro packaging
+        # (.deb / .AppImage / Flatpak) is a separate exercise.
+        run: |
+          mkdir -p dist/trailer-linux-x86_64
+          cp build/trailer dist/trailer-linux-x86_64/
+          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+             dist/trailer-linux-x86_64/
+          (cd dist && tar -czf trailer-linux-x86_64.tar.gz trailer-linux-x86_64)
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trailer-linux-x86_64
+          path: dist/trailer-linux-x86_64.tar.gz
+          retention-days: 30
+
+  windows-cross:
+    name: Windows cross-build (mingw-w64)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Windows image
+        # The Dockerfile pins Qt + qpdf + mingw versions so the
+        # produced trailer.exe matches what scripts/build-windows.sh
+        # produces locally on a developer's Linux box.
+        run: docker build -t trailer-windows -f docker/windows/Dockerfile .
+
+      - name: Cross-compile trailer.exe
+        # --in-container skips the docker-build branch since we just
+        # built the image; the script then runs the cmake +
+        # collect_dlls passes that produce build-windows/trailer.exe
+        # alongside every transitively-loaded DLL.
+        run: |
+          docker run --rm -v "$PWD":/work -w /work trailer-windows \
+            bash scripts/build-windows.sh --in-container
+
+      - name: Stage Windows artifact
+        run: |
+          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+             build-windows/
+          (cd build-windows && zip -r ../trailer-windows-x86_64.zip .)
+          mkdir -p dist
+          mv trailer-windows-x86_64.zip dist/
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: trailer-windows-x86_64
+          path: dist/trailer-windows-x86_64.zip
+          retention-days: 30
+
+  uat:
+    name: UAT (tag only)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build UAT image
+        run: docker build -t trailer-uat -f docker/uat/Dockerfile .
+      - name: Run UAT suite
+        # scripts/run-uat.sh --in-container does the cmake configure
+        # + build + ctest -L uat dance with the right Qt platform
+        # plugin available.
+        run: |
+          docker run --rm -v "$PWD":/work -w /work trailer-uat \
+            bash scripts/run-uat.sh --in-container
+
+  github-release:
+    name: Attach artifacts to GitHub Release
+    needs: [linux-build, windows-cross, uat]
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download Linux artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: trailer-linux-x86_64
+          path: dist
+
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: trailer-windows-x86_64
+          path: dist
+
+      - name: Create / update release
+        uses: softprops/action-gh-release@v2
+        with:
+          # Pre-1.0 tags are pre-releases by convention. Once the
+          # project commits to backwards compatibility on minor
+          # bumps (see PHILOSOPHY.md), flip this off.
+          prerelease: true
+          files: |
+            dist/trailer-linux-x86_64.tar.gz
+            dist/trailer-windows-x86_64.zip
+          body: |
+            Pre-release build of Trailer. See PHILOSOPHY.md for what
+            "pre-release" means while we're in 0.x.
+
+            macOS users: no `.app` artifact ships from CI yet —
+            cross-compiling to macOS from Linux is encumbered by
+            SDK licensing and code-signing constraints. Build from
+            source on a Mac via the README's "Build" section.
