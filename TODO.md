@@ -156,23 +156,39 @@ rearranged.
 
 ### High-fidelity signature + freehand capture (hardware input)
 
-- **Stop rasterising the signature to a tiny bitmap.** Store signatures
-  as vector strokes (polyline + per-sample pressure + timestamp) and
-  rasterise only at paint time for the target DPI. The canvas in the
-  capture surface should be as large as the popover allows, not a
-  shrunken swatch.
-- **Use hardware pressure + unaccelerated position where available.**
-  Qt exposes tablet input via `QTabletEvent` (pressure, tilt, tangential
-  pressure) and touch via `QTouchEvent` with per-point pressure on
-  supported hardware. We want:
-  - Physical / device coordinates (no OS pointer acceleration), which
-    tablet events deliver natively; for mouse fall back to the current
-    behaviour.
-  - Pressure recorded per sample, mapped to stroke width.
-  - Graceful fall-back to mouse — same code path, constant pressure.
-- **Apply the same to the freehand drawing tool.** Pressure-varying
-  stroke width when the user is drawing with a stylus or pressure-aware
-  trackpad.
+- **Signature canvas — DONE for the 80% case.** The 2026-04-29 pass
+  rebuilt `SignatureCanvas` to:
+  - Bigger default canvas (640×200) so signatures get pixels to
+    breathe and don't pixelate when stamped on a 300 DPI page.
+  - Render at 2x scale into the saved PNG so the cached raster is
+    sharp at output time.
+  - Pressure source priority: `QTabletEvent::pressure()` for
+    Wacom / Bamboo / Surface Pen, then `QPointerEvent::points()
+    .first().pressure()` for Apple Force Touch trackpads (Cocoa
+    backend in Qt 6.5+), then a 0.5 default for plain mice.
+  - Cubic pressure → width curve (1..7 px) for visible dynamic
+    range.
+  - Per-stroke 3-point centred moving average smoothing on
+    release, hides quantisation jitter from mouse / trackpad
+    input. Tablet pens are already smooth so the pass is
+    effectively a no-op for them.
+  - Sub-event sampling via `QPointerEvent::points()` so fast
+    strokes on a Force Touch trackpad don't lose intermediate
+    samples to OS coalescing.
+- **Vector storage as a sidecar.** Today the canvas stores strokes
+  in memory but writes only the rasterised PNG. A
+  `<id>.strokes.json` sidecar with `[stroke[(x,y,pressure)*]]*`
+  would let future viewers re-render at any DPI without
+  re-rasterising. Not blocking — the 2x raster is plenty for
+  paper-size output.
+- **Apply the same pressure-aware rendering to the Freehand
+  annotation tool.** AnnotationOverlay's Ink path currently uses
+  a constant width. The same `widthForPressure` logic applies if
+  AnnotationOverlay grows the per-sample-pressure capture.
+- **Apple Pencil / iOS** — out of scope. Trailer is Qt6 widgets,
+  desktop only. If a tablet build ever happens, QTouchEvent on
+  iPad surfaces Apple Pencil pressure / tilt and the existing
+  pressure pipeline could pick it up.
 
 ### AcroForm fields — direct manipulation, not auto-magic
 

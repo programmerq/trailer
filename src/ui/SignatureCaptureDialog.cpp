@@ -1,6 +1,9 @@
 #include "SignatureCaptureDialog.h"
 
+#include <algorithm>
+
 #include <QDialogButtonBox>
+#include <QEventPoint>
 #include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
@@ -21,7 +24,11 @@ namespace trailer {
 
 SignatureCanvas::SignatureCanvas(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_StaticContents);
-    setMinimumSize(320, 120);
+    // Bigger default canvas so signatures get more pixels to work
+    // with. The previous 320×120 was tight enough that any cursive
+    // ascender / descender clipped against the edge and the saved
+    // PNG looked stamp-sized.
+    setMinimumSize(640, 200);
     setCursor(Qt::CrossCursor);
     setAutoFillBackground(true);
     QPalette pal = palette();
@@ -30,10 +37,62 @@ SignatureCanvas::SignatureCanvas(QWidget* parent) : QWidget(parent) {
     setTabletTracking(true);
 }
 
+qreal SignatureCanvas::widthForPressure(qreal pressure) {
+    // Cubic curve. Light hairlines stay light, mid-pressure feels
+    // like a normal pen, full pressure produces a confident thick
+    // line. The previous linear `1 + pressure*5` gave too narrow a
+    // dynamic range — both light and heavy strokes looked roughly
+    // the same.
+    const qreal p = std::clamp(pressure, 0.0, 1.0);
+    const qreal shaped = p * p * p;            // 0..1, cubic
+    return 1.0 + shaped * 6.0;                 // 1..7 px
+}
+
 void SignatureCanvas::clear() {
     m_strokes.clear();
     m_current = nullptr;
+    m_lastStrokeUsedPressure = false;
     m_bounds = QRectF();
+    update();
+    emit changed();
+}
+
+void SignatureCanvas::beginStroke(const QPointF& pos, qreal pressure) {
+    m_strokes.emplace_back();
+    m_current = &m_strokes.back();
+    m_lastStrokeUsedPressure = pressure > 0.0;
+    m_current->push_back({pos, std::max(pressure, 0.5)});
+    m_bounds |= QRectF(pos, QSizeF(1, 1));
+    update();
+}
+
+void SignatureCanvas::extendStroke(const QPointF& pos, qreal pressure) {
+    if (!m_current) return;
+    if (pressure > 0.0) m_lastStrokeUsedPressure = true;
+    m_current->push_back({pos, std::max(pressure, 0.5)});
+    m_bounds |= QRectF(pos, QSizeF(1, 1));
+    update();
+}
+
+void SignatureCanvas::finishStroke() {
+    if (!m_current || m_current->size() < 3) {
+        m_current = nullptr;
+        emit changed();
+        return;
+    }
+    // 3-point centred moving average on positions to soften
+    // pixel-quantisation jitter from mouse / Force Touch input.
+    // Tablet pens already deliver smooth absolute coordinates;
+    // smoothing them is a no-op for the user but harmless.
+    auto& s = *m_current;
+    std::vector<Sample> smoothed = s;
+    for (size_t i = 1; i + 1 < s.size(); ++i) {
+        smoothed[i].pos = QPointF(
+            (s[i - 1].pos.x() + s[i].pos.x() + s[i + 1].pos.x()) / 3.0,
+            (s[i - 1].pos.y() + s[i].pos.y() + s[i + 1].pos.y()) / 3.0);
+    }
+    s = std::move(smoothed);
+    m_current = nullptr;
     update();
     emit changed();
 }
@@ -42,34 +101,34 @@ QImage SignatureCanvas::render() const {
     if (m_strokes.empty()) return {};
 
     // Pad the bbox a bit so the stroke doesn't clip at the edge.
-    const double pad = 6.0;
+    const double pad = 8.0;
     QRectF cropped = m_bounds.adjusted(-pad, -pad, pad, pad);
-    // Clamp to canvas so negative coords don't propagate.
     cropped = cropped.intersected(QRectF(rect()));
     if (cropped.isEmpty()) cropped = QRectF(rect());
 
-    QImage out(cropped.size().toSize(), QImage::Format_ARGB32);
+    // Render at 2x the canvas resolution. The signature stamp may
+    // land on a 300+ DPI page; doubling here keeps edges sharp
+    // without a separate per-stamp re-render at output time.
+    constexpr qreal kRenderScale = 2.0;
+    const QSize outSize = (cropped.size() * kRenderScale).toSize();
+    QImage out(outSize, QImage::Format_ARGB32);
     out.fill(Qt::transparent);
 
     QPainter p(&out);
     p.setRenderHint(QPainter::Antialiasing, true);
+    p.scale(kRenderScale, kRenderScale);
     p.translate(-cropped.topLeft());
-    p.setPen(QPen(Qt::black, 2.0,
-                  Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
 
     for (const auto& stroke : m_strokes) {
         if (stroke.empty()) continue;
-        // Draw each stroke as a single path where the pen width
-        // follows the per-point width. For mouse input the widths are
-        // constant so this collapses to a plain polyline.
         for (size_t i = 1; i < stroke.size(); ++i) {
-            QPen pen(Qt::black, stroke[i].width,
+            QPen pen(Qt::black, widthForPressure(stroke[i].pressure),
                      Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
             p.setPen(pen);
             p.drawLine(stroke[i - 1].pos, stroke[i].pos);
         }
         if (stroke.size() == 1) {
-            p.setPen(QPen(Qt::black, stroke[0].width));
+            p.setPen(QPen(Qt::black, widthForPressure(stroke[0].pressure)));
             p.drawPoint(stroke[0].pos);
         }
     }
@@ -79,11 +138,9 @@ QImage SignatureCanvas::render() const {
 void SignatureCanvas::paintEvent(QPaintEvent*) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
-    p.setPen(QPen(Qt::black, 2.0,
-                  Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
     for (const auto& stroke : m_strokes) {
         for (size_t i = 1; i < stroke.size(); ++i) {
-            QPen pen(Qt::black, stroke[i].width,
+            QPen pen(Qt::black, widthForPressure(stroke[i].pressure),
                      Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin);
             p.setPen(pen);
             p.drawLine(stroke[i - 1].pos, stroke[i].pos);
@@ -91,53 +148,53 @@ void SignatureCanvas::paintEvent(QPaintEvent*) {
     }
     // Baseline hint so users know where to write.
     p.setPen(QPen(QColor(200, 200, 200), 1, Qt::DashLine));
-    const int y = height() - 20;
-    p.drawLine(20, y, width() - 20, y);
+    const int y = height() - 24;
+    p.drawLine(24, y, width() - 24, y);
 }
 
 void SignatureCanvas::mousePressEvent(QMouseEvent* event) {
     if (event->button() != Qt::LeftButton) return;
-    m_strokes.emplace_back();
-    m_current = &m_strokes.back();
-    m_current->push_back({event->position(), 2.0});
-    m_bounds |= QRectF(event->position(), QSizeF(1, 1));
-    update();
+    // QPointerEvent (Qt 6) carries per-point pressure — Force Touch
+    // trackpads on macOS report a non-zero value via the Cocoa
+    // backend. Most plain mice report 0 and we fall back to a
+    // constant mid-pressure (0.5) inside beginStroke.
+    const qreal pressure = event->points().isEmpty()
+        ? 0.0
+        : qreal(event->points().first().pressure());
+    beginStroke(event->position(), pressure);
 }
 
 void SignatureCanvas::mouseMoveEvent(QMouseEvent* event) {
     if (!m_current) return;
-    m_current->push_back({event->position(), 2.0});
-    m_bounds |= QRectF(event->position(), QSizeF(1, 1));
-    update();
+    // points() yields any sub-events the OS coalesced into this
+    // single Qt event — relevant for fast strokes on a Force Touch
+    // trackpad where the OS may merge several physical samples per
+    // delivered Qt event.
+    const auto& pts = event->points();
+    if (!pts.isEmpty()) {
+        for (const QEventPoint& pt : pts) {
+            extendStroke(pt.position(), qreal(pt.pressure()));
+        }
+    } else {
+        extendStroke(event->position(), 0.0);
+    }
 }
 
 void SignatureCanvas::mouseReleaseEvent(QMouseEvent* event) {
     if (event->button() != Qt::LeftButton) return;
-    m_current = nullptr;
-    emit changed();
+    finishStroke();
 }
 
 void SignatureCanvas::tabletEvent(QTabletEvent* event) {
-    // Stylus events: use pressure (0..1) to modulate line width.
-    const qreal w = 1.0 + event->pressure() * 5.0;
     switch (event->type()) {
         case QEvent::TabletPress:
-            m_strokes.emplace_back();
-            m_current = &m_strokes.back();
-            m_current->push_back({event->position(), w});
-            m_bounds |= QRectF(event->position(), QSizeF(1, 1));
-            update();
+            beginStroke(event->position(), event->pressure());
             break;
         case QEvent::TabletMove:
-            if (m_current) {
-                m_current->push_back({event->position(), w});
-                m_bounds |= QRectF(event->position(), QSizeF(1, 1));
-                update();
-            }
+            extendStroke(event->position(), event->pressure());
             break;
         case QEvent::TabletRelease:
-            m_current = nullptr;
-            emit changed();
+            finishStroke();
             break;
         default:
             break;

@@ -12,12 +12,29 @@ class QTabWidget;
 
 namespace trailer {
 
-// Small drawing canvas used by SignatureCaptureDialog's "Draw" tab.
-// Captures mouse/stylus strokes into a QImage with alpha, so the
-// saved signature carries transparency into the PDF.
+// Drawing canvas used by SignatureCaptureDialog's "Draw" tab.
+// Captures mouse / stylus / Force Touch trackpad strokes as
+// per-sample (position, pressure) records and renders them into an
+// alpha-channel QImage at the canvas's native size — which is also
+// the size the cached PNG is written at, so signatures don't get
+// rasterised to a 320×120 thumbnail and pixelate when stamped on
+// a high-DPI page.
 //
-// Supports pressure via QTabletEvent when the user is drawing with a
-// stylus. Mouse input falls back to a constant pen width.
+// Pressure source priority:
+//   1. QTabletEvent::pressure() — Wacom / Bamboo / Surface Pen
+//      and any other absolute-coordinate stylus that surfaces
+//      through Qt's tablet protocol. Always 0..1.
+//   2. QPointerEvent::pressure() on the QMouseEvent — covers
+//      Apple Force Touch trackpads (Cocoa backend reports
+//      NSEvent.pressure here in Qt 6.5+) and any pressure-aware
+//      pointer that arrives via the mouse path.
+//   3. Default 0.5 — a regular mouse with no pressure data.
+//
+// Tablet input also bypasses OS pointer acceleration (QTabletEvent
+// reports raw absolute device coords), so a Wacom stroke matches
+// the user's hand motion without jiggling. Force Touch and mouse
+// strokes get a small moving-average smoothing pass on release to
+// hide quantisation jitter.
 class SignatureCanvas : public QWidget {
     Q_OBJECT
 public:
@@ -30,6 +47,10 @@ public:
 
     void clear();
     bool isEmpty() const { return m_strokes.empty(); }
+    // True when the most recently added stroke received pressure
+    // data > 0 from at least one sample. Surface for tests + UI to
+    // confirm a pressure-aware device was driving the canvas.
+    bool lastStrokeUsedPressure() const { return m_lastStrokeUsedPressure; }
 
 signals:
     void changed();
@@ -42,13 +63,24 @@ protected:
     void tabletEvent(QTabletEvent* event) override;
 
 private:
-    struct Point { QPointF pos; qreal width; };
-    // A stroke is a run of points with per-point width (for pressure
-    // sensitivity). Drawing interpolates between consecutive points.
-    std::vector<std::vector<Point>> m_strokes;
-    std::vector<Point>* m_current = nullptr;
+    struct Sample { QPointF pos; qreal pressure; };
+    // Map a 0..1 raw pressure to a stroke width in canvas pixels.
+    // Cubic curve gives a wider dynamic range than the previous
+    // linear: 0.0 → 1px (light hairline), 0.5 → ~3px (mid),
+    // 1.0 → ~7px (heavy).
+    static qreal widthForPressure(qreal pressure);
+    void beginStroke(const QPointF& pos, qreal pressure);
+    void extendStroke(const QPointF& pos, qreal pressure);
+    void finishStroke();
 
-    // Computed on each stroke-add so render() can crop tightly.
+    // A stroke is a run of (position, pressure) samples. Drawing
+    // interpolates pen width between consecutive samples via
+    // widthForPressure.
+    std::vector<std::vector<Sample>> m_strokes;
+    std::vector<Sample>* m_current = nullptr;
+    bool m_lastStrokeUsedPressure = false;
+
+    // Computed on each sample-add so render() can crop tightly.
     QRectF m_bounds;
 };
 
