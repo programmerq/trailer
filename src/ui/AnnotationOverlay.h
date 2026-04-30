@@ -12,6 +12,8 @@
 #include <functional>
 #include <unordered_map>
 
+class QTabletEvent;
+
 namespace trailer {
 
 class AnnotationStore;
@@ -101,6 +103,7 @@ protected:
     void mouseDoubleClickEvent(QMouseEvent* event) override;
     void keyPressEvent(QKeyEvent* event) override;
     void contextMenuEvent(QContextMenuEvent* event) override;
+    void tabletEvent(QTabletEvent* event) override;
     bool eventFilter(QObject* obj, QEvent* event) override;
 
 private:
@@ -124,6 +127,13 @@ private:
     QPointF m_dragStartDoc;
     QPointF m_dragCurrentDoc;
     std::vector<QPointF> m_inkPoints;
+    // Per-sample pressure (0..1) parallel to m_inkPoints. Captured
+    // from QPointerEvent::points().pressure() for mouse / trackpad
+    // and from QTabletEvent::pressure() for stylus input. Stays
+    // empty when no sample reported a non-zero pressure, in which
+    // case the resulting Ink annotation drops back to a constant
+    // stroke width at render time.
+    std::vector<float> m_inkPressures;
     // Pending text selection while Select tool is active; becomes the
     // source range for the right-click markup menu.
     std::vector<QRectF> m_pendingSelection;

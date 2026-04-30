@@ -460,7 +460,11 @@ QPDFObjectHandle buildLineAppearance(QPDF& pdf, const Annotation& a,
 
 // Build a Form XObject for an /Ink annotation. Walks the polyline
 // emitting `m`/`l` operators; PDF readers without custom Ink
-// rendering still get a stroked line through the user's path.
+// rendering still get a stroked line through the user's path. When
+// per-sample pressures are present, each segment is stroked
+// independently with its own line width — the cubic curve maps
+// pressure to a [base, base+5] width range so a stylus or Force
+// Touch trackpad stroke reads as variably-weighted ink.
 QPDFObjectHandle buildInkAppearance(QPDF& pdf, const Annotation& a,
                                     const std::vector<QPointF>& flippedPts,
                                     double px1, double py1,
@@ -468,26 +472,38 @@ QPDFObjectHandle buildInkAppearance(QPDF& pdf, const Annotation& a,
     if (flippedPts.size() < 2) return {};
     const QColor& stroke = a.style.stroke;
     const double sw = a.style.strokeWidth > 0.0 ? a.style.strokeWidth : 1.0;
+    const bool withPressure = !a.pressures.empty() &&
+        a.pressures.size() == flippedPts.size();
 
-    // Each line segment is ~36 bytes; cap at a reasonable polyline
-    // length so we don't blow past a fixed buffer. Realistic Ink
-    // strokes have ~50-200 points; 4096 bytes covers ~110 segments
-    // and is fine for typical signatures' worth of doodling.
-    constexpr int kBufSize = 16 * 1024;
+    constexpr int kBufSize = 32 * 1024;
     auto* buf = new char[kBufSize];
     int n = 0;
     n += std::snprintf(buf + n, kBufSize - n, "q\n");
     n += std::snprintf(buf + n, kBufSize - n, "%.3f %.3f %.3f RG\n",
                        stroke.redF(), stroke.greenF(), stroke.blueF());
-    n += std::snprintf(buf + n, kBufSize - n,
-                       "%.3f w 1 J 1 j\n", sw);
-    n += std::snprintf(buf + n, kBufSize - n, "%.3f %.3f m\n",
-                       flippedPts[0].x(), flippedPts[0].y());
-    for (size_t i = 1; i < flippedPts.size() && n < kBufSize - 64; ++i) {
-        n += std::snprintf(buf + n, kBufSize - n, "%.3f %.3f l\n",
-                           flippedPts[i].x(), flippedPts[i].y());
+    n += std::snprintf(buf + n, kBufSize - n, "1 J 1 j\n");
+    if (!withPressure) {
+        n += std::snprintf(buf + n, kBufSize - n, "%.3f w\n", sw);
+        n += std::snprintf(buf + n, kBufSize - n, "%.3f %.3f m\n",
+                           flippedPts[0].x(), flippedPts[0].y());
+        for (size_t i = 1; i < flippedPts.size() && n < kBufSize - 64; ++i) {
+            n += std::snprintf(buf + n, kBufSize - n, "%.3f %.3f l\n",
+                               flippedPts[i].x(), flippedPts[i].y());
+        }
+        n += std::snprintf(buf + n, kBufSize - n, "S\n");
+    } else {
+        for (size_t i = 1; i < flippedPts.size() && n < kBufSize - 128; ++i) {
+            const float pr = std::clamp(a.pressures[i], 0.0f, 1.0f);
+            const double shaped = double(pr) * pr * pr;
+            const double w = sw + shaped * 5.0;
+            n += std::snprintf(buf + n, kBufSize - n,
+                               "%.3f w %.3f %.3f m %.3f %.3f l S\n",
+                               w,
+                               flippedPts[i - 1].x(), flippedPts[i - 1].y(),
+                               flippedPts[i].x(),     flippedPts[i].y());
+        }
     }
-    n += std::snprintf(buf + n, kBufSize - n, "S\nQ\n");
+    n += std::snprintf(buf + n, kBufSize - n, "Q\n");
     QPDFObjectHandle out = ap::finishStream(pdf, buf, n, px1, py1, px2, py2);
     delete[] buf;
     return out;

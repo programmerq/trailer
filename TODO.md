@@ -184,10 +184,16 @@ rearranged.
   would let future viewers re-render at any DPI without
   re-rasterising. Not blocking — the 2x raster is plenty for
   paper-size output.
-- **Apply the same pressure-aware rendering to the Freehand
-  annotation tool.** AnnotationOverlay's Ink path currently uses
-  a constant width. The same `widthForPressure` logic applies if
-  AnnotationOverlay grows the per-sample-pressure capture.
+- ~~**Pressure-aware Ink (Freehand) tool.**~~ Done — `Annotation`
+  gained a `pressures` parallel vector, AnnotationOverlay overrides
+  `tabletEvent` for stylus input and reads `QEventPoint::pressure`
+  for Force Touch trackpads. The on-screen renderer draws each
+  segment with its own pressure-derived width, and the saved /AP
+  Form XObject does the same per-segment width emission so the
+  rendered ink matches what the user drew. Caveat: PDF's standard
+  /Ink subtype carries only x/y in `/InkList`; cross-app
+  round-trip preserves the polyline shape but loses pressure
+  unless we add a Trailer-specific extension key (deferred).
 - **Apple Pencil / iOS** — out of scope. Trailer is Qt6 widgets,
   desktop only. If a tablet build ever happens, QTouchEvent on
   iPad surfaces Apple Pencil pressure / tilt and the existing

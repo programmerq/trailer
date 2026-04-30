@@ -74,6 +74,12 @@ struct Annotation {
     AnnotationType type = AnnotationType::Rectangle;
     QRectF bounds;                // primary geometry; for Ink this is the bbox
     std::vector<QPointF> points;  // for Ink and Line endpoints
+    // Per-sample pressure, parallel to `points`. Populated for Ink
+    // strokes captured from a pressure-aware device (Wacom tablet,
+    // Apple Force Touch trackpad). Empty for Line/Arrow and for Ink
+    // strokes from a plain mouse — the renderer falls back to the
+    // style's stroke width when this is empty.
+    std::vector<float> pressures;
     std::vector<QRectF> quads;    // per-run rects for Highlight/Underline/StrikeOut
     QString text;                 // Text / Note / and any user-attached comment
     // Absolute filesystem path to an image asset used for image-stamp

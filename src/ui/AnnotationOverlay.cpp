@@ -4,6 +4,7 @@
 
 #include <QContextMenuEvent>
 #include <QEvent>
+#include <QEventPoint>
 #include <QFont>
 #include <QFrame>
 #include <QKeyEvent>
@@ -12,6 +13,7 @@
 #include <QPainter>
 #include <QPainterPath>
 #include <QPlainTextEdit>
+#include <QTabletEvent>
 #include <QResizeEvent>
 #include <QVBoxLayout>
 #include <QWidget>
@@ -24,6 +26,10 @@ AnnotationOverlay::AnnotationOverlay(QWidget* parent) : QWidget(parent) {
     setAttribute(Qt::WA_TransparentForMouseEvents, true);
     setAttribute(Qt::WA_NoSystemBackground, true);
     setMouseTracking(true);
+    // Tablet tracking lets the Ink tool receive QTabletEvents from
+    // a Wacom / Surface pen; otherwise Qt funnels stylus input
+    // through QMouseEvent and we lose pressure resolution.
+    setTabletTracking(true);
     // ClickFocus makes the overlay accept keyboard focus when the
     // user clicks on an annotation. Without this, Delete / arrow
     // nudge events would never reach keyPressEvent because focus
@@ -172,6 +178,31 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
             }
             case AnnotationType::Ink: {
                 if (a.points.size() < 2) break;
+                // When per-sample pressure was captured, draw each
+                // segment with a width derived from its pressure so
+                // a stylus / Force Touch trackpad stroke shows the
+                // hand's variation. Without pressure, fall through
+                // to a single QPainterPath for cheaper rendering.
+                if (!a.pressures.empty() &&
+                    a.pressures.size() == a.points.size()) {
+                    const qreal base = a.style.strokeWidth > 0.0
+                        ? a.style.strokeWidth : 1.5;
+                    for (size_t i = 1; i < a.points.size(); ++i) {
+                        const qreal pr = std::clamp<qreal>(
+                            a.pressures[i], 0.0, 1.0);
+                        // Same cubic curve as SignatureCanvas so a
+                        // light touch is light and a heavy touch is
+                        // confidently thick. base is the minimum.
+                        const qreal shaped = pr * pr * pr;
+                        const qreal w = base + shaped * 5.0;
+                        QPen segPen(a.style.stroke, w, Qt::SolidLine,
+                                    Qt::RoundCap, Qt::RoundJoin);
+                        p.setPen(segPen);
+                        p.drawLine(m_docToView(a.points[i - 1], page),
+                                   m_docToView(a.points[i], page));
+                    }
+                    break;
+                }
                 QPainterPath path(m_docToView(a.points[0], page));
                 for (size_t i = 1; i < a.points.size(); ++i) {
                     path.lineTo(m_docToView(a.points[i], page));
@@ -538,8 +569,18 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent* event) {
     m_dragCurrentDoc = m_dragStartDoc;
     m_dragging = true;
     m_inkPoints.clear();
+    m_inkPressures.clear();
     if (m_tool == AnnotationTool::Ink) {
         m_inkPoints.push_back(m_dragStartDoc);
+        // Force Touch trackpads on macOS surface NSEvent.pressure
+        // through QPointerEvent::points().pressure(); plain mice
+        // report 0. We emit pressure samples even when zero; the
+        // commit step drops the parallel vector if no sample was
+        // non-zero so the saved annotation stays compact.
+        const float pr = event->points().isEmpty()
+            ? 0.0f
+            : float(event->points().first().pressure());
+        m_inkPressures.push_back(pr);
     }
     update();
 }
@@ -608,7 +649,19 @@ void AnnotationOverlay::mouseMoveEvent(QMouseEvent* event) {
     if (!m_dragging) return;
     m_dragCurrentDoc = toDoc(event->position(), m_dragPage);
     if (m_tool == AnnotationTool::Ink) {
-        m_inkPoints.push_back(m_dragCurrentDoc);
+        // Capture coalesced sub-points so fast strokes don't lose
+        // intermediate samples to OS event coalescing — same trick
+        // SignatureCanvas uses for Force Touch trackpads.
+        const auto& pts = event->points();
+        if (!pts.isEmpty()) {
+            for (const QEventPoint& pt : pts) {
+                m_inkPoints.push_back(toDoc(pt.position(), m_dragPage));
+                m_inkPressures.push_back(float(pt.pressure()));
+            }
+        } else {
+            m_inkPoints.push_back(m_dragCurrentDoc);
+            m_inkPressures.push_back(0.0f);
+        }
     }
     update();
 }
@@ -663,9 +716,25 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
             a.points = {m_dragStartDoc, end};
             break;
         case AnnotationTool::Ink: {
-            if (m_inkPoints.size() < 2) { m_inkPoints.clear(); update(); return; }
+            if (m_inkPoints.size() < 2) {
+                m_inkPoints.clear();
+                m_inkPressures.clear();
+                update();
+                return;
+            }
             a.type = AnnotationType::Ink;
             a.points = m_inkPoints;
+            // Drop the parallel pressures vector if every sample was
+            // 0 (plain mouse, no Force Touch / tablet). Saves bytes
+            // in the AnnotationStore and signals "constant width" to
+            // the renderer.
+            bool anyPressure = false;
+            for (float p : m_inkPressures) {
+                if (p > 0.0f) { anyPressure = true; break; }
+            }
+            if (anyPressure && m_inkPressures.size() == m_inkPoints.size()) {
+                a.pressures = m_inkPressures;
+            }
             qreal minX = m_inkPoints.front().x(), maxX = minX;
             qreal minY = m_inkPoints.front().y(), maxY = minY;
             for (const auto& p : m_inkPoints) {
@@ -674,6 +743,7 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
             }
             a.bounds = QRectF(QPointF(minX, minY), QPointF(maxX, maxY));
             m_inkPoints.clear();
+            m_inkPressures.clear();
             break;
         }
         case AnnotationTool::Text: {
@@ -804,6 +874,7 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent* event) {
         }
         default:
             m_inkPoints.clear();
+            m_inkPressures.clear();
             update();
             return;
     }
@@ -974,6 +1045,64 @@ void AnnotationOverlay::nudgeSelected(double dx, double dy) {
     }
     m_store->update(updated);
     update();
+}
+
+void AnnotationOverlay::tabletEvent(QTabletEvent* event) {
+    // Stylus input drives the same Ink-stroke buffer as mouse moves
+    // but uses the absolute device coordinates and per-sample
+    // pressure. We synthesise mousePress/Move/Release semantics so
+    // the rest of the overlay behaves identically — selection,
+    // shape commit on release, etc.
+    if (m_tool != AnnotationTool::Ink) {
+        QWidget::tabletEvent(event);
+        return;
+    }
+    const QPointF posDoc = toDoc(event->position(), pageAt(event->position()));
+    const float pressure = float(event->pressure());
+    switch (event->type()) {
+        case QEvent::TabletPress: {
+            m_dragPage = pageAt(event->position());
+            m_dragStartDoc = posDoc;
+            m_dragCurrentDoc = posDoc;
+            m_dragging = true;
+            m_inkPoints.clear();
+            m_inkPressures.clear();
+            m_inkPoints.push_back(posDoc);
+            m_inkPressures.push_back(pressure);
+            update();
+            event->accept();
+            return;
+        }
+        case QEvent::TabletMove: {
+            if (!m_dragging) {
+                event->ignore();
+                return;
+            }
+            m_dragCurrentDoc = posDoc;
+            m_inkPoints.push_back(posDoc);
+            m_inkPressures.push_back(pressure);
+            update();
+            event->accept();
+            return;
+        }
+        case QEvent::TabletRelease: {
+            // Synthesise a left-button release so the existing Ink
+            // commit path runs unchanged. The QMouseEvent ctor wants
+            // a global pos; pass the same position the tablet
+            // reported and let Qt translate.
+            m_dragging = true;  // mouseReleaseEvent guards on this
+            QMouseEvent fake(QEvent::MouseButtonRelease,
+                             event->position(), event->globalPosition(),
+                             Qt::LeftButton, Qt::NoButton,
+                             Qt::NoModifier);
+            mouseReleaseEvent(&fake);
+            event->accept();
+            return;
+        }
+        default:
+            break;
+    }
+    QWidget::tabletEvent(event);
 }
 
 void AnnotationOverlay::contextMenuEvent(QContextMenuEvent* event) {
