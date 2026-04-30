@@ -160,12 +160,38 @@ if(APPLE)
 endif()
 trailer_set_warnings(trailer_core)
 
+set(TRAILER_ICON_DIR "${CMAKE_SOURCE_DIR}/resources/icons")
+set(TRAILER_MACOS_ICON "${TRAILER_ICON_DIR}/trailer.icns")
+set(TRAILER_WINDOWS_ICON "${TRAILER_ICON_DIR}/trailer.ico")
+
+# Generate a Windows resource (.rc) referencing the bundled .ico so Explorer,
+# the taskbar, and Alt-Tab show the loupe icon. Done as a configure-time
+# write so the .rc lives next to the binary's source list.
+if(WIN32 AND EXISTS "${TRAILER_WINDOWS_ICON}")
+    set(TRAILER_RC "${CMAKE_BINARY_DIR}/trailer.rc")
+    file(WRITE "${TRAILER_RC}"
+        "IDI_ICON1 ICON DISCARDABLE \"${TRAILER_WINDOWS_ICON}\"\n")
+    set(TRAILER_WINDOWS_RC_SOURCE "${TRAILER_RC}")
+else()
+    set(TRAILER_WINDOWS_RC_SOURCE "")
+endif()
+
 qt_add_executable(trailer
     src/main.cpp
+    ${TRAILER_WINDOWS_RC_SOURCE}
 )
 target_link_libraries(trailer PRIVATE trailer_core)
 trailer_set_warnings(trailer)
 trailer_deploy_onnxruntime(trailer)
+
+# Copy the .icns into the macOS bundle's Resources/ directory so Finder/Dock
+# pick it up, and tell Info.plist about the file via MACOSX_BUNDLE_ICON_FILE.
+if(APPLE AND EXISTS "${TRAILER_MACOS_ICON}")
+    target_sources(trailer PRIVATE "${TRAILER_MACOS_ICON}")
+    set_source_files_properties("${TRAILER_MACOS_ICON}" PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources"
+    )
+endif()
 
 set_target_properties(trailer PROPERTIES
     WIN32_EXECUTABLE ON
@@ -174,6 +200,7 @@ set_target_properties(trailer PROPERTIES
     MACOSX_BUNDLE_GUI_IDENTIFIER "org.trailer.Trailer"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
+    MACOSX_BUNDLE_ICON_FILE "trailer.icns"
 )
 
 enable_testing()

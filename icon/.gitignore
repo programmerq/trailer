@@ -1,0 +1,5 @@
+# Pipeline outputs — recoverable by re-running render.sh / make_iconset.py.
+output/
+
+# User-supplied photo input — kept local.
+inputs/arches.jpg

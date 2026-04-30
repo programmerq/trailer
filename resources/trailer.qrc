@@ -3,4 +3,13 @@
     <qresource prefix="/ml">
         <file alias="ppocr_en_dict.txt">ppocr_en_dict.txt</file>
     </qresource>
+    <qresource prefix="/icons">
+        <file alias="trailer_16.png">icons/trailer_16.png</file>
+        <file alias="trailer_32.png">icons/trailer_32.png</file>
+        <file alias="trailer_64.png">icons/trailer_64.png</file>
+        <file alias="trailer_128.png">icons/trailer_128.png</file>
+        <file alias="trailer_256.png">icons/trailer_256.png</file>
+        <file alias="trailer_512.png">icons/trailer_512.png</file>
+        <file alias="trailer_1024.png">icons/trailer_1024.png</file>
+    </qresource>
 </RCC>
