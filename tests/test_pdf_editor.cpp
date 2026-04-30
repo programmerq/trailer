@@ -163,6 +163,7 @@ private slots:
     void annotationRoundTripPreservesHighlightShape();
     void annotationRoundTripPreservesUnderlineAndStrikeOut();
     void annotationRectangleEmitsAppearanceStream();
+    void annotationEllipseAndLineAndInkEmitAppearanceStreams();
     void saveWithPasswordGatesLoad();
     void saveWithPasswordEmptyOwnerUsesUserPassword();
     void unlockRecoversLoadedButLockedEditor();
@@ -606,6 +607,84 @@ void TestPdfEditor::annotationRectangleEmitsAppearanceStream() {
     QVERIFY(subtype.isName());
     QCOMPARE(QString::fromStdString(subtype.getName()),
              QStringLiteral("/Form"));
+}
+
+// /AP coverage extends to Ellipse, Line, Arrow, and Ink. Each
+// annotation type goes through its own appearance builder; this
+// test asserts every saved /Annot ends up with a /AP /N stream
+// declaring /Subtype /Form, so external viewers (Apple Preview,
+// older Acrobat) render the shape from the appearance instead of
+// reconstructing from /C and /BS. Highlight/Underline/StrikeOut and
+// FreeText still rely on the property-based fallback and aren't in
+// scope here.
+void TestPdfEditor::
+    annotationEllipseAndLineAndInkEmitAppearanceStreams() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+    const QString dst = dir.filePath("shapes_ap.pdf");
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    Annotation ell;
+    ell.page = 0;
+    ell.type = AnnotationType::Ellipse;
+    ell.bounds = QRectF(80, 100, 120, 60);
+    ell.style.stroke = QColor(20, 20, 200);
+    ell.style.strokeWidth = 1.5;
+
+    Annotation line;
+    line.page = 0;
+    line.type = AnnotationType::Line;
+    line.bounds = QRectF(40, 200, 200, 200);
+    line.points = {QPointF(40, 200), QPointF(240, 200)};
+    line.style.stroke = QColor(20, 200, 20);
+
+    Annotation arrow;
+    arrow.page = 0;
+    arrow.type = AnnotationType::Arrow;
+    arrow.bounds = QRectF(40, 240, 200, 240);
+    arrow.points = {QPointF(40, 240), QPointF(240, 240)};
+    arrow.style.stroke = QColor(200, 20, 20);
+
+    Annotation ink;
+    ink.page = 0;
+    ink.type = AnnotationType::Ink;
+    ink.bounds = QRectF(50, 300, 200, 60);
+    // Some squiggle through the bounds.
+    ink.points = {
+        QPointF(50, 300), QPointF(80, 320), QPointF(120, 305),
+        QPointF(160, 335), QPointF(200, 320), QPointF(250, 360),
+    };
+
+    QVERIFY(editor.writeAnnotations({ell, line, arrow, ink}));
+    QVERIFY(editor.save(dst));
+
+    QPDF reopened;
+    reopened.processFile(dst.toLocal8Bit().constData());
+    auto pages = QPDFPageDocumentHelper(reopened).getAllPages();
+    QVERIFY(!pages.empty());
+    QPDFObjectHandle annots =
+        pages.front().getObjectHandle().getKey("/Annots");
+    QVERIFY(annots.isArray());
+    QCOMPARE(annots.getArrayNItems(), 4);
+
+    int withAp = 0;
+    for (int i = 0; i < annots.getArrayNItems(); ++i) {
+        QPDFObjectHandle entry = annots.getArrayItem(i);
+        QPDFObjectHandle ap = entry.getKey("/AP");
+        if (!ap.isDictionary()) continue;
+        QPDFObjectHandle apN = ap.getKey("/N");
+        if (!apN.isStream()) continue;
+        QPDFObjectHandle apDict = apN.getDict();
+        QPDFObjectHandle subtype = apDict.getKey("/Subtype");
+        if (!subtype.isName()) continue;
+        if (QString::fromStdString(subtype.getName())
+                != QStringLiteral("/Form")) continue;
+        ++withAp;
+    }
+    QCOMPARE(withAp, 4);
 }
 
 // ---------- Encryption (Phase 5) ------------------------------------------

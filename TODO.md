@@ -46,14 +46,17 @@ worked on.
   content stream; Redaction destroys content; ZoomLens has no
   standard PDF subtype and is intentionally skipped.
 
-  **/AP appearance streams** are now emitted for **Rectangle and
-  HighlightShape** so Apple Preview renders them correctly without
-  reconstructing from /C and /BS. The remaining types (Ellipse,
-  Line, Arrow, Ink, FreeText, Highlight/Underline/StrikeOut quads)
-  still rely on the reader's property-based fallback. Each
-  follows the same `buildSquareAppearance` pattern with a
-  type-specific content stream — incremental work, not a
-  blocker for files Trailer itself reads back perfectly.
+  **/AP appearance streams** are now emitted for **Rectangle,
+  HighlightShape, Ellipse, Line, Arrow, and Ink**. Each shape's
+  builder lives next to its property-only writer in
+  `PdfEditor.cpp`. The remaining types (FreeText for Text /
+  SpeechBubble, /QuadPoints-based Highlight / Underline / StrikeOut)
+  still rely on the property-based fallback. FreeText needs a font
+  resource in /Resources and a `BT` text block — non-trivial.
+  Highlight / Underline / StrikeOut typically render fine without
+  /AP because their /QuadPoints carry the geometry; viewers
+  reconstruct them from properties more reliably than they do for
+  shape annotations.
 
 - **PDF multi-page / continuous-mode overlay.** The annotation overlay
   uses the `pageNavigator()->currentPage()` for its page reference and

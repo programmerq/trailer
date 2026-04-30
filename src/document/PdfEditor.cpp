@@ -324,6 +324,175 @@ QPDFObjectHandle wrapAppearance(QPDFObjectHandle xobj) {
     return ap;
 }
 
+// Helpers shared by the type-specific appearance builders below.
+namespace ap {
+
+// Build the boilerplate Form XObject dict around a content stream.
+QPDFObjectHandle finishStream(QPDF& pdf, const char* buf, int len,
+                              double px1, double py1,
+                              double px2, double py2) {
+    auto dict = QPDFObjectHandle::newDictionary();
+    dict.replaceKey("/Type", QPDFObjectHandle::newName("/XObject"));
+    dict.replaceKey("/Subtype", QPDFObjectHandle::newName("/Form"));
+    dict.replaceKey("/FormType", QPDFObjectHandle::newInteger(1));
+    dict.replaceKey("/Resources", QPDFObjectHandle::newDictionary());
+
+    auto bbox = QPDFObjectHandle::newArray();
+    bbox.appendItem(QPDFObjectHandle::newReal(px1, 3));
+    bbox.appendItem(QPDFObjectHandle::newReal(py1, 3));
+    bbox.appendItem(QPDFObjectHandle::newReal(px2, 3));
+    bbox.appendItem(QPDFObjectHandle::newReal(py2, 3));
+    dict.replaceKey("/BBox", bbox);
+
+    auto stream = QPDFObjectHandle::newStream(&pdf, std::string(buf, buf + len));
+    stream.replaceDict(dict);
+    return stream;
+}
+
+}  // namespace ap
+
+// Build a Form XObject for an /Circle (ellipse) annotation. PDF
+// has no native ellipse operator; ISO 32000 prescribes four cubic
+// Bezier arcs with control offsets at kappa * radius. The kappa
+// value 0.5522847... is the canonical magic number for a circle.
+// For an ellipse we use kappa per axis independently.
+QPDFObjectHandle buildCircleAppearance(QPDF& pdf, const Annotation& a,
+                                       double px1, double py1,
+                                       double px2, double py2) {
+    const QColor& stroke = a.style.stroke;
+    const QColor& fill = a.style.fill;
+    const double sw = a.style.strokeWidth > 0.0 ? a.style.strokeWidth : 1.0;
+
+    const double inset = sw / 2.0;
+    const double cx = (px1 + px2) * 0.5;
+    const double cy = (py1 + py2) * 0.5;
+    const double rx = (px2 - px1) * 0.5 - inset;
+    const double ry = (py2 - py1) * 0.5 - inset;
+    constexpr double kKappa = 0.5522847498307933;
+    const double ox = rx * kKappa;
+    const double oy = ry * kKappa;
+
+    char buf[1024];
+    int n = 0;
+    n += std::snprintf(buf + n, sizeof(buf) - n, "q\n");
+    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f RG\n",
+                       stroke.redF(), stroke.greenF(), stroke.blueF());
+    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f w\n", sw);
+    if (fill.isValid() && fill.alpha() > 0) {
+        n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f rg\n",
+                           fill.redF(), fill.greenF(), fill.blueF());
+    }
+    // Start at the right of the ellipse, run counter-clockwise.
+    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f m\n",
+                       cx + rx, cy);
+    n += std::snprintf(buf + n, sizeof(buf) - n,
+                       "%.3f %.3f %.3f %.3f %.3f %.3f c\n",
+                       cx + rx, cy + oy, cx + ox, cy + ry, cx, cy + ry);
+    n += std::snprintf(buf + n, sizeof(buf) - n,
+                       "%.3f %.3f %.3f %.3f %.3f %.3f c\n",
+                       cx - ox, cy + ry, cx - rx, cy + oy, cx - rx, cy);
+    n += std::snprintf(buf + n, sizeof(buf) - n,
+                       "%.3f %.3f %.3f %.3f %.3f %.3f c\n",
+                       cx - rx, cy - oy, cx - ox, cy - ry, cx, cy - ry);
+    n += std::snprintf(buf + n, sizeof(buf) - n,
+                       "%.3f %.3f %.3f %.3f %.3f %.3f c\n",
+                       cx + ox, cy - ry, cx + rx, cy - oy, cx + rx, cy);
+    n += std::snprintf(buf + n, sizeof(buf) - n, "h %s\nQ\n",
+                       (fill.isValid() && fill.alpha() > 0) ? "B" : "S");
+    return ap::finishStream(pdf, buf, n, px1, py1, px2, py2);
+}
+
+// Build a Form XObject for a /Line annotation. Optional arrowhead
+// at the end (not on the start) when `arrow` is true. The arrow is
+// a simple two-segment open-V centred on the line's terminal angle.
+QPDFObjectHandle buildLineAppearance(QPDF& pdf, const Annotation& a,
+                                     bool arrow,
+                                     double lx1, double ly1,
+                                     double lx2, double ly2) {
+    const QColor& stroke = a.style.stroke;
+    const double sw = a.style.strokeWidth > 0.0 ? a.style.strokeWidth : 1.0;
+
+    char buf[1024];
+    int n = 0;
+    n += std::snprintf(buf + n, sizeof(buf) - n, "q\n");
+    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f RG\n",
+                       stroke.redF(), stroke.greenF(), stroke.blueF());
+    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f w\n", sw);
+    n += std::snprintf(buf + n, sizeof(buf) - n,
+                       "%.3f %.3f m %.3f %.3f l S\n",
+                       lx1, ly1, lx2, ly2);
+    if (arrow) {
+        // Arrowhead: two short segments back from the terminal point
+        // at ±25° from the line direction. Length scales with stroke
+        // width so a thicker line gets a chunkier head.
+        const double dx = lx2 - lx1;
+        const double dy = ly2 - ly1;
+        const double len = std::sqrt(dx * dx + dy * dy);
+        if (len > 0.0001) {
+            const double ux = dx / len;
+            const double uy = dy / len;
+            const double headLen = std::max(8.0, sw * 4.0);
+            constexpr double kCos = 0.9063078;   // cos(25°)
+            constexpr double kSin = 0.4226183;   // sin(25°)
+            const double rx = -ux * kCos + uy * kSin;
+            const double ry = -uy * kCos - ux * kSin;
+            const double lhx = lx2 + rx * headLen;
+            const double lhy = ly2 + ry * headLen;
+            const double rxv = -ux * kCos - uy * kSin;
+            const double ryv = -uy * kCos + ux * kSin;
+            const double rhx = lx2 + rxv * headLen;
+            const double rhy = ly2 + ryv * headLen;
+            n += std::snprintf(buf + n, sizeof(buf) - n,
+                               "%.3f %.3f m %.3f %.3f l %.3f %.3f l S\n",
+                               lhx, lhy, lx2, ly2, rhx, rhy);
+        }
+    }
+    n += std::snprintf(buf + n, sizeof(buf) - n, "Q\n");
+
+    // BBox sized to enclose both endpoints with a stroke-width pad.
+    const double pad = std::max(sw * 4.0, 12.0);
+    const double bx1 = std::min(lx1, lx2) - pad;
+    const double by1 = std::min(ly1, ly2) - pad;
+    const double bx2 = std::max(lx1, lx2) + pad;
+    const double by2 = std::max(ly1, ly2) + pad;
+    return ap::finishStream(pdf, buf, n, bx1, by1, bx2, by2);
+}
+
+// Build a Form XObject for an /Ink annotation. Walks the polyline
+// emitting `m`/`l` operators; PDF readers without custom Ink
+// rendering still get a stroked line through the user's path.
+QPDFObjectHandle buildInkAppearance(QPDF& pdf, const Annotation& a,
+                                    const std::vector<QPointF>& flippedPts,
+                                    double px1, double py1,
+                                    double px2, double py2) {
+    if (flippedPts.size() < 2) return {};
+    const QColor& stroke = a.style.stroke;
+    const double sw = a.style.strokeWidth > 0.0 ? a.style.strokeWidth : 1.0;
+
+    // Each line segment is ~36 bytes; cap at a reasonable polyline
+    // length so we don't blow past a fixed buffer. Realistic Ink
+    // strokes have ~50-200 points; 4096 bytes covers ~110 segments
+    // and is fine for typical signatures' worth of doodling.
+    constexpr int kBufSize = 16 * 1024;
+    auto* buf = new char[kBufSize];
+    int n = 0;
+    n += std::snprintf(buf + n, kBufSize - n, "q\n");
+    n += std::snprintf(buf + n, kBufSize - n, "%.3f %.3f %.3f RG\n",
+                       stroke.redF(), stroke.greenF(), stroke.blueF());
+    n += std::snprintf(buf + n, kBufSize - n,
+                       "%.3f w 1 J 1 j\n", sw);
+    n += std::snprintf(buf + n, kBufSize - n, "%.3f %.3f m\n",
+                       flippedPts[0].x(), flippedPts[0].y());
+    for (size_t i = 1; i < flippedPts.size() && n < kBufSize - 64; ++i) {
+        n += std::snprintf(buf + n, kBufSize - n, "%.3f %.3f l\n",
+                           flippedPts[i].x(), flippedPts[i].y());
+    }
+    n += std::snprintf(buf + n, kBufSize - n, "S\nQ\n");
+    QPDFObjectHandle out = ap::finishStream(pdf, buf, n, px1, py1, px2, py2);
+    delete[] buf;
+    return out;
+}
+
 QPDFObjectHandle buildAnnotation(QPDF& pdf, const Annotation& a,
                                  double pageHeight) {
     auto dict = QPDFObjectHandle::newDictionary();
@@ -357,6 +526,9 @@ QPDFObjectHandle buildAnnotation(QPDF& pdf, const Annotation& a,
         case AnnotationType::Ellipse:
             dict.replaceKey("/Subtype", QPDFObjectHandle::newName("/Circle"));
             dict.replaceKey("/Rect", rectArray(x1, py1, x2, py2));
+            dict.replaceKey("/AP", wrapAppearance(
+                pdf.makeIndirectObject(
+                    buildCircleAppearance(pdf, a, x1, py1, x2, py2))));
             break;
         case AnnotationType::Line:
         case AnnotationType::Arrow: {
@@ -381,6 +553,11 @@ QPDFObjectHandle buildAnnotation(QPDF& pdf, const Annotation& a,
                 };
                 dict.replaceKey("/LE", QPDFObjectHandle::newArray(le));
             }
+            dict.replaceKey("/AP", wrapAppearance(
+                pdf.makeIndirectObject(
+                    buildLineAppearance(pdf, a,
+                                        a.type == AnnotationType::Arrow,
+                                        lx1, ly1, lx2, ly2))));
             break;
         }
         case AnnotationType::Ink: {
@@ -388,14 +565,24 @@ QPDFObjectHandle buildAnnotation(QPDF& pdf, const Annotation& a,
             dict.replaceKey("/Rect", rectArray(x1, py1, x2, py2));
             std::vector<QPDFObjectHandle> stroke;
             stroke.reserve(a.points.size() * 2);
+            std::vector<QPointF> flippedPts;
+            flippedPts.reserve(a.points.size());
             for (const QPointF& p : a.points) {
+                const double pyf = flipY(p.y());
                 stroke.push_back(QPDFObjectHandle::newReal(p.x(), 3));
-                stroke.push_back(QPDFObjectHandle::newReal(flipY(p.y()), 3));
+                stroke.push_back(QPDFObjectHandle::newReal(pyf, 3));
+                flippedPts.emplace_back(p.x(), pyf);
             }
             std::vector<QPDFObjectHandle> inkList = {
                 QPDFObjectHandle::newArray(stroke),
             };
             dict.replaceKey("/InkList", QPDFObjectHandle::newArray(inkList));
+            QPDFObjectHandle inkAp =
+                buildInkAppearance(pdf, a, flippedPts, x1, py1, x2, py2);
+            if (inkAp.isStream()) {
+                dict.replaceKey("/AP", wrapAppearance(
+                    pdf.makeIndirectObject(inkAp)));
+            }
             break;
         }
         case AnnotationType::Text: {

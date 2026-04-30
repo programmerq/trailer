@@ -126,6 +126,13 @@ ctest --test-dir build --output-on-failure
 
 CI runs the same matrix (Ubuntu / Windows / macOS) on every push and PR.
 
+## Philosophy
+
+Trailer is built around a few hard-edged constraints — no ads, no
+telemetry, no accounts, no premium tier, no cloud sync, local-first.
+[PHILOSOPHY.md](PHILOSOPHY.md) spells them out and explains how the
+project intends to stay that way.
+
 ## License
 
 Trailer is MIT-licensed — see [LICENSE](LICENSE).
