@@ -13,13 +13,31 @@ worked on.
 
 ## Cross-cutting
 
-- **HiDPI / Retina support.** The app does not yet handle device-pixel
-  ratio > 1. Symptoms: screenshots capture logical pixels (not native),
-  and raster content may render soft on 2x displays. Needs:
-  - `Qt::AA_EnableHighDpiScaling` / `Qt::AA_UseHighDpiPixmaps` audit.
-  - `QScreen::devicePixelRatio()` propagated to all grab/paint paths
-    (screenshot, thumbnail render, image scaling).
-  - Test on 1x, 2x, 3x displays.
+- **HiDPI / Retina support — partially done.** Qt 6 enables high-
+  DPI scaling by default (`AA_EnableHighDpiScaling` /
+  `AA_UseHighDpiPixmaps` are deprecated and effectively always-on),
+  so the widgets layer is correct out of the box. The remaining
+  gaps were in custom-rendered raster content that asked the
+  document for logical-pixel sized images and let Qt scale them up
+  blurry on 2x displays.
+  - **Sidebar thumbnails** (commit pending) now render at
+    `m_size * devicePixelRatio` native pixels and stamp
+    `setDevicePixelRatio` on the result so Qt uses the high-DPI
+    bitmap at logical layout size. No more soft thumbnails on
+    Retina.
+  - **Screenshot capture** (`screen->grabWindow(0)`) is already
+    DPR-correct: the returned pixmap is native pixels and saving
+    to PNG writes the high-resolution data.
+  - **Magnifier overlay** is DPR-correct because both the source
+    grab and the magnifier widget share the same screen DPR; Qt
+    handles the native-to-native sample.
+  - **SignatureCanvas render** already emits at 2× canvas
+    resolution.
+  - **Mixed-DPR multi-monitor** (window dragged between a 1x and a
+    2x display mid-session) is *not* handled: thumbnail cache
+    won't refresh on screen change. Edge case; deferred.
+  - **Test on 1x, 2x, 3x displays** — manual; CI is offscreen
+    only.
 
 - **PDF undo/redo.** Image edits have an undo stack; PDF edits do not
   (cloning `QPDF` per mutation is expensive). Design options:

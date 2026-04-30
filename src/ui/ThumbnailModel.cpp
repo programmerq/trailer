@@ -5,11 +5,15 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QGuiApplication>
 #include <QImage>
 #include <QMimeData>
 #include <QPixmap>
+#include <QScreen>
 #include <QTemporaryFile>
 #include <QUrl>
+
+#include <cmath>
 
 #include <algorithm>
 
@@ -110,7 +114,22 @@ QVariant ThumbnailModel::data(const QModelIndex& index, int role) const {
         case Qt::DecorationRole: {
             auto it = m_cache.find(row);
             if (it == m_cache.end()) {
-                const QImage img = m_doc->renderThumbnail(row, m_size);
+                // Render at native resolution for the user's primary
+                // screen and stamp devicePixelRatio on the result so
+                // Qt treats the pixmap as logical m_size while
+                // sampling the high-DPI pixels. Without this the
+                // sidebar thumbnail looks blurry on Retina.
+                qreal dpr = 1.0;
+                if (auto* screen = QGuiApplication::primaryScreen()) {
+                    dpr = screen->devicePixelRatio();
+                }
+                const QSize nativeSize(
+                    int(std::ceil(m_size.width() * dpr)),
+                    int(std::ceil(m_size.height() * dpr)));
+                QImage img = m_doc->renderThumbnail(row, nativeSize);
+                if (!img.isNull()) {
+                    img.setDevicePixelRatio(dpr);
+                }
                 it = m_cache.insert(row, img.isNull() ? QPixmap() : QPixmap::fromImage(img));
             }
             return it.value();
