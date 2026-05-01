@@ -67,9 +67,20 @@ protected:
     // this window before the OS-level close completes. If the user
     // hits Cancel on any prompt, the window stays open.
     void closeEvent(QCloseEvent* event) override;
+    // Escape clears the Magnifier (and other transient "modes").
+    // Most modes are toggle actions so the user can flip them off
+    // explicitly; Escape is the universal "I'm done with this
+    // mode" affordance Mac apps lean on. Falls through to the base
+    // implementation when nothing matches.
+    void keyPressEvent(QKeyEvent* event) override;
 
 private slots:
     void onOpen();
+    // Wipe every Trailer-managed file under AppPaths::*. Used by
+    // Tools → Reset Trailer Settings…  for the "is this stale
+    // state from an older build?" diagnostic. Asks for explicit
+    // confirmation because this is destructive.
+    void onResetTrailerSettings();
     void onSave();
     void onSaveAs();
     void onRotateLeft();
@@ -106,6 +117,7 @@ private:
     void buildMenus();
     void buildEditMenu(QMenu* editMenu);
     void buildViewMenu(QMenu* viewMenu);
+    void buildGoMenu(QMenu* goMenu);
     void buildToolsMenu(QMenu* toolsMenu);
     // Shows the one-time "redaction is not defence-grade" warning
     // (DESIGN §6.11.6) the first time the user activates the

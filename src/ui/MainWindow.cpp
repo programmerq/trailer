@@ -21,6 +21,7 @@
 #include "ml/BackgroundRemover.h"
 #include "ml/OcrEngine.h"
 #include "platform/Share.h"
+#include "settings/AppPaths.h"
 #include "ml/SamSession.h"
 #include "recent/RecentFiles.h"
 #include "OcrResultsDialog.h"
@@ -38,6 +39,7 @@
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QFormLayout>
 #include <QGuiApplication>
 #include <QImageWriter>
@@ -315,6 +317,9 @@ void MainWindow::buildMenus() {
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
     buildViewMenu(viewMenu);
 
+    auto* goMenu = menuBar()->addMenu(tr("&Go"));
+    buildGoMenu(goMenu);
+
     auto* toolsMenu = menuBar()->addMenu(tr("&Tools"));
     buildToolsMenu(toolsMenu);
 
@@ -489,6 +494,17 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
     m_magnifierAction = viewMenu->addAction(tr("&Magnifier"));
     m_magnifierAction->setCheckable(true);
     m_magnifierAction->setShortcut(QKeySequence(Qt::Key_QuoteLeft));
+    // Cmd-Tab / app-deactivate clears Magnifier so the lens
+    // doesn't linger when the user comes back to a different
+    // workflow. Esc is handled in keyPressEvent.
+    connect(qApp, &QGuiApplication::applicationStateChanged,
+            this, [this](Qt::ApplicationState state) {
+                if (state != Qt::ApplicationActive &&
+                    m_magnifierAction &&
+                    m_magnifierAction->isChecked()) {
+                    m_magnifierAction->setChecked(false);
+                }
+            });
     connect(m_magnifierAction, &QAction::toggled, this, [this](bool on) {
         if (on) {
             m_magnifier->setTarget(m_documentView->currentWidget());
@@ -496,6 +512,63 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
         } else {
             m_magnifier->deactivate();
         }
+    });
+}
+
+void MainWindow::buildGoMenu(QMenu* goMenu) {
+    // Page navigation. Mirrors Preview.app's Go menu so Mac users
+    // bring their muscle memory with them. Each action is gated on
+    // doc->pageCount() in onCurrentDocumentChanged.
+    auto withCurrentDoc = [this](auto&& fn) {
+        return [this, fn = std::forward<decltype(fn)>(fn)]() {
+            if (auto* doc = m_documentView->currentDocument()) {
+                fn(doc);
+            }
+        };
+    };
+
+    auto* firstPage = goMenu->addAction(tr("&First Page"));
+    firstPage->setShortcut(QKeySequence(tr("Ctrl+Home")));
+    connect(firstPage, &QAction::triggered, this,
+            withCurrentDoc([](IDocument* doc) { doc->goToPage(0); }));
+
+    auto* prevPage = goMenu->addAction(tr("&Previous Page"));
+    prevPage->setShortcut(QKeySequence(tr("Ctrl+Left")));
+    connect(prevPage, &QAction::triggered, this,
+            withCurrentDoc([](IDocument* doc) {
+                doc->goToPage(std::max(0, doc->currentPage() - 1));
+            }));
+
+    auto* nextPage = goMenu->addAction(tr("&Next Page"));
+    nextPage->setShortcut(QKeySequence(tr("Ctrl+Right")));
+    connect(nextPage, &QAction::triggered, this,
+            withCurrentDoc([](IDocument* doc) {
+                doc->goToPage(std::min(doc->pageCount() - 1,
+                                       doc->currentPage() + 1));
+            }));
+
+    auto* lastPage = goMenu->addAction(tr("&Last Page"));
+    lastPage->setShortcut(QKeySequence(tr("Ctrl+End")));
+    connect(lastPage, &QAction::triggered, this,
+            withCurrentDoc([](IDocument* doc) {
+                doc->goToPage(doc->pageCount() - 1);
+            }));
+
+    goMenu->addSeparator();
+
+    // ⌥⌘G — same shortcut Preview.app uses. Pops a small dialog
+    // asking for the page number.
+    auto* gotoPage = goMenu->addAction(tr("&Go to Page…"));
+    gotoPage->setShortcut(QKeySequence(tr("Ctrl+Alt+G")));
+    connect(gotoPage, &QAction::triggered, this, [this]() {
+        auto* doc = m_documentView->currentDocument();
+        if (!doc || doc->pageCount() <= 0) return;
+        bool ok = false;
+        const int picked = QInputDialog::getInt(
+            this, tr("Go to Page"),
+            tr("Page (1–%1):").arg(doc->pageCount()),
+            doc->currentPage() + 1, 1, doc->pageCount(), 1, &ok);
+        if (ok) doc->goToPage(picked - 1);
     });
 }
 
@@ -587,6 +660,17 @@ void MainWindow::buildToolsMenu(QMenu* toolsMenu) {
     m_screenshotAction = toolsMenu->addAction(tr("&Take Screenshot"));
     m_screenshotAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_3));
     connect(m_screenshotAction, &QAction::triggered, this, &MainWindow::onTakeScreenshot);
+
+    toolsMenu->addSeparator();
+
+    // Diagnostic / "is this stale state" action. Wipes everything
+    // Trailer keeps on disk under AppPaths::*: settings.toml,
+    // recent.json, cards.toml, signatures dir, model cache. The
+    // user is asked to confirm with a destructive button label
+    // because this is genuinely destructive.
+    auto* resetAction = toolsMenu->addAction(tr("&Reset Trailer Settings…"));
+    connect(resetAction, &QAction::triggered, this,
+            &MainWindow::onResetTrailerSettings);
 }
 
 void MainWindow::onCropPages() {
@@ -1242,7 +1326,11 @@ void MainWindow::onExportAs() {
             << tr("JPEG image (*.jpg *.jpeg)")
             << tr("TIFF image (*.tif *.tiff)")
             << tr("BMP image (*.bmp)")
-            << tr("WebP image (*.webp)");
+            << tr("WebP image (*.webp)")
+            // Single-page PDF wrapping the (filtered, flattened)
+            // image. The "I want to email this photo as a PDF"
+            // workflow people expect from Preview.
+            << tr("PDF document (*.pdf)");
     QString selected;
     const QString suggested = doc->filePath().isEmpty()
         ? doc->displayName()
@@ -2091,6 +2179,63 @@ void MainWindow::dropEvent(QDropEvent* event) {
         m_app->openFiles(paths);
         event->acceptProposedAction();
     }
+}
+
+void MainWindow::onResetTrailerSettings() {
+    const QMessageBox::StandardButton ack = QMessageBox::warning(
+        this, tr("Reset Trailer"),
+        tr("Reset Trailer to a clean state?\n\n"
+           "This deletes:\n"
+           "  • Preferences (theme, last-saved-dir, autoSave)\n"
+           "  • Recent files history\n"
+           "  • Saved cards (My Card data)\n"
+           "  • Saved signatures\n"
+           "  • Cached ML models (will re-download on next use)\n\n"
+           "Open documents stay open — only Trailer's own state on "
+           "disk is wiped."),
+        QMessageBox::Reset | QMessageBox::Cancel,
+        QMessageBox::Cancel);
+    if (ack != QMessageBox::Reset) return;
+
+    auto removeFile = [](const QString& path) {
+        if (path.isEmpty()) return;
+        QFile::remove(path);
+    };
+    auto removeDir = [](const QString& path) {
+        if (path.isEmpty()) return;
+        QDir(path).removeRecursively();
+    };
+
+    removeFile(AppPaths::settingsFile());
+    removeFile(AppPaths::recentFile());
+    removeFile(AppPaths::cardsFile());
+    removeDir(AppPaths::signaturesDir());
+    removeDir(AppPaths::modelsDir());
+
+    // Refresh in-memory copies so the rest of the session sees the
+    // wipe. Settings reverts to defaults; recent menus rebuild.
+    m_app->settings().load();
+    m_app->recentFiles().load();
+    rebuildRecentMenu();
+
+    flashSuccess(tr("Trailer reset complete."));
+}
+
+void MainWindow::keyPressEvent(QKeyEvent* event) {
+    // Esc clears transient modes the user might be stuck in:
+    //   - Magnifier (the most common one — the lens follows the
+    //     cursor and there's no other obvious "exit" affordance).
+    //   - Active text-search overlay (handled separately by the
+    //     existing SearchBar::dismissed connection, but covering it
+    //     here too is harmless).
+    if (event->key() == Qt::Key_Escape) {
+        if (m_magnifierAction && m_magnifierAction->isChecked()) {
+            m_magnifierAction->setChecked(false);
+            event->accept();
+            return;
+        }
+    }
+    QMainWindow::keyPressEvent(event);
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {

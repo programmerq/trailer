@@ -11,8 +11,10 @@
 #include <QLabel>
 #include <QMovie>
 #include <QPageLayout>
+#include <QPageSize>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPdfWriter>
 #include <QPixmap>
 #include <QPrintDialog>
 #include <QPrinter>
@@ -506,6 +508,25 @@ bool ImageDocument::exportAs(const QString& destPath, const QString& format,
         // tinted along with the rest of the image — matches what the
         // user sees on screen when they toggle a preview.
         out = applyFilter(filterId, out);
+    }
+    // PDF export is a separate code path: a one-page PDF whose
+    // /MediaBox matches the image's pixel size at 72 DPI, with the
+    // image painted to fill. QImageWriter doesn't support PDF, so
+    // we use QPdfWriter directly. This is the "I emailed the photo
+    // of the form to my CPA but they want a PDF" workflow.
+    if (format.compare(QLatin1String("pdf"), Qt::CaseInsensitive) == 0) {
+        QPdfWriter writer(destPath);
+        writer.setResolution(72);
+        const QPageSize ps(out.size(), QPageSize::Point,
+                           QStringLiteral("ImagePage"),
+                           QPageSize::ExactMatch);
+        writer.setPageSize(ps);
+        writer.setPageMargins(QMarginsF(0, 0, 0, 0));
+        QPainter painter(&writer);
+        if (!painter.isActive()) return false;
+        painter.drawImage(QRectF(0, 0, out.width(), out.height()), out);
+        painter.end();
+        return true;
     }
     QImageWriter writer(destPath, format.toLatin1());
     if (quality >= 0) writer.setQuality(quality);
