@@ -185,9 +185,19 @@ Sidebar::Sidebar(QWidget* parent) : QDockWidget(tr("Sidebar"), parent) {
     connect(m_annotations, &QListWidget::itemClicked,
             this, &Sidebar::onAnnotationActivated);
 
+    // The sidebar used to host two tabs (Pages and Annotations).
+    // The 2026-04-30 HITL pass called out the always-present
+    // Annotations tab as wasted real estate when no annotations
+    // exist; it'll be revived as a dedicated "Highlights & Notes"
+    // sidebar mode once that feature lands. For now the sidebar
+    // shows just the Pages thumbnails — m_annotations is kept as
+    // a parented child widget so the existing refreshAnnotations
+    // / onAnnotationActivated wiring still compiles, but it isn't
+    // visible.
     m_tabs = new QTabWidget(m_stack);
     m_tabs->addTab(m_thumbnails, tr("Pages"));
-    m_tabs->addTab(m_annotations, tr("Annotations"));
+    m_tabs->setTabBarAutoHide(true);  // single tab → no tab strip
+    m_annotations->hide();
     m_tabsIndex = m_stack->addWidget(m_tabs);
 
     m_stack->setCurrentIndex(m_placeholderIndex);
@@ -208,12 +218,10 @@ void Sidebar::setDocument(IDocument* doc) {
     } else {
         m_pageSyncTimer.stop();
         m_model->setDocument(nullptr);
-        if (doc && doc->annotations()) {
-            m_stack->setCurrentIndex(m_tabsIndex);
-            m_tabs->setCurrentIndex(1);
-        } else {
-            m_stack->setCurrentIndex(m_placeholderIndex);
-        }
+        // Annotations-only fallback removed with the Annotations
+        // tab — nothing to show until the Highlights & Notes mode
+        // is implemented.
+        m_stack->setCurrentIndex(m_placeholderIndex);
     }
     if (auto* store = doc ? doc->annotations() : nullptr) {
         connect(store, &AnnotationStore::changed, this,
