@@ -3,3 +3,7 @@ output/
 
 # User-supplied photo inputs — kept local.
 inputs/
+
+# Python bytecode cache.
+__pycache__/
+*.pyc
