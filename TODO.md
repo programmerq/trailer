@@ -4,6 +4,135 @@ Items noted during development that aren't blocking the current phase.
 Should be picked up before shipping or when the surrounding area is
 worked on.
 
+## 2026-04-30 HITL pass (live use on macOS)
+
+Captured from the user driving the actual app on a Mac. Each entry is
+a discrete change; we'll knock them out in priority order. Crossed-off
+items have landed; the commit hash is in the strikethrough line.
+
+### Bugs (data loss / broken affordance)
+
+1. **Drag a file onto the Dock icon doesn't open it.** macOS sends a
+   `QFileOpenEvent` which `Application::event` already routes to
+   `openFiles`, but apparently nothing happens. Probably a
+   single-instance / argv-routing issue or the event handler runs
+   before the registry is wired. Repro and fix.
+2. **`Cmd-Tab` while dragging a Zoom Lens leaves an undo-less
+   annotation.** The drag is interrupted mid-flight (focus-out
+   event) and whatever code path commits the annotation skips the
+   AnnotationStore push that records it for Undo. Audit every
+   drag-commit branch in `AnnotationOverlay` for the
+   `focusOutEvent` / `Qt::ApplicationDeactivate` case.
+3. **Click-drag draws a red rectangle even with the Select tool
+   active.** The overlay's preview-drawing branch in `paintEvent`
+   defaults to `AnnotationType::Rectangle` regardless of the active
+   tool. `mouseReleaseEvent` correctly does nothing destructive in
+   Select mode, but the visible preview during drag misleads the
+   user.
+4. **Some PDF thumbnails render without paper-white in dark mode.**
+   The thumbnail renderer doesn't enforce a background; PDFs that
+   don't paint their own background appear as text floating against
+   the system dark colour. Force paper-white (or the page's declared
+   background) under the rendered content.
+
+### UX defaults
+
+5. **Default tool should be Select, not box-drawing.** Tied to bug
+   #3 — even when the active tool *is* Select, the preview makes it
+   look like a box tool. Once #3 is fixed, verify the toolbar's
+   `selectAction->setChecked(true)` initial state stands.
+6. **Sidebar starts hidden by default.** Currently visible on
+   launch; should be hidden until the user invokes `View → Toggle
+   Sidebar` or the new toolbar's sidebar button.
+7. **Foreground color shouldn't default to red.** Pick a neutral
+   high-contrast default (medium grey or accent blue) so the user's
+   first shape isn't a "danger" colour.
+8. **Inspector shortcut → ⌘I** (currently ⌘⇧I). The shorter mnemonic
+   is the convention in every Mac app of this shape. Bump
+   ⌘⇧I to "Toggle Annotations Sidebar" once that exists, or drop it.
+9. **macOS: launching with no files opens no window.** Match
+   Preview / TextEdit / Pages convention — Dock icon and menu bar
+   are live, but no canvas is shown until the user picks File →
+   Open or drops a file.
+10. **Esc / Cmd-Tab / loss-of-focus deactivates Magnifier.** Today
+    Magnifier mode is sticky until the user manually toggles it
+    off. It should clear on any obvious "I'm done with the
+    magnifier" signal.
+
+### Inspector + selection
+
+11. **Clicking on a placed annotation should NOT auto-show the
+    Inspector.** The Inspector is a workspace; opening it on every
+    click is noisy. Selection state still tracks (so Delete / arrow
+    keys work) but Inspector visibility stays under explicit user
+    control. Toggling the Inspector with ⌘I focuses on the current
+    selection.
+
+### Markup bar
+
+12. **Replace text labels with SVG icons** appropriate to each tool.
+    Need icons for Select, Rectangle, Ellipse, Line, Arrow,
+    Freehand, Text, Note, Speech Bubble, Highlight Shape, Zoom Lens,
+    Highlight, Underline, Strikeout, Redact. Solid-line outline
+    style at 16/20/24 px. Light + dark colour variants.
+
+### Top-bar redesign
+
+13. **Add a slim main toolbar** that takes the place of the OS title
+    bar (or rides above it on Linux/Win). Contains:
+    - Sidebar mode picker (icon → menu of: Hide / Thumbnails / TOC /
+      Highlights & Notes).
+    - Filename label, clickable to invoke macOS's title-bar pulldown
+      (path, tags, lock, "show in Finder"). On Linux/Win, render a
+      lighter equivalent (path tooltip + "Show in file manager").
+    - Zoom out / zoom-level / zoom in.
+    - Rotate left / right.
+    - Toggle markup toolbar.
+    - Toggle form-filling toolbar (action exists; surface it here).
+    - Search field — `Cmd-F` focuses it.
+14. **Window menu on macOS** — `Minimize`, `Zoom`, `Tile to Left /
+    Right`, `Center`, `Move & Resize → halves / quarters`, `Bring
+    All to Front`, plus a list of every open Trailer window with a
+    checkmark on the active one. `QMenuBar` exposes
+    `addMenu(tr("Window"))` with `Qt::WindowMenuRole` actions; some
+    of the macOS-specific entries get filled in by Cocoa
+    automatically once the menu has the right name.
+15. **Go menu** — `First Page`, `Previous Page`, `Next Page`, `Last
+    Page`, separator, `Go to Page…` (`⌥⌘G`). Mirrors Preview's Go
+    menu.
+
+### Sidebar modes
+
+16. **Sidebar has explicit modes** (Hide is default):
+    - Thumbnails (current behaviour minus the Annotations tab).
+    - Table of Contents (PDF outline / image bookmarks if any).
+    - Highlights & Notes (only if/when text-aware highlights ship;
+      otherwise dim or hide the entry).
+    Picker lives in the new top-bar's sidebar button. The current
+    "Annotations" tab inside the thumbnail sidebar moves to its own
+    mode (`Highlights & Notes`).
+17. **Some PDF thumbnails missing paper-white** — see Bug #4.
+
+### Search
+
+18. **Search highlights matches in highlighter yellow** (current
+    selection blue is fine for active match; siblings should be
+    yellow at lower opacity).
+19. **"Match X of Y" indicator** in the search bar.
+20. **Search opens the thumbnail sidebar** filtered to pages with
+    matches, plus a "found on N pages" caption.
+
+### Misc
+
+21. **`Tools → Reset Trailer Settings…`** (or hidden via a debug
+    flag) — wipe `Settings`, `RecentFiles`, `CardStore`, signature
+    PNGs, model cache. Sometimes the right diagnostic step is "are
+    these symptoms cached preferences from an older version?"
+22. **`File → Export as PDF`** for image documents. The
+    `ImageDocument::exportAs` already handles format conversion;
+    surface a dedicated PDF target for users who don't know to type
+    `.pdf` in Save As.
+
 ## UI
 
 - **Menu organisation review.** Some items currently under Tools may
