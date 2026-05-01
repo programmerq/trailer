@@ -53,8 +53,10 @@ def make_subject_shadow(subject_layer, blur=18, offset=(0, 8), darkness=80):
 
 def composite(render_path, out_path, margin_frac=0.10, corner_radius_frac=0.225,
               inner_padding_frac=0.10,
-              card_color=(255, 255, 255, 255),
-              canvas_bg_color=(241, 239, 234, 255),
+              card_color=(241, 239, 234, 255),
+              border_color=(255, 255, 255, 255),
+              border_width_frac=0.012,
+              canvas_bg_color=(0, 0, 0, 0),
               shadow_offset=(0, 6), shadow_blur=14, shadow_alpha=40,
               subject_shadow_offset=(0, 8), subject_shadow_blur=18,
               subject_shadow_alpha=70):
@@ -119,9 +121,19 @@ def composite(render_path, out_path, margin_frac=0.10, corner_radius_frac=0.225,
         shadow = shadow.filter(ImageFilter.GaussianBlur(shadow_blur))
         canvas = Image.alpha_composite(canvas, shadow)
 
-    # Off-white card.
-    card = make_rounded_square(size, card_size, corner_radius, fill=card_color)
-    canvas = Image.alpha_composite(canvas, card)
+    # Card stack: pure white outer border ring, then off-white card body
+    # painted slightly inside it. The visible white is just the
+    # border_width-thick ring between the two.
+    border_width_px = max(1, int(round(card_size * border_width_frac)))
+    border_layer = make_rounded_square(size, card_size, corner_radius,
+                                          fill=border_color)
+    canvas = Image.alpha_composite(canvas, border_layer)
+
+    body_size = card_size - 2 * border_width_px
+    body_radius = max(0, corner_radius - border_width_px)
+    body_layer = make_rounded_square(size, body_size, body_radius,
+                                       fill=card_color)
+    canvas = Image.alpha_composite(canvas, body_layer)
 
     # Scale rendered subject to fit the inner safe-area.
     if inner_size != size:
@@ -183,13 +195,13 @@ def main():
                    help="Card drop-shadow opacity (0-255). 0 to disable.")
     p.add_argument("--subject-shadow-alpha", type=int, default=70,
                    help="Subject drop-shadow opacity (0-255). 0 to disable.")
-    p.add_argument("--transparent-bg", action="store_true",
-                   help="Use a fully transparent canvas instead of the default "
-                        "off-white. Use this when the output is going into the "
-                        "macOS .icns / Windows .ico — those want transparency "
-                        "around the rounded square.")
+    p.add_argument("--opaque-bg", action="store_true",
+                   help="Fill the canvas (outside the rounded square) with an "
+                        "opaque off-white instead of transparent. Useful for "
+                        "previewing on light backgrounds; not what macOS "
+                        "expects in an .icns.")
     args = p.parse_args()
-    canvas_bg = (0, 0, 0, 0) if args.transparent_bg else (241, 239, 234, 255)
+    canvas_bg = (241, 239, 234, 255) if args.opaque_bg else (0, 0, 0, 0)
     composite(
         render_path=args.input,
         out_path=args.out,

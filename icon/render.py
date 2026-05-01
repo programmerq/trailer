@@ -40,7 +40,7 @@ def parse_args():
                         "positive = orbit right (toward +X).")
     p.add_argument("--fov", type=float, default=22.0,
                    help="Camera field of view, degrees (perspective only).")
-    p.add_argument("--cam-distance", type=float, default=210.0,
+    p.add_argument("--cam-distance", type=float, default=180.0,
                    help="Camera distance from scene origin, mm.")
     p.add_argument("--save-blend", action="store_true",
                    help="Also save the assembled scene as a .blend next to the PNG.")
@@ -502,7 +502,15 @@ def make_film_strip(length=180.0, width=35.0, frame_w=38.0, frame_h=24.0,
         tex.extension = "REPEAT"
         nt.links.new(tex_coord.outputs["UV"], mapping.inputs["Vector"])
         nt.links.new(mapping.outputs["Vector"], tex.inputs["Vector"])
-        nt.links.new(tex.outputs["Color"], emit.inputs["Color"])
+        # Boost saturation so canyon reds and sky blues come through more
+        # vividly — AgX view transform is somewhat desaturating compared to
+        # Filmic, and the body's volume absorption dims the photo further by
+        # the time it reaches the camera.
+        hsv = nt.nodes.new("ShaderNodeHueSaturation")
+        hsv.inputs["Saturation"].default_value = 1.25
+        hsv.inputs["Value"].default_value = 1.05
+        nt.links.new(tex.outputs["Color"], hsv.inputs["Color"])
+        nt.links.new(hsv.outputs["Color"], emit.inputs["Color"])
     else:
         gradient = nt.nodes.new("ShaderNodeTexGradient")
         gradient.gradient_type = "LINEAR"
