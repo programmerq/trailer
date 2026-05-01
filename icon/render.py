@@ -852,7 +852,12 @@ def build_scene(args):
         "BlackShoulder",
         body_length=body_length - 2 * shoulder_inset,
         body_width=body_width - 2 * shoulder_inset,
-        lens_r=lens_housing_outer_r + 0.1,
+        # Shoulder hole is DELIBERATELY smaller than the lens-ring outer radius
+        # so the ring overlaps the shoulder by 0.5mm — without this, the 0.1mm
+        # radial gap that used to exist between the cylindrical ring and the
+        # circular hole was visible at side-on angles as a thin "see-through"
+        # line at the right side of the housing.
+        lens_r=lens_housing_outer_r - 0.5,
         thickness=shoulder_thickness,
     )
     shoulder.data.materials.append(make_black_housing_material())
@@ -866,11 +871,11 @@ def build_scene(args):
         outer_r=lens_housing_outer_r, inner_r=lens_housing_inner_r,
         height=lens_housing_height,
     )
-    # Sink the ring 0.5mm into the shoulder so the bottom-of-ring meets-edge
-    # of-shoulder seam is hidden inside the shoulder's volume — without this,
-    # the slight gap between the cylinder bottom and the flat shoulder reads
-    # at 1024px as "missing geometry" along a horizontal line.
-    lens_ring.location.z = body_height + shoulder_thickness - 0.5
+    # Sink the ring 1.0mm into the shoulder. Combined with the shoulder hole
+    # being smaller than the ring's outer radius, the ring's bottom meets
+    # solid black-plastic on every side and there's no visible gap between
+    # the cylindrical ring wall and the rectangular shoulder.
+    lens_ring.location.z = body_height + shoulder_thickness - 1.0
     lens_ring.parent = loupe_parent
 
     # Two materials: black knurled body + bright white marking band.
