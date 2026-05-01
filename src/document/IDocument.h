@@ -106,6 +106,19 @@ public:
     virtual bool exportWithPassword(const QString& /*destPath*/,
                                     const QString& /*password*/) { return false; }
 
+    // Number of search matches the document currently has cached for
+    // its active query, plus the index of the "current" match
+    // (1-based; -1 when there is no current selection). Defaults
+    // are zero — non-text documents return them unconditionally.
+    // The values may change asynchronously while the search is
+    // running; MainWindow's polling timer reads them periodically.
+    virtual int searchMatchCount() const { return 0; }
+    virtual int currentSearchMatchIndex() const { return -1; }
+    // Pages that contain at least one match for the current query.
+    // Used by the sidebar's "search results" filter mode. Empty
+    // for documents that don't support text search.
+    virtual std::vector<int> pagesWithSearchMatches() const { return {}; }
+
     // AcroForm filling (Phase 5). supportsFormFilling() is the cheap
     // capability check; formFields() enumerates all leaf fields once;
     // setFormFieldValue(id, value) writes to the in-memory QPDF graph

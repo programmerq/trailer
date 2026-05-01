@@ -515,6 +515,38 @@ void PdfDocument::clearSearch() {
     }
 }
 
+int PdfDocument::searchMatchCount() const {
+    if (!m_searchModel) return 0;
+    return m_searchModel->rowCount({});
+}
+
+int PdfDocument::currentSearchMatchIndex() const {
+    if (!m_searchModel) return -1;
+    if (m_currentResult < 0) return -1;
+    if (m_currentResult >= m_searchModel->rowCount({})) return -1;
+    // 1-based for display; the convention every "X of Y" UI uses.
+    return m_currentResult + 1;
+}
+
+std::vector<int> PdfDocument::pagesWithSearchMatches() const {
+    std::vector<int> out;
+    if (!m_searchModel) return out;
+    const int total = m_searchModel->rowCount({});
+    for (int i = 0; i < total; ++i) {
+        // QPdfSearchModel exposes the page index via the
+        // PageIndexRole (Qt::UserRole + 1). We dedupe inline by
+        // remembering the last page seen — search results come
+        // back ordered by page so we don't need a set.
+        const QModelIndex idx = m_searchModel->index(i, 0);
+        const int page =
+            idx.data(static_cast<int>(QPdfSearchModel::Role::Page)).toInt();
+        if (out.empty() || out.back() != page) {
+            out.push_back(page);
+        }
+    }
+    return out;
+}
+
 void PdfDocument::print(QWidget* dialogParent) {
     if (!m_valid) {
         return;

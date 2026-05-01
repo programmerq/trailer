@@ -86,16 +86,45 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
 
     m_searchBar = new SearchBar(center);
     m_searchBar->hide();
+
+    // The PDF search model populates asynchronously; poll the
+    // document's match count periodically and refresh the
+    // SearchBar's "X of Y" indicator. The timer only ticks while
+    // the search bar is visible.
+    auto* searchPoll = new QTimer(this);
+    searchPoll->setInterval(150);
+    connect(searchPoll, &QTimer::timeout, this, [this]() {
+        if (!m_searchBar->isVisible()) return;
+        auto* doc = m_documentView->currentDocument();
+        if (!doc) {
+            m_searchBar->setMatchCounter(0, 0);
+            return;
+        }
+        m_searchBar->setMatchCounter(doc->currentSearchMatchIndex(),
+                                     doc->searchMatchCount());
+    });
+    searchPoll->start();
+
     connect(m_searchBar, &SearchBar::queryChanged, this, [this](const QString& q) {
         if (auto* doc = m_documentView->currentDocument()) {
             doc->setSearchQuery(q);
+            m_searchBar->setMatchCounter(doc->currentSearchMatchIndex(),
+                                         doc->searchMatchCount());
         }
     });
     connect(m_searchBar, &SearchBar::findNextRequested, this, [this]() {
-        if (auto* doc = m_documentView->currentDocument()) doc->findNext();
+        if (auto* doc = m_documentView->currentDocument()) {
+            doc->findNext();
+            m_searchBar->setMatchCounter(doc->currentSearchMatchIndex(),
+                                         doc->searchMatchCount());
+        }
     });
     connect(m_searchBar, &SearchBar::findPreviousRequested, this, [this]() {
-        if (auto* doc = m_documentView->currentDocument()) doc->findPrevious();
+        if (auto* doc = m_documentView->currentDocument()) {
+            doc->findPrevious();
+            m_searchBar->setMatchCounter(doc->currentSearchMatchIndex(),
+                                         doc->searchMatchCount());
+        }
     });
     connect(m_searchBar, &SearchBar::dismissed, this, &MainWindow::hideSearchBar);
 

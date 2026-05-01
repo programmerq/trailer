@@ -2,6 +2,7 @@
 
 #include <QHBoxLayout>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
 #include <QStyle>
 #include <QToolButton>
@@ -19,6 +20,14 @@ SearchBar::SearchBar(QWidget* parent) : QWidget(parent) {
             this, &SearchBar::queryChanged);
     connect(m_input, &QLineEdit::returnPressed,
             this, &SearchBar::findNextRequested);
+
+    // "X of Y" counter that lives between the input and the
+    // arrows. Hidden until the document has populated match data.
+    m_counter = new QLabel(this);
+    m_counter->setForegroundRole(QPalette::Mid);
+    m_counter->setMinimumWidth(60);
+    m_counter->setAlignment(Qt::AlignCenter);
+    m_counter->hide();
 
     m_prev = new QToolButton(this);
     m_prev->setIcon(style()->standardIcon(QStyle::SP_ArrowUp));
@@ -39,9 +48,24 @@ SearchBar::SearchBar(QWidget* parent) : QWidget(parent) {
             this, &SearchBar::dismissed);
 
     layout->addWidget(m_input, 1);
+    layout->addWidget(m_counter);
     layout->addWidget(m_prev);
     layout->addWidget(m_next);
     layout->addWidget(m_close);
+}
+
+void SearchBar::setMatchCounter(int current, int total) {
+    if (total <= 0) {
+        m_counter->clear();
+        m_counter->hide();
+        return;
+    }
+    if (current <= 0) {
+        m_counter->setText(tr("%1 matches").arg(total));
+    } else {
+        m_counter->setText(tr("%1 of %2").arg(current).arg(total));
+    }
+    m_counter->show();
 }
 
 void SearchBar::focusInput() {

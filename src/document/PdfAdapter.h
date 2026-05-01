@@ -54,6 +54,9 @@ public:
     void findNext() override;
     void findPrevious() override;
     void clearSearch() override;
+    int searchMatchCount() const override;
+    int currentSearchMatchIndex() const override;
+    std::vector<int> pagesWithSearchMatches() const override;
 
     bool supportsPrint() const override { return m_valid; }
     void print(QWidget* dialogParent) override;
