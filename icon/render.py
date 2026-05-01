@@ -29,7 +29,7 @@ def parse_args():
     p.add_argument("--size", type=int, default=1024)
     p.add_argument("--samples", type=int, default=256)
     p.add_argument("--out", type=str, default="output/icon.png")
-    p.add_argument("--photo", type=str, default="inputs/arches.jpg")
+    p.add_argument("--photo", type=str, default="inputs/arches-3.jpg")
     p.add_argument("--engine", type=str, default="CYCLES", choices=["CYCLES", "BLENDER_EEVEE_NEXT"])
     p.add_argument("--background", type=str, default="transparent",
                    choices=["transparent", "rounded_white"])
@@ -40,7 +40,7 @@ def parse_args():
                         "positive = orbit right (toward +X).")
     p.add_argument("--fov", type=float, default=22.0,
                    help="Camera field of view, degrees (perspective only).")
-    p.add_argument("--cam-distance", type=float, default=170.0,
+    p.add_argument("--cam-distance", type=float, default=210.0,
                    help="Camera distance from scene origin, mm.")
     p.add_argument("--save-blend", action="store_true",
                    help="Also save the assembled scene as a .blend next to the PNG.")
@@ -445,7 +445,7 @@ def _build_frame_separators(length, image_h, frame_w, separator_w=0.6):
     return bm
 
 
-def make_film_strip(length=85.0, width=35.0, frame_w=38.0, frame_h=24.0,
+def make_film_strip(length=180.0, width=35.0, frame_w=38.0, frame_h=24.0,
                     sprocket_pitch=4.75, sprocket_w=2.0, sprocket_h=2.8,
                     photo_image=None):
     """
@@ -751,7 +751,7 @@ def make_rounded_backdrop(camera, fov_deg, distance_behind_camera=200.0,
 
 
 def make_camera(distance=140.0, tilt_deg=18.0, azimuth_deg=0.0, fov_deg=22.0,
-                ortho=False, ortho_scale=50.0, look_at=(0, 0, 14)):
+                ortho=False, ortho_scale=50.0, look_at=(0, 0, 11)):
     """
     Camera placed in spherical coords around `look_at`:
       - tilt_deg: angle off the world vertical (z-axis). 0 = top-down.
@@ -866,7 +866,11 @@ def build_scene(args):
         outer_r=lens_housing_outer_r, inner_r=lens_housing_inner_r,
         height=lens_housing_height,
     )
-    lens_ring.location.z = body_height + shoulder_thickness
+    # Sink the ring 0.5mm into the shoulder so the bottom-of-ring meets-edge
+    # of-shoulder seam is hidden inside the shoulder's volume — without this,
+    # the slight gap between the cylinder bottom and the flat shoulder reads
+    # at 1024px as "missing geometry" along a horizontal line.
+    lens_ring.location.z = body_height + shoulder_thickness - 0.5
     lens_ring.parent = loupe_parent
 
     # Two materials: black knurled body + bright white marking band.

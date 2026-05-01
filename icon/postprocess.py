@@ -40,7 +40,7 @@ def make_rounded_alpha_mask(size, card_size, corner_radius):
     return mask
 
 
-def composite(render_path, out_path, margin_frac=0.06, corner_radius_frac=0.18,
+def composite(render_path, out_path, margin_frac=0.0977, corner_radius_frac=0.225,
               shadow_offset=(0, 6), shadow_blur=14, shadow_alpha=40,
               clip_to_card=True):
     """
@@ -103,10 +103,13 @@ def main():
                                   formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("input", help="Transparent rendered PNG (square).")
     p.add_argument("--out", required=True, help="Output composited PNG.")
-    p.add_argument("--margin", type=float, default=0.06,
-                   help="Transparent margin around the white card, as fraction.")
-    p.add_argument("--corner-radius", type=float, default=0.18,
-                   help="Card corner radius, as fraction of card side length.")
+    p.add_argument("--margin", type=float, default=0.0977,
+                   help="Transparent margin around the white card, as fraction. "
+                        "Default ~0.0977 matches macOS Big Sur+ icon convention "
+                        "(824/1024 card on a 1024 canvas).")
+    p.add_argument("--corner-radius", type=float, default=0.225,
+                   help="Card corner radius, as fraction of card side length. "
+                        "Default 0.225 matches Apple's macOS icon corner radius.")
     p.add_argument("--shadow-alpha", type=int, default=40,
                    help="Drop-shadow opacity (0-255). 0 to disable.")
     p.add_argument("--no-clip", action="store_true",
