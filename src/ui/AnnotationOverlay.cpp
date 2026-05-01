@@ -6,6 +6,7 @@
 #include <QEvent>
 #include <QEventPoint>
 #include <QFont>
+#include <QGuiApplication>
 #include <QFrame>
 #include <QKeyEvent>
 #include <QMenu>
@@ -39,6 +40,31 @@ AnnotationOverlay::AnnotationOverlay(QWidget* parent) : QWidget(parent) {
     m_docToView  = [](QPointF p, int /*page*/) { return p; };
     m_viewToDoc  = [](QPointF p, int /*page*/) { return p; };
     m_pageAtView = [this](QPointF) { return m_page; };
+
+    // Cmd-Tab / app-deactivate aborts any in-flight drag. Without
+    // this, the user could start a Zoom Lens drag, switch to
+    // another app, come back, and the drag state would still be
+    // live — the next mousePress would treat the lingering
+    // m_dragStartDoc as the start of a phantom drag whose release
+    // bypasses normal undo bookkeeping.
+    connect(qApp, &QGuiApplication::applicationStateChanged,
+            this, [this](Qt::ApplicationState state) {
+                if (state != Qt::ApplicationActive) {
+                    abortInFlightDrag();
+                }
+            });
+}
+
+void AnnotationOverlay::abortInFlightDrag() {
+    if (!m_dragging && !m_movingSelected &&
+        m_resizingHandle == ResizeHandle::None) {
+        return;
+    }
+    m_dragging = false;
+    m_movingSelected = false;
+    m_resizingHandle = ResizeHandle::None;
+    m_inkPoints.clear();
+    update();
 }
 
 void AnnotationOverlay::setStore(AnnotationStore* store) {

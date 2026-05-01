@@ -112,6 +112,13 @@ private:
     int pageAt(const QPointF& viewPt) const;
     int hitTest(const QPointF& viewPt) const;
     void openInlineEditor(int annotationId);
+    // Cancel any in-flight drag (shape-creation, selection move,
+    // resize handle) without committing it to the AnnotationStore.
+    // Wired to QGuiApplication::applicationStateChanged so a
+    // Cmd-Tab away mid-drag doesn't leave a half-placed shape that
+    // (a) is invisible because focus is gone and (b) bypasses the
+    // mouseRelease commit so undo has nothing to pop.
+    void abortInFlightDrag();
     // Translate the bounds of the selected annotation by `dx`, `dy`
     // doc-space points. No-op when nothing is selected. Emits the
     // store's changed() signal so undo / dirty propagate normally.

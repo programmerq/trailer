@@ -410,7 +410,21 @@ QImage PdfDocument::renderThumbnail(int pageIndex, QSize targetSize) {
         h = targetSize.height();
         w = static_cast<int>(h * aspect);
     }
-    return m_doc->render(pageIndex, QSize(w, h));
+    QImage rendered = m_doc->render(pageIndex, QSize(w, h));
+    if (rendered.isNull()) return rendered;
+    // Many PDFs draw their content (text, vector ink) with no
+    // explicit page background, leaving the rendered QImage with
+    // transparent regions where paper would be. In dark mode the
+    // sidebar's dock background shows through and the page reads
+    // as floating black text on dark grey — unrecognisable. Force
+    // an opaque white backdrop. PDFs that DO paint a background
+    // colour just paint over it, no harm done.
+    QImage canvas(rendered.size(), QImage::Format_ARGB32_Premultiplied);
+    canvas.fill(Qt::white);
+    QPainter painter(&canvas);
+    painter.drawImage(0, 0, rendered);
+    painter.end();
+    return canvas;
 }
 
 int PdfDocument::currentPage() const {
