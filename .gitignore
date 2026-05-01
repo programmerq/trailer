@@ -12,3 +12,11 @@ test-*.pdf
 test-*.png
 test-*.jpg
 .claude/
+
+# Reviewer-supplied real-world PDFs land in tests/data/ as a
+# personal scratch dir for the developer. They are not committed
+# (corpus privacy + we don't pin tests against any single sample).
+# Top-level *.pdf catches the other casual scratch case too.
+*.pdf
+!resources/**/*.pdf
+tests/data/

@@ -1190,21 +1190,16 @@ void TestUatSearchAndMarkup::uat_ann_122_arrowKeyNudgesSelectedAnnotation() {
     QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
 }
 
-// UAT-ANN-123 — Selecting an annotation auto-shows the Inspector
-// pane so the user gets per-annotation colour / stroke / font
-// controls without an extra click.
+// UAT-ANN-123 — Selecting an annotation tracks the selection in the
+// Inspector but does NOT pop the pane open (2026-04-30 reframe: the
+// auto-show was noisy for select-and-delete / select-and-nudge).
+// Visibility stays under the user's control via ⌘I.
 void TestUatSearchAndMarkup::uat_ann_123_inspectorTracksSelectedAnnotation() {
     AnnEditingFixture f = buildAnnEditingFixture(m_scratch,
                                                   QStringLiteral("123"));
     QVERIFY(f.overlay);
     QVERIFY(f.drawnId != 0);
 
-    auto* inspector = f.mw->findChild<QDockWidget*>(
-        QString(), Qt::FindDirectChildrenOnly);
-    Q_UNUSED(inspector);
-    // Locate the inspector dock by class name. There may be multiple
-    // dock widgets (sidebar, inspector); pick the one whose object
-    // class is "Inspector".
     QDockWidget* inspectorDock = nullptr;
     for (auto* d : f.mw->findChildren<QDockWidget*>()) {
         if (QString::fromLatin1(d->metaObject()->className())
@@ -1214,7 +1209,6 @@ void TestUatSearchAndMarkup::uat_ann_123_inspectorTracksSelectedAnnotation() {
         }
     }
     QVERIFY(inspectorDock);
-    // Inspector starts hidden in the constructor.
     QVERIFY(!inspectorDock->isVisible());
 
     sendMouse(f.overlay, QEvent::MouseButtonPress,
@@ -1224,9 +1218,10 @@ void TestUatSearchAndMarkup::uat_ann_123_inspectorTracksSelectedAnnotation() {
     QApplication::processEvents();
 
     QVERIFY2(f.overlay->selectedAnnotationId() == f.drawnId,
-             "Click should have selected the rectangle");
-    QVERIFY2(inspectorDock->isVisible(),
-             "Selecting an annotation should auto-show the Inspector");
+             "Click should select the rectangle");
+    QVERIFY2(!inspectorDock->isVisible(),
+             "Inspector visibility is user-controlled — selecting "
+             "an annotation must not pop the pane open");
 }
 
 // UAT-ANN-124 — Dragging the bottom-right resize handle of a

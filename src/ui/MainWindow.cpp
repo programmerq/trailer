@@ -118,6 +118,10 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
 
     m_sidebar = new Sidebar(this);
     addDockWidget(Qt::LeftDockWidgetArea, m_sidebar);
+    // Sidebar is hidden by default — the user opens it via the
+    // top-bar's sidebar mode picker (or View → Toggle Sidebar).
+    // Always-visible chrome is loud for a document-first workflow.
+    m_sidebar->hide();
     m_inspector = new Inspector(this);
     addDockWidget(Qt::RightDockWidgetArea, m_inspector);
     m_inspector->hide();
@@ -396,8 +400,12 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
     viewMenu->addAction(m_formToolbarAction);
 
     m_inspectorAction = m_inspector->toggleViewAction();
-    m_inspectorAction->setText(tr("Toggle &Inspector"));
-    m_inspectorAction->setShortcut(QKeySequence(tr("Ctrl+Shift+I")));
+    m_inspectorAction->setText(tr("&Inspector"));
+    // Cmd+I on macOS / Ctrl+I elsewhere — the convention in every
+    // Mac app of this shape (Preview, Pages, Numbers). The longer
+    // ⌘⇧I form was a holdover from an earlier draft and conflicted
+    // with the muscle memory the reference user already had.
+    m_inspectorAction->setShortcut(QKeySequence(tr("Ctrl+I")));
     viewMenu->addAction(m_inspectorAction);
 
     viewMenu->addSeparator();
@@ -1824,8 +1832,12 @@ void MainWindow::onAnnotationSelectionChanged(int id) {
         m_inspector->clearSelection();
         return;
     }
+    // Track the selection in the Inspector's data layer so the next
+    // ⌘I open lands on the right annotation, but DO NOT pop the
+    // pane open just because the user clicked. Inspector visibility
+    // is under the user's control — the auto-open was annoying for
+    // the common select-and-delete / select-and-nudge flow.
     m_inspector->setAnnotation(doc->annotations(), id);
-    if (!m_inspector->isVisible()) m_inspector->show();
 }
 
 void MainWindow::syncViewModeActions(IDocument* doc) {

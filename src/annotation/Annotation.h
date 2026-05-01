@@ -54,7 +54,12 @@ enum class DashStyle {
 };
 
 struct AnnotationStyle {
-    QColor stroke = QColor(220, 30, 30);
+    // Neutral charcoal grey by default. Red feels alarmed and
+    // pushes every first shape toward looking like a destructive
+    // marker; grey reads as a markup tool that the user can
+    // recolour to anything else from the Inspector / toolbar
+    // swatch on demand.
+    QColor stroke = QColor(60, 60, 60);
     QColor fill = QColor(0, 0, 0, 0);  // transparent by default
     double strokeWidth = 2.0;
     int fontPointSize = 12;

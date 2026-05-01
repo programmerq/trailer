@@ -112,7 +112,9 @@ void TestUatFoundations::uat_fnd_001_launchWithNoArguments() {
     QCOMPARE(mw->windowTitle(), QStringLiteral("Trailer"));
     QCOMPARE(mw->documentCount(), 0);
 
-    // Sidebar dock is visible at launch.
+    // Sidebar dock is hidden at launch (2026-04-30 HITL: chrome
+    // off by default; the user opens it from the top-bar's
+    // sidebar-mode picker or View → Toggle Sidebar).
     auto docks = mw->findChildren<QDockWidget*>();
     QDockWidget* sidebar = nullptr;
     for (auto* d : docks) {
@@ -122,7 +124,9 @@ void TestUatFoundations::uat_fnd_001_launchWithNoArguments() {
         }
     }
     QVERIFY2(sidebar, "Sidebar dock not found");
-    QVERIFY(sidebar->isVisible());
+    QVERIFY2(!sidebar->isVisible(),
+             "Sidebar must be hidden by default — toggle via "
+             "View → Toggle Sidebar");
 
     // Markup toolbar is hidden at launch (UAT-FND-001 correction).
     QToolBar* markup = nullptr;
@@ -314,7 +318,8 @@ void TestUatFoundations::uat_fnd_016_toggleSidebar() {
         }
     }
     QVERIFY(sidebar);
-    QVERIFY(sidebar->isVisible());
+    QVERIFY2(!sidebar->isVisible(),
+             "Sidebar should be hidden at launch (2026-04-30)");
 
     QAction* toggle = findMenuAction(mw->menuBar(), QStringLiteral("&View"),
                                      QStringLiteral("Toggle &Sidebar"));
@@ -322,11 +327,11 @@ void TestUatFoundations::uat_fnd_016_toggleSidebar() {
 
     toggle->trigger();
     QApplication::processEvents();
-    QVERIFY2(!sidebar->isVisible(), "First trigger should hide the Sidebar");
+    QVERIFY2(sidebar->isVisible(), "First trigger should show the Sidebar");
 
     toggle->trigger();
     QApplication::processEvents();
-    QVERIFY2(sidebar->isVisible(), "Second trigger should show the Sidebar");
+    QVERIFY2(!sidebar->isVisible(), "Second trigger should hide the Sidebar");
 }
 
 // UAT-FND-020 — flashError routes operation-failure feedback into the

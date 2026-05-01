@@ -203,6 +203,11 @@ set_target_properties(trailer PROPERTIES
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_ICON_FILE "trailer.icns"
+    # Custom Info.plist that declares CFBundleDocumentTypes — without
+    # this macOS doesn't dispatch QFileOpenEvent when the user drags
+    # a file onto the Dock icon or right-clicks → Open With. The
+    # default Qt-generated plist has no document-types entry.
+    MACOSX_BUNDLE_INFO_PLIST "${CMAKE_SOURCE_DIR}/resources/macos/Info.plist.in"
 )
 
 enable_testing()

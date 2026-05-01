@@ -409,7 +409,14 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
         }
     }
 
-    if (m_dragging) {
+    // Only paint a shape preview when the active tool actually
+    // creates a shape on release. With Select active the drag
+    // routes to text selection (highlight rectangles drawn above
+    // via m_pendingSelection), so leaking a Rectangle / Ellipse
+    // outline here makes the user think they're in box-drawing
+    // mode and confuses the affordance.
+    if (m_dragging && m_tool != AnnotationTool::None &&
+        m_tool != AnnotationTool::Select) {
         Annotation preview;
         preview.page = m_dragPage;
         preview.type = [this]() {
