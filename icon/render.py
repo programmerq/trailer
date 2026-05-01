@@ -903,16 +903,14 @@ def build_scene(args):
         if fi < len(lens_ring.data.polygons):
             lens_ring.data.polygons[fi].material_index = 1
 
-    # 4) Plano-convex glass lens — raised within the ring so the dome peeks
-    #    above the ring's top edge (visible from the side-on camera).
+    # 4) Plano-convex glass lens — recessed within the ring so the dome sits
+    #    clearly INSIDE the housing instead of looking like it's floating
+    #    above. Dome top ends up ~1.0mm below the ring rim.
     lens_radius = lens_housing_inner_r + 0.1
     lens_dome = 1.5
     lens = make_plano_convex_lens("OpticalLens", radius=lens_radius, dome_height=lens_dome)
-    # Lens flat-bottom z. Top of ring = body + shoulder + lens_housing_height.
-    # Set lens flat-bottom = top_of_ring - 0.5 so the dome (1.5mm tall) pokes
-    # above the rim by ~1.0mm.
     top_of_ring = body_height + shoulder_thickness + lens_housing_height
-    lens.location.z = top_of_ring - 0.5
+    lens.location.z = top_of_ring - 2.5
     lens.data.materials.append(make_optical_glass_material())
     lens.parent = loupe_parent
 
