@@ -361,61 +361,101 @@ def make_plano_convex_lens(name, radius, dome_height, segments=128, rings=24):
     return obj
 
 
-def _build_border_mesh(length, half_w, image_h, sprocket_pitch, sprocket_w, sprocket_h):
+def _build_border_mesh(length, half_w, image_h):
     """
-    Construct the matte-black border + sprocket-hole mesh directly, no booleans.
-    Each border band (top and bottom) is built as a long ladder of quads with
-    rectangular gaps where sprocket holes belong.
+    Construct the matte-black border bands (top and bottom) as plain
+    rectangles. Sprocket holes are punched in afterward via a single
+    boolean-difference against a beveled cutter (see _punch_sprocket_holes),
+    so each hole inherits Bell & Howell-style rounded perforation corners.
     """
     bm = bmesh.new()
     half_l = length / 2.0
     band_top_y0, band_top_y1 = image_h, half_w
     band_bot_y0, band_bot_y1 = -half_w, -image_h
 
+    # Top band
+    bm.faces.new([
+        bm.verts.new((-half_l, band_top_y0, 0)),
+        bm.verts.new((half_l, band_top_y0, 0)),
+        bm.verts.new((half_l, band_top_y1, 0)),
+        bm.verts.new((-half_l, band_top_y1, 0)),
+    ])
+    # Bottom band
+    bm.faces.new([
+        bm.verts.new((-half_l, band_bot_y0, 0)),
+        bm.verts.new((half_l, band_bot_y0, 0)),
+        bm.verts.new((half_l, band_bot_y1, 0)),
+        bm.verts.new((-half_l, band_bot_y1, 0)),
+    ])
+    return bm
+
+
+def _punch_sprocket_holes(border_obj, length, half_w, image_h,
+                            sprocket_pitch, sprocket_w, sprocket_h,
+                            corner_radius=0.35):
+    """
+    Punch Bell & Howell-style rounded-rectangle sprocket holes into the
+    border using one boolean difference. The cutter is built by:
+      1. Creating a beveled box at the origin (one hole's worth of geometry).
+      2. Joining a copy of that beveled box into a single cutter mesh — one
+         copy per sprocket position.
+      3. Boolean-differencing that single cutter from the border.
+
+    Doing all the holes in ONE boolean keeps the EXACT solver fast and
+    avoids the cumulative drift of N separate boolean ops.
+    """
+    half_l = length / 2.0
+    spr_top_cy = (image_h + half_w) / 2.0
+    spr_bot_cy = -spr_top_cy
     num_sprockets = int(length / sprocket_pitch)
     start_x = -((num_sprockets - 1) * sprocket_pitch) / 2.0
 
-    # Centerline-y for the sprocket holes within each band.
-    spr_top_cy = (band_top_y0 + band_top_y1) / 2.0
-    spr_bot_cy = (band_bot_y0 + band_bot_y1) / 2.0
+    # Build the prototype cutter at origin with bevel applied.
+    bpy.ops.mesh.primitive_cube_add(size=1, location=(0, 0, 0))
+    proto = bpy.context.object
+    proto.name = "SprocketCutterProto"
+    proto.scale = (sprocket_w, sprocket_h, 4.0)  # tall enough to cut through
+    bpy.ops.object.transform_apply(scale=True)
 
-    # Build x-cut points: alternating border-segment ↔ hole.
-    cuts = [-half_l]
+    bevel_mod = proto.modifiers.new("bevel", "BEVEL")
+    bevel_mod.width = corner_radius
+    bevel_mod.segments = 3
+    bevel_mod.profile = 0.5
+    bpy.context.view_layer.objects.active = proto
+    bpy.ops.object.modifier_apply(modifier="bevel")
+
+    # Place a copy at every sprocket position.
+    cutters = []
     for k in range(num_sprockets):
         cx = start_x + k * sprocket_pitch
-        cuts.append(cx - sprocket_w / 2.0)
-        cuts.append(cx + sprocket_w / 2.0)
-    cuts.append(half_l)
+        for cy in (spr_top_cy, spr_bot_cy):
+            c = proto.copy()
+            c.data = proto.data.copy()
+            c.location = (cx, cy, 0.05)
+            bpy.context.collection.objects.link(c)
+            cutters.append(c)
 
-    def make_band(y0, y1, hole_cy):
-        hole_y0 = hole_cy - sprocket_h / 2.0
-        hole_y1 = hole_cy + sprocket_h / 2.0
-        for i in range(len(cuts) - 1):
-            x0, x1 = cuts[i], cuts[i + 1]
-            is_hole = (i % 2 == 1)  # odd segments are holes (cut)
-            if is_hole:
-                # Above-hole strip
-                v00 = bm.verts.new((x0, hole_y1, 0))
-                v01 = bm.verts.new((x1, hole_y1, 0))
-                v02 = bm.verts.new((x1, y1, 0))
-                v03 = bm.verts.new((x0, y1, 0))
-                bm.faces.new([v00, v01, v02, v03])
-                # Below-hole strip
-                v10 = bm.verts.new((x0, y0, 0))
-                v11 = bm.verts.new((x1, y0, 0))
-                v12 = bm.verts.new((x1, hole_y0, 0))
-                v13 = bm.verts.new((x0, hole_y0, 0))
-                bm.faces.new([v10, v11, v12, v13])
-            else:
-                v0 = bm.verts.new((x0, y0, 0))
-                v1 = bm.verts.new((x1, y0, 0))
-                v2 = bm.verts.new((x1, y1, 0))
-                v3 = bm.verts.new((x0, y1, 0))
-                bm.faces.new([v0, v1, v2, v3])
+    # Hide / remove the prototype and join all copies into one cutter mesh.
+    bpy.data.objects.remove(proto, do_unlink=True)
+    bpy.ops.object.select_all(action="DESELECT")
+    for c in cutters:
+        c.select_set(True)
+    bpy.context.view_layer.objects.active = cutters[0]
+    bpy.ops.object.join()
+    joined_cutter = bpy.context.active_object
+    joined_cutter.name = "SprocketCutterAll"
 
-    make_band(band_top_y0, band_top_y1, spr_top_cy)
-    make_band(band_bot_y0, band_bot_y1, spr_bot_cy)
-    return bm
+    # Single boolean difference.
+    mod = border_obj.modifiers.new("sprocket_holes", "BOOLEAN")
+    mod.operation = "DIFFERENCE"
+    mod.object = joined_cutter
+    mod.solver = "EXACT"
+    bpy.context.view_layer.objects.active = border_obj
+    bpy.ops.object.modifier_apply(modifier="sprocket_holes")
+
+    joined_cutter.hide_render = True
+    joined_cutter.hide_viewport = True
+    return joined_cutter
 
 
 def _build_frame_separators(length, image_h, frame_w, separator_w=0.6):
@@ -537,16 +577,21 @@ def make_film_strip(length=180.0, width=35.0, frame_w=38.0, frame_h=24.0,
     bsdf.inputs["Base Color"].default_value = (0.015, 0.015, 0.015, 1.0)
     bsdf.inputs["Roughness"].default_value = 0.55
 
-    # ---- Border (with sprocket holes built into mesh) ----
+    # ---- Border (sprocket holes punched in via Boolean DIFFERENCE) ----
     border_mesh = bpy.data.meshes.new("FilmBorder")
     border_obj = bpy.data.objects.new("FilmBorder", border_mesh)
     bpy.context.collection.objects.link(border_obj)
     border_obj.parent = parent
     border_obj.location = (0, 0, 0.05)
-    bm = _build_border_mesh(length, half_w, image_h, sprocket_pitch, sprocket_w, sprocket_h)
+    bm = _build_border_mesh(length, half_w, image_h)
     bm.to_mesh(border_mesh)
     bm.free()
     border_obj.data.materials.append(black_mat)
+    _punch_sprocket_holes(
+        border_obj, length, half_w, image_h,
+        sprocket_pitch, sprocket_w, sprocket_h,
+        corner_radius=0.35,  # Bell & Howell-style
+    )
 
     # ---- Frame separators ----
     sep_mesh = bpy.data.meshes.new("FrameSeparators")

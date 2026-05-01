@@ -57,8 +57,8 @@ def composite(render_path, out_path, margin_frac=0.10, corner_radius_frac=0.225,
               border_color=(255, 255, 255, 255),
               border_width_frac=0.024,
               canvas_bg_color=(0, 0, 0, 0),
-              shadow_offset=(0, 6), shadow_blur=14, shadow_alpha=40,
-              subject_shadow_offset=(0, 8), subject_shadow_blur=18,
+              shadow_offset=(2, 6), shadow_blur=14, shadow_alpha=40,
+              subject_shadow_offset=(4, 9), subject_shadow_blur=18,
               subject_shadow_alpha=70):
     """
     Composite the transparent render onto a slightly off-white rounded-square
@@ -202,16 +202,31 @@ def main():
                         "opaque off-white instead of transparent. Useful for "
                         "previewing on light backgrounds; not what macOS "
                         "expects in an .icns.")
+    p.add_argument("--dark", action="store_true",
+                   help="Generate a dark-mode variant: charcoal card body + "
+                        "near-black border, suitable for a Sonoma+ "
+                        "tinted/dark-mode app icon. Subject drop shadow is "
+                        "lightened so it doesn't disappear into the card.")
     args = p.parse_args()
     canvas_bg = (241, 239, 234, 255) if args.opaque_bg else (0, 0, 0, 0)
+    if args.dark:
+        card = (28, 28, 30, 255)         # macOS dark-mode panel background
+        border = (58, 58, 60, 255)       # subtle lighter rim, like a window edge
+        sub_shadow = 110                 # deeper because the card itself is dark
+    else:
+        card = (241, 239, 234, 255)
+        border = (255, 255, 255, 255)
+        sub_shadow = args.subject_shadow_alpha
     composite(
         render_path=args.input,
         out_path=args.out,
         margin_frac=args.margin,
         corner_radius_frac=args.corner_radius,
         inner_padding_frac=args.inner_padding,
+        card_color=card,
+        border_color=border,
         shadow_alpha=args.shadow_alpha,
-        subject_shadow_alpha=args.subject_shadow_alpha,
+        subject_shadow_alpha=sub_shadow,
         canvas_bg_color=canvas_bg,
     )
 

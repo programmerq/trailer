@@ -22,6 +22,7 @@ if [[ ! -d "${SRC_DIR}" ]]; then
   exit 1
 fi
 
+DARK_SRC_DIR="${HERE}/output/iconset_dark"
 mkdir -p "${DST_DIR}"
 
 # 1) pngcrush each size into the repo's resources/icons/ directory.
@@ -79,6 +80,34 @@ if command -v magick >/dev/null 2>&1; then
   echo "  → ${DST_DIR}/trailer.ico ($(stat -f '%z' "${DST_DIR}/trailer.ico") bytes)"
 else
   echo "  (skipped trailer.ico — install ImageMagick for Windows .ico generation)"
+fi
+
+# 4) Dark-mode variant — same iconset processed through postprocess --dark.
+if [[ -d "${DARK_SRC_DIR}" ]]; then
+  echo "  (also packaging dark-mode iconset)"
+  for size in "${PNG_SIZES[@]}"; do
+    src="${DARK_SRC_DIR}/icon_${size}.png"
+    dst="${DST_DIR}/trailer-dark_${size}.png"
+    if [[ ! -f "${src}" ]]; then
+      continue
+    fi
+    pngcrush -q -rem allb -reduce -brute "${src}" "${dst}" >/dev/null
+  done
+
+  DARK_ICONSET="${ICONSET_TMP}/trailer-dark.iconset"
+  mkdir -p "${DARK_ICONSET}"
+  cp "${DST_DIR}/trailer-dark_16.png"   "${DARK_ICONSET}/icon_16x16.png"
+  cp "${DST_DIR}/trailer-dark_32.png"   "${DARK_ICONSET}/icon_16x16@2x.png"
+  cp "${DST_DIR}/trailer-dark_32.png"   "${DARK_ICONSET}/icon_32x32.png"
+  cp "${DST_DIR}/trailer-dark_64.png"   "${DARK_ICONSET}/icon_32x32@2x.png"
+  cp "${DST_DIR}/trailer-dark_128.png"  "${DARK_ICONSET}/icon_128x128.png"
+  cp "${DST_DIR}/trailer-dark_256.png"  "${DARK_ICONSET}/icon_128x128@2x.png"
+  cp "${DST_DIR}/trailer-dark_256.png"  "${DARK_ICONSET}/icon_256x256.png"
+  cp "${DST_DIR}/trailer-dark_512.png"  "${DARK_ICONSET}/icon_256x256@2x.png"
+  cp "${DST_DIR}/trailer-dark_512.png"  "${DARK_ICONSET}/icon_512x512.png"
+  cp "${DST_DIR}/trailer-dark_1024.png" "${DARK_ICONSET}/icon_512x512@2x.png"
+  iconutil --convert icns --output "${DST_DIR}/trailer-dark.icns" "${DARK_ICONSET}"
+  echo "  → ${DST_DIR}/trailer-dark.icns"
 fi
 
 echo "done."
