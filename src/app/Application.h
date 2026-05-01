@@ -35,6 +35,10 @@ public:
     // Always spawn a new empty window and return it. Used by the
     // window-per-file open flow so each file gets its own frame.
     MainWindow* ensureFreshWindow();
+    // Snapshot of every live MainWindow this Application owns.
+    // QPointer entries can be null (a destruction is queued); the
+    // Window menu filters those out before showing the list.
+    QList<MainWindow*> windows() const;
 
 protected:
     bool event(QEvent* event) override;

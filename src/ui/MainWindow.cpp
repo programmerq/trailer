@@ -323,6 +323,9 @@ void MainWindow::buildMenus() {
     auto* toolsMenu = menuBar()->addMenu(tr("&Tools"));
     buildToolsMenu(toolsMenu);
 
+    auto* windowMenu = menuBar()->addMenu(tr("&Window"));
+    buildWindowMenu(windowMenu);
+
     auto* helpMenu = menuBar()->addMenu(tr("&Help"));
     auto* aboutAction = helpMenu->addAction(tr("&About Trailer"));
     aboutAction->setMenuRole(QAction::AboutRole);
@@ -570,6 +573,77 @@ void MainWindow::buildGoMenu(QMenu* goMenu) {
             doc->currentPage() + 1, 1, doc->pageCount(), 1, &ok);
         if (ok) doc->goToPage(picked - 1);
     });
+}
+
+void MainWindow::buildWindowMenu(QMenu* windowMenu) {
+    // Standard macOS Window-menu items. Qt fills the default
+    // shortcut on macOS (⌘M for Minimize); we set it explicitly so
+    // it shows up on Linux / Windows too.
+    m_windowMenu = windowMenu;
+
+    auto* minimize = windowMenu->addAction(tr("&Minimize"));
+    minimize->setShortcut(QKeySequence(tr("Ctrl+M")));
+    connect(minimize, &QAction::triggered, this,
+            &QWidget::showMinimized);
+
+    auto* zoom = windowMenu->addAction(tr("&Zoom"));
+    connect(zoom, &QAction::triggered, this, [this]() {
+        // macOS "Zoom" toggles between user-sized and the OS's
+        // ideal-for-content size. QWidget doesn't expose that
+        // directly; toggling maximized is the closest portable
+        // approximation.
+        if (isMaximized()) showNormal();
+        else showMaximized();
+    });
+
+    windowMenu->addSeparator();
+
+    auto* bringAll = windowMenu->addAction(tr("Bring All to &Front"));
+    connect(bringAll, &QAction::triggered, this, [this]() {
+        for (MainWindow* w : m_app->windows()) {
+            if (!w) continue;
+            w->showNormal();
+            w->raise();
+            w->activateWindow();
+        }
+    });
+
+    m_windowMenuListSeparator = windowMenu->addSeparator();
+
+    // Refresh the dynamic per-window list each time the menu
+    // shows. Cheap (linear in window count, typically 1–3).
+    connect(windowMenu, &QMenu::aboutToShow,
+            this, &MainWindow::refreshWindowMenuList);
+
+    refreshWindowMenuList();
+}
+
+void MainWindow::refreshWindowMenuList() {
+    if (!m_windowMenu || !m_windowMenuListSeparator) return;
+    // Drop every action after the sentinel separator and rebuild.
+    const auto actions = m_windowMenu->actions();
+    bool past = false;
+    for (QAction* a : actions) {
+        if (past) {
+            m_windowMenu->removeAction(a);
+            a->deleteLater();
+        }
+        if (a == m_windowMenuListSeparator) past = true;
+    }
+    for (MainWindow* w : m_app->windows()) {
+        if (!w) continue;
+        const QString title = w->windowTitle().isEmpty()
+                                  ? tr("Untitled")
+                                  : w->windowTitle();
+        QAction* entry = m_windowMenu->addAction(title);
+        entry->setCheckable(true);
+        entry->setChecked(w == this);
+        connect(entry, &QAction::triggered, w, [w]() {
+            w->showNormal();
+            w->raise();
+            w->activateWindow();
+        });
+    }
 }
 
 void MainWindow::buildToolsMenu(QMenu* toolsMenu) {

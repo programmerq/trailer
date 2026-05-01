@@ -34,6 +34,15 @@ MainWindow* Application::ensureWindow() {
     return ensureFreshWindow();
 }
 
+QList<MainWindow*> Application::windows() const {
+    QList<MainWindow*> out;
+    out.reserve(m_windows.size());
+    for (const auto& ptr : m_windows) {
+        if (ptr) out.append(ptr.data());
+    }
+    return out;
+}
+
 MainWindow* Application::ensureFreshWindow() {
     auto* window = new MainWindow(this);
     window->setAttribute(Qt::WA_DeleteOnClose);

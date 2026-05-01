@@ -119,6 +119,13 @@ private:
     void buildViewMenu(QMenu* viewMenu);
     void buildGoMenu(QMenu* goMenu);
     void buildToolsMenu(QMenu* toolsMenu);
+    void buildWindowMenu(QMenu* windowMenu);
+    // Repopulate the Window menu's dynamic window list before it
+    // shows. The static items (Minimize / Zoom / Bring All to
+    // Front) stay; the per-window check-actions get rebuilt from
+    // Application::windows() each time so freshly-opened or
+    // closed frames show up immediately.
+    void refreshWindowMenuList();
     // Shows the one-time "redaction is not defence-grade" warning
     // (DESIGN §6.11.6) the first time the user activates the
     // Redaction tool. Returns true if the user either already
@@ -204,6 +211,10 @@ private:
     QAction* m_manageSignaturesAction = nullptr;
     QAction* m_printAction = nullptr;
     QAction* m_shareAction = nullptr;  // macOS-only; null on other platforms
+    QMenu* m_windowMenu = nullptr;
+    // Sentinel separator: the dynamic window list is rebuilt by
+    // removing every action AFTER this separator before each show.
+    QAction* m_windowMenuListSeparator = nullptr;
     QAction* m_findAction = nullptr;
     QAction* m_findNextAction = nullptr;
     QAction* m_findPreviousAction = nullptr;
