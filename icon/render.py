@@ -29,7 +29,7 @@ def parse_args():
     p.add_argument("--size", type=int, default=1024)
     p.add_argument("--samples", type=int, default=256)
     p.add_argument("--out", type=str, default="output/icon.png")
-    p.add_argument("--photo", type=str, default="inputs/arches-3.jpg")
+    p.add_argument("--photo", type=str, default="inputs/arches-4.png")
     p.add_argument("--engine", type=str, default="CYCLES", choices=["CYCLES", "BLENDER_EEVEE_NEXT"])
     p.add_argument("--background", type=str, default="transparent",
                    choices=["transparent", "rounded_white"])

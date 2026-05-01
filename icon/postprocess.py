@@ -52,7 +52,7 @@ def make_subject_shadow(subject_layer, blur=18, offset=(0, 8), darkness=80):
 
 
 def composite(render_path, out_path, margin_frac=0.10, corner_radius_frac=0.225,
-              inner_padding_frac=0.10,
+              inner_padding_frac=None,
               card_color=(241, 239, 234, 255),
               border_color=(255, 255, 255, 255),
               border_width_frac=0.012,
@@ -98,12 +98,14 @@ def composite(render_path, out_path, margin_frac=0.10, corner_radius_frac=0.225,
     corner_radius = int(round(card_size * corner_radius_frac))
 
     # Inner safe-area: a rounded square that's everywhere `inner_pad_px`
-    # inside the card. Crucially, the corner CENTERS coincide with the
-    # outer card's corner centers — only the radius shrinks. Scaling the
-    # radius proportionally instead leaves the diagonal ends of any
-    # element (like the rotated film strip) noticeably closer to the
-    # card's corners than the straight edges are to the straight edges.
-    inner_pad_px = int(round(card_size * inner_padding_frac))
+    # inside the card. By default the inner padding equals the white border
+    # width, so the rendered subject reaches just inside the white frame —
+    # there's no extra off-white margin between the subject and the white
+    # border. Pass inner_padding_frac to add additional margin.
+    if inner_padding_frac is None:
+        inner_pad_px = max(1, int(round(card_size * border_width_frac)))
+    else:
+        inner_pad_px = int(round(card_size * inner_padding_frac))
     inner_size = card_size - 2 * inner_pad_px
     inner_corner_radius = max(0, corner_radius - inner_pad_px)
 
@@ -186,11 +188,11 @@ def main():
                         "canvas — matches Apple's macOS Big Sur+ template.")
     p.add_argument("--corner-radius", type=float, default=0.225,
                    help="Card corner radius, as fraction of card side length.")
-    p.add_argument("--inner-padding", type=float, default=0.10,
-                   help="White-border padding inside the card. The rendered "
-                        "subject is scaled to fit (card - 2*inner_padding), "
-                        "so the white card edge has clean breathing room. "
-                        "0 disables.")
+    p.add_argument("--inner-padding", type=float, default=None,
+                   help="Extra padding between the subject and the card body, "
+                        "as a fraction of card size. Default: only the white "
+                        "border width — subject reaches just inside the border. "
+                        "Set to 0.05 etc. to add more breathing room.")
     p.add_argument("--shadow-alpha", type=int, default=40,
                    help="Card drop-shadow opacity (0-255). 0 to disable.")
     p.add_argument("--subject-shadow-alpha", type=int, default=70,
