@@ -24,6 +24,7 @@
 #include "ui/MainWindow.h"
 #include "ui/MarkupToolbar.h"
 #include "ui/SearchBar.h"
+#include "ui/Sidebar.h"
 
 #include <QAction>
 #include <QDockWidget>
@@ -184,6 +185,7 @@ private slots:
     void uat_vwr_062_findNextPrevWrap();
     void uat_vwr_063_escapeClosesSearch();
     void uat_vwr_065_searchWithNoMatches();
+    void uat_vwr_066_searchOpensSidebarWithMatchPages();
     void uat_ann_010_rectangleToolCreatesAnnotation();
     void uat_ann_012_lineToolCreatesAnnotation();
     void uat_ann_060_undoAddRectangle();
@@ -247,7 +249,9 @@ void TestUatSearchAndMarkup::uat_vwr_061_findMatchesInPdfText() {
     // Drive the query via the real SearchBar QLineEdit so we exercise
     // the same wire-up a user hits. setText() fires textChanged, which
     // SearchBar forwards as queryChanged → doc->setSearchQuery.
-    auto* lineEdit = mw->findChild<QLineEdit*>();
+    auto* searchBar = mw->findChild<SearchBar*>();
+    QVERIFY(searchBar);
+    auto* lineEdit = searchBar->findChild<QLineEdit*>();
     QVERIFY2(lineEdit, "SearchBar QLineEdit not found");
     lineEdit->setText(keyword);
     QApplication::processEvents();
@@ -307,7 +311,9 @@ void TestUatSearchAndMarkup::uat_vwr_061b_findMatchesInOcrLayerPdf() {
     findAction->trigger();
     QApplication::processEvents();
 
-    auto* lineEdit = mw->findChild<QLineEdit*>();
+    auto* searchBar = mw->findChild<SearchBar*>();
+    QVERIFY(searchBar);
+    auto* lineEdit = searchBar->findChild<QLineEdit*>();
     QVERIFY2(lineEdit, "SearchBar QLineEdit not found");
     lineEdit->setText(keyword);
     QApplication::processEvents();
@@ -354,7 +360,9 @@ void TestUatSearchAndMarkup::uat_vwr_062_findNextPrevWrap() {
     findAction->trigger();
     QApplication::processEvents();
 
-    auto* lineEdit = mw->findChild<QLineEdit*>();
+    auto* searchBar = mw->findChild<SearchBar*>();
+    QVERIFY(searchBar);
+    auto* lineEdit = searchBar->findChild<QLineEdit*>();
     QVERIFY(lineEdit);
     lineEdit->setText(keyword);
 
@@ -393,7 +401,11 @@ void TestUatSearchAndMarkup::uat_vwr_062_findNextPrevWrap() {
     QCOMPARE(view->currentSearchResultIndex(), copies - 1);
 }
 
-// UAT-VWR-063 — Escape closes the search bar and clears highlights.
+// UAT-VWR-063 — Escape clears the active query and any match
+// highlights. The 2026-05-02 top-bar refactor moved the search
+// field into an always-visible main toolbar — Escape no longer
+// hides the bar (it lives in the toolbar permanently); it just
+// soft-dismisses the query and returns focus to the document.
 void TestUatSearchAndMarkup::uat_vwr_063_escapeClosesSearch() {
     QVERIFY(m_scratch.isValid());
     const QString keyword = QStringLiteral("hippogryph");
@@ -415,9 +427,7 @@ void TestUatSearchAndMarkup::uat_vwr_063_escapeClosesSearch() {
 
     auto* bar = mw->findChild<SearchBar*>();
     QVERIFY(bar);
-    QVERIFY(bar->isVisible());
-
-    auto* lineEdit = mw->findChild<QLineEdit*>();
+    auto* lineEdit = bar->findChild<QLineEdit*>();
     QVERIFY(lineEdit);
     lineEdit->setText(keyword);
 
@@ -425,14 +435,9 @@ void TestUatSearchAndMarkup::uat_vwr_063_escapeClosesSearch() {
     QVERIFY(view);
     QTRY_VERIFY_WITH_TIMEOUT(view->currentSearchResultIndex() >= 0, 5000);
 
-    // Send Escape to the SearchBar; its keyPressEvent emits dismissed,
-    // which MainWindow::hideSearchBar hears and in turn calls
-    // clearSearch on the current document.
     sendKey(bar, Qt::Key_Escape);
     QApplication::processEvents();
 
-    QVERIFY2(!bar->isVisible(),
-             "SearchBar should be hidden after Escape");
     QCOMPARE(view->currentSearchResultIndex(), -1);
 }
 
@@ -461,7 +466,9 @@ void TestUatSearchAndMarkup::uat_vwr_065_searchWithNoMatches() {
     findAction->trigger();
     QApplication::processEvents();
 
-    auto* lineEdit = mw->findChild<QLineEdit*>();
+    auto* searchBar = mw->findChild<SearchBar*>();
+    QVERIFY(searchBar);
+    auto* lineEdit = searchBar->findChild<QLineEdit*>();
     QVERIFY(lineEdit);
     lineEdit->setText(QStringLiteral("zzzz_no_such_word_zzzz"));
 
@@ -488,6 +495,54 @@ void TestUatSearchAndMarkup::uat_vwr_065_searchWithNoMatches() {
     emit bar->findPreviousRequested();
     QApplication::processEvents();
     QCOMPARE(view->currentSearchResultIndex(), -1);
+}
+
+// UAT-VWR-066 — Cmd-F opens the sidebar in Search Results mode and
+// the polling timer pushes pages-with-matches into the filter so
+// the user sees just those pages while typing.
+void TestUatSearchAndMarkup::uat_vwr_066_searchOpensSidebarWithMatchPages() {
+    QVERIFY(m_scratch.isValid());
+    const QString keyword = QStringLiteral("zebranaut");
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_vwr_066.pdf")), keyword);
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+
+    // Sidebar starts hidden after the 2026-04-30 default flip.
+    auto* sidebar = mw->findChild<Sidebar*>();
+    QVERIFY(sidebar);
+    QVERIFY(!sidebar->isVisible());
+
+    QAction* findAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
+                                         QStringLiteral("&Find…"));
+    QVERIFY(findAction);
+    findAction->trigger();
+    QApplication::processEvents();
+
+    // Cmd-F opens the sidebar in Search Results mode.
+    QCOMPARE(sidebar->mode(), Sidebar::Mode::SearchResults);
+    QVERIFY(sidebar->isVisible());
+
+    auto* bar = mw->findChild<SearchBar*>();
+    QVERIFY(bar);
+    auto* lineEdit = bar->findChild<QLineEdit*>();
+    QVERIFY(lineEdit);
+    lineEdit->setText(keyword);
+    QApplication::processEvents();
+
+    // The polling timer fires every 150 ms; wait for it to push
+    // the pagesWithSearchMatches list into the sidebar's filter.
+    auto* doc = mw->findChild<DocumentView*>()->currentDocument();
+    QVERIFY(doc);
+    QTRY_VERIFY_WITH_TIMEOUT(!doc->pagesWithSearchMatches().empty(), 5000);
+    QTest::qWait(300);  // give the polling timer at least one tick
+    QVERIFY(!doc->pagesWithSearchMatches().empty());
 }
 
 // UAT-ANN-010 — Rectangle tool creates an annotation on click-drag.

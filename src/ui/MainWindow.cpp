@@ -40,6 +40,7 @@
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QInputDialog>
+#include <QToolButton>
 #include <QFormLayout>
 #include <QGuiApplication>
 #include <QImageWriter>
@@ -84,17 +85,20 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
     centerLayout->setContentsMargins(0, 0, 0, 0);
     centerLayout->setSpacing(0);
 
+    // SearchBar is constructed here without a parent layout; the
+    // main toolbar reparents it (buildMainToolbar). It stays alive
+    // for the window's lifetime and is always visible.
     m_searchBar = new SearchBar(center);
-    m_searchBar->hide();
 
     // The PDF search model populates asynchronously; poll the
     // document's match count periodically and refresh the
     // SearchBar's "X of Y" indicator. The timer only ticks while
-    // the search bar is visible.
+    // there's an active query so it doesn't burn cycles when the
+    // user isn't searching.
     auto* searchPoll = new QTimer(this);
     searchPoll->setInterval(150);
     connect(searchPoll, &QTimer::timeout, this, [this]() {
-        if (!m_searchBar->isVisible()) return;
+        if (m_searchBar->query().isEmpty()) return;
         auto* doc = m_documentView->currentDocument();
         if (!doc) {
             m_searchBar->setMatchCounter(0, 0);
@@ -102,6 +106,10 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
         }
         m_searchBar->setMatchCounter(doc->currentSearchMatchIndex(),
                                      doc->searchMatchCount());
+        // Push the search-result page list into the sidebar so
+        // SearchResults mode shows just those pages. Fast — the
+        // list is computed on demand from the cached search model.
+        m_sidebar->setSearchMatchPages(doc->pagesWithSearchMatches());
     });
     searchPoll->start();
 
@@ -142,7 +150,9 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
     m_animationBar = new AnimationBar(center);
     m_animationBar->hide();
 
-    centerLayout->addWidget(m_searchBar);
+    // The search bar moved into the main toolbar (built later) so
+    // it's always visible at the top right. The central column is
+    // now just the document view + the animation bar.
     centerLayout->addWidget(m_documentView, 1);
     centerLayout->addWidget(m_animationBar);
     setCentralWidget(center);
@@ -359,6 +369,113 @@ void MainWindow::buildMenus() {
     auto* aboutAction = helpMenu->addAction(tr("&About Trailer"));
     aboutAction->setMenuRole(QAction::AboutRole);
     connect(aboutAction, &QAction::triggered, this, &MainWindow::onAbout);
+
+    buildMainToolbar();
+}
+
+void MainWindow::buildMainToolbar() {
+    // Slim always-visible toolbar that hosts document chrome:
+    // sidebar mode picker, zoom, rotate, markup / forms toggles,
+    // and an embedded search field. Sits above any markup or form
+    // toolbar (insertToolBarBreak gives those their own row when
+    // they're shown). The toolbar is non-movable / non-floatable
+    // because letting the user drag it produces an empty band of
+    // chrome that's just visual noise.
+    m_mainToolbar = new QToolBar(tr("Main"), this);
+    m_mainToolbar->setObjectName(QStringLiteral("MainToolbar"));
+    m_mainToolbar->setMovable(false);
+    m_mainToolbar->setFloatable(false);
+    m_mainToolbar->setIconSize(QSize(18, 18));
+    m_mainToolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    addToolBar(Qt::TopToolBarArea, m_mainToolbar);
+    insertToolBarBreak(m_markupToolbar);
+
+    // Sidebar mode picker. Each entry calls Sidebar::setMode; the
+    // checked state mirrors back via Sidebar::modeChanged.
+    auto* sidebarBtn = new QToolButton(m_mainToolbar);
+    sidebarBtn->setText(tr("Sidebar"));
+    sidebarBtn->setPopupMode(QToolButton::InstantPopup);
+    auto* sidebarMenu = new QMenu(sidebarBtn);
+    auto* sidebarGroup = new QActionGroup(sidebarMenu);
+    sidebarGroup->setExclusive(true);
+    auto addModeAction = [this, sidebarMenu, sidebarGroup](
+            const QString& label, Sidebar::Mode mode, bool enabled = true) {
+        QAction* a = sidebarMenu->addAction(label);
+        a->setCheckable(true);
+        a->setEnabled(enabled);
+        sidebarGroup->addAction(a);
+        connect(a, &QAction::triggered, this, [this, mode]() {
+            m_sidebar->setMode(mode);
+        });
+        return a;
+    };
+    QAction* hideAction = addModeAction(tr("Hide Sidebar"), Sidebar::Mode::Hidden);
+    addModeAction(tr("Page Thumbnails"), Sidebar::Mode::Pages);
+    addModeAction(tr("Search Results"), Sidebar::Mode::SearchResults);
+    sidebarMenu->addSeparator();
+    // Disabled until the underlying features ship — see TODO.md.
+    addModeAction(tr("Table of Contents"), Sidebar::Mode::TableOfContents,
+                  /*enabled=*/false);
+    addModeAction(tr("Highlights && Notes"),
+                  Sidebar::Mode::HighlightsAndNotes, /*enabled=*/false);
+    hideAction->setChecked(true);  // Hidden is the launch default
+    sidebarBtn->setMenu(sidebarMenu);
+    m_mainToolbar->addWidget(sidebarBtn);
+    // Keep the picker's check-state in sync if the user closes the
+    // dock via its X button or the View → Toggle Sidebar action.
+    connect(m_sidebar, &Sidebar::modeChanged, this,
+            [sidebarGroup](Sidebar::Mode m) {
+                for (QAction* a : sidebarGroup->actions()) {
+                    if (a->isCheckable() &&
+                        a->data().value<Sidebar::Mode>() == m) {
+                        a->setChecked(true);
+                        return;
+                    }
+                }
+                // Fallback: just clear all checks.
+                for (QAction* a : sidebarGroup->actions()) a->setChecked(false);
+            });
+    // Tag each action with its Mode so the lookup above works.
+    {
+        const QList<QAction*> actions = sidebarGroup->actions();
+        const Sidebar::Mode modes[] = {
+            Sidebar::Mode::Hidden, Sidebar::Mode::Pages,
+            Sidebar::Mode::SearchResults,
+            Sidebar::Mode::TableOfContents,
+            Sidebar::Mode::HighlightsAndNotes};
+        for (int i = 0; i < actions.size() &&
+             i < int(sizeof(modes) / sizeof(modes[0])); ++i) {
+            actions[i]->setData(QVariant::fromValue(modes[i]));
+        }
+    }
+
+    m_mainToolbar->addSeparator();
+
+    m_mainToolbar->addAction(m_zoomOutAction);
+    m_mainToolbar->addAction(m_zoomActualAction);
+    m_mainToolbar->addAction(m_zoomInAction);
+    m_mainToolbar->addSeparator();
+    m_mainToolbar->addAction(m_rotateLeftAction);
+    m_mainToolbar->addAction(m_rotateRightAction);
+    m_mainToolbar->addSeparator();
+    m_mainToolbar->addAction(m_markupToolbarAction);
+    m_mainToolbar->addAction(m_formToolbarAction);
+
+    // Stretchable spacer pushes the search field to the right edge.
+    auto* spacer = new QWidget(m_mainToolbar);
+    spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    m_mainToolbar->addWidget(spacer);
+
+    // Search field is always visible in the toolbar now. The old
+    // floating SearchBar that toggled in/out of the central layout
+    // has been removed; m_searchBar is parented to the toolbar.
+    // We don't call show() — Qt propagates visibility from the
+    // QMainWindow at the next show event, and an explicit show()
+    // on a child of a still-hidden ancestor has no effect on the
+    // explicitly-hidden flag, so leaving it alone is correct.
+    m_searchBar->setParent(m_mainToolbar);
+    m_searchBar->setMaximumWidth(360);
+    m_mainToolbar->addWidget(m_searchBar);
 }
 
 void MainWindow::buildEditMenu(QMenu* editMenu) {
@@ -404,19 +521,34 @@ void MainWindow::buildEditMenu(QMenu* editMenu) {
 }
 
 void MainWindow::showSearchBar() {
+    // The search bar lives in the main toolbar and is always
+    // visible. Cmd-F just focuses the input field so the user can
+    // type immediately. The supportsSearch gate stays — for
+    // documents that can't search, focusing the field would invite
+    // the user to type into a no-op.
     auto* doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsSearch()) {
         return;
     }
-    m_searchBar->show();
     m_searchBar->focusInput();
+    // Open the sidebar in Search Results mode so the user sees
+    // pages-with-matches as they type. The polling timer pushes
+    // the current pagesWithSearchMatches() list into the sidebar
+    // every 150 ms while a query is active.
+    if (m_sidebar->mode() == Sidebar::Mode::Hidden) {
+        m_sidebar->setMode(Sidebar::Mode::SearchResults);
+    }
 }
 
 void MainWindow::hideSearchBar() {
-    m_searchBar->hide();
+    // "Hide" used to remove the floating search bar from the
+    // central column; with the toolbar embedding it's a soft
+    // dismiss that returns focus to the document and clears any
+    // active query so the highlighted matches go away.
     if (auto* doc = m_documentView->currentDocument()) {
         doc->clearSearch();
     }
+    m_searchBar->setMatchCounter(0, 0);
     m_documentView->setFocus();
 }
 
@@ -1833,11 +1965,17 @@ void MainWindow::updateTitleForDocument(IDocument* doc) {
     updateUndoRedoActions(doc);
     if (!doc) {
         setWindowTitle(tr("Trailer"));
+        setWindowFilePath(QString());
         return;
     }
     const QString name = doc->displayName();
     const QString marker = doc->isDirty() ? QStringLiteral("• ") : QString();
     setWindowTitle(tr("%1%2 — Trailer").arg(marker, name));
+    // setWindowFilePath bridges to NSWindow::representedFilename on
+    // macOS — the title bar gets a clickable folder icon for "Show
+    // in Finder", drag-out, tags, and locked-state toggles. On
+    // Linux / Windows it's a no-op outside Qt's internal bookkeeping.
+    setWindowFilePath(doc->filePath());
 
     const int idx = m_documentView->currentIndex();
     if (idx >= 0) {

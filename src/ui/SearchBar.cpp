@@ -77,6 +77,10 @@ QString SearchBar::query() const {
     return m_input->text();
 }
 
+void SearchBar::setQuery(const QString& q) {
+    m_input->setText(q);
+}
+
 void SearchBar::keyPressEvent(QKeyEvent* event) {
     if (event->key() == Qt::Key_Escape) {
         emit dismissed();

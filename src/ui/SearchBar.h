@@ -16,6 +16,13 @@ public:
 
     void focusInput();
     QString query() const;
+    // Programmatic set — fires the same textChanged → queryChanged
+    // chain a real keystroke would. Used by UATs to drive the
+    // search without depending on which QLineEdit findChild()
+    // happens to return first (the markup toolbar's QSpinBox /
+    // QComboBox carry internal QLineEdits that show up earlier in
+    // the depth-first walk).
+    void setQuery(const QString& q);
     // Show "<current> of <total>" between the input and the
     // arrow buttons. Pass total = 0 to clear (no query yet).
     // Pass current = 0 with total > 0 for "no current match

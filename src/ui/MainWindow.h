@@ -120,6 +120,11 @@ private:
     void buildGoMenu(QMenu* goMenu);
     void buildToolsMenu(QMenu* toolsMenu);
     void buildWindowMenu(QMenu* windowMenu);
+    // Slim always-visible top-bar with sidebar mode picker, zoom,
+    // rotate, markup / forms toolbar toggles, and an embedded
+    // search field. Built last so every action it surfaces has
+    // already been created by the menu builders above.
+    void buildMainToolbar();
     // Repopulate the Window menu's dynamic window list before it
     // shows. The static items (Minimize / Zoom / Bring All to
     // Front) stay; the per-window check-actions get rebuilt from
@@ -211,6 +216,7 @@ private:
     QAction* m_manageSignaturesAction = nullptr;
     QAction* m_printAction = nullptr;
     QAction* m_shareAction = nullptr;  // macOS-only; null on other platforms
+    QToolBar* m_mainToolbar = nullptr;
     QMenu* m_windowMenu = nullptr;
     // Sentinel separator: the dynamic window list is rebuilt by
     // removing every action AFTER this separator before each show.

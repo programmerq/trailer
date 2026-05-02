@@ -228,6 +228,50 @@ void Sidebar::setDocument(IDocument* doc) {
                 &Sidebar::refreshAnnotations, Qt::UniqueConnection);
     }
     refreshAnnotations();
+    // Re-apply the current mode so a doc swap (or removing the
+    // doc) honours the picker's last choice. Hidden stays hidden;
+    // SearchResults reverts to no-filter when the new doc has no
+    // pending matches yet.
+    applyMode();
+}
+
+void Sidebar::setMode(Mode mode) {
+    if (mode == m_mode) {
+        applyMode();
+        return;
+    }
+    m_mode = mode;
+    applyMode();
+    emit modeChanged(m_mode);
+}
+
+void Sidebar::setSearchMatchPages(const std::vector<int>& pages) {
+    m_searchMatchPages = pages;
+    if (m_mode == Mode::SearchResults) applyMode();
+}
+
+void Sidebar::applyMode() {
+    switch (m_mode) {
+        case Mode::Hidden:
+            m_model->setPageFilter({});
+            if (isVisible()) hide();
+            return;
+        case Mode::Pages:
+            m_model->setPageFilter({});
+            if (!isVisible()) show();
+            return;
+        case Mode::SearchResults:
+            m_model->setPageFilter(m_searchMatchPages);
+            if (!isVisible()) show();
+            return;
+        case Mode::TableOfContents:
+        case Mode::HighlightsAndNotes:
+            // Underlying feature not implemented yet — fall back to
+            // showing all pages so the dock doesn't go blank.
+            m_model->setPageFilter({});
+            if (!isVisible()) show();
+            return;
+    }
 }
 
 bool Sidebar::eventFilter(QObject* watched, QEvent* event) {
@@ -236,12 +280,13 @@ bool Sidebar::eventFilter(QObject* watched, QEvent* event) {
         if (key->key() == Qt::Key_Delete || key->key() == Qt::Key_Backspace) {
             const auto selected = m_thumbnails->selectionModel()->selectedIndexes();
             if (!selected.isEmpty()) {
-                std::vector<int> rows;
-                rows.reserve(selected.size());
+                std::vector<int> pages;
+                pages.reserve(selected.size());
                 for (const QModelIndex& idx : selected) {
-                    rows.push_back(idx.row());
+                    const int p = m_model->pageForRow(idx.row());
+                    if (p >= 0) pages.push_back(p);
                 }
-                emit deletePagesRequested(rows);
+                emit deletePagesRequested(pages);
                 return true;
             }
         }
@@ -300,7 +345,9 @@ void Sidebar::onThumbnailActivated(const QModelIndex& index) {
     if (!m_doc || !index.isValid()) {
         return;
     }
-    m_doc->goToPage(index.row());
+    const int page = m_model->pageForRow(index.row());
+    if (page < 0) return;
+    m_doc->goToPage(page);
 }
 
 void Sidebar::syncSelectionFromDocument() {
@@ -309,13 +356,28 @@ void Sidebar::syncSelectionFromDocument() {
     }
     const int current = m_doc->currentPage();
     const QModelIndex currentIdx = m_thumbnails->currentIndex();
-    if (current == currentIdx.row()) {
+    if (currentIdx.isValid() &&
+        m_model->pageForRow(currentIdx.row()) == current) {
         return;
     }
-    const QModelIndex target = m_model->index(current, 0);
-    if (!target.isValid()) {
-        return;
+    // Find the row that maps to the document's current page. With
+    // a filter active, the current page may not be in the filtered
+    // set — leave the selection alone in that case.
+    int targetRow = -1;
+    if (m_model->isFiltered()) {
+        const int total = m_model->rowCount({});
+        for (int r = 0; r < total; ++r) {
+            if (m_model->pageForRow(r) == current) {
+                targetRow = r;
+                break;
+            }
+        }
+        if (targetRow < 0) return;
+    } else {
+        targetRow = current;
     }
+    const QModelIndex target = m_model->index(targetRow, 0);
+    if (!target.isValid()) return;
     m_syncingSelection = true;
     m_thumbnails->setCurrentIndex(target);
     m_thumbnails->scrollTo(target, QAbstractItemView::EnsureVisible);

@@ -164,6 +164,15 @@ QWidget* PdfDocument::createView(QWidget* parent) {
     view->setDocument(m_doc.get());
     view->setZoomMode(QPdfView::ZoomMode::Custom);
     view->setZoomFactor(1.0);
+    // QPdfView paints search matches using the palette's Highlight
+    // role. Override to a translucent yellow so matches look like
+    // a marker-pen highlighter instead of a system selection.
+    // (Qt versions that ignore the role for PDF render fall back
+    // gracefully — the change is harmless.)
+    QPalette pdfPalette = view->palette();
+    pdfPalette.setColor(QPalette::Highlight, QColor(255, 235, 50, 160));
+    pdfPalette.setColor(QPalette::HighlightedText, Qt::black);
+    view->setPalette(pdfPalette);
     m_view = view;
     if (m_searchModel) {
         view->setSearchModel(m_searchModel.get());

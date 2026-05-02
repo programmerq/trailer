@@ -52,10 +52,15 @@ QStringList ThumbnailModel::mimeTypes() const {
 QMimeData* ThumbnailModel::mimeData(const QModelIndexList& indexes) const {
     auto* data = new QMimeData;
 
+    // Convert view-row indices to underlying document pages so
+    // drag-out / extract works the same whether the model is
+    // showing every page or a search-filtered subset.
     std::vector<int> rows;
     rows.reserve(indexes.size());
     for (const QModelIndex& idx : indexes) {
-        if (idx.isValid()) rows.push_back(idx.row());
+        if (!idx.isValid()) continue;
+        const int page = pageForRow(idx.row());
+        if (page >= 0) rows.push_back(page);
     }
     std::sort(rows.begin(), rows.end());
     rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
@@ -97,7 +102,21 @@ int ThumbnailModel::rowCount(const QModelIndex& parent) const {
     if (parent.isValid() || !m_doc || !m_doc->supportsThumbnails()) {
         return 0;
     }
+    if (!m_filter.empty()) return static_cast<int>(m_filter.size());
     return m_doc->pageCount();
+}
+
+void ThumbnailModel::setPageFilter(const std::vector<int>& pages) {
+    if (pages == m_filter) return;
+    beginResetModel();
+    m_filter = pages;
+    endResetModel();
+}
+
+int ThumbnailModel::pageForRow(int row) const {
+    if (m_filter.empty()) return row;
+    if (row < 0 || row >= static_cast<int>(m_filter.size())) return -1;
+    return m_filter[static_cast<size_t>(row)];
 }
 
 QVariant ThumbnailModel::data(const QModelIndex& index, int role) const {
@@ -105,14 +124,18 @@ QVariant ThumbnailModel::data(const QModelIndex& index, int role) const {
         return {};
     }
     const int row = index.row();
-    if (row < 0 || row >= m_doc->pageCount()) {
+    // Map row → underlying page when a filter is active. The
+    // cache is keyed on the page index so cross-filter switches
+    // don't re-render the same page.
+    const int page = pageForRow(row);
+    if (page < 0 || page >= m_doc->pageCount()) {
         return {};
     }
     switch (role) {
         case Qt::DisplayRole:
-            return QString::number(row + 1);
+            return QString::number(page + 1);
         case Qt::DecorationRole: {
-            auto it = m_cache.find(row);
+            auto it = m_cache.find(page);
             if (it == m_cache.end()) {
                 // Render at native resolution for the user's primary
                 // screen and stamp devicePixelRatio on the result so
@@ -126,16 +149,16 @@ QVariant ThumbnailModel::data(const QModelIndex& index, int role) const {
                 const QSize nativeSize(
                     int(std::ceil(m_size.width() * dpr)),
                     int(std::ceil(m_size.height() * dpr)));
-                QImage img = m_doc->renderThumbnail(row, nativeSize);
+                QImage img = m_doc->renderThumbnail(page, nativeSize);
                 if (!img.isNull()) {
                     img.setDevicePixelRatio(dpr);
                 }
-                it = m_cache.insert(row, img.isNull() ? QPixmap() : QPixmap::fromImage(img));
+                it = m_cache.insert(page, img.isNull() ? QPixmap() : QPixmap::fromImage(img));
             }
             return it.value();
         }
         case Qt::ToolTipRole:
-            return QObject::tr("Page %1").arg(row + 1);
+            return QObject::tr("Page %1").arg(page + 1);
         default:
             return {};
     }
