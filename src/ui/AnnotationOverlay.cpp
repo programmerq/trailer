@@ -459,6 +459,24 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
         }
     }
 
+    // Draw selection outlines for extra annotations selected via
+    // selectAll(). These receive the same dashed border as the primary
+    // but no resize handles — they are not individually interactive.
+    if (!m_extraSelectedIds.empty() && m_store) {
+        const QColor accent(60, 120, 220, 220);
+        QPen pen(accent);
+        pen.setWidth(1);
+        pen.setStyle(Qt::DashLine);
+        p.setPen(pen);
+        p.setBrush(Qt::NoBrush);
+        for (int extraId : m_extraSelectedIds) {
+            if (const Annotation* a = m_store->find(extraId)) {
+                const QRectF view = docRectToView(a->bounds, a->page);
+                p.drawRect(view.adjusted(-3, -3, 3, 3));
+            }
+        }
+    }
+
     if (m_tool == AnnotationTool::Select && !m_pendingSelection.empty()) {
         QColor selFill(80, 140, 220, 110);
         for (const QRectF& r : m_pendingSelection) {
@@ -603,6 +621,8 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent* event) {
                 m_selectedAnnotationId = hitId;
                 emit selectionChanged(hitId);
             }
+            // A direct click replaces any multi-selection from selectAll().
+            m_extraSelectedIds.clear();
             m_pendingSelection.clear();
             if (wasAlreadySelected && m_store) {
                 if (const Annotation* a = m_store->find(hitId)) {
@@ -621,8 +641,9 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent* event) {
         }
         // Empty-space click: clear any annotation selection and let
         // the text-selection drag below run.
-        if (m_selectedAnnotationId != 0) {
+        if (m_selectedAnnotationId != 0 || !m_extraSelectedIds.empty()) {
             m_selectedAnnotationId = 0;
+            m_extraSelectedIds.clear();
             emit selectionChanged(0);
             update();
         }
@@ -1038,10 +1059,19 @@ void AnnotationOverlay::keyPressEvent(QKeyEvent* event) {
         event->ignore();
         return;
     }
-    // Delete / Backspace removes the selected annotation. The
-    // store's changed() signal repaints automatically.
+    // Delete / Backspace removes the selected annotation(s). When
+    // selectAll() was used the extra ids are deleted together with
+    // the primary in a single undo step via removeMultiple().
     if (event->key() == Qt::Key_Delete || event->key() == Qt::Key_Backspace) {
-        m_store->remove(m_selectedAnnotationId);
+        if (!m_extraSelectedIds.empty()) {
+            // Batch delete: primary + all extras in one undo entry.
+            std::vector<int> allIds = m_extraSelectedIds;
+            allIds.push_back(m_selectedAnnotationId);
+            m_extraSelectedIds.clear();
+            m_store->removeMultiple(allIds);
+        } else {
+            m_store->remove(m_selectedAnnotationId);
+        }
         m_selectedAnnotationId = 0;
         emit selectionChanged(0);
         update();
@@ -1060,6 +1090,36 @@ void AnnotationOverlay::keyPressEvent(QKeyEvent* event) {
         default: break;
     }
     event->ignore();
+}
+
+std::vector<int> AnnotationOverlay::selectedAnnotationIds() const {
+    if (m_selectedAnnotationId == 0) return {};
+    std::vector<int> ids;
+    ids.reserve(1 + m_extraSelectedIds.size());
+    ids.push_back(m_selectedAnnotationId);
+    ids.insert(ids.end(), m_extraSelectedIds.begin(), m_extraSelectedIds.end());
+    return ids;
+}
+
+void AnnotationOverlay::selectAll() {
+    if (!m_store || m_store->isEmpty()) return;
+    m_extraSelectedIds.clear();
+    int firstId = 0;
+    for (const Annotation& a : m_store->annotations()) {
+        if (firstId == 0) {
+            firstId = a.id;
+        } else {
+            m_extraSelectedIds.push_back(a.id);
+        }
+    }
+    if (firstId != 0 && firstId != m_selectedAnnotationId) {
+        m_selectedAnnotationId = firstId;
+        emit selectionChanged(firstId);
+    }
+    // Grab keyboard focus so Delete / arrow keys work immediately
+    // after Cmd+A without requiring an extra click on the overlay.
+    setFocus(Qt::OtherFocusReason);
+    update();
 }
 
 QRectF AnnotationOverlay::selectedViewRectForTest() const {

@@ -16,6 +16,9 @@ public:
 
     int add(Annotation annotation);
     bool remove(int id);
+    // Remove all annotations whose id appears in `ids` in a single
+    // undo-history step. Returns true if at least one was removed.
+    bool removeMultiple(const std::vector<int>& ids);
     bool update(const Annotation& annotation);
     const Annotation* find(int id) const;
 

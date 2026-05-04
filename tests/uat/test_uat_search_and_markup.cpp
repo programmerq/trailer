@@ -299,6 +299,8 @@ private slots:
     void uat_ann_122_arrowKeyNudgesSelectedAnnotation();
     void uat_ann_123_inspectorTracksSelectedAnnotation();
     void uat_ann_124_dragHandleResizesSelectedAnnotation();
+    void uat_ann_125_selectAllSelectsEveryAnnotation();
+    void uat_ann_126_selectAllThenDeleteRemovesAllInOneUndo();
     void uat_toc_010_outlineDisabledOnPlainPdf();
     void uat_toc_011_outlineExposedForPdfWithBookmarks();
     void uat_toc_012_clickingOutlineEntryNavigatesToPage();
@@ -1730,6 +1732,91 @@ void TestUatSearchAndMarkup::uat_hn_012_listFiltersToTextContentTypes() {
     QVERIFY(list);
     QCOMPARE(list->count(), 1);
     QVERIFY(list->item(0)->text().contains(QStringLiteral("Highlight")));
+}
+
+// UAT-ANN-125 — Edit > Select All (Cmd/Ctrl+A) while annotations
+// exist selects all of them. selectedAnnotationIds() reports all ids;
+// the primary selectedAnnotationId() is set to one of them.
+void TestUatSearchAndMarkup::uat_ann_125_selectAllSelectsEveryAnnotation() {
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch,
+                                                  QStringLiteral("125"));
+    QVERIFY(f.overlay);
+    QVERIFY(f.drawnId != 0);
+
+    // Add a second annotation so selectAll has more than one to select.
+    auto* markup = f.mw->findChild<MarkupToolbar*>();
+    QVERIFY(markup);
+    QAction* rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
+    QVERIFY(rectAction);
+    rectAction->setChecked(true);
+    QApplication::processEvents();
+    dragOnOverlay(f.overlay, QPoint(400, 100), QPoint(500, 180));
+    QApplication::processEvents();
+    QCOMPARE(f.store->count(), 2);
+
+    // Switch back to Select tool.
+    QAction* selectAction = findToolAction(markup, QStringLiteral("Select"));
+    if (selectAction) { selectAction->setChecked(true); QApplication::processEvents(); }
+
+    // Trigger Select All via the menu action.
+    QAction* selectAllAction = findMenuAction(
+        f.mw->menuBar(), QStringLiteral("&Edit"),
+        QStringLiteral("Select &All"));
+    QVERIFY2(selectAllAction, "Edit > Select All action must exist");
+    QVERIFY2(selectAllAction->isEnabled(),
+             "Select All must be enabled for a document with annotations");
+    selectAllAction->trigger();
+    QApplication::processEvents();
+
+    // All annotation ids should be reported as selected.
+    const std::vector<int> selected = f.overlay->selectedAnnotationIds();
+    QCOMPARE(static_cast<int>(selected.size()), 2);
+    QVERIFY2(f.overlay->selectedAnnotationId() != 0,
+             "Primary selection must be set after selectAll()");
+}
+
+// UAT-ANN-126 — Select All followed by Delete removes every annotation
+// in a single undo step (one Undo restores all of them).
+void TestUatSearchAndMarkup::uat_ann_126_selectAllThenDeleteRemovesAllInOneUndo() {
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch,
+                                                  QStringLiteral("126"));
+    QVERIFY(f.overlay);
+    QVERIFY(f.drawnId != 0);
+
+    // Add a second annotation.
+    auto* markup = f.mw->findChild<MarkupToolbar*>();
+    QVERIFY(markup);
+    QAction* rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
+    QVERIFY(rectAction);
+    rectAction->setChecked(true);
+    QApplication::processEvents();
+    dragOnOverlay(f.overlay, QPoint(400, 100), QPoint(500, 180));
+    QApplication::processEvents();
+    QCOMPARE(f.store->count(), 2);
+
+    // Switch back to Select tool.
+    QAction* selectAction = findToolAction(markup, QStringLiteral("Select"));
+    if (selectAction) { selectAction->setChecked(true); QApplication::processEvents(); }
+
+    // Select All then Delete.
+    QAction* selectAllAction = findMenuAction(
+        f.mw->menuBar(), QStringLiteral("&Edit"),
+        QStringLiteral("Select &All"));
+    QVERIFY(selectAllAction);
+    selectAllAction->trigger();
+    QApplication::processEvents();
+
+    sendKey(f.overlay, Qt::Key_Delete);
+    QApplication::processEvents();
+
+    QCOMPARE(f.store->count(), 0);
+    QCOMPARE(f.overlay->selectedAnnotationId(), 0);
+
+    // Undo should restore all annotations in one step.
+    QVERIFY(f.store->canUndo());
+    f.store->undo();
+    QApplication::processEvents();
+    QCOMPARE(f.store->count(), 2);
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG

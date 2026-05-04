@@ -236,6 +236,7 @@ private:
     QAction* m_findAction = nullptr;
     QAction* m_findNextAction = nullptr;
     QAction* m_findPreviousAction = nullptr;
+    QAction* m_selectAllAction = nullptr;
     QAction* m_undoAction = nullptr;
     QAction* m_redoAction = nullptr;
 
