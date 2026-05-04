@@ -1016,6 +1016,7 @@ noted otherwise.
 | Quit | `Ctrl+Q` (Linux/Win) / `⌘Q` (Mac) |
 | Print | `Ctrl/⌘+P` |
 | Copy / Cut / Paste | `Ctrl/⌘+C / X / V` |
+| Select All | `Ctrl/⌘+A` |
 | Find | `Ctrl/⌘+F` |
 | Find Next / Previous | `Ctrl/⌘+G` / `Ctrl/⌘+Shift+G` |
 | Undo / Redo | `Ctrl/⌘+Z` / `Ctrl/⌘+Shift+Z` |

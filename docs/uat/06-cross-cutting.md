@@ -181,6 +181,7 @@ form — `Cmd` on macOS, `Ctrl` on Windows / Linux.
 |---|---|
 | `Cmd/Ctrl+Z` | `Edit > Undo` |
 | `Cmd+Shift+Z` (macOS) / `Ctrl+Y` | `Edit > Redo` |
+| `Cmd/Ctrl+A` | `Edit > Select All` |
 | `Cmd/Ctrl+F` | `Edit > Find…` |
 | `Cmd/Ctrl+G` (macOS) / `F3` | `Edit > Find Next` |
 | `Cmd+Shift+G` (macOS) / `Shift+F3` | `Edit > Find Previous` |

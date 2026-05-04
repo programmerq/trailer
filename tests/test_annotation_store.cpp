@@ -11,6 +11,7 @@ private slots:
     void addAssignsMonotonicIds();
     void findLocatesById();
     void removeErasesEntry();
+    void removeMultipleErasesAllInOnce();
     void updateReplacesInPlace();
     void annotationsOnPageFiltersByPage();
     void restoreBringsBackPriorSnapshot();
@@ -54,6 +55,33 @@ void TestAnnotationStore::removeErasesEntry() {
     QVERIFY(store.remove(id));
     QCOMPARE(store.count(), 0);
     QVERIFY(!store.remove(id));
+}
+
+void TestAnnotationStore::removeMultipleErasesAllInOnce() {
+    AnnotationStore store;
+    const int id1 = store.add(makeRect(0, QRectF(0, 0, 10, 10)));
+    const int id2 = store.add(makeRect(0, QRectF(5, 5, 10, 10)));
+    const int id3 = store.add(makeRect(0, QRectF(20, 20, 5, 5)));
+    QCOMPARE(store.count(), 3);
+
+    // Remove two of the three in a single call.
+    QVERIFY(store.removeMultiple({id1, id3}));
+    QCOMPARE(store.count(), 1);
+    QVERIFY(store.find(id1) == nullptr);
+    QVERIFY(store.find(id2) != nullptr);
+    QVERIFY(store.find(id3) == nullptr);
+
+    // The whole batch is one undo step — a single undo restores both.
+    QVERIFY(store.canUndo());
+    store.undo();
+    QCOMPARE(store.count(), 3);
+    QVERIFY(store.find(id1) != nullptr);
+    QVERIFY(store.find(id3) != nullptr);
+
+    // Empty id list is a no-op and returns false.
+    QVERIFY(!store.removeMultiple({}));
+    // All-missing ids is also a no-op.
+    QVERIFY(!store.removeMultiple({9998, 9999}));
 }
 
 void TestAnnotationStore::updateReplacesInPlace() {

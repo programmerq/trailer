@@ -546,6 +546,16 @@ void MainWindow::buildEditMenu(QMenu* editMenu) {
 
     editMenu->addSeparator();
 
+    m_selectAllAction = editMenu->addAction(tr("Select &All"));
+    m_selectAllAction->setShortcut(QKeySequence::SelectAll);
+    connect(m_selectAllAction, &QAction::triggered, this, [this]() {
+        if (auto* overlay = findChild<AnnotationOverlay*>()) {
+            overlay->selectAll();
+        }
+    });
+
+    editMenu->addSeparator();
+
     m_findAction = editMenu->addAction(tr("&Find…"));
     m_findAction->setShortcut(QKeySequence::Find);
     connect(m_findAction, &QAction::triggered, this, &MainWindow::showSearchBar);
@@ -2204,6 +2214,11 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
         m_autoShownMarkupDocs.insert(doc);
         m_markupToolbar->show();
     }
+
+    // Select All is available whenever there is an annotation store
+    // (the overlay exists and the user can place annotations). The
+    // action gracefully no-ops when the store is empty.
+    m_selectAllAction->setEnabled(canAnnotate);
 
     // Gate text-aware markup tools on the document's text layer. PDFs
     // always have one; bare images do not until OCR has been run with

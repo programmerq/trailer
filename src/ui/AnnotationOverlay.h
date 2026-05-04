@@ -11,6 +11,7 @@
 
 #include <functional>
 #include <unordered_map>
+#include <vector>
 
 class QTabletEvent;
 
@@ -93,6 +94,13 @@ public:
     // future Inspector restyle. Tests use this to verify selection
     // happened without needing access to private state.
     int selectedAnnotationId() const { return m_selectedAnnotationId; }
+    // Returns all currently-selected annotation ids (including the
+    // primary). Empty when nothing is selected.
+    std::vector<int> selectedAnnotationIds() const;
+    // Select all annotations in the store. Switches focus to the overlay
+    // so Delete / arrow keys work immediately. No-op when the store is
+    // empty or unset.
+    void selectAll();
     // True when the user is currently dragging a resize handle. Used
     // by tests to confirm the handle hit-test fired; in production
     // it has no other consumer.
@@ -198,6 +206,12 @@ private:
     // move; subsequent mouse-move events translate its bounds; the
     // mouse-release commits the new position to the store.
     int m_selectedAnnotationId = 0;
+    // Additional selected annotation ids accumulated by selectAll().
+    // These are rendered with a selection outline but do not receive
+    // move / resize handles — the primary (m_selectedAnnotationId)
+    // is the interactive one.  Cleared on any single-click selection
+    // change.
+    std::vector<int> m_extraSelectedIds;
     bool m_movingSelected = false;
     QPointF m_moveStartDoc;
     QRectF m_moveOriginalBounds;
