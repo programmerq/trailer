@@ -642,6 +642,29 @@ which clears it).
   location.
 - After save+reopen, the rectangle is on page 3 at the same spot.
 
+### UAT-ANN-125 — Select All selects every annotation
+
+**Preconditions:** A document with two or more annotations.
+**Steps:**
+1. With the Select tool active, press `Cmd/Ctrl+A` (or use
+   `Edit > Select All`).
+**Expected:**
+- All annotations receive a dashed selection outline.
+- `Edit > Select All` is enabled whenever the document has an
+  annotation store (even if currently empty — the action is a
+  no-op when no annotations exist).
+
+### UAT-ANN-126 — Select All then Delete removes all in one undo step
+
+**Preconditions:** A document with two or more annotations.
+**Steps:**
+1. Press `Cmd/Ctrl+A` to select all.
+2. Press `Delete` or `Backspace`.
+**Expected:**
+- All annotations are removed in a single operation.
+- A single `Cmd/Ctrl+Z` (Undo) restores all removed annotations
+  at once (not one-by-one).
+
 ---
 
 ## Known gaps

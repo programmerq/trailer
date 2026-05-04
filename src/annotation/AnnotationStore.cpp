@@ -1,6 +1,7 @@
 #include "AnnotationStore.h"
 
 #include <algorithm>
+#include <unordered_set>
 
 namespace trailer {
 
@@ -20,6 +21,22 @@ bool AnnotationStore::remove(int id) {
     if (it == m_annotations.end()) return false;
     pushHistory();
     m_annotations.erase(it);
+    emit changed();
+    return true;
+}
+
+bool AnnotationStore::removeMultiple(const std::vector<int>& ids) {
+    if (ids.empty()) return false;
+    const std::unordered_set<int> toRemove(ids.begin(), ids.end());
+    const bool anyFound = std::any_of(
+        m_annotations.begin(), m_annotations.end(),
+        [&](const Annotation& a) { return toRemove.count(a.id) > 0; });
+    if (!anyFound) return false;
+    pushHistory();
+    m_annotations.erase(
+        std::remove_if(m_annotations.begin(), m_annotations.end(),
+            [&](const Annotation& a) { return toRemove.count(a.id) > 0; }),
+        m_annotations.end());
     emit changed();
     return true;
 }
