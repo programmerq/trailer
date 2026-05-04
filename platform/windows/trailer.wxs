@@ -3,7 +3,6 @@
   Trailer Windows MSI installer — WiX 3.x source.
   Built with wixl (msitools) via scripts/build-windows-msi.sh.
 
-  TODO: Replace placeholder icon with real .ico file
   TODO: Add WiX UI extension for license agreement dialog (requires wixl UI
         support or switch to WiX 4 / burn)
   TODO: Evaluate WiX 4 (.NET-based, cross-platform) for future
@@ -31,6 +30,9 @@
         DowngradeErrorMessage="A newer version of Trailer is already installed. Please uninstall it before installing this version." />
 
     <MediaTemplate EmbedCab="yes" />
+
+    <!-- Application icon (embedded in MSI; used by shortcuts) -->
+    <Icon Id="TrailerIcon.ico" SourceFile="resources/icons/trailer.ico" />
 
     <!-- Add/Remove Programs metadata -->
     <Property Id="ARPNOREPAIR" Value="1" Secure="yes" />
@@ -69,6 +71,17 @@
       </Component>
     </DirectoryRef>
 
+    <!-- Application icon (installed alongside exe for DefaultIcon registry entries) -->
+    <DirectoryRef Id="TrailerFolder">
+      <Component Id="TrailerIconComponent"
+                 Guid="{70A16658-D516-4484-A69C-7CC78A6669CC}">
+        <File Id="TrailerIcoFile"
+              Name="trailer.ico"
+              Source="resources/icons/trailer.ico"
+              KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
     <!-- Qt platform plugin -->
     <DirectoryRef Id="PlatformsFolder">
       <Component Id="QWindowsDllComponent"
@@ -87,7 +100,8 @@
                   Name="Trailer"
                   Description="Cross-platform PDF and image workbench"
                   Target="[TrailerFolder]trailer.exe"
-                  WorkingDirectory="TrailerFolder" />
+                  WorkingDirectory="TrailerFolder"
+                  Icon="TrailerIcon.ico" />
         <RemoveFolder Id="RemoveTrailerStartMenuFolder"
                       On="uninstall" />
         <RegistryValue Root="HKCU"
@@ -106,7 +120,8 @@
                   Name="Trailer"
                   Description="Cross-platform PDF and image workbench"
                   Target="[TrailerFolder]trailer.exe"
-                  WorkingDirectory="TrailerFolder" />
+                  WorkingDirectory="TrailerFolder"
+                  Icon="TrailerIcon.ico" />
         <RegistryValue Root="HKCU"
                        Key="SOFTWARE\Trailer"
                        Name="DesktopInstalled"
@@ -224,7 +239,7 @@
         <RegistryValue Root="HKLM"
                        Key="SOFTWARE\Classes\Trailer.PDF\DefaultIcon"
                        Type="string"
-                       Value="[TrailerFolder]trailer.exe,0" />
+                       Value="[TrailerFolder]trailer.ico" />
         <RegistryValue Root="HKLM"
                        Key="SOFTWARE\Classes\Trailer.PDF\shell\open\command"
                        Type="string"
@@ -243,7 +258,7 @@
         <RegistryValue Root="HKLM"
                        Key="SOFTWARE\Classes\Trailer.Image\DefaultIcon"
                        Type="string"
-                       Value="[TrailerFolder]trailer.exe,0" />
+                       Value="[TrailerFolder]trailer.ico" />
         <RegistryValue Root="HKLM"
                        Key="SOFTWARE\Classes\Trailer.Image\shell\open\command"
                        Type="string"
@@ -330,6 +345,7 @@
              Title="Trailer"
              Level="1">
       <ComponentRef Id="TrailerExeComponent" />
+      <ComponentRef Id="TrailerIconComponent" />
       <ComponentRef Id="QWindowsDllComponent" />
       <ComponentRef Id="StartMenuShortcutComponent" />
       <ComponentRef Id="DesktopShortcutComponent" />
