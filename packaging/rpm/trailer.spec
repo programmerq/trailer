@@ -43,8 +43,18 @@ install -Dm644 %{_builddir}/trailer-source/packaging/rpm/trailer.desktop \
     %{buildroot}%{_datadir}/applications/trailer.desktop
 install -Dm644 %{_builddir}/trailer-source/packaging/rpm/org.trailer.Trailer.metainfo.xml \
     %{buildroot}%{_datadir}/metainfo/org.trailer.Trailer.metainfo.xml
-install -Dm644 %{_builddir}/trailer-source/packaging/rpm/trailer-256.png \
+install -Dm644 %{_builddir}/trailer-source/resources/icons/trailer_16.png \
+    %{buildroot}%{_datadir}/icons/hicolor/16x16/apps/trailer.png
+install -Dm644 %{_builddir}/trailer-source/resources/icons/trailer_32.png \
+    %{buildroot}%{_datadir}/icons/hicolor/32x32/apps/trailer.png
+install -Dm644 %{_builddir}/trailer-source/resources/icons/trailer_64.png \
+    %{buildroot}%{_datadir}/icons/hicolor/64x64/apps/trailer.png
+install -Dm644 %{_builddir}/trailer-source/resources/icons/trailer_128.png \
+    %{buildroot}%{_datadir}/icons/hicolor/128x128/apps/trailer.png
+install -Dm644 %{_builddir}/trailer-source/resources/icons/trailer_256.png \
     %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/trailer.png
+install -Dm644 %{_builddir}/trailer-source/resources/icons/trailer_512.png \
+    %{buildroot}%{_datadir}/icons/hicolor/512x512/apps/trailer.png
 # TODO: Bundle Qt 6 libs (ldd walk) into %{buildroot}%{_prefix}/lib/trailer/ and list in %files
 
 %post
@@ -69,8 +79,12 @@ fi
 %{_bindir}/trailer
 %{_datadir}/applications/trailer.desktop
 %{_datadir}/metainfo/org.trailer.Trailer.metainfo.xml
+%{_datadir}/icons/hicolor/16x16/apps/trailer.png
+%{_datadir}/icons/hicolor/32x32/apps/trailer.png
+%{_datadir}/icons/hicolor/64x64/apps/trailer.png
+%{_datadir}/icons/hicolor/128x128/apps/trailer.png
 %{_datadir}/icons/hicolor/256x256/apps/trailer.png
-# %{_prefix}/lib/trailer/  # TODO: list bundled Qt libs here
+%{_datadir}/icons/hicolor/512x512/apps/trailer.png
 
 %changelog
 * Sun Apr 27 2026 Trailer Contributors <TODO@trailer.example.com> - 0.1.0-1
