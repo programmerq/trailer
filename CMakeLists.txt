@@ -218,9 +218,11 @@ if(UNIX AND NOT APPLE)
             DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
     install(FILES platform/linux/org.trailer.Trailer.metainfo.xml
             DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
-    install(FILES platform/linux/trailer-256.png
-            DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/256x256/apps
-            RENAME trailer.png)
+    foreach(_size 16 32 64 128 256 512)
+        install(FILES resources/icons/trailer_${_size}.png
+                DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${_size}x${_size}/apps
+                RENAME trailer.png)
+    endforeach()
 endif()
 
 enable_testing()
