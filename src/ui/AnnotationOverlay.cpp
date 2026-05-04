@@ -1112,10 +1112,12 @@ void AnnotationOverlay::selectAll() {
             m_extraSelectedIds.push_back(a.id);
         }
     }
-    if (firstId != 0 && firstId != m_selectedAnnotationId) {
-        m_selectedAnnotationId = firstId;
-        emit selectionChanged(firstId);
-    }
+    if (firstId == 0) return;
+    m_selectedAnnotationId = firstId;
+    // Always emit selectionChanged so that Inspector and other
+    // listeners are notified — even when m_selectedAnnotationId was
+    // already pointing at firstId but m_extraSelectedIds has changed.
+    emit selectionChanged(firstId);
     // Grab keyboard focus so Delete / arrow keys work immediately
     // after Cmd+A without requiring an extra click on the overlay.
     setFocus(Qt::OtherFocusReason);
