@@ -20,8 +20,15 @@ DEB_ARCH=$(dpkg --print-architecture)
 DEB_OUT="/output/trailer_${PKG_VERSION}_${DEB_ARCH}.deb"
 
 echo "==> Configuring CMake"
+# CMAKE_INSTALL_PREFIX must be /usr so that GNUInstallDirs places
+# the binary at $STAGING/usr/bin/trailer (matching TRAILER_BIN
+# below) and the desktop / metainfo / icon files under
+# $STAGING/usr/share/. Without this, CMake defaults to /usr/local
+# on Unix and every later mv/patchelf/ldd against TRAILER_BIN
+# fails under `set -e`. Caught by Cursor in PR #4 review.
 cmake -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
     -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
     -S "$SRC"
 
