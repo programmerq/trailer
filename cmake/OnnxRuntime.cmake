@@ -32,6 +32,7 @@ if(NOT onnxruntime_FOUND)
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
             set(_trailer_ort_archive "onnxruntime-osx-arm64-${TRAILER_ORT_VERSION}.tgz")
             set(_trailer_ort_sha256 "65405dc8793c86cadb98b5e07f6d3bdde84f8300f1b030d4736b41c17610d6c1")
+            set(_trailer_ort_library_rel "lib/libonnxruntime.dylib")
         else()
             message(FATAL_ERROR
                 "ONNX Runtime tarball for macOS x86_64 is not published "
@@ -46,9 +47,12 @@ if(NOT onnxruntime_FOUND)
             set(_trailer_ort_archive "onnxruntime-linux-x64-${TRAILER_ORT_VERSION}.tgz")
             set(_trailer_ort_sha256 "e0a8998e70416801f9a634a8ea1d369a255ff109741469f9d99cf369a46a1492")
         endif()
+        set(_trailer_ort_library_rel "lib/libonnxruntime.so")
     elseif(CMAKE_SYSTEM_NAME STREQUAL "Windows")
         set(_trailer_ort_archive "onnxruntime-win-x64-${TRAILER_ORT_VERSION}.zip")
         set(_trailer_ort_sha256 "da753f762bf2400e7191ec594086b186a7051d5af8dc886f6e2020c2403df738")
+        set(_trailer_ort_library_rel "lib/onnxruntime.lib")
+        set(_trailer_ort_runtime_rel "lib/onnxruntime.dll")
     else()
         message(FATAL_ERROR "Unsupported platform for ONNX Runtime: ${CMAKE_SYSTEM_NAME}")
     endif()
@@ -64,13 +68,47 @@ if(NOT onnxruntime_FOUND)
     )
     FetchContent_MakeAvailable(onnxruntime_prebuilt)
 
-    # The extracted directory ships lib/cmake/onnxruntime/ with a full
-    # CMake config. Feed its location to find_package so we end up with
-    # the same `onnxruntime::onnxruntime` target as the system-package
-    # path.
-    find_package(onnxruntime CONFIG REQUIRED
-        PATHS "${onnxruntime_prebuilt_SOURCE_DIR}"
-        NO_DEFAULT_PATH)
+    set(_trailer_ort_include_dir "${onnxruntime_prebuilt_SOURCE_DIR}/include")
+    set(_trailer_ort_library "${onnxruntime_prebuilt_SOURCE_DIR}/${_trailer_ort_library_rel}")
+    if(WIN32)
+        set(_trailer_ort_runtime "${onnxruntime_prebuilt_SOURCE_DIR}/${_trailer_ort_runtime_rel}")
+    endif()
+
+    if(NOT EXISTS "${_trailer_ort_include_dir}/onnxruntime_cxx_api.h")
+        message(FATAL_ERROR
+            "ONNX Runtime headers not found in downloaded SDK at "
+            "${_trailer_ort_include_dir}")
+    endif()
+
+    if(NOT EXISTS "${_trailer_ort_library}")
+        message(FATAL_ERROR
+            "ONNX Runtime library not found in downloaded SDK at "
+            "${_trailer_ort_library}")
+    endif()
+
+    if(WIN32 AND NOT EXISTS "${_trailer_ort_runtime}")
+        message(FATAL_ERROR
+            "ONNX Runtime runtime DLL not found in downloaded SDK at "
+            "${_trailer_ort_runtime}")
+    endif()
+
+    if(NOT TARGET onnxruntime::onnxruntime)
+        add_library(onnxruntime::onnxruntime SHARED IMPORTED GLOBAL)
+    endif()
+
+    if(WIN32)
+        set_target_properties(onnxruntime::onnxruntime PROPERTIES
+            IMPORTED_IMPLIB "${_trailer_ort_library}"
+            IMPORTED_IMPLIB_RELEASE "${_trailer_ort_library}"
+            IMPORTED_LOCATION "${_trailer_ort_runtime}"
+            IMPORTED_LOCATION_RELEASE "${_trailer_ort_runtime}"
+            INTERFACE_INCLUDE_DIRECTORIES "${_trailer_ort_include_dir}")
+    else()
+        set_target_properties(onnxruntime::onnxruntime PROPERTIES
+            IMPORTED_LOCATION "${_trailer_ort_library}"
+            IMPORTED_LOCATION_RELEASE "${_trailer_ort_library}"
+            INTERFACE_INCLUDE_DIRECTORIES "${_trailer_ort_include_dir}")
+    endif()
 endif()
 
 if(NOT TARGET onnxruntime::onnxruntime)
