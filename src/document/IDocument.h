@@ -1,6 +1,7 @@
 #pragma once
 
 #include "annotation/Annotation.h"
+#include "document/PdfEditor.h"
 
 #include <QImage>
 #include <QSize>
@@ -8,10 +9,6 @@
 #include <QWidget>
 
 #include <vector>
-
-// Forward-declared so IDocument.h doesn't pull in PdfEditor.h.
-// Callers that need the full type include PdfEditor.h themselves.
-namespace trailer { struct FormField; }
 
 namespace trailer {
 
