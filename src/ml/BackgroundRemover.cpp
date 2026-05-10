@@ -32,16 +32,17 @@ std::vector<float> makeInputTensor(const QImage &src) {
     std::vector<float> tensor(3 * kModelSize * kModelSize);
     // NCHW: channel plane after channel plane. This lets us write
     // linear memory without stride fiddling in the model input.
+    const size_t plane = static_cast<size_t>(kModelSize) * static_cast<size_t>(kModelSize);
     for (int y = 0; y < kModelSize; ++y) {
         const uchar *scan = resized.constScanLine(y);
         for (int x = 0; x < kModelSize; ++x) {
-            const float r = scan[x * 3 + 0] / 255.0f;
-            const float g = scan[x * 3 + 1] / 255.0f;
-            const float b = scan[x * 3 + 2] / 255.0f;
-            const int base = y * kModelSize + x;
-            tensor[0 * kModelSize * kModelSize + base] = (r - kMean[0]) / kStd[0];
-            tensor[1 * kModelSize * kModelSize + base] = (g - kMean[1]) / kStd[1];
-            tensor[2 * kModelSize * kModelSize + base] = (b - kMean[2]) / kStd[2];
+            const float r = static_cast<float>(scan[x * 3 + 0]) / 255.0f;
+            const float g = static_cast<float>(scan[x * 3 + 1]) / 255.0f;
+            const float b = static_cast<float>(scan[x * 3 + 2]) / 255.0f;
+            const size_t base = static_cast<size_t>(y * kModelSize + x);
+            tensor[0 * plane + base] = (r - kMean[0]) / kStd[0];
+            tensor[1 * plane + base] = (g - kMean[1]) / kStd[1];
+            tensor[2 * plane + base] = (b - kMean[2]) / kStd[2];
         }
     }
     return tensor;

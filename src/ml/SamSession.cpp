@@ -34,12 +34,14 @@ constexpr std::array<float, 3> kSamStd{58.395f, 57.12f, 57.375f};
 constexpr float kMaskThreshold = 0.0f;
 
 std::vector<float> makeEncoderInput(const QImage &src, float &scaleOut) {
-    const float scale =
-        static_cast<float>(kEncoderSize) / static_cast<float>(std::max(src.width(), src.height()));
+    const float denom = static_cast<float>(std::max(src.width(), src.height()));
+    const float scale = static_cast<float>(kEncoderSize) / denom;
     scaleOut = scale;
 
-    const int resizedW = std::max(1, static_cast<int>(std::round(src.width() * scale)));
-    const int resizedH = std::max(1, static_cast<int>(std::round(src.height() * scale)));
+    const int resizedW =
+        std::max(1, static_cast<int>(std::round(static_cast<float>(src.width()) * scale)));
+    const int resizedH =
+        std::max(1, static_cast<int>(std::round(static_cast<float>(src.height()) * scale)));
 
     const QImage resized =
         src.convertToFormat(QImage::Format_RGB888)
@@ -50,9 +52,9 @@ std::vector<float> makeEncoderInput(const QImage &src, float &scaleOut) {
     for (int y = 0; y < resizedH; ++y) {
         const uchar *scan = resized.constScanLine(y);
         for (int x = 0; x < resizedW; ++x) {
-            const float r = scan[x * 3 + 0];
-            const float g = scan[x * 3 + 1];
-            const float b = scan[x * 3 + 2];
+            const float r = static_cast<float>(scan[x * 3 + 0]);
+            const float g = static_cast<float>(scan[x * 3 + 1]);
+            const float b = static_cast<float>(scan[x * 3 + 2]);
             const size_t idx = static_cast<size_t>(y) * kEncoderSize + static_cast<size_t>(x);
             tensor[0 * plane + idx] = (r - kSamMean[0]) / kSamStd[0];
             tensor[1 * plane + idx] = (g - kSamMean[1]) / kSamStd[1];
@@ -162,7 +164,9 @@ float perpDist(QPoint p, QPoint a, QPoint b) {
         const float py = static_cast<float>(p.y() - a.y());
         return std::sqrt(px * px + py * py);
     }
-    return std::abs(dy * (p.x() - a.x()) - dx * (p.y() - a.y())) / len;
+    const float px = static_cast<float>(p.x() - a.x());
+    const float py = static_cast<float>(p.y() - a.y());
+    return std::fabs(dy * px - dx * py) / len;
 }
 
 // Iterative Douglas-Peucker — simplifies a polyline so the maximum

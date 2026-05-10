@@ -1019,7 +1019,7 @@ void MainWindow::onCropPages() {
     if (allPagesCheck->isChecked()) {
         const int pages = doc->pageCount();
         std::vector<int> all;
-        all.reserve(pages);
+        all.reserve(static_cast<size_t>(pages));
         for (int i = 0; i < pages; ++i)
             all.push_back(i);
         anyApplied = doc->cropPages(all, l, t, r, b);
