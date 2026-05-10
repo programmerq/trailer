@@ -68,7 +68,9 @@ QImage maskToAlpha(const std::vector<float> &mask, int outW, int outH) {
     for (int y = 0; y < kModelSize; ++y) {
         uchar *scan = alpha.scanLine(y);
         for (int x = 0; x < kModelSize; ++x) {
-            const float v = (mask[y * kModelSize + x] - lo) / span;
+            const size_t idx =
+                static_cast<size_t>(y) * static_cast<size_t>(kModelSize) + static_cast<size_t>(x);
+            const float v = (mask[idx] - lo) / span;
             const int b = static_cast<int>(std::clamp(v, 0.0f, 1.0f) * 255.0f);
             scan[x] = static_cast<uchar>(b);
         }
