@@ -10,22 +10,22 @@
 namespace trailer {
 
 class StubDocument : public IDocument {
-public:
+  public:
     explicit StubDocument(QString path);
 
     QString displayName() const override;
     QString filePath() const override;
-    QWidget* createView(QWidget* parent) override;
+    QWidget *createView(QWidget *parent) override;
 
-private:
+  private:
     QString m_path;
 };
 
 class StubAdapter : public IFormatAdapter {
-public:
+  public:
     QStringList mimeTypes() const override;
     QStringList extensions() const override;
-    std::unique_ptr<IDocument> open(const QString& path) override;
+    std::unique_ptr<IDocument> open(const QString &path) override;
 };
 
-}  // namespace trailer
+} // namespace trailer

@@ -7,7 +7,7 @@ using namespace trailer;
 
 class TestAnnotationStore : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void addAssignsMonotonicIds();
     void findLocatesById();
     void removeErasesEntry();
@@ -28,7 +28,7 @@ Annotation makeRect(int page, QRectF bounds) {
     a.bounds = bounds;
     return a;
 }
-}  // namespace
+} // namespace
 
 void TestAnnotationStore::addAssignsMonotonicIds() {
     AnnotationStore store;
@@ -42,7 +42,7 @@ void TestAnnotationStore::addAssignsMonotonicIds() {
 void TestAnnotationStore::findLocatesById() {
     AnnotationStore store;
     const int id = store.add(makeRect(1, QRectF(1, 2, 3, 4)));
-    const Annotation* hit = store.find(id);
+    const Annotation *hit = store.find(id);
     QVERIFY(hit != nullptr);
     QCOMPARE(hit->page, 1);
     QCOMPARE(hit->bounds, QRectF(1, 2, 3, 4));
@@ -92,7 +92,7 @@ void TestAnnotationStore::updateReplacesInPlace() {
     a.bounds = QRectF(10, 10, 20, 20);
     a.text = "annotated";
     QVERIFY(store.update(a));
-    const Annotation* hit = store.find(id);
+    const Annotation *hit = store.find(id);
     QVERIFY(hit);
     QCOMPARE(hit->bounds, QRectF(10, 10, 20, 20));
     QCOMPARE(hit->text, QStringLiteral("annotated"));
@@ -134,7 +134,7 @@ void TestAnnotationStore::changedSignalFiresOnMutations() {
     store.remove(id);
     QCOMPARE(spy.count(), 2);
     store.clear();
-    QCOMPARE(spy.count(), 2);  // no-op when already empty
+    QCOMPARE(spy.count(), 2); // no-op when already empty
 }
 
 void TestAnnotationStore::undoRedoReversesAddRemoveUpdate() {
@@ -151,23 +151,23 @@ void TestAnnotationStore::undoRedoReversesAddRemoveUpdate() {
     QVERIFY(store.update(updated));
     QCOMPARE(store.find(id)->bounds, QRectF(1, 2, 3, 4));
 
-    store.undo();  // revert update
+    store.undo(); // revert update
     QCOMPARE(store.find(id)->bounds, QRectF(0, 0, 10, 10));
     QVERIFY(store.canRedo());
 
-    store.undo();  // revert add
+    store.undo(); // revert add
     QCOMPARE(store.count(), 0);
 
-    store.redo();  // re-add
+    store.redo(); // re-add
     QCOMPARE(store.count(), 1);
     QVERIFY(store.find(id) != nullptr);
 
-    store.redo();  // re-apply update
+    store.redo(); // re-apply update
     QCOMPARE(store.find(id)->bounds, QRectF(1, 2, 3, 4));
 
     store.undo();
     store.undo();
-    QVERIFY(store.remove(id) == false);  // already gone
+    QVERIFY(store.remove(id) == false); // already gone
 }
 
 void TestAnnotationStore::redoStackClearsOnNewMutation() {

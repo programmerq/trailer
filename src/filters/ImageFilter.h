@@ -28,7 +28,7 @@ enum class ImageFilter {
 
 // Stable, lowercase ids for persistence. Never translated.
 QString filterId(ImageFilter f);
-ImageFilter filterFromId(const QString& id);
+ImageFilter filterFromId(const QString &id);
 
 // Localisable display name for menu rows / combo entries.
 QString filterDisplayName(ImageFilter f);
@@ -40,7 +40,7 @@ QList<ImageFilter> allFilters();
 // ImageFilter::None (or an empty/unknown id) to get the input back
 // untouched — exporters call this unconditionally so the "no filter"
 // path is the identity.
-QImage applyFilter(ImageFilter f, const QImage& src);
-QImage applyFilter(const QString& id, const QImage& src);
+QImage applyFilter(ImageFilter f, const QImage &src);
+QImage applyFilter(const QString &id, const QImage &src);
 
-}  // namespace trailer
+} // namespace trailer

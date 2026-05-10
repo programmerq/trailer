@@ -8,7 +8,7 @@ using namespace trailer;
 
 class TestAppPaths : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void initTestCase();
     void settingsAndDataAreNonEmpty();
     void fileHelpersLiveUnderDirs();

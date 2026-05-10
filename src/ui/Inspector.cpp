@@ -29,26 +29,41 @@ namespace {
 
 QString typeLabel(AnnotationType type) {
     switch (type) {
-        case AnnotationType::Rectangle:      return Inspector::tr("Rectangle");
-        case AnnotationType::Ellipse:        return Inspector::tr("Ellipse");
-        case AnnotationType::Line:           return Inspector::tr("Line");
-        case AnnotationType::Arrow:          return Inspector::tr("Arrow");
-        case AnnotationType::Ink:            return Inspector::tr("Freehand");
-        case AnnotationType::Text:           return Inspector::tr("Text");
-        case AnnotationType::Note:           return Inspector::tr("Note");
-        case AnnotationType::Highlight:      return Inspector::tr("Highlight");
-        case AnnotationType::Underline:      return Inspector::tr("Underline");
-        case AnnotationType::StrikeOut:      return Inspector::tr("Strikeout");
-        case AnnotationType::HighlightShape: return Inspector::tr("Highlight Shape");
-        case AnnotationType::SpeechBubble:   return Inspector::tr("Speech Bubble");
-        case AnnotationType::ZoomLens:       return Inspector::tr("Zoom Lens");
-        case AnnotationType::Signature:      return Inspector::tr("Signature");
-        case AnnotationType::Redaction:      return Inspector::tr("Redaction");
+    case AnnotationType::Rectangle:
+        return Inspector::tr("Rectangle");
+    case AnnotationType::Ellipse:
+        return Inspector::tr("Ellipse");
+    case AnnotationType::Line:
+        return Inspector::tr("Line");
+    case AnnotationType::Arrow:
+        return Inspector::tr("Arrow");
+    case AnnotationType::Ink:
+        return Inspector::tr("Freehand");
+    case AnnotationType::Text:
+        return Inspector::tr("Text");
+    case AnnotationType::Note:
+        return Inspector::tr("Note");
+    case AnnotationType::Highlight:
+        return Inspector::tr("Highlight");
+    case AnnotationType::Underline:
+        return Inspector::tr("Underline");
+    case AnnotationType::StrikeOut:
+        return Inspector::tr("Strikeout");
+    case AnnotationType::HighlightShape:
+        return Inspector::tr("Highlight Shape");
+    case AnnotationType::SpeechBubble:
+        return Inspector::tr("Speech Bubble");
+    case AnnotationType::ZoomLens:
+        return Inspector::tr("Zoom Lens");
+    case AnnotationType::Signature:
+        return Inspector::tr("Signature");
+    case AnnotationType::Redaction:
+        return Inspector::tr("Redaction");
     }
     return {};
 }
 
-void applySwatch(QToolButton* btn, QColor c) {
+void applySwatch(QToolButton *btn, QColor c) {
     QPixmap swatch(18, 18);
     if (c.alpha() == 0) {
         swatch.fill(Qt::transparent);
@@ -61,16 +76,16 @@ void applySwatch(QToolButton* btn, QColor c) {
     btn->setIcon(QIcon(swatch));
 }
 
-}  // namespace
+} // namespace
 
-Inspector::Inspector(QWidget* parent) : QDockWidget(tr("Inspector"), parent) {
+Inspector::Inspector(QWidget *parent) : QDockWidget(tr("Inspector"), parent) {
     setObjectName(QStringLiteral("trailer.inspector"));
     setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 
     m_tabs = new QTabWidget(this);
 
-    auto* docTab = new QWidget(m_tabs);
-    auto* docLayout = new QFormLayout(docTab);
+    auto *docTab = new QWidget(m_tabs);
+    auto *docLayout = new QFormLayout(docTab);
     m_docNameLabel = new QLabel(docTab);
     m_docPathLabel = new QLabel(docTab);
     m_docPathLabel->setWordWrap(true);
@@ -87,17 +102,17 @@ Inspector::Inspector(QWidget* parent) : QDockWidget(tr("Inspector"), parent) {
 
     m_stack = new QStackedWidget(m_tabs);
 
-    auto* empty = new QWidget(m_stack);
-    auto* emptyLayout = new QVBoxLayout(empty);
-    auto* emptyLabel = new QLabel(tr("Select an annotation to inspect."), empty);
+    auto *empty = new QWidget(m_stack);
+    auto *emptyLayout = new QVBoxLayout(empty);
+    auto *emptyLabel = new QLabel(tr("Select an annotation to inspect."), empty);
     emptyLabel->setAlignment(Qt::AlignCenter);
     emptyLabel->setWordWrap(true);
     emptyLayout->addWidget(emptyLabel);
     emptyLayout->addStretch();
     m_emptyIndex = m_stack->addWidget(empty);
 
-    auto* form = new QWidget(m_stack);
-    auto* layout = new QFormLayout(form);
+    auto *form = new QWidget(m_stack);
+    auto *layout = new QFormLayout(form);
     m_pageLabel = new QLabel(form);
     m_typeLabel = new QLabel(form);
     layout->addRow(tr("Page:"), m_pageLabel);
@@ -108,12 +123,14 @@ Inspector::Inspector(QWidget* parent) : QDockWidget(tr("Inspector"), parent) {
     m_strokeButton->setAutoRaise(true);
     layout->addRow(tr("Stroke:"), m_strokeButton);
     connect(m_strokeButton, &QToolButton::clicked, this, [this]() {
-        if (!m_store || m_id == 0) return;
-        const Annotation* a = m_store->find(m_id);
-        if (!a) return;
-        const QColor c = QColorDialog::getColor(a->style.stroke, this,
-            tr("Stroke Colour"));
-        if (!c.isValid()) return;
+        if (!m_store || m_id == 0)
+            return;
+        const Annotation *a = m_store->find(m_id);
+        if (!a)
+            return;
+        const QColor c = QColorDialog::getColor(a->style.stroke, this, tr("Stroke Colour"));
+        if (!c.isValid())
+            return;
         Annotation updated = *a;
         updated.style.stroke = c;
         m_store->update(updated);
@@ -125,12 +142,15 @@ Inspector::Inspector(QWidget* parent) : QDockWidget(tr("Inspector"), parent) {
     m_fillButton->setAutoRaise(true);
     layout->addRow(tr("Fill:"), m_fillButton);
     connect(m_fillButton, &QToolButton::clicked, this, [this]() {
-        if (!m_store || m_id == 0) return;
-        const Annotation* a = m_store->find(m_id);
-        if (!a) return;
-        const QColor c = QColorDialog::getColor(a->style.fill, this,
-            tr("Fill Colour"), QColorDialog::ShowAlphaChannel);
-        if (!c.isValid()) return;
+        if (!m_store || m_id == 0)
+            return;
+        const Annotation *a = m_store->find(m_id);
+        if (!a)
+            return;
+        const QColor c = QColorDialog::getColor(a->style.fill, this, tr("Fill Colour"),
+                                                QColorDialog::ShowAlphaChannel);
+        if (!c.isValid())
+            return;
         Annotation updated = *a;
         updated.style.fill = c;
         m_store->update(updated);
@@ -142,89 +162,102 @@ Inspector::Inspector(QWidget* parent) : QDockWidget(tr("Inspector"), parent) {
     m_strokeWidth->setSingleStep(0.5);
     m_strokeWidth->setSuffix(tr(" px"));
     layout->addRow(tr("Stroke width:"), m_strokeWidth);
-    connect(m_strokeWidth, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            this, [this](double v) {
-                if (m_loading) return;
-                if (!m_store || m_id == 0) return;
-                const Annotation* a = m_store->find(m_id);
-                if (!a) return;
+    connect(m_strokeWidth, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+            [this](double v) {
+                if (m_loading)
+                    return;
+                if (!m_store || m_id == 0)
+                    return;
+                const Annotation *a = m_store->find(m_id);
+                if (!a)
+                    return;
                 Annotation updated = *a;
                 updated.style.strokeWidth = v;
                 m_store->update(updated);
             });
 
     m_dashCombo = new QComboBox(form);
-    m_dashCombo->addItem(tr("Solid"),  static_cast<int>(DashStyle::Solid));
+    m_dashCombo->addItem(tr("Solid"), static_cast<int>(DashStyle::Solid));
     m_dashCombo->addItem(tr("Dashed"), static_cast<int>(DashStyle::Dashed));
     m_dashCombo->addItem(tr("Dotted"), static_cast<int>(DashStyle::Dotted));
     layout->addRow(tr("Dash:"), m_dashCombo);
-    connect(m_dashCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int) {
-                if (m_loading) return;
-                if (!m_store || m_id == 0) return;
-                const Annotation* a = m_store->find(m_id);
-                if (!a) return;
-                Annotation updated = *a;
-                updated.style.dash = static_cast<DashStyle>(
-                    m_dashCombo->currentData().toInt());
-                m_store->update(updated);
-            });
+    connect(m_dashCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+        if (m_loading)
+            return;
+        if (!m_store || m_id == 0)
+            return;
+        const Annotation *a = m_store->find(m_id);
+        if (!a)
+            return;
+        Annotation updated = *a;
+        updated.style.dash = static_cast<DashStyle>(m_dashCombo->currentData().toInt());
+        m_store->update(updated);
+    });
 
     m_fontSize = new QSpinBox(form);
     m_fontSize->setRange(6, 72);
     m_fontSize->setSuffix(tr(" pt"));
     layout->addRow(tr("Font size:"), m_fontSize);
-    connect(m_fontSize, QOverload<int>::of(&QSpinBox::valueChanged),
-            this, [this](int v) {
-                if (m_loading) return;
-                if (!m_store || m_id == 0) return;
-                const Annotation* a = m_store->find(m_id);
-                if (!a) return;
-                Annotation updated = *a;
-                updated.style.fontPointSize = v;
-                m_store->update(updated);
-            });
+    connect(m_fontSize, QOverload<int>::of(&QSpinBox::valueChanged), this, [this](int v) {
+        if (m_loading)
+            return;
+        if (!m_store || m_id == 0)
+            return;
+        const Annotation *a = m_store->find(m_id);
+        if (!a)
+            return;
+        Annotation updated = *a;
+        updated.style.fontPointSize = v;
+        m_store->update(updated);
+    });
 
     m_fontFamily = new QFontComboBox(form);
     layout->addRow(tr("Font:"), m_fontFamily);
-    connect(m_fontFamily, &QFontComboBox::currentFontChanged, this,
-            [this](const QFont& f) {
-                if (m_loading) return;
-                if (!m_store || m_id == 0) return;
-                const Annotation* a = m_store->find(m_id);
-                if (!a) return;
-                Annotation updated = *a;
-                updated.style.fontFamily = f.family();
-                m_store->update(updated);
-            });
+    connect(m_fontFamily, &QFontComboBox::currentFontChanged, this, [this](const QFont &f) {
+        if (m_loading)
+            return;
+        if (!m_store || m_id == 0)
+            return;
+        const Annotation *a = m_store->find(m_id);
+        if (!a)
+            return;
+        Annotation updated = *a;
+        updated.style.fontFamily = f.family();
+        m_store->update(updated);
+    });
 
     m_fontWeight = new QComboBox(form);
-    m_fontWeight->addItem(tr("Light"),    static_cast<int>(QFont::Light));
-    m_fontWeight->addItem(tr("Regular"),  static_cast<int>(QFont::Normal));
-    m_fontWeight->addItem(tr("Medium"),   static_cast<int>(QFont::Medium));
-    m_fontWeight->addItem(tr("Bold"),     static_cast<int>(QFont::Bold));
-    m_fontWeight->addItem(tr("Black"),    static_cast<int>(QFont::Black));
+    m_fontWeight->addItem(tr("Light"), static_cast<int>(QFont::Light));
+    m_fontWeight->addItem(tr("Regular"), static_cast<int>(QFont::Normal));
+    m_fontWeight->addItem(tr("Medium"), static_cast<int>(QFont::Medium));
+    m_fontWeight->addItem(tr("Bold"), static_cast<int>(QFont::Bold));
+    m_fontWeight->addItem(tr("Black"), static_cast<int>(QFont::Black));
     layout->addRow(tr("Weight:"), m_fontWeight);
-    connect(m_fontWeight, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this](int) {
-                if (m_loading) return;
-                if (!m_store || m_id == 0) return;
-                const Annotation* a = m_store->find(m_id);
-                if (!a) return;
-                Annotation updated = *a;
-                updated.style.fontWeight = m_fontWeight->currentData().toInt();
-                m_store->update(updated);
-            });
+    connect(m_fontWeight, QOverload<int>::of(&QComboBox::currentIndexChanged), this, [this](int) {
+        if (m_loading)
+            return;
+        if (!m_store || m_id == 0)
+            return;
+        const Annotation *a = m_store->find(m_id);
+        if (!a)
+            return;
+        Annotation updated = *a;
+        updated.style.fontWeight = m_fontWeight->currentData().toInt();
+        m_store->update(updated);
+    });
 
     m_text = new QPlainTextEdit(form);
     m_text->setPlaceholderText(tr("Body text"));
     m_text->setMaximumHeight(120);
     layout->addRow(tr("Text:"), m_text);
     connect(m_text, &QPlainTextEdit::textChanged, this, [this]() {
-        if (m_loading) return;
-        if (!m_store || m_id == 0) return;
-        const Annotation* a = m_store->find(m_id);
-        if (!a) return;
+        if (m_loading)
+            return;
+        if (!m_store || m_id == 0)
+            return;
+        const Annotation *a = m_store->find(m_id);
+        if (!a)
+            return;
         Annotation updated = *a;
         updated.text = m_text->toPlainText();
         m_store->update(updated);
@@ -235,39 +268,42 @@ Inspector::Inspector(QWidget* parent) : QDockWidget(tr("Inspector"), parent) {
 
     m_tabs->addTab(m_stack, tr("Properties"));
 
-    auto* listTab = new QWidget(m_tabs);
-    auto* listLayout = new QVBoxLayout(listTab);
+    auto *listTab = new QWidget(m_tabs);
+    auto *listLayout = new QVBoxLayout(listTab);
     listLayout->setContentsMargins(4, 4, 4, 4);
     m_annotationList = new QListWidget(listTab);
     listLayout->addWidget(m_annotationList);
     m_tabs->addTab(listTab, tr("Annotations"));
-    connect(m_annotationList, &QListWidget::itemActivated, this,
-            [this](QListWidgetItem* item) {
-                if (!item || !m_store) return;
-                const int id = item->data(Qt::UserRole).toInt();
-                if (id <= 0) return;
-                setAnnotation(m_store, id);
-                m_tabs->setCurrentIndex(1);
-                emit annotationSelected(id);
-            });
-    connect(m_annotationList, &QListWidget::itemClicked, this,
-            [this](QListWidgetItem* item) {
-                if (!item || !m_store) return;
-                const int id = item->data(Qt::UserRole).toInt();
-                if (id <= 0) return;
-                emit annotationSelected(id);
-            });
+    connect(m_annotationList, &QListWidget::itemActivated, this, [this](QListWidgetItem *item) {
+        if (!item || !m_store)
+            return;
+        const int id = item->data(Qt::UserRole).toInt();
+        if (id <= 0)
+            return;
+        setAnnotation(m_store, id);
+        m_tabs->setCurrentIndex(1);
+        emit annotationSelected(id);
+    });
+    connect(m_annotationList, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
+        if (!item || !m_store)
+            return;
+        const int id = item->data(Qt::UserRole).toInt();
+        if (id <= 0)
+            return;
+        emit annotationSelected(id);
+    });
 
     setWidget(m_tabs);
 }
 
-void Inspector::setDocument(IDocument* doc) {
+void Inspector::setDocument(IDocument *doc) {
     if (m_doc == doc) {
         rebuildDocumentInfo();
         rebuildAnnotationList();
         return;
     }
-    if (m_store) disconnect(m_store, nullptr, this, nullptr);
+    if (m_store)
+        disconnect(m_store, nullptr, this, nullptr);
     m_doc = doc;
     m_store = doc ? doc->annotations() : nullptr;
     m_id = 0;
@@ -286,9 +322,10 @@ void Inspector::setDocument(IDocument* doc) {
     rebuildFromStore();
 }
 
-void Inspector::setAnnotation(AnnotationStore* store, int id) {
+void Inspector::setAnnotation(AnnotationStore *store, int id) {
     if (store && store != m_store) {
-        if (m_store) disconnect(m_store, nullptr, this, nullptr);
+        if (m_store)
+            disconnect(m_store, nullptr, this, nullptr);
         m_store = store;
         // See setDocument() for why this isn't Qt::UniqueConnection.
         connect(m_store, &AnnotationStore::changed, this, [this]() {
@@ -311,25 +348,40 @@ void Inspector::clearSelection() {
 namespace {
 QString typeShortLabel(AnnotationType type) {
     switch (type) {
-        case AnnotationType::Rectangle:      return Inspector::tr("Rect");
-        case AnnotationType::Ellipse:        return Inspector::tr("Ellipse");
-        case AnnotationType::Line:           return Inspector::tr("Line");
-        case AnnotationType::Arrow:          return Inspector::tr("Arrow");
-        case AnnotationType::Ink:            return Inspector::tr("Ink");
-        case AnnotationType::Text:           return Inspector::tr("Text");
-        case AnnotationType::Note:           return Inspector::tr("Note");
-        case AnnotationType::Highlight:      return Inspector::tr("Highlight");
-        case AnnotationType::Underline:      return Inspector::tr("Underline");
-        case AnnotationType::StrikeOut:      return Inspector::tr("Strikeout");
-        case AnnotationType::HighlightShape: return Inspector::tr("HlShape");
-        case AnnotationType::SpeechBubble:   return Inspector::tr("Bubble");
-        case AnnotationType::ZoomLens:       return Inspector::tr("Lens");
-        case AnnotationType::Signature:      return Inspector::tr("Sig");
-        case AnnotationType::Redaction:      return Inspector::tr("Redact");
+    case AnnotationType::Rectangle:
+        return Inspector::tr("Rect");
+    case AnnotationType::Ellipse:
+        return Inspector::tr("Ellipse");
+    case AnnotationType::Line:
+        return Inspector::tr("Line");
+    case AnnotationType::Arrow:
+        return Inspector::tr("Arrow");
+    case AnnotationType::Ink:
+        return Inspector::tr("Ink");
+    case AnnotationType::Text:
+        return Inspector::tr("Text");
+    case AnnotationType::Note:
+        return Inspector::tr("Note");
+    case AnnotationType::Highlight:
+        return Inspector::tr("Highlight");
+    case AnnotationType::Underline:
+        return Inspector::tr("Underline");
+    case AnnotationType::StrikeOut:
+        return Inspector::tr("Strikeout");
+    case AnnotationType::HighlightShape:
+        return Inspector::tr("HlShape");
+    case AnnotationType::SpeechBubble:
+        return Inspector::tr("Bubble");
+    case AnnotationType::ZoomLens:
+        return Inspector::tr("Lens");
+    case AnnotationType::Signature:
+        return Inspector::tr("Sig");
+    case AnnotationType::Redaction:
+        return Inspector::tr("Redact");
     }
     return {};
 }
-}  // namespace
+} // namespace
 
 void Inspector::rebuildDocumentInfo() {
     if (!m_doc) {
@@ -343,8 +395,7 @@ void Inspector::rebuildDocumentInfo() {
     m_docNameLabel->setText(m_doc->displayName());
     m_docPathLabel->setText(m_doc->filePath());
     const int pages = m_doc->pageCount();
-    m_docPagesLabel->setText(pages > 0 ? QString::number(pages)
-                                       : tr("—"));
+    m_docPagesLabel->setText(pages > 0 ? QString::number(pages) : tr("—"));
     const QSize px = m_doc->imagePixelSize();
     if (px.isValid() && !px.isEmpty()) {
         m_docSizeLabel->setText(tr("%1 × %2 px").arg(px.width()).arg(px.height()));
@@ -355,19 +406,22 @@ void Inspector::rebuildDocumentInfo() {
 }
 
 void Inspector::rebuildAnnotationList() {
-    if (!m_annotationList) return;
+    if (!m_annotationList)
+        return;
     const QSignalBlocker blk(m_annotationList);
     m_annotationList->clear();
-    if (!m_store) return;
-    for (const Annotation& a : m_store->annotations()) {
+    if (!m_store)
+        return;
+    for (const Annotation &a : m_store->annotations()) {
         QString summary = tr("p%1  %2").arg(a.page + 1).arg(typeShortLabel(a.type));
         if (!a.text.isEmpty()) {
             QString t = a.text;
             t.replace(QChar('\n'), QChar(' '));
-            if (t.size() > 40) t = t.left(40) + QStringLiteral("…");
+            if (t.size() > 40)
+                t = t.left(40) + QStringLiteral("…");
             summary += QStringLiteral("  \u2014  ") + t;
         }
-        auto* item = new QListWidgetItem(summary, m_annotationList);
+        auto *item = new QListWidgetItem(summary, m_annotationList);
         item->setData(Qt::UserRole, a.id);
         if (a.id == m_id) {
             m_annotationList->setCurrentItem(item);
@@ -380,7 +434,7 @@ void Inspector::rebuildFromStore() {
         m_stack->setCurrentIndex(m_emptyIndex);
         return;
     }
-    const Annotation* a = m_store->find(m_id);
+    const Annotation *a = m_store->find(m_id);
     if (!a) {
         m_stack->setCurrentIndex(m_emptyIndex);
         return;
@@ -404,11 +458,9 @@ void Inspector::rebuildFromStore() {
         const int idx = m_fontWeight->findData(a->style.fontWeight);
         m_fontWeight->setCurrentIndex(idx >= 0 ? idx : 1);
     }
-    const bool hasText = a->type == AnnotationType::Text
-                      || a->type == AnnotationType::Note
-                      || a->type == AnnotationType::SpeechBubble;
-    const bool hasFont = a->type == AnnotationType::Text
-                      || a->type == AnnotationType::SpeechBubble;
+    const bool hasText = a->type == AnnotationType::Text || a->type == AnnotationType::Note ||
+                         a->type == AnnotationType::SpeechBubble;
+    const bool hasFont = a->type == AnnotationType::Text || a->type == AnnotationType::SpeechBubble;
     m_text->setEnabled(hasText);
     m_fontSize->setEnabled(hasFont);
     m_fontFamily->setEnabled(hasFont);
@@ -420,4 +472,4 @@ void Inspector::rebuildFromStore() {
     m_loading = false;
 }
 
-}  // namespace trailer
+} // namespace trailer

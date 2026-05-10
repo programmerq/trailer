@@ -29,19 +29,18 @@ namespace trailer {
 namespace {
 
 class ThumbnailDelegate : public QStyledItemDelegate {
-public:
-    explicit ThumbnailDelegate(QListView* view)
-        : QStyledItemDelegate(view), m_view(view) {}
+  public:
+    explicit ThumbnailDelegate(QListView *view) : QStyledItemDelegate(view), m_view(view) {}
 
-    QSize sizeHint(const QStyleOptionViewItem& option,
-                   const QModelIndex& /*index*/) const override {
+    QSize sizeHint(const QStyleOptionViewItem &option,
+                   const QModelIndex & /*index*/) const override {
         const QSize icon = m_view->iconSize();
         const int h = icon.height() + option.fontMetrics.height() + 16;
         return QSize(m_view->viewport()->width(), h);
     }
 
-    void paint(QPainter* painter, const QStyleOptionViewItem& option,
-               const QModelIndex& index) const override {
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override {
         painter->save();
 
         const bool selected = option.state & QStyle::State_Selected;
@@ -55,8 +54,8 @@ public:
         int y = option.rect.top() + 6;
         int pixmapBottom = y + iconSize.height();
         if (!pm.isNull()) {
-            const QPixmap scaled = pm.scaled(iconSize, Qt::KeepAspectRatio,
-                                             Qt::SmoothTransformation);
+            const QPixmap scaled =
+                pm.scaled(iconSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
             const int x = option.rect.x() + (option.rect.width() - scaled.width()) / 2;
             painter->drawPixmap(x, y, scaled);
             pixmapBottom = y + scaled.height();
@@ -65,31 +64,31 @@ public:
         const QString text = index.data(Qt::DisplayRole).toString();
         painter->setPen(selected ? option.palette.highlightedText().color()
                                  : option.palette.text().color());
-        const QRect textRect(option.rect.x(), pixmapBottom + 2,
-                             option.rect.width(), option.fontMetrics.height());
+        const QRect textRect(option.rect.x(), pixmapBottom + 2, option.rect.width(),
+                             option.fontMetrics.height());
         painter->drawText(textRect, Qt::AlignHCenter | Qt::AlignTop, text);
 
         painter->restore();
     }
 
-private:
-    QListView* m_view;
+  private:
+    QListView *m_view;
 };
 
 class ThumbnailListView : public QListView {
-public:
+  public:
     using QListView::QListView;
 
     using MoveHandler = std::function<void(int, int)>;
     void setMoveHandler(MoveHandler h) { m_moveHandler = std::move(h); }
 
-protected:
-    void resizeEvent(QResizeEvent* event) override {
+  protected:
+    void resizeEvent(QResizeEvent *event) override {
         QListView::resizeEvent(event);
         scheduleDelayedItemsLayout();
     }
 
-    void dropEvent(QDropEvent* event) override {
+    void dropEvent(QDropEvent *event) override {
         if (!m_moveHandler || event->source() != this) {
             QListView::dropEvent(event);
             return;
@@ -104,25 +103,27 @@ protected:
         const QModelIndex dropIndex = indexAt(event->position().toPoint());
         int to = dropIndex.isValid() ? dropIndex.row() : model()->rowCount() - 1;
         switch (dropIndicatorPosition()) {
-            case QAbstractItemView::AboveItem:
-                // insert before drop target
-                break;
-            case QAbstractItemView::BelowItem:
-                to += 1;
-                break;
-            case QAbstractItemView::OnItem:
-                // treat as before the target
-                break;
-            case QAbstractItemView::OnViewport:
-                to = model()->rowCount();
-                break;
+        case QAbstractItemView::AboveItem:
+            // insert before drop target
+            break;
+        case QAbstractItemView::BelowItem:
+            to += 1;
+            break;
+        case QAbstractItemView::OnItem:
+            // treat as before the target
+            break;
+        case QAbstractItemView::OnViewport:
+            to = model()->rowCount();
+            break;
         }
         if (to > from) {
-            to -= 1;  // account for the source being removed first
+            to -= 1; // account for the source being removed first
         }
-        if (to < 0) to = 0;
+        if (to < 0)
+            to = 0;
         const int last = model()->rowCount() - 1;
-        if (to > last) to = last;
+        if (to > last)
+            to = last;
 
         if (from != to) {
             m_moveHandler(from, to);
@@ -130,23 +131,22 @@ protected:
         event->acceptProposedAction();
     }
 
-private:
+  private:
     MoveHandler m_moveHandler;
 };
 
-}  // namespace
+} // namespace
 
-Sidebar::Sidebar(QWidget* parent) : QDockWidget(tr("Sidebar"), parent) {
+Sidebar::Sidebar(QWidget *parent) : QDockWidget(tr("Sidebar"), parent) {
     setObjectName(QStringLiteral("trailer.sidebar"));
     setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetClosable);
 
     m_stack = new QStackedWidget(this);
 
-    auto* placeholder = new QWidget(m_stack);
-    auto* placeholderLayout = new QVBoxLayout(placeholder);
-    auto* placeholderLabel = new QLabel(
-        tr("Open a document to see its pages here."), placeholder);
+    auto *placeholder = new QWidget(m_stack);
+    auto *placeholderLayout = new QVBoxLayout(placeholder);
+    auto *placeholderLabel = new QLabel(tr("Open a document to see its pages here."), placeholder);
     placeholderLabel->setAlignment(Qt::AlignCenter);
     placeholderLabel->setWordWrap(true);
     placeholderLayout->addWidget(placeholderLabel);
@@ -170,22 +170,21 @@ Sidebar::Sidebar(QWidget* parent) : QDockWidget(tr("Sidebar"), parent) {
     m_thumbnails->setDropIndicatorShown(true);
     m_thumbnails->setDragDropMode(QAbstractItemView::DragDrop);
     m_thumbnails->setDefaultDropAction(Qt::MoveAction);
-    static_cast<ThumbnailListView*>(m_thumbnails)->setMoveHandler(
-        [this](int from, int to) { emit movePageRequested(from, to); });
+    static_cast<ThumbnailListView *>(m_thumbnails)->setMoveHandler([this](int from, int to) {
+        emit movePageRequested(from, to);
+    });
     m_thumbnails->installEventFilter(this);
-    connect(m_thumbnails->selectionModel(),
-            &QItemSelectionModel::currentChanged,
-            this, [this](const QModelIndex& current, const QModelIndex&) {
-                if (m_syncingSelection) return;
+    connect(m_thumbnails->selectionModel(), &QItemSelectionModel::currentChanged, this,
+            [this](const QModelIndex &current, const QModelIndex &) {
+                if (m_syncingSelection)
+                    return;
                 onThumbnailActivated(current);
             });
     m_annotations = new QListWidget(m_stack);
     m_annotations->setSelectionMode(QAbstractItemView::SingleSelection);
     m_annotations->setWordWrap(true);
-    connect(m_annotations, &QListWidget::itemActivated,
-            this, &Sidebar::onAnnotationActivated);
-    connect(m_annotations, &QListWidget::itemClicked,
-            this, &Sidebar::onAnnotationActivated);
+    connect(m_annotations, &QListWidget::itemActivated, this, &Sidebar::onAnnotationActivated);
+    connect(m_annotations, &QListWidget::itemClicked, this, &Sidebar::onAnnotationActivated);
 
     // Pages-thumbnails tab. The 2026-04-30 HITL pass removed the
     // legacy "Annotations" sibling tab from this strip; that view
@@ -193,7 +192,7 @@ Sidebar::Sidebar(QWidget* parent) : QDockWidget(tr("Sidebar"), parent) {
     // sidebar mode picker's "Highlights & Notes" entry.
     m_tabs = new QTabWidget(m_stack);
     m_tabs->addTab(m_thumbnails, tr("Pages"));
-    m_tabs->setTabBarAutoHide(true);  // single tab → no tab strip
+    m_tabs->setTabBarAutoHide(true); // single tab → no tab strip
     m_tabsIndex = m_stack->addWidget(m_tabs);
     m_annotationsIndex = m_stack->addWidget(m_annotations);
 
@@ -207,29 +206,26 @@ Sidebar::Sidebar(QWidget* parent) : QDockWidget(tr("Sidebar"), parent) {
     m_outline->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_outline->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_outline->setSelectionMode(QAbstractItemView::SingleSelection);
-    connect(m_outline, &QTreeView::activated,
-            this, [this](const QModelIndex& idx) {
-                if (m_doc && idx.isValid()) {
-                    m_doc->goToOutlineEntry(idx);
-                }
-            });
-    connect(m_outline, &QTreeView::clicked,
-            this, [this](const QModelIndex& idx) {
-                if (m_doc && idx.isValid()) {
-                    m_doc->goToOutlineEntry(idx);
-                }
-            });
+    connect(m_outline, &QTreeView::activated, this, [this](const QModelIndex &idx) {
+        if (m_doc && idx.isValid()) {
+            m_doc->goToOutlineEntry(idx);
+        }
+    });
+    connect(m_outline, &QTreeView::clicked, this, [this](const QModelIndex &idx) {
+        if (m_doc && idx.isValid()) {
+            m_doc->goToOutlineEntry(idx);
+        }
+    });
     m_outlineIndex = m_stack->addWidget(m_outline);
 
     m_stack->setCurrentIndex(m_placeholderIndex);
     setWidget(m_stack);
 
     m_pageSyncTimer.setInterval(120);
-    connect(&m_pageSyncTimer, &QTimer::timeout,
-            this, &Sidebar::syncSelectionFromDocument);
+    connect(&m_pageSyncTimer, &QTimer::timeout, this, &Sidebar::syncSelectionFromDocument);
 }
 
-void Sidebar::setDocument(IDocument* doc) {
+void Sidebar::setDocument(IDocument *doc) {
     m_doc = doc;
     if (doc && doc->supportsThumbnails() && doc->pageCount() > 0) {
         m_model->setDocument(doc);
@@ -251,9 +247,9 @@ void Sidebar::setDocument(IDocument* doc) {
     // clicks the disabled entry).
     m_outline->setModel(doc ? doc->outlineModel() : nullptr);
     m_outline->expandAll();
-    if (auto* store = doc ? doc->annotations() : nullptr) {
-        connect(store, &AnnotationStore::changed, this,
-                &Sidebar::refreshAnnotations, Qt::UniqueConnection);
+    if (auto *store = doc ? doc->annotations() : nullptr) {
+        connect(store, &AnnotationStore::changed, this, &Sidebar::refreshAnnotations,
+                Qt::UniqueConnection);
     }
     refreshAnnotations();
     // Re-apply the current mode so a doc swap (or removing the
@@ -273,65 +269,68 @@ void Sidebar::setMode(Mode mode) {
     emit modeChanged(m_mode);
 }
 
-void Sidebar::setSearchMatchPages(const std::vector<int>& pages) {
+void Sidebar::setSearchMatchPages(const std::vector<int> &pages) {
     m_searchMatchPages = pages;
-    if (m_mode == Mode::SearchResults) applyMode();
+    if (m_mode == Mode::SearchResults)
+        applyMode();
 }
 
 void Sidebar::applyMode() {
     switch (m_mode) {
-        case Mode::Hidden:
-            m_model->setPageFilter({});
-            if (m_doc) {
-                m_stack->setCurrentIndex(m_tabsIndex);
-            }
-            if (isVisible()) hide();
-            return;
-        case Mode::Pages:
-            m_model->setPageFilter({});
-            m_stack->setCurrentIndex(
-                m_doc ? m_tabsIndex : m_placeholderIndex);
-            if (!isVisible()) show();
-            return;
-        case Mode::SearchResults:
-            m_model->setPageFilter(m_searchMatchPages);
-            m_stack->setCurrentIndex(
-                m_doc ? m_tabsIndex : m_placeholderIndex);
-            if (!isVisible()) show();
-            return;
-        case Mode::TableOfContents:
-            // Hand over to the outline tree. If the doc has no
-            // outline, the QTreeView shows an empty area; the
-            // picker entry is gated on hasOutline() in MainWindow
-            // so this branch normally only runs for documents with
-            // an outline available.
-            m_stack->setCurrentIndex(
-                m_doc && m_doc->outlineModel() ? m_outlineIndex
-                                               : m_placeholderIndex);
-            if (!isVisible()) show();
-            return;
-        case Mode::HighlightsAndNotes:
-            // Rebuild the filtered list now in case mode changed
-            // without a store->changed signal firing recently.
-            refreshAnnotations();
-            m_stack->setCurrentIndex(
-                m_doc ? m_annotationsIndex : m_placeholderIndex);
-            if (!isVisible()) show();
-            return;
+    case Mode::Hidden:
+        m_model->setPageFilter({});
+        if (m_doc) {
+            m_stack->setCurrentIndex(m_tabsIndex);
+        }
+        if (isVisible())
+            hide();
+        return;
+    case Mode::Pages:
+        m_model->setPageFilter({});
+        m_stack->setCurrentIndex(m_doc ? m_tabsIndex : m_placeholderIndex);
+        if (!isVisible())
+            show();
+        return;
+    case Mode::SearchResults:
+        m_model->setPageFilter(m_searchMatchPages);
+        m_stack->setCurrentIndex(m_doc ? m_tabsIndex : m_placeholderIndex);
+        if (!isVisible())
+            show();
+        return;
+    case Mode::TableOfContents:
+        // Hand over to the outline tree. If the doc has no
+        // outline, the QTreeView shows an empty area; the
+        // picker entry is gated on hasOutline() in MainWindow
+        // so this branch normally only runs for documents with
+        // an outline available.
+        m_stack->setCurrentIndex(m_doc && m_doc->outlineModel() ? m_outlineIndex
+                                                                : m_placeholderIndex);
+        if (!isVisible())
+            show();
+        return;
+    case Mode::HighlightsAndNotes:
+        // Rebuild the filtered list now in case mode changed
+        // without a store->changed signal firing recently.
+        refreshAnnotations();
+        m_stack->setCurrentIndex(m_doc ? m_annotationsIndex : m_placeholderIndex);
+        if (!isVisible())
+            show();
+        return;
     }
 }
 
-bool Sidebar::eventFilter(QObject* watched, QEvent* event) {
+bool Sidebar::eventFilter(QObject *watched, QEvent *event) {
     if (watched == m_thumbnails && event->type() == QEvent::KeyPress) {
-        auto* key = static_cast<QKeyEvent*>(event);
+        auto *key = static_cast<QKeyEvent *>(event);
         if (key->key() == Qt::Key_Delete || key->key() == Qt::Key_Backspace) {
             const auto selected = m_thumbnails->selectionModel()->selectedIndexes();
             if (!selected.isEmpty()) {
                 std::vector<int> pages;
                 pages.reserve(selected.size());
-                for (const QModelIndex& idx : selected) {
+                for (const QModelIndex &idx : selected) {
                     const int p = m_model->pageForRow(idx.row());
-                    if (p >= 0) pages.push_back(p);
+                    if (p >= 0)
+                        pages.push_back(p);
                 }
                 emit deletePagesRequested(pages);
                 return true;
@@ -342,7 +341,8 @@ bool Sidebar::eventFilter(QObject* watched, QEvent* event) {
 }
 
 void Sidebar::refreshThumbnails() {
-    if (!m_doc) return;
+    if (!m_doc)
+        return;
     m_model->refresh();
     syncSelectionFromDocument();
 }
@@ -359,94 +359,132 @@ namespace {
 // review-this-document sense.
 bool isHighlightOrNoteType(AnnotationType t) {
     switch (t) {
-        case AnnotationType::Highlight:
-        case AnnotationType::Underline:
-        case AnnotationType::StrikeOut:
-        case AnnotationType::Note:
-        case AnnotationType::Text:
-        case AnnotationType::SpeechBubble:
-            return true;
-        case AnnotationType::Rectangle:
-        case AnnotationType::Ellipse:
-        case AnnotationType::Line:
-        case AnnotationType::Arrow:
-        case AnnotationType::Ink:
-        case AnnotationType::HighlightShape:
-        case AnnotationType::ZoomLens:
-        case AnnotationType::Redaction:
-        case AnnotationType::Signature:
-            return false;
+    case AnnotationType::Highlight:
+    case AnnotationType::Underline:
+    case AnnotationType::StrikeOut:
+    case AnnotationType::Note:
+    case AnnotationType::Text:
+    case AnnotationType::SpeechBubble:
+        return true;
+    case AnnotationType::Rectangle:
+    case AnnotationType::Ellipse:
+    case AnnotationType::Line:
+    case AnnotationType::Arrow:
+    case AnnotationType::Ink:
+    case AnnotationType::HighlightShape:
+    case AnnotationType::ZoomLens:
+    case AnnotationType::Redaction:
+    case AnnotationType::Signature:
+        return false;
     }
     return false;
 }
 
-}  // namespace
+} // namespace
 
 void Sidebar::refreshAnnotations() {
     m_annotations->clear();
-    if (!m_doc) return;
-    auto* store = m_doc->annotations();
-    if (!store) return;
+    if (!m_doc)
+        return;
+    auto *store = m_doc->annotations();
+    if (!store)
+        return;
     const bool filterForHighlights = (m_mode == Mode::HighlightsAndNotes);
-    for (const Annotation& a : store->annotations()) {
-        if (filterForHighlights && !isHighlightOrNoteType(a.type)) continue;
+    for (const Annotation &a : store->annotations()) {
+        if (filterForHighlights && !isHighlightOrNoteType(a.type))
+            continue;
         QString label;
         switch (a.type) {
-            case AnnotationType::Rectangle:      label = tr("Rectangle"); break;
-            case AnnotationType::Ellipse:        label = tr("Ellipse"); break;
-            case AnnotationType::Line:           label = tr("Line"); break;
-            case AnnotationType::Arrow:          label = tr("Arrow"); break;
-            case AnnotationType::Ink:            label = tr("Freehand"); break;
-            case AnnotationType::Text:           label = tr("Text"); break;
-            case AnnotationType::Note:           label = tr("Note"); break;
-            case AnnotationType::Highlight:      label = tr("Highlight"); break;
-            case AnnotationType::Underline:      label = tr("Underline"); break;
-            case AnnotationType::StrikeOut:      label = tr("Strikeout"); break;
-            case AnnotationType::HighlightShape: label = tr("Hl Shape"); break;
-            case AnnotationType::SpeechBubble:   label = tr("Speech Bubble"); break;
-            case AnnotationType::ZoomLens:       label = tr("Zoom Lens"); break;
-            case AnnotationType::Redaction:      label = tr("Redaction"); break;
-            case AnnotationType::Signature:      label = tr("Signature"); break;
+        case AnnotationType::Rectangle:
+            label = tr("Rectangle");
+            break;
+        case AnnotationType::Ellipse:
+            label = tr("Ellipse");
+            break;
+        case AnnotationType::Line:
+            label = tr("Line");
+            break;
+        case AnnotationType::Arrow:
+            label = tr("Arrow");
+            break;
+        case AnnotationType::Ink:
+            label = tr("Freehand");
+            break;
+        case AnnotationType::Text:
+            label = tr("Text");
+            break;
+        case AnnotationType::Note:
+            label = tr("Note");
+            break;
+        case AnnotationType::Highlight:
+            label = tr("Highlight");
+            break;
+        case AnnotationType::Underline:
+            label = tr("Underline");
+            break;
+        case AnnotationType::StrikeOut:
+            label = tr("Strikeout");
+            break;
+        case AnnotationType::HighlightShape:
+            label = tr("Hl Shape");
+            break;
+        case AnnotationType::SpeechBubble:
+            label = tr("Speech Bubble");
+            break;
+        case AnnotationType::ZoomLens:
+            label = tr("Zoom Lens");
+            break;
+        case AnnotationType::Redaction:
+            label = tr("Redaction");
+            break;
+        case AnnotationType::Signature:
+            label = tr("Signature");
+            break;
         }
-        const QString preview = a.text.isEmpty()
-            ? QString()
-            : QStringLiteral(" — %1").arg(a.text.left(60).replace('\n', ' '));
-        auto* item = new QListWidgetItem(
-            tr("p.%1  %2%3").arg(a.page + 1).arg(label).arg(preview),
-            m_annotations);
+        const QString preview =
+            a.text.isEmpty() ? QString()
+                             : QStringLiteral(" — %1").arg(a.text.left(60).replace('\n', ' '));
+        auto *item = new QListWidgetItem(tr("p.%1  %2%3").arg(a.page + 1).arg(label).arg(preview),
+                                         m_annotations);
         item->setData(Qt::UserRole, a.id);
     }
 }
 
 int Sidebar::highlightsAndNotesCount() const {
-    if (!m_doc) return 0;
-    auto* store = m_doc->annotations();
-    if (!store) return 0;
+    if (!m_doc)
+        return 0;
+    auto *store = m_doc->annotations();
+    if (!store)
+        return 0;
     int count = 0;
-    for (const Annotation& a : store->annotations()) {
-        if (isHighlightOrNoteType(a.type)) ++count;
+    for (const Annotation &a : store->annotations()) {
+        if (isHighlightOrNoteType(a.type))
+            ++count;
     }
     return count;
 }
 
 void Sidebar::onAnnotationActivated() {
-    auto* item = m_annotations->currentItem();
-    if (!item || !m_doc) return;
+    auto *item = m_annotations->currentItem();
+    if (!item || !m_doc)
+        return;
     const int id = item->data(Qt::UserRole).toInt();
-    auto* store = m_doc->annotations();
-    if (!store) return;
-    if (const Annotation* a = store->find(id)) {
+    auto *store = m_doc->annotations();
+    if (!store)
+        return;
+    if (const Annotation *a = store->find(id)) {
         m_doc->goToPage(a->page);
     }
     emit annotationSelected(id);
 }
 
-void Sidebar::onThumbnailActivated(const QModelIndex& index) {
+void Sidebar::onThumbnailActivated(const QModelIndex &index) {
     if (!m_doc || !index.isValid()) {
         return;
     }
     const int page = m_model->pageForRow(index.row());
-    if (page < 0) return;
+    if (page < 0)
+        return;
     m_doc->goToPage(page);
 }
 
@@ -456,8 +494,7 @@ void Sidebar::syncSelectionFromDocument() {
     }
     const int current = m_doc->currentPage();
     const QModelIndex currentIdx = m_thumbnails->currentIndex();
-    if (currentIdx.isValid() &&
-        m_model->pageForRow(currentIdx.row()) == current) {
+    if (currentIdx.isValid() && m_model->pageForRow(currentIdx.row()) == current) {
         return;
     }
     // Find the row that maps to the document's current page. With
@@ -472,16 +509,18 @@ void Sidebar::syncSelectionFromDocument() {
                 break;
             }
         }
-        if (targetRow < 0) return;
+        if (targetRow < 0)
+            return;
     } else {
         targetRow = current;
     }
     const QModelIndex target = m_model->index(targetRow, 0);
-    if (!target.isValid()) return;
+    if (!target.isValid())
+        return;
     m_syncingSelection = true;
     m_thumbnails->setCurrentIndex(target);
     m_thumbnails->scrollTo(target, QAbstractItemView::EnsureVisible);
     m_syncingSelection = false;
 }
 
-}  // namespace trailer
+} // namespace trailer

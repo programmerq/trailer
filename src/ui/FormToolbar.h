@@ -24,8 +24,8 @@ namespace trailer {
 class FormToolbar : public QToolBar {
     Q_OBJECT
 
-public:
-    explicit FormToolbar(QWidget* parent = nullptr);
+  public:
+    explicit FormToolbar(QWidget *parent = nullptr);
 
     AnnotationTool activeTool() const { return m_tool; }
     // Returns the text that should be pre-populated for the next Text
@@ -33,11 +33,11 @@ public:
     // Text Box (prompts the user to type).
     QString pendingText() const { return m_pendingText; }
 
-signals:
+  signals:
     // Emitted whenever the user switches tools. Subscribers call
     // doc->setAnnotationTool(tool) and prime doc->setPendingText(text)
     // so the next click on the canvas drops the correct glyph.
-    void toolChanged(AnnotationTool tool, const QString& pendingText);
+    void toolChanged(AnnotationTool tool, const QString &pendingText);
     // Emitted when the user clicks "AutoFill" — wired to the
     // AutoFill-cards feature. Handled in MainWindow.
     void autoFillRequested();
@@ -49,18 +49,18 @@ signals:
     // position if the button widget isn't reachable yet (e.g. the
     // toolbar hasn't been laid out — shouldn't happen in practice
     // but keeps the popover from landing at (0,0) regardless).
-    void signHereRequested(const QPoint& anchorGlobalPos);
+    void signHereRequested(const QPoint &anchorGlobalPos);
 
-private:
-    QAction* makeToolAction(const QString& label, AnnotationTool tool,
-                            const QString& pendingText = {},
-                            const QString& iconResource = QString());
+  private:
+    QAction *makeToolAction(const QString &label, AnnotationTool tool,
+                            const QString &pendingText = {},
+                            const QString &iconResource = QString());
 
-    QActionGroup* m_group = nullptr;
+    QActionGroup *m_group = nullptr;
     AnnotationTool m_tool = AnnotationTool::None;
     QString m_pendingText;
-    QAction* m_autoFillAction = nullptr;
-    QAction* m_signHereAction = nullptr;
+    QAction *m_autoFillAction = nullptr;
+    QAction *m_signHereAction = nullptr;
 };
 
-}  // namespace trailer
+} // namespace trailer

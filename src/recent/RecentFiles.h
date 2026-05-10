@@ -22,27 +22,26 @@ struct RecentEntry {
 };
 
 class RecentFiles {
-public:
+  public:
     RecentFiles();
     explicit RecentFiles(QString filePath);
 
     void load();
     void save() const;
 
-    void add(const QString& path);
+    void add(const QString &path);
     void clear();
 
     // Update the view-state fields of the entry whose canonical path
     // matches `path`. No-op if the entry doesn't exist (the user
     // closed a file that was never in the list, e.g. a temp scratch
     // doc). Caller is responsible for invoking save() to persist.
-    void updateViewState(const QString& path, int currentPage,
-                         double zoomFactor, int scrollY,
+    void updateViewState(const QString &path, int currentPage, double zoomFactor, int scrollY,
                          bool sidebarVisible);
 
     // Look up the captured view-state for `path` (canonical match).
     // Returns a default-constructed entry (path empty) if no match.
-    RecentEntry findByPath(const QString& path) const;
+    RecentEntry findByPath(const QString &path) const;
 
     QList<RecentEntry> entries() const { return m_entries; }
 
@@ -51,7 +50,7 @@ public:
 
     QString filePath() const { return m_filePath; }
 
-private:
+  private:
     void trim();
 
     QString m_filePath;
@@ -59,4 +58,4 @@ private:
     int m_maxEntries = 50;
 };
 
-}  // namespace trailer
+} // namespace trailer

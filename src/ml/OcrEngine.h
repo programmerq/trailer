@@ -37,7 +37,7 @@ class OnnxSession;
 // inference failures return an empty QVector rather than throwing.
 class OcrEngine : public QObject {
     Q_OBJECT
-public:
+  public:
     struct TextBlock {
         // Quadrilateral outlining the detected text region in
         // original-image pixel coordinates. Phase 6D only emits
@@ -52,7 +52,7 @@ public:
         float confidence = 0.0f;
     };
 
-    explicit OcrEngine(ModelRegistry* registry, QObject* parent = nullptr);
+    explicit OcrEngine(ModelRegistry *registry, QObject *parent = nullptr);
     ~OcrEngine() override;
 
     // True iff both the detector and the Latin recognizer are on
@@ -69,33 +69,33 @@ public:
     // Coordinates in the returned blocks are in source's pixel
     // space. Returns an empty vector if the models aren't ready or
     // inference fails.
-    QVector<TextBlock> recognize(const QImage& source);
+    QVector<TextBlock> recognize(const QImage &source);
 
     // Last inference's binarized detection map, same size as the
     // most recent `source`. Exposed for tests and debug overlays.
     // Empty if recognize() has not yet run successfully.
     QImage lastDetectionMask() const;
 
-signals:
+  signals:
     void downloadProgress(qint64 received, qint64 total);
     void modelsReady();
-    void modelsUnavailable(const QString& reason);
+    void modelsUnavailable(const QString &reason);
 
-private:
+  private:
     void onModelAvailable();
     bool loadDictionary();
 
     // Detection: resize `source` to fit within a 960-px max side on
     // multiples of 32, run the detector, threshold + label. Returns
     // axis-aligned rects in original-image coordinates.
-    QVector<QRect> detectBoxes(const QImage& source);
+    QVector<QRect> detectBoxes(const QImage &source);
 
     // Recognition: warp the box's crop into a 48×W strip, run the
     // recognizer, CTC-decode with `m_dict`. Returns an empty string
     // on failure. Writes the posterior geometric mean into `confOut`.
-    QString recognizeBox(const QImage& crop, float* confOut);
+    QString recognizeBox(const QImage &crop, float *confOut);
 
-    ModelRegistry* m_registry;
+    ModelRegistry *m_registry;
     std::unique_ptr<OnnxSession> m_detector;
     std::unique_ptr<OnnxSession> m_recognizer;
 
@@ -107,4 +107,4 @@ private:
     QImage m_lastMask;
 };
 
-}  // namespace trailer
+} // namespace trailer

@@ -25,7 +25,7 @@
 
 namespace trailer {
 
-Application::Application(int& argc, char** argv) : QApplication(argc, argv) {
+Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
     setApplicationName(QStringLiteral("Trailer"));
     setOrganizationName(QStringLiteral("Trailer"));
     setApplicationVersion(QStringLiteral("0.1.0"));
@@ -43,8 +43,8 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv) {
 
 Application::~Application() = default;
 
-MainWindow* Application::ensureWindow() {
-    for (auto& ptr : m_windows) {
+MainWindow *Application::ensureWindow() {
+    for (auto &ptr : m_windows) {
         if (ptr) {
             return ptr;
         }
@@ -52,17 +52,18 @@ MainWindow* Application::ensureWindow() {
     return ensureFreshWindow();
 }
 
-QList<MainWindow*> Application::windows() const {
-    QList<MainWindow*> out;
+QList<MainWindow *> Application::windows() const {
+    QList<MainWindow *> out;
     out.reserve(m_windows.size());
-    for (const auto& ptr : m_windows) {
-        if (ptr) out.append(ptr.data());
+    for (const auto &ptr : m_windows) {
+        if (ptr)
+            out.append(ptr.data());
     }
     return out;
 }
 
-MainWindow* Application::ensureFreshWindow() {
-    auto* window = new MainWindow(this);
+MainWindow *Application::ensureFreshWindow() {
+    auto *window = new MainWindow(this);
     window->setAttribute(Qt::WA_DeleteOnClose);
     connect(window, &QObject::destroyed, this, &Application::onWindowDestroyed);
     m_windows.append(window);
@@ -70,7 +71,7 @@ MainWindow* Application::ensureFreshWindow() {
     return window;
 }
 
-void Application::openFiles(const QStringList& paths) {
+void Application::openFiles(const QStringList &paths) {
     if (paths.isEmpty()) {
         return;
     }
@@ -81,9 +82,10 @@ void Application::openFiles(const QStringList& paths) {
     // NewTab modes. For NewWindow we don't reuse anything; every file
     // gets a fresh window so closing it is "close this file" without
     // touching unrelated work.
-    auto firstExistingWindow = [this]() -> MainWindow* {
-        for (auto& ptr : m_windows) {
-            if (ptr) return ptr;
+    auto firstExistingWindow = [this]() -> MainWindow * {
+        for (auto &ptr : m_windows) {
+            if (ptr)
+                return ptr;
         }
         return nullptr;
     };
@@ -98,28 +100,28 @@ void Application::openFiles(const QStringList& paths) {
     // window so they share a tab strip rather than spawning N
     // separate frames.
     auto isImageBatch = [&paths]() -> bool {
-        if (paths.size() < 2) return false;
+        if (paths.size() < 2)
+            return false;
         static const QSet<QString> imageExts = {
-            QStringLiteral("png"), QStringLiteral("jpg"),
-            QStringLiteral("jpeg"), QStringLiteral("bmp"),
-            QStringLiteral("tif"), QStringLiteral("tiff"),
-            QStringLiteral("webp"), QStringLiteral("gif"),
-            QStringLiteral("heic"), QStringLiteral("heif"),
+            QStringLiteral("png"),  QStringLiteral("jpg"), QStringLiteral("jpeg"),
+            QStringLiteral("bmp"),  QStringLiteral("tif"), QStringLiteral("tiff"),
+            QStringLiteral("webp"), QStringLiteral("gif"), QStringLiteral("heic"),
+            QStringLiteral("heif"),
         };
-        for (const QString& p : paths) {
+        for (const QString &p : paths) {
             const QString ext = QFileInfo(p).suffix().toLower();
-            if (!imageExts.contains(ext)) return false;
+            if (!imageExts.contains(ext))
+                return false;
         }
         return true;
     };
-    const bool batchedImages =
-        mode == OpenFilesIn::NewWindow && isImageBatch();
-    MainWindow* batchTarget = batchedImages ? ensureFreshWindow() : nullptr;
+    const bool batchedImages = mode == OpenFilesIn::NewWindow && isImageBatch();
+    MainWindow *batchTarget = batchedImages ? ensureFreshWindow() : nullptr;
 
-    for (const QString& path : paths) {
+    for (const QString &path : paths) {
         auto doc = m_registry.open(path);
 
-        MainWindow* target = nullptr;
+        MainWindow *target = nullptr;
         if (batchTarget) {
             // All images of this batch share one window so the user
             // can flip through them via the tab strip without
@@ -127,17 +129,18 @@ void Application::openFiles(const QStringList& paths) {
             target = batchTarget;
         } else {
             switch (mode) {
-                case OpenFilesIn::NewWindow:
-                    // One window per file. Even when `paths` has
-                    // multiple entries we spawn a separate window for
-                    // each so the user can arrange them independently.
-                    target = ensureFreshWindow();
-                    break;
-                case OpenFilesIn::SameWindow:
-                case OpenFilesIn::NewTab:
-                    target = firstExistingWindow();
-                    if (!target) target = ensureWindow();
-                    break;
+            case OpenFilesIn::NewWindow:
+                // One window per file. Even when `paths` has
+                // multiple entries we spawn a separate window for
+                // each so the user can arrange them independently.
+                target = ensureFreshWindow();
+                break;
+            case OpenFilesIn::SameWindow:
+            case OpenFilesIn::NewTab:
+                target = firstExistingWindow();
+                if (!target)
+                    target = ensureWindow();
+                break;
             }
         }
 
@@ -155,75 +158,66 @@ void Application::clearRecent() {
 }
 
 void Application::notifyWindowsRecentChanged() {
-    for (auto& ptr : m_windows) {
+    for (auto &ptr : m_windows) {
         if (ptr) {
             ptr->rebuildRecentMenu();
         }
     }
 }
 
-void Application::onWindowDestroyed(QObject* window) {
-    m_windows.erase(
-        std::remove_if(m_windows.begin(), m_windows.end(),
-            [window](const QPointer<MainWindow>& p) {
-                return p.data() == window || p.isNull();
-            }),
-        m_windows.end());
+void Application::onWindowDestroyed(QObject *window) {
+    m_windows.erase(std::remove_if(m_windows.begin(), m_windows.end(),
+                                   [window](const QPointer<MainWindow> &p) {
+                                       return p.data() == window || p.isNull();
+                                   }),
+                    m_windows.end());
 }
 
 #ifdef Q_OS_MACOS
 namespace {
 
-QString transientImportPath(const QString& prefix, const QString& ext) {
-    const QString base = QStandardPaths::writableLocation(
-        QStandardPaths::TempLocation);
-    const QString stamp = QDateTime::currentDateTime().toString(
-        QStringLiteral("yyyyMMdd-HHmmss-zzz"));
+QString transientImportPath(const QString &prefix, const QString &ext) {
+    const QString base = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
+    const QString stamp =
+        QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss-zzz"));
     const QString suffix = QUuid::createUuid().toString(QUuid::Id128);
     return QDir(base).filePath(
-        QStringLiteral("trailer-%1-%2-%3.%4")
-            .arg(prefix, stamp, suffix, ext));
+        QStringLiteral("trailer-%1-%2-%3.%4").arg(prefix, stamp, suffix, ext));
 }
 
-}  // namespace
+} // namespace
 
 void Application::installNoWindowMenuBar() {
-    auto* bar = new QMenuBar();
+    auto *bar = new QMenuBar();
     bar->setNativeMenuBar(true);
 
-    auto* fileMenu = bar->addMenu(tr("&File"));
+    auto *fileMenu = bar->addMenu(tr("&File"));
 
-    auto* newAction = fileMenu->addAction(tr("&New"));
+    auto *newAction = fileMenu->addAction(tr("&New"));
     newAction->setShortcut(QKeySequence::New);
-    connect(newAction, &QAction::triggered, this, [this]() {
-        ensureFreshWindow();
-    });
+    connect(newAction, &QAction::triggered, this, [this]() { ensureFreshWindow(); });
 
-    auto* openAction = fileMenu->addAction(tr("&Open…"));
+    auto *openAction = fileMenu->addAction(tr("&Open…"));
     openAction->setShortcut(QKeySequence::Open);
-    connect(openAction, &QAction::triggered, this,
-            &Application::openFilesFromDialog);
+    connect(openAction, &QAction::triggered, this, &Application::openFilesFromDialog);
 
-    auto* newFromClipboardAction = fileMenu->addAction(
-        tr("New from &Clipboard"));
-    connect(newFromClipboardAction, &QAction::triggered, this,
-            &Application::newFromClipboard);
+    auto *newFromClipboardAction = fileMenu->addAction(tr("New from &Clipboard"));
+    connect(newFromClipboardAction, &QAction::triggered, this, &Application::newFromClipboard);
 
-    auto* acquireAction = fileMenu->addAction(tr("&Acquire…"));
-    connect(acquireAction, &QAction::triggered, this,
-            &Application::acquireFromScreenshot);
+    auto *acquireAction = fileMenu->addAction(tr("&Acquire…"));
+    connect(acquireAction, &QAction::triggered, this, &Application::acquireFromScreenshot);
 
     fileMenu->addSeparator();
 
-    auto* closeWindowAction = fileMenu->addAction(tr("&Close Window"));
+    auto *closeWindowAction = fileMenu->addAction(tr("&Close Window"));
     closeWindowAction->setShortcut(QKeySequence::Close);
     connect(closeWindowAction, &QAction::triggered, this, [this]() {
-        if (auto* w = qobject_cast<MainWindow*>(activeWindow())) {
+        if (auto *w = qobject_cast<MainWindow *>(activeWindow())) {
             w->close();
         }
     });
 
-    auto* quitAction = fileMenu->addAction(tr("&Quit"));
+    auto *quitAction = fileMenu->addAction(tr("&Quit"));
     quitAction->setShortcut(QKeySequence::Quit);
     quitAction->setMenuRole(QAction::QuitRole);
     connect(quitAction, &QAction::triggered, this, &QCoreApplication::quit);
@@ -240,14 +234,16 @@ void Application::openFilesFromDialog() {
 }
 
 void Application::newFromClipboard() {
-    const QMimeData* data = QGuiApplication::clipboard()->mimeData();
-    if (!data) return;
+    const QMimeData *data = QGuiApplication::clipboard()->mimeData();
+    if (!data)
+        return;
 
     QStringList paths;
-    for (const QUrl& url : data->urls()) {
+    for (const QUrl &url : data->urls()) {
         if (url.isLocalFile()) {
             const QString local = url.toLocalFile();
-            if (!local.isEmpty()) paths.append(local);
+            if (!local.isEmpty())
+                paths.append(local);
         }
     }
     if (!paths.isEmpty()) {
@@ -270,9 +266,8 @@ void Application::newFromClipboard() {
         return;
     }
 
-    QMessageBox::information(
-        nullptr, tr("New from Clipboard"),
-        tr("Clipboard does not currently contain an image or file path."));
+    QMessageBox::information(nullptr, tr("New from Clipboard"),
+                             tr("Clipboard does not currently contain an image or file path."));
 }
 
 void Application::acquireFromScreenshot() {
@@ -281,16 +276,18 @@ void Application::acquireFromScreenshot() {
     proc.start(QStringLiteral("/usr/sbin/screencapture"),
                {QStringLiteral("-i"), QStringLiteral("-x"), path});
     proc.waitForFinished(-1);
-    if (proc.exitCode() != 0) return;
+    if (proc.exitCode() != 0)
+        return;
     const QFileInfo info(path);
-    if (!info.exists() || info.size() == 0) return;
+    if (!info.exists() || info.size() == 0)
+        return;
     openFiles({path});
 }
 #endif
 
-bool Application::event(QEvent* event) {
+bool Application::event(QEvent *event) {
     if (event->type() == QEvent::FileOpen) {
-        auto* fileOpen = static_cast<QFileOpenEvent*>(event);
+        auto *fileOpen = static_cast<QFileOpenEvent *>(event);
         const QString path = fileOpen->file();
         if (!path.isEmpty()) {
             openFiles({path});
@@ -300,4 +297,4 @@ bool Application::event(QEvent* event) {
     return QApplication::event(event);
 }
 
-}  // namespace trailer
+} // namespace trailer

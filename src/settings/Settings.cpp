@@ -16,7 +16,7 @@ namespace trailer {
 
 namespace {
 
-std::string toStd(const QString& s) {
+std::string toStd(const QString &s) {
     return s.toStdString();
 }
 
@@ -24,35 +24,45 @@ QString fromStd(std::string_view s) {
     return QString::fromUtf8(s.data(), static_cast<int>(s.size()));
 }
 
-}  // namespace
+} // namespace
 
 QString themeToString(Theme value) {
     switch (value) {
-        case Theme::System: return QStringLiteral("system");
-        case Theme::Light:  return QStringLiteral("light");
-        case Theme::Dark:   return QStringLiteral("dark");
+    case Theme::System:
+        return QStringLiteral("system");
+    case Theme::Light:
+        return QStringLiteral("light");
+    case Theme::Dark:
+        return QStringLiteral("dark");
     }
     return QStringLiteral("system");
 }
 
-Theme themeFromString(const QString& value) {
-    if (value == QLatin1String("light")) return Theme::Light;
-    if (value == QLatin1String("dark"))  return Theme::Dark;
+Theme themeFromString(const QString &value) {
+    if (value == QLatin1String("light"))
+        return Theme::Light;
+    if (value == QLatin1String("dark"))
+        return Theme::Dark;
     return Theme::System;
 }
 
 QString openFilesInToString(OpenFilesIn value) {
     switch (value) {
-        case OpenFilesIn::NewTab:     return QStringLiteral("new_tab");
-        case OpenFilesIn::NewWindow:  return QStringLiteral("new_window");
-        case OpenFilesIn::SameWindow: return QStringLiteral("same_window");
+    case OpenFilesIn::NewTab:
+        return QStringLiteral("new_tab");
+    case OpenFilesIn::NewWindow:
+        return QStringLiteral("new_window");
+    case OpenFilesIn::SameWindow:
+        return QStringLiteral("same_window");
     }
     return QStringLiteral("new_tab");
 }
 
-OpenFilesIn openFilesInFromString(const QString& value) {
-    if (value == QLatin1String("new_tab"))     return OpenFilesIn::NewTab;
-    if (value == QLatin1String("same_window")) return OpenFilesIn::SameWindow;
+OpenFilesIn openFilesInFromString(const QString &value) {
+    if (value == QLatin1String("new_tab"))
+        return OpenFilesIn::NewTab;
+    if (value == QLatin1String("same_window"))
+        return OpenFilesIn::SameWindow;
     // Default is window-per-file (see Settings.h). Any unrecognised
     // or empty value falls through to the same NewWindow default so
     // a typo in settings.toml doesn't silently flip behaviour.
@@ -77,11 +87,11 @@ void Settings::load() {
     toml::table tbl;
     try {
         tbl = toml::parse(content);
-    } catch (const toml::parse_error&) {
+    } catch (const toml::parse_error &) {
         return;
     }
 
-    if (auto* general = tbl["general"].as_table()) {
+    if (auto *general = tbl["general"].as_table()) {
         if (auto v = (*general)["theme"].value<std::string>()) {
             m_theme = themeFromString(fromStd(*v));
         }
@@ -92,7 +102,7 @@ void Settings::load() {
             m_lastSaveDir = fromStd(*v);
         }
     }
-    if (auto* files = tbl["files"].as_table()) {
+    if (auto *files = tbl["files"].as_table()) {
         if (auto v = (*files)["auto_save"].value<bool>()) {
             m_autoSave = *v;
         }
@@ -104,13 +114,13 @@ void Settings::load() {
     // first-use flag in its own table; new installs use the unified
     // [first_use] table below. Read both for backwards compatibility,
     // and write only the new table on save() so the old key fades out.
-    if (auto* redaction = tbl["redaction"].as_table()) {
+    if (auto *redaction = tbl["redaction"].as_table()) {
         if (auto v = (*redaction)["warning_acknowledged"].value<bool>()) {
             m_firstUseFlags.insert(QStringLiteral("redaction"), *v);
         }
     }
-    if (auto* firstUse = tbl["first_use"].as_table()) {
-        for (const auto& [k, node] : *firstUse) {
+    if (auto *firstUse = tbl["first_use"].as_table()) {
+        for (const auto &[k, node] : *firstUse) {
             if (auto v = node.value<bool>()) {
                 m_firstUseFlags.insert(fromStd(std::string(k.str())), *v);
             }
@@ -134,10 +144,11 @@ void Settings::save() const {
 
     toml::table tbl{
         {"general", std::move(generalTbl)},
-        {"files", toml::table{
-            {"auto_save", m_autoSave},
-            {"recent_max", static_cast<int64_t>(m_recentMax)},
-        }},
+        {"files",
+         toml::table{
+             {"auto_save", m_autoSave},
+             {"recent_max", static_cast<int64_t>(m_recentMax)},
+         }},
         {"first_use", std::move(firstUse)},
     };
 
@@ -155,13 +166,23 @@ void Settings::save() const {
     file.close();
 }
 
-void Settings::setTheme(Theme value) { m_theme = value; }
-void Settings::setOpenFilesIn(OpenFilesIn value) { m_openFilesIn = value; }
-void Settings::setAutoSave(bool value) { m_autoSave = value; }
-void Settings::setRecentMax(int value) { m_recentMax = value; }
-void Settings::setLastSaveDir(const QString& value) { m_lastSaveDir = value; }
+void Settings::setTheme(Theme value) {
+    m_theme = value;
+}
+void Settings::setOpenFilesIn(OpenFilesIn value) {
+    m_openFilesIn = value;
+}
+void Settings::setAutoSave(bool value) {
+    m_autoSave = value;
+}
+void Settings::setRecentMax(int value) {
+    m_recentMax = value;
+}
+void Settings::setLastSaveDir(const QString &value) {
+    m_lastSaveDir = value;
+}
 
-void Settings::setFirstUseAcknowledged(const QString& key, bool value) {
+void Settings::setFirstUseAcknowledged(const QString &key, bool value) {
     if (value) {
         m_firstUseFlags.insert(key, true);
     } else {
@@ -169,4 +190,4 @@ void Settings::setFirstUseAcknowledged(const QString& key, bool value) {
     }
 }
 
-}  // namespace trailer
+} // namespace trailer

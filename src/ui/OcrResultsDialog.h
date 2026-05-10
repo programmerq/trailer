@@ -19,22 +19,21 @@ namespace trailer {
 // 90% use case (scan a receipt, pull the numbers, paste them).
 class OcrResultsDialog : public QDialog {
     Q_OBJECT
-public:
-    OcrResultsDialog(const QString& sourceName,
-                     const QVector<OcrEngine::TextBlock>& blocks,
-                     QWidget* parent = nullptr);
+  public:
+    OcrResultsDialog(const QString &sourceName, const QVector<OcrEngine::TextBlock> &blocks,
+                     QWidget *parent = nullptr);
 
     // Joined plain text — one TextBlock per line, in reading order.
     QString plainText() const;
 
-private slots:
+  private slots:
     void onCopy();
     void onSaveAs();
 
-private:
-    QPlainTextEdit* m_text = nullptr;
-    QLabel* m_summary = nullptr;
+  private:
+    QPlainTextEdit *m_text = nullptr;
+    QLabel *m_summary = nullptr;
     QString m_suggestedBaseName;
 };
 
-}  // namespace trailer
+} // namespace trailer

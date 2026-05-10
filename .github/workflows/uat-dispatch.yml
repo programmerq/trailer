@@ -1,0 +1,22 @@
+# Run the Docker UAT suite on demand (same as the tag pipeline's UAT job).
+# Use this before tagging a release to avoid discovering failures only at tag time.
+
+name: UAT
+
+on:
+  workflow_dispatch:
+
+jobs:
+  uat:
+    name: UAT (manual)
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build UAT image
+        run: docker build -t trailer-uat -f docker/uat/Dockerfile .
+
+      - name: Run UAT suite
+        run: |
+          docker run --rm -v "$PWD":/work -w /work trailer-uat \
+            bash scripts/run-uat.sh --in-container

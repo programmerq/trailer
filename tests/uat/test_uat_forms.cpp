@@ -38,9 +38,10 @@ using namespace trailer;
 
 namespace {
 
-MainWindow* currentMainWindow() {
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (auto* mw = qobject_cast<MainWindow*>(w)) return mw;
+MainWindow *currentMainWindow() {
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (auto *mw = qobject_cast<MainWindow *>(w))
+            return mw;
     }
     return nullptr;
 }
@@ -49,7 +50,7 @@ MainWindow* currentMainWindow() {
 //   id 0 – text     "fullname"  value "Alice"   label "Full Name"
 //   id 1 – checkbox "agree"     value "Yes"
 //   id 2 – dropdown "color"     opts=[Red,Green,Blue]  value "Green"
-static QString writeFormPdf(const QString& path) {
+static QString writeFormPdf(const QString &path) {
     QPDF pdf;
     pdf.emptyPDF();
 
@@ -73,42 +74,42 @@ static QString writeFormPdf(const QString& path) {
 
     // text field
     QPDFObjectHandle tf = QPDFObjectHandle::newDictionary();
-    tf.replaceKey("/Type",    QPDFObjectHandle::newName("/Annot"));
+    tf.replaceKey("/Type", QPDFObjectHandle::newName("/Annot"));
     tf.replaceKey("/Subtype", QPDFObjectHandle::newName("/Widget"));
-    tf.replaceKey("/FT",      QPDFObjectHandle::newName("/Tx"));
-    tf.replaceKey("/T",       QPDFObjectHandle::newString("fullname"));
-    tf.replaceKey("/TU",      QPDFObjectHandle::newString("Full Name"));
-    tf.replaceKey("/V",       QPDFObjectHandle::newString("Alice"));
-    tf.replaceKey("/Rect",    makeRect(72, 720, 288, 744));
-    tf.replaceKey("/P",       pageObj);
+    tf.replaceKey("/FT", QPDFObjectHandle::newName("/Tx"));
+    tf.replaceKey("/T", QPDFObjectHandle::newString("fullname"));
+    tf.replaceKey("/TU", QPDFObjectHandle::newString("Full Name"));
+    tf.replaceKey("/V", QPDFObjectHandle::newString("Alice"));
+    tf.replaceKey("/Rect", makeRect(72, 720, 288, 744));
+    tf.replaceKey("/P", pageObj);
     QPDFObjectHandle tfObj = pdf.makeIndirectObject(tf);
 
     // checkbox
     QPDFObjectHandle cb = QPDFObjectHandle::newDictionary();
-    cb.replaceKey("/Type",    QPDFObjectHandle::newName("/Annot"));
+    cb.replaceKey("/Type", QPDFObjectHandle::newName("/Annot"));
     cb.replaceKey("/Subtype", QPDFObjectHandle::newName("/Widget"));
-    cb.replaceKey("/FT",      QPDFObjectHandle::newName("/Btn"));
-    cb.replaceKey("/T",       QPDFObjectHandle::newString("agree"));
-    cb.replaceKey("/V",       QPDFObjectHandle::newName("/Yes"));
-    cb.replaceKey("/AS",      QPDFObjectHandle::newName("/Yes"));
-    cb.replaceKey("/Rect",    makeRect(72, 680, 96, 704));
-    cb.replaceKey("/P",       pageObj);
+    cb.replaceKey("/FT", QPDFObjectHandle::newName("/Btn"));
+    cb.replaceKey("/T", QPDFObjectHandle::newString("agree"));
+    cb.replaceKey("/V", QPDFObjectHandle::newName("/Yes"));
+    cb.replaceKey("/AS", QPDFObjectHandle::newName("/Yes"));
+    cb.replaceKey("/Rect", makeRect(72, 680, 96, 704));
+    cb.replaceKey("/P", pageObj);
     QPDFObjectHandle cbObj = pdf.makeIndirectObject(cb);
 
     // dropdown / combo
     QPDFObjectHandle dd = QPDFObjectHandle::newDictionary();
-    dd.replaceKey("/Type",    QPDFObjectHandle::newName("/Annot"));
+    dd.replaceKey("/Type", QPDFObjectHandle::newName("/Annot"));
     dd.replaceKey("/Subtype", QPDFObjectHandle::newName("/Widget"));
-    dd.replaceKey("/FT",      QPDFObjectHandle::newName("/Ch"));
-    dd.replaceKey("/Ff",      QPDFObjectHandle::newInteger(131072));
-    dd.replaceKey("/T",       QPDFObjectHandle::newString("color"));
-    dd.replaceKey("/V",       QPDFObjectHandle::newString("Green"));
+    dd.replaceKey("/FT", QPDFObjectHandle::newName("/Ch"));
+    dd.replaceKey("/Ff", QPDFObjectHandle::newInteger(131072));
+    dd.replaceKey("/T", QPDFObjectHandle::newString("color"));
+    dd.replaceKey("/V", QPDFObjectHandle::newString("Green"));
     QPDFObjectHandle opts = QPDFObjectHandle::newArray();
-    for (const char* s : {"Red", "Green", "Blue"})
+    for (const char *s : {"Red", "Green", "Blue"})
         opts.appendItem(QPDFObjectHandle::newString(s));
-    dd.replaceKey("/Opt",  opts);
+    dd.replaceKey("/Opt", opts);
     dd.replaceKey("/Rect", makeRect(72, 640, 288, 664));
-    dd.replaceKey("/P",    pageObj);
+    dd.replaceKey("/P", pageObj);
     QPDFObjectHandle ddObj = pdf.makeIndirectObject(dd);
 
     // wire /Annots
@@ -122,8 +123,8 @@ static QString writeFormPdf(const QString& path) {
     QPDFObjectHandle kids = QPDFObjectHandle::newArray();
     kids.appendItem(pageObj);
     QPDFObjectHandle pagesDict = QPDFObjectHandle::newDictionary();
-    pagesDict.replaceKey("/Type",  QPDFObjectHandle::newName("/Pages"));
-    pagesDict.replaceKey("/Kids",  kids);
+    pagesDict.replaceKey("/Type", QPDFObjectHandle::newName("/Pages"));
+    pagesDict.replaceKey("/Kids", kids);
     pagesDict.replaceKey("/Count", QPDFObjectHandle::newInteger(1));
     QPDFObjectHandle pagesObj = pdf.makeIndirectObject(pagesDict);
     pageDict.replaceKey("/Parent", pagesObj);
@@ -134,11 +135,11 @@ static QString writeFormPdf(const QString& path) {
     acroFields.appendItem(cbObj);
     acroFields.appendItem(ddObj);
     QPDFObjectHandle acroForm = QPDFObjectHandle::newDictionary();
-    acroForm.replaceKey("/Fields",          acroFields);
+    acroForm.replaceKey("/Fields", acroFields);
     acroForm.replaceKey("/NeedAppearances", QPDFObjectHandle::newBool(true));
 
     QPDFObjectHandle root = pdf.getRoot();
-    root.replaceKey("/Pages",    pagesObj);
+    root.replaceKey("/Pages", pagesObj);
     root.replaceKey("/AcroForm", acroForm);
 
     QPDFWriter writer(pdf, path.toStdString().c_str());
@@ -146,11 +147,11 @@ static QString writeFormPdf(const QString& path) {
     return path;
 }
 
-}  // namespace
+} // namespace
 
 class TestUatForms : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void init();
 
     void uat_frm_010_formFieldsReportedOnOpen();
@@ -160,13 +161,14 @@ private slots:
     void uat_frm_041_fillFormsRespectsExplicitToggleOff();
     void uat_frm_050_tabMovesBetweenFieldsInReadingOrder();
 
-private:
+  private:
     QTemporaryDir m_scratch;
 };
 
 void TestUatForms::init() {
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (qobject_cast<MainWindow*>(w)) w->close();
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (qobject_cast<MainWindow *>(w))
+            w->close();
     }
     QApplication::processEvents();
 }
@@ -175,19 +177,18 @@ void TestUatForms::init() {
 // supportsFormFilling() return true and expose the expected fields.
 void TestUatForms::uat_frm_010_formFieldsReportedOnOpen() {
     QVERIFY(m_scratch.isValid());
-    const QString path = writeFormPdf(
-        m_scratch.filePath(QStringLiteral("frm010.pdf")));
+    const QString path = writeFormPdf(m_scratch.filePath(QStringLiteral("frm010.pdf")));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({path});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    IDocument* doc = dv->currentDocument();
+    IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
 
     QVERIFY(doc->supportsFormFilling());
@@ -197,13 +198,13 @@ void TestUatForms::uat_frm_010_formFieldsReportedOnOpen() {
 
     // Verify names and types are correctly decoded.
     bool hasText = false, hasCb = false, hasDd = false;
-    for (const auto& f : fields) {
-        if (f.name == QStringLiteral("fullname") &&
-            f.type == FormFieldType::Text) hasText = true;
-        if (f.name == QStringLiteral("agree") &&
-            f.type == FormFieldType::Checkbox) hasCb = true;
-        if (f.name == QStringLiteral("color") &&
-            f.type == FormFieldType::Dropdown) hasDd = true;
+    for (const auto &f : fields) {
+        if (f.name == QStringLiteral("fullname") && f.type == FormFieldType::Text)
+            hasText = true;
+        if (f.name == QStringLiteral("agree") && f.type == FormFieldType::Checkbox)
+            hasCb = true;
+        if (f.name == QStringLiteral("color") && f.type == FormFieldType::Dropdown)
+            hasDd = true;
     }
     QVERIFY(hasText);
     QVERIFY(hasCb);
@@ -214,19 +215,18 @@ void TestUatForms::uat_frm_010_formFieldsReportedOnOpen() {
 // the document must still report supportsFormFilling() after the call.
 void TestUatForms::uat_frm_020_setFormFillingActiveShowsFields() {
     QVERIFY(m_scratch.isValid());
-    const QString path = writeFormPdf(
-        m_scratch.filePath(QStringLiteral("frm020.pdf")));
+    const QString path = writeFormPdf(m_scratch.filePath(QStringLiteral("frm020.pdf")));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({path});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    IDocument* doc = dv->currentDocument();
+    IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
     QVERIFY(doc->supportsFormFilling());
 
@@ -243,31 +243,32 @@ void TestUatForms::uat_frm_020_setFormFillingActiveShowsFields() {
 // value across a full close/reopen cycle.
 void TestUatForms::uat_frm_030_fillTextFieldPersistsAcrossSave() {
     QVERIFY(m_scratch.isValid());
-    const QString src = writeFormPdf(
-        m_scratch.filePath(QStringLiteral("frm030_src.pdf")));
-    const QString dst = m_scratch.filePath(
-        QStringLiteral("frm030_filled.pdf"));
+    const QString src = writeFormPdf(m_scratch.filePath(QStringLiteral("frm030_src.pdf")));
+    const QString dst = m_scratch.filePath(QStringLiteral("frm030_filled.pdf"));
 
     // --- Open the form, fill it, save ---
     {
-        auto* app = qobject_cast<Application*>(qApp);
+        auto *app = qobject_cast<Application *>(qApp);
         QVERIFY(app);
         app->openFiles({src});
         QApplication::processEvents();
 
-        MainWindow* mw = currentMainWindow();
+        MainWindow *mw = currentMainWindow();
         QVERIFY(mw);
-        auto* dv = mw->findChild<DocumentView*>();
+        auto *dv = mw->findChild<DocumentView *>();
         QVERIFY(dv);
-        IDocument* doc = dv->currentDocument();
+        IDocument *doc = dv->currentDocument();
         QVERIFY(doc);
         QVERIFY(doc->supportsFormFilling());
 
         // Find the "fullname" text field.
         const auto fields = doc->formFields();
         int tfId = -1;
-        for (const auto& f : fields) {
-            if (f.name == QStringLiteral("fullname")) { tfId = f.id; break; }
+        for (const auto &f : fields) {
+            if (f.name == QStringLiteral("fullname")) {
+                tfId = f.id;
+                break;
+            }
         }
         QVERIFY(tfId >= 0);
 
@@ -280,23 +281,26 @@ void TestUatForms::uat_frm_030_fillTextFieldPersistsAcrossSave() {
 
     // --- Re-open the saved file and verify the value persisted ---
     {
-        auto* app = qobject_cast<Application*>(qApp);
+        auto *app = qobject_cast<Application *>(qApp);
         QVERIFY(app);
         app->openFiles({dst});
         QApplication::processEvents();
 
-        MainWindow* mw = currentMainWindow();
+        MainWindow *mw = currentMainWindow();
         QVERIFY(mw);
-        auto* dv = mw->findChild<DocumentView*>();
+        auto *dv = mw->findChild<DocumentView *>();
         QVERIFY(dv);
-        IDocument* doc = dv->currentDocument();
+        IDocument *doc = dv->currentDocument();
         QVERIFY(doc);
         QVERIFY(doc->supportsFormFilling());
 
         const auto fields = doc->formFields();
-        const FormField* tf = nullptr;
-        for (const auto& f : fields) {
-            if (f.name == QStringLiteral("fullname")) { tf = &f; break; }
+        const FormField *tf = nullptr;
+        for (const auto &f : fields) {
+            if (f.name == QStringLiteral("fullname")) {
+                tf = &f;
+                break;
+            }
         }
         QVERIFY(tf != nullptr);
         QCOMPARE(tf->value, QStringLiteral("Charlie"));
@@ -304,19 +308,21 @@ void TestUatForms::uat_frm_030_fillTextFieldPersistsAcrossSave() {
 }
 
 namespace {
-QAction* findFillFormsAction(MainWindow* mw) {
-    for (QAction* top : mw->menuBar()->actions()) {
-        QMenu* menu = top->menu();
-        if (!menu) continue;
-        for (QAction* a : menu->actions()) {
+QAction *findFillFormsAction(MainWindow *mw) {
+    for (QAction *top : mw->menuBar()->actions()) {
+        QMenu *menu = top->menu();
+        if (!menu)
+            continue;
+        for (QAction *a : menu->actions()) {
             QString t = a->text();
             t.remove(QLatin1Char('&'));
-            if (t == QStringLiteral("Fill Forms")) return a;
+            if (t == QStringLiteral("Fill Forms"))
+                return a;
         }
     }
     return nullptr;
 }
-}  // namespace
+} // namespace
 
 // UAT-FRM-040 — Opening a fillable PDF auto-enables Fill Forms mode
 // so the user sees the editable widgets without having to discover the
@@ -324,24 +330,21 @@ QAction* findFillFormsAction(MainWindow* mw) {
 // users want "see the field, click, type", not matcher cleverness.
 void TestUatForms::uat_frm_040_fillFormsAutoEnabledOnFillablePdf() {
     QVERIFY(m_scratch.isValid());
-    const QString path = writeFormPdf(
-        m_scratch.filePath(QStringLiteral("frm040.pdf")));
+    const QString path = writeFormPdf(m_scratch.filePath(QStringLiteral("frm040.pdf")));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({path});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
 
-    QAction* fillForms = findFillFormsAction(mw);
+    QAction *fillForms = findFillFormsAction(mw);
     QVERIFY2(fillForms, "Tools > Fill Forms action not found");
-    QVERIFY2(fillForms->isEnabled(),
-             "Fill Forms must be enabled for a fillable PDF");
-    QVERIFY2(fillForms->isChecked(),
-             "Fill Forms must be auto-enabled the first time a fillable "
-             "PDF becomes the current document");
+    QVERIFY2(fillForms->isEnabled(), "Fill Forms must be enabled for a fillable PDF");
+    QVERIFY2(fillForms->isChecked(), "Fill Forms must be auto-enabled the first time a fillable "
+                                     "PDF becomes the current document");
 }
 
 // UAT-FRM-041 — If the user explicitly toggles Fill Forms off for a
@@ -349,18 +352,17 @@ void TestUatForms::uat_frm_040_fillFormsAutoEnabledOnFillablePdf() {
 // it. The auto-enable is once-per-document, not per-focus.
 void TestUatForms::uat_frm_041_fillFormsRespectsExplicitToggleOff() {
     QVERIFY(m_scratch.isValid());
-    const QString path = writeFormPdf(
-        m_scratch.filePath(QStringLiteral("frm041.pdf")));
+    const QString path = writeFormPdf(m_scratch.filePath(QStringLiteral("frm041.pdf")));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({path});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
 
-    QAction* fillForms = findFillFormsAction(mw);
+    QAction *fillForms = findFillFormsAction(mw);
     QVERIFY(fillForms);
     QVERIFY(fillForms->isChecked());
 
@@ -372,18 +374,16 @@ void TestUatForms::uat_frm_041_fillFormsRespectsExplicitToggleOff() {
     // Force a re-evaluation of the current-document path: simulate the
     // window losing and regaining its current doc by reissuing the
     // signal. (In real life this fires on tab/window focus changes.)
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    IDocument* doc = dv->currentDocument();
+    IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
-    QMetaObject::invokeMethod(dv, "currentDocumentChanged",
-                              Qt::DirectConnection,
-                              Q_ARG(trailer::IDocument*, doc));
+    QMetaObject::invokeMethod(dv, "currentDocumentChanged", Qt::DirectConnection,
+                              Q_ARG(trailer::IDocument *, doc));
     QApplication::processEvents();
 
-    QVERIFY2(!fillForms->isChecked(),
-             "Re-emitting currentDocumentChanged for a doc the user has "
-             "already opted out on must not re-enable Fill Forms");
+    QVERIFY2(!fillForms->isChecked(), "Re-emitting currentDocumentChanged for a doc the user has "
+                                      "already opted out on must not re-enable Fill Forms");
 }
 
 // UAT-FRM-050 — Tab moves focus through form fields in reading order
@@ -395,19 +395,18 @@ void TestUatForms::uat_frm_041_fillFormsRespectsExplicitToggleOff() {
 // fullname → agree → color regardless of which one we focus first.
 void TestUatForms::uat_frm_050_tabMovesBetweenFieldsInReadingOrder() {
     QVERIFY(m_scratch.isValid());
-    const QString path = writeFormPdf(
-        m_scratch.filePath(QStringLiteral("frm050.pdf")));
+    const QString path = writeFormPdf(m_scratch.filePath(QStringLiteral("frm050.pdf")));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({path});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    auto* doc = dv->currentDocument();
+    auto *doc = dv->currentDocument();
     QVERIFY(doc);
     QVERIFY(doc->supportsFormFilling());
 
@@ -422,11 +421,11 @@ void TestUatForms::uat_frm_050_tabMovesBetweenFieldsInReadingOrder() {
     // would require linking against PdfEditor; the simpler check is to
     // verify the Tab chain produces three distinct widgets in some
     // consistent order without crashing).
-    auto* mw_widget = mw->findChild<QWidget*>();
+    auto *mw_widget = mw->findChild<QWidget *>();
     QVERIFY(mw_widget);
-    QList<QWidget*> overlayChildren;
-    for (auto* fo : mw->findChildren<QWidget*>()) {
-        if (auto* parent = fo->parentWidget()) {
+    QList<QWidget *> overlayChildren;
+    for (auto *fo : mw->findChildren<QWidget *>()) {
+        if (auto *parent = fo->parentWidget()) {
             // FormOverlay is the only widget that holds QLineEdit /
             // QCheckBox / QComboBox children for form fields.
             const QString cn = parent->metaObject()->className();
@@ -441,32 +440,33 @@ void TestUatForms::uat_frm_050_tabMovesBetweenFieldsInReadingOrder() {
     // Walk the focus chain via QWidget::nextInFocusChain, starting
     // from the first overlay child. Ensure every step is a different
     // widget (i.e., setTabOrder built a real chain) until we cycle.
-    QWidget* start = overlayChildren.first();
+    QWidget *start = overlayChildren.first();
     start->setFocus();
-    QSet<QWidget*> visited;
+    QSet<QWidget *> visited;
     visited.insert(start);
-    QWidget* cursor = start;
+    QWidget *cursor = start;
     for (int i = 0; i < 10 && cursor; ++i) {
         cursor = cursor->nextInFocusChain();
         if (overlayChildren.contains(cursor)) {
             visited.insert(cursor);
         }
-        if (visited.size() == static_cast<int>(overlayChildren.size())) break;
+        if (visited.size() == static_cast<int>(overlayChildren.size()))
+            break;
     }
-    QVERIFY2(visited.size() >= 3,
-             "Tab focus chain did not visit all form-field widgets");
+    QVERIFY2(visited.size() >= 3, "Tab focus chain did not visit all form-field widgets");
 }
 
 // Custom main: create Application (not just QApplication) so
 // qobject_cast<Application*>(qApp) succeeds inside the tests.
 // Also sandbox HOME so Settings/RecentFiles don't touch the user's
 // real config directory.
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     QTemporaryDir fakeHome;
-    if (!fakeHome.isValid()) return 1;
+    if (!fakeHome.isValid())
+        return 1;
     qputenv("HOME", fakeHome.path().toUtf8());
     qputenv("XDG_CONFIG_HOME", (fakeHome.path() + "/.config").toUtf8());
-    qputenv("XDG_DATA_HOME",   (fakeHome.path() + "/.local/share").toUtf8());
+    qputenv("XDG_DATA_HOME", (fakeHome.path() + "/.local/share").toUtf8());
     QDir().mkpath(fakeHome.path() + "/.config/trailer");
     QDir().mkpath(fakeHome.path() + "/.local/share/trailer");
 

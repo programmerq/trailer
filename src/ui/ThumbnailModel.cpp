@@ -8,6 +8,7 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QMimeData>
+#include <QPainter>
 #include <QPixmap>
 #include <QScreen>
 #include <QTemporaryFile>
@@ -17,11 +18,29 @@
 
 #include <algorithm>
 
+namespace {
+
+// PDF pages that do not paint a full-page background are often rendered
+// with transparency; without an explicit underlay the thumbnail would
+// show the UI surface colour (e.g. dark grey in dark mode) instead of paper.
+QImage thumbnailOnPaperWhite(const QImage &thumb) {
+    if (thumb.isNull()) {
+        return thumb;
+    }
+    QImage out(thumb.size(), QImage::Format_ARGB32_Premultiplied);
+    out.fill(Qt::white);
+    QPainter painter(&out);
+    painter.drawImage(0, 0, thumb);
+    return out;
+}
+
+} // namespace
+
 namespace trailer {
 
-ThumbnailModel::ThumbnailModel(QObject* parent) : QAbstractListModel(parent) {}
+ThumbnailModel::ThumbnailModel(QObject *parent) : QAbstractListModel(parent) {}
 
-void ThumbnailModel::setDocument(IDocument* doc) {
+void ThumbnailModel::setDocument(IDocument *doc) {
     beginResetModel();
     m_doc = doc;
     m_cache.clear();
@@ -45,22 +64,23 @@ void ThumbnailModel::setThumbnailSize(QSize size) {
 }
 
 QStringList ThumbnailModel::mimeTypes() const {
-    return {QStringLiteral("application/x-trailer-pages"),
-            QStringLiteral("text/uri-list")};
+    return {QStringLiteral("application/x-trailer-pages"), QStringLiteral("text/uri-list")};
 }
 
-QMimeData* ThumbnailModel::mimeData(const QModelIndexList& indexes) const {
-    auto* data = new QMimeData;
+QMimeData *ThumbnailModel::mimeData(const QModelIndexList &indexes) const {
+    auto *data = new QMimeData;
 
     // Convert view-row indices to underlying document pages so
     // drag-out / extract works the same whether the model is
     // showing every page or a search-filtered subset.
     std::vector<int> rows;
     rows.reserve(indexes.size());
-    for (const QModelIndex& idx : indexes) {
-        if (!idx.isValid()) continue;
+    for (const QModelIndex &idx : indexes) {
+        if (!idx.isValid())
+            continue;
         const int page = pageForRow(idx.row());
-        if (page >= 0) rows.push_back(page);
+        if (page >= 0)
+            rows.push_back(page);
     }
     std::sort(rows.begin(), rows.end());
     rows.erase(std::unique(rows.begin(), rows.end()), rows.end());
@@ -90,7 +110,7 @@ QMimeData* ThumbnailModel::mimeData(const QModelIndexList& indexes) const {
     return data;
 }
 
-Qt::ItemFlags ThumbnailModel::flags(const QModelIndex& index) const {
+Qt::ItemFlags ThumbnailModel::flags(const QModelIndex &index) const {
     Qt::ItemFlags f = QAbstractListModel::flags(index);
     if (index.isValid()) {
         f |= Qt::ItemIsDragEnabled;
@@ -98,28 +118,32 @@ Qt::ItemFlags ThumbnailModel::flags(const QModelIndex& index) const {
     return f;
 }
 
-int ThumbnailModel::rowCount(const QModelIndex& parent) const {
+int ThumbnailModel::rowCount(const QModelIndex &parent) const {
     if (parent.isValid() || !m_doc || !m_doc->supportsThumbnails()) {
         return 0;
     }
-    if (!m_filter.empty()) return static_cast<int>(m_filter.size());
+    if (!m_filter.empty())
+        return static_cast<int>(m_filter.size());
     return m_doc->pageCount();
 }
 
-void ThumbnailModel::setPageFilter(const std::vector<int>& pages) {
-    if (pages == m_filter) return;
+void ThumbnailModel::setPageFilter(const std::vector<int> &pages) {
+    if (pages == m_filter)
+        return;
     beginResetModel();
     m_filter = pages;
     endResetModel();
 }
 
 int ThumbnailModel::pageForRow(int row) const {
-    if (m_filter.empty()) return row;
-    if (row < 0 || row >= static_cast<int>(m_filter.size())) return -1;
+    if (m_filter.empty())
+        return row;
+    if (row < 0 || row >= static_cast<int>(m_filter.size()))
+        return -1;
     return m_filter[static_cast<size_t>(row)];
 }
 
-QVariant ThumbnailModel::data(const QModelIndex& index, int role) const {
+QVariant ThumbnailModel::data(const QModelIndex &index, int role) const {
     if (!m_doc || !index.isValid()) {
         return {};
     }
@@ -132,36 +156,36 @@ QVariant ThumbnailModel::data(const QModelIndex& index, int role) const {
         return {};
     }
     switch (role) {
-        case Qt::DisplayRole:
-            return QString::number(page + 1);
-        case Qt::DecorationRole: {
-            auto it = m_cache.find(page);
-            if (it == m_cache.end()) {
-                // Render at native resolution for the user's primary
-                // screen and stamp devicePixelRatio on the result so
-                // Qt treats the pixmap as logical m_size while
-                // sampling the high-DPI pixels. Without this the
-                // sidebar thumbnail looks blurry on Retina.
-                qreal dpr = 1.0;
-                if (auto* screen = QGuiApplication::primaryScreen()) {
-                    dpr = screen->devicePixelRatio();
-                }
-                const QSize nativeSize(
-                    int(std::ceil(m_size.width() * dpr)),
-                    int(std::ceil(m_size.height() * dpr)));
-                QImage img = m_doc->renderThumbnail(page, nativeSize);
-                if (!img.isNull()) {
-                    img.setDevicePixelRatio(dpr);
-                }
-                it = m_cache.insert(page, img.isNull() ? QPixmap() : QPixmap::fromImage(img));
+    case Qt::DisplayRole:
+        return QString::number(page + 1);
+    case Qt::DecorationRole: {
+        auto it = m_cache.find(page);
+        if (it == m_cache.end()) {
+            // Render at native resolution for the user's primary
+            // screen and stamp devicePixelRatio on the result so
+            // Qt treats the pixmap as logical m_size while
+            // sampling the high-DPI pixels. Without this the
+            // sidebar thumbnail looks blurry on Retina.
+            qreal dpr = 1.0;
+            if (auto *screen = QGuiApplication::primaryScreen()) {
+                dpr = screen->devicePixelRatio();
             }
-            return it.value();
+            const QSize nativeSize(int(std::ceil(m_size.width() * dpr)),
+                                   int(std::ceil(m_size.height() * dpr)));
+            QImage img = m_doc->renderThumbnail(page, nativeSize);
+            if (!img.isNull()) {
+                img = thumbnailOnPaperWhite(img);
+                img.setDevicePixelRatio(dpr);
+            }
+            it = m_cache.insert(page, img.isNull() ? QPixmap() : QPixmap::fromImage(img));
         }
-        case Qt::ToolTipRole:
-            return QObject::tr("Page %1").arg(page + 1);
-        default:
-            return {};
+        return it.value();
+    }
+    case Qt::ToolTipRole:
+        return QObject::tr("Page %1").arg(page + 1);
+    default:
+        return {};
     }
 }
 
-}  // namespace trailer
+} // namespace trailer

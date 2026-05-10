@@ -30,9 +30,9 @@ namespace trailer {
 
 namespace {
 
-constexpr const char* kExtensions[] = {
-    "png", "jpg", "jpeg", "bmp", "gif", "tiff", "tif", "webp",
-    "ppm", "pgm", "pbm", "xbm", "xpm", "ico",
+constexpr const char *kExtensions[] = {
+    "png",  "jpg", "jpeg", "bmp", "gif", "tiff", "tif",
+    "webp", "ppm", "pgm",  "pbm", "xbm", "xpm",  "ico",
 };
 
 constexpr double kZoomStep = 1.1;
@@ -42,164 +42,176 @@ constexpr size_t kMaxUndoSteps = 32;
 
 Qt::PenStyle toPenStyle(DashStyle d) {
     switch (d) {
-        case DashStyle::Solid:  return Qt::SolidLine;
-        case DashStyle::Dashed: return Qt::DashLine;
-        case DashStyle::Dotted: return Qt::DotLine;
+    case DashStyle::Solid:
+        return Qt::SolidLine;
+    case DashStyle::Dashed:
+        return Qt::DashLine;
+    case DashStyle::Dotted:
+        return Qt::DotLine;
     }
     return Qt::SolidLine;
 }
 
-QImage flattenAnnotations(const QImage& base,
-                          const std::vector<Annotation>& anns) {
-    if (anns.empty() || base.isNull()) return base;
+QImage flattenAnnotations(const QImage &base, const std::vector<Annotation> &anns) {
+    if (anns.empty() || base.isNull())
+        return base;
     QImage flat = base.convertToFormat(QImage::Format_ARGB32);
     QPainter p(&flat);
     p.setRenderHint(QPainter::Antialiasing, true);
-    for (const Annotation& a : anns) {
-        if (a.page != 0) continue;
+    for (const Annotation &a : anns) {
+        if (a.page != 0)
+            continue;
         QPen pen(a.style.stroke);
         pen.setWidthF(a.style.strokeWidth);
         pen.setStyle(toPenStyle(a.style.dash));
         p.setPen(pen);
         p.setBrush(a.style.fill.alpha() > 0 ? QBrush(a.style.fill) : Qt::NoBrush);
         switch (a.type) {
-            case AnnotationType::Rectangle: p.drawRect(a.bounds); break;
-            case AnnotationType::Ellipse:   p.drawEllipse(a.bounds); break;
-            case AnnotationType::Line:
-            case AnnotationType::Arrow: {
-                if (a.points.size() < 2) break;
-                p.drawLine(a.points[0], a.points[1]);
-                if (a.type == AnnotationType::Arrow) {
-                    const QLineF line(a.points[1], a.points[0]);
-                    QLineF l1 = line, l2 = line;
-                    l1.setLength(12.0); l2.setLength(12.0);
-                    l1.setAngle(line.angle() + 25.0);
-                    l2.setAngle(line.angle() - 25.0);
-                    p.drawLine(l1); p.drawLine(l2);
-                }
+        case AnnotationType::Rectangle:
+            p.drawRect(a.bounds);
+            break;
+        case AnnotationType::Ellipse:
+            p.drawEllipse(a.bounds);
+            break;
+        case AnnotationType::Line:
+        case AnnotationType::Arrow: {
+            if (a.points.size() < 2)
                 break;
+            p.drawLine(a.points[0], a.points[1]);
+            if (a.type == AnnotationType::Arrow) {
+                const QLineF line(a.points[1], a.points[0]);
+                QLineF l1 = line, l2 = line;
+                l1.setLength(12.0);
+                l2.setLength(12.0);
+                l1.setAngle(line.angle() + 25.0);
+                l2.setAngle(line.angle() - 25.0);
+                p.drawLine(l1);
+                p.drawLine(l2);
             }
-            case AnnotationType::Ink: {
-                if (a.points.size() < 2) break;
-                for (size_t i = 1; i < a.points.size(); ++i) {
-                    p.drawLine(a.points[i - 1], a.points[i]);
-                }
+            break;
+        }
+        case AnnotationType::Ink: {
+            if (a.points.size() < 2)
                 break;
+            for (size_t i = 1; i < a.points.size(); ++i) {
+                p.drawLine(a.points[i - 1], a.points[i]);
             }
-            case AnnotationType::Text: {
+            break;
+        }
+        case AnnotationType::Text: {
+            QFont f = p.font();
+            if (!a.style.fontFamily.isEmpty())
+                f.setFamily(a.style.fontFamily);
+            f.setWeight(static_cast<QFont::Weight>(a.style.fontWeight));
+            f.setPointSize(a.style.fontPointSize > 0 ? a.style.fontPointSize : 12);
+            p.setFont(f);
+            p.setPen(a.style.stroke);
+            p.drawText(a.bounds, Qt::AlignLeft | Qt::TextWordWrap, a.text);
+            break;
+        }
+        case AnnotationType::Note: {
+            const QRectF icon(a.bounds.topLeft(), QSizeF(18.0, 18.0));
+            const QColor noteColour =
+                a.style.fill.alpha() > 0 ? a.style.fill : QColor(255, 225, 120);
+            p.setBrush(noteColour);
+            p.setPen(QPen(a.style.stroke, 1.0));
+            p.drawRect(icon);
+            QFont f = p.font();
+            f.setPointSize(10);
+            f.setBold(true);
+            p.setFont(f);
+            p.drawText(icon, Qt::AlignCenter, QStringLiteral("N"));
+            break;
+        }
+        case AnnotationType::HighlightShape: {
+            QColor fill = a.style.fill.alpha() > 0 ? a.style.fill : a.style.stroke;
+            fill.setAlpha(a.style.fill.alpha() > 0 ? a.style.fill.alpha() : 90);
+            p.fillRect(a.bounds, fill);
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(a.bounds);
+            break;
+        }
+        case AnnotationType::SpeechBubble: {
+            const double radius =
+                std::min(12.0, std::min(a.bounds.width(), a.bounds.height()) / 4.0);
+            QPainterPath body;
+            body.addRoundedRect(a.bounds, radius, radius);
+            if (!a.points.empty()) {
+                const QPointF tail = a.points.front();
+                const QPointF anchor(a.bounds.left() + a.bounds.width() * 0.25, a.bounds.bottom());
+                const QPointF anchor2(anchor.x() + radius, a.bounds.bottom());
+                QPainterPath tailPath;
+                tailPath.moveTo(anchor);
+                tailPath.lineTo(tail);
+                tailPath.lineTo(anchor2);
+                tailPath.closeSubpath();
+                body.addPath(tailPath);
+            }
+            p.drawPath(body);
+            if (!a.text.isEmpty()) {
                 QFont f = p.font();
-                if (!a.style.fontFamily.isEmpty()) f.setFamily(a.style.fontFamily);
+                if (!a.style.fontFamily.isEmpty())
+                    f.setFamily(a.style.fontFamily);
                 f.setWeight(static_cast<QFont::Weight>(a.style.fontWeight));
                 f.setPointSize(a.style.fontPointSize > 0 ? a.style.fontPointSize : 12);
                 p.setFont(f);
                 p.setPen(a.style.stroke);
-                p.drawText(a.bounds, Qt::AlignLeft | Qt::TextWordWrap, a.text);
-                break;
+                p.drawText(a.bounds.adjusted(8, 4, -8, -4), Qt::AlignCenter | Qt::TextWordWrap,
+                           a.text);
             }
-            case AnnotationType::Note: {
-                const QRectF icon(a.bounds.topLeft(), QSizeF(18.0, 18.0));
-                const QColor noteColour = a.style.fill.alpha() > 0
-                    ? a.style.fill : QColor(255, 225, 120);
-                p.setBrush(noteColour);
-                p.setPen(QPen(a.style.stroke, 1.0));
-                p.drawRect(icon);
-                QFont f = p.font();
-                f.setPointSize(10);
-                f.setBold(true);
-                p.setFont(f);
-                p.drawText(icon, Qt::AlignCenter, QStringLiteral("N"));
+            break;
+        }
+        case AnnotationType::Redaction: {
+            p.fillRect(a.bounds, Qt::black);
+            break;
+        }
+        case AnnotationType::Signature: {
+            if (a.imagePath.isEmpty() || a.bounds.isEmpty())
                 break;
-            }
-            case AnnotationType::HighlightShape: {
-                QColor fill = a.style.fill.alpha() > 0 ? a.style.fill
-                                                       : a.style.stroke;
-                fill.setAlpha(a.style.fill.alpha() > 0 ? a.style.fill.alpha() : 90);
-                p.fillRect(a.bounds, fill);
-                p.setBrush(Qt::NoBrush);
-                p.drawRect(a.bounds);
+            QImage sig(a.imagePath);
+            if (sig.isNull())
                 break;
-            }
-            case AnnotationType::SpeechBubble: {
-                const double radius = std::min(12.0, std::min(a.bounds.width(),
-                                                              a.bounds.height()) / 4.0);
-                QPainterPath body;
-                body.addRoundedRect(a.bounds, radius, radius);
-                if (!a.points.empty()) {
-                    const QPointF tail = a.points.front();
-                    const QPointF anchor(a.bounds.left() + a.bounds.width() * 0.25,
-                                         a.bounds.bottom());
-                    const QPointF anchor2(anchor.x() + radius, a.bounds.bottom());
-                    QPainterPath tailPath;
-                    tailPath.moveTo(anchor);
-                    tailPath.lineTo(tail);
-                    tailPath.lineTo(anchor2);
-                    tailPath.closeSubpath();
-                    body.addPath(tailPath);
-                }
-                p.drawPath(body);
-                if (!a.text.isEmpty()) {
-                    QFont f = p.font();
-                    if (!a.style.fontFamily.isEmpty()) f.setFamily(a.style.fontFamily);
-                    f.setWeight(static_cast<QFont::Weight>(a.style.fontWeight));
-                    f.setPointSize(a.style.fontPointSize > 0 ? a.style.fontPointSize : 12);
-                    p.setFont(f);
-                    p.setPen(a.style.stroke);
-                    p.drawText(a.bounds.adjusted(8, 4, -8, -4),
-                               Qt::AlignCenter | Qt::TextWordWrap, a.text);
-                }
+            // Scale to fit preserving aspect ratio (matches the
+            // on-screen overlay preview).
+            const QImage scaled =
+                sig.scaled(a.bounds.size().toSize(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+            const QPointF topLeft(a.bounds.left() + (a.bounds.width() - scaled.width()) / 2.0,
+                                  a.bounds.top() + (a.bounds.height() - scaled.height()) / 2.0);
+            p.drawImage(topLeft, scaled);
+            break;
+        }
+        case AnnotationType::ZoomLens: {
+            if (a.bounds.width() < 1 || a.bounds.height() < 1)
                 break;
+            const double z = a.style.zoomFactor > 0 ? a.style.zoomFactor : 2.0;
+            const QSizeF srcSize(a.bounds.width() / z, a.bounds.height() / z);
+            const QPointF centre = a.bounds.center();
+            const QRectF src(centre.x() - srcSize.width() / 2, centre.y() - srcSize.height() / 2,
+                             srcSize.width(), srcSize.height());
+            const QRect srcRect =
+                src.toRect().intersected(QRect(0, 0, base.width(), base.height()));
+            if (!srcRect.isEmpty()) {
+                const QImage slice = base.copy(srcRect).scaled(
+                    a.bounds.size().toSize(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+                p.save();
+                QPainterPath clip;
+                clip.addEllipse(a.bounds);
+                p.setClipPath(clip);
+                p.drawImage(a.bounds.topLeft(), slice);
+                p.restore();
             }
-            case AnnotationType::Redaction: {
-                p.fillRect(a.bounds, Qt::black);
-                break;
-            }
-            case AnnotationType::Signature: {
-                if (a.imagePath.isEmpty() || a.bounds.isEmpty()) break;
-                QImage sig(a.imagePath);
-                if (sig.isNull()) break;
-                // Scale to fit preserving aspect ratio (matches the
-                // on-screen overlay preview).
-                const QImage scaled = sig.scaled(
-                    a.bounds.size().toSize(),
-                    Qt::KeepAspectRatio, Qt::SmoothTransformation);
-                const QPointF topLeft(
-                    a.bounds.left() + (a.bounds.width() - scaled.width()) / 2.0,
-                    a.bounds.top() + (a.bounds.height() - scaled.height()) / 2.0);
-                p.drawImage(topLeft, scaled);
-                break;
-            }
-            case AnnotationType::ZoomLens: {
-                if (a.bounds.width() < 1 || a.bounds.height() < 1) break;
-                const double z = a.style.zoomFactor > 0 ? a.style.zoomFactor : 2.0;
-                const QSizeF srcSize(a.bounds.width() / z, a.bounds.height() / z);
-                const QPointF centre = a.bounds.center();
-                const QRectF src(centre.x() - srcSize.width() / 2,
-                                 centre.y() - srcSize.height() / 2,
-                                 srcSize.width(), srcSize.height());
-                const QRect srcRect = src.toRect().intersected(
-                    QRect(0, 0, base.width(), base.height()));
-                if (!srcRect.isEmpty()) {
-                    const QImage slice = base.copy(srcRect).scaled(
-                        a.bounds.size().toSize(), Qt::KeepAspectRatio,
-                        Qt::SmoothTransformation);
-                    p.save();
-                    QPainterPath clip;
-                    clip.addEllipse(a.bounds);
-                    p.setClipPath(clip);
-                    p.drawImage(a.bounds.topLeft(), slice);
-                    p.restore();
-                }
-                p.setBrush(Qt::NoBrush);
-                p.drawEllipse(a.bounds);
-                break;
-            }
-            default: break;
+            p.setBrush(Qt::NoBrush);
+            p.drawEllipse(a.bounds);
+            break;
+        }
+        default:
+            break;
         }
     }
     return flat;
 }
 
-}  // namespace
+} // namespace
 
 ImageDocument::ImageDocument(QString path) : m_path(std::move(path)) {
     QImageReader reader(m_path);
@@ -221,17 +233,17 @@ QString ImageDocument::filePath() const {
     return m_path;
 }
 
-QWidget* ImageDocument::createView(QWidget* parent) {
-    auto* scroll = new QScrollArea(parent);
+QWidget *ImageDocument::createView(QWidget *parent) {
+    auto *scroll = new QScrollArea(parent);
     scroll->setAlignment(Qt::AlignCenter);
     scroll->setBackgroundRole(QPalette::Base);
 
-    auto* label = new QLabel(scroll);
+    auto *label = new QLabel(scroll);
     label->setAlignment(Qt::AlignCenter);
     label->setBackgroundRole(QPalette::Base);
 
     if (m_animated) {
-        auto* movie = new QMovie(m_path, QByteArray(), label);
+        auto *movie = new QMovie(m_path, QByteArray(), label);
         m_movie = movie;
         label->setMovie(movie);
         if (movie->isValid()) {
@@ -249,23 +261,23 @@ QWidget* ImageDocument::createView(QWidget* parent) {
     m_label = label;
 
     if (!m_animated && !m_image.isNull()) {
-        auto* overlay = new AnnotationOverlay(label);
+        auto *overlay = new AnnotationOverlay(label);
         overlay->setStore(&m_annotations);
-        overlay->setDocumentToView([this](QPointF p, int /*page*/) {
-            return QPointF(p.x() * m_scale, p.y() * m_scale);
-        });
+        overlay->setDocumentToView(
+            [this](QPointF p, int /*page*/) { return QPointF(p.x() * m_scale, p.y() * m_scale); });
         overlay->setViewToDocument([this](QPointF p, int /*page*/) {
-            if (m_scale <= 0.0) return p;
+            if (m_scale <= 0.0)
+                return p;
             return QPointF(p.x() / m_scale, p.y() / m_scale);
         });
-        overlay->setSourceSampler(
-            [this](QRectF docRect, QSize outPx, int /*page*/) -> QImage {
-                if (m_image.isNull()) return {};
-                const QRect src = docRect.toRect().intersected(m_image.rect());
-                if (src.isEmpty()) return {};
-                return m_image.copy(src).scaled(
-                    outPx, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            });
+        overlay->setSourceSampler([this](QRectF docRect, QSize outPx, int /*page*/) -> QImage {
+            if (m_image.isNull())
+                return {};
+            const QRect src = docRect.toRect().intersected(m_image.rect());
+            if (src.isEmpty())
+                return {};
+            return m_image.copy(src).scaled(outPx, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+        });
         overlay->setGeometry(label->rect());
         overlay->show();
         m_overlay = overlay;
@@ -280,8 +292,8 @@ void ImageDocument::applyScale(double factor) {
     }
     m_scale = std::clamp(factor, kZoomMin, kZoomMax);
     const QSize target = m_image.size() * m_scale;
-    const QPixmap scaled = QPixmap::fromImage(m_image).scaled(
-        target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    const QPixmap scaled =
+        QPixmap::fromImage(m_image).scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
     m_label->setPixmap(scaled);
     m_label->adjustSize();
     if (m_overlay) {
@@ -330,24 +342,29 @@ void ImageDocument::zoomFitPage() {
 }
 
 void ImageDocument::refreshView() {
-    if (!m_label || m_image.isNull()) return;
+    if (!m_label || m_image.isNull())
+        return;
     applyScale(m_scale);
 }
 
 void ImageDocument::setAnnotationTool(AnnotationTool tool) {
-    if (m_overlay) m_overlay->setActiveTool(tool);
+    if (m_overlay)
+        m_overlay->setActiveTool(tool);
 }
 
-void ImageDocument::setAnnotationStyle(const AnnotationStyle& style) {
-    if (m_overlay) m_overlay->setStyle(style);
+void ImageDocument::setAnnotationStyle(const AnnotationStyle &style) {
+    if (m_overlay)
+        m_overlay->setStyle(style);
 }
 
-void ImageDocument::setPendingAnnotationText(const QString& text) {
-    if (m_overlay) m_overlay->setPendingTextPreset(text);
+void ImageDocument::setPendingAnnotationText(const QString &text) {
+    if (m_overlay)
+        m_overlay->setPendingTextPreset(text);
 }
 
-void ImageDocument::setPendingSignaturePath(const QString& path) {
-    if (m_overlay) m_overlay->setPendingSignaturePath(path);
+void ImageDocument::setPendingSignaturePath(const QString &path) {
+    if (m_overlay)
+        m_overlay->setPendingSignaturePath(path);
 }
 
 void ImageDocument::pushUndoSnapshot() {
@@ -363,7 +380,8 @@ void ImageDocument::undo() {
         m_annotations.undo();
         return;
     }
-    if (m_undoStack.empty()) return;
+    if (m_undoStack.empty())
+        return;
     m_redoStack.push_back(m_image);
     m_image = m_undoStack.back();
     m_undoStack.pop_back();
@@ -376,7 +394,8 @@ void ImageDocument::redo() {
         m_annotations.redo();
         return;
     }
-    if (m_redoStack.empty()) return;
+    if (m_redoStack.empty())
+        return;
     m_undoStack.push_back(m_image);
     m_image = m_redoStack.back();
     m_redoStack.pop_back();
@@ -385,7 +404,8 @@ void ImageDocument::redo() {
 }
 
 void ImageDocument::rotatePage(int /*pageIndex*/, int degreesClockwise) {
-    if (m_image.isNull() || m_animated) return;
+    if (m_image.isNull() || m_animated)
+        return;
     pushUndoSnapshot();
     QTransform t;
     t.rotate(degreesClockwise);
@@ -395,7 +415,8 @@ void ImageDocument::rotatePage(int /*pageIndex*/, int degreesClockwise) {
 }
 
 void ImageDocument::flipHorizontal() {
-    if (m_image.isNull() || m_animated) return;
+    if (m_image.isNull() || m_animated)
+        return;
     pushUndoSnapshot();
     m_image = m_image.mirrored(/*horizontally=*/true, /*vertically=*/false);
     m_dirty = true;
@@ -403,7 +424,8 @@ void ImageDocument::flipHorizontal() {
 }
 
 void ImageDocument::flipVertical() {
-    if (m_image.isNull() || m_animated) return;
+    if (m_image.isNull() || m_animated)
+        return;
     pushUndoSnapshot();
     m_image = m_image.mirrored(/*horizontally=*/false, /*vertically=*/true);
     m_dirty = true;
@@ -424,10 +446,12 @@ bool ImageDocument::resizeImage(int width, int height, bool smoothScaling) {
 }
 
 bool ImageDocument::cropToRect(int x, int y, int width, int height) {
-    if (m_image.isNull() || m_animated) return false;
+    if (m_image.isNull() || m_animated)
+        return false;
     const QRect bounds(0, 0, m_image.width(), m_image.height());
     const QRect rect = QRect(x, y, width, height).intersected(bounds);
-    if (rect.isEmpty()) return false;
+    if (rect.isEmpty())
+        return false;
     pushUndoSnapshot();
     m_image = m_image.copy(rect);
     m_dirty = true;
@@ -437,8 +461,8 @@ bool ImageDocument::cropToRect(int x, int y, int width, int height) {
 
 namespace {
 
-QImage applyColourTransform(const QImage& src, double brightness,
-                            double contrast, double saturation) {
+QImage applyColourTransform(const QImage &src, double brightness, double contrast,
+                            double saturation) {
     const double bAdd = std::clamp(brightness, -1.0, 1.0) * 255.0;
     const double cFactor = (1.0 + std::clamp(contrast, -1.0, 1.0));
     const double sFactor = (1.0 + std::clamp(saturation, -1.0, 1.0));
@@ -450,7 +474,7 @@ QImage applyColourTransform(const QImage& src, double brightness,
     const int h = work.height();
     const int w = work.width();
     for (int y = 0; y < h; ++y) {
-        auto* scanline = reinterpret_cast<QRgb*>(work.scanLine(y));
+        auto *scanline = reinterpret_cast<QRgb *>(work.scanLine(y));
         for (int x = 0; x < w; ++x) {
             const QRgb px = scanline[x];
             double r = qRed(px);
@@ -458,7 +482,9 @@ QImage applyColourTransform(const QImage& src, double brightness,
             double b = qBlue(px);
             const int a = qAlpha(px);
 
-            r += bAdd; g += bAdd; b += bAdd;
+            r += bAdd;
+            g += bAdd;
+            b += bAdd;
             r = (r - 128.0) * cFactor + 128.0;
             g = (g - 128.0) * cFactor + 128.0;
             b = (b - 128.0) * cFactor + 128.0;
@@ -467,21 +493,19 @@ QImage applyColourTransform(const QImage& src, double brightness,
             g = lum + (g - lum) * sFactor;
             b = lum + (b - lum) * sFactor;
 
-            scanline[x] = qRgba(
-                std::clamp(static_cast<int>(std::lround(r)), 0, 255),
-                std::clamp(static_cast<int>(std::lround(g)), 0, 255),
-                std::clamp(static_cast<int>(std::lround(b)), 0, 255),
-                a);
+            scanline[x] = qRgba(std::clamp(static_cast<int>(std::lround(r)), 0, 255),
+                                std::clamp(static_cast<int>(std::lround(g)), 0, 255),
+                                std::clamp(static_cast<int>(std::lround(b)), 0, 255), a);
         }
     }
     return work;
 }
 
-}  // namespace
+} // namespace
 
-bool ImageDocument::adjustColour(double brightness, double contrast,
-                                 double saturation) {
-    if (m_image.isNull() || m_animated) return false;
+bool ImageDocument::adjustColour(double brightness, double contrast, double saturation) {
+    if (m_image.isNull() || m_animated)
+        return false;
     pushUndoSnapshot();
     m_image = applyColourTransform(m_image, brightness, contrast, saturation);
     m_dirty = true;
@@ -489,26 +513,27 @@ bool ImageDocument::adjustColour(double brightness, double contrast,
     return true;
 }
 
-void ImageDocument::previewColour(double brightness, double contrast,
-                                  double saturation) {
-    if (!m_label || m_image.isNull() || m_animated) return;
-    const QImage preview = applyColourTransform(
-        m_image, brightness, contrast, saturation);
+void ImageDocument::previewColour(double brightness, double contrast, double saturation) {
+    if (!m_label || m_image.isNull() || m_animated)
+        return;
+    const QImage preview = applyColourTransform(m_image, brightness, contrast, saturation);
     const QSize target = preview.size() * m_scale;
-    m_label->setPixmap(QPixmap::fromImage(preview).scaled(
-        target, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    m_label->setPixmap(
+        QPixmap::fromImage(preview).scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation));
 }
 
 void ImageDocument::clearColourPreview() {
     refreshView();
 }
 
-bool ImageDocument::replaceImage(const QImage& replacement) {
-    if (m_image.isNull() || m_animated || replacement.isNull()) return false;
+bool ImageDocument::replaceImage(const QImage &replacement) {
+    if (m_image.isNull() || m_animated || replacement.isNull())
+        return false;
     // ML features produce ARGB32 output the same size as the input;
     // anything else is a bug in the caller, so we hard-fail rather
     // than silently resample.
-    if (replacement.size() != m_image.size()) return false;
+    if (replacement.size() != m_image.size())
+        return false;
     pushUndoSnapshot();
     m_image = replacement;
     m_dirty = true;
@@ -516,9 +541,10 @@ bool ImageDocument::replaceImage(const QImage& replacement) {
     return true;
 }
 
-bool ImageDocument::exportAs(const QString& destPath, const QString& format,
-                             int quality, const QString& filterId) const {
-    if (m_image.isNull()) return false;
+bool ImageDocument::exportAs(const QString &destPath, const QString &format, int quality,
+                             const QString &filterId) const {
+    if (m_image.isNull())
+        return false;
     QImage out = flattenAnnotations(m_image, m_annotations.annotations());
     if (!filterId.isEmpty()) {
         // Apply colour filter after flattening so annotations are
@@ -534,30 +560,34 @@ bool ImageDocument::exportAs(const QString& destPath, const QString& format,
     if (format.compare(QLatin1String("pdf"), Qt::CaseInsensitive) == 0) {
         QPdfWriter writer(destPath);
         writer.setResolution(72);
-        const QPageSize ps(out.size(), QPageSize::Point,
-                           QStringLiteral("ImagePage"),
+        const QPageSize ps(out.size(), QPageSize::Point, QStringLiteral("ImagePage"),
                            QPageSize::ExactMatch);
         writer.setPageSize(ps);
         writer.setPageMargins(QMarginsF(0, 0, 0, 0));
         QPainter painter(&writer);
-        if (!painter.isActive()) return false;
+        if (!painter.isActive())
+            return false;
         painter.drawImage(QRectF(0, 0, out.width(), out.height()), out);
         painter.end();
         return true;
     }
     QImageWriter writer(destPath, format.toLatin1());
-    if (quality >= 0) writer.setQuality(quality);
+    if (quality >= 0)
+        writer.setQuality(quality);
     return writer.write(out);
 }
 
-bool ImageDocument::save(const QString& newPath) {
-    if (m_image.isNull() || m_animated) return false;
+bool ImageDocument::save(const QString &newPath) {
+    if (m_image.isNull() || m_animated)
+        return false;
     const QString target = newPath.isEmpty() ? m_path : newPath;
-    if (target.isEmpty()) return false;
+    if (target.isEmpty())
+        return false;
     const QImage out = flattenAnnotations(m_image, m_annotations.annotations());
     const QByteArray format = QFileInfo(target).suffix().toLatin1().toLower();
     QImageWriter writer(target, format.isEmpty() ? QByteArray("png") : format);
-    if (!writer.write(out)) return false;
+    if (!writer.write(out))
+        return false;
     m_image = out;
     m_annotations.clear();
     m_path = target;
@@ -607,7 +637,7 @@ QImage ImageDocument::renderThumbnail(int pageIndex, QSize targetSize) {
     return m_image.scaled(targetSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
 }
 
-void ImageDocument::print(QWidget* dialogParent) {
+void ImageDocument::print(QWidget *dialogParent) {
     if (m_image.isNull()) {
         return;
     }
@@ -622,8 +652,8 @@ void ImageDocument::print(QWidget* dialogParent) {
         return;
     }
     const QRect target = printer.pageLayout().paintRectPixels(printer.resolution());
-    const QImage scaled = m_image.scaled(
-        target.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    const QImage scaled =
+        m_image.scaled(target.size(), Qt::KeepAspectRatio, Qt::SmoothTransformation);
     const int x = target.x() + (target.width() - scaled.width()) / 2;
     const int y = target.y() + (target.height() - scaled.height()) / 2;
     painter.drawImage(QPoint(x, y), scaled);
@@ -650,14 +680,14 @@ QStringList ImageAdapter::mimeTypes() const {
 QStringList ImageAdapter::extensions() const {
     QStringList out;
     out.reserve(static_cast<int>(std::size(kExtensions)));
-    for (const char* ext : kExtensions) {
+    for (const char *ext : kExtensions) {
         out.append(QString::fromLatin1(ext));
     }
     return out;
 }
 
-std::unique_ptr<IDocument> ImageAdapter::open(const QString& path) {
+std::unique_ptr<IDocument> ImageAdapter::open(const QString &path) {
     return std::make_unique<ImageDocument>(path);
 }
 
-}  // namespace trailer
+} // namespace trailer

@@ -16,7 +16,7 @@ namespace trailer {
 // isAvailable() is false rather than calling shareFile() and
 // getting a no-op.
 class ShareService {
-public:
+  public:
     // True when the platform exposes a native share picker we can
     // present. Always false on non-macOS for v1.
     static bool isAvailable();
@@ -26,7 +26,7 @@ public:
     // popover next to the menu item the user clicked. The function
     // returns immediately; the picker is non-modal and dismisses
     // itself.
-    static void shareFile(const QString& filePath, QWidget* anchorWidget);
+    static void shareFile(const QString &filePath, QWidget *anchorWidget);
 };
 
-}  // namespace trailer
+} // namespace trailer

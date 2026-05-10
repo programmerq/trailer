@@ -62,25 +62,28 @@ using namespace trailer;
 
 namespace {
 
-MainWindow* currentMainWindow() {
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (auto* mw = qobject_cast<MainWindow*>(w)) return mw;
+MainWindow *currentMainWindow() {
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (auto *mw = qobject_cast<MainWindow *>(w))
+            return mw;
     }
     return nullptr;
 }
 
-QAction* findActionByText(QMenuBar* bar, const QString& text) {
-    for (QAction* top : bar->actions()) {
-        QMenu* menu = top->menu();
-        if (!menu) continue;
-        for (QAction* a : menu->actions()) {
-            if (a->text() == text) return a;
+QAction *findActionByText(QMenuBar *bar, const QString &text) {
+    for (QAction *top : bar->actions()) {
+        QMenu *menu = top->menu();
+        if (!menu)
+            continue;
+        for (QAction *a : menu->actions()) {
+            if (a->text() == text)
+                return a;
         }
     }
     return nullptr;
 }
 
-QString writeSampleScene(const QString& path, int w = 320, int h = 240) {
+QString writeSampleScene(const QString &path, int w = 320, int h = 240) {
     // Dark-grey background with a bright disc in the middle — an easy
     // target for SAM to segment when we click the centre.
     QImage img(w, h, QImage::Format_ARGB32);
@@ -89,7 +92,7 @@ QString writeSampleScene(const QString& path, int w = 320, int h = 240) {
     const int cy = h / 2;
     const int r = std::min(w, h) / 4;
     for (int y = 0; y < h; ++y) {
-        auto* scan = reinterpret_cast<QRgb*>(img.scanLine(y));
+        auto *scan = reinterpret_cast<QRgb *>(img.scanLine(y));
         for (int x = 0; x < w; ++x) {
             const int dx = x - cx;
             const int dy = y - cy;
@@ -103,18 +106,16 @@ QString writeSampleScene(const QString& path, int w = 320, int h = 240) {
 }
 
 bool seedMobileSamIntoAppCache() {
-    const QString encSrc =
-        QString::fromLocal8Bit(qgetenv("TRAILER_TEST_SAM_ENCODER"));
-    const QString decSrc =
-        QString::fromLocal8Bit(qgetenv("TRAILER_TEST_SAM_DECODER"));
-    if (encSrc.isEmpty() || !QFileInfo::exists(encSrc)) return false;
-    if (decSrc.isEmpty() || !QFileInfo::exists(decSrc)) return false;
+    const QString encSrc = QString::fromLocal8Bit(qgetenv("TRAILER_TEST_SAM_ENCODER"));
+    const QString decSrc = QString::fromLocal8Bit(qgetenv("TRAILER_TEST_SAM_DECODER"));
+    if (encSrc.isEmpty() || !QFileInfo::exists(encSrc))
+        return false;
+    if (decSrc.isEmpty() || !QFileInfo::exists(decSrc))
+        return false;
     const QString dir = AppPaths::modelsDir();
     QDir().mkpath(dir);
-    const QString encDest =
-        QDir(dir).filePath(QStringLiteral("mobile_sam_encoder.onnx"));
-    const QString decDest =
-        QDir(dir).filePath(QStringLiteral("mobile_sam_decoder.onnx"));
+    const QString encDest = QDir(dir).filePath(QStringLiteral("mobile_sam_encoder.onnx"));
+    const QString decDest = QDir(dir).filePath(QStringLiteral("mobile_sam_decoder.onnx"));
     QFile::remove(encDest);
     QFile::remove(decDest);
     return QFile::copy(encSrc, encDest) && QFile::copy(decSrc, decDest);
@@ -126,11 +127,11 @@ void wipeMobileSamCache() {
     QFile::remove(QDir(dir).filePath(QStringLiteral("mobile_sam_decoder.onnx")));
 }
 
-}  // namespace
+} // namespace
 
 class TestUatInstantAlphaAndSmartLasso : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void init();
     void uat_sam_010_instantAlphaMenuActionWired();
     void uat_sam_020_smartLassoMenuActionWired();
@@ -138,79 +139,70 @@ private slots:
     void uat_sam_040_smartLassoCropsToObjectBoundsWithRealModels();
     void uat_sam_050_instantAlphaNoopsWithoutModels();
 
-private:
+  private:
     QTemporaryDir m_scratch;
 };
 
 void TestUatInstantAlphaAndSmartLasso::init() {
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (qobject_cast<MainWindow*>(w)) w->close();
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (qobject_cast<MainWindow *>(w))
+            w->close();
     }
     QApplication::processEvents();
     wipeMobileSamCache();
 }
 
-void TestUatInstantAlphaAndSmartLasso::
-    uat_sam_010_instantAlphaMenuActionWired() {
+void TestUatInstantAlphaAndSmartLasso::uat_sam_010_instantAlphaMenuActionWired() {
     QVERIFY(m_scratch.isValid());
-    const QString imgPath = writeSampleScene(
-        m_scratch.filePath(QStringLiteral("sam010.png")));
+    const QString imgPath = writeSampleScene(m_scratch.filePath(QStringLiteral("sam010.png")));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({imgPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    QAction* action = findActionByText(
-        mw->menuBar(), QStringLiteral("&Instant Alpha…"));
+    QAction *action = findActionByText(mw->menuBar(), QStringLiteral("&Instant Alpha…"));
     QVERIFY2(action, "Tools → Instant Alpha… action is missing");
-    QVERIFY2(action->isEnabled(),
-             "Instant Alpha should be enabled for an image document");
+    QVERIFY2(action->isEnabled(), "Instant Alpha should be enabled for an image document");
 }
 
-void TestUatInstantAlphaAndSmartLasso::
-    uat_sam_020_smartLassoMenuActionWired() {
+void TestUatInstantAlphaAndSmartLasso::uat_sam_020_smartLassoMenuActionWired() {
     QVERIFY(m_scratch.isValid());
-    const QString imgPath = writeSampleScene(
-        m_scratch.filePath(QStringLiteral("sam020.png")));
+    const QString imgPath = writeSampleScene(m_scratch.filePath(QStringLiteral("sam020.png")));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({imgPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    QAction* action = findActionByText(
-        mw->menuBar(), QStringLiteral("Smart &Lasso…"));
+    QAction *action = findActionByText(mw->menuBar(), QStringLiteral("Smart &Lasso…"));
     QVERIFY2(action, "Tools → Smart Lasso… action is missing");
-    QVERIFY2(action->isEnabled(),
-             "Smart Lasso should be enabled for an image document");
+    QVERIFY2(action->isEnabled(), "Smart Lasso should be enabled for an image document");
 }
 
-void TestUatInstantAlphaAndSmartLasso::
-    uat_sam_030_instantAlphaAppliesAlphaWithRealModels() {
+void TestUatInstantAlphaAndSmartLasso::uat_sam_030_instantAlphaAppliesAlphaWithRealModels() {
     if (!seedMobileSamIntoAppCache()) {
         QSKIP("TRAILER_TEST_SAM_ENCODER + TRAILER_TEST_SAM_DECODER not "
               "set — skipping real inference path.");
     }
 
     QVERIFY(m_scratch.isValid());
-    const QString imgPath = writeSampleScene(
-        m_scratch.filePath(QStringLiteral("sam030.png")));
+    const QString imgPath = writeSampleScene(m_scratch.filePath(QStringLiteral("sam030.png")));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({imgPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    auto* imgDoc = dynamic_cast<ImageDocument*>(dv->currentDocument());
+    auto *imgDoc = dynamic_cast<ImageDocument *>(dv->currentDocument());
     QVERIFY2(imgDoc, "Active document should be an ImageDocument");
     const QImage original = imgDoc->image();
     QVERIFY(!original.isNull());
@@ -222,8 +214,7 @@ void TestUatInstantAlphaAndSmartLasso::
     QVERIFY(session.prepare(original));
     QCOMPARE(session.preparedSize(), before);
 
-    const QVector<QPoint> positives{
-        QPoint(original.width() / 2, original.height() / 2)};
+    const QVector<QPoint> positives{QPoint(original.width() / 2, original.height() / 2)};
     const QImage mask = session.segment(positives, {});
     QVERIFY(!mask.isNull());
     QCOMPARE(mask.size(), before);
@@ -231,8 +222,7 @@ void TestUatInstantAlphaAndSmartLasso::
 
     // Clicked pixel lands inside the foreground.
     const QPoint click = positives.first();
-    QVERIFY2(mask.constScanLine(click.y())[click.x()] != 0,
-             "Clicked pixel should be foreground");
+    QVERIFY2(mask.constScanLine(click.y())[click.x()] != 0, "Clicked pixel should be foreground");
 
     const QImage result = session.applyAsAlpha(original);
     QVERIFY(!result.isNull());
@@ -243,34 +233,31 @@ void TestUatInstantAlphaAndSmartLasso::
     QVERIFY(!imgDoc->canUndo());
     QVERIFY(imgDoc->replaceImage(result));
     QVERIFY2(imgDoc->isDirty(), "replaceImage should mark document dirty");
-    QVERIFY2(imgDoc->canUndo(),
-             "replaceImage should push an undo snapshot");
+    QVERIFY2(imgDoc->canUndo(), "replaceImage should push an undo snapshot");
 
     imgDoc->undo();
     QVERIFY(!imgDoc->canUndo());
 }
 
-void TestUatInstantAlphaAndSmartLasso::
-    uat_sam_040_smartLassoCropsToObjectBoundsWithRealModels() {
+void TestUatInstantAlphaAndSmartLasso::uat_sam_040_smartLassoCropsToObjectBoundsWithRealModels() {
     if (!seedMobileSamIntoAppCache()) {
         QSKIP("TRAILER_TEST_SAM_ENCODER + TRAILER_TEST_SAM_DECODER not "
               "set — skipping real inference path.");
     }
 
     QVERIFY(m_scratch.isValid());
-    const QString imgPath = writeSampleScene(
-        m_scratch.filePath(QStringLiteral("sam040.png")));
+    const QString imgPath = writeSampleScene(m_scratch.filePath(QStringLiteral("sam040.png")));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({imgPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    auto* imgDoc = dynamic_cast<ImageDocument*>(dv->currentDocument());
+    auto *imgDoc = dynamic_cast<ImageDocument *>(dv->currentDocument());
     QVERIFY(imgDoc);
     const QImage original = imgDoc->image();
     const QSize before = imgDoc->imagePixelSize();
@@ -279,62 +266,53 @@ void TestUatInstantAlphaAndSmartLasso::
     QVERIFY(session.isModelReady());
     QVERIFY(session.prepare(original));
 
-    const QVector<QPoint> positives{
-        QPoint(original.width() / 2, original.height() / 2)};
+    const QVector<QPoint> positives{QPoint(original.width() / 2, original.height() / 2)};
     QVERIFY(!session.segment(positives, {}).isNull());
 
     const QPolygon poly = session.contourFromLastMask();
     QVERIFY2(poly.size() >= 3, "Contour should have at least 3 points");
-    const QRect bounds =
-        poly.boundingRect().intersected(QRect(QPoint(), before));
+    const QRect bounds = poly.boundingRect().intersected(QRect(QPoint(), before));
     QVERIFY(bounds.width() >= 2 && bounds.height() >= 2);
     // The bounding rect of the disc must be strictly smaller than the
     // full image — otherwise the crop would be a no-op.
-    QVERIFY2(bounds.width() < before.width() ||
-             bounds.height() < before.height(),
+    QVERIFY2(bounds.width() < before.width() || bounds.height() < before.height(),
              "Polygon bounds should be a proper subset of the image");
 
     QVERIFY(!imgDoc->isDirty());
     QVERIFY(!imgDoc->canUndo());
-    QVERIFY(imgDoc->cropToRect(bounds.x(), bounds.y(),
-                               bounds.width(), bounds.height()));
+    QVERIFY(imgDoc->cropToRect(bounds.x(), bounds.y(), bounds.width(), bounds.height()));
     QVERIFY2(imgDoc->isDirty(), "cropToRect should mark document dirty");
-    QVERIFY2(imgDoc->canUndo(),
-             "cropToRect should push an undo snapshot");
+    QVERIFY2(imgDoc->canUndo(), "cropToRect should push an undo snapshot");
     QCOMPARE(imgDoc->imagePixelSize(), bounds.size());
 
     imgDoc->undo();
     QCOMPARE(imgDoc->imagePixelSize(), before);
 }
 
-void TestUatInstantAlphaAndSmartLasso::
-    uat_sam_050_instantAlphaNoopsWithoutModels() {
+void TestUatInstantAlphaAndSmartLasso::uat_sam_050_instantAlphaNoopsWithoutModels() {
     QVERIFY(m_scratch.isValid());
-    const QString imgPath = writeSampleScene(
-        m_scratch.filePath(QStringLiteral("sam050.png")));
+    const QString imgPath = writeSampleScene(m_scratch.filePath(QStringLiteral("sam050.png")));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({imgPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    auto* imgDoc = dynamic_cast<ImageDocument*>(dv->currentDocument());
+    auto *imgDoc = dynamic_cast<ImageDocument *>(dv->currentDocument());
     QVERIFY(imgDoc);
 
     SamSession session(&app->modelRegistry());
-    QVERIFY2(!session.isModelReady(),
-             "Cache was wiped in init() — models should not be ready");
+    QVERIFY2(!session.isModelReady(), "Cache was wiped in init() — models should not be ready");
 
     // prepare() must fail fast without emitting spurious signals and
     // segment() must yield a null mask.
     QVERIFY(!session.prepare(imgDoc->image()));
-    const QImage mask = session.segment(
-        {QPoint(imgDoc->image().width() / 2,
-                imgDoc->image().height() / 2)}, {});
+    const QImage mask =
+        session.segment({QPoint(imgDoc->image().width() / 2, imgDoc->image().height() / 2)}, {});
     QVERIFY(mask.isNull());
     QVERIFY(session.contourFromLastMask().isEmpty());
 
@@ -342,12 +320,13 @@ void TestUatInstantAlphaAndSmartLasso::
     QVERIFY(!imgDoc->canUndo());
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     QTemporaryDir fakeHome;
-    if (!fakeHome.isValid()) return 1;
+    if (!fakeHome.isValid())
+        return 1;
     qputenv("HOME", fakeHome.path().toUtf8());
     qputenv("XDG_CONFIG_HOME", (fakeHome.path() + "/.config").toUtf8());
-    qputenv("XDG_DATA_HOME",   (fakeHome.path() + "/.local/share").toUtf8());
+    qputenv("XDG_DATA_HOME", (fakeHome.path() + "/.local/share").toUtf8());
     QDir().mkpath(fakeHome.path() + "/.config/trailer");
     QDir().mkpath(fakeHome.path() + "/.local/share/trailer");
 

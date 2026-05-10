@@ -54,29 +54,33 @@ using namespace trailer;
 
 namespace {
 
-MainWindow* currentMainWindow() {
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (auto* mw = qobject_cast<MainWindow*>(w)) return mw;
+MainWindow *currentMainWindow() {
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (auto *mw = qobject_cast<MainWindow *>(w))
+            return mw;
     }
     return nullptr;
 }
 
-QAction* findMenuAction(QMenuBar* bar, const QString& topText, const QString& itemText) {
-    for (QAction* topAction : bar->actions()) {
+QAction *findMenuAction(QMenuBar *bar, const QString &topText, const QString &itemText) {
+    for (QAction *topAction : bar->actions()) {
         if (topAction->text() == topText) {
-            QMenu* menu = topAction->menu();
-            if (!menu) return nullptr;
-            for (QAction* action : menu->actions()) {
-                if (action->text() == itemText) return action;
+            QMenu *menu = topAction->menu();
+            if (!menu)
+                return nullptr;
+            for (QAction *action : menu->actions()) {
+                if (action->text() == itemText)
+                    return action;
             }
         }
     }
     return nullptr;
 }
 
-QAction* findToolAction(MarkupToolbar* bar, const QString& label) {
-    for (QAction* a : bar->actions()) {
-        if (a->text() == label) return a;
+QAction *findToolAction(MarkupToolbar *bar, const QString &label) {
+    for (QAction *a : bar->actions()) {
+        if (a->text() == label)
+            return a;
     }
     return nullptr;
 }
@@ -174,15 +178,14 @@ QString writePdfWithOutline(const QString& path,
 // searchable) text. QPdfWriter emits Tj operators for QPainter::drawText,
 // so QPdfSearchModel finds the text the same way it would in a PDF
 // produced by a print-to-PDF tool.
-QString writePdfWithKeyword(const QString& path, const QString& keyword) {
+QString writePdfWithKeyword(const QString &path, const QString &keyword) {
     QPdfWriter writer(path);
     writer.setPageSize(QPageSize(QPageSize::A4));
     QPainter p(&writer);
     QFont font(QStringLiteral("Helvetica"));
     font.setPointSize(24);
     p.setFont(font);
-    p.drawText(300, 400,
-               QStringLiteral("Trailer UAT fixture — keyword: ") + keyword);
+    p.drawText(300, 400, QStringLiteral("Trailer UAT fixture — keyword: ") + keyword);
     p.end();
     return path;
 }
@@ -190,7 +193,7 @@ QString writePdfWithKeyword(const QString& path, const QString& keyword) {
 // Like writePdfWithKeyword, but stamps the keyword `count` times at
 // vertically staggered positions so there are multiple distinct
 // matches for Find Next / Find Previous to walk through.
-QString writePdfWithKeywordTimes(const QString& path, const QString& keyword, int count) {
+QString writePdfWithKeywordTimes(const QString &path, const QString &keyword, int count) {
     QPdfWriter writer(path);
     writer.setPageSize(QPageSize(QPageSize::A4));
     QPainter p(&writer);
@@ -214,7 +217,7 @@ QString writePdfWithKeywordTimes(const QString& path, const QString& keyword, in
 // searchable. If QPdfSearchModel still finds the keyword here, the
 // search-on-OCR path works end to end; if not, we've reproduced the
 // user's reported regression in a regression-gated fixture.
-QString writeOcrLayerPdf(const QString& path, const QString& keyword) {
+QString writeOcrLayerPdf(const QString &path, const QString &keyword) {
     QPdfWriter writer(path);
     writer.setPageSize(QPageSize(QPageSize::A4));
     QPainter p(&writer);
@@ -228,9 +231,8 @@ QString writeOcrLayerPdf(const QString& path, const QString& keyword) {
     QFont font(QStringLiteral("Helvetica"));
     font.setPointSize(24);
     p.setFont(font);
-    p.setPen(QColor(0, 0, 0, 0));  // fully transparent — the OCR trick
-    p.drawText(300, 400,
-               QStringLiteral("OCR fixture — keyword: ") + keyword);
+    p.setPen(QColor(0, 0, 0, 0)); // fully transparent — the OCR trick
+    p.drawText(300, 400, QStringLiteral("OCR fixture — keyword: ") + keyword);
     p.end();
     return path;
 }
@@ -238,7 +240,7 @@ QString writeOcrLayerPdf(const QString& path, const QString& keyword) {
 // Sends a synthesized QKeyEvent directly to `target`. Same rationale
 // as sendMouse below — offscreen is happier with sendEvent than the
 // QTest::keyClick helpers.
-void sendKey(QWidget* target, Qt::Key key) {
+void sendKey(QWidget *target, Qt::Key key) {
     QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier);
     QApplication::sendEvent(target, &press);
     QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier);
@@ -249,7 +251,7 @@ void sendKey(QWidget* target, Qt::Key key) {
 // style helpers require the widget to be visible on a real display —
 // offscreen is finicky about that — but sendEvent is happy as long as
 // the widget exists, which is exactly what we need for the overlay.
-void sendMouse(QWidget* target, QEvent::Type type, QPoint pos, Qt::MouseButton button) {
+void sendMouse(QWidget *target, QEvent::Type type, QPoint pos, Qt::MouseButton button) {
     const QPoint globalPos = target->mapToGlobal(pos);
     const Qt::MouseButtons buttonsHeld =
         (type == QEvent::MouseButtonRelease) ? Qt::NoButton : Qt::MouseButtons(button);
@@ -260,7 +262,7 @@ void sendMouse(QWidget* target, QEvent::Type type, QPoint pos, Qt::MouseButton b
 // Simulates a click-drag on the overlay: press at `start`, two move
 // events (enough to register motion for tools that accumulate points
 // like Ink), release at `end`.
-void dragOnOverlay(AnnotationOverlay* overlay, QPoint start, QPoint end) {
+void dragOnOverlay(AnnotationOverlay *overlay, QPoint start, QPoint end) {
     sendMouse(overlay, QEvent::MouseButtonPress, start, Qt::LeftButton);
     const QPoint mid((start.x() + end.x()) / 2, (start.y() + end.y()) / 2);
     sendMouse(overlay, QEvent::MouseMove, mid, Qt::LeftButton);
@@ -269,11 +271,11 @@ void dragOnOverlay(AnnotationOverlay* overlay, QPoint start, QPoint end) {
     QApplication::processEvents();
 }
 
-}  // namespace
+} // namespace
 
 class TestUatSearchAndMarkup : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void init();
 
     void uat_vwr_061_findMatchesInPdfText();
@@ -308,13 +310,14 @@ private slots:
     void uat_hn_011_highlightsModeEnabledAfterAddingNote();
     void uat_hn_012_listFiltersToTextContentTypes();
 
-private:
+  private:
     QTemporaryDir m_scratch;
 };
 
 void TestUatSearchAndMarkup::init() {
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (qobject_cast<MainWindow*>(w)) w->close();
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (qobject_cast<MainWindow *>(w))
+            w->close();
     }
     QApplication::processEvents();
 }
@@ -328,25 +331,25 @@ void TestUatSearchAndMarkup::init() {
 void TestUatSearchAndMarkup::uat_vwr_061_findMatchesInPdfText() {
     QVERIFY(m_scratch.isValid());
     const QString keyword = QStringLiteral("zebranaut");
-    const QString pdfPath = writePdfWithKeyword(
-        m_scratch.filePath(QStringLiteral("uat_vwr_061.pdf")), keyword);
+    const QString pdfPath =
+        writePdfWithKeyword(m_scratch.filePath(QStringLiteral("uat_vwr_061.pdf")), keyword);
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
 
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    IDocument* doc = dv->currentDocument();
+    IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
     QVERIFY2(doc->supportsSearch(), "PDF document should report supportsSearch()");
 
-    QAction* findAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
-                                         QStringLiteral("&Find…"));
+    QAction *findAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Find…"));
     QVERIFY2(findAction, "Edit > Find… action not found");
     findAction->trigger();
     QApplication::processEvents();
@@ -354,14 +357,14 @@ void TestUatSearchAndMarkup::uat_vwr_061_findMatchesInPdfText() {
     // Drive the query via the real SearchBar QLineEdit so we exercise
     // the same wire-up a user hits. setText() fires textChanged, which
     // SearchBar forwards as queryChanged → doc->setSearchQuery.
-    auto* searchBar = mw->findChild<SearchBar*>();
+    auto *searchBar = mw->findChild<SearchBar *>();
     QVERIFY(searchBar);
-    auto* lineEdit = searchBar->findChild<QLineEdit*>();
+    auto *lineEdit = searchBar->findChild<QLineEdit *>();
     QVERIFY2(lineEdit, "SearchBar QLineEdit not found");
     lineEdit->setText(keyword);
     QApplication::processEvents();
 
-    auto* view = mw->findChild<QPdfView*>();
+    auto *view = mw->findChild<QPdfView *>();
     QVERIFY2(view, "QPdfView not found in MainWindow children");
 
     // QPdfSearchModel::setSearchString kicks off an async search. Wait
@@ -369,9 +372,7 @@ void TestUatSearchAndMarkup::uat_vwr_061_findMatchesInPdfText() {
     // out with a PDF that contains the literal keyword as selectable
     // text, search is broken — which is what the user reported.
     QTRY_VERIFY_WITH_TIMEOUT(
-        view->searchModel() != nullptr
-            && view->searchModel()->rowCount(QModelIndex()) > 0,
-        5000);
+        view->searchModel() != nullptr && view->searchModel()->rowCount(QModelIndex()) > 0, 5000);
 
     // The model having matches isn't enough: the view also has to be
     // told which match is current so it scrolls to and emphasises the
@@ -393,43 +394,41 @@ void TestUatSearchAndMarkup::uat_vwr_061_findMatchesInPdfText() {
 void TestUatSearchAndMarkup::uat_vwr_061b_findMatchesInOcrLayerPdf() {
     QVERIFY(m_scratch.isValid());
     const QString keyword = QStringLiteral("ocrphant");
-    const QString pdfPath = writeOcrLayerPdf(
-        m_scratch.filePath(QStringLiteral("uat_vwr_061b.pdf")), keyword);
+    const QString pdfPath =
+        writeOcrLayerPdf(m_scratch.filePath(QStringLiteral("uat_vwr_061b.pdf")), keyword);
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
 
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    IDocument* doc = dv->currentDocument();
+    IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
     QVERIFY2(doc->supportsSearch(), "PDF document should report supportsSearch()");
 
-    QAction* findAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
-                                         QStringLiteral("&Find…"));
+    QAction *findAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Find…"));
     QVERIFY2(findAction, "Edit > Find… action not found");
     findAction->trigger();
     QApplication::processEvents();
 
-    auto* searchBar = mw->findChild<SearchBar*>();
+    auto *searchBar = mw->findChild<SearchBar *>();
     QVERIFY(searchBar);
-    auto* lineEdit = searchBar->findChild<QLineEdit*>();
+    auto *lineEdit = searchBar->findChild<QLineEdit *>();
     QVERIFY2(lineEdit, "SearchBar QLineEdit not found");
     lineEdit->setText(keyword);
     QApplication::processEvents();
 
-    auto* view = mw->findChild<QPdfView*>();
+    auto *view = mw->findChild<QPdfView *>();
     QVERIFY2(view, "QPdfView not found in MainWindow children");
 
     QTRY_VERIFY_WITH_TIMEOUT(
-        view->searchModel() != nullptr
-            && view->searchModel()->rowCount(QModelIndex()) > 0,
-        5000);
+        view->searchModel() != nullptr && view->searchModel()->rowCount(QModelIndex()) > 0, 5000);
 
     QTRY_VERIFY_WITH_TIMEOUT(view->currentSearchResultIndex() >= 0, 5000);
 }
@@ -451,38 +450,37 @@ void TestUatSearchAndMarkup::uat_vwr_062_findNextPrevWrap() {
     const QString pdfPath = writePdfWithKeywordTimes(
         m_scratch.filePath(QStringLiteral("uat_vwr_062.pdf")), keyword, copies);
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
 
-    QAction* findAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
-                                         QStringLiteral("&Find…"));
+    QAction *findAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Find…"));
     QVERIFY(findAction);
     findAction->trigger();
     QApplication::processEvents();
 
-    auto* searchBar = mw->findChild<SearchBar*>();
+    auto *searchBar = mw->findChild<SearchBar *>();
     QVERIFY(searchBar);
-    auto* lineEdit = searchBar->findChild<QLineEdit*>();
+    auto *lineEdit = searchBar->findChild<QLineEdit *>();
     QVERIFY(lineEdit);
     lineEdit->setText(keyword);
 
-    auto* view = mw->findChild<QPdfView*>();
+    auto *view = mw->findChild<QPdfView *>();
     QVERIFY(view);
     // Wait for all `copies` matches to land. QPdfSearchModel streams
     // rowsInserted as the worker finds each hit; if we only wait for
     // rowCount > 0, the wrap assertion below races the worker.
-    QTRY_VERIFY_WITH_TIMEOUT(
-        view->searchModel() != nullptr
-            && view->searchModel()->rowCount(QModelIndex()) >= copies,
-        5000);
+    QTRY_VERIFY_WITH_TIMEOUT(view->searchModel() != nullptr &&
+                                 view->searchModel()->rowCount(QModelIndex()) >= copies,
+                             5000);
     QTRY_VERIFY_WITH_TIMEOUT(view->currentSearchResultIndex() >= 0, 5000);
 
-    auto* bar = mw->findChild<SearchBar*>();
+    auto *bar = mw->findChild<SearchBar *>();
     QVERIFY(bar);
     const int startIdx = view->currentSearchResultIndex();
     QCOMPARE(startIdx, 0);
@@ -514,29 +512,29 @@ void TestUatSearchAndMarkup::uat_vwr_062_findNextPrevWrap() {
 void TestUatSearchAndMarkup::uat_vwr_063_escapeClosesSearch() {
     QVERIFY(m_scratch.isValid());
     const QString keyword = QStringLiteral("hippogryph");
-    const QString pdfPath = writePdfWithKeyword(
-        m_scratch.filePath(QStringLiteral("uat_vwr_063.pdf")), keyword);
+    const QString pdfPath =
+        writePdfWithKeyword(m_scratch.filePath(QStringLiteral("uat_vwr_063.pdf")), keyword);
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
 
-    QAction* findAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
-                                         QStringLiteral("&Find…"));
+    QAction *findAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Find…"));
     findAction->trigger();
     QApplication::processEvents();
 
-    auto* bar = mw->findChild<SearchBar*>();
+    auto *bar = mw->findChild<SearchBar *>();
     QVERIFY(bar);
-    auto* lineEdit = bar->findChild<QLineEdit*>();
+    auto *lineEdit = bar->findChild<QLineEdit *>();
     QVERIFY(lineEdit);
     lineEdit->setText(keyword);
 
-    auto* view = mw->findChild<QPdfView*>();
+    auto *view = mw->findChild<QPdfView *>();
     QVERIFY(view);
     QTRY_VERIFY_WITH_TIMEOUT(view->currentSearchResultIndex() >= 0, 5000);
 
@@ -604,29 +602,28 @@ void TestUatSearchAndMarkup::uat_vwr_064_searchHighlightsFillOverlay() {
 void TestUatSearchAndMarkup::uat_vwr_065_searchWithNoMatches() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
-        m_scratch.filePath(QStringLiteral("uat_vwr_065.pdf")),
-        QStringLiteral("unicorn"));
+        m_scratch.filePath(QStringLiteral("uat_vwr_065.pdf")), QStringLiteral("unicorn"));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
 
-    QAction* findAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
-                                         QStringLiteral("&Find…"));
+    QAction *findAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Find…"));
     findAction->trigger();
     QApplication::processEvents();
 
-    auto* searchBar = mw->findChild<SearchBar*>();
+    auto *searchBar = mw->findChild<SearchBar *>();
     QVERIFY(searchBar);
-    auto* lineEdit = searchBar->findChild<QLineEdit*>();
+    auto *lineEdit = searchBar->findChild<QLineEdit *>();
     QVERIFY(lineEdit);
     lineEdit->setText(QStringLiteral("zzzz_no_such_word_zzzz"));
 
-    auto* view = mw->findChild<QPdfView*>();
+    auto *view = mw->findChild<QPdfView *>();
     QVERIFY(view);
 
     // Give the async search a beat to run, then confirm it turned up
@@ -641,7 +638,7 @@ void TestUatSearchAndMarkup::uat_vwr_065_searchWithNoMatches() {
     // Find Next / Previous against zero matches must stay -1 (not -1
     // accidentally wrapped modulo zero, which would crash or go to an
     // invalid index).
-    auto* bar = mw->findChild<SearchBar*>();
+    auto *bar = mw->findChild<SearchBar *>();
     QVERIFY(bar);
     emit bar->findNextRequested();
     QApplication::processEvents();
@@ -657,24 +654,24 @@ void TestUatSearchAndMarkup::uat_vwr_065_searchWithNoMatches() {
 void TestUatSearchAndMarkup::uat_vwr_066_searchOpensSidebarWithMatchPages() {
     QVERIFY(m_scratch.isValid());
     const QString keyword = QStringLiteral("zebranaut");
-    const QString pdfPath = writePdfWithKeyword(
-        m_scratch.filePath(QStringLiteral("uat_vwr_066.pdf")), keyword);
+    const QString pdfPath =
+        writePdfWithKeyword(m_scratch.filePath(QStringLiteral("uat_vwr_066.pdf")), keyword);
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
 
     // Sidebar starts hidden after the 2026-04-30 default flip.
-    auto* sidebar = mw->findChild<Sidebar*>();
+    auto *sidebar = mw->findChild<Sidebar *>();
     QVERIFY(sidebar);
     QVERIFY(!sidebar->isVisible());
 
-    QAction* findAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
-                                         QStringLiteral("&Find…"));
+    QAction *findAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Find…"));
     QVERIFY(findAction);
     findAction->trigger();
     QApplication::processEvents();
@@ -683,19 +680,19 @@ void TestUatSearchAndMarkup::uat_vwr_066_searchOpensSidebarWithMatchPages() {
     QCOMPARE(sidebar->mode(), Sidebar::Mode::SearchResults);
     QVERIFY(sidebar->isVisible());
 
-    auto* bar = mw->findChild<SearchBar*>();
+    auto *bar = mw->findChild<SearchBar *>();
     QVERIFY(bar);
-    auto* lineEdit = bar->findChild<QLineEdit*>();
+    auto *lineEdit = bar->findChild<QLineEdit *>();
     QVERIFY(lineEdit);
     lineEdit->setText(keyword);
     QApplication::processEvents();
 
     // The polling timer fires every 150 ms; wait for it to push
     // the pagesWithSearchMatches list into the sidebar's filter.
-    auto* doc = mw->findChild<DocumentView*>()->currentDocument();
+    auto *doc = mw->findChild<DocumentView *>()->currentDocument();
     QVERIFY(doc);
     QTRY_VERIFY_WITH_TIMEOUT(!doc->pagesWithSearchMatches().empty(), 5000);
-    QTest::qWait(300);  // give the polling timer at least one tick
+    QTest::qWait(300); // give the polling timer at least one tick
     QVERIFY(!doc->pagesWithSearchMatches().empty());
 }
 
@@ -703,43 +700,41 @@ void TestUatSearchAndMarkup::uat_vwr_066_searchOpensSidebarWithMatchPages() {
 void TestUatSearchAndMarkup::uat_ann_010_rectangleToolCreatesAnnotation() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
-        m_scratch.filePath(QStringLiteral("uat_ann_010.pdf")),
-        QStringLiteral("fixture"));
+        m_scratch.filePath(QStringLiteral("uat_ann_010.pdf")), QStringLiteral("fixture"));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
     mw->resize(1100, 750);
     QApplication::processEvents();
 
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    IDocument* doc = dv->currentDocument();
+    IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
-    AnnotationStore* store = doc->annotations();
+    AnnotationStore *store = doc->annotations();
     QVERIFY(store);
     const int before = store->count();
 
-    auto* markup = mw->findChild<MarkupToolbar*>();
+    auto *markup = mw->findChild<MarkupToolbar *>();
     QVERIFY(markup);
-    QAction* rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
+    QAction *rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
     QVERIFY2(rectAction, "Markup toolbar Rectangle action not found");
-    rectAction->setChecked(true);  // exclusive group → emits toggled(true)
+    rectAction->setChecked(true); // exclusive group → emits toggled(true)
     QApplication::processEvents();
 
-    auto* overlay = mw->findChild<AnnotationOverlay*>();
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
     QVERIFY2(overlay, "AnnotationOverlay not found as child of MainWindow");
     QCOMPARE(overlay->activeTool(), AnnotationTool::Rectangle);
 
     dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
 
     QCOMPARE(store->count(), before + 1);
-    QVERIFY2(store->canUndo(),
-             "Store should report canUndo() after adding a rectangle");
+    QVERIFY2(store->canUndo(), "Store should report canUndo() after adding a rectangle");
     QCOMPARE(store->annotations().back().type, AnnotationType::Rectangle);
 }
 
@@ -747,44 +742,42 @@ void TestUatSearchAndMarkup::uat_ann_010_rectangleToolCreatesAnnotation() {
 void TestUatSearchAndMarkup::uat_ann_012_lineToolCreatesAnnotation() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
-        m_scratch.filePath(QStringLiteral("uat_ann_012.pdf")),
-        QStringLiteral("fixture"));
+        m_scratch.filePath(QStringLiteral("uat_ann_012.pdf")), QStringLiteral("fixture"));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
     mw->resize(1100, 750);
     QApplication::processEvents();
 
-    auto* dv = mw->findChild<DocumentView*>();
-    IDocument* doc = dv->currentDocument();
+    auto *dv = mw->findChild<DocumentView *>();
+    IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
-    AnnotationStore* store = doc->annotations();
+    AnnotationStore *store = doc->annotations();
     const int before = store->count();
 
-    auto* markup = mw->findChild<MarkupToolbar*>();
+    auto *markup = mw->findChild<MarkupToolbar *>();
     QVERIFY(markup);
-    QAction* lineAction = findToolAction(markup, QStringLiteral("Line"));
+    QAction *lineAction = findToolAction(markup, QStringLiteral("Line"));
     QVERIFY(lineAction);
     lineAction->setChecked(true);
     QApplication::processEvents();
 
-    auto* overlay = mw->findChild<AnnotationOverlay*>();
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
     QVERIFY(overlay);
     QCOMPARE(overlay->activeTool(), AnnotationTool::Line);
 
     dragOnOverlay(overlay, QPoint(180, 240), QPoint(340, 360));
 
     QCOMPARE(store->count(), before + 1);
-    const Annotation& added = store->annotations().back();
+    const Annotation &added = store->annotations().back();
     QCOMPARE(added.type, AnnotationType::Line);
     QCOMPARE(added.points.size(), size_t{2});
-    QVERIFY2(store->canUndo(),
-             "Store should report canUndo() after adding a line");
+    QVERIFY2(store->canUndo(), "Store should report canUndo() after adding a line");
 }
 
 // UAT-ANN-060 — Undo removes the most recent rectangle add.
@@ -795,42 +788,40 @@ void TestUatSearchAndMarkup::uat_ann_012_lineToolCreatesAnnotation() {
 void TestUatSearchAndMarkup::uat_ann_060_undoAddRectangle() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
-        m_scratch.filePath(QStringLiteral("uat_ann_060.pdf")),
-        QStringLiteral("fixture"));
+        m_scratch.filePath(QStringLiteral("uat_ann_060.pdf")), QStringLiteral("fixture"));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
     mw->resize(1100, 750);
     QApplication::processEvents();
 
-    auto* dv = mw->findChild<DocumentView*>();
-    IDocument* doc = dv->currentDocument();
+    auto *dv = mw->findChild<DocumentView *>();
+    IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
-    AnnotationStore* store = doc->annotations();
+    AnnotationStore *store = doc->annotations();
     const int baseline = store->count();
 
-    auto* markup = mw->findChild<MarkupToolbar*>();
-    QAction* rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
+    auto *markup = mw->findChild<MarkupToolbar *>();
+    QAction *rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
     QVERIFY(rectAction);
     rectAction->setChecked(true);
     QApplication::processEvents();
 
-    auto* overlay = mw->findChild<AnnotationOverlay*>();
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
     QVERIFY(overlay);
 
     dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
     QCOMPARE(store->count(), baseline + 1);
 
-    QAction* undoAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
-                                         QStringLiteral("&Undo"));
+    QAction *undoAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Undo"));
     QVERIFY2(undoAction, "Edit > Undo action not found");
-    QVERIFY2(undoAction->isEnabled(),
-             "Undo action should be enabled after adding an annotation");
+    QVERIFY2(undoAction->isEnabled(), "Undo action should be enabled after adding an annotation");
     undoAction->trigger();
     QApplication::processEvents();
 
@@ -847,41 +838,40 @@ void TestUatSearchAndMarkup::uat_ann_060_undoAddRectangle() {
 void TestUatSearchAndMarkup::uat_ann_063_redoAfterUndo() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
-        m_scratch.filePath(QStringLiteral("uat_ann_063.pdf")),
-        QStringLiteral("fixture"));
+        m_scratch.filePath(QStringLiteral("uat_ann_063.pdf")), QStringLiteral("fixture"));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
     mw->resize(1100, 750);
     QApplication::processEvents();
 
-    auto* dv = mw->findChild<DocumentView*>();
-    IDocument* doc = dv->currentDocument();
+    auto *dv = mw->findChild<DocumentView *>();
+    IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
-    AnnotationStore* store = doc->annotations();
+    AnnotationStore *store = doc->annotations();
     const int baseline = store->count();
 
-    auto* markup = mw->findChild<MarkupToolbar*>();
-    QAction* rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
+    auto *markup = mw->findChild<MarkupToolbar *>();
+    QAction *rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
     QVERIFY(rectAction);
     rectAction->setChecked(true);
     QApplication::processEvents();
 
-    auto* overlay = mw->findChild<AnnotationOverlay*>();
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
     QVERIFY(overlay);
 
     dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
     QCOMPARE(store->count(), baseline + 1);
 
-    QAction* undoAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
-                                         QStringLiteral("&Undo"));
-    QAction* redoAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
-                                         QStringLiteral("&Redo"));
+    QAction *undoAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Undo"));
+    QAction *redoAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Redo"));
     QVERIFY(undoAction);
     QVERIFY(redoAction);
 
@@ -889,8 +879,7 @@ void TestUatSearchAndMarkup::uat_ann_063_redoAfterUndo() {
     QApplication::processEvents();
     QCOMPARE(store->count(), baseline);
 
-    QVERIFY2(redoAction->isEnabled(),
-             "Redo action should be enabled after an undo");
+    QVERIFY2(redoAction->isEnabled(), "Redo action should be enabled after an undo");
     redoAction->trigger();
     QApplication::processEvents();
     QCOMPARE(store->count(), baseline + 1);
@@ -910,40 +899,39 @@ void TestUatSearchAndMarkup::uat_ann_063_redoAfterUndo() {
 void TestUatSearchAndMarkup::uat_ann_070_hidingToolbarRestoresTextSelection() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
-        m_scratch.filePath(QStringLiteral("uat_ann_070.pdf")),
-        QStringLiteral("fixture"));
+        m_scratch.filePath(QStringLiteral("uat_ann_070.pdf")), QStringLiteral("fixture"));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
     mw->resize(1100, 750);
     QApplication::processEvents();
 
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    IDocument* doc = dv->currentDocument();
+    IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
-    AnnotationStore* store = doc->annotations();
+    AnnotationStore *store = doc->annotations();
     QVERIFY(store);
 
-    auto* markup = mw->findChild<MarkupToolbar*>();
+    auto *markup = mw->findChild<MarkupToolbar *>();
     QVERIFY(markup);
 
     // 1. Show the toolbar and pick Rectangle — simulates a user who
     //    has just drawn a shape and is now putting the toolbar away.
     markup->show();
     QApplication::processEvents();
-    QAction* rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
+    QAction *rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
     QVERIFY(rectAction);
     rectAction->setChecked(true);
     QApplication::processEvents();
     QCOMPARE(markup->activeTool(), AnnotationTool::Rectangle);
 
-    auto* overlay = mw->findChild<AnnotationOverlay*>();
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
     QVERIFY(overlay);
     QCOMPARE(overlay->activeTool(), AnnotationTool::Rectangle);
 
@@ -971,17 +959,16 @@ void TestUatSearchAndMarkup::uat_ann_070_hidingToolbarRestoresTextSelection() {
 void TestUatSearchAndMarkup::uat_ann_080_markupToolbarAutoShownOnEditableDoc() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
-        m_scratch.filePath(QStringLiteral("uat_ann_080.pdf")),
-        QStringLiteral("fixture"));
+        m_scratch.filePath(QStringLiteral("uat_ann_080.pdf")), QStringLiteral("fixture"));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    auto* markup = mw->findChild<MarkupToolbar*>();
+    auto *markup = mw->findChild<MarkupToolbar *>();
     QVERIFY(markup);
     QVERIFY2(markup->isVisible(),
              "Markup toolbar must be visible after opening an annotatable doc");
@@ -993,17 +980,16 @@ void TestUatSearchAndMarkup::uat_ann_080_markupToolbarAutoShownOnEditableDoc() {
 void TestUatSearchAndMarkup::uat_ann_081_markupToolbarRespectsExplicitHide() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
-        m_scratch.filePath(QStringLiteral("uat_ann_081.pdf")),
-        QStringLiteral("fixture"));
+        m_scratch.filePath(QStringLiteral("uat_ann_081.pdf")), QStringLiteral("fixture"));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    auto* markup = mw->findChild<MarkupToolbar*>();
+    auto *markup = mw->findChild<MarkupToolbar *>();
     QVERIFY(markup);
     QVERIFY(markup->isVisible());
 
@@ -1013,18 +999,16 @@ void TestUatSearchAndMarkup::uat_ann_081_markupToolbarRespectsExplicitHide() {
 
     // Re-trigger the current-document path — same effect as a tab
     // switch in the legacy NewTab mode, or any focus-driven refresh.
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    IDocument* doc = dv->currentDocument();
+    IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
-    QMetaObject::invokeMethod(dv, "currentDocumentChanged",
-                              Qt::DirectConnection,
-                              Q_ARG(trailer::IDocument*, doc));
+    QMetaObject::invokeMethod(dv, "currentDocumentChanged", Qt::DirectConnection,
+                              Q_ARG(trailer::IDocument *, doc));
     QApplication::processEvents();
 
-    QVERIFY2(!markup->isVisible(),
-             "Once the user has hidden the markup toolbar for a doc, "
-             "it must not auto-show again on subsequent focus changes");
+    QVERIFY2(!markup->isVisible(), "Once the user has hidden the markup toolbar for a doc, "
+                                   "it must not auto-show again on subsequent focus changes");
 }
 
 // UAT-ANN-082 — Underline / Highlight / StrikeOut are text-aware
@@ -1041,40 +1025,35 @@ void TestUatSearchAndMarkup::uat_ann_082_textCentricToolsDisabledOnPlainImage() 
         QVERIFY(img.save(imgPath, "PNG"));
     }
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({imgPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    auto* markup = mw->findChild<MarkupToolbar*>();
+    auto *markup = mw->findChild<MarkupToolbar *>();
     QVERIFY(markup);
 
-    auto find = [markup](const QString& label) -> QAction* {
+    auto find = [markup](const QString &label) -> QAction * {
         return findToolAction(markup, label);
     };
-    QAction* underline = find(QStringLiteral("Underline"));
-    QAction* highlight = find(QStringLiteral("Highlight"));
-    QAction* strike    = find(QStringLiteral("Strikeout"));
-    QAction* redact    = find(QStringLiteral("Redact"));
-    QAction* rect      = find(QStringLiteral("Rectangle"));
+    QAction *underline = find(QStringLiteral("Underline"));
+    QAction *highlight = find(QStringLiteral("Highlight"));
+    QAction *strike = find(QStringLiteral("Strikeout"));
+    QAction *redact = find(QStringLiteral("Redact"));
+    QAction *rect = find(QStringLiteral("Rectangle"));
     QVERIFY(underline);
     QVERIFY(highlight);
     QVERIFY(strike);
     QVERIFY(redact);
     QVERIFY(rect);
 
-    QVERIFY2(!underline->isEnabled(),
-             "Underline must be disabled on a plain image");
-    QVERIFY2(!highlight->isEnabled(),
-             "Highlight must be disabled on a plain image");
-    QVERIFY2(!strike->isEnabled(),
-             "Strikeout must be disabled on a plain image");
-    QVERIFY2(redact->isEnabled(),
-             "Redact must remain available on a plain image");
-    QVERIFY2(rect->isEnabled(),
-             "Rectangle (and other shape tools) remain available on images");
+    QVERIFY2(!underline->isEnabled(), "Underline must be disabled on a plain image");
+    QVERIFY2(!highlight->isEnabled(), "Highlight must be disabled on a plain image");
+    QVERIFY2(!strike->isEnabled(), "Strikeout must be disabled on a plain image");
+    QVERIFY2(redact->isEnabled(), "Redact must remain available on a plain image");
+    QVERIFY2(rect->isEnabled(), "Rectangle (and other shape tools) remain available on images");
 }
 
 // UAT-ANN-100 — Dropping a Text annotation no longer pops a modal
@@ -1084,41 +1063,41 @@ void TestUatSearchAndMarkup::uat_ann_082_textCentricToolsDisabledOnPlainImage() 
 void TestUatSearchAndMarkup::uat_ann_100_textDropOpensInlineEditor() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
-        m_scratch.filePath(QStringLiteral("uat_ann_100.pdf")),
-        QStringLiteral("fixture"));
+        m_scratch.filePath(QStringLiteral("uat_ann_100.pdf")), QStringLiteral("fixture"));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
     mw->resize(1100, 750);
     QApplication::processEvents();
 
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    AnnotationStore* store = dv->currentDocument()->annotations();
+    AnnotationStore *store = dv->currentDocument()->annotations();
     QVERIFY(store);
     const int before = store->count();
 
-    auto* markup = mw->findChild<MarkupToolbar*>();
+    auto *markup = mw->findChild<MarkupToolbar *>();
     QVERIFY(markup);
-    QAction* textAction = findToolAction(markup, QStringLiteral("Text"));
+    QAction *textAction = findToolAction(markup, QStringLiteral("Text"));
     QVERIFY(textAction);
     textAction->setChecked(true);
     QApplication::processEvents();
 
-    auto* overlay = mw->findChild<AnnotationOverlay*>();
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
     QVERIFY(overlay);
 
     // Snapshot the QMessageBox/QInputDialog count so we can assert
     // none appeared.
     auto modalCount = []() {
         int n = 0;
-        for (auto* w : QApplication::topLevelWidgets()) {
-            if (w->inherits("QDialog") || w->inherits("QMessageBox")) ++n;
+        for (auto *w : QApplication::topLevelWidgets()) {
+            if (w->inherits("QDialog") || w->inherits("QMessageBox"))
+                ++n;
         }
         return n;
     };
@@ -1132,7 +1111,7 @@ void TestUatSearchAndMarkup::uat_ann_100_textDropOpensInlineEditor() {
     //   3. created an inline editor child of the overlay
     QCOMPARE(store->count(), before + 1);
     QCOMPARE(modalCount(), modalsBefore);
-    auto* editor = overlay->findChild<QPlainTextEdit*>();
+    auto *editor = overlay->findChild<QPlainTextEdit *>();
     QVERIFY2(editor, "Expected an inline QPlainTextEdit anchored at the drop");
 }
 
@@ -1142,38 +1121,37 @@ void TestUatSearchAndMarkup::uat_ann_100_textDropOpensInlineEditor() {
 void TestUatSearchAndMarkup::uat_ann_101_emptyTextDropIsRemovedOnFocusOut() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
-        m_scratch.filePath(QStringLiteral("uat_ann_101.pdf")),
-        QStringLiteral("fixture"));
+        m_scratch.filePath(QStringLiteral("uat_ann_101.pdf")), QStringLiteral("fixture"));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
     mw->resize(1100, 750);
     QApplication::processEvents();
 
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    AnnotationStore* store = dv->currentDocument()->annotations();
+    AnnotationStore *store = dv->currentDocument()->annotations();
     QVERIFY(store);
     const int before = store->count();
 
-    auto* markup = mw->findChild<MarkupToolbar*>();
+    auto *markup = mw->findChild<MarkupToolbar *>();
     QVERIFY(markup);
-    QAction* textAction = findToolAction(markup, QStringLiteral("Text"));
+    QAction *textAction = findToolAction(markup, QStringLiteral("Text"));
     QVERIFY(textAction);
     textAction->setChecked(true);
     QApplication::processEvents();
 
-    auto* overlay = mw->findChild<AnnotationOverlay*>();
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
     QVERIFY(overlay);
     dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
 
     QCOMPARE(store->count(), before + 1);
-    auto* editor = overlay->findChild<QPlainTextEdit*>();
+    auto *editor = overlay->findChild<QPlainTextEdit *>();
     QVERIFY(editor);
 
     // Send an Escape — the eventFilter discards a fresh empty
@@ -1182,9 +1160,8 @@ void TestUatSearchAndMarkup::uat_ann_101_emptyTextDropIsRemovedOnFocusOut() {
     sendKey(editor, Qt::Key_Escape);
     QApplication::processEvents();
 
-    QVERIFY2(store->count() == before,
-             "An empty Text drop cancelled with Escape must not leave "
-             "an annotation behind");
+    QVERIFY2(store->count() == before, "An empty Text drop cancelled with Escape must not leave "
+                                       "an annotation behind");
 }
 
 // UAT-ANN-110 — End-to-end check that an annotation drawn in the UI
@@ -1195,44 +1172,41 @@ void TestUatSearchAndMarkup::uat_ann_101_emptyTextDropIsRemovedOnFocusOut() {
 void TestUatSearchAndMarkup::uat_ann_110_annotationsSurviveSaveReopen() {
     QVERIFY(m_scratch.isValid());
     const QString srcPath = writePdfWithKeyword(
-        m_scratch.filePath(QStringLiteral("uat_ann_110_src.pdf")),
-        QStringLiteral("fixture"));
-    const QString dstPath = m_scratch.filePath(
-        QStringLiteral("uat_ann_110_marked.pdf"));
+        m_scratch.filePath(QStringLiteral("uat_ann_110_src.pdf")), QStringLiteral("fixture"));
+    const QString dstPath = m_scratch.filePath(QStringLiteral("uat_ann_110_marked.pdf"));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({srcPath});
     QApplication::processEvents();
 
     {
-        MainWindow* mw = currentMainWindow();
+        MainWindow *mw = currentMainWindow();
         QVERIFY(mw);
         mw->resize(1100, 750);
         QApplication::processEvents();
 
-        auto* dv = mw->findChild<DocumentView*>();
+        auto *dv = mw->findChild<DocumentView *>();
         QVERIFY(dv);
-        IDocument* doc = dv->currentDocument();
+        IDocument *doc = dv->currentDocument();
         QVERIFY(doc);
-        AnnotationStore* store = doc->annotations();
+        AnnotationStore *store = doc->annotations();
         QVERIFY(store);
 
-        auto* markup = mw->findChild<MarkupToolbar*>();
+        auto *markup = mw->findChild<MarkupToolbar *>();
         QVERIFY(markup);
-        QAction* rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
+        QAction *rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
         QVERIFY(rectAction);
         rectAction->setChecked(true);
         QApplication::processEvents();
 
-        auto* overlay = mw->findChild<AnnotationOverlay*>();
+        auto *overlay = mw->findChild<AnnotationOverlay *>();
         QVERIFY(overlay);
         dragOnOverlay(overlay, QPoint(150, 200), QPoint(280, 300));
         QCOMPARE(store->count(), 1);
 
         // Save to a side path so the source isn't touched.
-        QVERIFY2(doc->save(dstPath),
-                 "Save with annotations must succeed");
+        QVERIFY2(doc->save(dstPath), "Save with annotations must succeed");
         mw->close();
         QApplication::processEvents();
     }
@@ -1242,24 +1216,23 @@ void TestUatSearchAndMarkup::uat_ann_110_annotationsSurviveSaveReopen() {
     app->openFiles({dstPath});
     QApplication::processEvents();
 
-    MainWindow* mw2 = currentMainWindow();
+    MainWindow *mw2 = currentMainWindow();
     QVERIFY(mw2);
-    auto* dv2 = mw2->findChild<DocumentView*>();
+    auto *dv2 = mw2->findChild<DocumentView *>();
     QVERIFY(dv2);
-    IDocument* doc2 = dv2->currentDocument();
+    IDocument *doc2 = dv2->currentDocument();
     QVERIFY(doc2);
-    AnnotationStore* store2 = doc2->annotations();
+    AnnotationStore *store2 = doc2->annotations();
     QVERIFY(store2);
 
-    QVERIFY2(store2->count() >= 1,
-             "Saved-and-reopened PDF must restore the rectangle "
-             "annotation drawn in the previous session");
+    QVERIFY2(store2->count() >= 1, "Saved-and-reopened PDF must restore the rectangle "
+                                   "annotation drawn in the previous session");
     bool hasRect = false;
-    for (const auto& a : store2->annotations()) {
-        if (a.type == AnnotationType::Rectangle) hasRect = true;
+    for (const auto &a : store2->annotations()) {
+        if (a.type == AnnotationType::Rectangle)
+            hasRect = true;
     }
-    QVERIFY2(hasRect,
-             "Restored annotation should be of type Rectangle");
+    QVERIFY2(hasRect, "Restored annotation should be of type Rectangle");
 }
 
 namespace {
@@ -1267,53 +1240,60 @@ namespace {
 // Helper: create a window with a PDF, draw a rectangle annotation
 // at viewport coordinates, return (mw, overlay, store, drawnId).
 struct AnnEditingFixture {
-    MainWindow* mw = nullptr;
-    AnnotationOverlay* overlay = nullptr;
-    AnnotationStore* store = nullptr;
+    MainWindow *mw = nullptr;
+    AnnotationOverlay *overlay = nullptr;
+    AnnotationStore *store = nullptr;
     int drawnId = 0;
 };
 
-AnnEditingFixture buildAnnEditingFixture(QTemporaryDir& scratch,
-                                         const QString& tag) {
+AnnEditingFixture buildAnnEditingFixture(QTemporaryDir &scratch, const QString &tag) {
     AnnEditingFixture f;
     const QString pdfPath = writePdfWithKeyword(
-        scratch.filePath(QStringLiteral("uat_ann_%1.pdf").arg(tag)),
-        QStringLiteral("fixture"));
+        scratch.filePath(QStringLiteral("uat_ann_%1.pdf").arg(tag)), QStringLiteral("fixture"));
 
-    auto* app = qobject_cast<Application*>(qApp);
-    if (!app) return f;
+    auto *app = qobject_cast<Application *>(qApp);
+    if (!app)
+        return f;
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
     f.mw = nullptr;
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (auto* m = qobject_cast<MainWindow*>(w)) f.mw = m;
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (auto *m = qobject_cast<MainWindow *>(w))
+            f.mw = m;
     }
-    if (!f.mw) return f;
+    if (!f.mw)
+        return f;
     f.mw->resize(1100, 750);
     QApplication::processEvents();
 
-    auto* dv = f.mw->findChild<DocumentView*>();
-    if (!dv) return f;
+    auto *dv = f.mw->findChild<DocumentView *>();
+    if (!dv)
+        return f;
     f.store = dv->currentDocument()->annotations();
-    if (!f.store) return f;
+    if (!f.store)
+        return f;
 
-    auto* markup = f.mw->findChild<MarkupToolbar*>();
-    if (!markup) return f;
-    QAction* rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
-    if (!rectAction) return f;
+    auto *markup = f.mw->findChild<MarkupToolbar *>();
+    if (!markup)
+        return f;
+    QAction *rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
+    if (!rectAction)
+        return f;
     rectAction->setChecked(true);
     QApplication::processEvents();
 
-    f.overlay = f.mw->findChild<AnnotationOverlay*>();
-    if (!f.overlay) return f;
+    f.overlay = f.mw->findChild<AnnotationOverlay *>();
+    if (!f.overlay)
+        return f;
     dragOnOverlay(f.overlay, QPoint(200, 250), QPoint(320, 340));
-    if (f.store->count() == 0) return f;
+    if (f.store->count() == 0)
+        return f;
     f.drawnId = f.store->annotations().back().id;
 
     // Switch back to Select tool so subsequent clicks select rather
     // than draw new rectangles.
-    QAction* selectAction = findToolAction(markup, QStringLiteral("Select"));
+    QAction *selectAction = findToolAction(markup, QStringLiteral("Select"));
     if (selectAction) {
         selectAction->setChecked(true);
         QApplication::processEvents();
@@ -1321,15 +1301,14 @@ AnnEditingFixture buildAnnEditingFixture(QTemporaryDir& scratch,
     return f;
 }
 
-}  // namespace
+} // namespace
 
 // UAT-ANN-120 — Click on an existing annotation while the Select
 // tool is active selects it. The overlay reports the selected id;
 // the dashed selection ring around it is a visual affordance the
 // user sees but the test asserts on the data layer instead.
 void TestUatSearchAndMarkup::uat_ann_120_clickSelectsExistingAnnotation() {
-    AnnEditingFixture f = buildAnnEditingFixture(m_scratch,
-                                                  QStringLiteral("120"));
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch, QStringLiteral("120"));
     QVERIFY(f.overlay);
     QVERIFY(f.drawnId != 0);
     QCOMPARE(f.overlay->selectedAnnotationId(), 0);
@@ -1337,10 +1316,8 @@ void TestUatSearchAndMarkup::uat_ann_120_clickSelectsExistingAnnotation() {
     // Click somewhere inside the rectangle's view-space bounds. The
     // drag we used to draw it ran from (200,250) to (320,340) in
     // view coords, so (260,295) is well inside.
-    sendMouse(f.overlay, QEvent::MouseButtonPress,
-              QPoint(260, 295), Qt::LeftButton);
-    sendMouse(f.overlay, QEvent::MouseButtonRelease,
-              QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonPress, QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease, QPoint(260, 295), Qt::LeftButton);
     QApplication::processEvents();
 
     QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
@@ -1349,17 +1326,14 @@ void TestUatSearchAndMarkup::uat_ann_120_clickSelectsExistingAnnotation() {
 // UAT-ANN-121 — Delete on a selected annotation removes it. The
 // store's count goes back to where it was before the draw.
 void TestUatSearchAndMarkup::uat_ann_121_deleteRemovesSelectedAnnotation() {
-    AnnEditingFixture f = buildAnnEditingFixture(m_scratch,
-                                                  QStringLiteral("121"));
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch, QStringLiteral("121"));
     QVERIFY(f.overlay);
     QVERIFY(f.drawnId != 0);
     QCOMPARE(f.store->count(), 1);
 
     // Click to select.
-    sendMouse(f.overlay, QEvent::MouseButtonPress,
-              QPoint(260, 295), Qt::LeftButton);
-    sendMouse(f.overlay, QEvent::MouseButtonRelease,
-              QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonPress, QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease, QPoint(260, 295), Qt::LeftButton);
     QApplication::processEvents();
     QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
 
@@ -1375,15 +1349,12 @@ void TestUatSearchAndMarkup::uat_ann_121_deleteRemovesSelectedAnnotation() {
 // (Shift = 10pt) without rebuilding it. The bounds shift; the id
 // stays the same.
 void TestUatSearchAndMarkup::uat_ann_122_arrowKeyNudgesSelectedAnnotation() {
-    AnnEditingFixture f = buildAnnEditingFixture(m_scratch,
-                                                  QStringLiteral("122"));
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch, QStringLiteral("122"));
     QVERIFY(f.overlay);
     QVERIFY(f.drawnId != 0);
 
-    sendMouse(f.overlay, QEvent::MouseButtonPress,
-              QPoint(260, 295), Qt::LeftButton);
-    sendMouse(f.overlay, QEvent::MouseButtonRelease,
-              QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonPress, QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease, QPoint(260, 295), Qt::LeftButton);
     QApplication::processEvents();
     QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
 
@@ -1392,8 +1363,7 @@ void TestUatSearchAndMarkup::uat_ann_122_arrowKeyNudgesSelectedAnnotation() {
     QApplication::processEvents();
     const QRectF after = f.store->find(f.drawnId)->bounds;
 
-    QVERIFY2(after.x() > before.x(),
-             "Right arrow should shift the bounds rightward in doc space");
+    QVERIFY2(after.x() > before.x(), "Right arrow should shift the bounds rightward in doc space");
     // The id is unchanged: nudging is an in-place update, not a
     // delete+add.
     QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
@@ -1404,13 +1374,12 @@ void TestUatSearchAndMarkup::uat_ann_122_arrowKeyNudgesSelectedAnnotation() {
 // auto-show was noisy for select-and-delete / select-and-nudge).
 // Visibility stays under the user's control via ⌘I.
 void TestUatSearchAndMarkup::uat_ann_123_inspectorTracksSelectedAnnotation() {
-    AnnEditingFixture f = buildAnnEditingFixture(m_scratch,
-                                                  QStringLiteral("123"));
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch, QStringLiteral("123"));
     QVERIFY(f.overlay);
     QVERIFY(f.drawnId != 0);
 
-    QDockWidget* inspectorDock = nullptr;
-    for (auto* d : f.mw->findChildren<QDockWidget*>()) {
+    QDockWidget *inspectorDock = nullptr;
+    for (auto *d : f.mw->findChildren<QDockWidget *>()) {
         if (QString::fromLatin1(d->metaObject()->className())
                 .endsWith(QStringLiteral("Inspector"))) {
             inspectorDock = d;
@@ -1420,33 +1389,26 @@ void TestUatSearchAndMarkup::uat_ann_123_inspectorTracksSelectedAnnotation() {
     QVERIFY(inspectorDock);
     QVERIFY(!inspectorDock->isVisible());
 
-    sendMouse(f.overlay, QEvent::MouseButtonPress,
-              QPoint(260, 295), Qt::LeftButton);
-    sendMouse(f.overlay, QEvent::MouseButtonRelease,
-              QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonPress, QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease, QPoint(260, 295), Qt::LeftButton);
     QApplication::processEvents();
 
-    QVERIFY2(f.overlay->selectedAnnotationId() == f.drawnId,
-             "Click should select the rectangle");
-    QVERIFY2(!inspectorDock->isVisible(),
-             "Inspector visibility is user-controlled — selecting "
-             "an annotation must not pop the pane open");
+    QVERIFY2(f.overlay->selectedAnnotationId() == f.drawnId, "Click should select the rectangle");
+    QVERIFY2(!inspectorDock->isVisible(), "Inspector visibility is user-controlled — selecting "
+                                          "an annotation must not pop the pane open");
 }
 
 // UAT-ANN-124 — Dragging the bottom-right resize handle of a
 // selected annotation expands its bounds. The id stays the same;
 // only the rectangle grows.
 void TestUatSearchAndMarkup::uat_ann_124_dragHandleResizesSelectedAnnotation() {
-    AnnEditingFixture f = buildAnnEditingFixture(m_scratch,
-                                                  QStringLiteral("124"));
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch, QStringLiteral("124"));
     QVERIFY(f.overlay);
     QVERIFY(f.drawnId != 0);
 
     // Select the rectangle first.
-    sendMouse(f.overlay, QEvent::MouseButtonPress,
-              QPoint(260, 295), Qt::LeftButton);
-    sendMouse(f.overlay, QEvent::MouseButtonRelease,
-              QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonPress, QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease, QPoint(260, 295), Qt::LeftButton);
     QApplication::processEvents();
     QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
 
@@ -1457,8 +1419,7 @@ void TestUatSearchAndMarkup::uat_ann_124_dragHandleResizesSelectedAnnotation() {
     // transform is identity. The overlay exposes the selected
     // annotation's view rect for this purpose.
     const QRectF viewRect = f.overlay->selectedViewRectForTest();
-    QVERIFY2(!viewRect.isEmpty(),
-             "The selected annotation should report a non-empty view rect");
+    QVERIFY2(!viewRect.isEmpty(), "The selected annotation should report a non-empty view rect");
     const QPoint brStart = viewRect.bottomRight().toPoint();
     const QPoint brEnd = brStart + QPoint(40, 40);
     sendMouse(f.overlay, QEvent::MouseButtonPress, brStart, Qt::LeftButton);
@@ -1470,12 +1431,10 @@ void TestUatSearchAndMarkup::uat_ann_124_dragHandleResizesSelectedAnnotation() {
     QApplication::processEvents();
 
     const QRectF after = f.store->find(f.drawnId)->bounds;
-    QVERIFY2(after.width() > before.width(),
-             "Dragging the bottom-right handle outward should "
-             "increase the bounds width");
-    QVERIFY2(after.height() > before.height(),
-             "Dragging the bottom-right handle outward should "
-             "increase the bounds height");
+    QVERIFY2(after.width() > before.width(), "Dragging the bottom-right handle outward should "
+                                             "increase the bounds width");
+    QVERIFY2(after.height() > before.height(), "Dragging the bottom-right handle outward should "
+                                               "increase the bounds height");
     // The id is preserved — resize is an in-place update.
     QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
 }
@@ -1821,9 +1780,10 @@ void TestUatSearchAndMarkup::uat_ann_126_selectAllThenDeleteRemovesAllInOneUndo(
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG
 // so Settings and RecentFiles don't touch the user's real config.
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     QTemporaryDir fakeHome;
-    if (!fakeHome.isValid()) return 1;
+    if (!fakeHome.isValid())
+        return 1;
     qputenv("HOME", fakeHome.path().toUtf8());
     qputenv("XDG_CONFIG_HOME", (fakeHome.path() + "/.config").toUtf8());
     qputenv("XDG_DATA_HOME", (fakeHome.path() + "/.local/share").toUtf8());

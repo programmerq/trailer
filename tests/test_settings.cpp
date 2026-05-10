@@ -10,7 +10,7 @@ using namespace trailer;
 
 class TestSettings : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void defaults();
     void roundTrip();
     void missingFileYieldsDefaults();
@@ -55,8 +55,7 @@ void TestSettings::roundTrip() {
     QCOMPARE(reloaded.autoSave(), false);
     QCOMPARE(reloaded.recentMax(), 20);
     QCOMPARE(reloaded.redactionWarningAcknowledged(), true);
-    QCOMPARE(reloaded.lastSaveDir(),
-             QStringLiteral("/some/where/Documents"));
+    QCOMPARE(reloaded.lastSaveDir(), QStringLiteral("/some/where/Documents"));
 }
 
 void TestSettings::missingFileYieldsDefaults() {

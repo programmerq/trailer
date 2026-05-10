@@ -7,8 +7,8 @@
 #   scripts/run-uat.sh --rebuild    # force rebuild of the docker image
 #   scripts/run-uat.sh --in-container  # internal: run the UAT suite assuming we are already inside the container
 #
-# Intended to be invoked manually or by a tag-triggered job later;
-# not wired into push/PR CI.
+# Intended to be invoked manually, via workflow_dispatch (.github/workflows/uat-
+# dispatch.yml), or by the tag-triggered release pipeline — not by push/PR CI.
 
 set -euo pipefail
 

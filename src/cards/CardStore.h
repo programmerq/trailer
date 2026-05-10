@@ -31,9 +31,9 @@ namespace trailer {
 //   postal_code = "97201"
 //   country = "USA"
 class CardStore {
-public:
-    CardStore();                              // uses AppPaths::cardsFile()
-    explicit CardStore(QString filePath);     // for tests
+  public:
+    CardStore();                          // uses AppPaths::cardsFile()
+    explicit CardStore(QString filePath); // for tests
 
     // Load from disk. Empty file / missing file is not an error; the
     // store starts with zero cards and setActiveIndex() = -1.
@@ -41,15 +41,14 @@ public:
     // Persist to disk. Creates the parent directory if needed.
     void save() const;
 
-    const std::vector<MyCard>& cards() const { return m_cards; }
+    const std::vector<MyCard> &cards() const { return m_cards; }
     int activeIndex() const { return m_activeIndex; }
 
     // Returns the currently active card (or a default-constructed
     // MyCard if there is none / index is out of range).
     MyCard activeCard() const;
     bool hasActive() const {
-        return m_activeIndex >= 0
-               && m_activeIndex < static_cast<int>(m_cards.size());
+        return m_activeIndex >= 0 && m_activeIndex < static_cast<int>(m_cards.size());
     }
 
     void addCard(MyCard card);
@@ -63,10 +62,10 @@ public:
 
     QString filePath() const { return m_filePath; }
 
-private:
+  private:
     QString m_filePath;
     std::vector<MyCard> m_cards;
     int m_activeIndex = -1;
 };
 
-}  // namespace trailer
+} // namespace trailer

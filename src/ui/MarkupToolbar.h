@@ -13,8 +13,8 @@ namespace trailer {
 class MarkupToolbar : public QToolBar {
     Q_OBJECT
 
-public:
-    explicit MarkupToolbar(QWidget* parent = nullptr);
+  public:
+    explicit MarkupToolbar(QWidget *parent = nullptr);
 
     AnnotationTool activeTool() const { return m_tool; }
     AnnotationStyle style() const;
@@ -40,22 +40,22 @@ public:
     // groups stay populated for every document type.)
     void setToolVisible(AnnotationTool tool, bool visible);
 
-signals:
+  signals:
     void activeToolChanged(AnnotationTool tool);
-    void styleChanged(const AnnotationStyle& style);
+    void styleChanged(const AnnotationStyle &style);
 
-private:
-    QAction* makeToolAction(const QString& label, AnnotationTool tool,
-                            const QString& iconResource = QString());
+  private:
+    QAction *makeToolAction(const QString &label, AnnotationTool tool,
+                            const QString &iconResource = QString());
 
-    QActionGroup* m_group = nullptr;
+    QActionGroup *m_group = nullptr;
     AnnotationTool m_tool = AnnotationTool::None;
     AnnotationStyle m_style;
-    QHash<AnnotationTool, QAction*> m_toolActions;
+    QHash<AnnotationTool, QAction *> m_toolActions;
     // Separator immediately before the text-aware tool group
     // (Underline / Highlight / StrikeOut). Tracked so we can hide it
     // when every tool in that group is hidden — see setToolVisible.
-    QAction* m_textAwareSeparator = nullptr;
+    QAction *m_textAwareSeparator = nullptr;
 };
 
-}  // namespace trailer
+} // namespace trailer

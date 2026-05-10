@@ -32,11 +32,11 @@ struct ModelSpec {
     QString displayName;
     QString fileName;
     QString url;
-    QString sha256;  // lowercase hex
-    qint64 size;     // bytes
+    QString sha256; // lowercase hex
+    qint64 size;    // bytes
     QString license;
     QString homepage;
-    QString purpose;  // short description shown in Preferences
+    QString purpose; // short description shown in Preferences
 };
 
 // Registry of downloadable ONNX models. Resolves a ModelId to the
@@ -50,8 +50,8 @@ struct ModelSpec {
 class ModelRegistry : public QObject {
     Q_OBJECT
 
-public:
-    explicit ModelRegistry(QObject* parent = nullptr);
+  public:
+    explicit ModelRegistry(QObject *parent = nullptr);
     ~ModelRegistry() override;
 
     // Absolute path where a model's file lives once downloaded. Does
@@ -80,28 +80,27 @@ public:
 
     // Override the manifest for testing. Replaces the built-in list
     // with the given specs; also resets the models directory.
-    void setManifestForTesting(const QList<ModelSpec>& specs,
-                               const QString& modelsDirOverride);
+    void setManifestForTesting(const QList<ModelSpec> &specs, const QString &modelsDirOverride);
 
-signals:
+  signals:
     void downloadProgress(ModelId id, qint64 received, qint64 total);
-    void available(ModelId id, const QString& localPath);
-    void downloadFailed(ModelId id, const QString& message);
+    void available(ModelId id, const QString &localPath);
+    void downloadFailed(ModelId id, const QString &message);
 
-private:
+  private:
     // Built-in manifest populated in the constructor.
     void populateBuiltin();
 
     // Per-id state: one downloader at a time, tracked so ensureAvailable
     // is idempotent while a fetch is in flight.
     QHash<ModelId, ModelSpec> m_specs;
-    QHash<ModelId, ModelDownloader*> m_downloads;
+    QHash<ModelId, ModelDownloader *> m_downloads;
     QString m_modelsDir;
 };
 
 // Verifies that a file at `path` matches `expectedSha256` (lowercase
 // hex). Returns false if the file is missing or hashes to anything
 // else. Exposed for tests.
-bool verifyModelHash(const QString& path, const QString& expectedSha256);
+bool verifyModelHash(const QString &path, const QString &expectedSha256);
 
-}  // namespace trailer
+} // namespace trailer

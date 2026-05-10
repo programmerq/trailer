@@ -10,22 +10,20 @@
 
 namespace trailer {
 
-AnimationBar::AnimationBar(QWidget* parent) : QWidget(parent) {
-    auto* layout = new QHBoxLayout(this);
+AnimationBar::AnimationBar(QWidget *parent) : QWidget(parent) {
+    auto *layout = new QHBoxLayout(this);
     layout->setContentsMargins(6, 4, 6, 4);
 
     m_playButton = new QToolButton(this);
     m_playButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
     m_playButton->setToolTip(tr("Play / Pause"));
-    connect(m_playButton, &QToolButton::clicked,
-            this, &AnimationBar::onPlayToggled);
+    connect(m_playButton, &QToolButton::clicked, this, &AnimationBar::onPlayToggled);
 
     m_slider = new QSlider(Qt::Horizontal, this);
     m_slider->setMinimum(0);
     m_slider->setSingleStep(1);
     m_slider->setPageStep(1);
-    connect(m_slider, &QSlider::sliderMoved,
-            this, &AnimationBar::onSliderMoved);
+    connect(m_slider, &QSlider::sliderMoved, this, &AnimationBar::onSliderMoved);
 
     m_counter = new QLabel(this);
     m_counter->setMinimumWidth(80);
@@ -38,7 +36,7 @@ AnimationBar::AnimationBar(QWidget* parent) : QWidget(parent) {
     connect(&m_pollTimer, &QTimer::timeout, this, &AnimationBar::poll);
 }
 
-void AnimationBar::setDocument(IDocument* doc) {
+void AnimationBar::setDocument(IDocument *doc) {
     m_doc = doc;
     if (!doc || !doc->supportsAnimation()) {
         m_pollTimer.stop();
@@ -55,13 +53,15 @@ void AnimationBar::setDocument(IDocument* doc) {
 }
 
 void AnimationBar::onPlayToggled() {
-    if (!m_doc) return;
+    if (!m_doc)
+        return;
     m_doc->setAnimationPlaying(!m_doc->isAnimationPlaying());
     refreshPlayIcon();
 }
 
 void AnimationBar::onSliderMoved(int value) {
-    if (!m_doc) return;
+    if (!m_doc)
+        return;
     m_doc->setCurrentFrame(value);
     refreshPlayIcon();
     const int total = m_doc->frameCount();
@@ -78,17 +78,16 @@ void AnimationBar::poll() {
             QSignalBlocker block(m_slider);
             m_slider->setValue(current);
         }
-        m_counter->setText(tr("%1 / %2")
-                               .arg(current + 1)
-                               .arg(m_doc->frameCount()));
+        m_counter->setText(tr("%1 / %2").arg(current + 1).arg(m_doc->frameCount()));
     }
 }
 
 void AnimationBar::refreshPlayIcon() {
-    if (!m_doc) return;
+    if (!m_doc)
+        return;
     const bool playing = m_doc->isAnimationPlaying();
-    m_playButton->setIcon(style()->standardIcon(
-        playing ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
+    m_playButton->setIcon(
+        style()->standardIcon(playing ? QStyle::SP_MediaPause : QStyle::SP_MediaPlay));
 }
 
-}  // namespace trailer
+} // namespace trailer

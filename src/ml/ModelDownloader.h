@@ -19,8 +19,8 @@ namespace trailer {
 class ModelDownloader : public QObject {
     Q_OBJECT
 
-public:
-    explicit ModelDownloader(QObject* parent = nullptr);
+  public:
+    explicit ModelDownloader(QObject *parent = nullptr);
     ~ModelDownloader() override;
 
     // Kick off a download. Returns immediately; watch the signals for
@@ -29,42 +29,40 @@ public:
     // `expectedSha256` is the lowercase hex digest the file must match
     // after download; mismatch is a failure. Pass an empty string to
     // skip verification (not recommended — used only by tests).
-    void start(const QString& url,
-               const QString& destPath,
-               const QString& expectedSha256);
+    void start(const QString &url, const QString &destPath, const QString &expectedSha256);
 
     // Abort whatever is in flight, if anything. Safe to call at any time.
     void cancel();
 
     bool isActive() const { return m_reply != nullptr; }
 
-signals:
+  signals:
     // Fired periodically while bytes arrive. `total` is -1 if the
     // server didn't send Content-Length.
     void progress(qint64 received, qint64 total);
 
     // Fired once when the file lands on disk and hashes OK.
-    void finished(const QString& destPath);
+    void finished(const QString &destPath);
 
     // Fired once on any failure path: network error, bad hash, write
     // failure, cancellation. `message` is human-readable.
-    void failed(const QString& message);
+    void failed(const QString &message);
 
-private slots:
+  private slots:
     void onReadyRead();
     void onFinished();
     void onProgress(qint64 rec, qint64 total);
 
-private:
-    void emitFailure(const QString& message);
+  private:
+    void emitFailure(const QString &message);
     void cleanup();
 
-    QNetworkAccessManager* m_net = nullptr;
-    QNetworkReply* m_reply = nullptr;
+    QNetworkAccessManager *m_net = nullptr;
+    QNetworkReply *m_reply = nullptr;
     QString m_destPath;
     QString m_tempPath;
     QString m_expectedSha256;
-    QFile* m_sink = nullptr;
+    QFile *m_sink = nullptr;
 };
 
-}  // namespace trailer
+} // namespace trailer
