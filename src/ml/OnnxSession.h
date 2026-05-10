@@ -12,7 +12,7 @@ class Env;
 class Session;
 class MemoryInfo;
 class Value;
-}  // namespace Ort
+} // namespace Ort
 
 namespace trailer {
 
@@ -34,9 +34,9 @@ namespace trailer {
 // NCHW-or-whatever the model expects; OnnxSession does not interpret it.
 struct TensorSpec {
     QByteArray name;
-    const float* data;
+    const float *data;
     std::vector<int64_t> shape;
-    qsizetype elementCount;  // product of shape; sanity checked against buffer size
+    qsizetype elementCount; // product of shape; sanity checked against buffer size
 };
 
 // Single output of a run() call. Data is copied out of the ORT-owned
@@ -49,14 +49,14 @@ struct TensorResult {
 };
 
 class OnnxSession {
-public:
+  public:
     // Load a model from a filesystem path. Returns nullptr if the file
     // cannot be read, is malformed, or does not load in ORT.
-    static std::unique_ptr<OnnxSession> fromFile(const QString& modelPath);
+    static std::unique_ptr<OnnxSession> fromFile(const QString &modelPath);
 
     // Load a model from an in-memory buffer. Useful for models embedded
     // in resources/ or generated at test time.
-    static std::unique_ptr<OnnxSession> fromBytes(const QByteArray& modelBytes);
+    static std::unique_ptr<OnnxSession> fromBytes(const QByteArray &modelBytes);
 
     ~OnnxSession();
 
@@ -65,22 +65,21 @@ public:
     // output names to read; if empty, every declared output is read.
     // Returns std::nullopt if ORT throws during the run (out-of-memory,
     // shape mismatch, etc.) and logs to qWarning.
-    std::optional<std::vector<TensorResult>> run(
-        const std::vector<TensorSpec>& inputs,
-        const std::vector<QByteArray>& outputs = {}) const;
+    std::optional<std::vector<TensorResult>> run(const std::vector<TensorSpec> &inputs,
+                                                 const std::vector<QByteArray> &outputs = {}) const;
 
     // Introspection helpers used by the feature modules to validate at
     // load time that a downloaded model matches the shape they expect.
     QStringList inputNames() const;
     QStringList outputNames() const;
 
-private:
+  private:
     OnnxSession();
-    OnnxSession(const OnnxSession&) = delete;
-    OnnxSession& operator=(const OnnxSession&) = delete;
+    OnnxSession(const OnnxSession &) = delete;
+    OnnxSession &operator=(const OnnxSession &) = delete;
 
     struct Impl;
     std::unique_ptr<Impl> m_impl;
 };
 
-}  // namespace trailer
+} // namespace trailer

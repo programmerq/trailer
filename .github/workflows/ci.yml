@@ -19,42 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Qt
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: '6.8.0'
-          modules: 'qtpdf'
-          cache: true
+      - uses: ./.github/actions/setup-linux-build
 
-      - name: Install Linux build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libgl1-mesa-dev \
-            libglu1-mesa-dev \
-            libxkbcommon-dev \
-            libxcb-icccm4 \
-            libxcb-image0 \
-            libxcb-keysyms1 \
-            libxcb-randr0 \
-            libxcb-render-util0 \
-            libxcb-shape0 \
-            libxcb-sync1 \
-            libxcb-xfixes0 \
-            libxcb-xinerama0 \
-            libxcb-xkb1 \
-            libxkbcommon-x11-0 \
-            libcups2-dev \
-            pkg-config \
-            libqpdf-dev
+      - name: clang-format
+        run: git ls-files '*.cpp' '*.h' '*.mm' | xargs clang-format --dry-run --Werror
 
       - name: Configure
-        # The CompilerWarnings.cmake module enables -Wall -Wextra
-        # -Wpedantic and treats everything as an error in the
-        # trailer_core target — the build itself is the lint gate.
-        # Adding clang-format / clang-tidy passes is a follow-up
-        # once the project has a committed style config.
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRAILER_WERROR=ON
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -63,7 +34,7 @@ jobs:
         # UAT tests (label `uat`) drive the full Application +
         # MainWindow stack and need a windowed Qt platform plugin.
         # The fast PR loop excludes them; they run on tag via
-        # release.yml's UAT step.
+        # release.yml's UAT step or manually via uat-dispatch.yml.
         working-directory: build
         run: ctest -C Release --output-on-failure --label-exclude uat
         env:

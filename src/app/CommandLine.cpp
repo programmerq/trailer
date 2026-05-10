@@ -5,14 +5,12 @@
 
 namespace trailer {
 
-CommandLineResult parseCommandLine(const QStringList& arguments) {
+CommandLineResult parseCommandLine(const QStringList &arguments) {
     QCommandLineParser parser;
     parser.setApplicationDescription(
         QStringLiteral("Trailer — cross-platform PDF and image workbench"));
-    parser.addPositionalArgument(
-        QStringLiteral("files"),
-        QStringLiteral("Files to open."),
-        QStringLiteral("[files...]"));
+    parser.addPositionalArgument(QStringLiteral("files"), QStringLiteral("Files to open."),
+                                 QStringLiteral("[files...]"));
 
     const QCommandLineOption helpOption = parser.addHelpOption();
     const QCommandLineOption versionOption = parser.addVersionOption();
@@ -26,4 +24,4 @@ CommandLineResult parseCommandLine(const QStringList& arguments) {
     return result;
 }
 
-}  // namespace trailer
+} // namespace trailer

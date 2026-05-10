@@ -17,7 +17,7 @@ using namespace trailer;
 
 class TestModelRegistry : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void builtinManifestHasAllIds();
     void localPathLivesUnderModelsDir();
     void verifyHashAcceptsMatchingFile();
@@ -29,7 +29,7 @@ private slots:
     void availableFiresEvenWhenFileAlreadyPresent();
     void corruptCacheTriggersRedownload();
 
-private:
+  private:
     QString fixturePath() const;
 };
 
@@ -49,8 +49,7 @@ void TestModelRegistry::builtinManifestHasAllIds() {
     // ocr det/cls + two recognizers (latin, cjk).
     QCOMPARE(list.size(), 8);
     // Spot-check one so a future rename doesn't silently break the UI.
-    QCOMPARE(reg.spec(ModelId::U2NetP).fileName,
-             QStringLiteral("u2netp.onnx"));
+    QCOMPARE(reg.spec(ModelId::U2NetP).fileName, QStringLiteral("u2netp.onnx"));
 }
 
 void TestModelRegistry::localPathLivesUnderModelsDir() {
@@ -75,8 +74,7 @@ void TestModelRegistry::verifyHashRejectsTamperedFile() {
 }
 
 void TestModelRegistry::verifyHashReturnsFalseForMissingFile() {
-    QVERIFY(!verifyModelHash(QStringLiteral("/no/such/path.onnx"),
-                             kIdentitySha256));
+    QVERIFY(!verifyModelHash(QStringLiteral("/no/such/path.onnx"), kIdentitySha256));
 }
 
 void TestModelRegistry::unknownIdFailsEnsureAvailable() {

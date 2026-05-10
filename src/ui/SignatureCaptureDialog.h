@@ -37,8 +37,8 @@ namespace trailer {
 // hide quantisation jitter.
 class SignatureCanvas : public QWidget {
     Q_OBJECT
-public:
-    explicit SignatureCanvas(QWidget* parent = nullptr);
+  public:
+    explicit SignatureCanvas(QWidget *parent = nullptr);
 
     // Return the signature as an RGBA image, cropped to the tight
     // bounding box of the ink. If nothing has been drawn returns a
@@ -52,32 +52,35 @@ public:
     // confirm a pressure-aware device was driving the canvas.
     bool lastStrokeUsedPressure() const { return m_lastStrokeUsedPressure; }
 
-signals:
+  signals:
     void changed();
 
-protected:
-    void paintEvent(QPaintEvent* event) override;
-    void mousePressEvent(QMouseEvent* event) override;
-    void mouseMoveEvent(QMouseEvent* event) override;
-    void mouseReleaseEvent(QMouseEvent* event) override;
-    void tabletEvent(QTabletEvent* event) override;
+  protected:
+    void paintEvent(QPaintEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void tabletEvent(QTabletEvent *event) override;
 
-private:
-    struct Sample { QPointF pos; qreal pressure; };
+  private:
+    struct Sample {
+        QPointF pos;
+        qreal pressure;
+    };
     // Map a 0..1 raw pressure to a stroke width in canvas pixels.
     // Cubic curve gives a wider dynamic range than the previous
     // linear: 0.0 → 1px (light hairline), 0.5 → ~3px (mid),
     // 1.0 → ~7px (heavy).
     static qreal widthForPressure(qreal pressure);
-    void beginStroke(const QPointF& pos, qreal pressure);
-    void extendStroke(const QPointF& pos, qreal pressure);
+    void beginStroke(const QPointF &pos, qreal pressure);
+    void extendStroke(const QPointF &pos, qreal pressure);
     void finishStroke();
 
     // A stroke is a run of (position, pressure) samples. Drawing
     // interpolates pen width between consecutive samples via
     // widthForPressure.
     std::vector<std::vector<Sample>> m_strokes;
-    std::vector<Sample>* m_current = nullptr;
+    std::vector<Sample> *m_current = nullptr;
     bool m_lastStrokeUsedPressure = false;
 
     // Computed on each sample-add so render() can crop tightly.
@@ -92,32 +95,32 @@ private:
 // caller reads the result via image() and label().
 class SignatureCaptureDialog : public QDialog {
     Q_OBJECT
-public:
-    explicit SignatureCaptureDialog(QWidget* parent = nullptr);
+  public:
+    explicit SignatureCaptureDialog(QWidget *parent = nullptr);
 
     QImage image() const { return m_result; }
     QString label() const;
 
-private slots:
+  private slots:
     void onDrawingChanged();
     void onClearClicked();
     void onBrowseClicked();
     void onTabChanged(int index);
 
-private:
+  private:
     void updateAcceptEnabled();
 
-    QTabWidget* m_tabs = nullptr;
-    SignatureCanvas* m_canvas = nullptr;
-    QPushButton* m_clearButton = nullptr;
+    QTabWidget *m_tabs = nullptr;
+    SignatureCanvas *m_canvas = nullptr;
+    QPushButton *m_clearButton = nullptr;
 
-    QWidget* m_importPreview = nullptr;  // holds m_importImageLabel
+    QWidget *m_importPreview = nullptr; // holds m_importImageLabel
     QImage m_importImage;
 
-    QLineEdit* m_label = nullptr;
-    QPushButton* m_okButton = nullptr;
+    QLineEdit *m_label = nullptr;
+    QPushButton *m_okButton = nullptr;
 
     QImage m_result;
 };
 
-}  // namespace trailer
+} // namespace trailer

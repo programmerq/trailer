@@ -16,7 +16,7 @@ using namespace trailer;
 
 class TestCards : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void matcherHandlesCommonFieldNames();
     void matcherIgnoresUnknownFields();
     void matcherIsCaseAndSeparatorInsensitive();
@@ -49,7 +49,7 @@ MyCard sampleCard() {
     return c;
 }
 
-}  // namespace
+} // namespace
 
 void TestCards::matcherHandlesCommonFieldNames() {
     const MyCard c = sampleCard();
@@ -109,16 +109,11 @@ void TestCards::matcherHandlesHierarchicalDotNames() {
     // " first name " pads. Before the fix, the trailing "FirstName"
     // lived inside "billing address.first name" and didn't match.
     const MyCard c = sampleCard();
-    QCOMPARE(autoFillValueFor(
-                 QStringLiteral("form1.BillingAddress.FirstName"), c),
-             c.givenName);
-    QCOMPARE(autoFillValueFor(
-                 QStringLiteral("topmostSubform[0].Page1[0].f1_02[0]"), c),
-             QString());  // purely indexed → no match, still no crash
-    QCOMPARE(autoFillValueFor(QStringLiteral("order.customer.email"), c),
-             c.email);
-    QCOMPARE(autoFillValueFor(QStringLiteral("addr.zip_code"), c),
-             c.postalCode);
+    QCOMPARE(autoFillValueFor(QStringLiteral("form1.BillingAddress.FirstName"), c), c.givenName);
+    QCOMPARE(autoFillValueFor(QStringLiteral("topmostSubform[0].Page1[0].f1_02[0]"), c),
+             QString()); // purely indexed → no match, still no crash
+    QCOMPARE(autoFillValueFor(QStringLiteral("order.customer.email"), c), c.email);
+    QCOMPARE(autoFillValueFor(QStringLiteral("addr.zip_code"), c), c.postalCode);
     QCOMPARE(autoFillValueFor(QStringLiteral("shipping.City"), c), c.city);
 }
 
@@ -155,7 +150,7 @@ void TestCards::storeRoundTripsAllFields() {
     QCOMPARE(reader.activeIndex(), 1);
     QCOMPARE(static_cast<int>(reader.cards().size()), 2);
 
-    const MyCard& a = reader.cards()[0];
+    const MyCard &a = reader.cards()[0];
     const MyCard expected = sampleCard();
     QCOMPARE(a.label, expected.label);
     QCOMPARE(a.givenName, expected.givenName);
@@ -192,9 +187,15 @@ void TestCards::storeRemoveClampsActiveIndex() {
     QVERIFY(dir.isValid());
     CardStore store(dir.filePath(QStringLiteral("cards.toml")));
 
-    MyCard a; a.label = QStringLiteral("A"); store.addCard(std::move(a));
-    MyCard b; b.label = QStringLiteral("B"); store.addCard(std::move(b));
-    MyCard c; c.label = QStringLiteral("C"); store.addCard(std::move(c));
+    MyCard a;
+    a.label = QStringLiteral("A");
+    store.addCard(std::move(a));
+    MyCard b;
+    b.label = QStringLiteral("B");
+    store.addCard(std::move(b));
+    MyCard c;
+    c.label = QStringLiteral("C");
+    store.addCard(std::move(c));
     store.setActiveIndex(2);
 
     store.removeCard(2);

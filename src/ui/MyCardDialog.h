@@ -17,31 +17,31 @@ namespace trailer {
 class MyCardDialog : public QDialog {
     Q_OBJECT
 
-public:
-    explicit MyCardDialog(QWidget* parent = nullptr);
+  public:
+    explicit MyCardDialog(QWidget *parent = nullptr);
 
-    void setCard(const MyCard& card);
+    void setCard(const MyCard &card);
     MyCard card() const;
 
-private:
-    QLineEdit* m_label = nullptr;
+  private:
+    QLineEdit *m_label = nullptr;
 
-    QLineEdit* m_givenName = nullptr;
-    QLineEdit* m_familyName = nullptr;
-    QLineEdit* m_fullName = nullptr;
+    QLineEdit *m_givenName = nullptr;
+    QLineEdit *m_familyName = nullptr;
+    QLineEdit *m_fullName = nullptr;
 
-    QLineEdit* m_email = nullptr;
-    QLineEdit* m_phone = nullptr;
+    QLineEdit *m_email = nullptr;
+    QLineEdit *m_phone = nullptr;
 
-    QLineEdit* m_organization = nullptr;
-    QLineEdit* m_jobTitle = nullptr;
+    QLineEdit *m_organization = nullptr;
+    QLineEdit *m_jobTitle = nullptr;
 
-    QLineEdit* m_addressLine1 = nullptr;
-    QLineEdit* m_addressLine2 = nullptr;
-    QLineEdit* m_city = nullptr;
-    QLineEdit* m_state = nullptr;
-    QLineEdit* m_postalCode = nullptr;
-    QLineEdit* m_country = nullptr;
+    QLineEdit *m_addressLine1 = nullptr;
+    QLineEdit *m_addressLine2 = nullptr;
+    QLineEdit *m_city = nullptr;
+    QLineEdit *m_state = nullptr;
+    QLineEdit *m_postalCode = nullptr;
+    QLineEdit *m_country = nullptr;
 };
 
-}  // namespace trailer
+} // namespace trailer

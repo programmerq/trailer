@@ -11,9 +11,9 @@ namespace trailer {
 namespace {
 constexpr int kSize = 220;
 constexpr int kTickMs = 33;
-}  // namespace
+} // namespace
 
-Magnifier::Magnifier(QWidget* parent)
+Magnifier::Magnifier(QWidget *parent)
     : QWidget(parent, Qt::FramelessWindowHint | Qt::Tool | Qt::WindowStaysOnTopHint |
                           Qt::WindowTransparentForInput) {
     setAttribute(Qt::WA_TranslucentBackground);
@@ -25,7 +25,7 @@ Magnifier::Magnifier(QWidget* parent)
     connect(&m_timer, &QTimer::timeout, this, &Magnifier::tick);
 }
 
-void Magnifier::setTarget(QWidget* target) {
+void Magnifier::setTarget(QWidget *target) {
     m_target = target;
 }
 
@@ -34,7 +34,8 @@ void Magnifier::setZoomFactor(double factor) {
 }
 
 void Magnifier::activate() {
-    if (m_active) return;
+    if (m_active)
+        return;
     m_active = true;
     m_timer.start();
     tick();
@@ -59,9 +60,7 @@ void Magnifier::tick() {
         return;
     }
     const int srcSize = static_cast<int>(kSize / m_factor);
-    const QRect src(targetPos.x() - srcSize / 2,
-                    targetPos.y() - srcSize / 2,
-                    srcSize, srcSize);
+    const QRect src(targetPos.x() - srcSize / 2, targetPos.y() - srcSize / 2, srcSize, srcSize);
     m_snapshot = m_target->grab(src).toImage();
     move(globalPos.x() - width() / 2, globalPos.y() - height() / 2);
     if (!isVisible()) {
@@ -71,7 +70,7 @@ void Magnifier::tick() {
     update();
 }
 
-void Magnifier::paintEvent(QPaintEvent* /*event*/) {
+void Magnifier::paintEvent(QPaintEvent * /*event*/) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
     p.setRenderHint(QPainter::SmoothPixmapTransform);
@@ -93,4 +92,4 @@ void Magnifier::paintEvent(QPaintEvent* /*event*/) {
     p.drawEllipse(rect().adjusted(1, 1, -1, -1));
 }
 
-}  // namespace trailer
+} // namespace trailer

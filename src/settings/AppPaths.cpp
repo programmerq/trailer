@@ -8,7 +8,7 @@ namespace trailer {
 
 namespace {
 
-QString joinPath(const QString& base, const QString& leaf) {
+QString joinPath(const QString &base, const QString &leaf) {
     return QDir::cleanPath(base + QLatin1Char('/') + leaf);
 }
 
@@ -20,7 +20,7 @@ QString macAppSupport() {
 #endif
 
 #if defined(Q_OS_LINUX) || defined(Q_OS_FREEBSD)
-QString xdgPath(const char* env, const QString& fallbackRelativeToHome) {
+QString xdgPath(const char *env, const QString &fallbackRelativeToHome) {
     const QString value = QProcessEnvironment::systemEnvironment().value(QString::fromLatin1(env));
     if (!value.isEmpty()) {
         return joinPath(value, QStringLiteral("trailer"));
@@ -29,7 +29,7 @@ QString xdgPath(const char* env, const QString& fallbackRelativeToHome) {
 }
 #endif
 
-}  // namespace
+} // namespace
 
 QString AppPaths::settingsDir() {
 #if defined(Q_OS_MACOS)
@@ -99,8 +99,8 @@ QString AppPaths::modelsDir() {
     return joinPath(dataDir(), QStringLiteral("models"));
 }
 
-void AppPaths::ensureDirExists(const QString& path) {
+void AppPaths::ensureDirExists(const QString &path) {
     QDir().mkpath(path);
 }
 
-}  // namespace trailer
+} // namespace trailer

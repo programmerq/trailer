@@ -25,8 +25,8 @@ class ModelRegistry;
 // channel.
 class BackgroundRemover : public QObject {
     Q_OBJECT
-public:
-    explicit BackgroundRemover(ModelRegistry* registry, QObject* parent = nullptr);
+  public:
+    explicit BackgroundRemover(ModelRegistry *registry, QObject *parent = nullptr);
     ~BackgroundRemover() override;
 
     // True if the U²-Net file is already on disk and hashes correctly.
@@ -43,19 +43,19 @@ public:
     // ready or inference fails. Successful result is an ARGB32
     // image the same size as the input, with background pixels
     // driven toward alpha 0. Non-background pixels keep their RGB.
-    QImage remove(const QImage& source);
+    QImage remove(const QImage &source);
 
-signals:
+  signals:
     // Download progress from the underlying registry.
     void downloadProgress(qint64 received, qint64 total);
     // Model file present and verified.
     void modelReady();
     // Model file missing AND ensureModelAvailable hasn't been called
     // yet (or failed). Message is human-readable.
-    void modelUnavailable(const QString& reason);
+    void modelUnavailable(const QString &reason);
 
-private:
-    ModelRegistry* m_registry;
+  private:
+    ModelRegistry *m_registry;
 };
 
-}  // namespace trailer
+} // namespace trailer

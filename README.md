@@ -27,6 +27,14 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
+Continuous integration passes `-DTRAILER_WERROR=ON` so compiler warnings
+fail the build (warnings-as-errors). Use the same flag locally when you
+want parity with CI:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRAILER_WERROR=ON
+```
+
 ### Platform notes
 
 **macOS.** Install Qt via the Qt online installer or Homebrew

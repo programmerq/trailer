@@ -43,7 +43,7 @@ using namespace trailer;
 
 class TestOcrEngine : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void notReadyWhenCacheEmpty();
     void recognizeReturnsEmptyWhenModelMissing();
     void ensureModelsAvailableFailsGracefullyWithoutUrls();
@@ -51,17 +51,18 @@ private slots:
     void dictionaryResourceHas96Entries();
     void endToEndInferenceWithRealModels();
 
-private:
-    static QByteArray sha256Hex(const QString& path) {
+  private:
+    static QByteArray sha256Hex(const QString &path) {
         QFile f(path);
-        if (!f.open(QIODevice::ReadOnly)) return {};
+        if (!f.open(QIODevice::ReadOnly))
+            return {};
         QCryptographicHash h(QCryptographicHash::Sha256);
-        if (!h.addData(&f)) return {};
+        if (!h.addData(&f))
+            return {};
         return h.result().toHex();
     }
-    static ModelSpec makeSpec(ModelId id, const QString& fileName,
-                              const QString& url = {},
-                              const QString& sha256 = {}) {
+    static ModelSpec makeSpec(ModelId id, const QString &fileName, const QString &url = {},
+                              const QString &sha256 = {}) {
         ModelSpec s;
         s.id = id;
         s.displayName = fileName;
@@ -72,8 +73,7 @@ private:
     }
     // Paint a simple "HELLO 1234" banner onto a white background.
     // Big, high-contrast, axis-aligned: the detector's easy mode.
-    static QImage makeTextImage(const QString& text,
-                                int w = 640, int h = 200) {
+    static QImage makeTextImage(const QString &text, int w = 640, int h = 200) {
         QImage img(w, h, QImage::Format_RGB32);
         img.fill(Qt::white);
         QPainter p(&img);
@@ -94,10 +94,8 @@ void TestOcrEngine::notReadyWhenCacheEmpty() {
     QVERIFY(dir.isValid());
     ModelRegistry reg;
     reg.setManifestForTesting(
-        {makeSpec(ModelId::PpOcrDetector,
-                  QStringLiteral("pp_ocr_det.onnx")),
-         makeSpec(ModelId::PpOcrRecognizerLatin,
-                  QStringLiteral("pp_ocr_rec_en.onnx"))},
+        {makeSpec(ModelId::PpOcrDetector, QStringLiteral("pp_ocr_det.onnx")),
+         makeSpec(ModelId::PpOcrRecognizerLatin, QStringLiteral("pp_ocr_rec_en.onnx"))},
         dir.path());
     OcrEngine engine(&reg);
     QVERIFY(!engine.isModelReady());
@@ -108,10 +106,8 @@ void TestOcrEngine::recognizeReturnsEmptyWhenModelMissing() {
     QVERIFY(dir.isValid());
     ModelRegistry reg;
     reg.setManifestForTesting(
-        {makeSpec(ModelId::PpOcrDetector,
-                  QStringLiteral("pp_ocr_det.onnx")),
-         makeSpec(ModelId::PpOcrRecognizerLatin,
-                  QStringLiteral("pp_ocr_rec_en.onnx"))},
+        {makeSpec(ModelId::PpOcrDetector, QStringLiteral("pp_ocr_det.onnx")),
+         makeSpec(ModelId::PpOcrRecognizerLatin, QStringLiteral("pp_ocr_rec_en.onnx"))},
         dir.path());
     OcrEngine engine(&reg);
 
@@ -127,10 +123,8 @@ void TestOcrEngine::ensureModelsAvailableFailsGracefullyWithoutUrls() {
     QVERIFY(dir.isValid());
     ModelRegistry reg;
     reg.setManifestForTesting(
-        {makeSpec(ModelId::PpOcrDetector,
-                  QStringLiteral("pp_ocr_det.onnx")),
-         makeSpec(ModelId::PpOcrRecognizerLatin,
-                  QStringLiteral("pp_ocr_rec_en.onnx"))},
+        {makeSpec(ModelId::PpOcrDetector, QStringLiteral("pp_ocr_det.onnx")),
+         makeSpec(ModelId::PpOcrRecognizerLatin, QStringLiteral("pp_ocr_rec_en.onnx"))},
         dir.path());
     OcrEngine engine(&reg);
 
@@ -162,11 +156,9 @@ void TestOcrEngine::modelsReadyFiresWhenBothModelsSeeded() {
 
     ModelRegistry reg;
     reg.setManifestForTesting(
-        {makeSpec(ModelId::PpOcrDetector,
-                  QStringLiteral("pp_ocr_det.onnx"),
+        {makeSpec(ModelId::PpOcrDetector, QStringLiteral("pp_ocr_det.onnx"),
                   QUrl::fromLocalFile(detPath).toString(), detHash),
-         makeSpec(ModelId::PpOcrRecognizerLatin,
-                  QStringLiteral("pp_ocr_rec_en.onnx"),
+         makeSpec(ModelId::PpOcrRecognizerLatin, QStringLiteral("pp_ocr_rec_en.onnx"),
                   QUrl::fromLocalFile(recPath).toString(), recHash)},
         dir.path());
     OcrEngine engine(&reg);
@@ -196,12 +188,10 @@ void TestOcrEngine::dictionaryResourceHas96Entries() {
 }
 
 void TestOcrEngine::endToEndInferenceWithRealModels() {
-    const QString detSrc =
-        QString::fromLocal8Bit(qgetenv("TRAILER_TEST_PPOCR_DET"));
-    const QString recSrc =
-        QString::fromLocal8Bit(qgetenv("TRAILER_TEST_PPOCR_REC"));
-    if (detSrc.isEmpty() || !QFileInfo::exists(detSrc) ||
-        recSrc.isEmpty() || !QFileInfo::exists(recSrc)) {
+    const QString detSrc = QString::fromLocal8Bit(qgetenv("TRAILER_TEST_PPOCR_DET"));
+    const QString recSrc = QString::fromLocal8Bit(qgetenv("TRAILER_TEST_PPOCR_REC"));
+    if (detSrc.isEmpty() || !QFileInfo::exists(detSrc) || recSrc.isEmpty() ||
+        !QFileInfo::exists(recSrc)) {
         QSKIP("TRAILER_TEST_PPOCR_DET + TRAILER_TEST_PPOCR_REC not set — "
               "skipping real inference path.");
     }
@@ -217,11 +207,9 @@ void TestOcrEngine::endToEndInferenceWithRealModels() {
 
     ModelRegistry reg;
     reg.setManifestForTesting(
-        {makeSpec(ModelId::PpOcrDetector,
-                  QStringLiteral("pp_ocr_det.onnx"),
+        {makeSpec(ModelId::PpOcrDetector, QStringLiteral("pp_ocr_det.onnx"),
                   QUrl::fromLocalFile(detPath).toString(), detHash),
-         makeSpec(ModelId::PpOcrRecognizerLatin,
-                  QStringLiteral("pp_ocr_rec_en.onnx"),
+         makeSpec(ModelId::PpOcrRecognizerLatin, QStringLiteral("pp_ocr_rec_en.onnx"),
                   QUrl::fromLocalFile(recPath).toString(), recHash)},
         dir.path());
     OcrEngine engine(&reg);
@@ -229,15 +217,13 @@ void TestOcrEngine::endToEndInferenceWithRealModels() {
 
     const QImage scene = makeTextImage(QStringLiteral("HELLO 1234"));
     const auto blocks = engine.recognize(scene);
-    QVERIFY2(!blocks.isEmpty(),
-             "Expected at least one text region on a HELLO 1234 banner");
+    QVERIFY2(!blocks.isEmpty(), "Expected at least one text region on a HELLO 1234 banner");
 
-    for (const auto& b : blocks) {
+    for (const auto &b : blocks) {
         QVERIFY(!b.text.isEmpty());
         QVERIFY(b.confidence >= 0.0f && b.confidence <= 1.0f);
         const QRect bounds = b.polygon.boundingRect();
-        QVERIFY2(bounds.intersects(scene.rect()),
-                 "Block polygon should overlap the source image");
+        QVERIFY2(bounds.intersects(scene.rect()), "Block polygon should overlap the source image");
     }
 
     // The joined recognised text should contain at least one ASCII
@@ -245,10 +231,10 @@ void TestOcrEngine::endToEndInferenceWithRealModels() {
     // system fonts is not always high, so we accept partial matches
     // — any of the characters from HELLO/1234 is enough.
     QString joined;
-    for (const auto& b : blocks) joined += b.text;
+    for (const auto &b : blocks)
+        joined += b.text;
     QVERIFY2(joined.contains(QRegularExpression(QStringLiteral("[A-Z0-9]"))),
-             qPrintable(QStringLiteral("No alnum chars recognised in: '%1'")
-                            .arg(joined)));
+             qPrintable(QStringLiteral("No alnum chars recognised in: '%1'").arg(joined)));
 
     const QImage mask = engine.lastDetectionMask();
     QVERIFY(!mask.isNull());

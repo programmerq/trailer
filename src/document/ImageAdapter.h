@@ -20,12 +20,12 @@ namespace trailer {
 class AnnotationOverlay;
 
 class ImageDocument : public IDocument {
-public:
+  public:
     explicit ImageDocument(QString path);
 
     QString displayName() const override;
     QString filePath() const override;
-    QWidget* createView(QWidget* parent) override;
+    QWidget *createView(QWidget *parent) override;
 
     bool supportsZoom() const override { return !m_animated && !m_image.isNull(); }
     void zoomIn() override;
@@ -35,27 +35,21 @@ public:
     void zoomFitPage() override;
 
     bool supportsPrint() const override { return !m_image.isNull(); }
-    void print(QWidget* dialogParent) override;
+    void print(QWidget *dialogParent) override;
 
     bool supportsThumbnails() const override { return !m_image.isNull() && !m_animated; }
     QImage renderThumbnail(int pageIndex, QSize targetSize) override;
 
-    AnnotationStore* annotations() override { return &m_annotations; }
+    AnnotationStore *annotations() override { return &m_annotations; }
     void setAnnotationTool(AnnotationTool tool) override;
-    void setAnnotationStyle(const AnnotationStyle& style) override;
-    void setPendingAnnotationText(const QString& text) override;
-    void setPendingSignaturePath(const QString& path) override;
+    void setAnnotationStyle(const AnnotationStyle &style) override;
+    void setPendingAnnotationText(const QString &text) override;
+    void setPendingSignaturePath(const QString &path) override;
 
     bool supportsEditing() const override { return !m_image.isNull() && !m_animated; }
-    bool isDirty() const override {
-        return m_dirty || !m_annotations.annotations().empty();
-    }
-    bool canUndo() const override {
-        return !m_undoStack.empty() || m_annotations.canUndo();
-    }
-    bool canRedo() const override {
-        return !m_redoStack.empty() || m_annotations.canRedo();
-    }
+    bool isDirty() const override { return m_dirty || !m_annotations.annotations().empty(); }
+    bool canUndo() const override { return !m_undoStack.empty() || m_annotations.canUndo(); }
+    bool canRedo() const override { return !m_redoStack.empty() || m_annotations.canRedo(); }
     void undo() override;
     void redo() override;
     void rotatePage(int pageIndex, int degreesClockwise) override;
@@ -69,16 +63,13 @@ public:
     // feed pixels into ONNX models. Returns a shallow copy — QImage is
     // copy-on-write, so this is cheap.
     QImage image() const { return m_image; }
-    bool adjustColour(double brightness, double contrast,
-                      double saturation) override;
-    void previewColour(double brightness, double contrast,
-                       double saturation);
+    bool adjustColour(double brightness, double contrast, double saturation) override;
+    void previewColour(double brightness, double contrast, double saturation);
     void clearColourPreview();
-    bool replaceImage(const QImage& replacement) override;
-    bool exportAs(const QString& destPath, const QString& format,
-                  int quality = -1,
-                  const QString& filterId = {}) const override;
-    bool save(const QString& newPath = {}) override;
+    bool replaceImage(const QImage &replacement) override;
+    bool exportAs(const QString &destPath, const QString &format, int quality = -1,
+                  const QString &filterId = {}) const override;
+    bool save(const QString &newPath = {}) override;
     int pageCount() const override { return m_image.isNull() ? 0 : 1; }
 
     bool supportsAnimation() const override { return m_animated && m_frameCount > 1; }
@@ -88,7 +79,7 @@ public:
     bool isAnimationPlaying() const override;
     void setAnimationPlaying(bool playing) override;
 
-private:
+  private:
     void applyScale(double factor);
     void refreshView();
     void pushUndoSnapshot();
@@ -109,10 +100,10 @@ private:
 };
 
 class ImageAdapter : public IFormatAdapter {
-public:
+  public:
     QStringList mimeTypes() const override;
     QStringList extensions() const override;
-    std::unique_ptr<IDocument> open(const QString& path) override;
+    std::unique_ptr<IDocument> open(const QString &path) override;
 };
 
-}  // namespace trailer
+} // namespace trailer

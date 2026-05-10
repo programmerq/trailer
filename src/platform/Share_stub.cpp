@@ -13,10 +13,9 @@ bool ShareService::isAvailable() {
     return false;
 }
 
-void ShareService::shareFile(const QString& /*filePath*/,
-                             QWidget* /*anchorWidget*/) {
+void ShareService::shareFile(const QString & /*filePath*/, QWidget * /*anchorWidget*/) {
     // No-op. Callers should gate on isAvailable() before reaching
     // here; we still implement the symbol so linkers don't complain.
 }
 
-}  // namespace trailer
+} // namespace trailer

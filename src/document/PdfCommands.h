@@ -19,16 +19,16 @@ class PdfEditor;
 // today; the unified chronological ordering is captured as a
 // follow-up in TODO.md.
 class PdfCommand {
-public:
+  public:
     virtual ~PdfCommand() = default;
     // Forward effect. Returns true on success; the document only
     // pushes the command to the undo stack when this returns true.
-    virtual bool apply(PdfEditor& editor) = 0;
+    virtual bool apply(PdfEditor &editor) = 0;
     // Inverse of apply. Should restore the editor to the state it
     // was in before apply() ran. Idempotent — calling apply then
     // revert then apply again must produce the same result as a
     // single apply.
-    virtual bool revert(PdfEditor& editor) = 0;
+    virtual bool revert(PdfEditor &editor) = 0;
     // Short verb-phrase description, used by the Edit menu's
     // "Undo X" / "Redo X" labels and by debug logs.
     virtual QString description() const = 0;
@@ -38,15 +38,15 @@ public:
 // 90; PDF /Rotate is integer-valued in 90° steps). The inverse is
 // the same call with `-degreesClockwise`.
 class RotatePageCommand : public PdfCommand {
-public:
+  public:
     RotatePageCommand(int pageIndex, int degreesClockwise);
-    bool apply(PdfEditor& editor) override;
-    bool revert(PdfEditor& editor) override;
+    bool apply(PdfEditor &editor) override;
+    bool revert(PdfEditor &editor) override;
     QString description() const override;
 
-private:
+  private:
     int m_pageIndex;
     int m_degrees;
 };
 
-}  // namespace trailer
+} // namespace trailer

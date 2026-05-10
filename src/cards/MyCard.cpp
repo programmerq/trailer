@@ -1,18 +1,21 @@
 #include "MyCard.h"
 
 #include "document/IDocument.h"
-#include "document/PdfEditor.h"  // FormField, FormFieldType
+#include "document/PdfEditor.h" // FormField, FormFieldType
 
 #include <QRegularExpression>
 
 namespace trailer {
 
 QString MyCard::displayFullName() const {
-    if (!fullName.trimmed().isEmpty()) return fullName.trimmed();
+    if (!fullName.trimmed().isEmpty())
+        return fullName.trimmed();
     QString out;
-    if (!givenName.isEmpty()) out = givenName;
+    if (!givenName.isEmpty())
+        out = givenName;
     if (!familyName.isEmpty()) {
-        if (!out.isEmpty()) out += QLatin1Char(' ');
+        if (!out.isEmpty())
+            out += QLatin1Char(' ');
         out += familyName;
     }
     return out.trimmed();
@@ -29,7 +32,7 @@ namespace {
 // "firstName" decompose into their constituent words. Sequences of
 // capitals ("XMLParser") collapse to a single token — good enough for
 // the field names we actually see on real PDFs.
-QString canonicalise(const QString& raw) {
+QString canonicalise(const QString &raw) {
     QString spaced;
     spaced.reserve(raw.size());
     for (int i = 0; i < raw.size(); ++i) {
@@ -54,7 +57,7 @@ QString canonicalise(const QString& raw) {
 // "address" doesn't accidentally match "addressee_name" semantics
 // inappropriately (we want it to match, but we also want "state" to
 // not match "statement").
-bool containsWord(const QString& hay, std::initializer_list<QLatin1String> needles) {
+bool containsWord(const QString &hay, std::initializer_list<QLatin1String> needles) {
     for (const auto n : needles) {
         // Word-boundary match on canonicalised input: the separator
         // regex already collapses non-alnum runs into single spaces,
@@ -62,23 +65,25 @@ bool containsWord(const QString& hay, std::initializer_list<QLatin1String> needl
         // or an exact equality.
         const QString pad = QLatin1Char(' ') + hay + QLatin1Char(' ');
         const QString needlePad = QLatin1Char(' ') + QString(n) + QLatin1Char(' ');
-        if (pad.contains(needlePad)) return true;
+        if (pad.contains(needlePad))
+            return true;
     }
     return false;
 }
 
-}  // namespace
+} // namespace
 
-QString autoFillValueFor(const QString& fieldName, const MyCard& card) {
+QString autoFillValueFor(const QString &fieldName, const MyCard &card) {
     const QString key = canonicalise(fieldName);
-    if (key.isEmpty()) return {};
+    if (key.isEmpty())
+        return {};
 
     // Ordering matters: check the most specific keys first. "address
     // line 2" must be tested before "address".
 
     // Name
-    if (containsWord(key, {QLatin1String("full name"), QLatin1String("fullname")})
-        || key == QLatin1String("name")) {
+    if (containsWord(key, {QLatin1String("full name"), QLatin1String("fullname")}) ||
+        key == QLatin1String("name")) {
         return card.displayFullName();
     }
     if (containsWord(key, {QLatin1String("first name"), QLatin1String("firstname"),
@@ -96,17 +101,16 @@ QString autoFillValueFor(const QString& fieldName, const MyCard& card) {
                            QLatin1String("email address")})) {
         return card.email;
     }
-    if (containsWord(key, {QLatin1String("phone"), QLatin1String("telephone"),
-                           QLatin1String("mobile"), QLatin1String("cell"),
-                           QLatin1String("phone number")})) {
+    if (containsWord(key,
+                     {QLatin1String("phone"), QLatin1String("telephone"), QLatin1String("mobile"),
+                      QLatin1String("cell"), QLatin1String("phone number")})) {
         return card.phone;
     }
 
     // Address — line 2 first to avoid "address" swallowing it.
     if (containsWord(key, {QLatin1String("address 2"), QLatin1String("address line 2"),
-                           QLatin1String("apt"), QLatin1String("apartment"),
-                           QLatin1String("suite"), QLatin1String("unit"),
-                           QLatin1String("po box")})) {
+                           QLatin1String("apt"), QLatin1String("apartment"), QLatin1String("suite"),
+                           QLatin1String("unit"), QLatin1String("po box")})) {
         return card.addressLine2;
     }
     if (containsWord(key, {QLatin1String("address"), QLatin1String("address 1"),
@@ -114,12 +118,12 @@ QString autoFillValueFor(const QString& fieldName, const MyCard& card) {
                            QLatin1String("street address")})) {
         return card.addressLine1;
     }
-    if (containsWord(key, {QLatin1String("city"), QLatin1String("town"),
-                           QLatin1String("locality")})) {
+    if (containsWord(key,
+                     {QLatin1String("city"), QLatin1String("town"), QLatin1String("locality")})) {
         return card.city;
     }
-    if (containsWord(key, {QLatin1String("state"), QLatin1String("province"),
-                           QLatin1String("region")})) {
+    if (containsWord(
+            key, {QLatin1String("state"), QLatin1String("province"), QLatin1String("region")})) {
         return card.state;
     }
     if (containsWord(key, {QLatin1String("zip"), QLatin1String("zipcode"),
@@ -137,21 +141,23 @@ QString autoFillValueFor(const QString& fieldName, const MyCard& card) {
                            QLatin1String("business")})) {
         return card.organization;
     }
-    if (containsWord(key, {QLatin1String("job title"), QLatin1String("title"),
-                           QLatin1String("position"), QLatin1String("role"),
-                           QLatin1String("occupation")})) {
+    if (containsWord(key,
+                     {QLatin1String("job title"), QLatin1String("title"), QLatin1String("position"),
+                      QLatin1String("role"), QLatin1String("occupation")})) {
         return card.jobTitle;
     }
 
     return {};
 }
 
-AutoFillResult autoFillDocument(IDocument* doc, const MyCard& card) {
+AutoFillResult autoFillDocument(IDocument *doc, const MyCard &card) {
     AutoFillResult r;
-    if (!doc || !doc->supportsFormFilling()) return r;
+    if (!doc || !doc->supportsFormFilling())
+        return r;
     const auto fields = doc->formFields();
-    for (const auto& f : fields) {
-        if (f.type != FormFieldType::Text) continue;
+    for (const auto &f : fields) {
+        if (f.type != FormFieldType::Text)
+            continue;
         r.examined++;
         // Try the fully-qualified /T name first; many real-world PDFs
         // use an opaque hierarchical /T (e.g. "form1[0].#subform[0]
@@ -161,10 +167,12 @@ AutoFillResult autoFillDocument(IDocument* doc, const MyCard& card) {
         if (v.isEmpty() && !f.label.isEmpty()) {
             v = autoFillValueFor(f.label, card);
         }
-        if (v.isEmpty()) continue;
-        if (doc->setFormFieldValue(f.id, v)) r.filled++;
+        if (v.isEmpty())
+            continue;
+        if (doc->setFormFieldValue(f.id, v))
+            r.filled++;
     }
     return r;
 }
 
-}  // namespace trailer
+} // namespace trailer

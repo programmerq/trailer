@@ -39,24 +39,25 @@ using namespace trailer;
 
 class TestSamSession : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void notReadyWhenCacheEmpty();
     void segmentFailsWithoutPrepare();
     void ensureModelsAvailableFailsGracefullyWithoutUrls();
     void modelsReadyFiresWhenBothModelsSeeded();
     void endToEndInferenceWithRealModels();
 
-private:
-    static QByteArray sha256Hex(const QString& path) {
+  private:
+    static QByteArray sha256Hex(const QString &path) {
         QFile f(path);
-        if (!f.open(QIODevice::ReadOnly)) return {};
+        if (!f.open(QIODevice::ReadOnly))
+            return {};
         QCryptographicHash h(QCryptographicHash::Sha256);
-        if (!h.addData(&f)) return {};
+        if (!h.addData(&f))
+            return {};
         return h.result().toHex();
     }
-    static ModelSpec makeSpec(ModelId id, const QString& fileName,
-                              const QString& url = {},
-                              const QString& sha256 = {}) {
+    static ModelSpec makeSpec(ModelId id, const QString &fileName, const QString &url = {},
+                              const QString &sha256 = {}) {
         ModelSpec s;
         s.id = id;
         s.displayName = fileName;
@@ -74,7 +75,7 @@ private:
         const int cy = h / 2;
         const int r = std::min(w, h) / 4;
         for (int y = 0; y < h; ++y) {
-            auto* scan = reinterpret_cast<QRgb*>(img.scanLine(y));
+            auto *scan = reinterpret_cast<QRgb *>(img.scanLine(y));
             for (int x = 0; x < w; ++x) {
                 const int dx = x - cx;
                 const int dy = y - cy;
@@ -85,7 +86,7 @@ private:
         }
         return img;
     }
-    static QPoint sceneCenter(const QImage& img) {
+    static QPoint sceneCenter(const QImage &img) {
         return QPoint(img.width() / 2, img.height() / 2);
     }
 };
@@ -95,10 +96,8 @@ void TestSamSession::notReadyWhenCacheEmpty() {
     QVERIFY(dir.isValid());
     ModelRegistry reg;
     reg.setManifestForTesting(
-        {makeSpec(ModelId::MobileSamEncoder,
-                  QStringLiteral("mobile_sam_encoder.onnx")),
-         makeSpec(ModelId::MobileSamDecoder,
-                  QStringLiteral("mobile_sam_decoder.onnx"))},
+        {makeSpec(ModelId::MobileSamEncoder, QStringLiteral("mobile_sam_encoder.onnx")),
+         makeSpec(ModelId::MobileSamDecoder, QStringLiteral("mobile_sam_decoder.onnx"))},
         dir.path());
     SamSession s(&reg);
     QVERIFY(!s.isModelReady());
@@ -109,10 +108,8 @@ void TestSamSession::segmentFailsWithoutPrepare() {
     QVERIFY(dir.isValid());
     ModelRegistry reg;
     reg.setManifestForTesting(
-        {makeSpec(ModelId::MobileSamEncoder,
-                  QStringLiteral("mobile_sam_encoder.onnx")),
-         makeSpec(ModelId::MobileSamDecoder,
-                  QStringLiteral("mobile_sam_decoder.onnx"))},
+        {makeSpec(ModelId::MobileSamEncoder, QStringLiteral("mobile_sam_encoder.onnx")),
+         makeSpec(ModelId::MobileSamDecoder, QStringLiteral("mobile_sam_decoder.onnx"))},
         dir.path());
     SamSession s(&reg);
     const QImage mask = s.segment({QPoint(10, 10)}, {});
@@ -126,10 +123,8 @@ void TestSamSession::ensureModelsAvailableFailsGracefullyWithoutUrls() {
     ModelRegistry reg;
     // Specs without URLs should make the registry emit failure.
     reg.setManifestForTesting(
-        {makeSpec(ModelId::MobileSamEncoder,
-                  QStringLiteral("mobile_sam_encoder.onnx")),
-         makeSpec(ModelId::MobileSamDecoder,
-                  QStringLiteral("mobile_sam_decoder.onnx"))},
+        {makeSpec(ModelId::MobileSamEncoder, QStringLiteral("mobile_sam_encoder.onnx")),
+         makeSpec(ModelId::MobileSamDecoder, QStringLiteral("mobile_sam_decoder.onnx"))},
         dir.path());
     SamSession s(&reg);
 
@@ -165,11 +160,9 @@ void TestSamSession::modelsReadyFiresWhenBothModelsSeeded() {
 
     ModelRegistry reg;
     reg.setManifestForTesting(
-        {makeSpec(ModelId::MobileSamEncoder,
-                  QStringLiteral("mobile_sam_encoder.onnx"),
+        {makeSpec(ModelId::MobileSamEncoder, QStringLiteral("mobile_sam_encoder.onnx"),
                   QUrl::fromLocalFile(encPath).toString(), encHash),
-         makeSpec(ModelId::MobileSamDecoder,
-                  QStringLiteral("mobile_sam_decoder.onnx"),
+         makeSpec(ModelId::MobileSamDecoder, QStringLiteral("mobile_sam_decoder.onnx"),
                   QUrl::fromLocalFile(decPath).toString(), decHash)},
         dir.path());
     SamSession s(&reg);
@@ -182,12 +175,10 @@ void TestSamSession::modelsReadyFiresWhenBothModelsSeeded() {
 }
 
 void TestSamSession::endToEndInferenceWithRealModels() {
-    const QString encSrc =
-        QString::fromLocal8Bit(qgetenv("TRAILER_TEST_SAM_ENCODER"));
-    const QString decSrc =
-        QString::fromLocal8Bit(qgetenv("TRAILER_TEST_SAM_DECODER"));
-    if (encSrc.isEmpty() || !QFileInfo::exists(encSrc) ||
-        decSrc.isEmpty() || !QFileInfo::exists(decSrc)) {
+    const QString encSrc = QString::fromLocal8Bit(qgetenv("TRAILER_TEST_SAM_ENCODER"));
+    const QString decSrc = QString::fromLocal8Bit(qgetenv("TRAILER_TEST_SAM_DECODER"));
+    if (encSrc.isEmpty() || !QFileInfo::exists(encSrc) || decSrc.isEmpty() ||
+        !QFileInfo::exists(decSrc)) {
         QSKIP("TRAILER_TEST_SAM_ENCODER + TRAILER_TEST_SAM_DECODER not "
               "set — skipping real inference path. Set both to the "
               "MobileSAM ONNX files to exercise this.");
@@ -204,11 +195,9 @@ void TestSamSession::endToEndInferenceWithRealModels() {
 
     ModelRegistry reg;
     reg.setManifestForTesting(
-        {makeSpec(ModelId::MobileSamEncoder,
-                  QStringLiteral("mobile_sam_encoder.onnx"),
+        {makeSpec(ModelId::MobileSamEncoder, QStringLiteral("mobile_sam_encoder.onnx"),
                   QUrl::fromLocalFile(encPath).toString(), encHash),
-         makeSpec(ModelId::MobileSamDecoder,
-                  QStringLiteral("mobile_sam_decoder.onnx"),
+         makeSpec(ModelId::MobileSamDecoder, QStringLiteral("mobile_sam_decoder.onnx"),
                   QUrl::fromLocalFile(decPath).toString(), decHash)},
         dir.path());
     SamSession s(&reg);
@@ -227,23 +216,21 @@ void TestSamSession::endToEndInferenceWithRealModels() {
     // than the whole image (not a degenerate "all-white" fallback).
     int fg = 0;
     for (int y = 0; y < mask.height(); ++y) {
-        const uchar* scan = mask.constScanLine(y);
+        const uchar *scan = mask.constScanLine(y);
         for (int x = 0; x < mask.width(); ++x) {
-            if (scan[x]) ++fg;
+            if (scan[x])
+                ++fg;
         }
     }
     const int total = mask.width() * mask.height();
     QVERIFY2(fg > total / 64,
-             qPrintable(QStringLiteral("mask too sparse: %1/%2")
-                            .arg(fg).arg(total)));
+             qPrintable(QStringLiteral("mask too sparse: %1/%2").arg(fg).arg(total)));
     QVERIFY2(fg < total - total / 16,
-             qPrintable(QStringLiteral("mask covers too much: %1/%2")
-                            .arg(fg).arg(total)));
+             qPrintable(QStringLiteral("mask covers too much: %1/%2").arg(fg).arg(total)));
 
     // The clicked pixel must end up inside the mask.
     const QPoint click = sceneCenter(scene);
-    QVERIFY2(mask.constScanLine(click.y())[click.x()] != 0,
-             "Clicked pixel should be foreground");
+    QVERIFY2(mask.constScanLine(click.y())[click.x()] != 0, "Clicked pixel should be foreground");
 
     // applyAsAlpha yields an ARGB32 image with the mask in alpha.
     const QImage alphaApplied = s.applyAsAlpha(scene);
@@ -253,8 +240,7 @@ void TestSamSession::endToEndInferenceWithRealModels() {
 
     // Contour should give us a polygon of reasonable complexity.
     const QPolygon poly = s.contourFromLastMask();
-    QVERIFY2(poly.size() >= 3,
-             "Contour should have at least 3 points");
+    QVERIFY2(poly.size() >= 3, "Contour should have at least 3 points");
     QVERIFY2(poly.boundingRect().intersects(scene.rect()),
              "Contour bounds should overlap the image");
 }

@@ -1,0 +1,44 @@
+name: Linux build environment
+description: >-
+  Install Qt (install-qt-action), apt packages for Trailer on Ubuntu,
+  and clang-format for CI lint steps.
+
+inputs:
+  qt-version:
+    description: Qt version passed to install-qt-action
+    required: false
+    default: '6.8.0'
+
+runs:
+  using: composite
+  steps:
+    - name: Install Qt
+      uses: jurplel/install-qt-action@v4
+      with:
+        version: ${{ inputs.qt-version }}
+        modules: 'qtpdf'
+        cache: true
+
+    - name: Install Linux build deps
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          clang-format \
+          libgl1-mesa-dev \
+          libglu1-mesa-dev \
+          libxkbcommon-dev \
+          libxcb-icccm4 \
+          libxcb-image0 \
+          libxcb-keysyms1 \
+          libxcb-randr0 \
+          libxcb-render-util0 \
+          libxcb-shape0 \
+          libxcb-sync1 \
+          libxcb-xfixes0 \
+          libxcb-xinerama0 \
+          libxcb-xkb1 \
+          libxkbcommon-x11-0 \
+          libcups2-dev \
+          pkg-config \
+          libqpdf-dev

@@ -2,7 +2,7 @@
 
 namespace trailer {
 
-DocumentView::DocumentView(QWidget* parent) : QTabWidget(parent) {
+DocumentView::DocumentView(QWidget *parent) : QTabWidget(parent) {
     setTabsClosable(true);
     setMovable(true);
     setDocumentMode(true);
@@ -14,14 +14,14 @@ DocumentView::DocumentView(QWidget* parent) : QTabWidget(parent) {
     setTabBarAutoHide(true);
     connect(this, &QTabWidget::tabCloseRequested, this, &DocumentView::onTabCloseRequested);
     connect(this, &QTabWidget::currentChanged, this, [this](int) {
-        if (QWidget* w = currentWidget()) {
+        if (QWidget *w = currentWidget()) {
             w->setFocus();
         }
         emit currentDocumentChanged(currentDocument());
     });
 }
 
-IDocument* DocumentView::currentDocument() const {
+IDocument *DocumentView::currentDocument() const {
     const int index = currentIndex();
     if (index < 0 || index >= static_cast<int>(m_documents.size())) {
         return nullptr;
@@ -29,12 +29,14 @@ IDocument* DocumentView::currentDocument() const {
     return m_documents[static_cast<size_t>(index)].get();
 }
 
-int DocumentView::documentAt(int index, IDocument** out) const {
+int DocumentView::documentAt(int index, IDocument **out) const {
     if (index < 0 || index >= static_cast<int>(m_documents.size())) {
-        if (out) *out = nullptr;
+        if (out)
+            *out = nullptr;
         return 0;
     }
-    if (out) *out = m_documents[static_cast<size_t>(index)].get();
+    if (out)
+        *out = m_documents[static_cast<size_t>(index)].get();
     return 1;
 }
 
@@ -42,7 +44,7 @@ void DocumentView::addDocument(std::unique_ptr<IDocument> document) {
     if (!document) {
         return;
     }
-    QWidget* view = document->createView(this);
+    QWidget *view = document->createView(this);
     const QString label = document->displayName();
     const QString tip = document->filePath();
 
@@ -58,7 +60,7 @@ void DocumentView::onTabCloseRequested(int index) {
     if (index < 0 || index >= static_cast<int>(m_documents.size())) {
         return;
     }
-    QWidget* view = widget(index);
+    QWidget *view = widget(index);
     removeTab(index);
     if (view) {
         view->deleteLater();
@@ -69,4 +71,4 @@ void DocumentView::onTabCloseRequested(int index) {
     }
 }
 
-}  // namespace trailer
+} // namespace trailer

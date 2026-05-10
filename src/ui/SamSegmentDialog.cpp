@@ -24,27 +24,30 @@ namespace {
 
 // Find the nearest point in a set to `target`, returning its index or
 // -1 if the set is empty. Distance is in source-image pixel space.
-int nearestIndex(const QVector<QPoint>& pts, QPoint target) {
+int nearestIndex(const QVector<QPoint> &pts, QPoint target) {
     int best = -1;
     double bestD2 = std::numeric_limits<double>::max();
     for (int i = 0; i < pts.size(); ++i) {
         const double dx = pts[i].x() - target.x();
         const double dy = pts[i].y() - target.y();
         const double d2 = dx * dx + dy * dy;
-        if (d2 < bestD2) { bestD2 = d2; best = i; }
+        if (d2 < bestD2) {
+            bestD2 = d2;
+            best = i;
+        }
     }
     return best;
 }
 
-}  // namespace
+} // namespace
 
-SamPromptCanvas::SamPromptCanvas(QWidget* parent) : QWidget(parent) {
+SamPromptCanvas::SamPromptCanvas(QWidget *parent) : QWidget(parent) {
     setMouseTracking(false);
     setFocusPolicy(Qt::StrongFocus);
     setMinimumSize(320, 240);
 }
 
-void SamPromptCanvas::setSource(const QImage& source) {
+void SamPromptCanvas::setSource(const QImage &source) {
     m_source = source;
     m_mask = QImage();
     m_polygon = QPolygon();
@@ -53,12 +56,12 @@ void SamPromptCanvas::setSource(const QImage& source) {
     update();
 }
 
-void SamPromptCanvas::setMask(const QImage& maskGrayscale) {
+void SamPromptCanvas::setMask(const QImage &maskGrayscale) {
     m_mask = maskGrayscale;
     update();
 }
 
-void SamPromptCanvas::setPolygon(const QPolygon& poly) {
+void SamPromptCanvas::setPolygon(const QPolygon &poly) {
     m_polygon = poly;
     update();
 }
@@ -73,48 +76,45 @@ void SamPromptCanvas::clearPrompts() {
 }
 
 QPoint SamPromptCanvas::canvasToSource(QPoint canvasPt) const {
-    if (m_source.isNull() || width() <= 0 || height() <= 0) return {};
+    if (m_source.isNull() || width() <= 0 || height() <= 0)
+        return {};
     // The image is drawn centered with aspect ratio preserved. Compute
     // the draw rect the same way paintEvent does, then invert.
-    const QSize target = m_source.size().scaled(
-        size(), Qt::KeepAspectRatio);
+    const QSize target = m_source.size().scaled(size(), Qt::KeepAspectRatio);
     const int offsetX = (width() - target.width()) / 2;
     const int offsetY = (height() - target.height()) / 2;
-    if (target.width() <= 0 || target.height() <= 0) return {};
-    const double fx = static_cast<double>(canvasPt.x() - offsetX) /
-                      target.width();
-    const double fy = static_cast<double>(canvasPt.y() - offsetY) /
-                      target.height();
-    if (fx < 0.0 || fx > 1.0 || fy < 0.0 || fy > 1.0) return {-1, -1};
-    return QPoint(
-        static_cast<int>(std::round(fx * m_source.width())),
-        static_cast<int>(std::round(fy * m_source.height())));
+    if (target.width() <= 0 || target.height() <= 0)
+        return {};
+    const double fx = static_cast<double>(canvasPt.x() - offsetX) / target.width();
+    const double fy = static_cast<double>(canvasPt.y() - offsetY) / target.height();
+    if (fx < 0.0 || fx > 1.0 || fy < 0.0 || fy > 1.0)
+        return {-1, -1};
+    return QPoint(static_cast<int>(std::round(fx * m_source.width())),
+                  static_cast<int>(std::round(fy * m_source.height())));
 }
 
-void SamPromptCanvas::paintEvent(QPaintEvent*) {
+void SamPromptCanvas::paintEvent(QPaintEvent *) {
     QPainter p(this);
     p.fillRect(rect(), QColor(32, 32, 32));
-    if (m_source.isNull()) return;
+    if (m_source.isNull())
+        return;
 
-    const QSize target = m_source.size().scaled(
-        size(), Qt::KeepAspectRatio);
-    const QRect drawRect(
-        (width() - target.width()) / 2,
-        (height() - target.height()) / 2,
-        target.width(), target.height());
+    const QSize target = m_source.size().scaled(size(), Qt::KeepAspectRatio);
+    const QRect drawRect((width() - target.width()) / 2, (height() - target.height()) / 2,
+                         target.width(), target.height());
 
     p.drawImage(drawRect, m_source);
 
     // Mask overlay — translucent blue where foreground.
-    if (m_showMask && !m_mask.isNull() &&
-        m_mask.size() == m_source.size()) {
+    if (m_showMask && !m_mask.isNull() && m_mask.size() == m_source.size()) {
         QImage tint(m_mask.size(), QImage::Format_ARGB32);
         tint.fill(Qt::transparent);
         for (int y = 0; y < tint.height(); ++y) {
-            auto* dst = reinterpret_cast<QRgb*>(tint.scanLine(y));
-            const uchar* src = m_mask.constScanLine(y);
+            auto *dst = reinterpret_cast<QRgb *>(tint.scanLine(y));
+            const uchar *src = m_mask.constScanLine(y);
             for (int x = 0; x < tint.width(); ++x) {
-                if (src[x]) dst[x] = qRgba(64, 128, 255, 96);
+                if (src[x])
+                    dst[x] = qRgba(64, 128, 255, 96);
             }
         }
         p.drawImage(drawRect, tint);
@@ -124,13 +124,10 @@ void SamPromptCanvas::paintEvent(QPaintEvent*) {
     if (m_showPolygon && !m_polygon.isEmpty()) {
         QPolygonF scaled;
         scaled.reserve(m_polygon.size());
-        const double sx =
-            static_cast<double>(drawRect.width()) / m_source.width();
-        const double sy =
-            static_cast<double>(drawRect.height()) / m_source.height();
-        for (const QPoint& pt : m_polygon) {
-            scaled.append(QPointF(drawRect.x() + pt.x() * sx,
-                                  drawRect.y() + pt.y() * sy));
+        const double sx = static_cast<double>(drawRect.width()) / m_source.width();
+        const double sy = static_cast<double>(drawRect.height()) / m_source.height();
+        for (const QPoint &pt : m_polygon) {
+            scaled.append(QPointF(drawRect.x() + pt.x() * sx, drawRect.y() + pt.y() * sy));
         }
         QPen outline(QColor(255, 200, 40), 2);
         outline.setJoinStyle(Qt::RoundJoin);
@@ -141,24 +138,25 @@ void SamPromptCanvas::paintEvent(QPaintEvent*) {
 
     // Prompt markers — green for positive, red for negative.
     auto drawMarker = [&](QPoint srcPt, QColor colour) {
-        const double sx =
-            static_cast<double>(drawRect.width()) / m_source.width();
-        const double sy =
-            static_cast<double>(drawRect.height()) / m_source.height();
-        const QPointF c(drawRect.x() + srcPt.x() * sx,
-                        drawRect.y() + srcPt.y() * sy);
+        const double sx = static_cast<double>(drawRect.width()) / m_source.width();
+        const double sy = static_cast<double>(drawRect.height()) / m_source.height();
+        const QPointF c(drawRect.x() + srcPt.x() * sx, drawRect.y() + srcPt.y() * sy);
         p.setPen(QPen(Qt::white, 2));
         p.setBrush(colour);
         p.drawEllipse(c, 6.0, 6.0);
     };
-    for (const QPoint& pt : m_positives) drawMarker(pt, QColor(64, 192, 80));
-    for (const QPoint& pt : m_negatives) drawMarker(pt, QColor(220, 64, 64));
+    for (const QPoint &pt : m_positives)
+        drawMarker(pt, QColor(64, 192, 80));
+    for (const QPoint &pt : m_negatives)
+        drawMarker(pt, QColor(220, 64, 64));
 }
 
-void SamPromptCanvas::mousePressEvent(QMouseEvent* event) {
-    if (m_source.isNull()) return;
+void SamPromptCanvas::mousePressEvent(QMouseEvent *event) {
+    if (m_source.isNull())
+        return;
     const QPoint srcPt = canvasToSource(event->pos());
-    if (srcPt.x() < 0) return;  // clicked outside image bounds
+    if (srcPt.x() < 0)
+        return; // clicked outside image bounds
 
     if (event->button() == Qt::RightButton) {
         // Remove nearest prompt.
@@ -176,12 +174,13 @@ void SamPromptCanvas::mousePressEvent(QMouseEvent* event) {
             const double dy = m_negatives[in].y() - srcPt.y();
             dn = dx * dx + dy * dy;
         }
-        if (dp == std::numeric_limits<double>::max() &&
-            dn == std::numeric_limits<double>::max()) {
+        if (dp == std::numeric_limits<double>::max() && dn == std::numeric_limits<double>::max()) {
             return;
         }
-        if (dp <= dn) m_positives.remove(ip);
-        else m_negatives.remove(in);
+        if (dp <= dn)
+            m_positives.remove(ip);
+        else
+            m_negatives.remove(in);
     } else if (event->button() == Qt::LeftButton) {
         if (event->modifiers() & Qt::ShiftModifier) {
             m_negatives.append(srcPt);
@@ -195,17 +194,15 @@ void SamPromptCanvas::mousePressEvent(QMouseEvent* event) {
     emit prompted();
 }
 
-SamSegmentDialog::SamSegmentDialog(Mode mode, const QImage& source,
-                                   SamSession* session, QWidget* parent)
+SamSegmentDialog::SamSegmentDialog(Mode mode, const QImage &source, SamSession *session,
+                                   QWidget *parent)
     : QDialog(parent), m_mode(mode), m_source(source), m_session(session) {
-    setWindowTitle(mode == Mode::InstantAlpha
-                       ? tr("Instant Alpha")
-                       : tr("Smart Lasso"));
-    auto* layout = new QVBoxLayout(this);
+    setWindowTitle(mode == Mode::InstantAlpha ? tr("Instant Alpha") : tr("Smart Lasso"));
+    auto *layout = new QVBoxLayout(this);
 
-    m_hint = new QLabel(tr(
-        "Click on the object you want to select. Shift-click adds an "
-        "exclusion point. Right-click removes the nearest point."), this);
+    m_hint = new QLabel(tr("Click on the object you want to select. Shift-click adds an "
+                           "exclusion point. Right-click removes the nearest point."),
+                        this);
     m_hint->setWordWrap(true);
     layout->addWidget(m_hint);
 
@@ -213,20 +210,17 @@ SamSegmentDialog::SamSegmentDialog(Mode mode, const QImage& source,
     m_canvas->setSource(source);
     m_canvas->setShowPolygon(mode == Mode::SmartLasso);
     m_canvas->setShowMask(mode == Mode::InstantAlpha);
-    connect(m_canvas, &SamPromptCanvas::prompted,
-            this, &SamSegmentDialog::onPrompted);
+    connect(m_canvas, &SamPromptCanvas::prompted, this, &SamSegmentDialog::onPrompted);
     layout->addWidget(m_canvas, /*stretch=*/1);
 
-    auto* buttonRow = new QHBoxLayout();
+    auto *buttonRow = new QHBoxLayout();
     m_clearButton = new QPushButton(tr("Clear Points"), this);
     m_clearButton->setEnabled(false);
-    connect(m_clearButton, &QPushButton::clicked,
-            this, &SamSegmentDialog::onClearClicked);
+    connect(m_clearButton, &QPushButton::clicked, this, &SamSegmentDialog::onClearClicked);
     buttonRow->addWidget(m_clearButton);
     buttonRow->addStretch();
 
-    auto* box = new QDialogButtonBox(
-        QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
+    auto *box = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, this);
     m_okButton = box->button(QDialogButtonBox::Ok);
     m_okButton->setEnabled(false);
     connect(box, &QDialogButtonBox::accepted, this, &QDialog::accept);
@@ -242,12 +236,11 @@ SamSegmentDialog::SamSegmentDialog(Mode mode, const QImage& source,
     m_canvas->setEnabled(false);
     m_hint->setText(tr("Preparing image…"));
     m_prepareWatcher = new QFutureWatcher<bool>(this);
-    connect(m_prepareWatcher, &QFutureWatcherBase::finished,
-            this, &SamSegmentDialog::onPrepareFinished);
-    SamSession* sess = m_session;
-    QFuture<bool> future = QtConcurrent::run([sess, source]() {
-        return sess && sess->prepare(source);
-    });
+    connect(m_prepareWatcher, &QFutureWatcherBase::finished, this,
+            &SamSegmentDialog::onPrepareFinished);
+    SamSession *sess = m_session;
+    QFuture<bool> future =
+        QtConcurrent::run([sess, source]() { return sess && sess->prepare(source); });
     m_prepareWatcher->setFuture(future);
 }
 
@@ -264,7 +257,8 @@ SamSegmentDialog::~SamSegmentDialog() {
 }
 
 void SamSegmentDialog::onPrepareFinished() {
-    if (!m_prepareWatcher) return;
+    if (!m_prepareWatcher)
+        return;
     const bool prepared = m_prepareWatcher->result();
     if (!prepared) {
         m_canvas->setEnabled(false);
@@ -273,9 +267,8 @@ void SamSegmentDialog::onPrepareFinished() {
         return;
     }
     m_canvas->setEnabled(true);
-    m_hint->setText(tr(
-        "Click on the object you want to select. Shift-click adds an "
-        "exclusion point. Right-click removes the nearest point."));
+    m_hint->setText(tr("Click on the object you want to select. Shift-click adds an "
+                       "exclusion point. Right-click removes the nearest point."));
 }
 
 void SamSegmentDialog::onClearClicked() {
@@ -290,7 +283,8 @@ void SamSegmentDialog::onPrompted() {
 }
 
 void SamSegmentDialog::rebuildPreview() {
-    if (!m_session) return;
+    if (!m_session)
+        return;
     const auto positives = m_canvas->positives();
     const auto negatives = m_canvas->negatives();
     if (positives.isEmpty() && negatives.isEmpty()) {
@@ -326,4 +320,4 @@ void SamSegmentDialog::rebuildPreview() {
     }
 }
 
-}  // namespace trailer
+} // namespace trailer

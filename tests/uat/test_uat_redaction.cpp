@@ -45,14 +45,15 @@ using namespace trailer;
 
 namespace {
 
-MainWindow* currentMainWindow() {
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (auto* mw = qobject_cast<MainWindow*>(w)) return mw;
+MainWindow *currentMainWindow() {
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (auto *mw = qobject_cast<MainWindow *>(w))
+            return mw;
     }
     return nullptr;
 }
 
-QString writeSamplePdf(const QString& path) {
+QString writeSamplePdf(const QString &path) {
     QPdfWriter writer(path);
     writer.setPageSize(QPageSize(QPageSize::A4));
     QPainter p(&writer);
@@ -62,71 +63,76 @@ QString writeSamplePdf(const QString& path) {
     return path;
 }
 
-QStringList firstPageXObjectKeys(const QString& pdfPath) {
+QStringList firstPageXObjectKeys(const QString &pdfPath) {
     QPDF pdf;
     pdf.processFile(pdfPath.toLocal8Bit().constData());
     auto pages = QPDFPageDocumentHelper(pdf).getAllPages();
-    if (pages.empty()) return {};
+    if (pages.empty())
+        return {};
     QPDFObjectHandle res = pages.front().getAttribute("/Resources", true);
-    if (!res.isDictionary()) return {};
+    if (!res.isDictionary())
+        return {};
     QPDFObjectHandle x = res.getKey("/XObject");
-    if (!x.isDictionary()) return {};
+    if (!x.isDictionary())
+        return {};
     QStringList keys;
-    for (const auto& k : x.getKeys()) keys << QString::fromStdString(k);
+    for (const auto &k : x.getKeys())
+        keys << QString::fromStdString(k);
     return keys;
 }
 
 // Concatenated page-1 content stream as a string. Used to check that
 // the redaction-flattening replaced the original drawing commands
 // with a single image draw.
-std::string firstPageContents(const QString& pdfPath) {
+std::string firstPageContents(const QString &pdfPath) {
     QPDF pdf;
     pdf.processFile(pdfPath.toLocal8Bit().constData());
     auto pages = QPDFPageDocumentHelper(pdf).getAllPages();
-    if (pages.empty()) return {};
+    if (pages.empty())
+        return {};
     std::string out;
     Pl_String sink("content", nullptr, out);
     pages.front().pipeContents(&sink);
     return out;
 }
 
-}  // namespace
+} // namespace
 
 class TestUatRedaction : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void init();
     void uat_red_010_redactionFlattensToRasterOnSave();
 
-private:
+  private:
     QTemporaryDir m_scratch;
 };
 
 void TestUatRedaction::init() {
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (qobject_cast<MainWindow*>(w)) w->close();
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (qobject_cast<MainWindow *>(w))
+            w->close();
     }
     QApplication::processEvents();
 }
 
 void TestUatRedaction::uat_red_010_redactionFlattensToRasterOnSave() {
     QVERIFY(m_scratch.isValid());
-    const QString pdfPath = writeSamplePdf(
-        m_scratch.filePath(QStringLiteral("red010.pdf")));
+    const QString pdfPath = writeSamplePdf(m_scratch.filePath(QStringLiteral("red010.pdf")));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    IDocument* doc = dv->currentDocument();
+    IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
 
-    AnnotationStore* astore = doc->annotations();
+    AnnotationStore *astore = doc->annotations();
     QVERIFY(astore);
 
     // Drop a Redaction over the middle of the page. Coordinates are in
@@ -143,13 +149,13 @@ void TestUatRedaction::uat_red_010_redactionFlattensToRasterOnSave() {
     // Page must now carry a /TrailerRed* XObject…
     const QStringList keys = firstPageXObjectKeys(out);
     bool foundRed = false;
-    for (const QString& k : keys) {
+    for (const QString &k : keys) {
         if (k.startsWith(QStringLiteral("/TrailerRed"))) {
-            foundRed = true; break;
+            foundRed = true;
+            break;
         }
     }
-    QVERIFY2(foundRed, qPrintable("No flattened redaction XObject: "
-                                  + keys.join(", ")));
+    QVERIFY2(foundRed, qPrintable("No flattened redaction XObject: " + keys.join(", ")));
 
     // …and its content stream must draw that XObject (the original
     // drawing commands should be gone).
@@ -162,17 +168,18 @@ void TestUatRedaction::uat_red_010_redactionFlattensToRasterOnSave() {
     // Re-read the output — Redactions must NOT come back as /Annot.
     PdfEditor round;
     QVERIFY(round.load(out));
-    for (const Annotation& reloaded : round.readAnnotations()) {
+    for (const Annotation &reloaded : round.readAnnotations()) {
         QVERIFY(reloaded.type != AnnotationType::Redaction);
     }
 }
 
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     QTemporaryDir fakeHome;
-    if (!fakeHome.isValid()) return 1;
+    if (!fakeHome.isValid())
+        return 1;
     qputenv("HOME", fakeHome.path().toUtf8());
     qputenv("XDG_CONFIG_HOME", (fakeHome.path() + "/.config").toUtf8());
-    qputenv("XDG_DATA_HOME",   (fakeHome.path() + "/.local/share").toUtf8());
+    qputenv("XDG_DATA_HOME", (fakeHome.path() + "/.local/share").toUtf8());
     QDir().mkpath(fakeHome.path() + "/.config/trailer");
     QDir().mkpath(fakeHome.path() + "/.local/share/trailer");
 

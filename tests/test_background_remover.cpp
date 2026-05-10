@@ -41,7 +41,7 @@ using namespace trailer;
 
 class TestBackgroundRemover : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void notReadyMeansFalse();
     void removeReturnsNullWhenModelMissing();
     void ensureModelAvailableFailsGracefullyWithoutUrl();
@@ -49,13 +49,12 @@ private slots:
     void signalsFanOutFromRegistrySuccessWithSeededCache();
     void removeProducesAlphaVarianceWithRealModel();
 
-private:
+  private:
     QString realModelEnvPath() const {
         return QString::fromLocal8Bit(qgetenv("TRAILER_TEST_U2NETP"));
     }
-    void pinU2NetP(ModelRegistry& reg, const QString& modelsDir,
-                   const QString& url = {},
-                   const QString& sha256 = {}) const {
+    void pinU2NetP(ModelRegistry &reg, const QString &modelsDir, const QString &url = {},
+                   const QString &sha256 = {}) const {
         ModelSpec spec;
         spec.id = ModelId::U2NetP;
         spec.displayName = QStringLiteral("U2NetP (test)");
@@ -64,11 +63,13 @@ private:
         spec.sha256 = sha256;
         reg.setManifestForTesting({spec}, modelsDir);
     }
-    static QByteArray sha256Hex(const QString& path) {
+    static QByteArray sha256Hex(const QString &path) {
         QFile f(path);
-        if (!f.open(QIODevice::ReadOnly)) return {};
+        if (!f.open(QIODevice::ReadOnly))
+            return {};
         QCryptographicHash h(QCryptographicHash::Sha256);
-        if (!h.addData(&f)) return {};
+        if (!h.addData(&f))
+            return {};
         return h.result().toHex();
     }
     // Build a simple checker-pattern image so inference has both bright
@@ -77,7 +78,7 @@ private:
     static QImage makeCheckerPattern(int w = 512, int h = 384) {
         QImage img(w, h, QImage::Format_ARGB32);
         for (int y = 0; y < h; ++y) {
-            auto* scan = reinterpret_cast<QRgb*>(img.scanLine(y));
+            auto *scan = reinterpret_cast<QRgb *>(img.scanLine(y));
             for (int x = 0; x < w; ++x) {
                 const bool onTile = ((x / 64) + (y / 64)) % 2;
                 scan[x] = onTile ? qRgb(250, 250, 250) : qRgb(20, 20, 20);
@@ -112,7 +113,7 @@ void TestBackgroundRemover::ensureModelAvailableFailsGracefullyWithoutUrl() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     ModelRegistry reg;
-    pinU2NetP(reg, dir.path());  // no URL — registry should bail
+    pinU2NetP(reg, dir.path()); // no URL — registry should bail
     BackgroundRemover r(&reg);
 
     QSignalSpy unavailable(&r, &BackgroundRemover::modelUnavailable);
@@ -130,10 +131,8 @@ void TestBackgroundRemover::signalsFanOutFromRegistryFailure() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     ModelRegistry reg;
-    pinU2NetP(reg, dir.path(),
-              QStringLiteral("file:///absolutely/does/not/exist.onnx"),
-              QStringLiteral(
-                  "0000000000000000000000000000000000000000000000000000000000000000"));
+    pinU2NetP(reg, dir.path(), QStringLiteral("file:///absolutely/does/not/exist.onnx"),
+              QStringLiteral("0000000000000000000000000000000000000000000000000000000000000000"));
     BackgroundRemover r(&reg);
 
     QSignalSpy unavailable(&r, &BackgroundRemover::modelUnavailable);
@@ -159,9 +158,7 @@ void TestBackgroundRemover::signalsFanOutFromRegistrySuccessWithSeededCache() {
     QVERIFY(!hash.isEmpty());
 
     ModelRegistry reg;
-    pinU2NetP(reg, dir.path(),
-              QUrl::fromLocalFile(dest).toString(),
-              QString::fromLatin1(hash));
+    pinU2NetP(reg, dir.path(), QUrl::fromLocalFile(dest).toString(), QString::fromLatin1(hash));
     BackgroundRemover r(&reg);
 
     QVERIFY(r.isModelReady());
@@ -187,9 +184,7 @@ void TestBackgroundRemover::removeProducesAlphaVarianceWithRealModel() {
     QVERIFY(!hash.isEmpty());
 
     ModelRegistry reg;
-    pinU2NetP(reg, dir.path(),
-              QUrl::fromLocalFile(realPath).toString(),
-              QString::fromLatin1(hash));
+    pinU2NetP(reg, dir.path(), QUrl::fromLocalFile(realPath).toString(), QString::fromLatin1(hash));
     BackgroundRemover r(&reg);
     QVERIFY(r.isModelReady());
 
@@ -205,16 +200,16 @@ void TestBackgroundRemover::removeProducesAlphaVarianceWithRealModel() {
     int minAlpha = 255;
     int maxAlpha = 0;
     for (int y = 0; y < output.height(); ++y) {
-        const auto* scan = reinterpret_cast<const QRgb*>(output.scanLine(y));
+        const auto *scan = reinterpret_cast<const QRgb *>(output.scanLine(y));
         for (int x = 0; x < output.width(); ++x) {
             const int a = qAlpha(scan[x]);
             minAlpha = std::min(minAlpha, a);
             maxAlpha = std::max(maxAlpha, a);
         }
     }
-    QVERIFY2(maxAlpha - minAlpha > 32,
-             qPrintable(QStringLiteral("alpha range too narrow: [%1, %2]")
-                            .arg(minAlpha).arg(maxAlpha)));
+    QVERIFY2(
+        maxAlpha - minAlpha > 32,
+        qPrintable(QStringLiteral("alpha range too narrow: [%1, %2]").arg(minAlpha).arg(maxAlpha)));
 }
 
 QTEST_MAIN(TestBackgroundRemover)

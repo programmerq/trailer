@@ -23,7 +23,7 @@ Q_DECLARE_METATYPE(trailer::AnnotationTool)
 
 class TestFormToolbar : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void textBoxEmitsTextToolWithEmptyPreset();
     void checkmarkEmitsTextToolWithCheckGlyph();
     void xMarkEmitsTextToolWithCrossGlyph();
@@ -40,20 +40,21 @@ namespace {
 // Find a QAction on the toolbar by its visible text. Returns nullptr
 // if nothing matches (meaning the test's assumption about the toolbar
 // layout is wrong — fail loudly rather than pass silently).
-QAction* findAction(FormToolbar* bar, const QString& text) {
-    for (QAction* a : bar->actions()) {
-        if (a->text() == text) return a;
+QAction *findAction(FormToolbar *bar, const QString &text) {
+    for (QAction *a : bar->actions()) {
+        if (a->text() == text)
+            return a;
     }
     return nullptr;
 }
 
-}  // namespace
+} // namespace
 
 void TestFormToolbar::textBoxEmitsTextToolWithEmptyPreset() {
     FormToolbar bar;
     QSignalSpy spy(&bar, &FormToolbar::toolChanged);
 
-    QAction* a = findAction(&bar, QStringLiteral("Text Box"));
+    QAction *a = findAction(&bar, QStringLiteral("Text Box"));
     QVERIFY(a);
     a->trigger();
 
@@ -69,7 +70,7 @@ void TestFormToolbar::checkmarkEmitsTextToolWithCheckGlyph() {
     FormToolbar bar;
     QSignalSpy spy(&bar, &FormToolbar::toolChanged);
 
-    QAction* a = findAction(&bar, QStringLiteral("Checkmark"));
+    QAction *a = findAction(&bar, QStringLiteral("Checkmark"));
     QVERIFY(a);
     a->trigger();
 
@@ -84,7 +85,7 @@ void TestFormToolbar::xMarkEmitsTextToolWithCrossGlyph() {
     FormToolbar bar;
     QSignalSpy spy(&bar, &FormToolbar::toolChanged);
 
-    QAction* a = findAction(&bar, QStringLiteral("X Mark"));
+    QAction *a = findAction(&bar, QStringLiteral("X Mark"));
     QVERIFY(a);
     a->trigger();
 
@@ -98,7 +99,7 @@ void TestFormToolbar::xMarkEmitsTextToolWithCrossGlyph() {
 void TestFormToolbar::autoFillSignalFiresOnce() {
     FormToolbar bar;
     QSignalSpy spy(&bar, &FormToolbar::autoFillRequested);
-    QAction* a = findAction(&bar, QStringLiteral("AutoFill"));
+    QAction *a = findAction(&bar, QStringLiteral("AutoFill"));
     QVERIFY(a);
     a->trigger();
     QCOMPARE(spy.count(), 1);
@@ -107,7 +108,7 @@ void TestFormToolbar::autoFillSignalFiresOnce() {
 void TestFormToolbar::signHereSignalFiresOnce() {
     FormToolbar bar;
     QSignalSpy spy(&bar, &FormToolbar::signHereRequested);
-    QAction* a = findAction(&bar, QStringLiteral("Sign Here"));
+    QAction *a = findAction(&bar, QStringLiteral("Sign Here"));
     QVERIFY(a);
     a->trigger();
     QCOMPARE(spy.count(), 1);
@@ -116,8 +117,8 @@ void TestFormToolbar::signHereSignalFiresOnce() {
 void TestFormToolbar::toolsAreMutuallyExclusive() {
     FormToolbar bar;
 
-    QAction* checkAction = findAction(&bar, QStringLiteral("Checkmark"));
-    QAction* textAction = findAction(&bar, QStringLiteral("Text Box"));
+    QAction *checkAction = findAction(&bar, QStringLiteral("Checkmark"));
+    QAction *textAction = findAction(&bar, QStringLiteral("Text Box"));
     QVERIFY(checkAction);
     QVERIFY(textAction);
 

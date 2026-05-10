@@ -10,6 +10,6 @@ struct CommandLineResult {
     bool version = false;
 };
 
-CommandLineResult parseCommandLine(const QStringList& arguments);
+CommandLineResult parseCommandLine(const QStringList &arguments);
 
-}  // namespace trailer
+} // namespace trailer

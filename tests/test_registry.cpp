@@ -11,31 +11,31 @@ using namespace trailer;
 namespace {
 
 class FakeDocument : public IDocument {
-public:
-    FakeDocument(QString name, QString path)
-        : m_name(std::move(name)), m_path(std::move(path)) {}
+  public:
+    FakeDocument(QString name, QString path) : m_name(std::move(name)), m_path(std::move(path)) {}
     QString displayName() const override { return m_name; }
     QString filePath() const override { return m_path; }
-    QWidget* createView(QWidget* parent) override { return new QLabel(m_name, parent); }
-private:
+    QWidget *createView(QWidget *parent) override { return new QLabel(m_name, parent); }
+
+  private:
     QString m_name;
     QString m_path;
 };
 
 class FakeTxtAdapter : public IFormatAdapter {
-public:
+  public:
     QStringList mimeTypes() const override { return {"text/plain"}; }
     QStringList extensions() const override { return {"txt"}; }
-    std::unique_ptr<IDocument> open(const QString& path) override {
+    std::unique_ptr<IDocument> open(const QString &path) override {
         return std::make_unique<FakeDocument>(QStringLiteral("fake"), path);
     }
 };
 
-}  // namespace
+} // namespace
 
 class TestRegistry : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void fallsBackToStubForUnknownExtension();
     void dispatchesToRegisteredAdapterByExtension();
 };

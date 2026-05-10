@@ -10,15 +10,17 @@
 
 namespace trailer {
 
-ModelDownloader::ModelDownloader(QObject* parent)
+ModelDownloader::ModelDownloader(QObject *parent)
     : QObject(parent), m_net(new QNetworkAccessManager(this)) {}
 
-ModelDownloader::~ModelDownloader() { cancel(); }
+ModelDownloader::~ModelDownloader() {
+    cancel();
+}
 
-void ModelDownloader::start(const QString& url,
-                            const QString& destPath,
-                            const QString& expectedSha256) {
-    if (m_reply) return;  // already busy
+void ModelDownloader::start(const QString &url, const QString &destPath,
+                            const QString &expectedSha256) {
+    if (m_reply)
+        return; // already busy
     m_destPath = destPath;
     m_tempPath = destPath + QLatin1String(".part");
     m_expectedSha256 = expectedSha256.toLower();
@@ -32,7 +34,8 @@ void ModelDownloader::start(const QString& url,
     m_sink = new QFile(m_tempPath, this);
     if (!m_sink->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
         const QString err = m_sink->errorString();
-        delete m_sink; m_sink = nullptr;
+        delete m_sink;
+        m_sink = nullptr;
         emitFailure(tr("Cannot open %1 for writing: %2").arg(m_tempPath, err));
         return;
     }
@@ -44,19 +47,21 @@ void ModelDownloader::start(const QString& url,
     m_reply = m_net->get(req);
     connect(m_reply, &QNetworkReply::readyRead, this, &ModelDownloader::onReadyRead);
     connect(m_reply, &QNetworkReply::finished, this, &ModelDownloader::onFinished);
-    connect(m_reply, &QNetworkReply::downloadProgress,
-            this, &ModelDownloader::onProgress);
+    connect(m_reply, &QNetworkReply::downloadProgress, this, &ModelDownloader::onProgress);
 }
 
 void ModelDownloader::cancel() {
-    if (m_reply) m_reply->abort();
+    if (m_reply)
+        m_reply->abort();
     cleanup();
 }
 
 void ModelDownloader::onReadyRead() {
-    if (!m_reply || !m_sink) return;
+    if (!m_reply || !m_sink)
+        return;
     const QByteArray chunk = m_reply->readAll();
-    if (!chunk.isEmpty()) m_sink->write(chunk);
+    if (!chunk.isEmpty())
+        m_sink->write(chunk);
 }
 
 void ModelDownloader::onProgress(qint64 rec, qint64 total) {
@@ -67,10 +72,12 @@ void ModelDownloader::onFinished() {
     // Drain whatever's still buffered before flushing.
     if (m_reply && m_sink) {
         const QByteArray chunk = m_reply->readAll();
-        if (!chunk.isEmpty()) m_sink->write(chunk);
+        if (!chunk.isEmpty())
+            m_sink->write(chunk);
     }
 
-    if (!m_reply) return;
+    if (!m_reply)
+        return;
 
     if (m_reply->error() != QNetworkReply::NoError) {
         const QString err = m_reply->errorString();
@@ -100,8 +107,7 @@ void ModelDownloader::onFinished() {
         file.close();
         const QString got = QString::fromLatin1(hash.result().toHex());
         if (got.toLower() != m_expectedSha256) {
-            emitFailure(tr("SHA256 mismatch: expected %1, got %2")
-                            .arg(m_expectedSha256, got));
+            emitFailure(tr("SHA256 mismatch: expected %1, got %2").arg(m_expectedSha256, got));
             return;
         }
     }
@@ -119,7 +125,7 @@ void ModelDownloader::onFinished() {
     emit finished(finalPath);
 }
 
-void ModelDownloader::emitFailure(const QString& message) {
+void ModelDownloader::emitFailure(const QString &message) {
     const QString msg = message;
     cleanup();
     emit failed(msg);
@@ -138,4 +144,4 @@ void ModelDownloader::cleanup() {
     QFile::remove(m_tempPath);
 }
 
-}  // namespace trailer
+} // namespace trailer

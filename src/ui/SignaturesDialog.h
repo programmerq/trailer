@@ -20,31 +20,31 @@ namespace trailer {
 // semantics in the future; Phase 5 just returns the selected id).
 class SignaturesDialog : public QDialog {
     Q_OBJECT
-public:
-    explicit SignaturesDialog(QWidget* parent = nullptr);
+  public:
+    explicit SignaturesDialog(QWidget *parent = nullptr);
 
     // After exec(): the id of the signature the user picked, or an
     // empty string if none / rejected. Callers use this to pre-select
     // in the Sign tool.
     QString selectedId() const { return m_selectedId; }
 
-private slots:
+  private slots:
     void onAddClicked();
     void onRemoveClicked();
     void onSelectionChanged();
 
-private:
+  private:
     void reload();
-    QListWidgetItem* itemForId(const QString& id) const;
+    QListWidgetItem *itemForId(const QString &id) const;
 
     SignatureStore m_store;
     std::vector<Signature> m_signatures;
     QString m_selectedId;
 
-    QListWidget* m_list = nullptr;
-    QLabel* m_preview = nullptr;
-    QPushButton* m_addButton = nullptr;
-    QPushButton* m_removeButton = nullptr;
+    QListWidget *m_list = nullptr;
+    QLabel *m_preview = nullptr;
+    QPushButton *m_addButton = nullptr;
+    QPushButton *m_removeButton = nullptr;
 };
 
-}  // namespace trailer
+} // namespace trailer
