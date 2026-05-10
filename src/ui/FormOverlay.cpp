@@ -153,9 +153,9 @@ QWidget *FormOverlay::createWidgetForField(const FormField &field) {
     case FormFieldType::Dropdown: {
         auto *combo = new QComboBox(this);
         combo->addItems(field.options);
-        const int idx = field.options.indexOf(field.value);
+        const qsizetype idx = field.options.indexOf(field.value);
         if (idx >= 0)
-            combo->setCurrentIndex(idx);
+            combo->setCurrentIndex(static_cast<int>(idx));
         const int id = field.id;
         connect(combo, &QComboBox::currentTextChanged, this,
                 [this, id](const QString &text) { emit fieldValueChanged(id, text); });

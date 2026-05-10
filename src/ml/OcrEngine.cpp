@@ -72,8 +72,8 @@ QSize fitDetectionSize(const QSize &src) {
     const int longest = std::max(w, h);
     if (longest > kDetMaxSide) {
         const float scale = static_cast<float>(kDetMaxSide) / static_cast<float>(longest);
-        w = std::max(kDetStride, static_cast<int>(std::round(w * scale)));
-        h = std::max(kDetStride, static_cast<int>(std::round(h * scale)));
+        w = std::max(kDetStride, static_cast<int>(std::round(static_cast<float>(w) * scale)));
+        h = std::max(kDetStride, static_cast<int>(std::round(static_cast<float>(h) * scale)));
     }
     // Round to the next multiple of kDetStride (up, to avoid losing
     // a row of text to floor()).
@@ -93,9 +93,9 @@ std::vector<float> makeDetInput(const QImage &src, QSize resizedSize) {
     for (int y = 0; y < h; ++y) {
         const uchar *scan = resized.constScanLine(y);
         for (int x = 0; x < w; ++x) {
-            const float r = scan[x * 3 + 0] / 255.0f;
-            const float g = scan[x * 3 + 1] / 255.0f;
-            const float b = scan[x * 3 + 2] / 255.0f;
+            const float r = static_cast<float>(scan[x * 3 + 0]) / 255.0f;
+            const float g = static_cast<float>(scan[x * 3 + 1]) / 255.0f;
+            const float b = static_cast<float>(scan[x * 3 + 2]) / 255.0f;
             const size_t idx =
                 static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x);
             tensor[0 * plane + idx] = (r - kDetMean[0]) / kDetStd[0];
@@ -169,9 +169,11 @@ QVector<QRect> labelComponents(std::vector<uint8_t> &bin, int w, int h) {
 QRect unscaleAndExpand(const QRect &r, const QSize &detSize, const QSize &origSize) {
     const float sx = static_cast<float>(origSize.width()) / static_cast<float>(detSize.width());
     const float sy = static_cast<float>(origSize.height()) / static_cast<float>(detSize.height());
-    QRect out(static_cast<int>(std::floor(r.x() * sx)), static_cast<int>(std::floor(r.y() * sy)),
-              static_cast<int>(std::ceil(r.width() * sx)),
-              static_cast<int>(std::ceil(r.height() * sy)));
+    QRect out(
+        static_cast<int>(std::floor(static_cast<double>(r.x()) * static_cast<double>(sx))),
+        static_cast<int>(std::floor(static_cast<double>(r.y()) * static_cast<double>(sy))),
+        static_cast<int>(std::ceil(static_cast<double>(r.width()) * static_cast<double>(sx))),
+        static_cast<int>(std::ceil(static_cast<double>(r.height()) * static_cast<double>(sy))));
     const int padX = std::max(1, out.width() / 7);  // ~14 %
     const int padY = std::max(1, out.height() / 5); // ~20 %
     out.adjust(-padX, -padY, padX, padY);
@@ -224,7 +226,8 @@ std::vector<float> makeRecInput(const QImage &crop, int targetW) {
     const int srcW = std::max(1, crop.width());
     const int srcH = std::max(1, crop.height());
     const float scale = static_cast<float>(kRecHeight) / static_cast<float>(srcH);
-    const int resizedW = std::clamp(static_cast<int>(std::round(srcW * scale)), 1, targetW);
+    const int resizedW =
+        std::clamp(static_cast<int>(std::round(static_cast<float>(srcW) * scale)), 1, targetW);
 
     const QImage resized =
         crop.convertToFormat(QImage::Format_RGB888)
@@ -235,9 +238,9 @@ std::vector<float> makeRecInput(const QImage &crop, int targetW) {
     for (int y = 0; y < kRecHeight; ++y) {
         const uchar *scan = resized.constScanLine(y);
         for (int x = 0; x < resizedW; ++x) {
-            const float r = scan[x * 3 + 0] / 255.0f;
-            const float g = scan[x * 3 + 1] / 255.0f;
-            const float b = scan[x * 3 + 2] / 255.0f;
+            const float r = static_cast<float>(scan[x * 3 + 0]) / 255.0f;
+            const float g = static_cast<float>(scan[x * 3 + 1]) / 255.0f;
+            const float b = static_cast<float>(scan[x * 3 + 2]) / 255.0f;
             const size_t idx =
                 static_cast<size_t>(y) * static_cast<size_t>(targetW) + static_cast<size_t>(x);
             tensor[0 * plane + idx] = (r - 0.5f) / 0.5f;

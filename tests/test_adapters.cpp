@@ -169,6 +169,16 @@ void TestAdapters::pdfDocumentRendersThumbnailsForValidFile() {
     QVERIFY(thumb.width() <= 128);
     QVERIFY(thumb.height() <= 160);
 
+    // PdfDocument composites transparent renders onto opaque paper white;
+    // sample a corner that stays background on this fixture.
+    const QImage thumbArgb = thumb.convertToFormat(QImage::Format_ARGB32);
+    QVERIFY(thumbArgb.width() > 8 && thumbArgb.height() > 8);
+    const QRgb paper = thumbArgb.pixel(2, 2);
+    QCOMPARE(qAlpha(paper), 255);
+    QCOMPARE(qRed(paper), 255);
+    QCOMPARE(qGreen(paper), 255);
+    QCOMPARE(qBlue(paper), 255);
+
     const QImage oob = doc.renderThumbnail(5, QSize(128, 160));
     QVERIFY(oob.isNull());
 }

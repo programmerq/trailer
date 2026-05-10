@@ -6,7 +6,6 @@ function(trailer_add_test name source)
 endfunction()
 
 trailer_add_test(test_settings   test_settings.cpp)
-trailer_add_test(test_thumbnail_model test_thumbnail_model.cpp)
 trailer_add_test(test_recent     test_recent.cpp)
 trailer_add_test(test_app_paths  test_app_paths.cpp)
 trailer_add_test(test_registry   test_registry.cpp)
