@@ -1772,7 +1772,8 @@ void MainWindow::onTakeScreenshot() {
         args << "-iW";
         break;
     case ShotMode::Region:
-        args << "-i" << "-s";
+        args << "-i"
+             << "-s";
         break;
     }
     args << path;

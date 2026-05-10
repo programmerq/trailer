@@ -22,7 +22,7 @@ jobs:
       - uses: ./.github/actions/setup-linux-build
 
       - name: clang-format
-        run: git ls-files '*.cpp' '*.h' '*.mm' | xargs clang-format --dry-run --Werror
+        run: git ls-files '*.cpp' '*.h' '*.mm' | xargs clang-format-14 --dry-run --Werror
 
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRAILER_WERROR=ON
