@@ -1,7 +1,7 @@
 name: Linux build environment
 description: >-
   Install Qt (install-qt-action), apt packages for Trailer on Ubuntu,
-  and clang-format for CI lint steps.
+  and clang-format-14 for CI lint steps (matches Ubuntu 22.04 runners).
 
 inputs:
   qt-version:
@@ -24,7 +24,7 @@ runs:
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          clang-format \
+          clang-format-14 \
           libgl1-mesa-dev \
           libglu1-mesa-dev \
           libxkbcommon-dev \
