@@ -22,33 +22,33 @@ class AnnotationStore;
 class AnnotationOverlay : public QWidget {
     Q_OBJECT
 
-public:
-    explicit AnnotationOverlay(QWidget* parent = nullptr);
+  public:
+    explicit AnnotationOverlay(QWidget *parent = nullptr);
 
-    void setStore(AnnotationStore* store);
+    void setStore(AnnotationStore *store);
     void setActiveTool(AnnotationTool tool);
     AnnotationTool activeTool() const { return m_tool; }
     // When non-empty, Text annotations drop with this preset content
     // and skip the multi-line input dialog. Used by FormToolbar's
     // Checkmark / X Mark tools to stamp ✓/✗ glyphs on the page. The
     // preset persists until tool changes or this is cleared.
-    void setPendingTextPreset(const QString& text) { m_pendingTextPreset = text; }
+    void setPendingTextPreset(const QString &text) { m_pendingTextPreset = text; }
     QString pendingTextPreset() const { return m_pendingTextPreset; }
     // When the Signature tool is active, the next drag creates a
     // Signature annotation referring to this PNG. Cleared (along with
     // the tool) when the active tool moves away from Signature.
-    void setPendingSignaturePath(const QString& path) { m_pendingSignaturePath = path; }
+    void setPendingSignaturePath(const QString &path) { m_pendingSignaturePath = path; }
     QString pendingSignaturePath() const { return m_pendingSignaturePath; }
-    void setStyle(const AnnotationStyle& style);
-    const AnnotationStyle& style() const { return m_style; }
+    void setStyle(const AnnotationStyle &style);
+    const AnnotationStyle &style() const { return m_style; }
     void setPage(int page);
 
     // Mapping between document-native coordinates and overlay (view) pixels.
     // The page parameter lets multi-page viewers (e.g. QPdfView in
     // Continuous mode) resolve per-page offsets. Callers must keep the
     // callbacks in sync with the underlying view when the zoom changes.
-    using DocToView  = std::function<QPointF(QPointF docPt, int page)>;
-    using ViewToDoc  = std::function<QPointF(QPointF viewPt, int page)>;
+    using DocToView = std::function<QPointF(QPointF docPt, int page)>;
+    using ViewToDoc = std::function<QPointF(QPointF viewPt, int page)>;
     using PageAtView = std::function<int(QPointF viewPt)>;
     void setDocumentToView(DocToView fn);
     void setViewToDocument(ViewToDoc fn);
@@ -60,15 +60,14 @@ public:
     // Supplies per-run text rects (in doc coords) for a selection between two
     // points on a page. Used by the Highlight/Underline/StrikeOut tools. If
     // unset or it returns empty, the markup falls back to the drag bbox.
-    using TextSelectionProvider = std::function<std::vector<QRectF>(
-        QPointF startDoc, QPointF endDoc, int page)>;
+    using TextSelectionProvider =
+        std::function<std::vector<QRectF>(QPointF startDoc, QPointF endDoc, int page)>;
     void setTextSelectionProvider(TextSelectionProvider fn);
 
     // Samples the underlying document at (docRect, page) and returns an
     // image of the requested pixel size. Used by ZoomLens to draw a
     // magnified view. If unset, ZoomLens renders as an empty circle.
-    using SourceSampler = std::function<QImage(
-        QRectF docRect, QSize outPixels, int page)>;
+    using SourceSampler = std::function<QImage(QRectF docRect, QSize outPixels, int page)>;
     void setSourceSampler(SourceSampler fn);
 
     // Per-match rectangle for the search-highlight pass. The overlay
@@ -104,16 +103,14 @@ public:
     // True when the user is currently dragging a resize handle. Used
     // by tests to confirm the handle hit-test fired; in production
     // it has no other consumer.
-    bool isResizingForTest() const {
-        return m_resizingHandle != ResizeHandle::None;
-    }
+    bool isResizingForTest() const { return m_resizingHandle != ResizeHandle::None; }
     // View-space rect of the currently-selected annotation. Empty
     // QRectF when nothing is selected. Used by tests to compute
     // handle positions without depending on internal docRectToView
     // arithmetic.
     QRectF selectedViewRectForTest() const;
 
-signals:
+  signals:
     void annotationCommitted(int id);
     // Fires whenever m_selectedAnnotationId changes (including on
     // clear-to-zero). MainWindow uses this to drive the Inspector
@@ -121,22 +118,22 @@ signals:
     // colour / stroke / font controls without an extra click.
     void selectionChanged(int id);
 
-protected:
-    void paintEvent(QPaintEvent* event) override;
-    void mousePressEvent(QMouseEvent* event) override;
-    void mouseMoveEvent(QMouseEvent* event) override;
-    void mouseReleaseEvent(QMouseEvent* event) override;
-    void mouseDoubleClickEvent(QMouseEvent* event) override;
-    void keyPressEvent(QKeyEvent* event) override;
-    void contextMenuEvent(QContextMenuEvent* event) override;
-    void tabletEvent(QTabletEvent* event) override;
-    bool eventFilter(QObject* obj, QEvent* event) override;
+  protected:
+    void paintEvent(QPaintEvent *event) override;
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseMoveEvent(QMouseEvent *event) override;
+    void mouseReleaseEvent(QMouseEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
+    void keyPressEvent(QKeyEvent *event) override;
+    void contextMenuEvent(QContextMenuEvent *event) override;
+    void tabletEvent(QTabletEvent *event) override;
+    bool eventFilter(QObject *obj, QEvent *event) override;
 
-private:
-    QRectF docRectToView(const QRectF& r, int page) const;
-    QPointF toDoc(const QPointF& viewPt, int page) const;
-    int pageAt(const QPointF& viewPt) const;
-    int hitTest(const QPointF& viewPt) const;
+  private:
+    QRectF docRectToView(const QRectF &r, int page) const;
+    QPointF toDoc(const QPointF &viewPt, int page) const;
+    int pageAt(const QPointF &viewPt) const;
+    int hitTest(const QPointF &viewPt) const;
     void openInlineEditor(int annotationId);
     // Cancel any in-flight drag (shape-creation, selection move,
     // resize handle) without committing it to the AnnotationStore.
@@ -228,10 +225,10 @@ private:
     // point for the currently-selected annotation. Returns None
     // when nothing's selected or the click missed the ~10 px handle
     // hit zone.
-    ResizeHandle handleAt(const QPointF& viewPt) const;
+    ResizeHandle handleAt(const QPointF &viewPt) const;
     // Compute the four handle rects in view space for the given
     // annotation bounds.
-    QRectF handleRect(const QRectF& viewBounds, ResizeHandle which) const;
+    QRectF handleRect(const QRectF &viewBounds, ResizeHandle which) const;
 };
 
-}  // namespace trailer
+} // namespace trailer

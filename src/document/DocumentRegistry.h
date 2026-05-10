@@ -11,16 +11,16 @@
 namespace trailer {
 
 class DocumentRegistry {
-public:
+  public:
     DocumentRegistry();
 
     void registerAdapter(std::unique_ptr<IFormatAdapter> adapter);
 
-    std::unique_ptr<IDocument> open(const QString& path) const;
+    std::unique_ptr<IDocument> open(const QString &path) const;
 
-private:
+  private:
     std::vector<std::unique_ptr<IFormatAdapter>> m_adapters;
     StubAdapter m_fallback;
 };
 
-}  // namespace trailer
+} // namespace trailer

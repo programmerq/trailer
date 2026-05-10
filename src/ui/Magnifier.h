@@ -10,10 +10,10 @@ namespace trailer {
 class Magnifier : public QWidget {
     Q_OBJECT
 
-public:
-    explicit Magnifier(QWidget* parent = nullptr);
+  public:
+    explicit Magnifier(QWidget *parent = nullptr);
 
-    void setTarget(QWidget* target);
+    void setTarget(QWidget *target);
     void setZoomFactor(double factor);
     double zoomFactor() const { return m_factor; }
 
@@ -21,13 +21,13 @@ public:
     void deactivate();
     bool isActive() const { return m_active; }
 
-protected:
-    void paintEvent(QPaintEvent* event) override;
+  protected:
+    void paintEvent(QPaintEvent *event) override;
 
-private slots:
+  private slots:
     void tick();
 
-private:
+  private:
     QPointer<QWidget> m_target;
     QTimer m_timer;
     QImage m_snapshot;
@@ -35,4 +35,4 @@ private:
     bool m_active = false;
 };
 
-}  // namespace trailer
+} // namespace trailer

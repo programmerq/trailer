@@ -15,7 +15,7 @@
 
 namespace trailer {
 
-MarkupToolbar::MarkupToolbar(QWidget* parent) : QToolBar(parent) {
+MarkupToolbar::MarkupToolbar(QWidget *parent) : QToolBar(parent) {
     setWindowTitle(tr("Markup"));
     setObjectName(QStringLiteral("MarkupToolbar"));
     // Toolbar placement is intentional, not user-configurable. Letting
@@ -38,7 +38,7 @@ MarkupToolbar::MarkupToolbar(QWidget* parent) : QToolBar(parent) {
     m_group = new QActionGroup(this);
     m_group->setExclusive(true);
 
-    auto* selectAction = makeToolAction(tr("Select"), AnnotationTool::Select,
+    auto *selectAction = makeToolAction(tr("Select"), AnnotationTool::Select,
                                         QStringLiteral(":/icons/actions/tool-select.svg"));
     selectAction->setChecked(true);
     addSeparator();
@@ -78,16 +78,14 @@ MarkupToolbar::MarkupToolbar(QWidget* parent) : QToolBar(parent) {
 
     addSeparator();
 
-    auto* redactAction =
-        makeToolAction(tr("Redact"), AnnotationTool::Redaction,
-                       QStringLiteral(":/icons/actions/tool-redact.svg"));
-    redactAction->setToolTip(
-        tr("Redact — paint a permanent black block. Content is rasterised "
-           "on save. Not a defence-grade redaction tool."));
+    auto *redactAction = makeToolAction(tr("Redact"), AnnotationTool::Redaction,
+                                        QStringLiteral(":/icons/actions/tool-redact.svg"));
+    redactAction->setToolTip(tr("Redact — paint a permanent black block. Content is rasterised "
+                                "on save. Not a defence-grade redaction tool."));
 
     addSeparator();
 
-    auto* strokeBtn = new QToolButton(this);
+    auto *strokeBtn = new QToolButton(this);
     strokeBtn->setText(tr("Stroke"));
     strokeBtn->setAutoRaise(true);
     auto refreshStrokeSwatch = [this, strokeBtn]() {
@@ -97,16 +95,16 @@ MarkupToolbar::MarkupToolbar(QWidget* parent) : QToolBar(parent) {
     };
     refreshStrokeSwatch();
     connect(strokeBtn, &QToolButton::clicked, this, [this, refreshStrokeSwatch]() {
-        const QColor c = QColorDialog::getColor(m_style.stroke, this,
-            tr("Stroke Colour"));
-        if (!c.isValid()) return;
+        const QColor c = QColorDialog::getColor(m_style.stroke, this, tr("Stroke Colour"));
+        if (!c.isValid())
+            return;
         m_style.stroke = c;
         refreshStrokeSwatch();
         emit styleChanged(m_style);
     });
     addWidget(strokeBtn);
 
-    auto* fillBtn = new QToolButton(this);
+    auto *fillBtn = new QToolButton(this);
     fillBtn->setText(tr("Fill"));
     fillBtn->setAutoRaise(true);
     auto refreshFillSwatch = [this, fillBtn]() {
@@ -123,36 +121,36 @@ MarkupToolbar::MarkupToolbar(QWidget* parent) : QToolBar(parent) {
     };
     refreshFillSwatch();
     connect(fillBtn, &QToolButton::clicked, this, [this, refreshFillSwatch]() {
-        const QColor c = QColorDialog::getColor(m_style.fill, this,
-            tr("Fill Colour"), QColorDialog::ShowAlphaChannel);
-        if (!c.isValid()) return;
+        const QColor c = QColorDialog::getColor(m_style.fill, this, tr("Fill Colour"),
+                                                QColorDialog::ShowAlphaChannel);
+        if (!c.isValid())
+            return;
         m_style.fill = c;
         refreshFillSwatch();
         emit styleChanged(m_style);
     });
     addWidget(fillBtn);
 
-    auto* widthSpin = new QDoubleSpinBox(this);
+    auto *widthSpin = new QDoubleSpinBox(this);
     widthSpin->setRange(0.5, 20.0);
     widthSpin->setSingleStep(0.5);
     widthSpin->setValue(m_style.strokeWidth);
     widthSpin->setSuffix(tr(" px"));
-    connect(widthSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged),
-            this, [this](double v) {
+    connect(widthSpin, QOverload<double>::of(&QDoubleSpinBox::valueChanged), this,
+            [this](double v) {
                 m_style.strokeWidth = v;
                 emit styleChanged(m_style);
             });
     addWidget(new QLabel(tr("Width "), this));
     addWidget(widthSpin);
 
-    auto* dashCombo = new QComboBox(this);
-    dashCombo->addItem(tr("Solid"),  static_cast<int>(DashStyle::Solid));
+    auto *dashCombo = new QComboBox(this);
+    dashCombo->addItem(tr("Solid"), static_cast<int>(DashStyle::Solid));
     dashCombo->addItem(tr("Dashed"), static_cast<int>(DashStyle::Dashed));
     dashCombo->addItem(tr("Dotted"), static_cast<int>(DashStyle::Dotted));
-    connect(dashCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
-            this, [this, dashCombo](int) {
-                m_style.dash = static_cast<DashStyle>(
-                    dashCombo->currentData().toInt());
+    connect(dashCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this, dashCombo](int) {
+                m_style.dash = static_cast<DashStyle>(dashCombo->currentData().toInt());
                 emit styleChanged(m_style);
             });
     addWidget(new QLabel(tr("Dash "), this));
@@ -161,11 +159,13 @@ MarkupToolbar::MarkupToolbar(QWidget* parent) : QToolBar(parent) {
     m_tool = AnnotationTool::Select;
 }
 
-AnnotationStyle MarkupToolbar::style() const { return m_style; }
+AnnotationStyle MarkupToolbar::style() const {
+    return m_style;
+}
 
-QAction* MarkupToolbar::makeToolAction(const QString& label, AnnotationTool tool,
-                                       const QString& iconResource) {
-    QAction* action = nullptr;
+QAction *MarkupToolbar::makeToolAction(const QString &label, AnnotationTool tool,
+                                       const QString &iconResource) {
+    QAction *action = nullptr;
     if (!iconResource.isEmpty()) {
         const QIcon icon = themedActionIcon(iconResource, this);
         action = addAction(icon, label);
@@ -176,7 +176,8 @@ QAction* MarkupToolbar::makeToolAction(const QString& label, AnnotationTool tool
     action->setCheckable(true);
     m_group->addAction(action);
     connect(action, &QAction::toggled, this, [this, tool](bool on) {
-        if (!on) return;
+        if (!on)
+            return;
         m_tool = tool;
         emit activeToolChanged(tool);
     });
@@ -185,9 +186,11 @@ QAction* MarkupToolbar::makeToolAction(const QString& label, AnnotationTool tool
 }
 
 void MarkupToolbar::setActiveTool(AnnotationTool tool) {
-    if (tool == m_tool) return;
+    if (tool == m_tool)
+        return;
     auto it = m_toolActions.find(tool);
-    if (it == m_toolActions.end()) return;
+    if (it == m_toolActions.end())
+        return;
     // Flipping the action's checked state fires the toggled slot,
     // which updates m_tool and re-emits activeToolChanged.
     it.value()->setChecked(true);
@@ -195,9 +198,11 @@ void MarkupToolbar::setActiveTool(AnnotationTool tool) {
 
 void MarkupToolbar::setToolVisible(AnnotationTool tool, bool visible) {
     auto it = m_toolActions.find(tool);
-    if (it == m_toolActions.end()) return;
-    QAction* action = it.value();
-    if (action->isVisible() == visible) return;
+    if (it == m_toolActions.end())
+        return;
+    QAction *action = it.value();
+    if (action->isVisible() == visible)
+        return;
     action->setVisible(visible);
     // If we just hid the active tool, fall back to Select so the
     // overlay isn't stuck consuming click-drags for a tool whose
@@ -210,19 +215,17 @@ void MarkupToolbar::setToolVisible(AnnotationTool tool, bool visible) {
     // dividers wrapping an empty region. The check runs on every
     // change so re-showing one tool brings the separator back.
     const bool isTextAware = tool == AnnotationTool::Highlight ||
-                             tool == AnnotationTool::Underline ||
-                             tool == AnnotationTool::StrikeOut;
+                             tool == AnnotationTool::Underline || tool == AnnotationTool::StrikeOut;
     if (isTextAware && m_textAwareSeparator) {
         auto visibleByTool = [this](AnnotationTool t) {
             auto i = m_toolActions.find(t);
             return i != m_toolActions.end() && i.value()->isVisible();
         };
-        const bool anyVisible =
-            visibleByTool(AnnotationTool::Highlight) ||
-            visibleByTool(AnnotationTool::Underline) ||
-            visibleByTool(AnnotationTool::StrikeOut);
+        const bool anyVisible = visibleByTool(AnnotationTool::Highlight) ||
+                                visibleByTool(AnnotationTool::Underline) ||
+                                visibleByTool(AnnotationTool::StrikeOut);
         m_textAwareSeparator->setVisible(anyVisible);
     }
 }
 
-}  // namespace trailer
+} // namespace trailer

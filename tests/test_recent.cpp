@@ -9,7 +9,7 @@ using namespace trailer;
 
 class TestRecent : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void addDedupesAndOrders();
     void trimsToMaxEntries();
     void roundTripsToDisk();
@@ -19,7 +19,7 @@ private slots:
 };
 
 namespace {
-QString touch(const QTemporaryDir& dir, const QString& name) {
+QString touch(const QTemporaryDir &dir, const QString &name) {
     const QString path = dir.filePath(name);
     QFile f(path);
     if (f.open(QIODevice::WriteOnly)) {
@@ -27,7 +27,7 @@ QString touch(const QTemporaryDir& dir, const QString& name) {
     }
     return path;
 }
-}  // namespace
+} // namespace
 
 void TestRecent::addDedupesAndOrders() {
     QTemporaryDir dir;
@@ -38,7 +38,7 @@ void TestRecent::addDedupesAndOrders() {
     RecentFiles r(dir.filePath("recent.json"));
     r.add(a);
     r.add(b);
-    r.add(a);  // moves a to the front
+    r.add(a); // moves a to the front
 
     const auto entries = r.entries();
     QCOMPARE(entries.size(), 2);
@@ -116,8 +116,7 @@ void TestRecent::viewStateRoundTripsAndRestoresOnLookup() {
     RecentFiles reloaded(recentPath);
     reloaded.load();
     const RecentEntry e = reloaded.findByPath(docPath);
-    QVERIFY2(!e.path.isEmpty(),
-             "findByPath should locate the entry by canonical path");
+    QVERIFY2(!e.path.isEmpty(), "findByPath should locate the entry by canonical path");
     QCOMPARE(e.currentPage, 42);
     QCOMPARE(e.zoomFactor, 1.5);
     QCOMPARE(e.scrollY, 120);

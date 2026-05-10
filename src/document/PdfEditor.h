@@ -19,7 +19,7 @@ namespace trailer {
 // you ship a document that anyone can read but not (say) print.
 struct EncryptionOptions {
     QString userPassword;
-    QString ownerPassword;        // empty → derived from userPassword
+    QString ownerPassword; // empty → derived from userPassword
     bool allowPrint = true;
     bool allowHighResPrint = true; // only meaningful if allowPrint
     bool allowModify = true;
@@ -41,12 +41,12 @@ enum class FormFieldType { Text, Checkbox, RadioButton, Dropdown, Unknown };
 struct FormField {
     int id = -1;
     int page = 0;
-    QRectF rectPts;          // bottom-left origin, PDF points
+    QRectF rectPts; // bottom-left origin, PDF points
     FormFieldType type = FormFieldType::Unknown;
-    QString name;            // fully-qualified internal name (/T hierarchy)
-    QString label;           // /TU alternative name (shown to the user)
-    QString value;           // current value; "Yes"/"Off" for checkboxes
-    QStringList options;     // non-empty for Dropdown fields
+    QString name;        // fully-qualified internal name (/T hierarchy)
+    QString label;       // /TU alternative name (shown to the user)
+    QString value;       // current value; "Yes"/"Off" for checkboxes
+    QStringList options; // non-empty for Dropdown fields
     bool readOnly = false;
     bool required = false;
     bool multiline = false;  // text fields only
@@ -54,27 +54,26 @@ struct FormField {
 };
 
 class PdfEditor {
-public:
+  public:
     PdfEditor();
     ~PdfEditor();
 
-    PdfEditor(const PdfEditor&) = delete;
-    PdfEditor& operator=(const PdfEditor&) = delete;
+    PdfEditor(const PdfEditor &) = delete;
+    PdfEditor &operator=(const PdfEditor &) = delete;
 
-    bool load(const QString& path);
+    bool load(const QString &path);
     bool isValid() const { return m_valid; }
     int pageCount() const;
 
     void rotatePage(int pageIndex, int degreesClockwise);
     void deletePages(std::vector<int> pageIndices);
     void movePage(int from, int to);
-    bool insertPagesFrom(const QString& sourcePath, int insertAtIndex);
-    bool extractPages(const std::vector<int>& pageIndices, const QString& destPath) const;
+    bool insertPagesFrom(const QString &sourcePath, int insertAtIndex);
+    bool extractPages(const std::vector<int> &pageIndices, const QString &destPath) const;
 
     // Cropping. Margins are in PDF points, measured inward from each edge of the
     // current MediaBox. Returns false if the resulting rectangle would be invalid.
-    bool cropPage(int pageIndex, double leftPts, double topPts,
-                  double rightPts, double bottomPts);
+    bool cropPage(int pageIndex, double leftPts, double topPts, double rightPts, double bottomPts);
 
     // Append in-memory annotations to each page's /Annots array. Caller
     // supplies doc-native coords (PDF points, top-left origin); the writer
@@ -82,7 +81,7 @@ public:
     // Signature annotations are skipped here — they must be burned into
     // the page content stream via flattenSignatures() so they remain
     // visible in readers that don't render annotation appearances.
-    bool writeAnnotations(const std::vector<Annotation>& annotations);
+    bool writeAnnotations(const std::vector<Annotation> &annotations);
 
     // Flatten every Signature-typed annotation into its page's content
     // stream by embedding the referenced PNG as an image XObject and
@@ -91,7 +90,7 @@ public:
     // permanent visual. Callers invoke this once, immediately before
     // save() or exportWithPassword(). Returns true when all signatures
     // were embedded (an empty signature list is success).
-    bool flattenSignatures(const std::vector<Annotation>& annotations);
+    bool flattenSignatures(const std::vector<Annotation> &annotations);
 
     // For every page that has at least one Redaction-typed annotation,
     // render the current page contents to a raster image, paint opaque
@@ -106,7 +105,7 @@ public:
     // Returns true when all affected pages were rasterised (empty
     // redaction list is success). Non-redaction annotations are
     // untouched.
-    bool applyRedactions(const std::vector<Annotation>& annotations);
+    bool applyRedactions(const std::vector<Annotation> &annotations);
 
     // Parse /Annots arrays on every page and return an in-memory representation
     // in doc-native coords (top-left origin). Only the subtypes this class
@@ -125,13 +124,13 @@ public:
     // at index `id` in the readFormFields() list. Returns false if the
     // id is out of range, the field is read-only, or the document is
     // invalid. For checkboxes pass "Yes" or "Off".
-    bool setFormFieldValue(int id, const QString& value);
+    bool setFormFieldValue(int id, const QString &value);
 
-    bool save(const QString& path);
+    bool save(const QString &path);
     // Overload that writes an AES-256 (R6) password-protected PDF.
     // Callers that don't need encryption should use the one-arg form —
     // it's binary-identical output otherwise.
-    bool save(const QString& path, const EncryptionOptions& enc);
+    bool save(const QString &path, const EncryptionOptions &enc);
 
     // Write a linearized + compressed version of the document. Streams
     // are re-compressed, object streams are regenerated, and the file
@@ -139,7 +138,7 @@ public:
     // to be smaller than the input (already-optimised inputs can even
     // grow slightly), but for typical PDFs the reduction is
     // substantial. Does not modify the in-memory state.
-    bool saveReduced(const QString& path);
+    bool saveReduced(const QString &path);
 
     // After load(): true if the backing PDF required a password to
     // open. Phase 5 callers prompt the user when this is the case.
@@ -149,18 +148,18 @@ public:
     // Returns true once the document is accessible. Idempotent for
     // already-unencrypted documents. Wrong password keeps the editor
     // in the loaded-but-locked state.
-    bool unlock(const QString& password);
+    bool unlock(const QString &password);
 
-    QPDF* qpdf() { return m_qpdf.get(); }
+    QPDF *qpdf() { return m_qpdf.get(); }
 
-private:
-    bool saveImpl(const QString& path, const EncryptionOptions* enc);
+  private:
+    bool saveImpl(const QString &path, const EncryptionOptions *enc);
 
     std::unique_ptr<QPDF> m_qpdf;
     std::vector<std::unique_ptr<QPDF>> m_sources;
     bool m_valid = false;
     bool m_encrypted = false;
-    QString m_path;  // remembered for unlock() retry
+    QString m_path; // remembered for unlock() retry
 };
 
-}  // namespace trailer
+} // namespace trailer

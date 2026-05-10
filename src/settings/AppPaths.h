@@ -5,7 +5,7 @@
 namespace trailer {
 
 class AppPaths {
-public:
+  public:
     static QString settingsDir();
     static QString dataDir();
 
@@ -27,7 +27,7 @@ public:
     // long-lived artefacts — not the cache dir which the OS may purge.
     static QString modelsDir();
 
-    static void ensureDirExists(const QString& path);
+    static void ensureDirExists(const QString &path);
 };
 
-}  // namespace trailer
+} // namespace trailer

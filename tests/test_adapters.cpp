@@ -17,7 +17,7 @@ using namespace trailer;
 
 class TestAdapters : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void pdfAdapterAdvertisesPdfExtension();
     void imageAdapterAdvertisesCommonExtensions();
     void registryRoutesPdfToPdfAdapter();
@@ -53,7 +53,7 @@ void TestAdapters::pdfAdapterAdvertisesPdfExtension() {
 void TestAdapters::imageAdapterAdvertisesCommonExtensions() {
     ImageAdapter adapter;
     const QStringList exts = adapter.extensions();
-    for (const QString& expected : {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp"}) {
+    for (const QString &expected : {"png", "jpg", "jpeg", "gif", "bmp", "tiff", "webp"}) {
         QVERIFY2(exts.contains(expected), qPrintable(expected));
     }
 }
@@ -63,9 +63,9 @@ void TestAdapters::registryRoutesPdfToPdfAdapter() {
     reg.registerAdapter(std::make_unique<PdfAdapter>());
     auto doc = reg.open("/tmp/nonexistent.pdf");
     QVERIFY(doc != nullptr);
-    auto* pdf = dynamic_cast<PdfDocument*>(doc.get());
+    auto *pdf = dynamic_cast<PdfDocument *>(doc.get());
     QVERIFY2(pdf != nullptr, "expected a PdfDocument");
-    QVERIFY(!pdf->isValid());  // nonexistent file
+    QVERIFY(!pdf->isValid()); // nonexistent file
 }
 
 void TestAdapters::registryRoutesPngToImageAdapter() {
@@ -101,7 +101,7 @@ void TestAdapters::pdfDocumentReportsInvalidForMissingFile() {
     QCOMPARE(doc.pageCount(), 0);
 
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
-    QVERIFY(view != nullptr);  // falls back to an error label
+    QVERIFY(view != nullptr); // falls back to an error label
 }
 
 void TestAdapters::imageDocumentZoomResizesPixmap() {
@@ -120,9 +120,9 @@ void TestAdapters::imageDocumentZoomResizesPixmap() {
     QVERIFY(view != nullptr);
 
     // Find the QLabel inside the QScrollArea that owns the pixmap.
-    auto* scroll = qobject_cast<QScrollArea*>(view.get());
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
-    auto* label = qobject_cast<QLabel*>(scroll->widget());
+    auto *label = qobject_cast<QLabel *>(scroll->widget());
     QVERIFY(label != nullptr);
 
     const QSize original = label->pixmap().size();
@@ -261,7 +261,8 @@ void TestAdapters::pdfDocumentDeletePagesRemovesAndMarksDirty() {
         for (int i = 0; i < 4; ++i) {
             painter.drawText(QRect(100, 100, 800, 200), Qt::AlignCenter,
                              QStringLiteral("Page %1").arg(i + 1));
-            if (i < 3) writer.newPage();
+            if (i < 3)
+                writer.newPage();
         }
         painter.end();
     }
@@ -291,7 +292,8 @@ void TestAdapters::pdfDocumentMovePageReorders() {
         for (int i = 0; i < 3; ++i) {
             painter.drawText(QRect(100, 100, 800, 200), Qt::AlignCenter,
                              QStringLiteral("Page %1").arg(i + 1));
-            if (i < 2) writer.newPage();
+            if (i < 2)
+                writer.newPage();
         }
         painter.end();
     }
@@ -305,15 +307,14 @@ void TestAdapters::pdfDocumentMovePageReorders() {
 
 namespace {
 
-QString writeTinyPng(const QString& path, int w = 32, int h = 24,
-                     QColor colour = Qt::blue) {
+QString writeTinyPng(const QString &path, int w = 32, int h = 24, QColor colour = Qt::blue) {
     QImage img(w, h, QImage::Format_ARGB32);
     img.fill(colour);
     img.save(path, "PNG");
     return path;
 }
 
-}  // namespace
+} // namespace
 
 void TestAdapters::imageDocumentRotateSwapsDimensionsAndMarksDirty() {
     QTemporaryDir dir;

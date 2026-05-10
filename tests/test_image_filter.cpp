@@ -17,16 +17,24 @@ QImage makeSolid(QRgb colour, int w = 4, int h = 4) {
     return img;
 }
 
-int r(const QImage& img, int x, int y) { return qRed(img.pixel(x, y)); }
-int g(const QImage& img, int x, int y) { return qGreen(img.pixel(x, y)); }
-int b(const QImage& img, int x, int y) { return qBlue(img.pixel(x, y)); }
-int a(const QImage& img, int x, int y) { return qAlpha(img.pixel(x, y)); }
+int r(const QImage &img, int x, int y) {
+    return qRed(img.pixel(x, y));
+}
+int g(const QImage &img, int x, int y) {
+    return qGreen(img.pixel(x, y));
+}
+int b(const QImage &img, int x, int y) {
+    return qBlue(img.pixel(x, y));
+}
+int a(const QImage &img, int x, int y) {
+    return qAlpha(img.pixel(x, y));
+}
 
-}  // namespace
+} // namespace
 
 class TestImageFilter : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void idRoundTripIsStable();
     void idRejectsUnknownToNone();
     void allFiltersListsEveryEnumValue();

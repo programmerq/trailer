@@ -18,7 +18,7 @@ enum class Theme {
 };
 
 class Settings {
-public:
+  public:
     Settings();
     explicit Settings(QString filePath);
 
@@ -42,7 +42,7 @@ public:
     // same folder rather than always defaulting to ~/Documents. The
     // value is best-effort — empty string means "use platform default".
     QString lastSaveDir() const { return m_lastSaveDir; }
-    void setLastSaveDir(const QString& value);
+    void setLastSaveDir(const QString &value);
 
     // Whether the user has seen the one-time "redaction is not
     // defence-grade" warning (DESIGN §6.11.6). True = do not show
@@ -61,14 +61,14 @@ public:
     // viewers") can adopt the same surface without growing a new
     // accessor pair every time. Keys are written under the
     // [first_use] table in settings.toml; unknown keys load as false.
-    bool firstUseAcknowledged(const QString& key) const {
+    bool firstUseAcknowledged(const QString &key) const {
         return m_firstUseFlags.value(key, false);
     }
-    void setFirstUseAcknowledged(const QString& key, bool value);
+    void setFirstUseAcknowledged(const QString &key, bool value);
 
     QString filePath() const { return m_filePath; }
 
-private:
+  private:
     QString m_filePath;
     Theme m_theme = Theme::System;
     // Window-per-file is the default after the 2026-04-24 HITL review
@@ -82,8 +82,8 @@ private:
 };
 
 QString themeToString(Theme value);
-Theme themeFromString(const QString& value);
+Theme themeFromString(const QString &value);
 QString openFilesInToString(OpenFilesIn value);
-OpenFilesIn openFilesInFromString(const QString& value);
+OpenFilesIn openFilesInFromString(const QString &value);
 
-}  // namespace trailer
+} // namespace trailer

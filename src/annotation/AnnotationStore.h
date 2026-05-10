@@ -11,18 +11,18 @@ namespace trailer {
 class AnnotationStore : public QObject {
     Q_OBJECT
 
-public:
-    explicit AnnotationStore(QObject* parent = nullptr);
+  public:
+    explicit AnnotationStore(QObject *parent = nullptr);
 
     int add(Annotation annotation);
     bool remove(int id);
     // Remove all annotations whose id appears in `ids` in a single
     // undo-history step. Returns true if at least one was removed.
-    bool removeMultiple(const std::vector<int>& ids);
-    bool update(const Annotation& annotation);
-    const Annotation* find(int id) const;
+    bool removeMultiple(const std::vector<int> &ids);
+    bool update(const Annotation &annotation);
+    const Annotation *find(int id) const;
 
-    const std::vector<Annotation>& annotations() const { return m_annotations; }
+    const std::vector<Annotation> &annotations() const { return m_annotations; }
     std::vector<Annotation> annotationsOnPage(int page) const;
     int count() const { return static_cast<int>(m_annotations.size()); }
     bool isEmpty() const { return m_annotations.empty(); }
@@ -37,12 +37,15 @@ public:
     bool canRedo() const { return !m_redoStack.empty(); }
     void undo();
     void redo();
-    void clearHistory() { m_undoStack.clear(); m_redoStack.clear(); }
+    void clearHistory() {
+        m_undoStack.clear();
+        m_redoStack.clear();
+    }
 
-signals:
+  signals:
     void changed();
 
-private:
+  private:
     void pushHistory();
 
     std::vector<Annotation> m_annotations;
@@ -52,4 +55,4 @@ private:
     static constexpr size_t kMaxUndo = 64;
 };
 
-}  // namespace trailer
+} // namespace trailer

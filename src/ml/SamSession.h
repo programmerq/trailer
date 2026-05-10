@@ -41,8 +41,8 @@ class OnnxSession;
 // segment() returns a null QImage.
 class SamSession : public QObject {
     Q_OBJECT
-public:
-    explicit SamSession(ModelRegistry* registry, QObject* parent = nullptr);
+  public:
+    explicit SamSession(ModelRegistry *registry, QObject *parent = nullptr);
     ~SamSession() override;
 
     bool isModelReady() const;
@@ -52,7 +52,7 @@ public:
     // geometry on the session. Call once per image; subsequent
     // segment() calls reuse the cache. Returns false on failure
     // (model missing, ORT error).
-    bool prepare(const QImage& source);
+    bool prepare(const QImage &source);
 
     // Run the decoder against the cached embedding with the given
     // prompts. `positives` and `negatives` are in original-image pixel
@@ -60,14 +60,13 @@ public:
     // image, or a null QImage on failure. The result is also stashed
     // so contourFromLastMask() can extract a polygon without re-running
     // inference.
-    QImage segment(const QVector<QPoint>& positives,
-                   const QVector<QPoint>& negatives);
+    QImage segment(const QVector<QPoint> &positives, const QVector<QPoint> &negatives);
 
     // Convenience: apply the last mask to `source` (which should be
     // the same image passed to prepare()) as an alpha channel. Pixels
     // outside the mask get alpha=0; inside stays opaque. Returns null
     // if no segment has yet run.
-    QImage applyAsAlpha(const QImage& source) const;
+    QImage applyAsAlpha(const QImage &source) const;
 
     // Extract a simplified polygon contour from the last mask — used
     // by Smart Lasso to produce a user-editable selection. Returns
@@ -79,25 +78,25 @@ public:
     // Empty if prepare() has not succeeded.
     QSize preparedSize() const;
 
-signals:
+  signals:
     void downloadProgress(qint64 received, qint64 total);
     // Both encoder and decoder are on disk and verified.
     void modelsReady();
     // Download failed or registry has no URL for one of the models.
-    void modelsUnavailable(const QString& reason);
+    void modelsUnavailable(const QString &reason);
 
-private:
+  private:
     void onModelAvailable();
 
-    ModelRegistry* m_registry;
+    ModelRegistry *m_registry;
     std::unique_ptr<OnnxSession> m_encoder;
     std::unique_ptr<OnnxSession> m_decoder;
 
     // Cache of the encoder output for the currently prepared image.
-    std::vector<float> m_embedding;          // [1,256,64,64]
-    QSize m_origSize;                        // prepare()'s pixel size
-    float m_scale = 0.0f;                    // 1024 / max(W, H)
-    QImage m_lastMask;                       // Grayscale8 same-size as source
+    std::vector<float> m_embedding; // [1,256,64,64]
+    QSize m_origSize;               // prepare()'s pixel size
+    float m_scale = 0.0f;           // 1024 / max(W, H)
+    QImage m_lastMask;              // Grayscale8 same-size as source
 };
 
-}  // namespace trailer
+} // namespace trailer

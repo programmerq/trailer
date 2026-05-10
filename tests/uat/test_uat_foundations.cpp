@@ -34,35 +34,39 @@ using namespace trailer;
 
 namespace {
 
-MainWindow* currentMainWindow() {
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (auto* mw = qobject_cast<MainWindow*>(w)) return mw;
+MainWindow *currentMainWindow() {
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (auto *mw = qobject_cast<MainWindow *>(w))
+            return mw;
     }
     return nullptr;
 }
 
-QAction* findMenuAction(QMenuBar* bar, const QString& topText, const QString& itemText) {
-    for (QAction* topAction : bar->actions()) {
+QAction *findMenuAction(QMenuBar *bar, const QString &topText, const QString &itemText) {
+    for (QAction *topAction : bar->actions()) {
         if (topAction->text() == topText) {
-            QMenu* menu = topAction->menu();
-            if (!menu) return nullptr;
-            for (QAction* action : menu->actions()) {
-                if (action->text() == itemText) return action;
+            QMenu *menu = topAction->menu();
+            if (!menu)
+                return nullptr;
+            for (QAction *action : menu->actions()) {
+                if (action->text() == itemText)
+                    return action;
             }
         }
     }
     return nullptr;
 }
 
-QStringList topLevelMenuTexts(QMenuBar* bar) {
+QStringList topLevelMenuTexts(QMenuBar *bar) {
     QStringList texts;
-    for (QAction* a : bar->actions()) {
-        if (!a->text().isEmpty()) texts << a->text();
+    for (QAction *a : bar->actions()) {
+        if (!a->text().isEmpty())
+            texts << a->text();
     }
     return texts;
 }
 
-QString writeTinyPdf(const QString& path) {
+QString writeTinyPdf(const QString &path) {
     QPdfWriter writer(path);
     writer.setPageSize(QPageSize(QPageSize::A4));
     QPainter p(&writer);
@@ -71,11 +75,11 @@ QString writeTinyPdf(const QString& path) {
     return path;
 }
 
-}  // namespace
+} // namespace
 
 class TestUatFoundations : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void init();
 
     // Map to docs/uat/01-foundations.md
@@ -93,24 +97,25 @@ private slots:
     void uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms();
     void uat_fnd_050_fileOpenEventOpensWindow();
 
-private:
+  private:
     QTemporaryDir m_scratch;
 };
 
 void TestUatFoundations::init() {
     // Close any leftover windows from a previous slot so every case
     // starts from an "app with no open windows" baseline.
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (qobject_cast<MainWindow*>(w)) w->close();
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (qobject_cast<MainWindow *>(w))
+            w->close();
     }
     QApplication::processEvents();
 }
 
 void TestUatFoundations::uat_fnd_001_launchWithNoArguments() {
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
 
-    MainWindow* mw = app->ensureWindow();
+    MainWindow *mw = app->ensureWindow();
     QVERIFY(mw);
     QCOMPARE(mw->windowTitle(), QStringLiteral("Trailer"));
     QCOMPARE(mw->documentCount(), 0);
@@ -118,22 +123,21 @@ void TestUatFoundations::uat_fnd_001_launchWithNoArguments() {
     // Sidebar dock is hidden at launch (2026-04-30 HITL: chrome
     // off by default; the user opens it from the top-bar's
     // sidebar-mode picker or View → Toggle Sidebar).
-    auto docks = mw->findChildren<QDockWidget*>();
-    QDockWidget* sidebar = nullptr;
-    for (auto* d : docks) {
+    auto docks = mw->findChildren<QDockWidget *>();
+    QDockWidget *sidebar = nullptr;
+    for (auto *d : docks) {
         if (d->windowTitle().contains(QStringLiteral("Sidebar"), Qt::CaseInsensitive)) {
             sidebar = d;
             break;
         }
     }
     QVERIFY2(sidebar, "Sidebar dock not found");
-    QVERIFY2(!sidebar->isVisible(),
-             "Sidebar must be hidden by default — toggle via "
-             "View → Toggle Sidebar");
+    QVERIFY2(!sidebar->isVisible(), "Sidebar must be hidden by default — toggle via "
+                                    "View → Toggle Sidebar");
 
     // Markup toolbar is hidden at launch (UAT-FND-001 correction).
-    QToolBar* markup = nullptr;
-    for (auto* t : mw->findChildren<QToolBar*>()) {
+    QToolBar *markup = nullptr;
+    for (auto *t : mw->findChildren<QToolBar *>()) {
         if (t->windowTitle().contains(QStringLiteral("Markup"), Qt::CaseInsensitive)) {
             markup = t;
             break;
@@ -143,8 +147,8 @@ void TestUatFoundations::uat_fnd_001_launchWithNoArguments() {
     QVERIFY2(!markup->isVisible(), "Markup toolbar should be hidden at launch");
 
     // Inspector dock is hidden at launch.
-    QDockWidget* inspector = nullptr;
-    for (auto* d : docks) {
+    QDockWidget *inspector = nullptr;
+    for (auto *d : docks) {
         if (d->windowTitle().contains(QStringLiteral("Inspector"), Qt::CaseInsensitive)) {
             inspector = d;
             break;
@@ -158,19 +162,18 @@ void TestUatFoundations::uat_fnd_002_launchOpensFileInWindow() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writeTinyPdf(m_scratch.filePath("uat_fnd_002.pdf"));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
 
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY2(mw, "Expected a MainWindow after openFiles");
     QCOMPARE(mw->documentCount(), 1);
 
     const auto recent = app->recentFiles().entries();
-    QVERIFY2(!recent.isEmpty(),
-             "Recent files should contain at least one entry after openFiles");
+    QVERIFY2(!recent.isEmpty(), "Recent files should contain at least one entry after openFiles");
 }
 
 // Window-per-file is the default (see TODO.md UX polish pass). A
@@ -181,20 +184,19 @@ void TestUatFoundations::uat_fnd_003_singleDocumentHidesTabBar() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writeTinyPdf(m_scratch.filePath("uat_fnd_003.pdf"));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
 
-    auto* tabs = mw->findChild<QTabWidget*>();
+    auto *tabs = mw->findChild<QTabWidget *>();
     QVERIFY2(tabs, "Expected a QTabWidget (DocumentView) inside MainWindow");
     QCOMPARE(tabs->count(), 1);
-    QVERIFY2(tabs->tabBarAutoHide(),
-             "DocumentView must set tabBarAutoHide so single-doc windows "
-             "don't show a tab strip");
+    QVERIFY2(tabs->tabBarAutoHide(), "DocumentView must set tabBarAutoHide so single-doc windows "
+                                     "don't show a tab strip");
     QVERIFY2(!tabs->tabBar()->isVisible(),
              "With autoHide on and one tab, the tab bar must not be visible");
 }
@@ -203,20 +205,20 @@ void TestUatFoundations::uat_fnd_003_singleDocumentHidesTabBar() {
 // the default NewWindow mode, spawn one window per file — not pile
 // them all into a single frame. The test confirms the count of
 // top-level MainWindows matches the number of paths.
-void TestUatFoundations::
-    uat_fnd_004_openingMultipleFilesSpawnsMultipleWindows() {
+void TestUatFoundations::uat_fnd_004_openingMultipleFilesSpawnsMultipleWindows() {
     QVERIFY(m_scratch.isValid());
     const QString p1 = writeTinyPdf(m_scratch.filePath("uat_fnd_004_a.pdf"));
     const QString p2 = writeTinyPdf(m_scratch.filePath("uat_fnd_004_b.pdf"));
     const QString p3 = writeTinyPdf(m_scratch.filePath("uat_fnd_004_c.pdf"));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
 
     // Sanity: starting state has no MainWindows (init() closed them).
     int baselineWindows = 0;
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (qobject_cast<MainWindow*>(w)) ++baselineWindows;
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (qobject_cast<MainWindow *>(w))
+            ++baselineWindows;
     }
     QCOMPARE(baselineWindows, 0);
 
@@ -224,8 +226,8 @@ void TestUatFoundations::
     QApplication::processEvents();
 
     int spawned = 0;
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (auto* mw = qobject_cast<MainWindow*>(w)) {
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (auto *mw = qobject_cast<MainWindow *>(w)) {
             QCOMPARE(mw->documentCount(), 1);
             ++spawned;
         }
@@ -240,7 +242,7 @@ void TestUatFoundations::
 // typically multi-page documents that warrant their own frame.
 void TestUatFoundations::uat_fnd_005_imageBatchSharesOneWindow() {
     QVERIFY(m_scratch.isValid());
-    auto writePng = [this](const QString& name) {
+    auto writePng = [this](const QString &name) {
         const QString path = m_scratch.filePath(name);
         QImage img(80, 60, QImage::Format_RGB32);
         img.fill(Qt::white);
@@ -251,12 +253,13 @@ void TestUatFoundations::uat_fnd_005_imageBatchSharesOneWindow() {
     const QString p2 = writePng(QStringLiteral("uat_fnd_005_b.png"));
     const QString p3 = writePng(QStringLiteral("uat_fnd_005_c.png"));
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
 
     int baselineWindows = 0;
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (qobject_cast<MainWindow*>(w)) ++baselineWindows;
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (qobject_cast<MainWindow *>(w))
+            ++baselineWindows;
     }
     QCOMPARE(baselineWindows, 0);
 
@@ -265,8 +268,8 @@ void TestUatFoundations::uat_fnd_005_imageBatchSharesOneWindow() {
 
     int windowCount = 0;
     int totalDocs = 0;
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (auto* mw = qobject_cast<MainWindow*>(w)) {
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (auto *mw = qobject_cast<MainWindow *>(w)) {
             ++windowCount;
             totalDocs += mw->documentCount();
         }
@@ -276,34 +279,32 @@ void TestUatFoundations::uat_fnd_005_imageBatchSharesOneWindow() {
 }
 
 void TestUatFoundations::uat_fnd_010_menuStructure() {
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
-    MainWindow* mw = app->ensureWindow();
+    MainWindow *mw = app->ensureWindow();
     QVERIFY(mw);
-    QMenuBar* bar = mw->menuBar();
+    QMenuBar *bar = mw->menuBar();
     QVERIFY(bar);
 
     const QStringList topLevel = topLevelMenuTexts(bar);
-    for (const QString& expected : {QStringLiteral("&File"),
-                                    QStringLiteral("&Edit"),
-                                    QStringLiteral("&View"),
-                                    QStringLiteral("&Tools"),
-                                    QStringLiteral("&Help")}) {
+    for (const QString &expected :
+         {QStringLiteral("&File"), QStringLiteral("&Edit"), QStringLiteral("&View"),
+          QStringLiteral("&Tools"), QStringLiteral("&Help")}) {
         QVERIFY2(topLevel.contains(expected),
                  qPrintable(QStringLiteral("Missing top-level menu: ") + expected));
     }
 
     // Spot-check a handful of items that the UAT doc lists.
-    for (const auto& pair : {
+    for (const auto &pair : {
              std::pair{QStringLiteral("&File"), QStringLiteral("&Open…")},
              std::pair{QStringLiteral("&File"), QStringLiteral("&Quit")},
              std::pair{QStringLiteral("&View"), QStringLiteral("Zoom &In")},
              std::pair{QStringLiteral("&Tools"), QStringLiteral("Rotate &Right")},
              std::pair{QStringLiteral("&Help"), QStringLiteral("&About Trailer")},
          }) {
-        QAction* a = findMenuAction(bar, pair.first, pair.second);
-        QVERIFY2(a, qPrintable(QStringLiteral("Missing menu item: ") + pair.first
-                               + QStringLiteral(" > ") + pair.second));
+        QAction *a = findMenuAction(bar, pair.first, pair.second);
+        QVERIFY2(a, qPrintable(QStringLiteral("Missing menu item: ") + pair.first +
+                               QStringLiteral(" > ") + pair.second));
     }
 }
 
@@ -339,24 +340,23 @@ void TestUatFoundations::uat_fnd_011_macosNoWindowMenuProvidesFileActions() {
 }
 
 void TestUatFoundations::uat_fnd_016_toggleSidebar() {
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
-    MainWindow* mw = app->ensureWindow();
+    MainWindow *mw = app->ensureWindow();
     QVERIFY(mw);
 
-    QDockWidget* sidebar = nullptr;
-    for (auto* d : mw->findChildren<QDockWidget*>()) {
+    QDockWidget *sidebar = nullptr;
+    for (auto *d : mw->findChildren<QDockWidget *>()) {
         if (d->windowTitle().contains(QStringLiteral("Sidebar"), Qt::CaseInsensitive)) {
             sidebar = d;
             break;
         }
     }
     QVERIFY(sidebar);
-    QVERIFY2(!sidebar->isVisible(),
-             "Sidebar should be hidden at launch (2026-04-30)");
+    QVERIFY2(!sidebar->isVisible(), "Sidebar should be hidden at launch (2026-04-30)");
 
-    QAction* toggle = findMenuAction(mw->menuBar(), QStringLiteral("&View"),
-                                     QStringLiteral("Toggle &Sidebar"));
+    QAction *toggle =
+        findMenuAction(mw->menuBar(), QStringLiteral("&View"), QStringLiteral("Toggle &Sidebar"));
     QVERIFY2(toggle, "View > Toggle Sidebar action not found");
 
     toggle->trigger();
@@ -374,19 +374,19 @@ void TestUatFoundations::uat_fnd_016_toggleSidebar() {
 // modals with status-bar messages so users dealing with a tax doc /
 // bill / court doc are not interrupted by a click-through every time
 // something doesn't work the first try.
-void TestUatFoundations::
-    uat_fnd_020_flashErrorRoutesToStatusBarNotModal() {
-    auto* app = qobject_cast<Application*>(qApp);
+void TestUatFoundations::uat_fnd_020_flashErrorRoutesToStatusBarNotModal() {
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
-    MainWindow* mw = app->ensureWindow();
+    MainWindow *mw = app->ensureWindow();
     QVERIFY(mw);
 
     // Snapshot of any existing QMessageBox windows so we don't false-
     // positive on a leftover from another test.
     auto countMessageBoxes = []() {
         int n = 0;
-        for (auto* w : QApplication::topLevelWidgets()) {
-            if (w->inherits("QMessageBox")) ++n;
+        for (auto *w : QApplication::topLevelWidgets()) {
+            if (w->inherits("QMessageBox"))
+                ++n;
         }
         return n;
     };
@@ -395,8 +395,7 @@ void TestUatFoundations::
     mw->flashError(QStringLiteral("Crop failed — margins too large."));
     QApplication::processEvents();
 
-    QVERIFY2(countMessageBoxes() == messageBoxesBefore,
-             "flashError must NOT spawn a QMessageBox");
+    QVERIFY2(countMessageBoxes() == messageBoxesBefore, "flashError must NOT spawn a QMessageBox");
     const QString status = mw->statusBar()->currentMessage();
     QVERIFY2(status.contains(QStringLiteral("Crop failed")),
              qPrintable(QStringLiteral("status bar was: '%1'").arg(status)));
@@ -415,8 +414,7 @@ void TestUatFoundations::
     mw->flashStatus(QStringLiteral("Window/region capture not supported."));
     QApplication::processEvents();
     QCOMPARE(countMessageBoxes(), messageBoxesBefore);
-    QVERIFY(mw->statusBar()->currentMessage()
-                .contains(QStringLiteral("not supported")));
+    QVERIFY(mw->statusBar()->currentMessage().contains(QStringLiteral("not supported")));
 }
 
 // UAT-FND-030 — Auto-save writes the file when a document is dirty
@@ -427,30 +425,29 @@ void TestUatFoundations::uat_fnd_030_autoSaveWritesDirtyDocsWithPath() {
     const QString pdfPath = writeTinyPdf(m_scratch.filePath("uat_fnd_030.pdf"));
     const auto sizeBefore = QFileInfo(pdfPath).size();
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->settings().setAutoSave(true);
     app->openFiles({pdfPath});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    auto* dv = mw->findChild<QTabWidget*>();
+    auto *dv = mw->findChild<QTabWidget *>();
     QVERIFY(dv);
 
     // Mutate the active doc so isDirty() reports true. Adding an
     // empty rectangle annotation through the public API (the same
     // path the markup toolbar uses) is enough.
-    auto* doc = qobject_cast<MainWindow*>(mw)->findChild<QObject*>();
+    auto *doc = qobject_cast<MainWindow *>(mw)->findChild<QObject *>();
     Q_UNUSED(doc);
     // Use the test-friendly path: rotate the page (mutates state) so
     // isDirty becomes true via the document's normal write path.
-    auto* dvCast = mw->findChild<DocumentView*>();
+    auto *dvCast = mw->findChild<DocumentView *>();
     QVERIFY(dvCast);
-    if (auto* idoc = dvCast->currentDocument()) {
+    if (auto *idoc = dvCast->currentDocument()) {
         idoc->rotatePage(0, 90);
-        QVERIFY2(idoc->isDirty(),
-                 "rotating a page should make the document dirty");
+        QVERIFY2(idoc->isDirty(), "rotating a page should make the document dirty");
     }
 
     // Trigger the auto-save tick directly.
@@ -460,7 +457,7 @@ void TestUatFoundations::uat_fnd_030_autoSaveWritesDirtyDocsWithPath() {
     // The file on disk should have been rewritten — its size will
     // typically change after a rotate, but at minimum its mtime
     // changes. Assert the doc is now clean (auto-save cleared dirty).
-    auto* idocAfter = dvCast->currentDocument();
+    auto *idocAfter = dvCast->currentDocument();
     QVERIFY2(idocAfter && !idocAfter->isDirty(),
              "After autoSaveDirtyDocs() the doc should no longer be dirty");
 
@@ -472,10 +469,10 @@ void TestUatFoundations::uat_fnd_030_autoSaveWritesDirtyDocsWithPath() {
 // untitled docs (filePath empty) are skipped. It also skips clean
 // documents — no churn on idle files.
 void TestUatFoundations::uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs() {
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->settings().setAutoSave(true);
-    MainWindow* mw = app->ensureWindow();
+    MainWindow *mw = app->ensureWindow();
     QVERIFY(mw);
 
     // No documents in the window — autoSave is a no-op, must not
@@ -501,24 +498,20 @@ void TestUatFoundations::uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs() {
 // platforms hide the menu item until xdg-email / WinShare are
 // implemented. This test only checks the action presence; actually
 // firing the picker is platform-modal and not UAT-friendly.
-void TestUatFoundations::
-    uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms() {
-    auto* app = qobject_cast<Application*>(qApp);
+void TestUatFoundations::uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms() {
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
-    MainWindow* mw = app->ensureWindow();
+    MainWindow *mw = app->ensureWindow();
     QVERIFY(mw);
 
-    QAction* shareAction = findMenuAction(mw->menuBar(),
-                                          QStringLiteral("&File"),
-                                          QStringLiteral("&Share…"));
+    QAction *shareAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&File"), QStringLiteral("&Share…"));
 #ifdef Q_OS_MACOS
-    QVERIFY2(shareAction,
-             "File → Share… should be present on macOS where the "
-             "NSSharingServicePicker implementation lives");
+    QVERIFY2(shareAction, "File → Share… should be present on macOS where the "
+                          "NSSharingServicePicker implementation lives");
 #else
-    QVERIFY2(!shareAction,
-             "File → Share… is hidden on platforms whose ShareService "
-             "stub returns isAvailable() == false");
+    QVERIFY2(!shareAction, "File → Share… is hidden on platforms whose ShareService "
+                           "stub returns isAvailable() == false");
 #endif
 }
 
@@ -561,9 +554,10 @@ void TestUatFoundations::uat_fnd_050_fileOpenEventOpensWindow() {
 // Application so Settings/RecentFiles write into a sandbox, not the
 // user's real config dir. QTEST_MAIN would construct QApplication
 // before we got a chance to do that.
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     QTemporaryDir fakeHome;
-    if (!fakeHome.isValid()) return 1;
+    if (!fakeHome.isValid())
+        return 1;
     qputenv("HOME", fakeHome.path().toUtf8());
     qputenv("XDG_CONFIG_HOME", (fakeHome.path() + "/.config").toUtf8());
     qputenv("XDG_DATA_HOME", (fakeHome.path() + "/.local/share").toUtf8());

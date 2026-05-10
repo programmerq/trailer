@@ -22,7 +22,7 @@ using namespace trailer;
 
 namespace {
 
-QString writeSamplePdf(const QString& path, int pages) {
+QString writeSamplePdf(const QString &path, int pages) {
     QPdfWriter writer(path);
     writer.setPageSize(QPageSize(QPageSize::A4));
     QPainter painter(&writer);
@@ -44,7 +44,7 @@ QString writeSamplePdf(const QString& path, int pages) {
 //
 // Uses the qpdf C++ API directly so we can produce form fields that
 // Qt's QPdfWriter doesn't expose.
-static QString writeFormPdf(const QString& path) {
+static QString writeFormPdf(const QString &path) {
     QPDF pdf;
     pdf.emptyPDF();
 
@@ -69,42 +69,42 @@ static QString writeFormPdf(const QString& path) {
 
     // ---- text field ----
     QPDFObjectHandle tf = QPDFObjectHandle::newDictionary();
-    tf.replaceKey("/Type",    QPDFObjectHandle::newName("/Annot"));
+    tf.replaceKey("/Type", QPDFObjectHandle::newName("/Annot"));
     tf.replaceKey("/Subtype", QPDFObjectHandle::newName("/Widget"));
-    tf.replaceKey("/FT",      QPDFObjectHandle::newName("/Tx"));
-    tf.replaceKey("/T",       QPDFObjectHandle::newString("fullname"));
-    tf.replaceKey("/TU",      QPDFObjectHandle::newString("Full Name"));
-    tf.replaceKey("/V",       QPDFObjectHandle::newString("Alice"));
-    tf.replaceKey("/Rect",    makeRect(72, 720, 288, 744));
-    tf.replaceKey("/P",       pageObj);
+    tf.replaceKey("/FT", QPDFObjectHandle::newName("/Tx"));
+    tf.replaceKey("/T", QPDFObjectHandle::newString("fullname"));
+    tf.replaceKey("/TU", QPDFObjectHandle::newString("Full Name"));
+    tf.replaceKey("/V", QPDFObjectHandle::newString("Alice"));
+    tf.replaceKey("/Rect", makeRect(72, 720, 288, 744));
+    tf.replaceKey("/P", pageObj);
     QPDFObjectHandle tfObj = pdf.makeIndirectObject(tf);
 
     // ---- checkbox ----
     QPDFObjectHandle cb = QPDFObjectHandle::newDictionary();
-    cb.replaceKey("/Type",    QPDFObjectHandle::newName("/Annot"));
+    cb.replaceKey("/Type", QPDFObjectHandle::newName("/Annot"));
     cb.replaceKey("/Subtype", QPDFObjectHandle::newName("/Widget"));
-    cb.replaceKey("/FT",      QPDFObjectHandle::newName("/Btn"));
-    cb.replaceKey("/T",       QPDFObjectHandle::newString("agree"));
-    cb.replaceKey("/V",       QPDFObjectHandle::newName("/Yes"));
-    cb.replaceKey("/AS",      QPDFObjectHandle::newName("/Yes"));
-    cb.replaceKey("/Rect",    makeRect(72, 680, 96, 704));
-    cb.replaceKey("/P",       pageObj);
+    cb.replaceKey("/FT", QPDFObjectHandle::newName("/Btn"));
+    cb.replaceKey("/T", QPDFObjectHandle::newString("agree"));
+    cb.replaceKey("/V", QPDFObjectHandle::newName("/Yes"));
+    cb.replaceKey("/AS", QPDFObjectHandle::newName("/Yes"));
+    cb.replaceKey("/Rect", makeRect(72, 680, 96, 704));
+    cb.replaceKey("/P", pageObj);
     QPDFObjectHandle cbObj = pdf.makeIndirectObject(cb);
 
     // ---- dropdown / combo (/FT /Ch + combo flag) ----
     QPDFObjectHandle dd = QPDFObjectHandle::newDictionary();
-    dd.replaceKey("/Type",    QPDFObjectHandle::newName("/Annot"));
+    dd.replaceKey("/Type", QPDFObjectHandle::newName("/Annot"));
     dd.replaceKey("/Subtype", QPDFObjectHandle::newName("/Widget"));
-    dd.replaceKey("/FT",      QPDFObjectHandle::newName("/Ch"));
-    dd.replaceKey("/Ff",      QPDFObjectHandle::newInteger(131072)); // combo
-    dd.replaceKey("/T",       QPDFObjectHandle::newString("color"));
-    dd.replaceKey("/V",       QPDFObjectHandle::newString("Green"));
+    dd.replaceKey("/FT", QPDFObjectHandle::newName("/Ch"));
+    dd.replaceKey("/Ff", QPDFObjectHandle::newInteger(131072)); // combo
+    dd.replaceKey("/T", QPDFObjectHandle::newString("color"));
+    dd.replaceKey("/V", QPDFObjectHandle::newString("Green"));
     QPDFObjectHandle opts = QPDFObjectHandle::newArray();
-    for (const char* s : {"Red", "Green", "Blue"})
+    for (const char *s : {"Red", "Green", "Blue"})
         opts.appendItem(QPDFObjectHandle::newString(s));
-    dd.replaceKey("/Opt",  opts);
+    dd.replaceKey("/Opt", opts);
     dd.replaceKey("/Rect", makeRect(72, 640, 288, 664));
-    dd.replaceKey("/P",    pageObj);
+    dd.replaceKey("/P", pageObj);
     QPDFObjectHandle ddObj = pdf.makeIndirectObject(dd);
 
     // ---- wire /Annots on the page ----
@@ -118,8 +118,8 @@ static QString writeFormPdf(const QString& path) {
     QPDFObjectHandle kids = QPDFObjectHandle::newArray();
     kids.appendItem(pageObj);
     QPDFObjectHandle pagesDict = QPDFObjectHandle::newDictionary();
-    pagesDict.replaceKey("/Type",  QPDFObjectHandle::newName("/Pages"));
-    pagesDict.replaceKey("/Kids",  kids);
+    pagesDict.replaceKey("/Type", QPDFObjectHandle::newName("/Pages"));
+    pagesDict.replaceKey("/Kids", kids);
     pagesDict.replaceKey("/Count", QPDFObjectHandle::newInteger(1));
     QPDFObjectHandle pagesObj = pdf.makeIndirectObject(pagesDict);
     pageDict.replaceKey("/Parent", pagesObj);
@@ -130,12 +130,12 @@ static QString writeFormPdf(const QString& path) {
     acroFields.appendItem(cbObj);
     acroFields.appendItem(ddObj);
     QPDFObjectHandle acroForm = QPDFObjectHandle::newDictionary();
-    acroForm.replaceKey("/Fields",         acroFields);
+    acroForm.replaceKey("/Fields", acroFields);
     acroForm.replaceKey("/NeedAppearances", QPDFObjectHandle::newBool(true));
 
     // ---- Catalog ----
     QPDFObjectHandle root = pdf.getRoot();
-    root.replaceKey("/Pages",   pagesObj);
+    root.replaceKey("/Pages", pagesObj);
     root.replaceKey("/AcroForm", acroForm);
 
     QPDFWriter writer(pdf, path.toStdString().c_str());
@@ -143,11 +143,11 @@ static QString writeFormPdf(const QString& path) {
     return path;
 }
 
-}  // namespace
+} // namespace
 
 class TestPdfEditor : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void reportsInvalidForMissingFile();
     void loadsPageCountFromDisk();
     void saveRoundTripsPreservingPageCount();
@@ -378,14 +378,25 @@ void TestPdfEditor::annotationRoundTripPreservesShapes() {
     QCOMPARE(got.size(), anns.size());
 
     int rects = 0, ells = 0, lines = 0, arrows = 0, notes = 0;
-    for (const Annotation& a : got) {
+    for (const Annotation &a : got) {
         switch (a.type) {
-            case AnnotationType::Rectangle: ++rects; break;
-            case AnnotationType::Ellipse:   ++ells;  break;
-            case AnnotationType::Line:      ++lines; break;
-            case AnnotationType::Arrow:     ++arrows; break;
-            case AnnotationType::Note:      ++notes; break;
-            default: break;
+        case AnnotationType::Rectangle:
+            ++rects;
+            break;
+        case AnnotationType::Ellipse:
+            ++ells;
+            break;
+        case AnnotationType::Line:
+            ++lines;
+            break;
+        case AnnotationType::Arrow:
+            ++arrows;
+            break;
+        case AnnotationType::Note:
+            ++notes;
+            break;
+        default:
+            break;
         }
     }
     QCOMPARE(rects, 1);
@@ -394,7 +405,7 @@ void TestPdfEditor::annotationRoundTripPreservesShapes() {
     QCOMPARE(arrows, 1);
     QCOMPARE(notes, 1);
 
-    for (const Annotation& a : got) {
+    for (const Annotation &a : got) {
         if (a.type == AnnotationType::Note) {
             QCOMPARE(a.text, QStringLiteral("hello"));
             QCOMPARE(a.page, 1);
@@ -477,7 +488,7 @@ void TestPdfEditor::annotationRoundTripPreservesTextAndSpeechBubble() {
     bubble.type = AnnotationType::SpeechBubble;
     bubble.bounds = QRectF(200, 200, 200, 80);
     bubble.text = QStringLiteral("Talking head");
-    bubble.points = {QPointF(180, 290)};  // callout tail in doc coords
+    bubble.points = {QPointF(180, 290)}; // callout tail in doc coords
 
     QVERIFY(editor.writeAnnotations({text, bubble}));
     QVERIFY(editor.save(dst));
@@ -487,7 +498,7 @@ void TestPdfEditor::annotationRoundTripPreservesTextAndSpeechBubble() {
     const auto got = round.readAnnotations();
     QCOMPARE(got.size(), size_t{2});
     int textCount = 0, bubbleCount = 0;
-    for (const Annotation& a : got) {
+    for (const Annotation &a : got) {
         if (a.type == AnnotationType::Text) {
             ++textCount;
             QCOMPARE(a.text, QStringLiteral("Hello, world!"));
@@ -515,7 +526,7 @@ void TestPdfEditor::annotationRoundTripPreservesHighlightShape() {
     hs.type = AnnotationType::HighlightShape;
     hs.bounds = QRectF(50, 50, 100, 60);
     hs.style.stroke = QColor(255, 200, 0);
-    hs.style.fill = QColor(255, 255, 0, 128);  // translucent yellow
+    hs.style.fill = QColor(255, 255, 0, 128); // translucent yellow
     QVERIFY(editor.writeAnnotations({hs}));
     QVERIFY(editor.save(dst));
 
@@ -556,9 +567,11 @@ void TestPdfEditor::annotationRoundTripPreservesUnderlineAndStrikeOut() {
     const auto got = round.readAnnotations();
     QCOMPARE(got.size(), size_t{2});
     int underlineCount = 0, strikeCount = 0;
-    for (const Annotation& a : got) {
-        if (a.type == AnnotationType::Underline) ++underlineCount;
-        if (a.type == AnnotationType::StrikeOut) ++strikeCount;
+    for (const Annotation &a : got) {
+        if (a.type == AnnotationType::Underline)
+            ++underlineCount;
+        if (a.type == AnnotationType::StrikeOut)
+            ++strikeCount;
     }
     QCOMPARE(underlineCount, 1);
     QCOMPARE(strikeCount, 1);
@@ -592,23 +605,19 @@ void TestPdfEditor::annotationRectangleEmitsAppearanceStream() {
     reopened.processFile(dst.toLocal8Bit().constData());
     auto pages = QPDFPageDocumentHelper(reopened).getAllPages();
     QVERIFY(!pages.empty());
-    QPDFObjectHandle annots =
-        pages.front().getObjectHandle().getKey("/Annots");
+    QPDFObjectHandle annots = pages.front().getObjectHandle().getKey("/Annots");
     QVERIFY2(annots.isArray() && annots.getArrayNItems() >= 1,
              "Expected at least one /Annot entry on the saved page");
     QPDFObjectHandle entry = annots.getArrayItem(0);
     QPDFObjectHandle ap = entry.getKey("/AP");
-    QVERIFY2(ap.isDictionary(),
-             "/AP must be present and a dictionary");
+    QVERIFY2(ap.isDictionary(), "/AP must be present and a dictionary");
     QPDFObjectHandle apN = ap.getKey("/N");
-    QVERIFY2(apN.isStream(),
-             "/AP /N must reference a Form XObject stream");
+    QVERIFY2(apN.isStream(), "/AP /N must reference a Form XObject stream");
     // The XObject's dict should declare /Subtype /Form.
     QPDFObjectHandle apDict = apN.getDict();
     QPDFObjectHandle subtype = apDict.getKey("/Subtype");
     QVERIFY(subtype.isName());
-    QCOMPARE(QString::fromStdString(subtype.getName()),
-             QStringLiteral("/Form"));
+    QCOMPARE(QString::fromStdString(subtype.getName()), QStringLiteral("/Form"));
 }
 
 // /AP coverage extends to Ellipse, Line, Arrow, and Ink. Each
@@ -619,8 +628,7 @@ void TestPdfEditor::annotationRectangleEmitsAppearanceStream() {
 // reconstructing from /C and /BS. Highlight/Underline/StrikeOut and
 // FreeText still rely on the property-based fallback and aren't in
 // scope here.
-void TestPdfEditor::
-    annotationEllipseAndLineAndInkEmitAppearanceStreams() {
+void TestPdfEditor::annotationEllipseAndLineAndInkEmitAppearanceStreams() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
@@ -656,7 +664,7 @@ void TestPdfEditor::
     ink.bounds = QRectF(50, 300, 200, 60);
     // Some squiggle through the bounds.
     ink.points = {
-        QPointF(50, 300), QPointF(80, 320), QPointF(120, 305),
+        QPointF(50, 300),  QPointF(80, 320),  QPointF(120, 305),
         QPointF(160, 335), QPointF(200, 320), QPointF(250, 360),
     };
 
@@ -667,8 +675,7 @@ void TestPdfEditor::
     reopened.processFile(dst.toLocal8Bit().constData());
     auto pages = QPDFPageDocumentHelper(reopened).getAllPages();
     QVERIFY(!pages.empty());
-    QPDFObjectHandle annots =
-        pages.front().getObjectHandle().getKey("/Annots");
+    QPDFObjectHandle annots = pages.front().getObjectHandle().getKey("/Annots");
     QVERIFY(annots.isArray());
     QCOMPARE(annots.getArrayNItems(), 4);
 
@@ -676,14 +683,17 @@ void TestPdfEditor::
     for (int i = 0; i < annots.getArrayNItems(); ++i) {
         QPDFObjectHandle entry = annots.getArrayItem(i);
         QPDFObjectHandle ap = entry.getKey("/AP");
-        if (!ap.isDictionary()) continue;
+        if (!ap.isDictionary())
+            continue;
         QPDFObjectHandle apN = ap.getKey("/N");
-        if (!apN.isStream()) continue;
+        if (!apN.isStream())
+            continue;
         QPDFObjectHandle apDict = apN.getDict();
         QPDFObjectHandle subtype = apDict.getKey("/Subtype");
-        if (!subtype.isName()) continue;
-        if (QString::fromStdString(subtype.getName())
-                != QStringLiteral("/Form")) continue;
+        if (!subtype.isName())
+            continue;
+        if (QString::fromStdString(subtype.getName()) != QStringLiteral("/Form"))
+            continue;
         ++withAp;
     }
     QCOMPARE(withAp, 4);
@@ -706,14 +716,17 @@ void TestPdfEditor::rotatePageCommandIsReversible() {
         // Save to a tmp, reopen via raw qpdf, read /Rotate.
         QTemporaryFile tmp(QDir::tempPath() + "/rot_check_XXXXXX.pdf");
         tmp.setAutoRemove(true);
-        if (!tmp.open()) return -1;
+        if (!tmp.open())
+            return -1;
         const QString p = tmp.fileName();
         tmp.close();
-        if (!editor.save(p)) return -1;
+        if (!editor.save(p))
+            return -1;
         QPDF reopened;
         reopened.processFile(p.toLocal8Bit().constData());
         auto pages = QPDFPageDocumentHelper(reopened).getAllPages();
-        if (pages.empty()) return -1;
+        if (pages.empty())
+            return -1;
         QPDFObjectHandle r = pages.front().getObjectHandle().getKey("/Rotate");
         return r.isInteger() ? int(r.getIntValue()) : 0;
     };
@@ -832,9 +845,12 @@ void TestPdfEditor::formFieldsRoundTripsText() {
     const auto fields = editor.readFormFields();
     QCOMPARE(static_cast<int>(fields.size()), 3);
 
-    const FormField* tf = nullptr;
-    for (const auto& f : fields) {
-        if (f.name == QStringLiteral("fullname")) { tf = &f; break; }
+    const FormField *tf = nullptr;
+    for (const auto &f : fields) {
+        if (f.name == QStringLiteral("fullname")) {
+            tf = &f;
+            break;
+        }
     }
     QVERIFY(tf != nullptr);
     QCOMPARE(tf->type, FormFieldType::Text);
@@ -852,9 +868,12 @@ void TestPdfEditor::formFieldsRoundTripsCheckbox() {
     QVERIFY(editor.load(path));
 
     const auto fields = editor.readFormFields();
-    const FormField* cb = nullptr;
-    for (const auto& f : fields) {
-        if (f.name == QStringLiteral("agree")) { cb = &f; break; }
+    const FormField *cb = nullptr;
+    for (const auto &f : fields) {
+        if (f.name == QStringLiteral("agree")) {
+            cb = &f;
+            break;
+        }
     }
     QVERIFY(cb != nullptr);
     QCOMPARE(cb->type, FormFieldType::Checkbox);
@@ -872,9 +891,12 @@ void TestPdfEditor::formFieldsRoundTripsDropdown() {
     QVERIFY(editor.load(path));
 
     const auto fields = editor.readFormFields();
-    const FormField* dd = nullptr;
-    for (const auto& f : fields) {
-        if (f.name == QStringLiteral("color")) { dd = &f; break; }
+    const FormField *dd = nullptr;
+    for (const auto &f : fields) {
+        if (f.name == QStringLiteral("color")) {
+            dd = &f;
+            break;
+        }
     }
     QVERIFY(dd != nullptr);
     QCOMPARE(dd->type, FormFieldType::Dropdown);
@@ -898,8 +920,11 @@ void TestPdfEditor::setFormFieldValuePersists() {
     // Locate the "fullname" field and change its value.
     const auto fields = editor.readFormFields();
     int tfId = -1;
-    for (const auto& f : fields) {
-        if (f.name == QStringLiteral("fullname")) { tfId = f.id; break; }
+    for (const auto &f : fields) {
+        if (f.name == QStringLiteral("fullname")) {
+            tfId = f.id;
+            break;
+        }
     }
     QVERIFY(tfId >= 0);
     QVERIFY(editor.setFormFieldValue(tfId, QStringLiteral("Bob")));
@@ -909,9 +934,12 @@ void TestPdfEditor::setFormFieldValuePersists() {
     PdfEditor round;
     QVERIFY(round.load(dst));
     const auto roundFields = round.readFormFields();
-    const FormField* tf = nullptr;
-    for (const auto& f : roundFields) {
-        if (f.name == QStringLiteral("fullname")) { tf = &f; break; }
+    const FormField *tf = nullptr;
+    for (const auto &f : roundFields) {
+        if (f.name == QStringLiteral("fullname")) {
+            tf = &f;
+            break;
+        }
     }
     QVERIFY(tf != nullptr);
     QCOMPARE(tf->value, QStringLiteral("Bob"));
@@ -943,7 +971,7 @@ void TestPdfEditor::saveReducedProducesValidPdf() {
 void TestPdfEditor::saveReducedFailsOnInvalidEditor() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    PdfEditor editor;  // never loaded
+    PdfEditor editor; // never loaded
     QVERIFY(!editor.saveReduced(dir.filePath("out.pdf")));
 }
 
@@ -951,7 +979,7 @@ namespace {
 
 // Drop a tiny PNG onto disk — arbitrary bytes in ARGB32 with partial
 // alpha so the SMask path gets exercised.
-QString writeSampleSignaturePng(const QString& path) {
+QString writeSampleSignaturePng(const QString &path) {
     QImage img(32, 16, QImage::Format_ARGB32);
     img.fill(QColor(0, 0, 0, 0));
     QPainter p(&img);
@@ -964,30 +992,32 @@ QString writeSampleSignaturePng(const QString& path) {
 }
 
 // Read the first page's /Resources/XObject and return the keys.
-QStringList xobjectKeysOnFirstPage(const QString& pdfPath) {
+QStringList xobjectKeysOnFirstPage(const QString &pdfPath) {
     QPDF pdf;
     pdf.processFile(pdfPath.toLocal8Bit().constData());
     auto pages = QPDFPageDocumentHelper(pdf).getAllPages();
-    if (pages.empty()) return {};
+    if (pages.empty())
+        return {};
     QPDFObjectHandle resources = pages.front().getAttribute("/Resources", true);
-    if (!resources.isDictionary()) return {};
+    if (!resources.isDictionary())
+        return {};
     QPDFObjectHandle xobj = resources.getKey("/XObject");
-    if (!xobj.isDictionary()) return {};
+    if (!xobj.isDictionary())
+        return {};
     QStringList out;
-    for (const auto& key : xobj.getKeys()) {
+    for (const auto &key : xobj.getKeys()) {
         out << QString::fromStdString(key);
     }
     return out;
 }
 
-}  // namespace
+} // namespace
 
 void TestPdfEditor::flattenSignaturesEmbedsImageXObject() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
-    const QString pngPath =
-        writeSampleSignaturePng(dir.filePath("sig.png"));
+    const QString pngPath = writeSampleSignaturePng(dir.filePath("sig.png"));
     const QString dst = dir.filePath("signed.pdf");
 
     PdfEditor editor;
@@ -1010,19 +1040,18 @@ void TestPdfEditor::flattenSignaturesEmbedsImageXObject() {
 
     const QStringList keys = xobjectKeysOnFirstPage(dst);
     bool foundSig = false;
-    for (const QString& k : keys) {
+    for (const QString &k : keys) {
         if (k.startsWith(QStringLiteral("/TrailerSig"))) {
             foundSig = true;
             break;
         }
     }
-    QVERIFY2(foundSig, qPrintable("Expected /TrailerSig* key, got: "
-                                  + keys.join(", ")));
+    QVERIFY2(foundSig, qPrintable("Expected /TrailerSig* key, got: " + keys.join(", ")));
 
     // Signatures are flattened, not stored as /Annot — readAnnotations
     // must NOT bring them back as an annotation.
     const auto reread = round.readAnnotations();
-    for (const Annotation& a : reread) {
+    for (const Annotation &a : reread) {
         QVERIFY(a.type != AnnotationType::Signature);
     }
 }
@@ -1050,7 +1079,7 @@ void TestPdfEditor::flattenSignaturesWithMissingPngLeavesPageUntouched() {
     QVERIFY(editor.save(dst));
 
     const QStringList keys = xobjectKeysOnFirstPage(dst);
-    for (const QString& k : keys) {
+    for (const QString &k : keys) {
         QVERIFY2(!k.startsWith(QStringLiteral("/TrailerSig")),
                  qPrintable("Unexpected sig XObject: " + k));
     }
@@ -1115,33 +1144,35 @@ namespace {
 
 // Returns true if the page's /Contents stream is a single draw of a
 // page-sized image XObject — i.e., the redaction rasterised the page.
-bool firstPageIsRasterFlattened(const QString& pdfPath) {
+bool firstPageIsRasterFlattened(const QString &pdfPath) {
     QPDF pdf;
     pdf.processFile(pdfPath.toLocal8Bit().constData());
     auto pages = QPDFPageDocumentHelper(pdf).getAllPages();
-    if (pages.empty()) return false;
+    if (pages.empty())
+        return false;
     std::string content;
     Pl_String sink("content", nullptr, content);
     pages.front().pipeContents(&sink);
     // Raster-flattened content looks like: q W 0 0 H X Y cm /Name Do Q
     // — a single draw of an image XObject.
-    return content.find("/TrailerRed") != std::string::npos
-        && content.find(" Do") != std::string::npos;
+    return content.find("/TrailerRed") != std::string::npos &&
+           content.find(" Do") != std::string::npos;
 }
 
 // Count /Annots entries on the first page.
-int firstPageAnnotCount(const QString& pdfPath) {
+int firstPageAnnotCount(const QString &pdfPath) {
     QPDF pdf;
     pdf.processFile(pdfPath.toLocal8Bit().constData());
     auto pages = QPDFPageDocumentHelper(pdf).getAllPages();
-    if (pages.empty()) return -1;
-    QPDFObjectHandle annots =
-        pages.front().getObjectHandle().getKey("/Annots");
-    if (!annots.isArray()) return 0;
+    if (pages.empty())
+        return -1;
+    QPDFObjectHandle annots = pages.front().getObjectHandle().getKey("/Annots");
+    if (!annots.isArray())
+        return 0;
     return annots.getArrayNItems();
 }
 
-}  // namespace
+} // namespace
 
 // Placing a redaction rectangle on page 0 must: replace the page's
 // content stream with a raster draw of a /TrailerRed* XObject, add
@@ -1169,20 +1200,19 @@ void TestPdfEditor::applyRedactionsReplacesPageContentWithRaster() {
 
     const QStringList keys = xobjectKeysOnFirstPage(dst);
     bool foundRed = false;
-    for (const QString& k : keys) {
+    for (const QString &k : keys) {
         if (k.startsWith(QStringLiteral("/TrailerRed"))) {
             foundRed = true;
             break;
         }
     }
-    QVERIFY2(foundRed, qPrintable("Expected /TrailerRed* key, got: "
-                                  + keys.join(", ")));
+    QVERIFY2(foundRed, qPrintable("Expected /TrailerRed* key, got: " + keys.join(", ")));
     QVERIFY(firstPageIsRasterFlattened(dst));
 
     // Round-tripped file must not re-materialise the redaction as an
     // /Annot — the content is destroyed, not annotated.
     const auto reread = round.readAnnotations();
-    for (const Annotation& a : reread) {
+    for (const Annotation &a : reread) {
         QVERIFY(a.type != AnnotationType::Redaction);
     }
 }
@@ -1237,7 +1267,7 @@ void TestPdfEditor::applyRedactionsIsNoOpWithoutRedactionAnnotations() {
     QVERIFY(editor.save(dst));
 
     const QStringList keys = xobjectKeysOnFirstPage(dst);
-    for (const QString& k : keys) {
+    for (const QString &k : keys) {
         QVERIFY2(!k.startsWith(QStringLiteral("/TrailerRed")),
                  qPrintable("Unexpected redaction XObject: " + k));
     }
@@ -1262,7 +1292,7 @@ void TestPdfEditor::applyRedactionsOnlyTouchesPagesWithRedactions() {
     QVERIFY(editor.save(dst));
 
     const QStringList keys = xobjectKeysOnFirstPage(dst);
-    for (const QString& k : keys) {
+    for (const QString &k : keys) {
         QVERIFY2(!k.startsWith(QStringLiteral("/TrailerRed")),
                  qPrintable("Page 0 should be untouched, got: " + k));
     }
@@ -1277,7 +1307,7 @@ void TestPdfEditor::applyRedactionsOnlyTouchesPagesWithRedactions() {
     QPDFObjectHandle xobj = resources.getKey("/XObject");
     QVERIFY(xobj.isDictionary());
     bool foundRed = false;
-    for (const auto& key : xobj.getKeys()) {
+    for (const auto &key : xobj.getKeys()) {
         if (QString::fromStdString(key).startsWith(QStringLiteral("/TrailerRed"))) {
             foundRed = true;
             break;

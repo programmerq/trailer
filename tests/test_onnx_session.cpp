@@ -14,7 +14,7 @@ using namespace trailer;
 
 class TestOnnxSession : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void loadFromFile();
     void loadFromBytes();
     void inputsAndOutputsReported();
@@ -23,7 +23,7 @@ private slots:
     void emptyBytesReturnNullptr();
     void mismatchedElementCountRejected();
 
-private:
+  private:
     QString fixturePath() const;
 };
 
@@ -74,7 +74,7 @@ void TestOnnxSession::identityRoundTripsFloats() {
     const auto outputs = s->run({in});
     QVERIFY(outputs.has_value());
     QCOMPARE(outputs->size(), 1u);
-    const auto& r = outputs->front();
+    const auto &r = outputs->front();
     QCOMPARE(r.name, QByteArrayLiteral("output"));
     QCOMPARE(r.data.size(), buf.size());
     for (size_t i = 0; i < buf.size(); ++i) {
@@ -101,7 +101,7 @@ void TestOnnxSession::mismatchedElementCountRejected() {
     TensorSpec in;
     in.name = QByteArrayLiteral("input");
     in.data = buf.data();
-    in.shape = {5};          // claim 5 elements but only provide 2
+    in.shape = {5}; // claim 5 elements but only provide 2
     in.elementCount = 2;
     const auto outputs = s->run({in});
     QVERIFY(!outputs.has_value());

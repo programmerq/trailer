@@ -45,9 +45,10 @@ using namespace trailer;
 
 namespace {
 
-MainWindow* currentMainWindow() {
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (auto* mw = qobject_cast<MainWindow*>(w)) return mw;
+MainWindow *currentMainWindow() {
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (auto *mw = qobject_cast<MainWindow *>(w))
+            return mw;
     }
     return nullptr;
 }
@@ -55,23 +56,27 @@ MainWindow* currentMainWindow() {
 // Walk every menu's actions (including nested submenus) and return
 // the action whose visible text matches, ignoring "&" accelerator
 // hints. Case-sensitive.
-QAction* findMenuAction(QMenu* menu, const QString& text) {
-    for (QAction* sub : menu->actions()) {
+QAction *findMenuAction(QMenu *menu, const QString &text) {
+    for (QAction *sub : menu->actions()) {
         QString t = sub->text();
         t.remove(QLatin1Char('&'));
-        if (t == text) return sub;
-        if (QMenu* nested = sub->menu()) {
-            if (QAction* hit = findMenuAction(nested, text)) return hit;
+        if (t == text)
+            return sub;
+        if (QMenu *nested = sub->menu()) {
+            if (QAction *hit = findMenuAction(nested, text))
+                return hit;
         }
     }
     return nullptr;
 }
 
-QAction* findMenuAction(MainWindow* mw, const QString& text) {
-    for (QAction* a : mw->menuBar()->actions()) {
-        QMenu* m = a->menu();
-        if (!m) continue;
-        if (QAction* hit = findMenuAction(m, text)) return hit;
+QAction *findMenuAction(MainWindow *mw, const QString &text) {
+    for (QAction *a : mw->menuBar()->actions()) {
+        QMenu *m = a->menu();
+        if (!m)
+            continue;
+        if (QAction *hit = findMenuAction(m, text))
+            return hit;
     }
     return nullptr;
 }
@@ -79,7 +84,7 @@ QAction* findMenuAction(MainWindow* mw, const QString& text) {
 // Minimal two-field form PDF: one text field ("email") and one that
 // won't match any card attribute ("signature_placeholder"). Keeps the
 // test assertion crisp: fill one, leave one alone.
-QString writeMiniFormPdf(const QString& path) {
+QString writeMiniFormPdf(const QString &path) {
     QPDF pdf;
     pdf.emptyPDF();
 
@@ -151,7 +156,7 @@ QString writeMiniFormPdf(const QString& path) {
 // Variant that assigns cryptic /T names and puts the friendly label
 // on /TU (AcroForm's "alternative name" — what most viewers show next
 // to the field). Used to verify AutoFill's /TU fallback.
-QString writeFormPdfWithTooltipLabels(const QString& path) {
+QString writeFormPdfWithTooltipLabels(const QString &path) {
     QPDF pdf;
     pdf.emptyPDF();
 
@@ -169,9 +174,7 @@ QString writeFormPdfWithTooltipLabels(const QString& path) {
     page.replaceKey("/MediaBox", makeRect(0, 0, 612, 792));
     page.replaceKey("/Resources", QPDFObjectHandle::newDictionary());
 
-    auto makeTextField = [&pdf, &makeRect](const std::string& t,
-                                           const std::string& tu,
-                                           double y) {
+    auto makeTextField = [&pdf, &makeRect](const std::string &t, const std::string &tu, double y) {
         QPDFObjectHandle f = QPDFObjectHandle::newDictionary();
         f.replaceKey("/FT", QPDFObjectHandle::newName("/Tx"));
         f.replaceKey("/T", QPDFObjectHandle::newString(t));
@@ -220,32 +223,32 @@ QString writeFormPdfWithTooltipLabels(const QString& path) {
     return path;
 }
 
-}  // namespace
+} // namespace
 
 class TestUatAutoFill : public QObject {
     Q_OBJECT
 
-private slots:
+  private slots:
     void init();
     void uat_af_010_autoFillPopulatesMatchingTextFields();
     void uat_af_020_autoFillFallsBackToAlternativeName();
     void uat_af_030_autoFillMenuActionShowsStatusAndActivatesForm();
 
-private:
+  private:
     QTemporaryDir m_scratch;
 };
 
 void TestUatAutoFill::init() {
-    for (auto* w : QApplication::topLevelWidgets()) {
-        if (qobject_cast<MainWindow*>(w)) w->close();
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (qobject_cast<MainWindow *>(w))
+            w->close();
     }
     QApplication::processEvents();
 }
 
 void TestUatAutoFill::uat_af_010_autoFillPopulatesMatchingTextFields() {
     QVERIFY(m_scratch.isValid());
-    const QString path = writeMiniFormPdf(
-        m_scratch.filePath(QStringLiteral("autofill010.pdf")));
+    const QString path = writeMiniFormPdf(m_scratch.filePath(QStringLiteral("autofill010.pdf")));
 
     // Seed the card store on disk so MainWindow's AutoFill handler
     // picks it up without prompting.
@@ -260,23 +263,23 @@ void TestUatAutoFill::uat_af_010_autoFillPopulatesMatchingTextFields() {
         store.save();
     }
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({path});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    IDocument* doc = dv->currentDocument();
+    IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
     QVERIFY(doc->supportsFormFilling());
 
     // Also verify the Tools > AutoFill Form action is present and
     // enabled — but don't trigger it, because it pops a modal
     // QMessageBox that blocks the offscreen test.
-    QAction* action = findMenuAction(mw, QStringLiteral("AutoFill from My Card"));
+    QAction *action = findMenuAction(mw, QStringLiteral("AutoFill from My Card"));
     QVERIFY(action);
     QVERIFY(action->isEnabled());
 
@@ -291,11 +294,13 @@ void TestUatAutoFill::uat_af_010_autoFillPopulatesMatchingTextFields() {
     // Now inspect the fields. "email" should have been filled, the
     // unknown field should still be empty.
     const auto fields = doc->formFields();
-    const FormField* emailField = nullptr;
-    const FormField* sigField = nullptr;
-    for (const auto& f : fields) {
-        if (f.name == QStringLiteral("email")) emailField = &f;
-        if (f.name == QStringLiteral("signature_placeholder")) sigField = &f;
+    const FormField *emailField = nullptr;
+    const FormField *sigField = nullptr;
+    for (const auto &f : fields) {
+        if (f.name == QStringLiteral("email"))
+            emailField = &f;
+        if (f.name == QStringLiteral("signature_placeholder"))
+            sigField = &f;
     }
     QVERIFY(emailField != nullptr);
     QVERIFY(sigField != nullptr);
@@ -305,8 +310,8 @@ void TestUatAutoFill::uat_af_010_autoFillPopulatesMatchingTextFields() {
 
 void TestUatAutoFill::uat_af_020_autoFillFallsBackToAlternativeName() {
     QVERIFY(m_scratch.isValid());
-    const QString path = writeFormPdfWithTooltipLabels(
-        m_scratch.filePath(QStringLiteral("autofill020.pdf")));
+    const QString path =
+        writeFormPdfWithTooltipLabels(m_scratch.filePath(QStringLiteral("autofill020.pdf")));
 
     {
         CardStore store(AppPaths::cardsFile());
@@ -318,16 +323,16 @@ void TestUatAutoFill::uat_af_020_autoFillFallsBackToAlternativeName() {
         store.save();
     }
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({path});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    auto* dv = mw->findChild<DocumentView*>();
+    auto *dv = mw->findChild<DocumentView *>();
     QVERIFY(dv);
-    IDocument* doc = dv->currentDocument();
+    IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
 
     CardStore store(AppPaths::cardsFile());
@@ -341,13 +346,16 @@ void TestUatAutoFill::uat_af_020_autoFillFallsBackToAlternativeName() {
     QCOMPARE(r.filled, 2);
 
     const auto fields = doc->formFields();
-    const FormField* first = nullptr;
-    const FormField* email = nullptr;
-    const FormField* mystery = nullptr;
-    for (const auto& f : fields) {
-        if (f.label == QStringLiteral("First Name")) first = &f;
-        if (f.label == QStringLiteral("Email Address")) email = &f;
-        if (f.label == QStringLiteral("Supplementary Code")) mystery = &f;
+    const FormField *first = nullptr;
+    const FormField *email = nullptr;
+    const FormField *mystery = nullptr;
+    for (const auto &f : fields) {
+        if (f.label == QStringLiteral("First Name"))
+            first = &f;
+        if (f.label == QStringLiteral("Email Address"))
+            email = &f;
+        if (f.label == QStringLiteral("Supplementary Code"))
+            mystery = &f;
     }
     QVERIFY(first);
     QVERIFY(email);
@@ -357,11 +365,9 @@ void TestUatAutoFill::uat_af_020_autoFillFallsBackToAlternativeName() {
     QCOMPARE(mystery->value, QString());
 }
 
-void TestUatAutoFill::
-    uat_af_030_autoFillMenuActionShowsStatusAndActivatesForm() {
+void TestUatAutoFill::uat_af_030_autoFillMenuActionShowsStatusAndActivatesForm() {
     QVERIFY(m_scratch.isValid());
-    const QString path = writeMiniFormPdf(
-        m_scratch.filePath(QStringLiteral("autofill030.pdf")));
+    const QString path = writeMiniFormPdf(m_scratch.filePath(QStringLiteral("autofill030.pdf")));
 
     {
         CardStore store(AppPaths::cardsFile());
@@ -372,25 +378,24 @@ void TestUatAutoFill::
         store.save();
     }
 
-    auto* app = qobject_cast<Application*>(qApp);
+    auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     app->openFiles({path});
     QApplication::processEvents();
 
-    MainWindow* mw = currentMainWindow();
+    MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
 
     // As of UAT-FRM-040, opening a fillable PDF auto-enables Fill
     // Forms — so it's already on before we trigger AutoFill. The
     // interesting assertions below are that AutoFill itself doesn't
     // pop a modal (no hang) and writes a status-bar line.
-    QAction* fillForms = findMenuAction(mw, QStringLiteral("Fill Forms"));
+    QAction *fillForms = findMenuAction(mw, QStringLiteral("Fill Forms"));
     QVERIFY(fillForms);
-    QVERIFY2(fillForms->isChecked(),
-             "Fill Forms must be auto-enabled on a fillable PDF "
-             "(see UAT-FRM-040)");
+    QVERIFY2(fillForms->isChecked(), "Fill Forms must be auto-enabled on a fillable PDF "
+                                     "(see UAT-FRM-040)");
 
-    QAction* autoFill = findMenuAction(mw, QStringLiteral("AutoFill from My Card"));
+    QAction *autoFill = findMenuAction(mw, QStringLiteral("AutoFill from My Card"));
     QVERIFY(autoFill);
     QVERIFY(autoFill->isEnabled());
 
@@ -405,10 +410,8 @@ void TestUatAutoFill::
     const QString msg = mw->statusBar()->currentMessage();
     QVERIFY2(msg.contains(QStringLiteral("AutoFill")),
              qPrintable(QStringLiteral("status bar was: '%1'").arg(msg)));
-    QVERIFY2(msg.contains(QStringLiteral("1")) &&
-             msg.contains(QStringLiteral("2")),
-             qPrintable(QStringLiteral("expected 'filled 1 of 2' in: '%1'")
-                            .arg(msg)));
+    QVERIFY2(msg.contains(QStringLiteral("1")) && msg.contains(QStringLiteral("2")),
+             qPrintable(QStringLiteral("expected 'filled 1 of 2' in: '%1'").arg(msg)));
 
     // Fill Forms remains active after AutoFill — turning it on was a
     // no-op because the auto-enable already did it.
@@ -418,12 +421,13 @@ void TestUatAutoFill::
 // Custom main: create Application (not just QApplication) so
 // qobject_cast<Application*>(qApp) succeeds. Sandbox HOME so the
 // CardStore and RecentFiles don't touch the developer's real config.
-int main(int argc, char** argv) {
+int main(int argc, char **argv) {
     QTemporaryDir fakeHome;
-    if (!fakeHome.isValid()) return 1;
+    if (!fakeHome.isValid())
+        return 1;
     qputenv("HOME", fakeHome.path().toUtf8());
     qputenv("XDG_CONFIG_HOME", (fakeHome.path() + "/.config").toUtf8());
-    qputenv("XDG_DATA_HOME",   (fakeHome.path() + "/.local/share").toUtf8());
+    qputenv("XDG_DATA_HOME", (fakeHome.path() + "/.local/share").toUtf8());
     QDir().mkpath(fakeHome.path() + "/.config/trailer");
     QDir().mkpath(fakeHome.path() + "/.local/share/trailer");
 

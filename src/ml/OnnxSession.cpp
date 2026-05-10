@@ -24,9 +24,8 @@ namespace {
 // has been observed to abort in `libc++`'s mutex teardown path
 // during process exit. Leaking is the documented workaround and
 // costs a few MB at shutdown, which the OS reclaims anyway.
-Ort::Env& sharedEnv() {
-    static Ort::Env* env = new Ort::Env(
-        ORT_LOGGING_LEVEL_WARNING, "trailer");
+Ort::Env &sharedEnv() {
+    static Ort::Env *env = new Ort::Env(ORT_LOGGING_LEVEL_WARNING, "trailer");
     return *env;
 }
 
@@ -37,7 +36,8 @@ Ort::Env& sharedEnv() {
 // past that.
 int defaultThreads() {
     const int hw = QThread::idealThreadCount();
-    if (hw <= 0) return 1;
+    if (hw <= 0)
+        return 1;
     return std::min(hw, 4);
 }
 
@@ -48,7 +48,7 @@ Ort::SessionOptions makeOptions() {
     return opts;
 }
 
-}  // namespace
+} // namespace
 
 struct OnnxSession::Impl {
     // The session holds borrowed references to the env; env lifetime
@@ -61,8 +61,8 @@ struct OnnxSession::Impl {
     // we keep the owned strings and hand out string_view-ish refs).
     std::vector<Ort::AllocatedStringPtr> inputNamesOwned;
     std::vector<Ort::AllocatedStringPtr> outputNamesOwned;
-    std::vector<const char*> inputNameCStrs;
-    std::vector<const char*> outputNameCStrs;
+    std::vector<const char *> inputNameCStrs;
+    std::vector<const char *> outputNameCStrs;
 
     void cacheNames() {
         const size_t nin = session->GetInputCount();
@@ -87,11 +87,10 @@ struct OnnxSession::Impl {
 OnnxSession::OnnxSession() : m_impl(std::make_unique<Impl>()) {}
 OnnxSession::~OnnxSession() = default;
 
-std::unique_ptr<OnnxSession> OnnxSession::fromFile(const QString& modelPath) {
+std::unique_ptr<OnnxSession> OnnxSession::fromFile(const QString &modelPath) {
     QFile f(modelPath);
     if (!f.open(QIODevice::ReadOnly)) {
-        qWarning() << "OnnxSession: cannot open model" << modelPath
-                   << f.errorString();
+        qWarning() << "OnnxSession: cannot open model" << modelPath << f.errorString();
         return {};
     }
     const QByteArray bytes = f.readAll();
@@ -99,17 +98,16 @@ std::unique_ptr<OnnxSession> OnnxSession::fromFile(const QString& modelPath) {
     return fromBytes(bytes);
 }
 
-std::unique_ptr<OnnxSession> OnnxSession::fromBytes(const QByteArray& modelBytes) {
-    if (modelBytes.isEmpty()) return {};
+std::unique_ptr<OnnxSession> OnnxSession::fromBytes(const QByteArray &modelBytes) {
+    if (modelBytes.isEmpty())
+        return {};
     std::unique_ptr<OnnxSession> wrap(new OnnxSession());
     try {
-        wrap->m_impl->session = std::make_unique<Ort::Session>(
-            sharedEnv(),
-            modelBytes.constData(),
-            static_cast<size_t>(modelBytes.size()),
-            makeOptions());
+        wrap->m_impl->session =
+            std::make_unique<Ort::Session>(sharedEnv(), modelBytes.constData(),
+                                           static_cast<size_t>(modelBytes.size()), makeOptions());
         wrap->m_impl->cacheNames();
-    } catch (const Ort::Exception& e) {
+    } catch (const Ort::Exception &e) {
         qWarning() << "OnnxSession: failed to load model:" << e.what();
         return {};
     }
@@ -119,7 +117,7 @@ std::unique_ptr<OnnxSession> OnnxSession::fromBytes(const QByteArray& modelBytes
 QStringList OnnxSession::inputNames() const {
     QStringList out;
     out.reserve(static_cast<int>(m_impl->inputNameCStrs.size()));
-    for (const char* n : m_impl->inputNameCStrs) {
+    for (const char *n : m_impl->inputNameCStrs) {
         out.push_back(QString::fromUtf8(n));
     }
     return out;
@@ -128,68 +126,63 @@ QStringList OnnxSession::inputNames() const {
 QStringList OnnxSession::outputNames() const {
     QStringList out;
     out.reserve(static_cast<int>(m_impl->outputNameCStrs.size()));
-    for (const char* n : m_impl->outputNameCStrs) {
+    for (const char *n : m_impl->outputNameCStrs) {
         out.push_back(QString::fromUtf8(n));
     }
     return out;
 }
 
-std::optional<std::vector<TensorResult>> OnnxSession::run(
-    const std::vector<TensorSpec>& inputs,
-    const std::vector<QByteArray>& outputs) const {
-    if (!m_impl->session) return std::nullopt;
+std::optional<std::vector<TensorResult>>
+OnnxSession::run(const std::vector<TensorSpec> &inputs,
+                 const std::vector<QByteArray> &outputs) const {
+    if (!m_impl->session)
+        return std::nullopt;
 
     // Wrap each input tensor in an Ort::Value backed by the caller's
     // buffer. We do NOT copy; the buffer must outlive the run() call.
-    Ort::MemoryInfo memInfo = Ort::MemoryInfo::CreateCpu(
-        OrtArenaAllocator, OrtMemTypeDefault);
+    Ort::MemoryInfo memInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
 
-    std::vector<const char*> inputNameCs;
+    std::vector<const char *> inputNameCs;
     std::vector<Ort::Value> inputValues;
     inputNameCs.reserve(inputs.size());
     inputValues.reserve(inputs.size());
 
-    for (const auto& spec : inputs) {
+    for (const auto &spec : inputs) {
         const qsizetype declared = spec.elementCount;
-        const int64_t computed = std::accumulate(
-            spec.shape.begin(), spec.shape.end(), int64_t{1},
-            std::multiplies<int64_t>{});
+        const int64_t computed = std::accumulate(spec.shape.begin(), spec.shape.end(), int64_t{1},
+                                                 std::multiplies<int64_t>{});
         if (computed != declared) {
-            qWarning() << "OnnxSession::run: element-count mismatch for input"
-                       << spec.name << "declared" << declared << "shape-product" << computed;
+            qWarning() << "OnnxSession::run: element-count mismatch for input" << spec.name
+                       << "declared" << declared << "shape-product" << computed;
             return std::nullopt;
         }
         inputNameCs.push_back(spec.name.constData());
         inputValues.push_back(Ort::Value::CreateTensor<float>(
-            memInfo,
-            const_cast<float*>(spec.data),
-            static_cast<size_t>(spec.elementCount),
-            spec.shape.data(),
-            spec.shape.size()));
+            memInfo, const_cast<float *>(spec.data), static_cast<size_t>(spec.elementCount),
+            spec.shape.data(), spec.shape.size()));
     }
 
     // Output names: either the caller-specified subset or all of them.
-    std::vector<const char*> outputNameCs;
-    std::vector<QByteArray> ownedNames;  // storage for dynamically built names
+    std::vector<const char *> outputNameCs;
+    std::vector<QByteArray> ownedNames; // storage for dynamically built names
     if (outputs.empty()) {
-        for (const char* n : m_impl->outputNameCStrs) {
+        for (const char *n : m_impl->outputNameCStrs) {
             outputNameCs.push_back(n);
         }
     } else {
         outputNameCs.reserve(outputs.size());
-        ownedNames = outputs;  // keep backing memory alive
-        for (const auto& n : ownedNames) {
+        ownedNames = outputs; // keep backing memory alive
+        for (const auto &n : ownedNames) {
             outputNameCs.push_back(n.constData());
         }
     }
 
     std::vector<Ort::Value> results;
     try {
-        results = m_impl->session->Run(
-            Ort::RunOptions{nullptr},
-            inputNameCs.data(), inputValues.data(), inputValues.size(),
-            outputNameCs.data(), outputNameCs.size());
-    } catch (const Ort::Exception& e) {
+        results =
+            m_impl->session->Run(Ort::RunOptions{nullptr}, inputNameCs.data(), inputValues.data(),
+                                 inputValues.size(), outputNameCs.data(), outputNameCs.size());
+    } catch (const Ort::Exception &e) {
         qWarning() << "OnnxSession::run: ORT exception:" << e.what();
         return std::nullopt;
     }
@@ -205,13 +198,11 @@ std::optional<std::vector<TensorResult>> OnnxSession::run(
         const size_t nelem = info.GetElementCount();
         r.data.resize(nelem);
         if (nelem > 0) {
-            std::memcpy(r.data.data(),
-                        results[i].GetTensorData<float>(),
-                        nelem * sizeof(float));
+            std::memcpy(r.data.data(), results[i].GetTensorData<float>(), nelem * sizeof(float));
         }
         out.push_back(std::move(r));
     }
     return out;
 }
 
-}  // namespace trailer
+} // namespace trailer

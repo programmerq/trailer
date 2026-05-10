@@ -27,13 +27,13 @@ class AnnotationOverlay;
 class FormOverlay;
 
 class PdfDocument : public IDocument {
-public:
+  public:
     explicit PdfDocument(QString path);
     ~PdfDocument() override;
 
     QString displayName() const override;
     QString filePath() const override;
-    QWidget* createView(QWidget* parent) override;
+    QWidget *createView(QWidget *parent) override;
 
     bool supportsZoom() const override { return true; }
     void zoomIn() override;
@@ -53,7 +53,7 @@ public:
     void goToPage(int pageIndex) override;
 
     bool supportsSearch() const override { return true; }
-    void setSearchQuery(const QString& query) override;
+    void setSearchQuery(const QString &query) override;
     void findNext() override;
     void findPrevious() override;
     void clearSearch() override;
@@ -62,23 +62,21 @@ public:
     std::vector<int> pagesWithSearchMatches() const override;
 
     bool supportsPrint() const override { return m_valid; }
-    void print(QWidget* dialogParent) override;
+    void print(QWidget *dialogParent) override;
 
     bool supportsEditing() const override { return m_valid; }
     bool supportsPasswordExport() const override {
         return m_valid && m_editor && m_editor->isValid();
     }
-    bool exportWithPassword(const QString& destPath,
-                            const QString& password) override;
+    bool exportWithPassword(const QString &destPath, const QString &password) override;
 
     bool supportsFileSizeReduction() const override {
         return m_valid && m_editor && m_editor->isValid();
     }
-    bool reduceFileSize(const QString& destPath) override;
+    bool reduceFileSize(const QString &destPath) override;
 
     bool supportsFormFilling() const override {
-        return m_valid && m_editor && m_editor->isValid()
-               && m_editor->hasFormFields();
+        return m_valid && m_editor && m_editor->isValid() && m_editor->hasFormFields();
     }
     // PDFs always carry a text layer (even scan-only PDFs typically
     // expose an empty layer). Text-aware markup tools are offered.
@@ -92,12 +90,10 @@ public:
     bool hasOutline() const override;
     void goToOutlineEntry(const QModelIndex& index) override;
     std::vector<FormField> formFields() const override;
-    bool setFormFieldValue(int id, const QString& value) override;
+    bool setFormFieldValue(int id, const QString &value) override;
     void setFormFillingActive(bool active) override;
     void refreshFormView() override;
-    bool isDirty() const override {
-        return m_dirty || m_annotationsModified;
-    }
+    bool isDirty() const override { return m_dirty || m_annotationsModified; }
     // PDF-level undo runs across two parallel stacks: the
     // AnnotationStore for in-memory shape edits, and a separate
     // PdfCommand stack for qpdf-level mutations (rotate today;
@@ -109,16 +105,15 @@ public:
     void undo() override;
     void redo() override;
     void rotatePage(int pageIndex, int degreesClockwise) override;
-    void deletePages(const std::vector<int>& pageIndices) override;
+    void deletePages(const std::vector<int> &pageIndices) override;
     void movePage(int from, int to) override;
-    bool insertPagesFrom(const QString& sourcePath, int insertAtIndex) override;
-    bool extractPages(const std::vector<int>& pageIndices, const QString& destPath) const override;
-    bool cropPage(int pageIndex, double leftPts, double topPts,
-                  double rightPts, double bottomPts) override;
-    bool cropPages(const std::vector<int>& pageIndices,
-                   double leftPts, double topPts,
+    bool insertPagesFrom(const QString &sourcePath, int insertAtIndex) override;
+    bool extractPages(const std::vector<int> &pageIndices, const QString &destPath) const override;
+    bool cropPage(int pageIndex, double leftPts, double topPts, double rightPts,
+                  double bottomPts) override;
+    bool cropPages(const std::vector<int> &pageIndices, double leftPts, double topPts,
                    double rightPts, double bottomPts) override;
-    bool save(const QString& newPath = {}) override;
+    bool save(const QString &newPath = {}) override;
 
     // Two-phase save for off-thread execution. The first phase
     // (saveBeginQpdfPhase) does only thread-safe qpdf work and may
@@ -131,27 +126,27 @@ public:
     // documents where blocking on save is acceptable; both APIs are
     // exclusive (do not interleave calls).
     struct SaveContext {
-        QString writePath;     // where the worker wrote the new bytes
-        QString targetPath;    // where they should end up (== writePath
-                               // for non-overwrite, != for overwrite)
+        QString writePath;  // where the worker wrote the new bytes
+        QString targetPath; // where they should end up (== writePath
+                            // for non-overwrite, != for overwrite)
         bool sameFile = false;
     };
     // Computes the SaveContext (worker-safe), runs all qpdf
     // operations, and writes to writePath. Returns nullopt on
     // failure. Safe to call from any thread that is not interleaved
     // with another save on this document.
-    std::optional<SaveContext> saveBeginQpdfPhase(const QString& newPath);
+    std::optional<SaveContext> saveBeginQpdfPhase(const QString &newPath);
     // Publishes a successful saveBeginQpdfPhase result: rename the
     // temp file (for same-file overwrite), reload QPdfDocument and
     // re-attach the view / search model. UI-thread only. Returns
     // true on success.
-    bool saveCommitOnUi(const SaveContext& ctx);
+    bool saveCommitOnUi(const SaveContext &ctx);
 
-    AnnotationStore* annotations() override { return &m_annotations; }
+    AnnotationStore *annotations() override { return &m_annotations; }
     void setAnnotationTool(AnnotationTool tool) override;
-    void setAnnotationStyle(const AnnotationStyle& style) override;
-    void setPendingAnnotationText(const QString& text) override;
-    void setPendingSignaturePath(const QString& path) override;
+    void setAnnotationStyle(const AnnotationStyle &style) override;
+    void setPendingAnnotationText(const QString &text) override;
+    void setPendingSignaturePath(const QString &path) override;
 
     bool isValid() const { return m_valid; }
 
@@ -160,9 +155,9 @@ public:
     // be retried with a password from the user. Stays false for plain
     // PDFs.
     bool needsPassword() const { return m_needsPassword; }
-    bool unlock(const QString& password);
+    bool unlock(const QString &password);
 
-private:
+  private:
     void applyViewMode();
     void applyZoomFactor(double factor);
     bool reloadViewerFromEditor();
@@ -217,10 +212,10 @@ private:
 };
 
 class PdfAdapter : public IFormatAdapter {
-public:
+  public:
     QStringList mimeTypes() const override;
     QStringList extensions() const override;
-    std::unique_ptr<IDocument> open(const QString& path) override;
+    std::unique_ptr<IDocument> open(const QString &path) override;
 
     // Password-prompt hook. open() calls this when a PDF refuses to
     // load for IncorrectPassword reasons. Return a populated optional
@@ -231,10 +226,9 @@ public:
     // The default hook uses QInputDialog on the active window. UAT
     // tests install a shim here so they can exercise the retry loop
     // without an interactive dialog.
-    using PasswordPrompt = std::function<std::optional<QString>(
-        const QString& path, int attempt)>;
+    using PasswordPrompt = std::function<std::optional<QString>(const QString &path, int attempt)>;
     static void setPasswordPrompt(PasswordPrompt prompt);
     static PasswordPrompt passwordPrompt();
 };
 
-}  // namespace trailer
+} // namespace trailer

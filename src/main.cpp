@@ -4,7 +4,7 @@
 
 #include <QIcon>
 
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[]) {
     trailer::Application app(argc, argv);
 
     QIcon icon;
@@ -13,8 +13,7 @@ int main(int argc, char* argv[]) {
     }
     QApplication::setWindowIcon(icon);
 
-    const trailer::CommandLineResult cli =
-        trailer::parseCommandLine(app.arguments());
+    const trailer::CommandLineResult cli = trailer::parseCommandLine(app.arguments());
 
     if (cli.paths.isEmpty()) {
 #ifdef Q_OS_MACOS

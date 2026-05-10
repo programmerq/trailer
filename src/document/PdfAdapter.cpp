@@ -45,42 +45,40 @@ constexpr double kZoomMax = 16.0;
 // title under the model's `Title` role (numerically Qt::UserRole).
 // Without this remap the tree shows a column of empty rows.
 class OutlineProxyModel : public QIdentityProxyModel {
-public:
-    explicit OutlineProxyModel(QObject* parent = nullptr)
-        : QIdentityProxyModel(parent) {}
+  public:
+    explicit OutlineProxyModel(QObject *parent = nullptr) : QIdentityProxyModel(parent) {}
 
-    QVariant data(const QModelIndex& proxyIndex, int role) const override {
+    QVariant data(const QModelIndex &proxyIndex, int role) const override {
         if (role == Qt::DisplayRole) {
             return QIdentityProxyModel::data(proxyIndex,
-                static_cast<int>(QPdfBookmarkModel::Role::Title));
+                                             static_cast<int>(QPdfBookmarkModel::Role::Title));
         }
         return QIdentityProxyModel::data(proxyIndex, role);
     }
 };
 
 class NavigablePdfView : public QPdfView {
-public:
-    explicit NavigablePdfView(QWidget* parent) : QPdfView(parent) {}
+  public:
+    explicit NavigablePdfView(QWidget *parent) : QPdfView(parent) {}
 
-protected:
-    void keyPressEvent(QKeyEvent* e) override {
+  protected:
+    void keyPressEvent(QKeyEvent *e) override {
         if (pageMode() == QPdfView::PageMode::SinglePage) {
             const int key = e->key();
-            QScrollBar* vbar = verticalScrollBar();
+            QScrollBar *vbar = verticalScrollBar();
             const bool atBottom = vbar->value() >= vbar->maximum();
             const bool atTop = vbar->value() <= vbar->minimum();
-            auto* nav = pageNavigator();
+            auto *nav = pageNavigator();
             const int current = nav->currentPage();
             const int last = document() ? document()->pageCount() - 1 : 0;
-            if ((key == Qt::Key_Down || key == Qt::Key_PageDown ||
-                 key == Qt::Key_Space) && atBottom && current < last) {
+            if ((key == Qt::Key_Down || key == Qt::Key_PageDown || key == Qt::Key_Space) &&
+                atBottom && current < last) {
                 nav->jump(current + 1, QPointF{}, zoomFactor());
                 verticalScrollBar()->setValue(verticalScrollBar()->minimum());
                 e->accept();
                 return;
             }
-            if ((key == Qt::Key_Up || key == Qt::Key_PageUp) && atTop &&
-                current > 0) {
+            if ((key == Qt::Key_Up || key == Qt::Key_PageUp) && atTop && current > 0) {
                 nav->jump(current - 1, QPointF{}, zoomFactor());
                 verticalScrollBar()->setValue(verticalScrollBar()->maximum());
                 e->accept();
@@ -90,11 +88,10 @@ protected:
         QPdfView::keyPressEvent(e);
     }
 };
-}  // namespace
+} // namespace
 
 PdfDocument::PdfDocument(QString path)
-    : m_path(std::move(path)),
-      m_doc(std::make_unique<QPdfDocument>()),
+    : m_path(std::move(path)), m_doc(std::make_unique<QPdfDocument>()),
       m_editor(std::make_unique<PdfEditor>()) {
     const QPdfDocument::Error error = m_doc->load(m_path);
     m_valid = (error == QPdfDocument::Error::None);
@@ -105,21 +102,22 @@ PdfDocument::PdfDocument(QString path)
     m_needsPassword = (error == QPdfDocument::Error::IncorrectPassword);
     if (m_valid) {
         m_editor->load(m_path);
-        for (Annotation& a : m_editor->readAnnotations()) {
+        for (Annotation &a : m_editor->readAnnotations()) {
             m_annotations.add(std::move(a));
         }
         m_annotations.clearHistory();
-        QObject::connect(&m_annotations, &AnnotationStore::changed,
-                         m_doc.get(), [this]() {
+        QObject::connect(&m_annotations, &AnnotationStore::changed, m_doc.get(), [this]() {
             m_annotationsModified = true;
             m_lastUndoSource = UndoSource::Annotation;
         });
     }
 }
 
-bool PdfDocument::unlock(const QString& password) {
-    if (m_valid) return true;
-    if (!m_needsPassword) return false;
+bool PdfDocument::unlock(const QString &password) {
+    if (m_valid)
+        return true;
+    if (!m_needsPassword)
+        return false;
 
     m_doc->setPassword(password);
     const QPdfDocument::Error error = m_doc->load(m_path);
@@ -142,12 +140,11 @@ bool PdfDocument::unlock(const QString& password) {
         m_editor->unlock(password);
     }
     if (m_editor->isValid()) {
-        for (Annotation& a : m_editor->readAnnotations()) {
+        for (Annotation &a : m_editor->readAnnotations()) {
             m_annotations.add(std::move(a));
         }
         m_annotations.clearHistory();
-        QObject::connect(&m_annotations, &AnnotationStore::changed,
-                         m_doc.get(), [this]() {
+        QObject::connect(&m_annotations, &AnnotationStore::changed, m_doc.get(), [this]() {
             m_annotationsModified = true;
             m_lastUndoSource = UndoSource::Annotation;
         });
@@ -169,19 +166,18 @@ int PdfDocument::pageCount() const {
     return m_valid ? m_doc->pageCount() : 0;
 }
 
-QWidget* PdfDocument::createView(QWidget* parent) {
+QWidget *PdfDocument::createView(QWidget *parent) {
     if (!m_valid) {
-        auto* container = new QWidget(parent);
-        auto* layout = new QVBoxLayout(container);
-        auto* label = new QLabel(
-            QObject::tr("Could not open PDF:\n%1").arg(m_path), container);
+        auto *container = new QWidget(parent);
+        auto *layout = new QVBoxLayout(container);
+        auto *label = new QLabel(QObject::tr("Could not open PDF:\n%1").arg(m_path), container);
         label->setAlignment(Qt::AlignCenter);
         label->setTextInteractionFlags(Qt::TextSelectableByMouse);
         layout->addWidget(label);
         return container;
     }
 
-    auto* view = new NavigablePdfView(parent);
+    auto *view = new NavigablePdfView(parent);
     view->setDocument(m_doc.get());
     view->setZoomMode(QPdfView::ZoomMode::Custom);
     view->setZoomFactor(1.0);
@@ -203,11 +199,12 @@ QWidget* PdfDocument::createView(QWidget* parent) {
     }
     applyViewMode();
 
-    auto* overlay = new AnnotationOverlay(view->viewport());
+    auto *overlay = new AnnotationOverlay(view->viewport());
     overlay->setStore(&m_annotations);
     overlay->setPage(view->pageNavigator()->currentPage());
     auto pageOriginInView = [this](int page) -> QPointF {
-        if (!m_view || !m_doc || page < 0) return {};
+        if (!m_view || !m_doc || page < 0)
+            return {};
         const double z = m_view->zoomFactor();
         const QMargins m = m_view->documentMargins();
         const int spacing = m_view->pageSpacing();
@@ -222,17 +219,15 @@ QWidget* PdfDocument::createView(QWidget* parent) {
 
         if (m_view->pageMode() == QPdfView::PageMode::SinglePage) {
             const int cur = m_view->pageNavigator()->currentPage();
-            if (page != cur) return QPointF(-1e9, -1e9);
+            if (page != cur)
+                return QPointF(-1e9, -1e9);
             const double contentW = maxW + m.left() + m.right();
-            const double contentH = m_doc->pagePointSize(page).height() * z
-                + m.top() + m.bottom();
+            const double contentH = m_doc->pagePointSize(page).height() * z + m.top() + m.bottom();
             const double extraX = std::max(0.0, (vp.width() - contentW) / 2.0);
             const double extraY = std::max(0.0, (vp.height() - contentH) / 2.0);
-            return QPointF(
-                extraX + m.left() + (maxW - pw) / 2.0
-                    - m_view->horizontalScrollBar()->value(),
-                extraY + m.top()
-                    - m_view->verticalScrollBar()->value());
+            return QPointF(extraX + m.left() + (maxW - pw) / 2.0 -
+                               m_view->horizontalScrollBar()->value(),
+                           extraY + m.top() - m_view->verticalScrollBar()->value());
         }
 
         double y = m.top();
@@ -242,68 +237,72 @@ QWidget* PdfDocument::createView(QWidget* parent) {
         double contentH = m.top() + m.bottom();
         for (int i = 0; i < total; ++i) {
             contentH += m_doc->pagePointSize(i).height() * z;
-            if (i > 0) contentH += spacing;
+            if (i > 0)
+                contentH += spacing;
         }
         const double contentW = maxW + m.left() + m.right();
         const double extraX = std::max(0.0, (vp.width() - contentW) / 2.0);
         const double extraY = std::max(0.0, (vp.height() - contentH) / 2.0);
-        return QPointF(
-            extraX + m.left() + (maxW - pw) / 2.0
-                - m_view->horizontalScrollBar()->value(),
-            extraY + y - m_view->verticalScrollBar()->value());
+        return QPointF(extraX + m.left() + (maxW - pw) / 2.0 -
+                           m_view->horizontalScrollBar()->value(),
+                       extraY + y - m_view->verticalScrollBar()->value());
     };
     overlay->setDocumentToView([this, pageOriginInView](QPointF p, int page) {
-        if (!m_view) return p;
+        if (!m_view)
+            return p;
         const double z = m_view->zoomFactor();
         const QPointF origin = pageOriginInView(page);
         return QPointF(origin.x() + p.x() * z, origin.y() + p.y() * z);
     });
     overlay->setViewToDocument([this, pageOriginInView](QPointF p, int page) {
-        if (!m_view) return p;
+        if (!m_view)
+            return p;
         const double z = m_view->zoomFactor();
-        if (z <= 0.0) return p;
+        if (z <= 0.0)
+            return p;
         const QPointF origin = pageOriginInView(page);
         return QPointF((p.x() - origin.x()) / z, (p.y() - origin.y()) / z);
     });
     overlay->setPageAtViewPoint([this, pageOriginInView](QPointF viewPt) -> int {
-        if (!m_view || !m_doc) return -1;
+        if (!m_view || !m_doc)
+            return -1;
         const double z = m_view->zoomFactor();
         const int total = m_doc->pageCount();
         for (int i = 0; i < total; ++i) {
             const QPointF origin = pageOriginInView(i);
             const QSizeF pt = m_doc->pagePointSize(i);
-            const QRectF rect(origin.x(), origin.y(),
-                              pt.width() * z, pt.height() * z);
-            if (rect.contains(viewPt)) return i;
+            const QRectF rect(origin.x(), origin.y(), pt.width() * z, pt.height() * z);
+            if (rect.contains(viewPt))
+                return i;
         }
         return m_view->pageNavigator()->currentPage();
     });
-    overlay->setSourceSampler(
-        [this](QRectF docRect, QSize outPx, int page) -> QImage {
-            if (!m_doc || page < 0 || docRect.isEmpty()) return {};
-            const QSizeF pagePts = m_doc->pagePointSize(page);
-            if (pagePts.isEmpty()) return {};
-            const double sx = outPx.width() / docRect.width();
-            const double sy = outPx.height() / docRect.height();
-            const QSize fullPx(
-                std::max(1, static_cast<int>(pagePts.width() * sx)),
-                std::max(1, static_cast<int>(pagePts.height() * sy)));
-            QPdfDocumentRenderOptions opts;
-            opts.setScaledSize(fullPx);
-            opts.setScaledClipRect(QRect(
-                static_cast<int>(docRect.x() * sx),
-                static_cast<int>(docRect.y() * sy),
-                outPx.width(), outPx.height()));
-            return m_doc->render(page, outPx, opts);
-        });
+    overlay->setSourceSampler([this](QRectF docRect, QSize outPx, int page) -> QImage {
+        if (!m_doc || page < 0 || docRect.isEmpty())
+            return {};
+        const QSizeF pagePts = m_doc->pagePointSize(page);
+        if (pagePts.isEmpty())
+            return {};
+        const double sx = outPx.width() / docRect.width();
+        const double sy = outPx.height() / docRect.height();
+        const QSize fullPx(std::max(1, static_cast<int>(pagePts.width() * sx)),
+                           std::max(1, static_cast<int>(pagePts.height() * sy)));
+        QPdfDocumentRenderOptions opts;
+        opts.setScaledSize(fullPx);
+        opts.setScaledClipRect(QRect(static_cast<int>(docRect.x() * sx),
+                                     static_cast<int>(docRect.y() * sy), outPx.width(),
+                                     outPx.height()));
+        return m_doc->render(page, outPx, opts);
+    });
     overlay->setTextSelectionProvider(
-        [this](QPointF startDoc, QPointF endDoc, int page)
-            -> std::vector<QRectF> {
-            if (!m_doc || page < 0) return {};
+        [this](QPointF startDoc, QPointF endDoc, int page) -> std::vector<QRectF> {
+            if (!m_doc || page < 0)
+                return {};
             const QPdfSelection sel = m_doc->getSelection(page, startDoc, endDoc);
-            if (!sel.isValid()) return {};
+            if (!sel.isValid())
+                return {};
             std::vector<QRectF> out;
-            for (const QPolygonF& poly : sel.bounds()) {
+            for (const QPolygonF &poly : sel.bounds()) {
                 out.push_back(poly.boundingRect());
             }
             return out;
@@ -312,67 +311,71 @@ QWidget* PdfDocument::createView(QWidget* parent) {
     overlay->show();
     m_overlay = overlay;
 
-    QObject::connect(view->pageNavigator(), &QPdfPageNavigator::currentPageChanged,
-                     overlay, [overlay](int page) {
-                         if (overlay) overlay->setPage(page);
+    QObject::connect(view->pageNavigator(), &QPdfPageNavigator::currentPageChanged, overlay,
+                     [overlay](int page) {
+                         if (overlay)
+                             overlay->setPage(page);
                      });
-    QObject::connect(view->verticalScrollBar(), &QScrollBar::valueChanged,
-                     overlay, QOverload<>::of(&QWidget::update));
-    QObject::connect(view->horizontalScrollBar(), &QScrollBar::valueChanged,
-                     overlay, QOverload<>::of(&QWidget::update));
-    QObject::connect(view, &QPdfView::zoomFactorChanged,
-                     overlay, QOverload<>::of(&QWidget::update));
+    QObject::connect(view->verticalScrollBar(), &QScrollBar::valueChanged, overlay,
+                     QOverload<>::of(&QWidget::update));
+    QObject::connect(view->horizontalScrollBar(), &QScrollBar::valueChanged, overlay,
+                     QOverload<>::of(&QWidget::update));
+    QObject::connect(view, &QPdfView::zoomFactorChanged, overlay,
+                     QOverload<>::of(&QWidget::update));
     view->viewport()->installEventFilter(overlay);
 
     // --- Form overlay (Phase 5) ---
-    auto* formOverlay = new FormOverlay(view->viewport());
+    auto *formOverlay = new FormOverlay(view->viewport());
     formOverlay->setDocumentToView([this, pageOriginInView](QPointF p, int page) {
-        if (!m_view) return p;
+        if (!m_view)
+            return p;
         const double z = m_view->zoomFactor();
         const QPointF origin = pageOriginInView(page);
         return QPointF(origin.x() + p.x() * z, origin.y() + p.y() * z);
     });
     formOverlay->setPageSize([this](int page) -> QSizeF {
-        if (!m_doc || page < 0) return {};
+        if (!m_doc || page < 0)
+            return {};
         return m_doc->pagePointSize(page);
     });
     if (m_editor && m_editor->isValid()) {
         formOverlay->setFields(m_editor->readFormFields());
     }
     formOverlay->setGeometry(view->viewport()->rect());
-    formOverlay->hide();   // shown by MainWindow when form-filling is toggled on
+    formOverlay->hide(); // shown by MainWindow when form-filling is toggled on
     m_formOverlay = formOverlay;
 
     // Relayout form widgets on scroll / zoom / resize.
-    QObject::connect(view->verticalScrollBar(), &QScrollBar::valueChanged,
-                     formOverlay, &FormOverlay::relayout);
-    QObject::connect(view->horizontalScrollBar(), &QScrollBar::valueChanged,
-                     formOverlay, &FormOverlay::relayout);
-    QObject::connect(view, &QPdfView::zoomFactorChanged,
-                     formOverlay, &FormOverlay::relayout);
+    QObject::connect(view->verticalScrollBar(), &QScrollBar::valueChanged, formOverlay,
+                     &FormOverlay::relayout);
+    QObject::connect(view->horizontalScrollBar(), &QScrollBar::valueChanged, formOverlay,
+                     &FormOverlay::relayout);
+    QObject::connect(view, &QPdfView::zoomFactorChanged, formOverlay, &FormOverlay::relayout);
     // When the user edits a widget, write the value back to the editor.
-    QObject::connect(formOverlay, &FormOverlay::fieldValueChanged,
-                     view, [this](int id, const QString& value) {
-                         setFormFieldValue(id, value);
-                     });
+    QObject::connect(formOverlay, &FormOverlay::fieldValueChanged, view,
+                     [this](int id, const QString &value) { setFormFieldValue(id, value); });
 
     return view;
 }
 
 void PdfDocument::setAnnotationTool(AnnotationTool tool) {
-    if (m_overlay) m_overlay->setActiveTool(tool);
+    if (m_overlay)
+        m_overlay->setActiveTool(tool);
 }
 
-void PdfDocument::setAnnotationStyle(const AnnotationStyle& style) {
-    if (m_overlay) m_overlay->setStyle(style);
+void PdfDocument::setAnnotationStyle(const AnnotationStyle &style) {
+    if (m_overlay)
+        m_overlay->setStyle(style);
 }
 
-void PdfDocument::setPendingAnnotationText(const QString& text) {
-    if (m_overlay) m_overlay->setPendingTextPreset(text);
+void PdfDocument::setPendingAnnotationText(const QString &text) {
+    if (m_overlay)
+        m_overlay->setPendingTextPreset(text);
 }
 
-void PdfDocument::setPendingSignaturePath(const QString& path) {
-    if (m_overlay) m_overlay->setPendingSignaturePath(path);
+void PdfDocument::setPendingSignaturePath(const QString &path) {
+    if (m_overlay)
+        m_overlay->setPendingSignaturePath(path);
 }
 
 void PdfDocument::applyViewMode() {
@@ -380,13 +383,13 @@ void PdfDocument::applyViewMode() {
         return;
     }
     switch (m_viewMode) {
-        case ViewMode::SinglePage:
-            m_view->setPageMode(QPdfView::PageMode::SinglePage);
-            break;
-        case ViewMode::TwoPages:
-        case ViewMode::Continuous:
-            m_view->setPageMode(QPdfView::PageMode::MultiPage);
-            break;
+    case ViewMode::SinglePage:
+        m_view->setPageMode(QPdfView::PageMode::SinglePage);
+        break;
+    case ViewMode::TwoPages:
+    case ViewMode::Continuous:
+        m_view->setPageMode(QPdfView::PageMode::MultiPage);
+        break;
     }
 }
 
@@ -402,17 +405,19 @@ void PdfDocument::applyZoomFactor(double factor) {
     const double clamped = std::clamp(factor, kZoomMin, kZoomMax);
     m_view->setZoomMode(QPdfView::ZoomMode::Custom);
     m_view->setZoomFactor(clamped);
-    QScrollBar* hbar = m_view->horizontalScrollBar();
+    QScrollBar *hbar = m_view->horizontalScrollBar();
     hbar->setValue((hbar->minimum() + hbar->maximum()) / 2);
 }
 
 void PdfDocument::zoomIn() {
-    if (!m_view) return;
+    if (!m_view)
+        return;
     applyZoomFactor(m_view->zoomFactor() * kZoomStep);
 }
 
 void PdfDocument::zoomOut() {
-    if (!m_view) return;
+    if (!m_view)
+        return;
     applyZoomFactor(m_view->zoomFactor() / kZoomStep);
 }
 
@@ -421,12 +426,14 @@ void PdfDocument::zoomActual() {
 }
 
 void PdfDocument::zoomFitWidth() {
-    if (!m_view) return;
+    if (!m_view)
+        return;
     m_view->setZoomMode(QPdfView::ZoomMode::FitToWidth);
 }
 
 void PdfDocument::zoomFitPage() {
-    if (!m_view) return;
+    if (!m_view)
+        return;
     m_view->setZoomMode(QPdfView::ZoomMode::FitInView);
 }
 
@@ -446,7 +453,8 @@ QImage PdfDocument::renderThumbnail(int pageIndex, QSize targetSize) {
         w = static_cast<int>(h * aspect);
     }
     QImage rendered = m_doc->render(pageIndex, QSize(w, h));
-    if (rendered.isNull()) return rendered;
+    if (rendered.isNull())
+        return rendered;
     // Many PDFs draw their content (text, vector ink) with no
     // explicit page background, leaving the rendered QImage with
     // transparent regions where paper would be. In dark mode the
@@ -463,7 +471,8 @@ QImage PdfDocument::renderThumbnail(int pageIndex, QSize targetSize) {
 }
 
 int PdfDocument::currentPage() const {
-    if (!m_view) return 0;
+    if (!m_view)
+        return 0;
     return m_view->pageNavigator()->currentPage();
 }
 
@@ -474,7 +483,7 @@ void PdfDocument::goToPage(int pageIndex) {
     m_view->pageNavigator()->jump(pageIndex, QPointF{}, m_view->zoomFactor());
 }
 
-void PdfDocument::setSearchQuery(const QString& query) {
+void PdfDocument::setSearchQuery(const QString &query) {
     if (!m_valid) {
         return;
     }
@@ -492,10 +501,9 @@ void PdfDocument::setSearchQuery(const QString& query) {
         // Using the search model as the context so the lambda is
         // torn down automatically with it. PdfDocument itself isn't a
         // QObject so we can't bind to a member slot directly.
-        QObject::connect(
-            m_searchModel.get(), &QAbstractItemModel::rowsInserted,
-            m_searchModel.get(),
-            [this](const QModelIndex&, int, int) { onSearchResultsPopulated(); });
+        QObject::connect(m_searchModel.get(), &QAbstractItemModel::rowsInserted,
+                         m_searchModel.get(),
+                         [this](const QModelIndex &, int, int) { onSearchResultsPopulated(); });
     }
     m_searchModel->setSearchString(query);
     m_currentResult = query.isEmpty() ? -1 : 0;
@@ -519,9 +527,12 @@ void PdfDocument::setSearchQuery(const QString& query) {
 }
 
 void PdfDocument::onSearchResultsPopulated() {
-    if (!m_view || !m_searchModel) return;
-    if (m_currentResult < 0) return;
-    if (m_searchModel->rowCount({}) <= 0) return;
+    if (!m_view || !m_searchModel)
+        return;
+    if (m_currentResult < 0)
+        return;
+    if (m_searchModel->rowCount({}) <= 0)
+        return;
     // Don't stomp on user navigation: if findNext/findPrevious bumped
     // the index while the search was still populating, leave it alone.
     if (m_view->currentSearchResultIndex() >= 0) {
@@ -532,8 +543,9 @@ void PdfDocument::onSearchResultsPopulated() {
     refreshSearchHighlights();
 }
 
-QAbstractItemModel* PdfDocument::outlineModel() {
-    if (!m_valid || !m_doc) return nullptr;
+QAbstractItemModel *PdfDocument::outlineModel() {
+    if (!m_valid || !m_doc)
+        return nullptr;
     if (!m_bookmarkModel) {
         m_bookmarkModel = std::make_unique<QPdfBookmarkModel>();
         m_bookmarkModel->setDocument(m_doc.get());
@@ -546,7 +558,8 @@ QAbstractItemModel* PdfDocument::outlineModel() {
 }
 
 bool PdfDocument::hasOutline() const {
-    if (!m_valid || !m_doc) return false;
+    if (!m_valid || !m_doc)
+        return false;
     // Construct the model lazily on the pre-check too so MainWindow
     // can drive the Sidebar picker's enabled-state without forcing a
     // separate tree walk.
@@ -557,33 +570,37 @@ bool PdfDocument::hasOutline() const {
     return m_bookmarkModel->rowCount({}) > 0;
 }
 
-void PdfDocument::goToOutlineEntry(const QModelIndex& index) {
-    if (!m_valid || !m_view || !index.isValid()) return;
-    if (!m_bookmarkModel) return;
+void PdfDocument::goToOutlineEntry(const QModelIndex &index) {
+    if (!m_valid || !m_view || !index.isValid())
+        return;
+    if (!m_bookmarkModel)
+        return;
     // The index may be either a proxy index (from the Sidebar's
     // QTreeView attached to outlineModel() ) or a source index. Read
     // the page role through the index itself — QIdentityProxyModel
     // passes non-DisplayRole queries straight through, so either
     // works.
-    const QVariant pageVar = index.data(
-        static_cast<int>(QPdfBookmarkModel::Role::Page));
+    const QVariant pageVar = index.data(static_cast<int>(QPdfBookmarkModel::Role::Page));
     bool ok = false;
     const int page = pageVar.toInt(&ok);
-    if (!ok || page < 0 || page >= pageCount()) return;
+    if (!ok || page < 0 || page >= pageCount())
+        return;
     goToPage(page);
 }
 
 void PdfDocument::refreshSearchHighlights() {
-    if (!m_overlay) return;
+    if (!m_overlay)
+        return;
     std::vector<AnnotationOverlay::SearchHighlight> highlights;
     if (m_searchModel) {
         const int n = m_searchModel->rowCount({});
         for (int i = 0; i < n; ++i) {
             const QPdfLink link = m_searchModel->resultAtIndex(i);
-            if (!link.isValid()) continue;
+            if (!link.isValid())
+                continue;
             const int page = link.page();
             const bool isCurrent = (i == m_currentResult);
-            for (const QRectF& r : link.rectangles()) {
+            for (const QRectF &r : link.rectangles()) {
                 highlights.push_back({page, r, isCurrent});
             }
         }
@@ -592,18 +609,22 @@ void PdfDocument::refreshSearchHighlights() {
 }
 
 void PdfDocument::findNext() {
-    if (!m_view || !m_searchModel) return;
+    if (!m_view || !m_searchModel)
+        return;
     const int count = m_searchModel->rowCount({});
-    if (count <= 0) return;
+    if (count <= 0)
+        return;
     m_currentResult = (m_currentResult + 1) % count;
     m_view->setCurrentSearchResultIndex(m_currentResult);
     refreshSearchHighlights();
 }
 
 void PdfDocument::findPrevious() {
-    if (!m_view || !m_searchModel) return;
+    if (!m_view || !m_searchModel)
+        return;
     const int count = m_searchModel->rowCount({});
-    if (count <= 0) return;
+    if (count <= 0)
+        return;
     m_currentResult = (m_currentResult - 1 + count) % count;
     m_view->setCurrentSearchResultIndex(m_currentResult);
     refreshSearchHighlights();
@@ -621,21 +642,26 @@ void PdfDocument::clearSearch() {
 }
 
 int PdfDocument::searchMatchCount() const {
-    if (!m_searchModel) return 0;
+    if (!m_searchModel)
+        return 0;
     return m_searchModel->rowCount({});
 }
 
 int PdfDocument::currentSearchMatchIndex() const {
-    if (!m_searchModel) return -1;
-    if (m_currentResult < 0) return -1;
-    if (m_currentResult >= m_searchModel->rowCount({})) return -1;
+    if (!m_searchModel)
+        return -1;
+    if (m_currentResult < 0)
+        return -1;
+    if (m_currentResult >= m_searchModel->rowCount({}))
+        return -1;
     // 1-based for display; the convention every "X of Y" UI uses.
     return m_currentResult + 1;
 }
 
 std::vector<int> PdfDocument::pagesWithSearchMatches() const {
     std::vector<int> out;
-    if (!m_searchModel) return out;
+    if (!m_searchModel)
+        return out;
     const int total = m_searchModel->rowCount({});
     for (int i = 0; i < total; ++i) {
         // QPdfSearchModel exposes the page index via the
@@ -643,8 +669,7 @@ std::vector<int> PdfDocument::pagesWithSearchMatches() const {
         // remembering the last page seen — search results come
         // back ordered by page so we don't need a set.
         const QModelIndex idx = m_searchModel->index(i, 0);
-        const int page =
-            idx.data(static_cast<int>(QPdfSearchModel::Role::Page)).toInt();
+        const int page = idx.data(static_cast<int>(QPdfSearchModel::Role::Page)).toInt();
         if (out.empty() || out.back() != page) {
             out.push_back(page);
         }
@@ -652,7 +677,7 @@ std::vector<int> PdfDocument::pagesWithSearchMatches() const {
     return out;
 }
 
-void PdfDocument::print(QWidget* dialogParent) {
+void PdfDocument::print(QWidget *dialogParent) {
     if (!m_valid) {
         return;
     }
@@ -679,7 +704,8 @@ void PdfDocument::print(QWidget* dialogParent) {
     const QRect target = printer.pageLayout().paintRectPixels(printer.resolution());
     for (int page = first; page <= last; ++page) {
         const QSizeF pagePts = m_doc->pagePointSize(page);
-        if (pagePts.isEmpty()) continue;
+        if (pagePts.isEmpty())
+            continue;
 
         const double aspect = pagePts.width() / pagePts.height();
         int w = target.width();
@@ -704,8 +730,8 @@ bool PdfDocument::reloadViewerFromEditor() {
     if (!m_editor || !m_editor->isValid()) {
         return false;
     }
-    auto preview = std::make_unique<QTemporaryFile>(
-        QDir::tempPath() + QStringLiteral("/trailer-preview-XXXXXX.pdf"));
+    auto preview = std::make_unique<QTemporaryFile>(QDir::tempPath() +
+                                                    QStringLiteral("/trailer-preview-XXXXXX.pdf"));
     preview->setAutoRemove(true);
     if (!preview->open()) {
         return false;
@@ -747,7 +773,8 @@ void PdfDocument::rotatePage(int pageIndex, int degreesClockwise) {
         return;
     }
     auto cmd = std::make_unique<RotatePageCommand>(pageIndex, degreesClockwise);
-    if (!cmd->apply(*m_editor)) return;
+    if (!cmd->apply(*m_editor))
+        return;
     m_pdfUndoStack.push_back(std::move(cmd));
     m_pdfRedoStack.clear();
     m_lastUndoSource = UndoSource::PdfCommand;
@@ -771,25 +798,24 @@ void PdfDocument::undo() {
     // logs (TODO: PdfCommand + AnnotationStore should share one
     // chronological list so multi-action undo always pops the
     // most recent thing the user did).
-    if (m_lastUndoSource == UndoSource::PdfCommand &&
-        !m_pdfUndoStack.empty()) {
+    if (m_lastUndoSource == UndoSource::PdfCommand && !m_pdfUndoStack.empty()) {
         auto cmd = std::move(m_pdfUndoStack.back());
         m_pdfUndoStack.pop_back();
         cmd->revert(*m_editor);
         m_pdfRedoStack.push_back(std::move(cmd));
         reloadViewerFromEditor();
-        m_lastUndoSource = m_pdfUndoStack.empty()
-            ? (m_annotations.canUndo() ? UndoSource::Annotation
-                                       : UndoSource::None)
-            : UndoSource::PdfCommand;
+        m_lastUndoSource =
+            m_pdfUndoStack.empty()
+                ? (m_annotations.canUndo() ? UndoSource::Annotation : UndoSource::None)
+                : UndoSource::PdfCommand;
         return;
     }
     if (m_annotations.canUndo()) {
         m_annotations.undo();
-        m_lastUndoSource = m_annotations.canUndo()
-            ? UndoSource::Annotation
-            : (m_pdfUndoStack.empty() ? UndoSource::None
-                                      : UndoSource::PdfCommand);
+        m_lastUndoSource =
+            m_annotations.canUndo()
+                ? UndoSource::Annotation
+                : (m_pdfUndoStack.empty() ? UndoSource::None : UndoSource::PdfCommand);
         return;
     }
     if (!m_pdfUndoStack.empty()) {
@@ -800,8 +826,7 @@ void PdfDocument::undo() {
         cmd->revert(*m_editor);
         m_pdfRedoStack.push_back(std::move(cmd));
         reloadViewerFromEditor();
-        m_lastUndoSource = m_pdfUndoStack.empty()
-            ? UndoSource::None : UndoSource::PdfCommand;
+        m_lastUndoSource = m_pdfUndoStack.empty() ? UndoSource::None : UndoSource::PdfCommand;
     }
 }
 
@@ -810,8 +835,7 @@ void PdfDocument::redo() {
     // recent redo distinctly; if the user is redoing they almost
     // always want the inverse of their most recent undo, and the
     // last-source heuristic from undo() is the closest signal.
-    if (m_lastUndoSource == UndoSource::PdfCommand &&
-        !m_pdfRedoStack.empty()) {
+    if (m_lastUndoSource == UndoSource::PdfCommand && !m_pdfRedoStack.empty()) {
         auto cmd = std::move(m_pdfRedoStack.back());
         m_pdfRedoStack.pop_back();
         cmd->apply(*m_editor);
@@ -835,13 +859,13 @@ void PdfDocument::redo() {
     }
 }
 
-void PdfDocument::deletePages(const std::vector<int>& pageIndices) {
+void PdfDocument::deletePages(const std::vector<int> &pageIndices) {
     if (!m_valid || !m_editor || !m_editor->isValid() || pageIndices.empty()) {
         return;
     }
     const int before = m_editor->pageCount();
     if (static_cast<int>(pageIndices.size()) >= before) {
-        return;  // refuse to delete every page
+        return; // refuse to delete every page
     }
     m_editor->deletePages(pageIndices);
     if (reloadViewerFromEditor()) {
@@ -849,15 +873,16 @@ void PdfDocument::deletePages(const std::vector<int>& pageIndices) {
     }
 }
 
-bool PdfDocument::extractPages(const std::vector<int>& pageIndices,
-                               const QString& destPath) const {
-    if (!m_valid || !m_editor || !m_editor->isValid()) return false;
+bool PdfDocument::extractPages(const std::vector<int> &pageIndices, const QString &destPath) const {
+    if (!m_valid || !m_editor || !m_editor->isValid())
+        return false;
     return m_editor->extractPages(pageIndices, destPath);
 }
 
-bool PdfDocument::cropPage(int pageIndex, double leftPts, double topPts,
-                           double rightPts, double bottomPts) {
-    if (!m_valid || !m_editor || !m_editor->isValid()) return false;
+bool PdfDocument::cropPage(int pageIndex, double leftPts, double topPts, double rightPts,
+                           double bottomPts) {
+    if (!m_valid || !m_editor || !m_editor->isValid())
+        return false;
     if (!m_editor->cropPage(pageIndex, leftPts, topPts, rightPts, bottomPts)) {
         return false;
     }
@@ -868,8 +893,7 @@ bool PdfDocument::cropPage(int pageIndex, double leftPts, double topPts,
     return false;
 }
 
-bool PdfDocument::cropPages(const std::vector<int>& pageIndices,
-                            double leftPts, double topPts,
+bool PdfDocument::cropPages(const std::vector<int> &pageIndices, double leftPts, double topPts,
                             double rightPts, double bottomPts) {
     if (!m_valid || !m_editor || !m_editor->isValid() || pageIndices.empty()) {
         return false;
@@ -880,7 +904,8 @@ bool PdfDocument::cropPages(const std::vector<int>& pageIndices,
             any = true;
         }
     }
-    if (!any) return false;
+    if (!any)
+        return false;
     if (reloadViewerFromEditor()) {
         m_dirty = true;
         return true;
@@ -888,7 +913,7 @@ bool PdfDocument::cropPages(const std::vector<int>& pageIndices,
     return false;
 }
 
-bool PdfDocument::insertPagesFrom(const QString& sourcePath, int insertAtIndex) {
+bool PdfDocument::insertPagesFrom(const QString &sourcePath, int insertAtIndex) {
     if (!m_valid || !m_editor || !m_editor->isValid()) {
         return false;
     }
@@ -916,14 +941,14 @@ void PdfDocument::movePage(int from, int to) {
     }
 }
 
-bool PdfDocument::save(const QString& newPath) {
+bool PdfDocument::save(const QString &newPath) {
     auto ctx = saveBeginQpdfPhase(newPath);
-    if (!ctx) return false;
+    if (!ctx)
+        return false;
     return saveCommitOnUi(*ctx);
 }
 
-std::optional<PdfDocument::SaveContext>
-PdfDocument::saveBeginQpdfPhase(const QString& newPath) {
+std::optional<PdfDocument::SaveContext> PdfDocument::saveBeginQpdfPhase(const QString &newPath) {
     if (!m_valid || !m_editor || !m_editor->isValid()) {
         return std::nullopt;
     }
@@ -949,16 +974,15 @@ PdfDocument::saveBeginQpdfPhase(const QString& newPath) {
 
     SaveContext ctx;
     ctx.targetPath = targetPath;
-    ctx.sameFile = !m_path.isEmpty() &&
-        QFileInfo(targetPath).canonicalFilePath()
-            == QFileInfo(m_path).canonicalFilePath();
+    ctx.sameFile = !m_path.isEmpty() && QFileInfo(targetPath).canonicalFilePath() ==
+                                            QFileInfo(m_path).canonicalFilePath();
 
     if (ctx.sameFile) {
         // Stage to a temp file so a partial write doesn't clobber the
         // original. The UI-phase rename is atomic.
-        auto temp = std::make_unique<QTemporaryFile>(
-            QDir::tempPath() + QStringLiteral("/trailer-save-XXXXXX.pdf"));
-        temp->setAutoRemove(false);  // we hand the file to the UI phase
+        auto temp = std::make_unique<QTemporaryFile>(QDir::tempPath() +
+                                                     QStringLiteral("/trailer-save-XXXXXX.pdf"));
+        temp->setAutoRemove(false); // we hand the file to the UI phase
         if (!temp->open()) {
             return std::nullopt;
         }
@@ -977,7 +1001,7 @@ PdfDocument::saveBeginQpdfPhase(const QString& newPath) {
     return ctx;
 }
 
-bool PdfDocument::saveCommitOnUi(const SaveContext& ctx) {
+bool PdfDocument::saveCommitOnUi(const SaveContext &ctx) {
     if (ctx.sameFile) {
         // Tear down our QPdfDocument's open handle so we can rename
         // over the file on Windows (Linux/macOS don't strictly need
@@ -1020,7 +1044,7 @@ bool PdfDocument::saveCommitOnUi(const SaveContext& ctx) {
     }
     m_dirty = false;
     m_annotations.clear();
-    for (Annotation& a : m_editor->readAnnotations()) {
+    for (Annotation &a : m_editor->readAnnotations()) {
         m_annotations.add(std::move(a));
     }
     m_annotations.clearHistory();
@@ -1029,14 +1053,17 @@ bool PdfDocument::saveCommitOnUi(const SaveContext& ctx) {
 }
 
 std::vector<FormField> PdfDocument::formFields() const {
-    if (!m_valid || !m_editor || !m_editor->isValid()) return {};
+    if (!m_valid || !m_editor || !m_editor->isValid())
+        return {};
     return m_editor->readFormFields();
 }
 
-bool PdfDocument::setFormFieldValue(int id, const QString& value) {
-    if (!m_valid || !m_editor || !m_editor->isValid()) return false;
+bool PdfDocument::setFormFieldValue(int id, const QString &value) {
+    if (!m_valid || !m_editor || !m_editor->isValid())
+        return false;
     const bool ok = m_editor->setFormFieldValue(id, value);
-    if (ok) m_dirty = true;
+    if (ok)
+        m_dirty = true;
     return ok;
 }
 
@@ -1048,8 +1075,7 @@ void PdfDocument::setFormFillingActive(bool active) {
             if (m_editor && m_editor->isValid()) {
                 m_formOverlay->setFields(m_editor->readFormFields());
             }
-            m_formOverlay->setGeometry(
-                m_view ? m_view->viewport()->rect() : QRect{});
+            m_formOverlay->setGeometry(m_view ? m_view->viewport()->rect() : QRect{});
             m_formOverlay->show();
         } else {
             m_formOverlay->hide();
@@ -1063,36 +1089,46 @@ void PdfDocument::refreshFormView() {
     // sees the new values immediately. Does not change the overlay's
     // visibility — if form-filling is off the refresh is a no-op until
     // the user toggles it on.
-    if (!m_formOverlay || !m_editor || !m_editor->isValid()) return;
+    if (!m_formOverlay || !m_editor || !m_editor->isValid())
+        return;
     m_formOverlay->setFields(m_editor->readFormFields());
 }
 
-bool PdfDocument::exportWithPassword(const QString& destPath,
-                                     const QString& password) {
-    if (!m_valid || !m_editor || !m_editor->isValid()) return false;
-    if (destPath.isEmpty()) return false;
+bool PdfDocument::exportWithPassword(const QString &destPath, const QString &password) {
+    if (!m_valid || !m_editor || !m_editor->isValid())
+        return false;
+    if (destPath.isEmpty())
+        return false;
     // Write annotations into the editor's QPDF graph (same as save),
     // then serialize to `destPath` with AES-256 encryption. We write to
     // a separate destination only — never overwrite the source file —
     // so the in-memory state remains unencrypted and further edits keep
     // working normally.
-    if (!m_editor->applyRedactions(m_annotations.annotations())) return false;
-    if (!m_editor->flattenSignatures(m_annotations.annotations())) return false;
-    if (!m_editor->writeAnnotations(m_annotations.annotations())) return false;
+    if (!m_editor->applyRedactions(m_annotations.annotations()))
+        return false;
+    if (!m_editor->flattenSignatures(m_annotations.annotations()))
+        return false;
+    if (!m_editor->writeAnnotations(m_annotations.annotations()))
+        return false;
     EncryptionOptions enc;
     enc.userPassword = password;
     return m_editor->save(destPath, enc);
 }
 
-bool PdfDocument::reduceFileSize(const QString& destPath) {
-    if (!m_valid || !m_editor || !m_editor->isValid()) return false;
-    if (destPath.isEmpty()) return false;
+bool PdfDocument::reduceFileSize(const QString &destPath) {
+    if (!m_valid || !m_editor || !m_editor->isValid())
+        return false;
+    if (destPath.isEmpty())
+        return false;
     // Flush pending annotations first so the reduced output reflects
     // everything the user sees on screen. Linearization + object-
     // stream regeneration then re-packs the document.
-    if (!m_editor->applyRedactions(m_annotations.annotations())) return false;
-    if (!m_editor->flattenSignatures(m_annotations.annotations())) return false;
-    if (!m_editor->writeAnnotations(m_annotations.annotations())) return false;
+    if (!m_editor->applyRedactions(m_annotations.annotations()))
+        return false;
+    if (!m_editor->flattenSignatures(m_annotations.annotations()))
+        return false;
+    if (!m_editor->writeAnnotations(m_annotations.annotations()))
+        return false;
     return m_editor->saveReduced(destPath);
 }
 
@@ -1110,30 +1146,31 @@ namespace {
 // the password echo hidden. Returns nullopt if the user cancels or if
 // there's no window to parent to (e.g. offscreen UAT without an
 // installed test shim — we refuse to spin a dialog into the void).
-std::optional<QString> defaultPasswordPrompt(const QString& path, int attempt) {
-    QWidget* parent = QApplication::activeWindow();
-    if (!parent) return std::nullopt;
+std::optional<QString> defaultPasswordPrompt(const QString &path, int attempt) {
+    QWidget *parent = QApplication::activeWindow();
+    if (!parent)
+        return std::nullopt;
     const int maxAttempts = 3;
-    const QString title = attempt == 0
-        ? QObject::tr("Password required")
-        : QObject::tr("Password required (%1 attempts left)")
-              .arg(maxAttempts - attempt);
-    const QString prompt = QObject::tr(
-        "“%1” is password-protected. Enter the password to open it.")
-        .arg(QFileInfo(path).fileName());
+    const QString title =
+        attempt == 0
+            ? QObject::tr("Password required")
+            : QObject::tr("Password required (%1 attempts left)").arg(maxAttempts - attempt);
+    const QString prompt = QObject::tr("“%1” is password-protected. Enter the password to open it.")
+                               .arg(QFileInfo(path).fileName());
     bool ok = false;
-    const QString pw = QInputDialog::getText(
-        parent, title, prompt, QLineEdit::Password, QString(), &ok);
-    if (!ok) return std::nullopt;
+    const QString pw =
+        QInputDialog::getText(parent, title, prompt, QLineEdit::Password, QString(), &ok);
+    if (!ok)
+        return std::nullopt;
     return pw;
 }
 
-PdfAdapter::PasswordPrompt& activePasswordPrompt() {
+PdfAdapter::PasswordPrompt &activePasswordPrompt() {
     static PdfAdapter::PasswordPrompt prompt = defaultPasswordPrompt;
     return prompt;
 }
 
-}  // namespace
+} // namespace
 
 void PdfAdapter::setPasswordPrompt(PasswordPrompt prompt) {
     activePasswordPrompt() = prompt ? std::move(prompt) : defaultPasswordPrompt;
@@ -1143,7 +1180,7 @@ PdfAdapter::PasswordPrompt PdfAdapter::passwordPrompt() {
     return activePasswordPrompt();
 }
 
-std::unique_ptr<IDocument> PdfAdapter::open(const QString& path) {
+std::unique_ptr<IDocument> PdfAdapter::open(const QString &path) {
     auto doc = std::make_unique<PdfDocument>(path);
 
     // Password-gated PDF: prompt up to three times. Each iteration
@@ -1151,13 +1188,14 @@ std::unique_ptr<IDocument> PdfAdapter::open(const QString& path) {
     // response ends the loop and leaves the document in its locked
     // state (createView falls back to a "Could not open" label).
     const int maxAttempts = 3;
-    auto& prompt = activePasswordPrompt();
+    auto &prompt = activePasswordPrompt();
     for (int attempt = 0; attempt < maxAttempts && doc->needsPassword(); ++attempt) {
         std::optional<QString> pw = prompt(path, attempt);
-        if (!pw) break;
+        if (!pw)
+            break;
         doc->unlock(*pw);
     }
     return doc;
 }
 
-}  // namespace trailer
+} // namespace trailer

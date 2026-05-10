@@ -23,14 +23,14 @@ struct MyCard {
     QString email;
     QString phone;
 
-    QString organization;   // Company / employer / school
+    QString organization; // Company / employer / school
     QString jobTitle;
 
-    QString addressLine1;   // Street and number (or "Line 1")
-    QString addressLine2;   // Apt / suite / PO box
+    QString addressLine1; // Street and number (or "Line 1")
+    QString addressLine2; // Apt / suite / PO box
     QString city;
-    QString state;          // State / province / region
-    QString postalCode;     // ZIP / postcode
+    QString state;      // State / province / region
+    QString postalCode; // ZIP / postcode
     QString country;
 
     // Full name, synthesised from fullName or given+family. Never
@@ -43,15 +43,18 @@ struct MyCard {
 // autofill value from `card` — or an empty string if there's no
 // confident mapping. The matcher is case-insensitive and tolerates
 // underscores / hyphens / spaces between words.
-QString autoFillValueFor(const QString& fieldName, const MyCard& card);
+QString autoFillValueFor(const QString &fieldName, const MyCard &card);
 
-class IDocument;  // fwd
+class IDocument; // fwd
 // Apply `card` to every text field in `doc` whose name the matcher
 // recognises. Returns {filled, examined} so callers can surface a
 // "filled N of M" message. Skips non-text fields and fields whose
 // name has no match. Returns {0, 0} if `doc` is null or doesn't
 // support form filling — never crashes.
-struct AutoFillResult { int filled = 0; int examined = 0; };
-AutoFillResult autoFillDocument(IDocument* doc, const MyCard& card);
+struct AutoFillResult {
+    int filled = 0;
+    int examined = 0;
+};
+AutoFillResult autoFillDocument(IDocument *doc, const MyCard &card);
 
-}  // namespace trailer
+} // namespace trailer

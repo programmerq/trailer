@@ -13,7 +13,7 @@ using namespace trailer;
 
 class TestSignatures : public QObject {
     Q_OBJECT
-private slots:
+  private slots:
     void loadAllOnMissingDirectoryReturnsEmpty();
     void addWritesPngAndJsonSidecar();
     void loadAllReturnsNewestFirst();
@@ -29,7 +29,7 @@ QImage solidImage() {
     return img;
 }
 
-}  // namespace
+} // namespace
 
 void TestSignatures::loadAllOnMissingDirectoryReturnsEmpty() {
     QTemporaryDir dir;
@@ -44,14 +44,13 @@ void TestSignatures::addWritesPngAndJsonSidecar() {
     QVERIFY(dir.isValid());
     SignatureStore s(dir.path());
 
-    const Signature added = s.add(solidImage(), QStringLiteral("Work"),
-                                  QStringLiteral("handwritten"));
+    const Signature added =
+        s.add(solidImage(), QStringLiteral("Work"), QStringLiteral("handwritten"));
     QVERIFY(!added.id.isEmpty());
     QVERIFY(!added.pngPath.isEmpty());
     QVERIFY(QFile::exists(added.pngPath));
 
-    const QString jsonPath =
-        added.pngPath.chopped(4) + QStringLiteral(".json");
+    const QString jsonPath = added.pngPath.chopped(4) + QStringLiteral(".json");
     QVERIFY(QFile::exists(jsonPath));
 
     const auto all = s.loadAll();
@@ -90,8 +89,7 @@ void TestSignatures::removeDeletesBothFiles() {
 
     QVERIFY(s.remove(added.id));
     QVERIFY(!QFile::exists(added.pngPath));
-    const QString jsonPath =
-        added.pngPath.chopped(4) + QStringLiteral(".json");
+    const QString jsonPath = added.pngPath.chopped(4) + QStringLiteral(".json");
     QVERIFY(!QFile::exists(jsonPath));
 
     QVERIFY(s.loadAll().empty());
@@ -104,8 +102,7 @@ void TestSignatures::loadAllSynthesizesMetadataForOrphanPng() {
     // loadAll should still pick it up and use the filename as label.
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    const QString pngPath =
-        dir.filePath(QStringLiteral("sig_manual.png"));
+    const QString pngPath = dir.filePath(QStringLiteral("sig_manual.png"));
     QVERIFY(solidImage().save(pngPath, "PNG"));
 
     SignatureStore s(dir.path());
