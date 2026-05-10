@@ -287,19 +287,23 @@ QPDFObjectHandle buildSquareAppearance(QPDF &pdf, const Annotation &a, double px
     const double rh = (py2 - py1) - sw;
 
     char buf[512];
-    int n = 0;
-    n += std::snprintf(buf + n, sizeof(buf) - n, "q\n");
-    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f RG\n", stroke.redF(),
-                       stroke.greenF(), stroke.blueF());
-    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f w\n", sw);
+    size_t n = 0;
+    n += static_cast<size_t>(std::snprintf(buf + n, sizeof(buf) - n, "q\n"));
+    n += static_cast<size_t>(std::snprintf(
+        buf + n, sizeof(buf) - n, "%.3f %.3f %.3f RG\n", static_cast<double>(stroke.redF()),
+        static_cast<double>(stroke.greenF()), static_cast<double>(stroke.blueF())));
+    n += static_cast<size_t>(std::snprintf(buf + n, sizeof(buf) - n, "%.3f w\n", sw));
     if (fill.isValid() && fill.alpha() > 0) {
-        n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f rg\n", fill.redF(),
-                           fill.greenF(), fill.blueF());
-        n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f %.3f re B\n", rx, ry, rw, rh);
+        n += static_cast<size_t>(std::snprintf(
+            buf + n, sizeof(buf) - n, "%.3f %.3f %.3f rg\n", static_cast<double>(fill.redF()),
+            static_cast<double>(fill.greenF()), static_cast<double>(fill.blueF())));
+        n += static_cast<size_t>(
+            std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f %.3f re B\n", rx, ry, rw, rh));
     } else {
-        n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f %.3f re S\n", rx, ry, rw, rh);
+        n += static_cast<size_t>(
+            std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f %.3f re S\n", rx, ry, rw, rh));
     }
-    n += std::snprintf(buf + n, sizeof(buf) - n, "Q\n");
+    n += static_cast<size_t>(std::snprintf(buf + n, sizeof(buf) - n, "Q\n"));
 
     auto dict = QPDFObjectHandle::newDictionary();
     dict.replaceKey("/Type", QPDFObjectHandle::newName("/XObject"));
@@ -331,7 +335,7 @@ QPDFObjectHandle wrapAppearance(QPDFObjectHandle xobj) {
 namespace ap {
 
 // Build the boilerplate Form XObject dict around a content stream.
-QPDFObjectHandle finishStream(QPDF &pdf, const char *buf, int len, double px1, double py1,
+QPDFObjectHandle finishStream(QPDF &pdf, const char *buf, size_t len, double px1, double py1,
                               double px2, double py2) {
     auto dict = QPDFObjectHandle::newDictionary();
     dict.replaceKey("/Type", QPDFObjectHandle::newName("/XObject"));
@@ -374,27 +378,33 @@ QPDFObjectHandle buildCircleAppearance(QPDF &pdf, const Annotation &a, double px
     const double oy = ry * kKappa;
 
     char buf[1024];
-    int n = 0;
-    n += std::snprintf(buf + n, sizeof(buf) - n, "q\n");
-    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f RG\n", stroke.redF(),
-                       stroke.greenF(), stroke.blueF());
-    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f w\n", sw);
+    size_t n = 0;
+    n += static_cast<size_t>(std::snprintf(buf + n, sizeof(buf) - n, "q\n"));
+    n += static_cast<size_t>(std::snprintf(
+        buf + n, sizeof(buf) - n, "%.3f %.3f %.3f RG\n", static_cast<double>(stroke.redF()),
+        static_cast<double>(stroke.greenF()), static_cast<double>(stroke.blueF())));
+    n += static_cast<size_t>(std::snprintf(buf + n, sizeof(buf) - n, "%.3f w\n", sw));
     if (fill.isValid() && fill.alpha() > 0) {
-        n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f rg\n", fill.redF(),
-                           fill.greenF(), fill.blueF());
+        n += static_cast<size_t>(std::snprintf(
+            buf + n, sizeof(buf) - n, "%.3f %.3f %.3f rg\n", static_cast<double>(fill.redF()),
+            static_cast<double>(fill.greenF()), static_cast<double>(fill.blueF())));
     }
     // Start at the right of the ellipse, run counter-clockwise.
-    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f m\n", cx + rx, cy);
-    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f %.3f %.3f %.3f c\n", cx + rx,
-                       cy + oy, cx + ox, cy + ry, cx, cy + ry);
-    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f %.3f %.3f %.3f c\n", cx - ox,
-                       cy + ry, cx - rx, cy + oy, cx - rx, cy);
-    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f %.3f %.3f %.3f c\n", cx - rx,
-                       cy - oy, cx - ox, cy - ry, cx, cy - ry);
-    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f %.3f %.3f %.3f c\n", cx + ox,
-                       cy - ry, cx + rx, cy - oy, cx + rx, cy);
-    n += std::snprintf(buf + n, sizeof(buf) - n, "h %s\nQ\n",
-                       (fill.isValid() && fill.alpha() > 0) ? "B" : "S");
+    n += static_cast<size_t>(std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f m\n", cx + rx, cy));
+    n += static_cast<size_t>(std::snprintf(buf + n, sizeof(buf) - n,
+                                           "%.3f %.3f %.3f %.3f %.3f %.3f c\n", cx + rx, cy + oy,
+                                           cx + ox, cy + ry, cx, cy + ry));
+    n += static_cast<size_t>(std::snprintf(buf + n, sizeof(buf) - n,
+                                           "%.3f %.3f %.3f %.3f %.3f %.3f c\n", cx - ox, cy + ry,
+                                           cx - rx, cy + oy, cx - rx, cy));
+    n += static_cast<size_t>(std::snprintf(buf + n, sizeof(buf) - n,
+                                           "%.3f %.3f %.3f %.3f %.3f %.3f c\n", cx - rx, cy - oy,
+                                           cx - ox, cy - ry, cx, cy - ry));
+    n += static_cast<size_t>(std::snprintf(buf + n, sizeof(buf) - n,
+                                           "%.3f %.3f %.3f %.3f %.3f %.3f c\n", cx + ox, cy - ry,
+                                           cx + rx, cy - oy, cx + rx, cy));
+    n += static_cast<size_t>(std::snprintf(buf + n, sizeof(buf) - n, "h %s\nQ\n",
+                                           (fill.isValid() && fill.alpha() > 0) ? "B" : "S"));
     return ap::finishStream(pdf, buf, n, px1, py1, px2, py2);
 }
 
@@ -407,12 +417,14 @@ QPDFObjectHandle buildLineAppearance(QPDF &pdf, const Annotation &a, bool arrow,
     const double sw = a.style.strokeWidth > 0.0 ? a.style.strokeWidth : 1.0;
 
     char buf[1024];
-    int n = 0;
-    n += std::snprintf(buf + n, sizeof(buf) - n, "q\n");
-    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f %.3f RG\n", stroke.redF(),
-                       stroke.greenF(), stroke.blueF());
-    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f w\n", sw);
-    n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f m %.3f %.3f l S\n", lx1, ly1, lx2, ly2);
+    size_t n = 0;
+    n += static_cast<size_t>(std::snprintf(buf + n, sizeof(buf) - n, "q\n"));
+    n += static_cast<size_t>(std::snprintf(
+        buf + n, sizeof(buf) - n, "%.3f %.3f %.3f RG\n", static_cast<double>(stroke.redF()),
+        static_cast<double>(stroke.greenF()), static_cast<double>(stroke.blueF())));
+    n += static_cast<size_t>(std::snprintf(buf + n, sizeof(buf) - n, "%.3f w\n", sw));
+    n += static_cast<size_t>(
+        std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f m %.3f %.3f l S\n", lx1, ly1, lx2, ly2));
     if (arrow) {
         // Arrowhead: two short segments back from the terminal point
         // at ±25° from the line direction. Length scales with stroke
@@ -434,11 +446,12 @@ QPDFObjectHandle buildLineAppearance(QPDF &pdf, const Annotation &a, bool arrow,
             const double ryv = -uy * kCos + ux * kSin;
             const double rhx = lx2 + rxv * headLen;
             const double rhy = ly2 + ryv * headLen;
-            n += std::snprintf(buf + n, sizeof(buf) - n, "%.3f %.3f m %.3f %.3f l %.3f %.3f l S\n",
-                               lhx, lhy, lx2, ly2, rhx, rhy);
+            n += static_cast<size_t>(std::snprintf(buf + n, sizeof(buf) - n,
+                                                   "%.3f %.3f m %.3f %.3f l %.3f %.3f l S\n", lhx,
+                                                   lhy, lx2, ly2, rhx, rhy));
         }
     }
-    n += std::snprintf(buf + n, sizeof(buf) - n, "Q\n");
+    n += static_cast<size_t>(std::snprintf(buf + n, sizeof(buf) - n, "Q\n"));
 
     // BBox sized to enclose both endpoints with a stroke-width pad.
     const double pad = std::max(sw * 4.0, 12.0);
@@ -466,32 +479,34 @@ QPDFObjectHandle buildInkAppearance(QPDF &pdf, const Annotation &a,
     const bool withPressure = !a.pressures.empty() && a.pressures.size() == flippedPts.size();
 
     constexpr int kBufSize = 32 * 1024;
+    const size_t cap = static_cast<size_t>(kBufSize);
     auto *buf = new char[kBufSize];
-    int n = 0;
-    n += std::snprintf(buf + n, kBufSize - n, "q\n");
-    n += std::snprintf(buf + n, kBufSize - n, "%.3f %.3f %.3f RG\n", stroke.redF(), stroke.greenF(),
-                       stroke.blueF());
-    n += std::snprintf(buf + n, kBufSize - n, "1 J 1 j\n");
+    size_t n = 0;
+    n += static_cast<size_t>(std::snprintf(buf + n, cap - n, "q\n"));
+    n += static_cast<size_t>(
+        std::snprintf(buf + n, cap - n, "%.3f %.3f %.3f RG\n", static_cast<double>(stroke.redF()),
+                      static_cast<double>(stroke.greenF()), static_cast<double>(stroke.blueF())));
+    n += static_cast<size_t>(std::snprintf(buf + n, cap - n, "1 J 1 j\n"));
     if (!withPressure) {
-        n += std::snprintf(buf + n, kBufSize - n, "%.3f w\n", sw);
-        n += std::snprintf(buf + n, kBufSize - n, "%.3f %.3f m\n", flippedPts[0].x(),
-                           flippedPts[0].y());
-        for (size_t i = 1; i < flippedPts.size() && n < kBufSize - 64; ++i) {
-            n += std::snprintf(buf + n, kBufSize - n, "%.3f %.3f l\n", flippedPts[i].x(),
-                               flippedPts[i].y());
+        n += static_cast<size_t>(std::snprintf(buf + n, cap - n, "%.3f w\n", sw));
+        n += static_cast<size_t>(
+            std::snprintf(buf + n, cap - n, "%.3f %.3f m\n", flippedPts[0].x(), flippedPts[0].y()));
+        for (size_t i = 1; i < flippedPts.size() && n < cap - 64; ++i) {
+            n += static_cast<size_t>(std::snprintf(buf + n, cap - n, "%.3f %.3f l\n",
+                                                   flippedPts[i].x(), flippedPts[i].y()));
         }
-        n += std::snprintf(buf + n, kBufSize - n, "S\n");
+        n += static_cast<size_t>(std::snprintf(buf + n, cap - n, "S\n"));
     } else {
-        for (size_t i = 1; i < flippedPts.size() && n < kBufSize - 128; ++i) {
-            const float pr = std::clamp(a.pressures[i], 0.0f, 1.0f);
-            const double shaped = double(pr) * pr * pr;
+        for (size_t i = 1; i < flippedPts.size() && n < cap - 128; ++i) {
+            const double pr = static_cast<double>(std::clamp(a.pressures[i], 0.0f, 1.0f));
+            const double shaped = pr * pr * pr;
             const double w = sw + shaped * 5.0;
-            n += std::snprintf(buf + n, kBufSize - n, "%.3f w %.3f %.3f m %.3f %.3f l S\n", w,
-                               flippedPts[i - 1].x(), flippedPts[i - 1].y(), flippedPts[i].x(),
-                               flippedPts[i].y());
+            n += static_cast<size_t>(std::snprintf(
+                buf + n, cap - n, "%.3f w %.3f %.3f m %.3f %.3f l S\n", w, flippedPts[i - 1].x(),
+                flippedPts[i - 1].y(), flippedPts[i].x(), flippedPts[i].y()));
         }
     }
-    n += std::snprintf(buf + n, kBufSize - n, "Q\n");
+    n += static_cast<size_t>(std::snprintf(buf + n, cap - n, "Q\n"));
     QPDFObjectHandle out = ap::finishStream(pdf, buf, n, px1, py1, px2, py2);
     delete[] buf;
     return out;
@@ -706,8 +721,8 @@ EncodedSignature encodeSignatureImage(const QImage &src) {
     const int h = img.height();
     out.width = w;
     out.height = h;
-    out.rgb.reserve(static_cast<size_t>(w) * h * 3);
-    out.alpha.reserve(static_cast<size_t>(w) * h);
+    out.rgb.reserve(static_cast<size_t>(w) * static_cast<size_t>(h) * 3u);
+    out.alpha.reserve(static_cast<size_t>(w) * static_cast<size_t>(h));
     bool anyNonOpaque = false;
     for (int y = 0; y < h; ++y) {
         const auto *scan = reinterpret_cast<const QRgb *>(img.constScanLine(y));
@@ -1147,13 +1162,13 @@ std::vector<Annotation> PdfEditor::readAnnotations() const {
                     QPDFObjectHandle inkList = entry.getKey("/InkList");
                     if (!inkList.isArray() || inkList.getArrayNItems() < 1)
                         continue;
-                    QPDFObjectHandle stroke = inkList.getArrayItem(0);
-                    if (!stroke.isArray())
+                    QPDFObjectHandle inkPts = inkList.getArrayItem(0);
+                    if (!inkPts.isArray())
                         continue;
-                    const int sn = stroke.getArrayNItems();
+                    const int sn = inkPts.getArrayNItems();
                     for (int k = 0; k + 1 < sn; k += 2) {
-                        const double x = stroke.getArrayItem(k).getNumericValue();
-                        const double y = stroke.getArrayItem(k + 1).getNumericValue();
+                        const double x = inkPts.getArrayItem(k).getNumericValue();
+                        const double y = inkPts.getArrayItem(k + 1).getNumericValue();
                         a.points.emplace_back(x, flipY(y));
                     }
                     if (a.points.size() < 2)

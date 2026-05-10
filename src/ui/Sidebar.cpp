@@ -326,7 +326,7 @@ bool Sidebar::eventFilter(QObject *watched, QEvent *event) {
             const auto selected = m_thumbnails->selectionModel()->selectedIndexes();
             if (!selected.isEmpty()) {
                 std::vector<int> pages;
-                pages.reserve(selected.size());
+                pages.reserve(static_cast<size_t>(selected.size()));
                 for (const QModelIndex &idx : selected) {
                     const int p = m_model->pageForRow(idx.row());
                     if (p >= 0)

@@ -8,7 +8,6 @@
 #include <QGuiApplication>
 #include <QImage>
 #include <QMimeData>
-#include <QPainter>
 #include <QPixmap>
 #include <QScreen>
 #include <QTemporaryFile>
@@ -17,24 +16,6 @@
 #include <cmath>
 
 #include <algorithm>
-
-namespace {
-
-// PDF pages that do not paint a full-page background are often rendered
-// with transparency; without an explicit underlay the thumbnail would
-// show the UI surface colour (e.g. dark grey in dark mode) instead of paper.
-QImage thumbnailOnPaperWhite(const QImage &thumb) {
-    if (thumb.isNull()) {
-        return thumb;
-    }
-    QImage out(thumb.size(), QImage::Format_ARGB32_Premultiplied);
-    out.fill(Qt::white);
-    QPainter painter(&out);
-    painter.drawImage(0, 0, thumb);
-    return out;
-}
-
-} // namespace
 
 namespace trailer {
 
@@ -74,7 +55,7 @@ QMimeData *ThumbnailModel::mimeData(const QModelIndexList &indexes) const {
     // drag-out / extract works the same whether the model is
     // showing every page or a search-filtered subset.
     std::vector<int> rows;
-    rows.reserve(indexes.size());
+    rows.reserve(static_cast<size_t>(indexes.size()));
     for (const QModelIndex &idx : indexes) {
         if (!idx.isValid())
             continue;
@@ -174,7 +155,6 @@ QVariant ThumbnailModel::data(const QModelIndex &index, int role) const {
                                    int(std::ceil(m_size.height() * dpr)));
             QImage img = m_doc->renderThumbnail(page, nativeSize);
             if (!img.isNull()) {
-                img = thumbnailOnPaperWhite(img);
                 img.setDevicePixelRatio(dpr);
             }
             it = m_cache.insert(page, img.isNull() ? QPixmap() : QPixmap::fromImage(img));
