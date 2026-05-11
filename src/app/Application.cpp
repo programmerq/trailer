@@ -4,9 +4,24 @@
 #include "document/PdfAdapter.h"
 #include "ui/MainWindow.h"
 
+#include <QAction>
+#include <QClipboard>
+#include <QDateTime>
+#include <QDir>
 #include <QFileInfo>
 #include <QFileOpenEvent>
+#include <QFileDialog>
+#include <QGuiApplication>
+#include <QImage>
+#include <QMenu>
+#include <QMenuBar>
+#include <QMimeData>
+#include <QMessageBox>
+#include <QProcess>
 #include <QSet>
+#include <QStandardPaths>
+#include <QUrl>
+#include <QUuid>
 
 namespace trailer {
 
@@ -21,6 +36,9 @@ Application::Application(int& argc, char** argv) : QApplication(argc, argv) {
 
     m_registry.registerAdapter(std::make_unique<PdfAdapter>());
     m_registry.registerAdapter(std::make_unique<ImageAdapter>());
+#ifdef Q_OS_MACOS
+    installNoWindowMenuBar();
+#endif
 }
 
 Application::~Application() = default;
@@ -152,6 +170,123 @@ void Application::onWindowDestroyed(QObject* window) {
             }),
         m_windows.end());
 }
+
+#ifdef Q_OS_MACOS
+namespace {
+
+QString transientImportPath(const QString& prefix, const QString& ext) {
+    const QString base = QStandardPaths::writableLocation(
+        QStandardPaths::TempLocation);
+    const QString stamp = QDateTime::currentDateTime().toString(
+        QStringLiteral("yyyyMMdd-HHmmss-zzz"));
+    const QString suffix = QUuid::createUuid().toString(QUuid::Id128);
+    return QDir(base).filePath(
+        QStringLiteral("trailer-%1-%2-%3.%4")
+            .arg(prefix, stamp, suffix, ext));
+}
+
+}  // namespace
+
+void Application::installNoWindowMenuBar() {
+    auto* bar = new QMenuBar();
+    bar->setNativeMenuBar(true);
+
+    auto* fileMenu = bar->addMenu(tr("&File"));
+
+    auto* newAction = fileMenu->addAction(tr("&New"));
+    newAction->setShortcut(QKeySequence::New);
+    connect(newAction, &QAction::triggered, this, [this]() {
+        ensureFreshWindow();
+    });
+
+    auto* openAction = fileMenu->addAction(tr("&Open…"));
+    openAction->setShortcut(QKeySequence::Open);
+    connect(openAction, &QAction::triggered, this,
+            &Application::openFilesFromDialog);
+
+    auto* newFromClipboardAction = fileMenu->addAction(
+        tr("New from &Clipboard"));
+    connect(newFromClipboardAction, &QAction::triggered, this,
+            &Application::newFromClipboard);
+
+    auto* acquireAction = fileMenu->addAction(tr("&Acquire…"));
+    connect(acquireAction, &QAction::triggered, this,
+            &Application::acquireFromScreenshot);
+
+    fileMenu->addSeparator();
+
+    auto* closeWindowAction = fileMenu->addAction(tr("&Close Window"));
+    closeWindowAction->setShortcut(QKeySequence::Close);
+    connect(closeWindowAction, &QAction::triggered, this, [this]() {
+        if (auto* w = qobject_cast<MainWindow*>(activeWindow())) {
+            w->close();
+        }
+    });
+
+    auto* quitAction = fileMenu->addAction(tr("&Quit"));
+    quitAction->setShortcut(QKeySequence::Quit);
+    quitAction->setMenuRole(QAction::QuitRole);
+    connect(quitAction, &QAction::triggered, this, &QCoreApplication::quit);
+
+    m_noWindowMenuBar = bar;
+}
+
+void Application::openFilesFromDialog() {
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        nullptr, tr("Open files"), QString(),
+        tr("Documents (*.pdf *.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp "
+           "*.gif *.heic *.heif);;All files (*)"));
+    openFiles(paths);
+}
+
+void Application::newFromClipboard() {
+    const QMimeData* data = QGuiApplication::clipboard()->mimeData();
+    if (!data) return;
+
+    QStringList paths;
+    for (const QUrl& url : data->urls()) {
+        if (url.isLocalFile()) {
+            const QString local = url.toLocalFile();
+            if (!local.isEmpty()) paths.append(local);
+        }
+    }
+    if (!paths.isEmpty()) {
+        openFiles(paths);
+        return;
+    }
+
+    const QImage image = QGuiApplication::clipboard()->image();
+    if (!image.isNull()) {
+        const QString path = transientImportPath("clipboard", "png");
+        if (image.save(path, "PNG")) {
+            openFiles({path});
+            return;
+        }
+    }
+
+    const QString text = data->text().trimmed();
+    if (!text.isEmpty() && QFileInfo::exists(text)) {
+        openFiles({text});
+        return;
+    }
+
+    QMessageBox::information(
+        nullptr, tr("New from Clipboard"),
+        tr("Clipboard does not currently contain an image or file path."));
+}
+
+void Application::acquireFromScreenshot() {
+    const QString path = transientImportPath("acquire", "png");
+    QProcess proc;
+    proc.start(QStringLiteral("/usr/sbin/screencapture"),
+               {QStringLiteral("-i"), QStringLiteral("-x"), path});
+    proc.waitForFinished(-1);
+    if (proc.exitCode() != 0) return;
+    const QFileInfo info(path);
+    if (!info.exists() || info.size() == 0) return;
+    openFiles({path});
+}
+#endif
 
 bool Application::event(QEvent* event) {
     if (event->type() == QEvent::FileOpen) {
