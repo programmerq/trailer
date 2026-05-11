@@ -13,6 +13,7 @@
 namespace trailer {
 
 class MainWindow;
+class QMenuBar;
 
 class Application : public QApplication {
     Q_OBJECT
@@ -39,6 +40,9 @@ public:
     // QPointer entries can be null (a destruction is queued); the
     // Window menu filters those out before showing the list.
     QList<MainWindow*> windows() const;
+#ifdef Q_OS_MACOS
+    QMenuBar* noWindowMenuBar() const { return m_noWindowMenuBar.data(); }
+#endif
 
 protected:
     bool event(QEvent* event) override;
@@ -48,12 +52,21 @@ private slots:
 
 private:
     void notifyWindowsRecentChanged();
+#ifdef Q_OS_MACOS
+    void installNoWindowMenuBar();
+    void openFilesFromDialog();
+    void newFromClipboard();
+    void acquireFromScreenshot();
+#endif
 
     Settings m_settings;
     RecentFiles m_recent;
     DocumentRegistry m_registry;
     ModelRegistry m_modelRegistry;
     QList<QPointer<MainWindow>> m_windows;
+#ifdef Q_OS_MACOS
+    QPointer<QMenuBar> m_noWindowMenuBar;
+#endif
 };
 
 }  // namespace trailer
