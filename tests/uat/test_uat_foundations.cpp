@@ -84,6 +84,7 @@ private slots:
     void uat_fnd_004_openingMultipleFilesSpawnsMultipleWindows();
     void uat_fnd_005_imageBatchSharesOneWindow();
     void uat_fnd_010_menuStructure();
+    void uat_fnd_011_macosNoWindowMenuProvidesFileActions();
     void uat_fnd_016_toggleSidebar();
     void uat_fnd_020_flashErrorRoutesToStatusBarNotModal();
     void uat_fnd_030_autoSaveWritesDirtyDocsWithPath();
@@ -302,6 +303,37 @@ void TestUatFoundations::uat_fnd_010_menuStructure() {
         QVERIFY2(a, qPrintable(QStringLiteral("Missing menu item: ") + pair.first
                                + QStringLiteral(" > ") + pair.second));
     }
+}
+
+void TestUatFoundations::uat_fnd_011_macosNoWindowMenuProvidesFileActions() {
+#ifndef Q_OS_MACOS
+    QSKIP("macOS-only menu-bar behavior.");
+#else
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+
+    QMenuBar* bar = app->noWindowMenuBar();
+    QVERIFY2(bar, "Application-level macOS menu bar should exist");
+
+    for (const QString& item : {
+             QStringLiteral("&New"),
+             QStringLiteral("&Open…"),
+             QStringLiteral("New from &Clipboard"),
+             QStringLiteral("&Acquire…"),
+         }) {
+        QAction* a = findMenuAction(bar, QStringLiteral("&File"), item);
+        QVERIFY2(a, qPrintable(QStringLiteral("Missing File menu item: ") + item));
+    }
+
+    QAction* newAction =
+        findMenuAction(bar, QStringLiteral("&File"), QStringLiteral("&New"));
+    QVERIFY(newAction);
+    const int before = app->windows().size();
+    newAction->trigger();
+    QApplication::processEvents();
+    QVERIFY2(app->windows().size() >= before + 1,
+             "File > New should create a window in no-window mode");
+#endif
 }
 
 void TestUatFoundations::uat_fnd_016_toggleSidebar() {
