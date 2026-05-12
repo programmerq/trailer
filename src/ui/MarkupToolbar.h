@@ -26,12 +26,19 @@ public:
     // only if the tool actually changed.
     void setActiveTool(AnnotationTool tool);
 
-    // Enable or disable a single tool's QAction. Used by MainWindow to
+    // Hide or show a single tool's QAction. Used by MainWindow to
     // gate text-aware tools (Underline / Highlight / StrikeOut) on
-    // documents without a text layer. If the currently-active tool is
-    // disabled, the toolbar automatically falls back to Select so the
-    // user is not stranded in a now-greyed-out mode.
-    void setToolEnabled(AnnotationTool tool, bool enabled);
+    // documents without a text layer. Hiding (rather than disabling)
+    // visibly shrinks the toolbar — at the 18 px icon size a disabled
+    // glyph is more noise than information. If the currently-active
+    // tool is hidden, the toolbar automatically falls back to Select.
+    //
+    // If hiding leaves a separator-bounded group with no visible
+    // tools, the preceding separator is hidden too so the user doesn't
+    // see a pair of adjacent dividers around nothing. (Currently the
+    // text-aware trio is the only group with this treatment — other
+    // groups stay populated for every document type.)
+    void setToolVisible(AnnotationTool tool, bool visible);
 
 signals:
     void activeToolChanged(AnnotationTool tool);
@@ -45,6 +52,10 @@ private:
     AnnotationTool m_tool = AnnotationTool::None;
     AnnotationStyle m_style;
     QHash<AnnotationTool, QAction*> m_toolActions;
+    // Separator immediately before the text-aware tool group
+    // (Underline / Highlight / StrikeOut). Tracked so we can hide it
+    // when every tool in that group is hidden — see setToolVisible.
+    QAction* m_textAwareSeparator = nullptr;
 };
 
 }  // namespace trailer

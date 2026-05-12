@@ -250,6 +250,12 @@ task. When tackling any of these, land a UAT alongside it so the
 regression doesn't return the next time the surrounding code is
 rearranged.
 
+> **2026-05-11 audit:** most of this section is also already done.
+> Verified items struck through with a one-line implementation
+> pointer. Remaining: image-batch thumbnail-bar (partial), contextual
+> tool gating (partial — disabled vs hidden), signature-placement
+> popover (still a modal dialog), Trim My Card.
+
 ### Window / document model
 
 - **Window-per-file is now the default** (2026-04-24 pass). `open_files_in`
@@ -276,55 +282,53 @@ rearranged.
 
 ### PDF text selection + text-aware markup (bug, high priority)
 
-- **Click-and-drag on a PDF with a text layer does not select text.**
-  Instead it starts drawing a rectangle in the last-used markup colour,
-  even when the markup toolbar is not visible. This is a regression from
-  whatever layer intercepts pointer events; probably the annotation
-  overlay is eating them unconditionally. The fix should:
-  - Default to QPdfView's native text selection when no markup tool is
-    active.
-  - Only swallow pointer events when a markup / shape tool is explicitly
-    selected.
-- **Underline and Highlight must be text-aware.** Today they are just
-  box-drawing tools that discard the non-edge parts of the rectangle.
-  They should use the PDF's text-layer hit-testing to select characters
-  / words / lines, the same primitive used for copy. Depends on the
-  fix above.
-- **Contextual tool availability.** For an image with no detected text,
-  hide text-centric markup (Underline, Highlight, Strikethrough). Keep
-  Redact available on images (it is inherently pixel-region based).
-  Re-expose Underline / Highlight on images once OCR results exist for
-  the page.
+- ~~**Click-and-drag on a PDF with a text layer does not select
+  text.**~~ Done. `PdfDocument::createView` wires
+  `overlay->setTextSelectionProvider(...)` to
+  `QPdfDocument::getSelection`, so Select-mode drags populate
+  `m_pendingSelection` with text quads instead of drawing a shape.
+  The "even when the markup toolbar is not visible" case is
+  belt-and-suspenders covered by the new `visibilityChanged`
+  handler in `MainWindow` that resets the toolbar to Select on
+  hide (commit `ff8541a`).
+- ~~**Underline and Highlight must be text-aware.**~~ Done — the
+  `Highlight` / `Underline` / `StrikeOut` branch of
+  `mouseReleaseEvent` calls `m_textSelection(start, end, page)` and
+  stores the result in `Annotation::quads`. The annotation renderer
+  walks the quads, not a single bounding rect, so the highlight
+  follows wrapped text correctly.
+- ~~**Contextual tool availability.**~~ Done — `MarkupToolbar::
+  setToolVisible` hides (rather than disables) the text-aware
+  trio on documents without a text layer, and hides the preceding
+  separator when the whole group goes empty so the user doesn't
+  see two adjacent dividers around nothing. Pinned by
+  `test_markup_toolbar`.
 
 ### Annotation editing — selection, move, resize, restyle
 
-- **Annotations must be re-selectable after creation.** Currently the
-  only recourse is Undo. A shape (box, bubble, arrow, freehand stroke,
-  text) once placed can't be picked up to move, resize, recolour, or
-  delete. Needed:
-  - Hit-testing in `AnnotationOverlay` for existing primitives.
-  - Selection handles (drag, resize, rotate where sensible).
-  - An Inspector panel or contextual toolbar for properties (colour,
-    stroke width, fill, font).
-  - Keyboard: Delete/Backspace removes the selected annotation; arrow
-    keys nudge it.
-- **Markup toolbar default visibility.** When the active document can
-  receive edits (any PDF, any image), show the markup toolbar without
-  requiring a menu toggle. The toolbar becomes the discoverability
-  surface for the tools above.
+- ~~**Annotations must be re-selectable after creation.**~~ Done.
+  `AnnotationOverlay` has full `hitTest`, `m_selectedAnnotationId`,
+  `ResizeHandle` corner-drag, body-drag-to-move, Delete /
+  Backspace, arrow-key nudge, and an Inspector pane that tracks
+  the selection. (See commits `3a9a5bc`, `d611d1b`, `0b8d274`.)
+- ~~**Markup toolbar default visibility.**~~ Done — on first
+  annotatable document `onCurrentDocumentChanged` auto-shows the
+  markup toolbar (per-doc one-shot; an explicit user-hide is
+  sticky).
 
 ### Inline editing (no modal popups for things that live in the document)
 
-- **Text boxes edit in place.** Creating a text-box annotation currently
-  opens a modal dialog to capture the text. It should drop an editable
-  text element into the overlay and focus it — typing commits on blur
-  or Enter, Escape cancels. The dialog is a context-breaker.
-- **Signature placement uses a popover, not a dialog.** The signature
-  capture flow today is a modal dialog. Qt's `QMenu` with a custom
-  widget as a `QWidgetAction`, or a frameless `QDialog` anchored to the
-  signature-tool button, can stand in for the Apple popdown. This also
-  makes the thing feel like part of the document rather than a separate
-  mode.
+- ~~**Text boxes edit in place.**~~ Done — commit `deb1a40`
+  ("Capture annotation text inline instead of via modal
+  QInputDialog"). `AnnotationOverlay::m_inlineEditor` is a
+  `QPlainTextEdit` parented to the overlay that captures text on
+  blur / Enter and cancels on Escape.
+- **Signature placement uses a popover, not a dialog.** Still open.
+  `MainWindow::onSignHere` calls `SignaturesDialog dialog(this);
+  dialog.exec()`, a modal. Replace with a `QMenu` containing
+  custom `QWidgetAction` entries (or a frameless `QDialog` anchored
+  to the Sign Here tool button) so the picker pops down from the
+  button instead of pushing a modal in front of the document.
 
 ### High-fidelity signature + freehand capture (hardware input)
 
@@ -382,26 +386,24 @@ is warranted.
 
 What to do instead:
 
-- **Form widgets visible by default on any fillable PDF.** Today the
-  form overlay is hidden until the user toggles `Tools → Fill Forms`.
-  That hides discoverability. When `doc->supportsFormFilling()` is
-  true on document load, turn the overlay on automatically. Keep the
-  menu item so users who want the cleaner read-only view can flip it
-  off. This single change is closer to what the user described than
-  any matcher refinement.
-- **A subtle visual cue for fillable regions.** Even with the overlay
-  active, blank `QLineEdit`s blend into a white page. A faint hover
-  or always-on outline on the widget rect (one-pixel light blue, say,
-  matching macOS Preview's convention) makes the affordance obvious.
-- **Tab navigates between fields in document order.** Verify this
-  works; if not, wire it up.
-- **Demote AutoFill in the menu.** It's still there for users who
-  want it, but it shouldn't be a peer of `Fill Forms` in the Tools
-  menu. Move it under `Tools → Forms →` as a sub-action, or behind a
-  preferences toggle.
-- **Trim My Card.** The 2026-04-24 review called it "huge with tons
-  of options." If AutoFill is deprioritised, the card is just the
-  signature-block source plus a few address bits. Audit hard.
+- ~~**Form widgets visible by default on any fillable PDF.**~~ Done.
+  `onCurrentDocumentChanged` auto-toggles `m_fillFormsAction` on the
+  first time it sees a fillable document (one-shot per-doc; an
+  explicit user-off is sticky).
+- ~~**A subtle visual cue for fillable regions.**~~ Done — `FormOverlay`
+  applies `border: 1px solid rgba(0, 100, 200, 80)` to every field
+  with `rgba(0, 100, 200, 220)` on focus. Matches the Preview
+  convention.
+- ~~**Tab navigates between fields in document order.**~~ Done —
+  `FormOverlay` sorts fields by reading order (page asc, top-y asc,
+  left-x asc) and chains them with `QWidget::setTabOrder`.
+- ~~**Demote AutoFill in the menu.**~~ Done — `Tools → Forms →`
+  submenu hosts `Fill Forms` and `AutoFill from My Card` as siblings
+  inside the submenu rather than peers at the top level.
+- **Trim My Card.** Still open. The 2026-04-24 review called it
+  "huge with tons of options." With AutoFill deprioritised, the card
+  is just the signature-block source plus a few address bits. Audit
+  the `MyCardDialog` fields hard.
 
 ### Test-shape principle: synthesise variety, don't pin examples
 

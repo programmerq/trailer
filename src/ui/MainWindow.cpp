@@ -2206,9 +2206,9 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     // available on plain images — it operates on pixel rectangles, not
     // glyphs.
     const bool hasText = doc && doc->hasTextLayer();
-    m_markupToolbar->setToolEnabled(AnnotationTool::Underline, hasText);
-    m_markupToolbar->setToolEnabled(AnnotationTool::Highlight, hasText);
-    m_markupToolbar->setToolEnabled(AnnotationTool::StrikeOut, hasText);
+    m_markupToolbar->setToolVisible(AnnotationTool::Underline, hasText);
+    m_markupToolbar->setToolVisible(AnnotationTool::Highlight, hasText);
+    m_markupToolbar->setToolVisible(AnnotationTool::StrikeOut, hasText);
 
     syncViewModeActions(doc);
     updateTitleForDocument(doc);

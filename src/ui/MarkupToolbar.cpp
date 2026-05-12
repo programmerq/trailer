@@ -63,7 +63,11 @@ MarkupToolbar::MarkupToolbar(QWidget* parent) : QToolBar(parent) {
     makeToolAction(tr("Zoom Lens"), AnnotationTool::ZoomLens,
                    QStringLiteral(":/icons/actions/tool-zoom-lens.svg"));
 
-    addSeparator();
+    // Captured so we can hide it when the entire text-aware group is
+    // hidden (e.g. on a bare image with no OCR results — the three
+    // tools below are disabled there). Avoids two adjacent separators
+    // around nothing on those documents.
+    m_textAwareSeparator = addSeparator();
 
     makeToolAction(tr("Highlight"), AnnotationTool::Highlight,
                    QStringLiteral(":/icons/actions/tool-highlight.svg"));
@@ -189,17 +193,35 @@ void MarkupToolbar::setActiveTool(AnnotationTool tool) {
     it.value()->setChecked(true);
 }
 
-void MarkupToolbar::setToolEnabled(AnnotationTool tool, bool enabled) {
+void MarkupToolbar::setToolVisible(AnnotationTool tool, bool visible) {
     auto it = m_toolActions.find(tool);
     if (it == m_toolActions.end()) return;
     QAction* action = it.value();
-    if (action->isEnabled() == enabled) return;
-    action->setEnabled(enabled);
-    // If we just disabled the active tool, fall back to Select so the
+    if (action->isVisible() == visible) return;
+    action->setVisible(visible);
+    // If we just hid the active tool, fall back to Select so the
     // overlay isn't stuck consuming click-drags for a tool whose
-    // button is greyed out.
-    if (!enabled && tool == m_tool) {
+    // button is no longer reachable.
+    if (!visible && tool == m_tool) {
         setActiveTool(AnnotationTool::Select);
+    }
+    // Text-aware group: when every tool in it is hidden, also hide
+    // the preceding separator. Otherwise we leave two adjacent
+    // dividers wrapping an empty region. The check runs on every
+    // change so re-showing one tool brings the separator back.
+    const bool isTextAware = tool == AnnotationTool::Highlight ||
+                             tool == AnnotationTool::Underline ||
+                             tool == AnnotationTool::StrikeOut;
+    if (isTextAware && m_textAwareSeparator) {
+        auto visibleByTool = [this](AnnotationTool t) {
+            auto i = m_toolActions.find(t);
+            return i != m_toolActions.end() && i.value()->isVisible();
+        };
+        const bool anyVisible =
+            visibleByTool(AnnotationTool::Highlight) ||
+            visibleByTool(AnnotationTool::Underline) ||
+            visibleByTool(AnnotationTool::StrikeOut);
+        m_textAwareSeparator->setVisible(anyVisible);
     }
 }
 
