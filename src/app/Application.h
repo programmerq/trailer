@@ -7,13 +7,13 @@
 
 #include <QApplication>
 #include <QList>
+#include <QMenuBar>
 #include <QPointer>
 #include <QStringList>
 
 namespace trailer {
 
 class MainWindow;
-class QMenuBar;
 
 class Application : public QApplication {
     Q_OBJECT
