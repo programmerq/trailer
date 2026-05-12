@@ -228,5 +228,12 @@ if(UNIX AND NOT APPLE)
     endforeach()
 endif()
 
+# Developer-facing tool: renders every toolbar SVG into a sheet PNG
+# for visual review. Not part of any test target so ctest doesn't run
+# it, but it builds with the rest so it doesn't bit-rot.
+qt_add_executable(generate_icon_sheet tools/generate_icon_sheet.cpp)
+target_link_libraries(generate_icon_sheet PRIVATE trailer_core)
+trailer_set_warnings(generate_icon_sheet)
+
 enable_testing()
 add_subdirectory(tests)
