@@ -6,8 +6,10 @@
 // AutoFill / Sign Here buttons emit their own signals.
 
 #include "ui/FormToolbar.h"
+#include "ui/IconHelper.h"
 
 #include <QAction>
+#include <QImage>
 #include <QMetaType>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
@@ -29,6 +31,8 @@ private slots:
     void signHereSignalFiresOnce();
     void toolsAreMutuallyExclusive();
     void everyActionHasARenderedIcon();
+    void filledSiblingPairedAsCheckedState();
+    void noFilledSiblingReusesNormalForChecked();
 };
 
 namespace {
@@ -150,6 +154,61 @@ void TestFormToolbar::everyActionHasARenderedIcon() {
                                 .arg(a->text())));
         QCOMPARE(pm.size(), QSize(18, 18));
     }
+}
+
+// When the SVG resource has a sibling named `<base>-filled.svg`, the
+// helper auto-attaches it as the icon's QIcon::On pixmap so QAction's
+// checked state renders the louder filled glyph. This is the
+// outline → fill swap that signals "this is the armed tool" without
+// relying on Qt's subtle checked-button background.
+void TestFormToolbar::filledSiblingPairedAsCheckedState() {
+    // tool-rectangle.svg + tool-rectangle-filled.svg both exist.
+    const QIcon icon = themedActionIcon(
+        QStringLiteral(":/icons/actions/tool-rectangle.svg"), Qt::black);
+    QVERIFY(!icon.isNull());
+
+    const QPixmap off = icon.pixmap(QSize(24, 24), QIcon::Normal, QIcon::Off);
+    const QPixmap on  = icon.pixmap(QSize(24, 24), QIcon::Normal, QIcon::On);
+    QVERIFY(!off.isNull());
+    QVERIFY(!on.isNull());
+
+    // The two pixmaps must actually differ — same-content would mean
+    // the filled sibling silently failed to load and Qt fell back to
+    // the Off variant for the On state.
+    const QImage offImg = off.toImage();
+    const QImage onImg  = on.toImage();
+    QVERIFY2(offImg != onImg,
+             "Off and On pixmaps are identical — filled sibling did "
+             "not render or was not attached as QIcon::On.");
+
+    // The filled variant should paint MORE pixels (it adds an inset
+    // filled interior on top of the outline). Sanity-check by counting
+    // non-transparent pixels: On > Off.
+    auto countOpaque = [](const QImage& img) {
+        int n = 0;
+        for (int y = 0; y < img.height(); ++y) {
+            for (int x = 0; x < img.width(); ++x) {
+                if (qAlpha(img.pixel(x, y)) > 0) ++n;
+            }
+        }
+        return n;
+    };
+    QVERIFY2(countOpaque(onImg) > countOpaque(offImg),
+             "Filled variant should cover more pixels than the outline.");
+}
+
+// Tools without a `-filled.svg` sibling (e.g. tool-select, which the
+// guidelines deliberately excludes — selection is the implicit
+// default and has no "armed" state) should still produce a usable
+// icon for both states; Qt falls back to the Off pixmap when no On
+// is registered.
+void TestFormToolbar::noFilledSiblingReusesNormalForChecked() {
+    const QIcon icon = themedActionIcon(
+        QStringLiteral(":/icons/actions/tool-select.svg"), Qt::black);
+    QVERIFY(!icon.isNull());
+    const QPixmap on = icon.pixmap(QSize(24, 24), QIcon::Normal, QIcon::On);
+    QVERIFY2(!on.isNull(),
+             "Icon without a filled sibling must still render in On state.");
 }
 
 QTEST_MAIN(TestFormToolbar)
