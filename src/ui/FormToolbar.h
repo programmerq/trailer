@@ -43,7 +43,13 @@ signals:
     void autoFillRequested();
     // Emitted when the user clicks "Sign Here" — wired to the Sign
     // tool feature (pick saved signature, place, flatten).
-    void signHereRequested();
+    // `anchorGlobalPos` is the screen-space position the receiver
+    // should anchor its picker popover at, computed from the Sign-
+    // Here button's bottom-left corner. Falls back to the cursor
+    // position if the button widget isn't reachable yet (e.g. the
+    // toolbar hasn't been laid out — shouldn't happen in practice
+    // but keeps the popover from landing at (0,0) regardless).
+    void signHereRequested(const QPoint& anchorGlobalPos);
 
 private:
     QAction* makeToolAction(const QString& label, AnnotationTool tool,

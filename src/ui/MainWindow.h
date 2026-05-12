@@ -111,7 +111,12 @@ private slots:
     void onAutoFillCurrentForm();
     void onManageMyCard();
     void onManageSignatures();
-    void onSignHere();
+    // anchorGlobalPos is the screen-space position the FormToolbar
+    // captured from the Sign-Here button before emitting; the
+    // SignaturePicker pops up there. Default-constructed QPoint
+    // (i.e. the QObject::invokeMethod / Tools-menu paths that
+    // don't have an anchor) falls back to the cursor position.
+    void onSignHere(const QPoint& anchorGlobalPos = QPoint());
     void onCurrentDocumentChanged(IDocument* doc);
     // Invoked whenever the active document's annotation store mutates
     // (add / remove / update / undo / redo). Refreshes the window

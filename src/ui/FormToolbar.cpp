@@ -4,6 +4,9 @@
 
 #include <QAction>
 #include <QActionGroup>
+#include <QCursor>
+#include <QPoint>
+#include <QWidget>
 
 namespace trailer {
 
@@ -53,8 +56,17 @@ FormToolbar::FormToolbar(QWidget* parent) : QToolBar(parent) {
         tr("Sign Here"));
     m_signHereAction->setToolTip(
         tr("Sign Here — place a saved signature on the page"));
-    connect(m_signHereAction, &QAction::triggered,
-            this, &FormToolbar::signHereRequested);
+    connect(m_signHereAction, &QAction::triggered, this, [this]() {
+        // Anchor the picker popover under the Sign-Here button so it
+        // feels attached to the affordance the user just clicked,
+        // not yanked into the centre of the screen. widgetForAction
+        // returns the QToolButton hosting the QAction.
+        QWidget* host = widgetForAction(m_signHereAction);
+        const QPoint anchor = host
+            ? host->mapToGlobal(QPoint(0, host->height()))
+            : QCursor::pos();
+        emit signHereRequested(anchor);
+    });
 
     m_tool = AnnotationTool::Select;
 }

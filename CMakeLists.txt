@@ -125,6 +125,8 @@ set(TRAILER_SOURCES
     src/ui/Sidebar.h
     src/ui/SignatureCaptureDialog.cpp
     src/ui/SignatureCaptureDialog.h
+    src/ui/SignaturePicker.cpp
+    src/ui/SignaturePicker.h
     src/ui/SignaturesDialog.cpp
     src/ui/SignaturesDialog.h
     src/ui/ThumbnailModel.cpp

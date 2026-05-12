@@ -9,6 +9,7 @@
 #include "IconHelper.h"
 #include "MarkupToolbar.h"
 #include "MyCardDialog.h"
+#include "SignaturePicker.h"
 #include "SignaturesDialog.h"
 #include "cards/CardStore.h"
 #include "cards/MyCard.h"
@@ -2371,22 +2372,23 @@ void MainWindow::onManageMyCard() {
     store.save();
 }
 
-void MainWindow::onSignHere() {
+void MainWindow::onSignHere(const QPoint& anchorGlobalPos) {
     auto* doc = m_documentView->currentDocument();
     if (!doc) return;
 
-    // Open the manager; the user's current selection is what the Sign
-    // tool will stamp on the next drag. An empty signatures folder
-    // lets the user "Add…" from inside the dialog before picking.
-    SignaturesDialog dialog(this);
-    if (dialog.exec() != QDialog::Accepted) return;
-
-    const QString id = dialog.selectedId();
+    // Popover anchored under the Sign-Here button on the form
+    // toolbar (per the 2026-04-24 review: "Signature placement uses
+    // a popover, not a dialog"). The picker handles "Add…" inline —
+    // user goes through capture and the new signature is auto-armed
+    // as if they'd picked it from an existing list.
+    const QPoint anchor = anchorGlobalPos.isNull() ? QCursor::pos()
+                                                   : anchorGlobalPos;
+    const QString id = SignaturePicker::show(this, anchor);
     if (id.isEmpty()) return;
 
-    // Resolve the id to an absolute PNG path via a fresh store scan —
-    // the dialog only hands back the id so we don't leak internal
-    // layout details across the signal boundary.
+    // Resolve the id to an absolute PNG path via a fresh store scan.
+    // The picker only hands back the id so the resolution detail
+    // stays local to this call site.
     SignatureStore store;
     QString pngPath;
     for (const Signature& s : store.loadAll()) {

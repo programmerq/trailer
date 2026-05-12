@@ -252,9 +252,10 @@ rearranged.
 
 > **2026-05-11 audit:** most of this section is also already done.
 > Verified items struck through with a one-line implementation
-> pointer. Remaining: image-batch thumbnail-bar (partial), contextual
-> tool gating (partial — disabled vs hidden), signature-placement
-> popover (still a modal dialog), Trim My Card.
+> pointer. Remaining: image-batch thumbnail-bar (partial — single
+> window works, multi-doc ThumbnailModel still TODO) and Trim My
+> Card. Contextual tool gating and signature-placement popover
+> were finished in the same audit pass.
 
 ### Window / document model
 
@@ -323,12 +324,16 @@ rearranged.
   QInputDialog"). `AnnotationOverlay::m_inlineEditor` is a
   `QPlainTextEdit` parented to the overlay that captures text on
   blur / Enter and cancels on Escape.
-- **Signature placement uses a popover, not a dialog.** Still open.
-  `MainWindow::onSignHere` calls `SignaturesDialog dialog(this);
-  dialog.exec()`, a modal. Replace with a `QMenu` containing
-  custom `QWidgetAction` entries (or a frameless `QDialog` anchored
-  to the Sign Here tool button) so the picker pops down from the
-  button instead of pushing a modal in front of the document.
+- ~~**Signature placement uses a popover, not a dialog.**~~ Done.
+  New `SignaturePicker::show` (in `src/ui/SignaturePicker.{h,cpp}`)
+  pops a `QMenu` of thumbnails anchored under the Sign-Here button
+  on the form toolbar. "Add Signature…" goes straight into the
+  capture dialog and the new signature is auto-armed on save (no
+  re-open-the-picker step). "Manage Signatures…" still opens the
+  full `SignaturesDialog` for add/remove flows. `FormToolbar::
+  signHereRequested` now carries the anchor position so the
+  popover lands under the button the user clicked, not in the
+  centre of the screen.
 
 ### High-fidelity signature + freehand capture (hardware input)
 
