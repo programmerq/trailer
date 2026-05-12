@@ -38,7 +38,8 @@ signals:
     void styleChanged(const AnnotationStyle& style);
 
 private:
-    QAction* makeToolAction(const QString& label, AnnotationTool tool);
+    QAction* makeToolAction(const QString& label, AnnotationTool tool,
+                            const QString& iconResource = QString());
 
     QActionGroup* m_group = nullptr;
     AnnotationTool m_tool = AnnotationTool::None;

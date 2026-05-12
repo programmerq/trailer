@@ -6,6 +6,7 @@
 #include "Inspector.h"
 #include "Magnifier.h"
 #include "FormToolbar.h"
+#include "IconHelper.h"
 #include "MarkupToolbar.h"
 #include "MyCardDialog.h"
 #include "SignaturesDialog.h"
@@ -234,7 +235,31 @@ MainWindow::MainWindow(Application* app, QWidget* parent)
 
     m_formToolbar = new FormToolbar(this);
     addToolBar(Qt::TopToolBarArea, m_formToolbar);
+    // Force the form toolbar onto its own row so it never shares a
+    // line with the markup bar (mutual exclusion below should keep
+    // both from being visible at once, but this is the belt-and-
+    // suspenders against a future caller that shows them anyway).
+    insertToolBarBreak(m_formToolbar);
     m_formToolbar->hide();
+    // Markup and form-filling are different workflows: a user
+    // marking up annotations isn't filling form fields, and vice
+    // versa. Treat them as mutually exclusive so they never pile up
+    // and obscure each other. We listen on visibilityChanged rather
+    // than the toggle action so the auto-show paths
+    // (onCurrentDocumentChanged → m_markupToolbar->show()) get the
+    // same exclusion treatment.
+    connect(m_markupToolbar, &QToolBar::visibilityChanged,
+            this, [this](bool visible) {
+                if (visible && m_formToolbar->isVisible()) {
+                    m_formToolbar->hide();
+                }
+            });
+    connect(m_formToolbar, &QToolBar::visibilityChanged,
+            this, [this](bool visible) {
+                if (visible && m_markupToolbar->isVisible()) {
+                    m_markupToolbar->hide();
+                }
+            });
     connect(m_formToolbar, &FormToolbar::toolChanged,
             this, [this](AnnotationTool tool, const QString& pendingText) {
                 if (auto* doc = m_documentView->currentDocument()) {
@@ -385,8 +410,16 @@ void MainWindow::buildMainToolbar() {
     m_mainToolbar->setObjectName(QStringLiteral("MainToolbar"));
     m_mainToolbar->setMovable(false);
     m_mainToolbar->setFloatable(false);
+    // Suppress the per-toolbar dock context menu; we never want the
+    // user to right-click and hide the chrome that hosts sidebar /
+    // zoom / search.
+    m_mainToolbar->setContextMenuPolicy(Qt::PreventContextMenu);
     m_mainToolbar->setIconSize(QSize(18, 18));
-    m_mainToolbar->setToolButtonStyle(Qt::ToolButtonTextBesideIcon);
+    // Icon-only is the screen-real-estate win. Action text labels are
+    // still set (and surface as hover tooltips via QAction's default
+    // behaviour); they just don't render next to the glyph. The menu
+    // bar remains the discoverable surface for unfamiliar users.
+    m_mainToolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
     addToolBar(Qt::TopToolBarArea, m_mainToolbar);
     insertToolBarBreak(m_markupToolbar);
 
@@ -394,6 +427,11 @@ void MainWindow::buildMainToolbar() {
     // checked state mirrors back via Sidebar::modeChanged.
     auto* sidebarBtn = new QToolButton(m_mainToolbar);
     sidebarBtn->setText(tr("Sidebar"));
+    sidebarBtn->setIcon(
+        themedActionIcon(QStringLiteral(":/icons/actions/panel-sidebar.svg"),
+                         m_mainToolbar));
+    sidebarBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    sidebarBtn->setToolTip(tr("Sidebar"));
     sidebarBtn->setPopupMode(QToolButton::InstantPopup);
     auto* sidebarMenu = new QMenu(sidebarBtn);
     auto* sidebarGroup = new QActionGroup(sidebarMenu);
@@ -560,11 +598,15 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
 
     m_markupToolbarAction = m_markupToolbar->toggleViewAction();
     m_markupToolbarAction->setText(tr("Toggle &Markup Toolbar"));
+    m_markupToolbarAction->setIcon(
+        themedActionIcon(QStringLiteral(":/icons/actions/panel-markup.svg"), this));
     m_markupToolbarAction->setShortcut(QKeySequence(tr("Ctrl+Shift+A")));
     viewMenu->addAction(m_markupToolbarAction);
 
     m_formToolbarAction = m_formToolbar->toggleViewAction();
     m_formToolbarAction->setText(tr("Show Form Filling &Toolbar"));
+    m_formToolbarAction->setIcon(
+        themedActionIcon(QStringLiteral(":/icons/actions/panel-form.svg"), this));
     m_formToolbarAction->setShortcut(QKeySequence(tr("Ctrl+Shift+B")));
     viewMenu->addAction(m_formToolbarAction);
 
@@ -626,7 +668,9 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
 
     viewMenu->addSeparator();
 
-    m_zoomInAction = viewMenu->addAction(tr("Zoom &In"));
+    m_zoomInAction = viewMenu->addAction(
+        themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-in.svg"), this),
+        tr("Zoom &In"));
     m_zoomInAction->setShortcuts({
         QKeySequence::ZoomIn,
         QKeySequence(Qt::CTRL | Qt::Key_Equal),
@@ -635,20 +679,42 @@ void MainWindow::buildViewMenu(QMenu* viewMenu) {
         if (auto* doc = m_documentView->currentDocument()) doc->zoomIn();
     });
 
-    m_zoomOutAction = viewMenu->addAction(tr("Zoom &Out"));
+    m_zoomOutAction = viewMenu->addAction(
+        themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-out.svg"), this),
+        tr("Zoom &Out"));
     m_zoomOutAction->setShortcut(QKeySequence::ZoomOut);
     connect(m_zoomOutAction, &QAction::triggered, this, [this]() {
         if (auto* doc = m_documentView->currentDocument()) doc->zoomOut();
     });
 
-    m_zoomActualAction = viewMenu->addAction(tr("&Actual Size"));
-    m_zoomActualAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
+    // Zoom shortcuts follow Adobe Acrobat's PDF-reader convention,
+    // which is the muscle memory most users bring to a PDF tool:
+    //   ⌘0 → Fit Page (whole page in viewport)
+    //   ⌘1 → Actual Size (100%)
+    //   ⌘2 → Fit Width
+    // This deliberately differs from Preview.app's ⌘0=Actual / ⌘9=Fit
+    // pattern — Acrobat's three-zoom mapping is what PDF-heavy users
+    // already have in their fingers.
+    m_zoomFitPageAction = viewMenu->addAction(
+        themedActionIcon(QStringLiteral(":/icons/actions/view-fit-page.svg"), this),
+        tr("Fit &Page"));
+    m_zoomFitPageAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
+    connect(m_zoomFitPageAction, &QAction::triggered, this, [this]() {
+        if (auto* doc = m_documentView->currentDocument()) doc->zoomFitPage();
+    });
+
+    m_zoomActualAction = viewMenu->addAction(
+        themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-actual.svg"), this),
+        tr("&Actual Size"));
+    m_zoomActualAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
     connect(m_zoomActualAction, &QAction::triggered, this, [this]() {
         if (auto* doc = m_documentView->currentDocument()) doc->zoomActual();
     });
 
-    m_zoomFitAction = viewMenu->addAction(tr("&Fit to Width"));
-    m_zoomFitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
+    m_zoomFitAction = viewMenu->addAction(
+        themedActionIcon(QStringLiteral(":/icons/actions/view-fit-width.svg"), this),
+        tr("&Fit to Width"));
+    m_zoomFitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_2));
     connect(m_zoomFitAction, &QAction::triggered, this, [this]() {
         if (auto* doc = m_documentView->currentDocument()) doc->zoomFitWidth();
     });
@@ -808,11 +874,15 @@ void MainWindow::refreshWindowMenuList() {
 }
 
 void MainWindow::buildToolsMenu(QMenu* toolsMenu) {
-    m_rotateLeftAction = toolsMenu->addAction(tr("Rotate &Left"));
+    m_rotateLeftAction = toolsMenu->addAction(
+        themedActionIcon(QStringLiteral(":/icons/actions/page-rotate-left.svg"), this),
+        tr("Rotate &Left"));
     m_rotateLeftAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_L));
     connect(m_rotateLeftAction, &QAction::triggered, this, &MainWindow::onRotateLeft);
 
-    m_rotateRightAction = toolsMenu->addAction(tr("Rotate &Right"));
+    m_rotateRightAction = toolsMenu->addAction(
+        themedActionIcon(QStringLiteral(":/icons/actions/page-rotate-right.svg"), this),
+        tr("Rotate &Right"));
     m_rotateRightAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
     connect(m_rotateRightAction, &QAction::triggered, this, &MainWindow::onRotateRight);
 
@@ -2034,6 +2104,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_zoomOutAction->setEnabled(hasZoom);
     m_zoomActualAction->setEnabled(hasZoom);
     m_zoomFitAction->setEnabled(hasZoom);
+    m_zoomFitPageAction->setEnabled(hasZoom);
 
     m_magnifierAction->setEnabled(doc != nullptr);
     if (!doc && m_magnifierAction->isChecked()) {
@@ -2477,6 +2548,16 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
         }
     }
     QMainWindow::keyPressEvent(event);
+}
+
+QMenu* MainWindow::createPopupMenu() {
+    // Disable Qt's default right-click toolbar/dock visibility menu.
+    // It's the source of the "I hid a toolbar and can't get it back"
+    // frustration: the menu surfaces every toolbar's toggle, including
+    // accidental hides from a stray right-click. View → Toggle Markup
+    // Toolbar (etc.) and the main toolbar's toggle buttons are the
+    // intentional, discoverable controls.
+    return nullptr;
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {

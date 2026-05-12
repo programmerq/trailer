@@ -12,4 +12,35 @@
         <file alias="trailer_512.png">icons/trailer_512.png</file>
         <file alias="trailer_1024.png">icons/trailer_1024.png</file>
     </qresource>
+    <qresource prefix="/icons/actions">
+        <file alias="tool-select.svg">icons/actions/tool-select.svg</file>
+        <file alias="tool-rectangle.svg">icons/actions/tool-rectangle.svg</file>
+        <file alias="tool-ellipse.svg">icons/actions/tool-ellipse.svg</file>
+        <file alias="tool-line.svg">icons/actions/tool-line.svg</file>
+        <file alias="tool-arrow.svg">icons/actions/tool-arrow.svg</file>
+        <file alias="tool-freehand.svg">icons/actions/tool-freehand.svg</file>
+        <file alias="tool-text.svg">icons/actions/tool-text.svg</file>
+        <file alias="tool-note.svg">icons/actions/tool-note.svg</file>
+        <file alias="tool-speech-bubble.svg">icons/actions/tool-speech-bubble.svg</file>
+        <file alias="tool-highlight-shape.svg">icons/actions/tool-highlight-shape.svg</file>
+        <file alias="tool-zoom-lens.svg">icons/actions/tool-zoom-lens.svg</file>
+        <file alias="tool-highlight.svg">icons/actions/tool-highlight.svg</file>
+        <file alias="tool-underline.svg">icons/actions/tool-underline.svg</file>
+        <file alias="tool-strikeout.svg">icons/actions/tool-strikeout.svg</file>
+        <file alias="tool-redact.svg">icons/actions/tool-redact.svg</file>
+        <file alias="tool-autofill.svg">icons/actions/tool-autofill.svg</file>
+        <file alias="tool-sign-here.svg">icons/actions/tool-sign-here.svg</file>
+        <file alias="tool-checkmark.svg">icons/actions/tool-checkmark.svg</file>
+        <file alias="tool-xmark.svg">icons/actions/tool-xmark.svg</file>
+        <file alias="view-zoom-in.svg">icons/actions/view-zoom-in.svg</file>
+        <file alias="view-zoom-out.svg">icons/actions/view-zoom-out.svg</file>
+        <file alias="view-zoom-actual.svg">icons/actions/view-zoom-actual.svg</file>
+        <file alias="view-fit-page.svg">icons/actions/view-fit-page.svg</file>
+        <file alias="view-fit-width.svg">icons/actions/view-fit-width.svg</file>
+        <file alias="page-rotate-left.svg">icons/actions/page-rotate-left.svg</file>
+        <file alias="page-rotate-right.svg">icons/actions/page-rotate-right.svg</file>
+        <file alias="panel-sidebar.svg">icons/actions/panel-sidebar.svg</file>
+        <file alias="panel-markup.svg">icons/actions/panel-markup.svg</file>
+        <file alias="panel-form.svg">icons/actions/panel-form.svg</file>
+    </qresource>
 </RCC>

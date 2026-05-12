@@ -33,6 +33,10 @@ public:
     virtual void zoomOut() {}
     virtual void zoomActual() {}
     virtual void zoomFitWidth() {}
+    // Fit the entire current page/image in the viewport. Distinct from
+    // zoomFitWidth, which only constrains horizontally. Bound to ⌘0
+    // following Adobe Acrobat's PDF-reader convention.
+    virtual void zoomFitPage() {}
 
     virtual bool supportsViewModes() const { return false; }
     virtual ViewMode viewMode() const { return ViewMode::SinglePage; }

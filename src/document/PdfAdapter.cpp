@@ -404,6 +404,11 @@ void PdfDocument::zoomFitWidth() {
     m_view->setZoomMode(QPdfView::ZoomMode::FitToWidth);
 }
 
+void PdfDocument::zoomFitPage() {
+    if (!m_view) return;
+    m_view->setZoomMode(QPdfView::ZoomMode::FitInView);
+}
+
 QImage PdfDocument::renderThumbnail(int pageIndex, QSize targetSize) {
     if (!m_valid || pageIndex < 0 || pageIndex >= m_doc->pageCount()) {
         return {};

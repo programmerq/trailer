@@ -32,6 +32,7 @@ public:
     void zoomOut() override;
     void zoomActual() override;
     void zoomFitWidth() override;
+    void zoomFitPage() override;
 
     bool supportsPrint() const override { return !m_image.isNull(); }
     void print(QWidget* dialogParent) override;

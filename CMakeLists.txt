@@ -18,7 +18,7 @@ set(CMAKE_AUTOUIC ON)
 
 include(CompilerWarnings)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Concurrent Gui Widgets Network Test Pdf PdfWidgets PrintSupport)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Core Concurrent Gui Widgets Network Svg Test Pdf PdfWidgets PrintSupport)
 include(OnnxRuntime)
 # Prefer a CMake package config (e.g. vcpkg on Windows).  Fall back to
 # pkg-config so that Linux/macOS system packages (libqpdf-dev, brew qpdf)
@@ -105,6 +105,8 @@ set(TRAILER_SOURCES
     src/ui/FormOverlay.h
     src/ui/FormToolbar.cpp
     src/ui/FormToolbar.h
+    src/ui/IconHelper.cpp
+    src/ui/IconHelper.h
     src/ui/Inspector.cpp
     src/ui/Inspector.h
     src/ui/Magnifier.cpp
@@ -149,6 +151,7 @@ target_link_libraries(trailer_core
         Qt6::Concurrent
         Qt6::Gui
         Qt6::Network
+        Qt6::Svg
         Qt6::Widgets
         Qt6::Pdf
         Qt6::PdfWidgets

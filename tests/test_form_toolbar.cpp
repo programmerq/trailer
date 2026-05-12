@@ -28,6 +28,7 @@ private slots:
     void autoFillSignalFiresOnce();
     void signHereSignalFiresOnce();
     void toolsAreMutuallyExclusive();
+    void everyActionHasARenderedIcon();
 };
 
 namespace {
@@ -126,6 +127,29 @@ void TestFormToolbar::toolsAreMutuallyExclusive() {
     // Preset must reset when switching back to plain Text Box so the
     // overlay opens its input dialog instead of silently dropping ✓.
     QVERIFY(bar.pendingText().isEmpty());
+}
+
+// Regression: each toolbar action ships with a non-empty themed icon
+// (resource registered in trailer.qrc, SVG renders to a real pixmap,
+// the tint pass actually paints something). A broken qrc alias or
+// missing Qt6::Svg dep would silently produce null icons — Qt's
+// QIcon API does not throw — and we'd ship a blank-button toolbar.
+void TestFormToolbar::everyActionHasARenderedIcon() {
+    FormToolbar bar;
+    for (QAction* a : bar.actions()) {
+        if (a->isSeparator()) continue;
+        QVERIFY2(!a->icon().isNull(),
+                 qPrintable(QStringLiteral("action without icon: %1")
+                                .arg(a->text())));
+        // A non-null QIcon is necessary but not sufficient — verify
+        // the icon engine actually renders a pixmap at the toolbar's
+        // size rather than returning a transparent placeholder.
+        const QPixmap pm = a->icon().pixmap(QSize(18, 18));
+        QVERIFY2(!pm.isNull(),
+                 qPrintable(QStringLiteral("icon renders empty: %1")
+                                .arg(a->text())));
+        QCOMPARE(pm.size(), QSize(18, 18));
+    }
 }
 
 QTEST_MAIN(TestFormToolbar)

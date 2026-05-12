@@ -47,7 +47,8 @@ signals:
 
 private:
     QAction* makeToolAction(const QString& label, AnnotationTool tool,
-                            const QString& pendingText = {});
+                            const QString& pendingText = {},
+                            const QString& iconResource = QString());
 
     QActionGroup* m_group = nullptr;
     AnnotationTool m_tool = AnnotationTool::None;

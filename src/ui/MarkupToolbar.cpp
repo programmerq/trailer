@@ -1,5 +1,7 @@
 #include "MarkupToolbar.h"
 
+#include "IconHelper.h"
+
 #include <QAction>
 #include <QActionGroup>
 #include <QColorDialog>
@@ -16,38 +18,68 @@ namespace trailer {
 MarkupToolbar::MarkupToolbar(QWidget* parent) : QToolBar(parent) {
     setWindowTitle(tr("Markup"));
     setObjectName(QStringLiteral("MarkupToolbar"));
-    setMovable(true);
+    // Toolbar placement is intentional, not user-configurable. Letting
+    // users drag the bar invariably ends with it docked somewhere
+    // obscured or floating off-window with no obvious way back. The
+    // right-click "hide toolbar" context menu is suppressed for the
+    // same reason — View → Toggle Markup Toolbar is the single source
+    // of truth for visibility. Overflow is handled by Qt's built-in
+    // extension chevron.
+    setMovable(false);
+    setFloatable(false);
+    setContextMenuPolicy(Qt::PreventContextMenu);
+    // Icon-only at 18 px is the screen-real-estate win the user
+    // asked for. Each action keeps its text label (used as tooltip
+    // and as test fixture by findToolAction); the toolbar just
+    // doesn't render it next to the glyph.
+    setToolButtonStyle(Qt::ToolButtonIconOnly);
+    setIconSize(QSize(18, 18));
 
     m_group = new QActionGroup(this);
     m_group->setExclusive(true);
 
-    auto* selectAction = makeToolAction(tr("Select"), AnnotationTool::Select);
+    auto* selectAction = makeToolAction(tr("Select"), AnnotationTool::Select,
+                                        QStringLiteral(":/icons/actions/tool-select.svg"));
     selectAction->setChecked(true);
     addSeparator();
-    makeToolAction(tr("Rectangle"), AnnotationTool::Rectangle);
-    makeToolAction(tr("Ellipse"), AnnotationTool::Ellipse);
-    makeToolAction(tr("Line"), AnnotationTool::Line);
-    makeToolAction(tr("Arrow"), AnnotationTool::Arrow);
-    makeToolAction(tr("Freehand"), AnnotationTool::Ink);
-    makeToolAction(tr("Text"), AnnotationTool::Text);
-    makeToolAction(tr("Note"), AnnotationTool::Note);
-    makeToolAction(tr("Bubble"), AnnotationTool::SpeechBubble);
-    makeToolAction(tr("Hl Shape"), AnnotationTool::HighlightShape);
-    makeToolAction(tr("Zoom Lens"), AnnotationTool::ZoomLens);
+    makeToolAction(tr("Rectangle"), AnnotationTool::Rectangle,
+                   QStringLiteral(":/icons/actions/tool-rectangle.svg"));
+    makeToolAction(tr("Ellipse"), AnnotationTool::Ellipse,
+                   QStringLiteral(":/icons/actions/tool-ellipse.svg"));
+    makeToolAction(tr("Line"), AnnotationTool::Line,
+                   QStringLiteral(":/icons/actions/tool-line.svg"));
+    makeToolAction(tr("Arrow"), AnnotationTool::Arrow,
+                   QStringLiteral(":/icons/actions/tool-arrow.svg"));
+    makeToolAction(tr("Freehand"), AnnotationTool::Ink,
+                   QStringLiteral(":/icons/actions/tool-freehand.svg"));
+    makeToolAction(tr("Text"), AnnotationTool::Text,
+                   QStringLiteral(":/icons/actions/tool-text.svg"));
+    makeToolAction(tr("Note"), AnnotationTool::Note,
+                   QStringLiteral(":/icons/actions/tool-note.svg"));
+    makeToolAction(tr("Bubble"), AnnotationTool::SpeechBubble,
+                   QStringLiteral(":/icons/actions/tool-speech-bubble.svg"));
+    makeToolAction(tr("Hl Shape"), AnnotationTool::HighlightShape,
+                   QStringLiteral(":/icons/actions/tool-highlight-shape.svg"));
+    makeToolAction(tr("Zoom Lens"), AnnotationTool::ZoomLens,
+                   QStringLiteral(":/icons/actions/tool-zoom-lens.svg"));
 
     addSeparator();
 
-    makeToolAction(tr("Highlight"), AnnotationTool::Highlight);
-    makeToolAction(tr("Underline"), AnnotationTool::Underline);
-    makeToolAction(tr("Strikeout"), AnnotationTool::StrikeOut);
+    makeToolAction(tr("Highlight"), AnnotationTool::Highlight,
+                   QStringLiteral(":/icons/actions/tool-highlight.svg"));
+    makeToolAction(tr("Underline"), AnnotationTool::Underline,
+                   QStringLiteral(":/icons/actions/tool-underline.svg"));
+    makeToolAction(tr("Strikeout"), AnnotationTool::StrikeOut,
+                   QStringLiteral(":/icons/actions/tool-strikeout.svg"));
 
     addSeparator();
 
     auto* redactAction =
-        makeToolAction(tr("Redact"), AnnotationTool::Redaction);
+        makeToolAction(tr("Redact"), AnnotationTool::Redaction,
+                       QStringLiteral(":/icons/actions/tool-redact.svg"));
     redactAction->setToolTip(
-        tr("Paint a permanent black block — content is rasterised on save. "
-           "Not a defence-grade redaction tool."));
+        tr("Redact — paint a permanent black block. Content is rasterised "
+           "on save. Not a defence-grade redaction tool."));
 
     addSeparator();
 
@@ -127,8 +159,16 @@ MarkupToolbar::MarkupToolbar(QWidget* parent) : QToolBar(parent) {
 
 AnnotationStyle MarkupToolbar::style() const { return m_style; }
 
-QAction* MarkupToolbar::makeToolAction(const QString& label, AnnotationTool tool) {
-    auto* action = addAction(label);
+QAction* MarkupToolbar::makeToolAction(const QString& label, AnnotationTool tool,
+                                       const QString& iconResource) {
+    QAction* action = nullptr;
+    if (!iconResource.isEmpty()) {
+        const QIcon icon = themedActionIcon(iconResource, this);
+        action = addAction(icon, label);
+    } else {
+        action = addAction(label);
+    }
+    action->setToolTip(label);
     action->setCheckable(true);
     m_group->addAction(action);
     connect(action, &QAction::toggled, this, [this, tool](bool on) {

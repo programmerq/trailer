@@ -38,6 +38,7 @@ public:
     void zoomOut() override;
     void zoomActual() override;
     void zoomFitWidth() override;
+    void zoomFitPage() override;
 
     bool supportsViewModes() const override { return true; }
     ViewMode viewMode() const override { return m_viewMode; }

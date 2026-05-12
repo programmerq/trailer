@@ -312,6 +312,23 @@ void ImageDocument::zoomFitWidth() {
     applyScale(static_cast<double>(available) / static_cast<double>(m_image.width()));
 }
 
+void ImageDocument::zoomFitPage() {
+    if (!m_scroll || !m_label || m_image.isNull()) {
+        return;
+    }
+    const int availW = m_scroll->viewport()->width();
+    const int availH = m_scroll->viewport()->height();
+    if (availW <= 0 || availH <= 0 ||
+        m_image.width() <= 0 || m_image.height() <= 0) {
+        return;
+    }
+    const double scaleW =
+        static_cast<double>(availW) / static_cast<double>(m_image.width());
+    const double scaleH =
+        static_cast<double>(availH) / static_cast<double>(m_image.height());
+    applyScale(std::min(scaleW, scaleH));
+}
+
 void ImageDocument::refreshView() {
     if (!m_label || m_image.isNull()) return;
     applyScale(m_scale);

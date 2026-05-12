@@ -73,6 +73,13 @@ protected:
     // mode" affordance Mac apps lean on. Falls through to the base
     // implementation when nothing matches.
     void keyPressEvent(QKeyEvent* event) override;
+    // Suppress Qt's built-in right-click toolbar/dock context menu.
+    // That menu lets the user accidentally hide a toolbar with no
+    // discoverable way to bring it back — the source of the
+    // "I'm tired of re-enabling toolbars" frustration. Visibility
+    // lives in the View menu (and the main toolbar toggles); this
+    // is the single source of truth.
+    QMenu* createPopupMenu() override;
 
 private slots:
     void onOpen();
@@ -231,6 +238,7 @@ private:
     QAction* m_zoomOutAction = nullptr;
     QAction* m_zoomActualAction = nullptr;
     QAction* m_zoomFitAction = nullptr;
+    QAction* m_zoomFitPageAction = nullptr;
     QAction* m_magnifierAction = nullptr;
     QAction* m_markupToolbarAction = nullptr;
     QAction* m_formToolbarAction = nullptr;
