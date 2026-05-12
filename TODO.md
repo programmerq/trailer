@@ -10,128 +10,128 @@ Captured from the user driving the actual app on a Mac. Each entry is
 a discrete change; we'll knock them out in priority order. Crossed-off
 items have landed; the commit hash is in the strikethrough line.
 
+> **2026-05-11 audit:** most of this section is already in the code.
+> Verified-done items are struck through with the reference; the only
+> remaining bullets are #1 (Dock-drop — needs runtime repro on
+> macOS), #16 (sidebar TOC / Highlights & Notes — placeholders,
+> blocked on underlying features), and #18 (search-match yellow —
+> needs a custom highlight overlay over `QPdfView`).
+
 ### Bugs (data loss / broken affordance)
 
 1. **Drag a file onto the Dock icon doesn't open it.** macOS sends a
    `QFileOpenEvent` which `Application::event` already routes to
    `openFiles`, but apparently nothing happens. Probably a
    single-instance / argv-routing issue or the event handler runs
-   before the registry is wired. Repro and fix.
-2. **`Cmd-Tab` while dragging a Zoom Lens leaves an undo-less
-   annotation.** The drag is interrupted mid-flight (focus-out
-   event) and whatever code path commits the annotation skips the
-   AnnotationStore push that records it for Undo. Audit every
-   drag-commit branch in `AnnotationOverlay` for the
-   `focusOutEvent` / `Qt::ApplicationDeactivate` case.
-3. **Click-drag draws a red rectangle even with the Select tool
-   active.** The overlay's preview-drawing branch in `paintEvent`
-   defaults to `AnnotationType::Rectangle` regardless of the active
-   tool. `mouseReleaseEvent` correctly does nothing destructive in
-   Select mode, but the visible preview during drag misleads the
-   user.
-4. **Some PDF thumbnails render without paper-white in dark mode.**
-   The thumbnail renderer doesn't enforce a background; PDFs that
-   don't paint their own background appear as text floating against
-   the system dark colour. Force paper-white (or the page's declared
-   background) under the rendered content.
+   before the registry is wired. Repro and fix. The event handler
+   looks correct in code (`Application::event` calls `openFiles` on
+   `QEvent::FileOpen`); the bug may have been a launch-timing race
+   that the `8bd9ad0` macOS no-window pass cleaned up. **Needs
+   live macOS verification before crossing off.**
+2. ~~**`Cmd-Tab` while dragging a Zoom Lens leaves an undo-less
+   annotation.**~~ Done — `AnnotationOverlay` ctor wires
+   `applicationStateChanged` to `abortInFlightDrag`, which clears
+   `m_dragging` / `m_movingSelected` / `m_resizingHandle` /
+   `m_inkPoints` when the app goes inactive.
+3. ~~**Click-drag draws a red rectangle even with the Select tool
+   active.**~~ Done — `4b74f80` ("HITL round 1: Select-mode
+   preview, defaults, Inspector wiring, Dock open"). `paintEvent`
+   now guards on `m_tool != Select && m_tool != None` before
+   drawing the shape preview.
+4. ~~**Some PDF thumbnails render without paper-white in dark
+   mode.**~~ Done — `PdfDocument::renderThumbnail` composites the
+   rendered page over an opaque white canvas before returning.
 
 ### UX defaults
 
-5. **Default tool should be Select, not box-drawing.** Tied to bug
-   #3 — even when the active tool *is* Select, the preview makes it
-   look like a box tool. Once #3 is fixed, verify the toolbar's
-   `selectAction->setChecked(true)` initial state stands.
-6. **Sidebar starts hidden by default.** Currently visible on
-   launch; should be hidden until the user invokes `View → Toggle
-   Sidebar` or the new toolbar's sidebar button.
-7. **Foreground color shouldn't default to red.** Pick a neutral
-   high-contrast default (medium grey or accent blue) so the user's
-   first shape isn't a "danger" colour.
-8. **Inspector shortcut → ⌘I** (currently ⌘⇧I). The shorter mnemonic
-   is the convention in every Mac app of this shape. Bump
-   ⌘⇧I to "Toggle Annotations Sidebar" once that exists, or drop it.
-9. **macOS: launching with no files opens no window.** Match
-   Preview / TextEdit / Pages convention — Dock icon and menu bar
-   are live, but no canvas is shown until the user picks File →
-   Open or drops a file.
-10. **Esc / Cmd-Tab / loss-of-focus deactivates Magnifier.** Today
-    Magnifier mode is sticky until the user manually toggles it
-    off. It should clear on any obvious "I'm done with the
-    magnifier" signal.
+5. ~~**Default tool should be Select, not box-drawing.**~~ Done —
+   `MarkupToolbar` initialises with `selectAction->setChecked(true)`
+   and stores `m_tool = AnnotationTool::Select`. Tied to #3 which
+   also landed.
+6. ~~**Sidebar starts hidden by default.**~~ Done — `Sidebar` ships
+   `Mode::Hidden` as the default, `MainWindow` calls
+   `m_sidebar->hide()` on construction, and the main-toolbar
+   Sidebar picker shows "Hide Sidebar" checked at launch.
+7. ~~**Foreground color shouldn't default to red.**~~ Done —
+   `AnnotationStyle::stroke` defaults to `QColor(60, 60, 60)`
+   (dark grey).
+8. ~~**Inspector shortcut → ⌘I**~~ Done — wired to
+   `QKeySequence(tr("Ctrl+I"))` in `buildViewMenu`.
+9. ~~**macOS: launching with no files opens no window.**~~ Done
+   upstream in `8bd9ad0` ("Add macOS no-window file menu actions").
+10. ~~**Esc / Cmd-Tab / loss-of-focus deactivates Magnifier.**~~
+    Done — `MainWindow::keyPressEvent` un-checks the magnifier
+    action on Esc; `applicationStateChanged` un-checks it on app
+    deactivate.
 
 ### Inspector + selection
 
-11. **Clicking on a placed annotation should NOT auto-show the
-    Inspector.** The Inspector is a workspace; opening it on every
-    click is noisy. Selection state still tracks (so Delete / arrow
-    keys work) but Inspector visibility stays under explicit user
-    control. Toggling the Inspector with ⌘I focuses on the current
-    selection.
+11. ~~**Clicking on a placed annotation should NOT auto-show the
+    Inspector.**~~ Done — `onAnnotationSelectionChanged` only
+    updates the Inspector's data layer; the comment explicitly
+    notes "DO NOT pop the pane open just because the user clicked."
 
 ### Markup bar
 
-12. **Replace text labels with SVG icons** appropriate to each tool.
-    Need icons for Select, Rectangle, Ellipse, Line, Arrow,
-    Freehand, Text, Note, Speech Bubble, Highlight Shape, Zoom Lens,
-    Highlight, Underline, Strikeout, Redact. Solid-line outline
-    style at 16/20/24 px. Light + dark colour variants.
+12. ~~**Replace text labels with SVG icons** appropriate to each
+    tool.~~ Done — 29 base + 6 filled SVG icons under
+    `resources/icons/actions/`, themed via `IconHelper` (commits
+    `ff8541a`, `0d7ea5b`, `fae4ccd`). See `docs/icon-guidelines.md`
+    for the family + artist brief, and `tools/generate_icon_sheet`
+    for a visual review.
 
 ### Top-bar redesign
 
-13. **Add a slim main toolbar** that takes the place of the OS title
-    bar (or rides above it on Linux/Win). Contains:
-    - Sidebar mode picker (icon → menu of: Hide / Thumbnails / TOC /
-      Highlights & Notes).
-    - Filename label, clickable to invoke macOS's title-bar pulldown
-      (path, tags, lock, "show in Finder"). On Linux/Win, render a
-      lighter equivalent (path tooltip + "Show in file manager").
-    - Zoom out / zoom-level / zoom in.
-    - Rotate left / right.
-    - Toggle markup toolbar.
-    - Toggle form-filling toolbar (action exists; surface it here).
-    - Search field — `Cmd-F` focuses it.
-14. **Window menu on macOS** — `Minimize`, `Zoom`, `Tile to Left /
-    Right`, `Center`, `Move & Resize → halves / quarters`, `Bring
-    All to Front`, plus a list of every open Trailer window with a
-    checkmark on the active one. `QMenuBar` exposes
-    `addMenu(tr("Window"))` with `Qt::WindowMenuRole` actions; some
-    of the macOS-specific entries get filled in by Cocoa
-    automatically once the menu has the right name.
-15. **Go menu** — `First Page`, `Previous Page`, `Next Page`, `Last
-    Page`, separator, `Go to Page…` (`⌥⌘G`). Mirrors Preview's Go
-    menu.
+13. ~~**Add a slim main toolbar**~~ Done — `buildMainToolbar` in
+    `MainWindow` builds the bar with sidebar-mode picker, zoom
+    (out / actual / in), rotate (L / R), markup-toggle, form-
+    toggle, and a search field anchored to the right. Markup and
+    form toolbars are mutually exclusive and locked
+    non-movable / non-floatable (commit `ff8541a`).
+    (Title-bar filename pulldown is platform-default chrome on
+    macOS and needs no special handling.)
+14. ~~**Window menu on macOS**~~ Done — `buildWindowMenu` adds
+    Minimize, Bring All to Front, and a dynamic per-window list
+    refreshed via `refreshWindowMenuList`.
+15. ~~**Go menu**~~ Done — `buildGoMenu` mirrors Preview's First /
+    Previous / Next / Last Page entries with the documented
+    shortcuts.
 
 ### Sidebar modes
 
-16. **Sidebar has explicit modes** (Hide is default):
-    - Thumbnails (current behaviour minus the Annotations tab).
-    - Table of Contents (PDF outline / image bookmarks if any).
-    - Highlights & Notes (only if/when text-aware highlights ship;
-      otherwise dim or hide the entry).
-    Picker lives in the new top-bar's sidebar button. The current
-    "Annotations" tab inside the thumbnail sidebar moves to its own
-    mode (`Highlights & Notes`).
-17. **Some PDF thumbnails missing paper-white** — see Bug #4.
+16. **Sidebar has explicit modes** (Hide is default). Hidden /
+    Thumbnails / Search Results all work. Table of Contents and
+    Highlights & Notes are deliberate disabled placeholders in the
+    picker — the underlying features (PDF outline parsing,
+    text-aware highlights) haven't shipped. Re-enable each entry
+    when its data source is in place.
+17. ~~**Some PDF thumbnails missing paper-white**~~ — duplicate of
+    #4 above; both fixed.
 
 ### Search
 
-18. **Search highlights matches in highlighter yellow** (current
-    selection blue is fine for active match; siblings should be
-    yellow at lower opacity).
-19. **"Match X of Y" indicator** in the search bar.
-20. **Search opens the thumbnail sidebar** filtered to pages with
-    matches, plus a "found on N pages" caption.
+18. **Search highlights matches in highlighter yellow.** Still open.
+    `QPdfView` paints its own selection rectangles in the system
+    accent colour and the API doesn't expose a tint hook. Options:
+    layer a custom overlay over the view that reads from
+    `QPdfSearchModel` and paints siblings at low-opacity yellow,
+    or subclass `QPdfView` to intercept its draw call.
+19. ~~**"Match X of Y" indicator**~~ Done — `SearchBar::
+    setMatchCounter` is wired through every find / next / previous
+    handler in `MainWindow`.
+20. ~~**Search opens the thumbnail sidebar**~~ Done —
+    `Sidebar::Mode::SearchResults` populates from query matches and
+    the sidebar auto-switches to it on a non-empty query.
 
 ### Misc
 
-21. **`Tools → Reset Trailer Settings…`** (or hidden via a debug
-    flag) — wipe `Settings`, `RecentFiles`, `CardStore`, signature
-    PNGs, model cache. Sometimes the right diagnostic step is "are
-    these symptoms cached preferences from an older version?"
-22. **`File → Export as PDF`** for image documents. The
-    `ImageDocument::exportAs` already handles format conversion;
-    surface a dedicated PDF target for users who don't know to type
-    `.pdf` in Save As.
+21. ~~**`Tools → Reset Trailer Settings…`**~~ Done — see
+    `onResetTrailerSettings` in `MainWindow`; wipes Settings,
+    RecentFiles, CardStore, signature PNGs, and model cache after
+    explicit confirmation.
+22. ~~**`File → Export as PDF`** for image documents.~~ Done —
+    "PDF document (*.pdf)" is one of the file-type filters in
+    `MainWindow::onExportAs`.
 
 ## UI
 
