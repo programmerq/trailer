@@ -239,6 +239,10 @@ private:
     QAction* m_undoAction = nullptr;
     QAction* m_redoAction = nullptr;
 
+    // Sidebar picker's "Table of Contents" entry. Enabled per-doc
+    // based on hasOutline() so PDFs without an /Outlines tree get
+    // a greyed-out entry instead of an empty tree.
+    QAction* m_tocSidebarAction = nullptr;
     QAction* m_zoomInAction = nullptr;
     QAction* m_zoomOutAction = nullptr;
     QAction* m_zoomActualAction = nullptr;
