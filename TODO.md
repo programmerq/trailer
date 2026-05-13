@@ -19,15 +19,13 @@ items have landed; the commit hash is in the strikethrough line.
 
 ### Bugs (data loss / broken affordance)
 
-1. **Drag a file onto the Dock icon doesn't open it.** In-process
-   path covered by `uat_fnd_050_fileOpenEventOpensWindow` — synth-
-   esising a `QFileOpenEvent` with no windows open creates a
-   window with the file as expected. The Info.plist already
-   declares `CFBundleDocumentTypes` so macOS dispatches the event
-   for both PDFs and images. Live-on-Mac repro (build the .app,
-   drag onto Dock) **still needs a manual confirmation** — the
-   automated UAT pins the event-routing contract but can't drive
-   macOS's LaunchServices.
+1. ~~**Drag a file onto the Dock icon doesn't open it.**~~ Done.
+   In-process path pinned by `uat_fnd_050_fileOpenEventOpensWindow`
+   (synthesises a `QFileOpenEvent` with no windows open and
+   confirms a window is created). Live drag-onto-Dock confirmed
+   on macOS by the user on 2026-05-13. The Info.plist's
+   `CFBundleDocumentTypes` for `com.adobe.pdf` and `public.image`
+   is the LaunchServices-side prerequisite.
 2. ~~**`Cmd-Tab` while dragging a Zoom Lens leaves an undo-less
    annotation.**~~ Done — `AnnotationOverlay` ctor wires
    `applicationStateChanged` to `abortInFlightDrag`, which clears
