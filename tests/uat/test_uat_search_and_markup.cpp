@@ -30,6 +30,7 @@
 #include <QDockWidget>
 #include <QFont>
 #include <QLineEdit>
+#include <QListWidget>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMouseEvent>
@@ -301,6 +302,9 @@ private slots:
     void uat_toc_010_outlineDisabledOnPlainPdf();
     void uat_toc_011_outlineExposedForPdfWithBookmarks();
     void uat_toc_012_clickingOutlineEntryNavigatesToPage();
+    void uat_hn_010_highlightsModeDisabledForEmptyDoc();
+    void uat_hn_011_highlightsModeEnabledAfterAddingNote();
+    void uat_hn_012_listFiltersToTextContentTypes();
 
 private:
     QTemporaryDir m_scratch;
@@ -1593,6 +1597,139 @@ void TestUatSearchAndMarkup::uat_toc_012_clickingOutlineEntryNavigatesToPage() {
     doc->goToOutlineEntry(idx2);
     QApplication::processEvents();
     QTRY_COMPARE_WITH_TIMEOUT(doc->currentPage(), 2, 2000);
+}
+
+namespace {
+
+// Helper: find the "Highlights & Notes" picker entry by walking the
+// main toolbar's QToolButtons. Same shape as the TOC lookup.
+QAction* findHighlightsNotesAction(MainWindow* mw) {
+    const auto* mainToolbar =
+        mw->findChild<QToolBar*>(QStringLiteral("MainToolbar"));
+    if (!mainToolbar) return nullptr;
+    for (auto* btn : mainToolbar->findChildren<QToolButton*>()) {
+        QMenu* m = btn->menu();
+        if (!m) continue;
+        for (QAction* item : m->actions()) {
+            if (item->text() == QStringLiteral("Highlights && Notes")) {
+                return item;
+            }
+        }
+    }
+    return nullptr;
+}
+
+}  // namespace
+
+// UAT-HN-010 — opening a fresh document with no annotations leaves
+// the Highlights & Notes picker entry disabled.
+void TestUatSearchAndMarkup::uat_hn_010_highlightsModeDisabledForEmptyDoc() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_hn_010.pdf")),
+        QStringLiteral("griffin"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+    QAction* hnAction = findHighlightsNotesAction(mw);
+    QVERIFY(hnAction);
+    QVERIFY2(!hnAction->isEnabled(),
+             "H&N entry must start disabled — no annotations yet.");
+}
+
+// UAT-HN-011 — adding a Note annotation flips the H&N picker entry
+// from disabled to enabled on the next store-changed cycle. Removing
+// the only annotation flips it back to disabled.
+void TestUatSearchAndMarkup::uat_hn_011_highlightsModeEnabledAfterAddingNote() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_hn_011.pdf")),
+        QStringLiteral("phoenix"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+    QAction* hnAction = findHighlightsNotesAction(mw);
+    QVERIFY(hnAction);
+    QVERIFY(!hnAction->isEnabled());
+
+    auto* doc = mw->findChild<DocumentView*>()->currentDocument();
+    QVERIFY(doc);
+    auto* store = doc->annotations();
+    QVERIFY(store);
+
+    Annotation note;
+    note.type = AnnotationType::Note;
+    note.page = 0;
+    note.bounds = QRectF(100, 100, 24, 24);
+    note.text = QStringLiteral("Re-read this part.");
+    store->add(note);
+    QApplication::processEvents();
+    QTRY_VERIFY_WITH_TIMEOUT(hnAction->isEnabled(), 2000);
+
+    // Removing it flips back to disabled.
+    const auto rows = store->annotations();
+    QCOMPARE(rows.size(), size_t(1));
+    store->remove(rows[0].id);
+    QApplication::processEvents();
+    QTRY_VERIFY_WITH_TIMEOUT(!hnAction->isEnabled(), 2000);
+}
+
+// UAT-HN-012 — the H&N list is filtered to text-content annotation
+// types. A document with a Rectangle (pure shape) plus a Highlight
+// (text-content) shows only the Highlight in the H&N list.
+void TestUatSearchAndMarkup::uat_hn_012_listFiltersToTextContentTypes() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_hn_012.pdf")),
+        QStringLiteral("dragon"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+    auto* sidebar = mw->findChild<Sidebar*>();
+    QVERIFY(sidebar);
+    auto* doc = mw->findChild<DocumentView*>()->currentDocument();
+    QVERIFY(doc);
+    auto* store = doc->annotations();
+    QVERIFY(store);
+
+    Annotation rect;
+    rect.type = AnnotationType::Rectangle;
+    rect.page = 0;
+    rect.bounds = QRectF(50, 50, 200, 100);
+    store->add(rect);
+    Annotation hl;
+    hl.type = AnnotationType::Highlight;
+    hl.page = 0;
+    hl.bounds = QRectF(60, 200, 180, 30);
+    hl.text = QStringLiteral("Important paragraph.");
+    store->add(hl);
+    QApplication::processEvents();
+
+    // Only the Highlight counts toward Highlights & Notes; the
+    // Rectangle is a pure-shape annotation.
+    QCOMPARE(sidebar->highlightsAndNotesCount(), 1);
+
+    sidebar->setMode(Sidebar::Mode::HighlightsAndNotes);
+    QApplication::processEvents();
+    auto* list = sidebar->findChild<QListWidget*>();
+    QVERIFY(list);
+    QCOMPARE(list->count(), 1);
+    QVERIFY(list->item(0)->text().contains(QStringLiteral("Highlight")));
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG

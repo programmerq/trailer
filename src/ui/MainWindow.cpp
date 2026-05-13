@@ -458,8 +458,9 @@ void MainWindow::buildMainToolbar() {
     m_tocSidebarAction = addModeAction(
         tr("Table of Contents"), Sidebar::Mode::TableOfContents,
         /*enabled=*/false);
-    addModeAction(tr("Highlights && Notes"),
-                  Sidebar::Mode::HighlightsAndNotes, /*enabled=*/false);
+    m_highlightsAndNotesSidebarAction = addModeAction(
+        tr("Highlights && Notes"),
+        Sidebar::Mode::HighlightsAndNotes, /*enabled=*/false);
     hideAction->setChecked(true);  // Hidden is the launch default
     sidebarBtn->setMenu(sidebarMenu);
     m_mainToolbar->addWidget(sidebarBtn);
@@ -2226,6 +2227,18 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
             m_sidebar->setMode(Sidebar::Mode::Hidden);
         }
     }
+    // Highlights & Notes picker entry: enabled iff the doc has at
+    // least one text-content annotation to list. Falls back to
+    // Hidden if we were already in H&N mode and the new doc has
+    // none, so the dock doesn't show an empty list.
+    if (m_highlightsAndNotesSidebarAction) {
+        const int count = m_sidebar->highlightsAndNotesCount();
+        m_highlightsAndNotesSidebarAction->setEnabled(count > 0);
+        if (count == 0 &&
+            m_sidebar->mode() == Sidebar::Mode::HighlightsAndNotes) {
+            m_sidebar->setMode(Sidebar::Mode::Hidden);
+        }
+    }
 
     syncViewModeActions(doc);
     updateTitleForDocument(doc);
@@ -2237,6 +2250,18 @@ void MainWindow::onActiveAnnotationStoreChanged() {
     // lifetime outlives the tab it's shown in, so dispatch through
     // the tab widget rather than capturing a pointer.
     updateTitleForDocument(m_documentView->currentDocument());
+    // Keep the Highlights & Notes picker entry's enabled-state in
+    // sync as the user adds / removes annotations. The Sidebar's
+    // own refreshAnnotations is already connected to the same
+    // signal directly; this just gates the menu item.
+    if (m_highlightsAndNotesSidebarAction && m_sidebar) {
+        const int count = m_sidebar->highlightsAndNotesCount();
+        m_highlightsAndNotesSidebarAction->setEnabled(count > 0);
+        if (count == 0 &&
+            m_sidebar->mode() == Sidebar::Mode::HighlightsAndNotes) {
+            m_sidebar->setMode(Sidebar::Mode::Hidden);
+        }
+    }
 }
 
 void MainWindow::onAnnotationSelectionChanged(int id) {
