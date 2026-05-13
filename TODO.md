@@ -19,15 +19,15 @@ items have landed; the commit hash is in the strikethrough line.
 
 ### Bugs (data loss / broken affordance)
 
-1. **Drag a file onto the Dock icon doesn't open it.** macOS sends a
-   `QFileOpenEvent` which `Application::event` already routes to
-   `openFiles`, but apparently nothing happens. Probably a
-   single-instance / argv-routing issue or the event handler runs
-   before the registry is wired. Repro and fix. The event handler
-   looks correct in code (`Application::event` calls `openFiles` on
-   `QEvent::FileOpen`); the bug may have been a launch-timing race
-   that the `8bd9ad0` macOS no-window pass cleaned up. **Needs
-   live macOS verification before crossing off.**
+1. **Drag a file onto the Dock icon doesn't open it.** In-process
+   path covered by `uat_fnd_050_fileOpenEventOpensWindow` — synth-
+   esising a `QFileOpenEvent` with no windows open creates a
+   window with the file as expected. The Info.plist already
+   declares `CFBundleDocumentTypes` so macOS dispatches the event
+   for both PDFs and images. Live-on-Mac repro (build the .app,
+   drag onto Dock) **still needs a manual confirmation** — the
+   automated UAT pins the event-routing contract but can't drive
+   macOS's LaunchServices.
 2. ~~**`Cmd-Tab` while dragging a Zoom Lens leaves an undo-less
    annotation.**~~ Done — `AnnotationOverlay` ctor wires
    `applicationStateChanged` to `abortInFlightDrag`, which clears
