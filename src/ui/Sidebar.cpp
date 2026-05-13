@@ -187,20 +187,15 @@ Sidebar::Sidebar(QWidget* parent) : QDockWidget(tr("Sidebar"), parent) {
     connect(m_annotations, &QListWidget::itemClicked,
             this, &Sidebar::onAnnotationActivated);
 
-    // The sidebar used to host two tabs (Pages and Annotations).
-    // The 2026-04-30 HITL pass called out the always-present
-    // Annotations tab as wasted real estate when no annotations
-    // exist; it'll be revived as a dedicated "Highlights & Notes"
-    // sidebar mode once that feature lands. For now the sidebar
-    // shows just the Pages thumbnails — m_annotations is kept as
-    // a parented child widget so the existing refreshAnnotations
-    // / onAnnotationActivated wiring still compiles, but it isn't
-    // visible.
+    // Pages-thumbnails tab. The 2026-04-30 HITL pass removed the
+    // legacy "Annotations" sibling tab from this strip; that view
+    // now lives on its own stack page so it can be reached via the
+    // sidebar mode picker's "Highlights & Notes" entry.
     m_tabs = new QTabWidget(m_stack);
     m_tabs->addTab(m_thumbnails, tr("Pages"));
     m_tabs->setTabBarAutoHide(true);  // single tab → no tab strip
-    m_annotations->hide();
     m_tabsIndex = m_stack->addWidget(m_tabs);
+    m_annotationsIndex = m_stack->addWidget(m_annotations);
 
     // Outline / TOC tree view. Hidden until the active document
     // exposes an outline (PDF /Outlines tree) AND the picker mode
@@ -316,11 +311,11 @@ void Sidebar::applyMode() {
             if (!isVisible()) show();
             return;
         case Mode::HighlightsAndNotes:
-            // Underlying feature not implemented yet — fall back to
-            // showing all pages so the dock doesn't go blank.
-            m_model->setPageFilter({});
+            // Rebuild the filtered list now in case mode changed
+            // without a store->changed signal firing recently.
+            refreshAnnotations();
             m_stack->setCurrentIndex(
-                m_doc ? m_tabsIndex : m_placeholderIndex);
+                m_doc ? m_annotationsIndex : m_placeholderIndex);
             if (!isVisible()) show();
             return;
     }
@@ -352,24 +347,66 @@ void Sidebar::refreshThumbnails() {
     syncSelectionFromDocument();
 }
 
+namespace {
+
+// Highlights & Notes mode filters the annotation list down to the
+// types that carry user-meaningful content. Pure-shape annotations
+// (Rectangle, Ellipse, Line, Arrow, Ink, HighlightShape, ZoomLens,
+// Redaction, Signature) would clutter the list without contributing
+// to the "skim what I marked up" use case. Speech bubbles are
+// included because they carry user text; redactions are not because
+// they're a content-destruction tool, not an annotation in the
+// review-this-document sense.
+bool isHighlightOrNoteType(AnnotationType t) {
+    switch (t) {
+        case AnnotationType::Highlight:
+        case AnnotationType::Underline:
+        case AnnotationType::StrikeOut:
+        case AnnotationType::Note:
+        case AnnotationType::Text:
+        case AnnotationType::SpeechBubble:
+            return true;
+        case AnnotationType::Rectangle:
+        case AnnotationType::Ellipse:
+        case AnnotationType::Line:
+        case AnnotationType::Arrow:
+        case AnnotationType::Ink:
+        case AnnotationType::HighlightShape:
+        case AnnotationType::ZoomLens:
+        case AnnotationType::Redaction:
+        case AnnotationType::Signature:
+            return false;
+    }
+    return false;
+}
+
+}  // namespace
+
 void Sidebar::refreshAnnotations() {
     m_annotations->clear();
     if (!m_doc) return;
     auto* store = m_doc->annotations();
     if (!store) return;
+    const bool filterForHighlights = (m_mode == Mode::HighlightsAndNotes);
     for (const Annotation& a : store->annotations()) {
+        if (filterForHighlights && !isHighlightOrNoteType(a.type)) continue;
         QString label;
         switch (a.type) {
-            case AnnotationType::Rectangle: label = tr("Rectangle"); break;
-            case AnnotationType::Ellipse:   label = tr("Ellipse"); break;
-            case AnnotationType::Line:      label = tr("Line"); break;
-            case AnnotationType::Arrow:     label = tr("Arrow"); break;
-            case AnnotationType::Ink:       label = tr("Freehand"); break;
-            case AnnotationType::Text:      label = tr("Text"); break;
-            case AnnotationType::Note:      label = tr("Note"); break;
-            case AnnotationType::Highlight: label = tr("Highlight"); break;
-            case AnnotationType::Underline: label = tr("Underline"); break;
-            case AnnotationType::StrikeOut: label = tr("Strikeout"); break;
+            case AnnotationType::Rectangle:      label = tr("Rectangle"); break;
+            case AnnotationType::Ellipse:        label = tr("Ellipse"); break;
+            case AnnotationType::Line:           label = tr("Line"); break;
+            case AnnotationType::Arrow:          label = tr("Arrow"); break;
+            case AnnotationType::Ink:            label = tr("Freehand"); break;
+            case AnnotationType::Text:           label = tr("Text"); break;
+            case AnnotationType::Note:           label = tr("Note"); break;
+            case AnnotationType::Highlight:      label = tr("Highlight"); break;
+            case AnnotationType::Underline:      label = tr("Underline"); break;
+            case AnnotationType::StrikeOut:      label = tr("Strikeout"); break;
+            case AnnotationType::HighlightShape: label = tr("Hl Shape"); break;
+            case AnnotationType::SpeechBubble:   label = tr("Speech Bubble"); break;
+            case AnnotationType::ZoomLens:       label = tr("Zoom Lens"); break;
+            case AnnotationType::Redaction:      label = tr("Redaction"); break;
+            case AnnotationType::Signature:      label = tr("Signature"); break;
         }
         const QString preview = a.text.isEmpty()
             ? QString()
@@ -379,6 +416,17 @@ void Sidebar::refreshAnnotations() {
             m_annotations);
         item->setData(Qt::UserRole, a.id);
     }
+}
+
+int Sidebar::highlightsAndNotesCount() const {
+    if (!m_doc) return 0;
+    auto* store = m_doc->annotations();
+    if (!store) return 0;
+    int count = 0;
+    for (const Annotation& a : store->annotations()) {
+        if (isHighlightOrNoteType(a.type)) ++count;
+    }
+    return count;
 }
 
 void Sidebar::onAnnotationActivated() {

@@ -243,6 +243,11 @@ private:
     // based on hasOutline() so PDFs without an /Outlines tree get
     // a greyed-out entry instead of an empty tree.
     QAction* m_tocSidebarAction = nullptr;
+    // "Highlights & Notes" entry. Enabled iff the doc has at least
+    // one text-content annotation (highlights, underlines, sticky
+    // notes, free text, speech bubbles). Refreshed on store
+    // mutations via onActiveAnnotationStoreChanged.
+    QAction* m_highlightsAndNotesSidebarAction = nullptr;
     QAction* m_zoomInAction = nullptr;
     QAction* m_zoomOutAction = nullptr;
     QAction* m_zoomActualAction = nullptr;

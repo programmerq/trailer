@@ -42,6 +42,10 @@ public:
     void refreshAnnotations();
 
     Mode mode() const { return m_mode; }
+    // Number of items currently in the Highlights & Notes list.
+    // MainWindow uses this to gate the picker entry's enabled state
+    // — empty list = greyed-out menu entry.
+    int highlightsAndNotesCount() const;
     // Switch presentation. Hidden hides the dock; the others bring
     // it back if it was hidden. Pages/SearchResults reuse the same
     // QListView with a different filter on the model.
@@ -84,6 +88,7 @@ private:
     int m_placeholderIndex = 0;
     int m_tabsIndex = 0;
     int m_outlineIndex = 0;
+    int m_annotationsIndex = 0;
     bool m_syncingSelection = false;
     Mode m_mode = Mode::Hidden;
     std::vector<int> m_searchMatchPages;
