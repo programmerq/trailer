@@ -162,6 +162,11 @@ private:
     // and scrolled into view — this is where the "Find found nothing"
     // bug on OCR'd PDFs used to live.
     void onSearchResultsPopulated();
+    // Walk the search model and push every match rectangle into the
+    // annotation overlay's search-highlight pass, flagging the
+    // current-index match as `isCurrent`. Re-run whenever the model
+    // populates, the current index changes, or the search clears.
+    void refreshSearchHighlights();
 
     QString m_path;
     std::unique_ptr<QPdfDocument> m_doc;

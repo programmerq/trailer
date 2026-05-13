@@ -70,6 +70,24 @@ public:
         QRectF docRect, QSize outPixels, int page)>;
     void setSourceSampler(SourceSampler fn);
 
+    // Per-match rectangle for the search-highlight pass. The overlay
+    // paints siblings in low-opacity yellow and the current match in
+    // high-opacity yellow with a thin outline — the "highlighter
+    // marker" look. Driven by the document adapter (PdfDocument
+    // queries QPdfSearchModel and pushes the list here on every
+    // model/index change).
+    struct SearchHighlight {
+        int page;
+        QRectF rect;
+        bool isCurrent;
+    };
+    void setSearchHighlights(std::vector<SearchHighlight> highlights);
+    // Convenience for tests: how many match rects the overlay is
+    // currently holding.
+    int searchHighlightCountForTest() const {
+        return static_cast<int>(m_searchHighlights.size());
+    }
+
     // The id of the currently-selected annotation (0 = none). Public
     // so MainWindow can wire keyboard shortcuts (Delete, arrows) and
     // future Inspector restyle. Tests use this to verify selection
@@ -153,6 +171,11 @@ private:
     // overlay doesn't re-decode on every repaint. Mutable because
     // paintEvent() is const-ish in spirit.
     mutable std::unordered_map<std::string, QImage> m_signatureCache;
+    // Search-match rectangles to paint underneath annotations on
+    // every repaint. Refreshed from the document adapter whenever
+    // the search model or current-match index changes. Empty when
+    // no search is active.
+    std::vector<SearchHighlight> m_searchHighlights;
 
     DocToView m_docToView;
     ViewToDoc m_viewToDoc;

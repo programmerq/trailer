@@ -21,6 +21,7 @@
 #include <QPdfDocument>
 #include <QPdfDocumentRenderOptions>
 #include <QPdfPageNavigator>
+#include <QPdfLink>
 #include <QPdfSearchModel>
 #include <QPdfView>
 #include <QPrintDialog>
@@ -491,6 +492,10 @@ void PdfDocument::setSearchQuery(const QString& query) {
             m_view->setCurrentSearchResultIndex(m_currentResult);
         }
     }
+    // Push the (possibly empty) match list to the overlay so an
+    // empty / cleared query removes stale yellow highlights from a
+    // previous search.
+    refreshSearchHighlights();
 }
 
 void PdfDocument::onSearchResultsPopulated() {
@@ -499,8 +504,30 @@ void PdfDocument::onSearchResultsPopulated() {
     if (m_searchModel->rowCount({}) <= 0) return;
     // Don't stomp on user navigation: if findNext/findPrevious bumped
     // the index while the search was still populating, leave it alone.
-    if (m_view->currentSearchResultIndex() >= 0) return;
+    if (m_view->currentSearchResultIndex() >= 0) {
+        refreshSearchHighlights();
+        return;
+    }
     m_view->setCurrentSearchResultIndex(m_currentResult);
+    refreshSearchHighlights();
+}
+
+void PdfDocument::refreshSearchHighlights() {
+    if (!m_overlay) return;
+    std::vector<AnnotationOverlay::SearchHighlight> highlights;
+    if (m_searchModel) {
+        const int n = m_searchModel->rowCount({});
+        for (int i = 0; i < n; ++i) {
+            const QPdfLink link = m_searchModel->resultAtIndex(i);
+            if (!link.isValid()) continue;
+            const int page = link.page();
+            const bool isCurrent = (i == m_currentResult);
+            for (const QRectF& r : link.rectangles()) {
+                highlights.push_back({page, r, isCurrent});
+            }
+        }
+    }
+    m_overlay->setSearchHighlights(std::move(highlights));
 }
 
 void PdfDocument::findNext() {
@@ -509,6 +536,7 @@ void PdfDocument::findNext() {
     if (count <= 0) return;
     m_currentResult = (m_currentResult + 1) % count;
     m_view->setCurrentSearchResultIndex(m_currentResult);
+    refreshSearchHighlights();
 }
 
 void PdfDocument::findPrevious() {
@@ -517,6 +545,7 @@ void PdfDocument::findPrevious() {
     if (count <= 0) return;
     m_currentResult = (m_currentResult - 1 + count) % count;
     m_view->setCurrentSearchResultIndex(m_currentResult);
+    refreshSearchHighlights();
 }
 
 void PdfDocument::clearSearch() {
@@ -527,6 +556,7 @@ void PdfDocument::clearSearch() {
     if (m_view) {
         m_view->setCurrentSearchResultIndex(-1);
     }
+    refreshSearchHighlights();
 }
 
 int PdfDocument::searchMatchCount() const {

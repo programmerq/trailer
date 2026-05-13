@@ -184,6 +184,7 @@ private slots:
     void uat_vwr_061b_findMatchesInOcrLayerPdf();
     void uat_vwr_062_findNextPrevWrap();
     void uat_vwr_063_escapeClosesSearch();
+    void uat_vwr_064_searchHighlightsFillOverlay();
     void uat_vwr_065_searchWithNoMatches();
     void uat_vwr_066_searchOpensSidebarWithMatchPages();
     void uat_ann_010_rectangleToolCreatesAnnotation();
@@ -439,6 +440,55 @@ void TestUatSearchAndMarkup::uat_vwr_063_escapeClosesSearch() {
     QApplication::processEvents();
 
     QCOMPARE(view->currentSearchResultIndex(), -1);
+}
+
+// UAT-VWR-064 — Each search hit shows up in the AnnotationOverlay's
+// search-highlight pass (the yellow "highlighter marker" siblings
+// the 2026-04-30 HITL pass asked for, separate from QPdfView's own
+// current-match painting). The overlay holds at least one rect per
+// match while the query is active; clearing the query drops every
+// rect back to zero.
+void TestUatSearchAndMarkup::uat_vwr_064_searchHighlightsFillOverlay() {
+    QVERIFY(m_scratch.isValid());
+    const QString keyword = QStringLiteral("manticore");
+    const int copies = 3;
+    const QString pdfPath = writePdfWithKeywordTimes(
+        m_scratch.filePath(QStringLiteral("uat_vwr_064.pdf")), keyword, copies);
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+    auto* overlay = mw->findChild<AnnotationOverlay*>();
+    QVERIFY(overlay);
+    QCOMPARE(overlay->searchHighlightCountForTest(), 0);
+
+    QAction* findAction = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
+                                         QStringLiteral("&Find…"));
+    QVERIFY(findAction);
+    findAction->trigger();
+    QApplication::processEvents();
+
+    auto* bar = mw->findChild<SearchBar*>();
+    QVERIFY(bar);
+    auto* lineEdit = bar->findChild<QLineEdit*>();
+    QVERIFY(lineEdit);
+    lineEdit->setText(keyword);
+
+    // QPdfSearchModel populates asynchronously. Wait for the overlay's
+    // highlight list to catch up; it's pushed from the same
+    // rowsInserted handler the view uses.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        overlay->searchHighlightCountForTest() >= copies, 5000);
+
+    // Clearing the query (empty string) drops the highlights back to
+    // zero so a stale yellow wash doesn't linger on the page.
+    lineEdit->clear();
+    QApplication::processEvents();
+    QTRY_COMPARE_WITH_TIMEOUT(overlay->searchHighlightCountForTest(), 0, 2000);
 }
 
 // UAT-VWR-065 — Typing a non-matching query is a harmless no-op.
