@@ -15,6 +15,7 @@
 
 #include <QAction>
 #include <QDockWidget>
+#include <QFileOpenEvent>
 #include <QMenu>
 #include <QMenuBar>
 #include <QPdfWriter>
@@ -90,6 +91,7 @@ private slots:
     void uat_fnd_030_autoSaveWritesDirtyDocsWithPath();
     void uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs();
     void uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms();
+    void uat_fnd_050_fileOpenEventOpensWindow();
 
 private:
     QTemporaryDir m_scratch;
@@ -518,6 +520,41 @@ void TestUatFoundations::
              "File → Share… is hidden on platforms whose ShareService "
              "stub returns isAvailable() == false");
 #endif
+}
+
+// UAT-FND-050 — Synthesize the QFileOpenEvent macOS dispatches when
+// the user drops a file onto the Dock icon (or right-click → Open
+// With → Trailer). Application::event already routes it through
+// openFiles, so we just have to confirm the wiring still survives.
+// The previous TODO entry (2026-04-30 #1) suspected a registry-
+// timing bug; the registry is registered in the Application
+// constructor, before exec(), so by the time any QEvent::FileOpen
+// can be dispatched the routing path is fully wired. This test
+// pins that contract so a future refactor that defers
+// registry init can't silently break Dock-drop.
+//
+// (The end-to-end live test — actually drag a file onto the Dock
+// — still needs a real macOS session. See README/dev notes; this
+// UAT only covers the in-process event-routing path.)
+void TestUatFoundations::uat_fnd_050_fileOpenEventOpensWindow() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writeTinyPdf(
+        m_scratch.filePath(QStringLiteral("uat_fnd_050.pdf")));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    // Confirm we start with no windows so the event below is the
+    // only thing that can open one.
+    QCOMPARE(app->windows().size(), 0);
+
+    QFileOpenEvent ev(pdfPath);
+    QCoreApplication::sendEvent(app, &ev);
+    QApplication::processEvents();
+
+    QCOMPARE(app->windows().size(), 1);
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+    QCOMPARE(mw->documentCount(), 1);
 }
 
 // Custom main: we need to set HOME (and XDG vars) before constructing
