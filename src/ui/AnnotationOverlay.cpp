@@ -115,6 +115,12 @@ void AnnotationOverlay::setPage(int page) {
     update();
 }
 
+void AnnotationOverlay::setSearchHighlights(
+    std::vector<SearchHighlight> highlights) {
+    m_searchHighlights = std::move(highlights);
+    update();
+}
+
 void AnnotationOverlay::setDocumentToView(DocToView fn) {
     m_docToView = std::move(fn);
     update();
@@ -159,6 +165,31 @@ void AnnotationOverlay::paintEvent(QPaintEvent* /*event*/) {
     if (!m_store) return;
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing, true);
+
+    // Search-match highlights live behind user annotations so the
+    // user can mark up on top of a found match without losing the
+    // visual cue underneath. Siblings get a soft highlighter-yellow
+    // wash; the current match gets a brighter wash with a thin
+    // outline so the user can spot it during Find Next / Previous
+    // without scanning the whole page. The doc-to-view transform is
+    // the same one annotations use, so highlights track zoom and
+    // scroll without any extra plumbing.
+    if (!m_searchHighlights.empty() && m_docToView) {
+        const QColor siblingFill(255, 235, 50, 90);
+        const QColor currentFill(255, 200, 0, 170);
+        const QColor currentBorder(180, 130, 0, 220);
+        for (const SearchHighlight& h : m_searchHighlights) {
+            if (h.rect.isEmpty()) continue;
+            const QRectF viewRect = docRectToView(h.rect, h.page);
+            if (viewRect.isEmpty()) continue;
+            p.setPen(h.isCurrent ? QPen(currentBorder, 1.0) : Qt::NoPen);
+            p.setBrush(h.isCurrent ? currentFill : siblingFill);
+            p.drawRect(viewRect);
+        }
+        // Reset painter brush so annotation-drawing code below isn't
+        // surprised by leftover state.
+        p.setBrush(Qt::NoBrush);
+    }
 
     auto applyDash = [](QPen& pen, DashStyle d) {
         switch (d) {

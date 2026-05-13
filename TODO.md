@@ -110,12 +110,14 @@ items have landed; the commit hash is in the strikethrough line.
 
 ### Search
 
-18. **Search highlights matches in highlighter yellow.** Still open.
-    `QPdfView` paints its own selection rectangles in the system
-    accent colour and the API doesn't expose a tint hook. Options:
-    layer a custom overlay over the view that reads from
-    `QPdfSearchModel` and paints siblings at low-opacity yellow,
-    or subclass `QPdfView` to intercept its draw call.
+18. ~~**Search highlights matches in highlighter yellow.**~~ Done.
+    `AnnotationOverlay` gained a `setSearchHighlights` API; the
+    paint pass runs underneath user annotations and renders
+    siblings at low-opacity yellow with the current match at high
+    opacity plus a thin outline. `PdfDocument::refreshSearch
+    Highlights` walks `QPdfSearchModel::resultAtIndex(i).
+    rectangles()` and pushes the list on every search-model /
+    current-index change. Pinned by `uat_vwr_064`.
 19. ~~**"Match X of Y" indicator**~~ Done — `SearchBar::
     setMatchCounter` is wired through every find / next / previous
     handler in `MainWindow`.
