@@ -41,7 +41,13 @@
 #include <QPlainTextEdit>
 #include <QTemporaryDir>
 #include <QToolBar>
+#include <QToolButton>
+#include <QTreeView>
 #include <QtTest/QtTest>
+
+#include <qpdf/QPDF.hh>
+#include <qpdf/QPDFObjectHandle.hh>
+#include <qpdf/QPDFWriter.hh>
 
 using namespace trailer;
 
@@ -72,6 +78,95 @@ QAction* findToolAction(MarkupToolbar* bar, const QString& label) {
         if (a->text() == label) return a;
     }
     return nullptr;
+}
+
+// Builds a 3-page PDF with an /Outlines tree pointing one bookmark
+// at each page. Uses qpdf directly because QPdfWriter doesn't expose
+// outline construction. The structure matches the minimal /Outlines
+// shape from PDF spec §12.3.3:
+//   Catalog → /Outlines → root dict { /First /Last /Count }
+//   root.First → item1 { /Title /Parent /Next /Dest [page /XYZ] }
+//   item1.Next → item2 { /Title /Parent /Prev /Next /Dest [page] }
+//   item2.Next → item3 { /Title /Parent /Prev /Dest [page] }
+QString writePdfWithOutline(const QString& path,
+                            const QStringList& titles) {
+    QPDF pdf;
+    pdf.emptyPDF();
+
+    auto makeRect = [](double x0, double y0, double x1, double y1) {
+        QPDFObjectHandle r = QPDFObjectHandle::newArray();
+        for (double v : {x0, y0, x1, y1}) {
+            r.appendItem(QPDFObjectHandle::newReal(v));
+        }
+        return r;
+    };
+
+    const int pageCount = titles.size();
+
+    // Build /Pages root first so each page's /Parent can point at it.
+    QPDFObjectHandle pagesDict = QPDFObjectHandle::newDictionary();
+    pagesDict.replaceKey("/Type", QPDFObjectHandle::newName("/Pages"));
+    QPDFObjectHandle pagesObj = pdf.makeIndirectObject(pagesDict);
+
+    // Build N empty pages and collect their indirect handles.
+    std::vector<QPDFObjectHandle> pageObjs;
+    QPDFObjectHandle kids = QPDFObjectHandle::newArray();
+    for (int i = 0; i < pageCount; ++i) {
+        QPDFObjectHandle page = QPDFObjectHandle::newDictionary();
+        page.replaceKey("/Type", QPDFObjectHandle::newName("/Page"));
+        page.replaceKey("/MediaBox", makeRect(0, 0, 612, 792));
+        page.replaceKey("/Resources", QPDFObjectHandle::newDictionary());
+        page.replaceKey("/Parent", pagesObj);
+        QPDFObjectHandle pageObj = pdf.makeIndirectObject(page);
+        pageObjs.push_back(pageObj);
+        kids.appendItem(pageObj);
+    }
+    pagesDict.replaceKey("/Kids", kids);
+    pagesDict.replaceKey("/Count", QPDFObjectHandle::newInteger(pageCount));
+
+    QPDFObjectHandle root = pdf.getRoot();
+    root.replaceKey("/Pages", pagesObj);
+
+    // Build the /Outlines tree. Spec §12.3.3:
+    //   root → /First, /Last, /Count
+    //   each item → /Title, /Parent, /Prev?, /Next?, /Dest
+    QPDFObjectHandle outlinesRoot = QPDFObjectHandle::newDictionary();
+    outlinesRoot.replaceKey("/Type", QPDFObjectHandle::newName("/Outlines"));
+    QPDFObjectHandle outlinesObj = pdf.makeIndirectObject(outlinesRoot);
+
+    std::vector<QPDFObjectHandle> itemObjs;
+    for (int i = 0; i < pageCount; ++i) {
+        QPDFObjectHandle item = QPDFObjectHandle::newDictionary();
+        item.replaceKey("/Title",
+            QPDFObjectHandle::newUnicodeString(titles[i].toStdString()));
+        item.replaceKey("/Parent", outlinesObj);
+        // Destination: jump to top of page at current zoom.
+        QPDFObjectHandle dest = QPDFObjectHandle::newArray();
+        dest.appendItem(pageObjs[i]);
+        dest.appendItem(QPDFObjectHandle::newName("/XYZ"));
+        dest.appendItem(QPDFObjectHandle::newInteger(0));
+        dest.appendItem(QPDFObjectHandle::newInteger(792));
+        dest.appendItem(QPDFObjectHandle::newNull());
+        item.replaceKey("/Dest", dest);
+        itemObjs.push_back(pdf.makeIndirectObject(item));
+    }
+    for (int i = 0; i < int(itemObjs.size()); ++i) {
+        if (i > 0) itemObjs[i].replaceKey("/Prev", itemObjs[i - 1]);
+        if (i + 1 < int(itemObjs.size())) {
+            itemObjs[i].replaceKey("/Next", itemObjs[i + 1]);
+        }
+    }
+    if (!itemObjs.empty()) {
+        outlinesObj.replaceKey("/First", itemObjs.front());
+        outlinesObj.replaceKey("/Last",  itemObjs.back());
+        outlinesObj.replaceKey("/Count",
+            QPDFObjectHandle::newInteger(int(itemObjs.size())));
+    }
+    root.replaceKey("/Outlines", outlinesObj);
+
+    QPDFWriter writer(pdf, path.toLocal8Bit().constData());
+    writer.write();
+    return path;
 }
 
 // Writes a one-page A4 PDF containing `keyword` as real (selectable,
@@ -203,6 +298,9 @@ private slots:
     void uat_ann_122_arrowKeyNudgesSelectedAnnotation();
     void uat_ann_123_inspectorTracksSelectedAnnotation();
     void uat_ann_124_dragHandleResizesSelectedAnnotation();
+    void uat_toc_010_outlineDisabledOnPlainPdf();
+    void uat_toc_011_outlineExposedForPdfWithBookmarks();
+    void uat_toc_012_clickingOutlineEntryNavigatesToPage();
 
 private:
     QTemporaryDir m_scratch;
@@ -1374,6 +1472,127 @@ void TestUatSearchAndMarkup::uat_ann_124_dragHandleResizesSelectedAnnotation() {
              "increase the bounds height");
     // The id is preserved — resize is an in-place update.
     QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
+}
+
+// UAT-TOC-010 — plain PDFs (no /Outlines tree) leave the sidebar
+// picker's "Table of Contents" entry disabled. The picker still
+// shows it (so the user can see the feature exists), but clicking
+// it would do nothing useful.
+void TestUatSearchAndMarkup::uat_toc_010_outlineDisabledOnPlainPdf() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_toc_010.pdf")),
+        QStringLiteral("kraken"));
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+
+    // The picker entry lives on a QMenu hosted by the sidebar
+    // QToolButton on the main toolbar. The menu is attached to the
+    // button (not as an action's QAction::menu()), so walk the
+    // QToolButton children directly.
+    QAction* tocAction = nullptr;
+    const auto* mainToolbar =
+        mw->findChild<QToolBar*>(QStringLiteral("MainToolbar"));
+    QVERIFY(mainToolbar);
+    for (auto* btn : mainToolbar->findChildren<QToolButton*>()) {
+        QMenu* m = btn->menu();
+        if (!m) continue;
+        for (QAction* item : m->actions()) {
+            if (item->text() == QStringLiteral("Table of Contents")) {
+                tocAction = item;
+                break;
+            }
+        }
+        if (tocAction) break;
+    }
+    QVERIFY2(tocAction,
+             "Sidebar picker should always offer a TOC menu entry");
+    QVERIFY2(!tocAction->isEnabled(),
+             "TOC entry must be disabled for a plain PDF without "
+             "an /Outlines tree.");
+}
+
+// UAT-TOC-011 — a PDF with an /Outlines tree exposes it via the
+// document's outlineModel(), and the sidebar's picker entry becomes
+// enabled. We don't rely on any rendered UI here — we drive the
+// model directly via the document.
+void TestUatSearchAndMarkup::uat_toc_011_outlineExposedForPdfWithBookmarks() {
+    QVERIFY(m_scratch.isValid());
+    const QStringList titles = {
+        QStringLiteral("Introduction"),
+        QStringLiteral("Methods"),
+        QStringLiteral("Results"),
+    };
+    const QString pdfPath = writePdfWithOutline(
+        m_scratch.filePath(QStringLiteral("uat_toc_011.pdf")), titles);
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+    auto* docView = mw->findChild<DocumentView*>();
+    QVERIFY(docView);
+    IDocument* doc = docView->currentDocument();
+    QVERIFY(doc);
+
+    QVERIFY2(doc->hasOutline(),
+             "PdfDocument with /Outlines should report hasOutline() true");
+    QAbstractItemModel* model = doc->outlineModel();
+    QVERIFY(model);
+    QCOMPARE(model->rowCount({}), titles.size());
+    // Title shows up as DisplayRole via the document's proxy model
+    // (the Sidebar's tree view depends on this).
+    for (int i = 0; i < titles.size(); ++i) {
+        const QString got = model->index(i, 0).data(Qt::DisplayRole).toString();
+        QCOMPARE(got, titles[i]);
+    }
+}
+
+// UAT-TOC-012 — clicking an outline entry navigates the document
+// to the entry's destination page. Drives goToOutlineEntry directly
+// (the same code path Sidebar's QTreeView::clicked is wired to) so
+// we don't have to render the tree view in the offscreen test.
+void TestUatSearchAndMarkup::uat_toc_012_clickingOutlineEntryNavigatesToPage() {
+    QVERIFY(m_scratch.isValid());
+    const QStringList titles = {
+        QStringLiteral("Cover"),
+        QStringLiteral("Chapter 1"),
+        QStringLiteral("Chapter 2"),
+    };
+    const QString pdfPath = writePdfWithOutline(
+        m_scratch.filePath(QStringLiteral("uat_toc_012.pdf")), titles);
+
+    auto* app = qobject_cast<Application*>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow* mw = currentMainWindow();
+    QVERIFY(mw);
+    auto* docView = mw->findChild<DocumentView*>();
+    QVERIFY(docView);
+    IDocument* doc = docView->currentDocument();
+    QVERIFY(doc);
+
+    QAbstractItemModel* model = doc->outlineModel();
+    QVERIFY(model);
+    QCOMPARE(model->rowCount({}), 3);
+
+    // The third bookmark points to page index 2 (zero-based).
+    const QModelIndex idx2 = model->index(2, 0);
+    QVERIFY(idx2.isValid());
+    doc->goToOutlineEntry(idx2);
+    QApplication::processEvents();
+    QTRY_COMPARE_WITH_TIMEOUT(doc->currentPage(), 2, 2000);
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG

@@ -4,6 +4,7 @@
 #include "annotation/AnnotationStore.h"
 #include "document/IDocument.h"
 
+#include <QAbstractItemModel>
 #include <QDropEvent>
 #include <QFontMetrics>
 #include <QItemSelectionModel>
@@ -18,6 +19,7 @@
 #include <QStackedWidget>
 #include <QStyledItemDelegate>
 #include <QTabWidget>
+#include <QTreeView>
 #include <QVBoxLayout>
 
 #include <functional>
@@ -200,6 +202,30 @@ Sidebar::Sidebar(QWidget* parent) : QDockWidget(tr("Sidebar"), parent) {
     m_annotations->hide();
     m_tabsIndex = m_stack->addWidget(m_tabs);
 
+    // Outline / TOC tree view. Hidden until the active document
+    // exposes an outline (PDF /Outlines tree) AND the picker mode
+    // is set to TableOfContents. The model is supplied by the
+    // document; sidebar stays ignorant of QPdfBookmarkModel.
+    m_outline = new QTreeView(m_stack);
+    m_outline->setHeaderHidden(true);
+    m_outline->setUniformRowHeights(true);
+    m_outline->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    m_outline->setSelectionBehavior(QAbstractItemView::SelectRows);
+    m_outline->setSelectionMode(QAbstractItemView::SingleSelection);
+    connect(m_outline, &QTreeView::activated,
+            this, [this](const QModelIndex& idx) {
+                if (m_doc && idx.isValid()) {
+                    m_doc->goToOutlineEntry(idx);
+                }
+            });
+    connect(m_outline, &QTreeView::clicked,
+            this, [this](const QModelIndex& idx) {
+                if (m_doc && idx.isValid()) {
+                    m_doc->goToOutlineEntry(idx);
+                }
+            });
+    m_outlineIndex = m_stack->addWidget(m_outline);
+
     m_stack->setCurrentIndex(m_placeholderIndex);
     setWidget(m_stack);
 
@@ -223,6 +249,13 @@ void Sidebar::setDocument(IDocument* doc) {
         // is implemented.
         m_stack->setCurrentIndex(m_placeholderIndex);
     }
+    // Bind the outline tree to whatever model the document exposes.
+    // setModel(nullptr) on a doc without an outline keeps the view
+    // safely empty (we never switch to TableOfContents mode for it
+    // anyway, but the picker can still toggle there if the user
+    // clicks the disabled entry).
+    m_outline->setModel(doc ? doc->outlineModel() : nullptr);
+    m_outline->expandAll();
     if (auto* store = doc ? doc->annotations() : nullptr) {
         connect(store, &AnnotationStore::changed, this,
                 &Sidebar::refreshAnnotations, Qt::UniqueConnection);
@@ -254,21 +287,40 @@ void Sidebar::applyMode() {
     switch (m_mode) {
         case Mode::Hidden:
             m_model->setPageFilter({});
+            if (m_doc) {
+                m_stack->setCurrentIndex(m_tabsIndex);
+            }
             if (isVisible()) hide();
             return;
         case Mode::Pages:
             m_model->setPageFilter({});
+            m_stack->setCurrentIndex(
+                m_doc ? m_tabsIndex : m_placeholderIndex);
             if (!isVisible()) show();
             return;
         case Mode::SearchResults:
             m_model->setPageFilter(m_searchMatchPages);
+            m_stack->setCurrentIndex(
+                m_doc ? m_tabsIndex : m_placeholderIndex);
             if (!isVisible()) show();
             return;
         case Mode::TableOfContents:
+            // Hand over to the outline tree. If the doc has no
+            // outline, the QTreeView shows an empty area; the
+            // picker entry is gated on hasOutline() in MainWindow
+            // so this branch normally only runs for documents with
+            // an outline available.
+            m_stack->setCurrentIndex(
+                m_doc && m_doc->outlineModel() ? m_outlineIndex
+                                               : m_placeholderIndex);
+            if (!isVisible()) show();
+            return;
         case Mode::HighlightsAndNotes:
             // Underlying feature not implemented yet — fall back to
             // showing all pages so the dock doesn't go blank.
             m_model->setPageFilter({});
+            m_stack->setCurrentIndex(
+                m_doc ? m_tabsIndex : m_placeholderIndex);
             if (!isVisible()) show();
             return;
     }

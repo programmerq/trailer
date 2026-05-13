@@ -100,11 +100,13 @@ items have landed; the commit hash is in the strikethrough line.
 ### Sidebar modes
 
 16. **Sidebar has explicit modes** (Hide is default). Hidden /
-    Thumbnails / Search Results all work. Table of Contents and
-    Highlights & Notes are deliberate disabled placeholders in the
-    picker — the underlying features (PDF outline parsing,
-    text-aware highlights) haven't shipped. Re-enable each entry
-    when its data source is in place.
+    Thumbnails / Search Results / Table of Contents all work as of
+    the 2026-05-13 pass — `IDocument::outlineModel()` is wired to
+    `QPdfBookmarkModel` (with a tiny `OutlineProxyModel` mapping
+    DisplayRole → Title), and the picker's TOC entry is enabled
+    per-doc based on `hasOutline()`. Pinned by `uat_toc_010..012`.
+    Highlights & Notes is still a disabled placeholder waiting on
+    a `Highlights & Notes` aggregate-view feature.
 17. ~~**Some PDF thumbnails missing paper-white**~~ — duplicate of
     #4 above; both fixed.
 

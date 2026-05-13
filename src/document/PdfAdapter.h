@@ -17,6 +17,8 @@ class QTemporaryFile;
 
 class QPdfDocument;
 class QPdfSearchModel;
+class QPdfBookmarkModel;
+class QIdentityProxyModel;
 class QPdfView;
 
 namespace trailer {
@@ -81,6 +83,14 @@ public:
     // PDFs always carry a text layer (even scan-only PDFs typically
     // expose an empty layer). Text-aware markup tools are offered.
     bool hasTextLayer() const override { return m_valid; }
+
+    // PDF outline (Table of Contents) — backed by QPdfBookmarkModel,
+    // lazily constructed on first access. Empty for documents without
+    // an /Outlines tree; hasOutline() pre-checks rowCount so the
+    // Sidebar picker can grey-out the TOC mode entry.
+    QAbstractItemModel* outlineModel() override;
+    bool hasOutline() const override;
+    void goToOutlineEntry(const QModelIndex& index) override;
     std::vector<FormField> formFields() const override;
     bool setFormFieldValue(int id, const QString& value) override;
     void setFormFillingActive(bool active) override;
@@ -171,6 +181,13 @@ private:
     QString m_path;
     std::unique_ptr<QPdfDocument> m_doc;
     std::unique_ptr<QPdfSearchModel> m_searchModel;
+    // QPdfBookmarkModel is lazy: only created the first time
+    // outlineModel() is called, so PDFs we never open a TOC view on
+    // don't pay for the tree walk. The proxy remaps the model's
+    // Title role onto Qt::DisplayRole so vanilla QTreeView shows
+    // the bookmark titles without a custom delegate.
+    mutable std::unique_ptr<QPdfBookmarkModel> m_bookmarkModel;
+    mutable std::unique_ptr<QIdentityProxyModel> m_outlineProxy;
     std::unique_ptr<PdfEditor> m_editor;
     std::unique_ptr<QTemporaryFile> m_previewFile;
     QPointer<QPdfView> m_view;

@@ -10,6 +10,9 @@
 
 #include <vector>
 
+class QAbstractItemModel;
+class QModelIndex;
+
 namespace trailer {
 
 class AnnotationStore;
@@ -64,6 +67,23 @@ public:
     // are not offered on bare images where they would do nothing
     // meaningful.
     virtual bool hasTextLayer() const { return false; }
+
+    // Outline / Table of Contents access. Documents that ship with a
+    // /Outlines tree (most authored PDFs do) expose it through this
+    // model so the Sidebar's "Table of Contents" mode can render a
+    // navigable tree. Returns nullptr when the document has none;
+    // the model is owned by the document and must outlive any view
+    // attached to it. `hasOutline()` is the cheap pre-check used by
+    // MainWindow to gate the TOC picker entry without instantiating
+    // a QTreeView.
+    virtual QAbstractItemModel* outlineModel() { return nullptr; }
+    virtual bool hasOutline() const { return false; }
+    // Navigate to whatever the outline entry at `index` points to —
+    // typically goToPage() with the destination page from the model.
+    // Keeps the role-id lookup encapsulated inside the document so
+    // the Sidebar doesn't have to know about QPdfBookmarkModel's
+    // internal enum values.
+    virtual void goToOutlineEntry(const QModelIndex& /*index*/) {}
 
     virtual bool supportsEditing() const { return false; }
     virtual bool isDirty() const { return false; }

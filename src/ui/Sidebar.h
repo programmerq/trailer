@@ -9,6 +9,7 @@ class QListView;
 class QListWidget;
 class QStackedWidget;
 class QTabWidget;
+class QTreeView;
 
 namespace trailer {
 
@@ -74,10 +75,15 @@ private:
     QTabWidget* m_tabs = nullptr;
     QListView* m_thumbnails = nullptr;
     QListWidget* m_annotations = nullptr;
+    // Tree view bound to the active document's outlineModel() on
+    // setDocument. Shown in TableOfContents mode; collapses cleanly
+    // when the doc has no /Outlines tree.
+    QTreeView* m_outline = nullptr;
     ThumbnailModel* m_model = nullptr;
     QTimer m_pageSyncTimer;
     int m_placeholderIndex = 0;
     int m_tabsIndex = 0;
+    int m_outlineIndex = 0;
     bool m_syncingSelection = false;
     Mode m_mode = Mode::Hidden;
     std::vector<int> m_searchMatchPages;

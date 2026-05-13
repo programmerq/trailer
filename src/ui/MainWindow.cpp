@@ -452,9 +452,12 @@ void MainWindow::buildMainToolbar() {
     addModeAction(tr("Page Thumbnails"), Sidebar::Mode::Pages);
     addModeAction(tr("Search Results"), Sidebar::Mode::SearchResults);
     sidebarMenu->addSeparator();
-    // Disabled until the underlying features ship — see TODO.md.
-    addModeAction(tr("Table of Contents"), Sidebar::Mode::TableOfContents,
-                  /*enabled=*/false);
+    // Table of Contents is enabled on documents whose outline model
+    // has rows. The picker entry's enabled state is refreshed on
+    // every doc change in onCurrentDocumentChanged.
+    m_tocSidebarAction = addModeAction(
+        tr("Table of Contents"), Sidebar::Mode::TableOfContents,
+        /*enabled=*/false);
     addModeAction(tr("Highlights && Notes"),
                   Sidebar::Mode::HighlightsAndNotes, /*enabled=*/false);
     hideAction->setChecked(true);  // Hidden is the launch default
@@ -2210,6 +2213,19 @@ void MainWindow::onCurrentDocumentChanged(IDocument* doc) {
     m_markupToolbar->setToolVisible(AnnotationTool::Underline, hasText);
     m_markupToolbar->setToolVisible(AnnotationTool::Highlight, hasText);
     m_markupToolbar->setToolVisible(AnnotationTool::StrikeOut, hasText);
+
+    // Sidebar TOC picker entry: enabled iff the active document has
+    // an outline. If we were already in TableOfContents mode and the
+    // new doc has no outline, drop back to Hidden so the dock
+    // doesn't show an empty tree.
+    if (m_tocSidebarAction) {
+        const bool hasOutline = doc && doc->hasOutline();
+        m_tocSidebarAction->setEnabled(hasOutline);
+        if (!hasOutline &&
+            m_sidebar->mode() == Sidebar::Mode::TableOfContents) {
+            m_sidebar->setMode(Sidebar::Mode::Hidden);
+        }
+    }
 
     syncViewModeActions(doc);
     updateTitleForDocument(doc);

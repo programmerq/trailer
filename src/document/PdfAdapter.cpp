@@ -21,6 +21,8 @@
 #include <QPdfDocument>
 #include <QPdfDocumentRenderOptions>
 #include <QPdfPageNavigator>
+#include <QIdentityProxyModel>
+#include <QPdfBookmarkModel>
 #include <QPdfLink>
 #include <QPdfSearchModel>
 #include <QPdfView>
@@ -37,6 +39,24 @@ namespace {
 constexpr double kZoomStep = 1.1;
 constexpr double kZoomMin = 0.10;
 constexpr double kZoomMax = 16.0;
+
+// Bridge proxy for QPdfBookmarkModel: a vanilla QTreeView fetches
+// row text via Qt::DisplayRole, but QPdfBookmarkModel exposes its
+// title under the model's `Title` role (numerically Qt::UserRole).
+// Without this remap the tree shows a column of empty rows.
+class OutlineProxyModel : public QIdentityProxyModel {
+public:
+    explicit OutlineProxyModel(QObject* parent = nullptr)
+        : QIdentityProxyModel(parent) {}
+
+    QVariant data(const QModelIndex& proxyIndex, int role) const override {
+        if (role == Qt::DisplayRole) {
+            return QIdentityProxyModel::data(proxyIndex,
+                static_cast<int>(QPdfBookmarkModel::Role::Title));
+        }
+        return QIdentityProxyModel::data(proxyIndex, role);
+    }
+};
 
 class NavigablePdfView : public QPdfView {
 public:
@@ -510,6 +530,47 @@ void PdfDocument::onSearchResultsPopulated() {
     }
     m_view->setCurrentSearchResultIndex(m_currentResult);
     refreshSearchHighlights();
+}
+
+QAbstractItemModel* PdfDocument::outlineModel() {
+    if (!m_valid || !m_doc) return nullptr;
+    if (!m_bookmarkModel) {
+        m_bookmarkModel = std::make_unique<QPdfBookmarkModel>();
+        m_bookmarkModel->setDocument(m_doc.get());
+    }
+    if (!m_outlineProxy) {
+        m_outlineProxy = std::make_unique<OutlineProxyModel>();
+        m_outlineProxy->setSourceModel(m_bookmarkModel.get());
+    }
+    return m_outlineProxy.get();
+}
+
+bool PdfDocument::hasOutline() const {
+    if (!m_valid || !m_doc) return false;
+    // Construct the model lazily on the pre-check too so MainWindow
+    // can drive the Sidebar picker's enabled-state without forcing a
+    // separate tree walk.
+    if (!m_bookmarkModel) {
+        m_bookmarkModel = std::make_unique<QPdfBookmarkModel>();
+        m_bookmarkModel->setDocument(m_doc.get());
+    }
+    return m_bookmarkModel->rowCount({}) > 0;
+}
+
+void PdfDocument::goToOutlineEntry(const QModelIndex& index) {
+    if (!m_valid || !m_view || !index.isValid()) return;
+    if (!m_bookmarkModel) return;
+    // The index may be either a proxy index (from the Sidebar's
+    // QTreeView attached to outlineModel() ) or a source index. Read
+    // the page role through the index itself — QIdentityProxyModel
+    // passes non-DisplayRole queries straight through, so either
+    // works.
+    const QVariant pageVar = index.data(
+        static_cast<int>(QPdfBookmarkModel::Role::Page));
+    bool ok = false;
+    const int page = pageVar.toInt(&ok);
+    if (!ok || page < 0 || page >= pageCount()) return;
+    goToPage(page);
 }
 
 void PdfDocument::refreshSearchHighlights() {
