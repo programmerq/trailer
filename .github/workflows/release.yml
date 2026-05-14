@@ -121,13 +121,13 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Download Linux artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: trailer-linux-x86_64
           path: dist
 
       - name: Download Windows artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: trailer-windows-x86_64
           path: dist
