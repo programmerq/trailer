@@ -27,11 +27,10 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
-The required PR build is warnings-only during 0.x. The advisory
-`Warnings-as-errors` job and the tag-driven release pipeline both pass
-`-DTRAILER_WERROR=ON`, so any new warning still surfaces — just
-without bouncing unrelated work. Use the flag locally when you want
-the release-equivalent strict bar:
+The required PR build is warnings-only during 0.x. Warnings still
+print in the build log; they just don't fail. The tag-driven release
+pipeline passes `-DTRAILER_WERROR=ON` to catch any regressions at tag
+time. Use the flag locally when you want release-equivalent strictness:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRAILER_WERROR=ON

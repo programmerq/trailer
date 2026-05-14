@@ -5,11 +5,10 @@
 # waiting through for every commit.
 #
 # Dev-phase posture (2026-05): the *required* build is warnings-only —
-# `-DTRAILER_WERROR=ON` is reserved for the release pipeline. The
-# `werror` and `clang-format` checks below are intentionally advisory
-# (`continue-on-error: true`) so a noisy warning or a missed
-# clang-format pass doesn't bounce unrelated work. When the project
-# tightens up post-1.0, flip them required.
+# `-DTRAILER_WERROR=ON` is reserved for the release pipeline so a leaky
+# `-Wconversion` doesn't bounce unrelated PR work. Warnings still print
+# in the build log; they just don't fail. The release pipeline catches
+# regressions at tag time.
 
 name: CI
 
@@ -29,7 +28,11 @@ jobs:
   build-and-test:
     name: Linux build + unit tests
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # Short on purpose — prefer fast fail over patient hang. ccache hits
+    # bring warm runs well under 5 min; the first cold run after the
+    # cache is invalidated will be tight against this budget. Bump if
+    # the post-Qt-bump cold time consistently overshoots.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
 
@@ -38,17 +41,16 @@ jobs:
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          key: ci-${{ runner.os }}-gcc-${{ github.job }}
+          key: ci-${{ runner.os }}-gcc
           # Cache lives across branches; the action keys by commit and
           # falls back to the closest ancestor, so warm runs skip
           # recompiling unchanged files.
           max-size: 500M
 
       - name: Configure
-        # Dev phase: warnings-only. The advisory `werror` job below
-        # still runs `-DTRAILER_WERROR=ON` so regressions stay visible
-        # without blocking merges. Tagged releases (release.yml) build
-        # with WERROR=ON for the strict bar.
+        # Dev phase: warnings-only (TRAILER_WERROR defaults OFF).
+        # Tagged releases (release.yml) build with WERROR=ON for the
+        # strict bar.
         run: >-
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Release
@@ -70,7 +72,7 @@ jobs:
   clang-format:
     name: clang-format (advisory)
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 3
     # Advisory only — output goes to the job summary so the diff is
     # visible without bouncing merges. Flip to required once the tree
     # is reliably formatted (post-1.0 / when a pre-commit hook lands).
@@ -113,32 +115,3 @@ jobs:
           else
             echo "clang-format: clean ✓"
           fi
-
-  werror:
-    name: Warnings-as-errors (advisory)
-    runs-on: ubuntu-24.04
-    timeout-minutes: 25
-    # Advisory only — surfaces new -Wconversion / -Wsign-conversion /
-    # -Wdouble-promotion regressions without blocking dev. Cleared by
-    # the release pipeline, which builds with WERROR=ON.
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v6
-
-      - uses: ./.github/actions/setup-linux-build
-
-      - name: ccache
-        uses: hendrikmuhs/ccache-action@v1.2
-        with:
-          key: ci-${{ runner.os }}-gcc-${{ github.job }}
-          max-size: 500M
-
-      - name: Configure (-Werror)
-        run: >-
-          cmake -S . -B build
-          -DCMAKE_BUILD_TYPE=Release
-          -DTRAILER_WERROR=ON
-          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
-
-      - name: Build (-Werror)
-        run: cmake --build build --config Release --parallel
