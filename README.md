@@ -27,9 +27,11 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
-Continuous integration passes `-DTRAILER_WERROR=ON` so compiler warnings
-fail the build (warnings-as-errors). Use the same flag locally when you
-want parity with CI:
+The required PR build is warnings-only during 0.x. The advisory
+`Warnings-as-errors` job and the tag-driven release pipeline both pass
+`-DTRAILER_WERROR=ON`, so any new warning still surfaces — just
+without bouncing unrelated work. Use the flag locally when you want
+the release-equivalent strict bar:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRAILER_WERROR=ON
