@@ -175,7 +175,7 @@ bool ModelRegistry::ensureAvailable(ModelId id) {
             this,
             [this, id]() {
                 emit downloadFailed(id, tr("No download URL registered for this model. "
-                                           "Check Preferences → Models, or install the file "
+                                           "Check Manage ML Models, or install the file "
                                            "manually under the models directory."));
             },
             Qt::QueuedConnection);
