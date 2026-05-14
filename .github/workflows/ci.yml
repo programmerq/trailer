@@ -1,8 +1,15 @@
-# Fast-feedback CI: lint + unit tests on Linux. Runs on every PR
-# and on pushes to main. The full cross-compile to Linux + Windows
-# artifacts lives in `release.yml` and only fires on tag pushes —
-# it's slow (Docker image build, mingw cross-link, dependency
-# walk) and not worth waiting through for every commit.
+# Fast-feedback CI: lint + unit tests on Linux. Runs on every PR and on
+# pushes to main. The full cross-compile to Linux + Windows artifacts
+# lives in `release.yml` and only fires on tag pushes — it's slow
+# (Docker image build, mingw cross-link, dependency walk) and not worth
+# waiting through for every commit.
+#
+# Dev-phase posture (2026-05): the *required* build is warnings-only —
+# `-DTRAILER_WERROR=ON` is reserved for the release pipeline. The
+# `werror` and `clang-format` checks below are intentionally advisory
+# (`continue-on-error: true`) so a noisy warning or a missed
+# clang-format pass doesn't bounce unrelated work. When the project
+# tightens up post-1.0, flip them required.
 
 name: CI
 
@@ -12,30 +19,126 @@ on:
   pull_request:
     branches: [main]
 
+# Cancel an in-progress run when a new commit lands on the same ref —
+# stops PR pushes from queueing up minutes of stale builds.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
     name: Linux build + unit tests
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup-linux-build
 
-      - name: clang-format
-        run: git ls-files '*.cpp' '*.h' '*.mm' | xargs clang-format-14 --dry-run --Werror
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ci-${{ runner.os }}-gcc-${{ github.job }}
+          # Cache lives across branches; the action keys by commit and
+          # falls back to the closest ancestor, so warm runs skip
+          # recompiling unchanged files.
+          max-size: 500M
 
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRAILER_WERROR=ON
+        # Dev phase: warnings-only. The advisory `werror` job below
+        # still runs `-DTRAILER_WERROR=ON` so regressions stay visible
+        # without blocking merges. Tagged releases (release.yml) build
+        # with WERROR=ON for the strict bar.
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
         run: cmake --build build --config Release --parallel
 
       - name: Unit tests
         # UAT tests (label `uat`) drive the full Application +
-        # MainWindow stack and need a windowed Qt platform plugin.
-        # The fast PR loop excludes them; they run on tag via
-        # release.yml's UAT step or manually via uat-dispatch.yml.
+        # MainWindow stack and need a windowed Qt platform plugin. The
+        # fast PR loop excludes them; they run on tag via release.yml's
+        # UAT step or manually via uat-dispatch.yml.
         working-directory: build
         run: ctest -C Release --output-on-failure --label-exclude uat
         env:
           QT_QPA_PLATFORM: offscreen
+
+  clang-format:
+    name: clang-format (advisory)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    # Advisory only — output goes to the job summary so the diff is
+    # visible without bouncing merges. Flip to required once the tree
+    # is reliably formatted (post-1.0 / when a pre-commit hook lands).
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install clang-format
+        # Pinned to v14 to match scripts/run-uat.sh and the maintainer's
+        # local toolchain. Available in noble universe.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format-14
+
+      - name: Run clang-format
+        shell: bash
+        run: |
+          set +e
+          OUTPUT=$(git ls-files '*.cpp' '*.h' '*.mm' \
+            | xargs clang-format-14 --dry-run --Werror 2>&1)
+          EXIT=$?
+          if [ "$EXIT" -ne 0 ]; then
+            {
+              echo "## clang-format diff"
+              echo ""
+              echo "Files below need a re-format. Run locally:"
+              echo ""
+              echo '```sh'
+              echo "git ls-files '*.cpp' '*.h' '*.mm' \\"
+              echo "  | xargs clang-format-14 -i"
+              echo '```'
+              echo ""
+              echo "### clang-format output"
+              echo ""
+              echo '```'
+              echo "$OUTPUT"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::clang-format reported issues — see job summary"
+          else
+            echo "clang-format: clean ✓"
+          fi
+
+  werror:
+    name: Warnings-as-errors (advisory)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    # Advisory only — surfaces new -Wconversion / -Wsign-conversion /
+    # -Wdouble-promotion regressions without blocking dev. Cleared by
+    # the release pipeline, which builds with WERROR=ON.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup-linux-build
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: ci-${{ runner.os }}-gcc-${{ github.job }}
+          max-size: 500M
+
+      - name: Configure (-Werror)
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DTRAILER_WERROR=ON
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build (-Werror)
+        run: cmake --build build --config Release --parallel
