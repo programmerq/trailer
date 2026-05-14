@@ -54,7 +54,7 @@ jobs:
           (cd dist && tar -czf trailer-linux-x86_64.tar.gz trailer-linux-x86_64)
 
       - name: Upload Linux artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: trailer-linux-x86_64
           path: dist/trailer-linux-x86_64.tar.gz
@@ -90,7 +90,7 @@ jobs:
           mv trailer-windows-x86_64.zip dist/
 
       - name: Upload Windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: trailer-windows-x86_64
           path: dist/trailer-windows-x86_64.zip
