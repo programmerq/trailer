@@ -1,18 +1,22 @@
 # Tag-triggered release pipeline.
 #
-# Builds the Linux native binary on the host runner and the
-# Windows 64-bit binary via mingw-w64 in the existing Docker image
+# Builds the Linux native binary on the host runner and the Windows
+# 64-bit binary via mingw-w64 in the existing Docker image
 # (docker/windows/Dockerfile + scripts/build-windows.sh). All work
-# happens on Linux runners — there is intentionally no macOS
-# runner. Cross-compiling to macOS from Linux is encumbered by
-# Apple's SDK licensing (the SDK is only legally redistributable
-# from a Mac you own) and macOS code-signing for distribution
-# requires `codesign` running on macOS. Producing a `.app` for
-# users is therefore a manual step performed on a Mac developer
-# machine; it's intentionally outside CI.
+# happens on Linux runners — there is intentionally no macOS runner.
+# Cross-compiling to macOS from Linux is encumbered by Apple's SDK
+# licensing (the SDK is only legally redistributable from a Mac you
+# own) and macOS code-signing for distribution requires `codesign`
+# running on macOS. Producing a `.app` for users is therefore a manual
+# step performed on a Mac developer machine; it's intentionally
+# outside CI.
 #
 # UAT also runs at tag time — it's slow (driving the full Qt stack
 # under offscreen) and not worth blocking every PR on.
+#
+# Release is the strict bar: `TRAILER_WERROR=ON` so any warning
+# regression introduced during the dev-phase loop (where WERROR is
+# advisory, see ci.yml) gets caught here before artifacts ship.
 
 name: Release
 
@@ -24,14 +28,25 @@ on:
 jobs:
   linux-build:
     name: Linux build
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
       - uses: ./.github/actions/setup-linux-build
 
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: release-${{ runner.os }}-gcc-linux
+          max-size: 500M
+
       - name: Configure
-        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRAILER_WERROR=ON
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DTRAILER_WERROR=ON
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -62,7 +77,8 @@ jobs:
 
   windows-cross:
     name: Windows cross-build (mingw-w64)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
 
@@ -98,7 +114,8 @@ jobs:
 
   uat:
     name: UAT (tag only)
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v6
       - name: Build UAT image
@@ -114,7 +131,8 @@ jobs:
   github-release:
     name: Attach artifacts to GitHub Release
     needs: [linux-build, windows-cross, uat]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     permissions:
       contents: write
     steps:

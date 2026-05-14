@@ -1,7 +1,12 @@
 name: Linux build environment
 description: >-
-  Install Qt (install-qt-action), apt packages for Trailer on Ubuntu,
-  and clang-format-14 for CI lint steps (matches Ubuntu 22.04 runners).
+  Install Qt (install-qt-action) and the apt packages Trailer needs on
+  ubuntu-24.04 (noble). qpdf 11.x ships in noble main, which is the
+  minimum version Trailer's PDF forms code needs — earlier Ubuntu
+  releases (22.04/jammy) shipped qpdf 10.x and broke the link with an
+  `undefined reference to QPDFFormFieldObjectHelper::isChecked()`.
+  clang-format is installed by the dedicated `clang-format` job, not
+  here, because most consumers of this action don't need it.
 
 inputs:
   qt-version:
@@ -24,7 +29,6 @@ runs:
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          clang-format-14 \
           libgl1-mesa-dev \
           libglu1-mesa-dev \
           libxkbcommon-dev \
