@@ -28,11 +28,13 @@ jobs:
   build-and-test:
     name: Linux build + unit tests
     runs-on: ubuntu-24.04
-    # Short on purpose — prefer fast fail over patient hang. ccache hits
-    # bring warm runs well under 5 min; the first cold run after the
-    # cache is invalidated will be tight against this budget. Bump if
-    # the post-Qt-bump cold time consistently overshoots.
-    timeout-minutes: 15
+    # Short on purpose — prefer fast fail over patient hang. The
+    # setup-linux-build action installs mold + ninja so the build
+    # uses them by default (~3× faster linking, better parallel job
+    # scheduling than make). ccache hits bring warm runs well under
+    # 5 min; first cold runs land around 12-14 min. Bump if the
+    # post-Qt-bump cold time consistently overshoots.
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@v6
 
@@ -51,13 +53,21 @@ jobs:
         # Dev phase: warnings-only (TRAILER_WERROR defaults OFF).
         # Tagged releases (release.yml) build with WERROR=ON for the
         # strict bar.
+        #
+        # -G Ninja: ninja's scheduler beats make at filling cores when
+        #    AUTOMOC's variable-cost steps land between compile units.
+        # -fuse-ld=mold: drops the link phase from minutes (ld.bfd) to
+        #    seconds. Especially valuable here because each test_*
+        #    binary links separately against trailer_core + Qt + ONNX.
         run: >-
-          cmake -S . -B build
+          cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=mold
+          -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=mold
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --parallel
 
       - name: Unit tests
         # UAT tests (label `uat`) drive the full Application +
