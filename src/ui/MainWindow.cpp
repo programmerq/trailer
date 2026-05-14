@@ -114,7 +114,8 @@ QString modelKey(ModelId id) {
     case ModelId::PpOcrRecognizerCjk:
         return QStringLiteral("pp_ocr_recognizer_cjk");
     }
-    return QStringLiteral("unknown");
+    Q_UNREACHABLE();
+    return QString();
 }
 
 QString modelPolicyFlagKey(ModelId id) {
@@ -166,7 +167,8 @@ QString estimatedRam(ModelId id) {
     case ModelId::PpOcrRecognizerCjk:
         return QObject::tr("~220 MiB while running");
     }
-    return QObject::tr("Varies");
+    Q_UNREACHABLE();
+    return QObject::tr("Unknown RAM requirement");
 }
 
 bool anyNeverDownloadEnabled(MainWindow *parent, const QList<ModelId> &ids) {
@@ -311,7 +313,7 @@ void showModelManagerDialog(MainWindow *parent) {
     rowButtons->addStretch();
     layout->addLayout(rowButtons);
 
-    auto selectedId = [table]() -> std::optional<ModelId> {
+    auto getSelectedModelId = [table]() -> std::optional<ModelId> {
         const int row = table->currentRow();
         if (row < 0)
             return std::nullopt;
@@ -321,33 +323,36 @@ void showModelManagerDialog(MainWindow *parent) {
         return static_cast<ModelId>(item->data(Qt::UserRole).toInt());
     };
 
-    QObject::connect(downloadNow, &QPushButton::clicked, &dialog, [parent, table, selectedId]() {
-        const auto id = selectedId();
-        if (!id)
-            return;
-        if (isNeverDownloadEnabled(parent, *id)) {
-            QMessageBox::information(parent, QObject::tr("Never Download Enabled"),
-                                     QObject::tr("This model is set to Never Download. "
-                                                 "Switch it to Ask First before downloading."));
-            return;
-        }
-        downloadModelWithProgress(parent, *id);
-        refreshModelTable(parent, table);
-    });
-    QObject::connect(setNever, &QPushButton::clicked, &dialog, [parent, table, selectedId]() {
-        const auto id = selectedId();
-        if (!id)
-            return;
-        setNeverDownloadEnabled(parent, *id, true);
-        refreshModelTable(parent, table);
-    });
-    QObject::connect(allowAgain, &QPushButton::clicked, &dialog, [parent, table, selectedId]() {
-        const auto id = selectedId();
-        if (!id)
-            return;
-        setNeverDownloadEnabled(parent, *id, false);
-        refreshModelTable(parent, table);
-    });
+    QObject::connect(
+        downloadNow, &QPushButton::clicked, &dialog, [parent, table, getSelectedModelId]() {
+            const auto id = getSelectedModelId();
+            if (!id)
+                return;
+            if (isNeverDownloadEnabled(parent, *id)) {
+                QMessageBox::information(parent, QObject::tr("Never Download Enabled"),
+                                         QObject::tr("This model is set to Never Download. "
+                                                     "Switch it to Ask First before downloading."));
+                return;
+            }
+            downloadModelWithProgress(parent, *id);
+            refreshModelTable(parent, table);
+        });
+    QObject::connect(setNever, &QPushButton::clicked, &dialog,
+                     [parent, table, getSelectedModelId]() {
+                         const auto id = getSelectedModelId();
+                         if (!id)
+                             return;
+                         setNeverDownloadEnabled(parent, *id, true);
+                         refreshModelTable(parent, table);
+                     });
+    QObject::connect(allowAgain, &QPushButton::clicked, &dialog,
+                     [parent, table, getSelectedModelId]() {
+                         const auto id = getSelectedModelId();
+                         if (!id)
+                             return;
+                         setNeverDownloadEnabled(parent, *id, false);
+                         refreshModelTable(parent, table);
+                     });
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
     QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
@@ -814,7 +819,7 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
     m_selectAllAction = editMenu->addAction(tr("Select &All"));
     m_selectAllAction->setShortcut(QKeySequence::SelectAll);
     connect(m_selectAllAction, &QAction::triggered, this, [this]() {
-        if (auto *overlay = findChild<AnnotationOverlay *>()) {
+        if (auto* overlay = findChild<AnnotationOverlay*>()) {
             overlay->selectAll();
         }
     });
@@ -2147,7 +2152,8 @@ void MainWindow::onTakeScreenshot() {
         args << "-iW";
         break;
     case ShotMode::Region:
-        args << "-i" << "-s";
+        args << "-i"
+             << "-s";
         break;
     }
     args << path;
