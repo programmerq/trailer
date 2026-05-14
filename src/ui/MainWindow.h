@@ -31,6 +31,7 @@ class MainWindow : public QMainWindow {
 
   public:
     explicit MainWindow(Application *app, QWidget *parent = nullptr);
+    Application *app() const { return m_app; }
 
     void addDocument(std::unique_ptr<IDocument> document);
     int documentCount() const;

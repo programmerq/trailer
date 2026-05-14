@@ -15,6 +15,7 @@ class TestSettings : public QObject {
     void roundTrip();
     void missingFileYieldsDefaults();
     void enumConversions();
+    void firstUseFlagsRoundTrip();
 };
 
 void TestSettings::defaults() {
@@ -75,6 +76,25 @@ void TestSettings::enumConversions() {
     QCOMPARE(openFilesInFromString("new_tab"), OpenFilesIn::NewTab);
     QCOMPARE(openFilesInFromString("new_window"), OpenFilesIn::NewWindow);
     QCOMPARE(openFilesInFromString("same_window"), OpenFilesIn::SameWindow);
+}
+
+void TestSettings::firstUseFlagsRoundTrip() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("settings.toml");
+
+    {
+        Settings s(path);
+        s.setFirstUseAcknowledged(QStringLiteral("ml_never_download_u2netp"), true);
+        s.setFirstUseAcknowledged(QStringLiteral("ml_never_download_mobile_sam_encoder"), true);
+        s.save();
+    }
+
+    Settings reloaded(path);
+    reloaded.load();
+    QVERIFY(reloaded.firstUseAcknowledged(QStringLiteral("ml_never_download_u2netp")));
+    QVERIFY(reloaded.firstUseAcknowledged(QStringLiteral("ml_never_download_mobile_sam_encoder")));
+    QVERIFY(!reloaded.firstUseAcknowledged(QStringLiteral("ml_never_download_pp_ocr_detector")));
 }
 
 QTEST_MAIN(TestSettings)
