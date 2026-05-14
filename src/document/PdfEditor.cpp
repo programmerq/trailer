@@ -1282,7 +1282,17 @@ std::vector<FormField> PdfEditor::readFormFields() const {
 
             // Value
             if (field.isCheckbox() || field.isRadioButton()) {
-                ff.value = field.isChecked() ? QStringLiteral("Yes") : QStringLiteral("Off");
+                // QPDFFormFieldObjectHelper::isChecked() was added in qpdf
+                // 11.10, but Ubuntu noble's libqpdf-dev (the LTS line CI
+                // runs on) ships 11.9. Replicate the helper inline so the
+                // build links against 11.0+. Per the PDF spec a checkbox
+                // is "on" when its /V entry is a Name other than /Off.
+                //
+                // `v` is intentionally non-const: QPDFObjectHandle::isName()
+                // and getName() weren't const-qualified until qpdf 12.
+                QPDFObjectHandle v = field.getValue();
+                const bool checked = v.isName() && v.getName() != "/Off";
+                ff.value = checked ? QStringLiteral("Yes") : QStringLiteral("Off");
             } else {
                 ff.value = QString::fromStdString(field.getValueAsString());
             }
