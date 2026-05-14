@@ -21,6 +21,7 @@
 #include "app/Application.h"
 #include "filters/ImageFilter.h"
 #include "ml/BackgroundRemover.h"
+#include "ml/ModelRegistry.h"
 #include "ml/OcrEngine.h"
 #include "platform/Share.h"
 #include "settings/AppPaths.h"
@@ -45,6 +46,7 @@
 #include <QToolButton>
 #include <QFormLayout>
 #include <QGuiApplication>
+#include <QHBoxLayout>
 #include <QImageWriter>
 #include <QKeySequence>
 #include <QLabel>
@@ -62,6 +64,8 @@
 #include <QScreen>
 #include <QSlider>
 #include <QSpinBox>
+#include <QTableWidget>
+#include <QHeaderView>
 #include <QCloseEvent>
 #include <QFuture>
 #include <QFutureWatcher>
@@ -74,7 +78,285 @@
 #include <QWidget>
 #include "document/ImageAdapter.h"
 
+#include <optional>
+
 namespace trailer {
+
+namespace {
+
+QList<ModelId> allManagedModelIds() {
+    return {ModelId::U2NetP,
+            ModelId::BiRefNetLite,
+            ModelId::MobileSamEncoder,
+            ModelId::MobileSamDecoder,
+            ModelId::PpOcrDetector,
+            ModelId::PpOcrDirection,
+            ModelId::PpOcrRecognizerLatin,
+            ModelId::PpOcrRecognizerCjk};
+}
+
+QString modelKey(ModelId id) {
+    switch (id) {
+    case ModelId::U2NetP:
+        return QStringLiteral("u2netp");
+    case ModelId::BiRefNetLite:
+        return QStringLiteral("birefnet_lite");
+    case ModelId::MobileSamEncoder:
+        return QStringLiteral("mobile_sam_encoder");
+    case ModelId::MobileSamDecoder:
+        return QStringLiteral("mobile_sam_decoder");
+    case ModelId::PpOcrDetector:
+        return QStringLiteral("pp_ocr_detector");
+    case ModelId::PpOcrDirection:
+        return QStringLiteral("pp_ocr_direction");
+    case ModelId::PpOcrRecognizerLatin:
+        return QStringLiteral("pp_ocr_recognizer_latin");
+    case ModelId::PpOcrRecognizerCjk:
+        return QStringLiteral("pp_ocr_recognizer_cjk");
+    }
+    return QStringLiteral("unknown");
+}
+
+QString modelPolicyFlagKey(ModelId id) {
+    return QStringLiteral("ml_never_download_") + modelKey(id);
+}
+
+bool isNeverDownloadEnabled(MainWindow *parent, ModelId id) {
+    return parent->app()->settings().firstUseAcknowledged(modelPolicyFlagKey(id));
+}
+
+void setNeverDownloadEnabled(MainWindow *parent, ModelId id, bool enabled) {
+    Settings &s = parent->app()->settings();
+    s.setFirstUseAcknowledged(modelPolicyFlagKey(id), enabled);
+    s.save();
+}
+
+qint64 totalSizeBytes(const ModelRegistry &registry, const QList<ModelId> &ids) {
+    qint64 total = 0;
+    for (ModelId id : ids) {
+        const ModelSpec spec = registry.spec(id);
+        if (spec.id == id && spec.size > 0)
+            total += spec.size;
+    }
+    return total;
+}
+
+QString formatSize(qint64 bytes) {
+    if (bytes <= 0)
+        return QObject::tr("Unknown");
+    return QLocale().formattedDataSize(bytes, 1, QLocale::DataSizeIecFormat);
+}
+
+QString estimatedRam(ModelId id) {
+    switch (id) {
+    case ModelId::U2NetP:
+        return QObject::tr("~200 MiB while running");
+    case ModelId::BiRefNetLite:
+        return QObject::tr("~400 MiB while running");
+    case ModelId::MobileSamEncoder:
+        return QObject::tr("~350 MiB while running");
+    case ModelId::MobileSamDecoder:
+        return QObject::tr("~80 MiB while running");
+    case ModelId::PpOcrDetector:
+        return QObject::tr("~120 MiB while running");
+    case ModelId::PpOcrDirection:
+        return QObject::tr("~60 MiB while running");
+    case ModelId::PpOcrRecognizerLatin:
+        return QObject::tr("~180 MiB while running");
+    case ModelId::PpOcrRecognizerCjk:
+        return QObject::tr("~220 MiB while running");
+    }
+    return QObject::tr("Varies");
+}
+
+bool anyNeverDownloadEnabled(MainWindow *parent, const QList<ModelId> &ids) {
+    for (ModelId id : ids) {
+        if (isNeverDownloadEnabled(parent, id))
+            return true;
+    }
+    return false;
+}
+
+void refreshModelTable(MainWindow *parent, QTableWidget *table) {
+    ModelRegistry &registry = parent->app()->modelRegistry();
+    const QList<ModelId> ids = allManagedModelIds();
+    table->setRowCount(ids.size());
+    for (int row = 0; row < ids.size(); ++row) {
+        const ModelId id = ids.at(row);
+        const ModelSpec spec = registry.spec(id);
+        auto *name = new QTableWidgetItem(spec.displayName);
+        name->setData(Qt::UserRole, static_cast<int>(id));
+        table->setItem(row, 0, name);
+        table->setItem(row, 1, new QTableWidgetItem(spec.purpose));
+        table->setItem(row, 2, new QTableWidgetItem(formatSize(spec.size)));
+        table->setItem(row, 3, new QTableWidgetItem(estimatedRam(id)));
+        table->setItem(row, 4, new QTableWidgetItem(spec.license));
+        table->setItem(row, 5,
+                       new QTableWidgetItem(registry.isAvailable(id)
+                                                ? QObject::tr("Ready")
+                                                : QObject::tr("Not downloaded")));
+        table->setItem(row, 6,
+                       new QTableWidgetItem(isNeverDownloadEnabled(parent, id)
+                                                ? QObject::tr("Never download")
+                                                : QObject::tr("Ask first")));
+    }
+}
+
+bool downloadModelWithProgress(MainWindow *parent, ModelId id) {
+    ModelRegistry &registry = parent->app()->modelRegistry();
+    const ModelSpec spec = registry.spec(id);
+    if (registry.isAvailable(id))
+        return true;
+
+    QProgressDialog progress(QObject::tr("Downloading %1…").arg(spec.displayName), QString(), 0,
+                             100, parent);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setCancelButton(nullptr);
+    progress.setMinimumDuration(0);
+    progress.setValue(0);
+    progress.show();
+
+    bool ready = false;
+    bool failed = false;
+    QString failureMessage;
+
+    QMetaObject::Connection progConn;
+    QMetaObject::Connection availConn;
+    QMetaObject::Connection failConn;
+    progConn = QObject::connect(&registry, &ModelRegistry::downloadProgress, &progress,
+                                [&progress, id](ModelId gotId, qint64 rec, qint64 total) {
+                                    if (gotId != id)
+                                        return;
+                                    if (total <= 0) {
+                                        progress.setRange(0, 0);
+                                        return;
+                                    }
+                                    progress.setRange(0, 100);
+                                    progress.setValue(static_cast<int>(rec * 100 / total));
+                                });
+    availConn = QObject::connect(&registry, &ModelRegistry::available, &progress,
+                                 [&progress, id, &ready](ModelId gotId, const QString &) {
+                                     if (gotId != id)
+                                         return;
+                                     ready = true;
+                                     progress.setValue(progress.maximum());
+                                     progress.close();
+                                 });
+    failConn = QObject::connect(
+        &registry, &ModelRegistry::downloadFailed, &progress,
+        [&progress, id, &failed, &failureMessage](ModelId gotId, const QString &message) {
+            if (gotId != id)
+                return;
+            failed = true;
+            failureMessage = message;
+            progress.close();
+        });
+
+    registry.ensureAvailable(id);
+    progress.exec();
+
+    QObject::disconnect(progConn);
+    QObject::disconnect(availConn);
+    QObject::disconnect(failConn);
+
+    if (failed) {
+        QMessageBox::warning(
+            parent, QObject::tr("Download Failed"),
+            QObject::tr("Could not fetch %1:\n%2").arg(spec.displayName, failureMessage));
+        return false;
+    }
+    return ready || registry.isAvailable(id);
+}
+
+void showModelManagerDialog(MainWindow *parent) {
+    QDialog dialog(parent);
+    dialog.setWindowTitle(QObject::tr("ML Models"));
+    dialog.resize(980, 420);
+
+    auto *layout = new QVBoxLayout(&dialog);
+    auto *intro = new QLabel(QObject::tr("ML features run locally on your device. Trailer does not "
+                                         "send your image or PDF content to the cloud.\n"
+                                         "Use this panel to review model size, estimated RAM, and "
+                                         "download policy."));
+    intro->setWordWrap(true);
+    layout->addWidget(intro);
+
+    auto *table = new QTableWidget(&dialog);
+    table->setColumnCount(7);
+    table->setHorizontalHeaderLabels({QObject::tr("Model"), QObject::tr("Used for"),
+                                      QObject::tr("Download size"), QObject::tr("Estimated RAM"),
+                                      QObject::tr("License"), QObject::tr("Status"),
+                                      QObject::tr("Policy")});
+    table->setSelectionBehavior(QAbstractItemView::SelectRows);
+    table->setSelectionMode(QAbstractItemView::SingleSelection);
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::Stretch);
+    table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(5, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(6, QHeaderView::ResizeToContents);
+    refreshModelTable(parent, table);
+    table->selectRow(0);
+    layout->addWidget(table);
+
+    auto *rowButtons = new QHBoxLayout();
+    auto *downloadNow = new QPushButton(QObject::tr("Download Selected"), &dialog);
+    auto *setNever = new QPushButton(QObject::tr("Set Never Download"), &dialog);
+    auto *allowAgain = new QPushButton(QObject::tr("Set Ask First"), &dialog);
+    rowButtons->addWidget(downloadNow);
+    rowButtons->addWidget(setNever);
+    rowButtons->addWidget(allowAgain);
+    rowButtons->addStretch();
+    layout->addLayout(rowButtons);
+
+    auto selectedId = [table]() -> std::optional<ModelId> {
+        const int row = table->currentRow();
+        if (row < 0)
+            return std::nullopt;
+        const auto *item = table->item(row, 0);
+        if (!item)
+            return std::nullopt;
+        return static_cast<ModelId>(item->data(Qt::UserRole).toInt());
+    };
+
+    QObject::connect(downloadNow, &QPushButton::clicked, &dialog, [parent, table, selectedId]() {
+        const auto id = selectedId();
+        if (!id)
+            return;
+        if (isNeverDownloadEnabled(parent, *id)) {
+            QMessageBox::information(parent, QObject::tr("Never Download Enabled"),
+                                     QObject::tr("This model is set to Never Download. "
+                                                 "Switch it to Ask First before downloading."));
+            return;
+        }
+        downloadModelWithProgress(parent, *id);
+        refreshModelTable(parent, table);
+    });
+    QObject::connect(setNever, &QPushButton::clicked, &dialog, [parent, table, selectedId]() {
+        const auto id = selectedId();
+        if (!id)
+            return;
+        setNeverDownloadEnabled(parent, *id, true);
+        refreshModelTable(parent, table);
+    });
+    QObject::connect(allowAgain, &QPushButton::clicked, &dialog, [parent, table, selectedId]() {
+        const auto id = selectedId();
+        if (!id)
+            return;
+        setNeverDownloadEnabled(parent, *id, false);
+        refreshModelTable(parent, table);
+    });
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close, &dialog);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    layout->addWidget(buttons);
+
+    dialog.exec();
+}
+
+} // namespace
 
 MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent), m_app(app) {
     setAcceptDrops(true);
@@ -532,7 +814,7 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
     m_selectAllAction = editMenu->addAction(tr("Select &All"));
     m_selectAllAction->setShortcut(QKeySequence::SelectAll);
     connect(m_selectAllAction, &QAction::triggered, this, [this]() {
-        if (auto* overlay = findChild<AnnotationOverlay*>()) {
+        if (auto *overlay = findChild<AnnotationOverlay *>()) {
             overlay->selectAll();
         }
     });
@@ -913,6 +1195,9 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     m_recognizeTextAction = toolsMenu->addAction(tr("Reco&gnize Text…"));
     connect(m_recognizeTextAction, &QAction::triggered, this, &MainWindow::onRecognizeText);
 
+    auto *modelsAction = toolsMenu->addAction(tr("Manage &ML Models…"));
+    connect(modelsAction, &QAction::triggered, this, [this]() { showModelManagerDialog(this); });
+
     toolsMenu->addSeparator();
 
     m_exportAsAction = toolsMenu->addAction(tr("&Export As…"));
@@ -1244,14 +1529,43 @@ void MainWindow::onRemoveBackground() {
     // step before doing any heavy work. The progress dialog is
     // cancellable so a slow connection doesn't trap them.
     if (!remover->isModelReady()) {
-        const QMessageBox::StandardButton ack =
-            QMessageBox::question(this, tr("Download Background Removal Model"),
-                                  tr("To remove backgrounds, Trailer needs to download the "
-                                     "U\u00b2-Net Portable model (~4.4 MB, Apache 2.0). "
-                                     "Continue?"),
-                                  QMessageBox::Yes | QMessageBox::No);
-        if (ack != QMessageBox::Yes)
+        const QList<ModelId> required = {ModelId::U2NetP};
+        if (anyNeverDownloadEnabled(this, required)) {
+            QMessageBox box(this);
+            box.setWindowTitle(tr("Background Removal Model Not Allowed"));
+            box.setIcon(QMessageBox::Information);
+            box.setText(tr("Background Removal is set to Never Download in ML Models."));
+            box.setInformativeText(
+                tr("Open Manage ML Models to change policy. Models run locally on your "
+                   "device; Trailer does not upload your files to the cloud."));
+            auto *manage = box.addButton(tr("Manage ML Models…"), QMessageBox::ActionRole);
+            box.addButton(QMessageBox::Cancel);
+            box.exec();
+            if (box.clickedButton() == manage)
+                showModelManagerDialog(this);
+            if (!remover->isModelReady())
+                return;
+        }
+
+        QMessageBox box(this);
+        box.setWindowTitle(tr("Download Background Removal Model"));
+        box.setIcon(QMessageBox::Question);
+        box.setText(tr("Background Removal can download %1 for U²-Net Portable (Apache 2.0).")
+                        .arg(formatSize(totalSizeBytes(m_app->modelRegistry(), required))));
+        box.setInformativeText(
+            tr("Runs locally on your device (no cloud processing). "
+               "Choose Download Now to continue, or Manage ML Models for details."));
+        auto *download = box.addButton(tr("Download Now"), QMessageBox::AcceptRole);
+        auto *manage = box.addButton(tr("Manage ML Models…"), QMessageBox::ActionRole);
+        box.addButton(QMessageBox::Cancel);
+        box.exec();
+        if (box.clickedButton() == manage) {
+            showModelManagerDialog(this);
+            if (!remover->isModelReady())
+                return;
+        } else if (box.clickedButton() != download) {
             return;
+        }
 
         QProgressDialog progress(tr("Downloading U\u00b2-Net Portable…"), tr("Cancel"), 0, 100,
                                  this);
@@ -1335,8 +1649,8 @@ void MainWindow::onRemoveBackground() {
                 if (result.isNull()) {
                     flashError(tr("Remove Background failed — "
                                   "model may be missing or corrupt; "
-                                  "try re-downloading from Preferences "
-                                  "→ Models."));
+                                  "try re-downloading from Manage "
+                                  "ML Models."));
                     return;
                 }
                 if (!imgDoc->replaceImage(result)) {
@@ -1364,14 +1678,45 @@ bool ensureSamModelsReady(MainWindow *parent, SamSession &session) {
     if (session.isModelReady())
         return true;
 
-    const auto ack =
-        QMessageBox::question(parent, QObject::tr("Download MobileSAM"),
-                              QObject::tr("Instant Alpha and Smart Lasso need the MobileSAM "
-                                          "model (~44 MB across two files, Apache 2.0 / MIT). "
-                                          "Continue?"),
-                              QMessageBox::Yes | QMessageBox::No);
-    if (ack != QMessageBox::Yes)
+    const QList<ModelId> required = {ModelId::MobileSamEncoder, ModelId::MobileSamDecoder};
+    if (anyNeverDownloadEnabled(parent, required)) {
+        QMessageBox box(parent);
+        box.setWindowTitle(QObject::tr("MobileSAM Models Not Allowed"));
+        box.setIcon(QMessageBox::Information);
+        box.setText(
+            QObject::tr("Instant Alpha / Smart Lasso is set to Never Download in ML Models."));
+        box.setInformativeText(
+            QObject::tr("Open Manage ML Models to change policy. Models run locally on your "
+                        "device; Trailer does not upload your files to the cloud."));
+        auto *manage = box.addButton(QObject::tr("Manage ML Models…"), QMessageBox::ActionRole);
+        box.addButton(QMessageBox::Cancel);
+        box.exec();
+        if (box.clickedButton() == manage)
+            showModelManagerDialog(parent);
+        if (!session.isModelReady())
+            return false;
+    }
+
+    QMessageBox box(parent);
+    box.setWindowTitle(QObject::tr("Download MobileSAM"));
+    box.setIcon(QMessageBox::Question);
+    box.setText(QObject::tr("Instant Alpha and Smart Lasso can download %1 for MobileSAM "
+                            "(Apache 2.0 / MIT).")
+                    .arg(formatSize(totalSizeBytes(parent->app()->modelRegistry(), required))));
+    box.setInformativeText(QObject::tr("Runs locally on your device (no cloud processing). "
+                                       "Choose Download Now to continue, or Manage ML Models "
+                                       "for details."));
+    auto *download = box.addButton(QObject::tr("Download Now"), QMessageBox::AcceptRole);
+    auto *manage = box.addButton(QObject::tr("Manage ML Models…"), QMessageBox::ActionRole);
+    box.addButton(QMessageBox::Cancel);
+    box.exec();
+    if (box.clickedButton() == manage) {
+        showModelManagerDialog(parent);
+        if (!session.isModelReady())
+            return false;
+    } else if (box.clickedButton() != download) {
         return false;
+    }
 
     QProgressDialog progress(QObject::tr("Downloading MobileSAM models…"), QObject::tr("Cancel"), 0,
                              100, parent);
@@ -1425,14 +1770,44 @@ bool ensureOcrModelsReady(MainWindow *parent, OcrEngine &engine) {
     if (engine.isModelReady())
         return true;
 
-    const auto ack =
-        QMessageBox::question(parent, QObject::tr("Download Text Recognition Models"),
-                              QObject::tr("Recognize Text needs the PP-OCRv3 detector + "
-                                          "recognizer (~11 MB across two files, Apache 2.0). "
-                                          "Continue?"),
-                              QMessageBox::Yes | QMessageBox::No);
-    if (ack != QMessageBox::Yes)
+    const QList<ModelId> required = {ModelId::PpOcrDetector, ModelId::PpOcrRecognizerLatin};
+    if (anyNeverDownloadEnabled(parent, required)) {
+        QMessageBox box(parent);
+        box.setWindowTitle(QObject::tr("Text Recognition Models Not Allowed"));
+        box.setIcon(QMessageBox::Information);
+        box.setText(QObject::tr("Recognize Text is set to Never Download in ML Models."));
+        box.setInformativeText(
+            QObject::tr("Open Manage ML Models to change policy. Models run locally on your "
+                        "device; Trailer does not upload your files to the cloud."));
+        auto *manage = box.addButton(QObject::tr("Manage ML Models…"), QMessageBox::ActionRole);
+        box.addButton(QMessageBox::Cancel);
+        box.exec();
+        if (box.clickedButton() == manage)
+            showModelManagerDialog(parent);
+        if (!engine.isModelReady())
+            return false;
+    }
+
+    QMessageBox box(parent);
+    box.setWindowTitle(QObject::tr("Download Text Recognition Models"));
+    box.setIcon(QMessageBox::Question);
+    box.setText(QObject::tr("Recognize Text can download %1 for PP-OCRv3 detector + recognizer "
+                            "(Apache 2.0).")
+                    .arg(formatSize(totalSizeBytes(parent->app()->modelRegistry(), required))));
+    box.setInformativeText(QObject::tr("Runs locally on your device (no cloud processing). "
+                                       "Choose Download Now to continue, or Manage ML Models "
+                                       "for details."));
+    auto *download = box.addButton(QObject::tr("Download Now"), QMessageBox::AcceptRole);
+    auto *manage = box.addButton(QObject::tr("Manage ML Models…"), QMessageBox::ActionRole);
+    box.addButton(QMessageBox::Cancel);
+    box.exec();
+    if (box.clickedButton() == manage) {
+        showModelManagerDialog(parent);
+        if (!engine.isModelReady())
+            return false;
+    } else if (box.clickedButton() != download) {
         return false;
+    }
 
     QProgressDialog progress(QObject::tr("Downloading text-recognition models…"),
                              QObject::tr("Cancel"), 0, 100, parent);
@@ -1772,8 +2147,7 @@ void MainWindow::onTakeScreenshot() {
         args << "-iW";
         break;
     case ShotMode::Region:
-        args << "-i"
-             << "-s";
+        args << "-i" << "-s";
         break;
     }
     args << path;
