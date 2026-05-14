@@ -133,7 +133,7 @@ jobs:
           path: dist
 
       - name: Create / update release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           # Pre-1.0 tags are pre-releases by convention. Once the
           # project commits to backwards compatibility on minor
