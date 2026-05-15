@@ -36,7 +36,7 @@ struct ModelSpec {
     qint64 size;    // bytes
     QString license;
     QString homepage;
-    QString purpose;          // short description shown in Preferences
+    QString purpose;           // short description shown in the Manage ML Models dialog
     QString estimatedRamLabel; // e.g. "~200 MiB while running"
 };
 

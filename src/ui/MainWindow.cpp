@@ -879,6 +879,13 @@ void MainWindow::refreshWindowMenuList() {
 }
 
 void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
+    // QAction::toolTip() on a menu item is only rendered as a hover
+    // tooltip when the parent QMenu opts in. ML actions use this to
+    // explain a policy block ("Set to Never Download in Manage ML
+    // Models…") — without this call, hovering a disabled item shows
+    // nothing.
+    toolsMenu->setToolTipsVisible(true);
+
     m_rotateLeftAction = toolsMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/page-rotate-left.svg"), this),
         tr("Rotate &Left"));
@@ -2087,20 +2094,27 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     m_flipVerticalAction->setEnabled(canEdit);
     m_adjustSizeAction->setEnabled(canEdit && isImage);
     m_adjustColourAction->setEnabled(canEdit && isImage);
-    // ML features: grey out when policy disallows the required models.
-    // A disabled menu item with a tooltip pointing at Manage ML Models
-    // is less friction than letting the user click and hitting a popup.
+    // ML features: grey out when policy *would* prevent a download we
+    // need to run. If a model is already cached (manual install, or the
+    // user flipped the policy after downloading), the policy is a no-op
+    // for that id — the feature stays usable. The tooltip is only set
+    // when policy is actually the reason for disablement, so it doesn't
+    // appear over actions disabled for unrelated reasons (wrong doc
+    // type, can't edit, etc.).
     auto applyMlPolicy = [this](QAction *action, bool baseEnabled,
                                 std::initializer_list<ModelId> required) {
-        bool blocked = false;
+        ModelRegistry &reg = m_app->modelRegistry();
+        bool policyBlocksPending = false;
         for (ModelId id : required) {
+            if (reg.isAvailable(id))
+                continue;
             if (ModelPolicy::isNeverDownload(m_app, id)) {
-                blocked = true;
+                policyBlocksPending = true;
                 break;
             }
         }
-        action->setEnabled(baseEnabled && !blocked);
-        action->setToolTip(blocked
+        action->setEnabled(baseEnabled && !policyBlocksPending);
+        action->setToolTip(baseEnabled && policyBlocksPending
                                ? tr("Set to Never Download in Manage ML Models. "
                                     "Open that dialog to allow downloads.")
                                : QString());
