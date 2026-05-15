@@ -21,6 +21,29 @@ QString joinPath(const QString &base, const QString &leaf) {
 
 } // namespace
 
+QString modelIdKey(ModelId id) {
+    switch (id) {
+    case ModelId::U2NetP:
+        return QStringLiteral("u2netp");
+    case ModelId::BiRefNetLite:
+        return QStringLiteral("birefnet_lite");
+    case ModelId::MobileSamEncoder:
+        return QStringLiteral("mobile_sam_encoder");
+    case ModelId::MobileSamDecoder:
+        return QStringLiteral("mobile_sam_decoder");
+    case ModelId::PpOcrDetector:
+        return QStringLiteral("pp_ocr_detector");
+    case ModelId::PpOcrDirection:
+        return QStringLiteral("pp_ocr_direction");
+    case ModelId::PpOcrRecognizerLatin:
+        return QStringLiteral("pp_ocr_recognizer_latin");
+    case ModelId::PpOcrRecognizerCjk:
+        return QStringLiteral("pp_ocr_recognizer_cjk");
+    }
+    Q_UNREACHABLE();
+    return QString();
+}
+
 bool verifyModelHash(const QString &path, const QString &expectedSha256) {
     if (expectedSha256.isEmpty())
         return QFile::exists(path);
@@ -58,7 +81,8 @@ void ModelRegistry::populateBuiltin() {
          QStringLiteral("309c8469258dda742793dce0ebea8e6dd393174f89934733ecc8b14c76f4ddd8"),
          4574861, QStringLiteral("Apache 2.0"),
          QStringLiteral("https://github.com/xuebinqin/U-2-Net"),
-         QStringLiteral("Background removal (fast, small model).")});
+         QStringLiteral("Background removal (fast, small model)."),
+         QStringLiteral("~200 MiB while running")});
     add({ModelId::BiRefNetLite,
          QStringLiteral("BiRefNet Lite"),
          QStringLiteral("birefnet_lite.onnx"),
@@ -67,7 +91,8 @@ void ModelRegistry::populateBuiltin() {
          0,
          QStringLiteral("MIT"),
          QStringLiteral("https://github.com/ZhengPeng7/BiRefNet"),
-         QStringLiteral("Background removal (higher quality, slower).")});
+         QStringLiteral("Background removal (higher quality, slower)."),
+         QStringLiteral("~400 MiB while running")});
     // MobileSAM is split across a one-shot image encoder (TinyViT,
     // ~28 MB) and a per-click prompt decoder (~16 MB). The encoder
     // runs once per image load; the decoder runs for each user click.
@@ -85,7 +110,8 @@ void ModelRegistry::populateBuiltin() {
          QStringLiteral("580f5fb648ea1062c0aabc26217aed56921985f03f0cbbd852bba81d760cc749"),
          28157093, QStringLiteral("Apache 2.0 (weights) / MIT (export)"),
          QStringLiteral("https://github.com/ChaoningZhang/MobileSAM"),
-         QStringLiteral("Image encoder for Instant Alpha and Smart Lasso.")});
+         QStringLiteral("Image encoder for Instant Alpha and Smart Lasso."),
+         QStringLiteral("~350 MiB while running")});
     add({ModelId::MobileSamDecoder, QStringLiteral("MobileSAM Decoder"),
          QStringLiteral("mobile_sam_decoder.onnx"),
          QStringLiteral("https://huggingface.co/Acly/MobileSAM/resolve/main/"
@@ -93,7 +119,8 @@ void ModelRegistry::populateBuiltin() {
          QStringLiteral("93915fc7c993ab9d59ab8c9ccd3bce37f7509c81ab4150a74abd4d2abbd8570d"),
          16501323, QStringLiteral("Apache 2.0 (weights) / MIT (export)"),
          QStringLiteral("https://github.com/ChaoningZhang/MobileSAM"),
-         QStringLiteral("Prompt decoder for Instant Alpha and Smart Lasso.")});
+         QStringLiteral("Prompt decoder for Instant Alpha and Smart Lasso."),
+         QStringLiteral("~80 MiB while running")});
     // PaddleOCR ONNX exports are hosted by the RapidOCR project on
     // Hugging Face. The LFS oid on each file matches its SHA-256 so
     // the download-path hash check is a straight string compare.
@@ -104,14 +131,16 @@ void ModelRegistry::populateBuiltin() {
          QStringLiteral("f139598bc2af4e4b6fe98dec11574e30edfdd91fc94ac1425c18ace3bd5a866b"),
          2423224, QStringLiteral("Apache 2.0"),
          QStringLiteral("https://github.com/PaddlePaddle/PaddleOCR"),
-         QStringLiteral("Text detection (DBNet) — finds line boxes on a page.")});
+         QStringLiteral("Text detection (DBNet) — finds line boxes on a page."),
+         QStringLiteral("~120 MiB while running")});
     add({ModelId::PpOcrDirection, QStringLiteral("PP-OCR Direction Classifier"),
          QStringLiteral("pp_ocr_cls.onnx"),
          QStringLiteral("https://huggingface.co/SWHL/RapidOCR/resolve/main/"
                         "PP-OCRv3/ch_ppocr_mobile_v2.0_cls_train.onnx"),
          QStringLiteral("70581b300b83babd9e0dd1d7d74c5b006869e8796da277a70c2e405bf9d77c82"), 581639,
          QStringLiteral("Apache 2.0"), QStringLiteral("https://github.com/PaddlePaddle/PaddleOCR"),
-         QStringLiteral("Text orientation classifier (auto-rotates 180° lines).")});
+         QStringLiteral("Text orientation classifier (auto-rotates 180° lines)."),
+         QStringLiteral("~60 MiB while running")});
     add({ModelId::PpOcrRecognizerLatin, QStringLiteral("PP-OCRv3 Recognizer (Latin)"),
          QStringLiteral("pp_ocr_rec_en.onnx"),
          QStringLiteral("https://huggingface.co/SWHL/RapidOCR/resolve/main/"
@@ -119,7 +148,8 @@ void ModelRegistry::populateBuiltin() {
          QStringLiteral("ef7abd8bd3629ae57ea2c28b425c1bd258a871b93fd2fe7c433946ade9b5d9ea"),
          8967018, QStringLiteral("Apache 2.0"),
          QStringLiteral("https://github.com/PaddlePaddle/PaddleOCR"),
-         QStringLiteral("Text recognition for Latin scripts (English, European languages).")});
+         QStringLiteral("Text recognition for Latin scripts (English, European languages)."),
+         QStringLiteral("~180 MiB while running")});
     add({ModelId::PpOcrRecognizerCjk, QStringLiteral("PP-OCRv4 Recognizer (CJK)"),
          QStringLiteral("pp_ocr_rec_cjk.onnx"),
          QStringLiteral("https://huggingface.co/SWHL/RapidOCR/resolve/main/"
@@ -127,7 +157,8 @@ void ModelRegistry::populateBuiltin() {
          QStringLiteral("48fc40f24f6d2a207a2b1091d3437eb3cc3eb6b676dc3ef9c37384005483683b"),
          10857958, QStringLiteral("Apache 2.0"),
          QStringLiteral("https://github.com/PaddlePaddle/PaddleOCR"),
-         QStringLiteral("Text recognition for Chinese/Japanese/Korean scripts.")});
+         QStringLiteral("Text recognition for Chinese/Japanese/Korean scripts."),
+         QStringLiteral("~220 MiB while running")});
 }
 
 QString ModelRegistry::localPath(ModelId id) const {

@@ -55,12 +55,12 @@ class Settings {
         setFirstUseAcknowledged(QStringLiteral("redaction"), value);
     }
 
-    // Generic key→bool storage for one-time prompts. The redaction
-    // warning was the first; future first-use prompts (e.g. "this
-    // PDF was saved with form values that won't render in older
-    // viewers") can adopt the same surface without growing a new
-    // accessor pair every time. Keys are written under the
+    // Generic key→bool storage. Originally added for one-time prompts
+    // (e.g. the redaction warning); now also reused for the
+    // never-download policy bits per ML model under keys of the form
+    // `ml_never_download_<model_key>`. Keys are written under the
     // [first_use] table in settings.toml; unknown keys load as false.
+    // Treat the table name as legacy — the storage is a generic bool bag.
     bool firstUseAcknowledged(const QString &key) const {
         return m_firstUseFlags.value(key, false);
     }
