@@ -1,8 +1,8 @@
 # Build pipeline for release artifacts.
 #
-# Runs on PRs and manual dispatch so we can verify artifact builds
+# Runs on PRs and manual dispatch so we can verify release builds
 # before cutting a tag. On tag pushes it also publishes a GitHub
-# pre-release with the built artifacts attached.
+# pre-release with Linux/Windows artifacts attached.
 #
 # UAT also runs at tag time — it's slow (driving the full Qt stack
 # under offscreen) and not worth blocking every PR on.
@@ -113,6 +113,8 @@ jobs:
 
   macos-build:
     name: macOS .app build
+    # macOS runner minutes are expensive; keep this in manual/tag flows.
+    if: github.event_name != 'pull_request'
     runs-on: macos-14
     timeout-minutes: 45
     steps:
@@ -133,6 +135,7 @@ jobs:
         run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_OSX_ARCHITECTURES=arm64
           -DTRAILER_WERROR=ON
 
       - name: Build
@@ -190,12 +193,6 @@ jobs:
           name: trailer-windows-x86_64
           path: dist
 
-      - name: Download macOS artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: trailer-macos-arm64
-          path: dist
-
       - name: Create / update release
         uses: softprops/action-gh-release@v3
         with:
@@ -206,7 +203,11 @@ jobs:
           files: |
             dist/trailer-linux-x86_64.tar.gz
             dist/trailer-windows-x86_64.zip
-            dist/trailer-macos-arm64.zip
           body: |
             Pre-release build of Trailer. See PHILOSOPHY.md for what
             "pre-release" means while we're in 0.x.
+
+            macOS `.app` artifacts are built for CI verification, but
+            are not attached to GitHub Releases yet. Signed/notarized
+            distribution and fully self-contained bundling (`macdeployqt`
+            + qpdf dylib fixups) are tracked separately.
