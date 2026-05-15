@@ -1,5 +1,6 @@
 #include "Application.h"
 
+#include "TrailerVersion.h"
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
 #include "ui/MainWindow.h"
@@ -28,7 +29,7 @@ namespace trailer {
 Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
     setApplicationName(QStringLiteral("Trailer"));
     setOrganizationName(QStringLiteral("Trailer"));
-    setApplicationVersion(QStringLiteral("0.1.0"));
+    setApplicationVersion(QStringLiteral(TRAILER_VERSION_STRING));
 
     m_settings.load();
     m_recent.setMaxEntries(m_settings.recentMax());
