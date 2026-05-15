@@ -139,7 +139,7 @@ request (`.github/workflows/ci.yml`).
 ## Release process
 
 Heavy artifact builds (Linux native, Windows cross-build via
-mingw-w64 in `docker/windows/Dockerfile`, and a universal macOS
+mingw-w64 in `docker/windows/Dockerfile`, and a macOS Apple Silicon
 `.app` packaged as a DMG) plus the full UAT suite live in
 `.github/workflows/release.yml`. They are intentionally **not**
 triggered on every PR — macOS runner minutes bill at 10× Linux, and
@@ -187,11 +187,16 @@ UAT is slow. Instead they are gated on a `release-candidate` label:
    rebuild — the bytes shipped to users are exactly the bytes the
    release-candidate PR validated.
 
-The macOS DMG contains a universal (Apple Silicon + Intel),
-self-contained `trailer.app` (Qt frameworks bundled via
-`macdeployqt`; qpdf statically linked from a source build inside
-CI). For 0.1.x it ships **unsigned** — the release body documents
-the one-time Gatekeeper quarantine bypass users need to run.
+The macOS DMG contains an Apple Silicon (arm64) self-contained
+`trailer.app` (Qt frameworks bundled via `macdeployqt`; qpdf
+statically linked from a source build inside CI). Intel-Mac support
+is deferred — ONNX Runtime, which powers Trailer's ML features, no
+longer publishes macOS x86_64 / universal2 prebuilts upstream, so a
+universal binary isn't viable while ML features are link-time deps.
+Intel-Mac users can build from source via `scripts/build-macos.sh`
+on their host. For 0.1.x the `.app` ships **unsigned** — the
+release body documents the one-time Gatekeeper quarantine bypass
+users need to run.
 
 ### Recovering from a missing prior build
 
