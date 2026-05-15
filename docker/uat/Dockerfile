@@ -41,6 +41,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         pkg-config \
         python3 \
         python3-venv \
+        libglib2.0-0t64 \
         libqpdf-dev \
         libgl1-mesa-dev \
         libglu1-mesa-dev \
@@ -67,6 +68,10 @@ RUN python3 -m venv /opt/aqt-venv \
     && /opt/aqt-venv/bin/pip install --no-cache-dir aqtinstall
 ENV PATH=/opt/aqt-venv/bin:$PATH
 
+# libglib2.0-0t64 (installed above) is a runtime dep of Qt's prebuilt
+# host CLI tools (moc / rcc / uic from the aqtinstall linux_gcc_64
+# package). Without it, autorcc fails with "cannot open shared object
+# file: libglib-2.0.so.0" — same issue the Windows Dockerfile fixes.
 RUN aqt install-qt linux desktop ${QT_VERSION} linux_gcc_64 \
         -m qtpdf \
         -O /opt/qt
