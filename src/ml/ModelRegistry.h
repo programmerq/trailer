@@ -36,8 +36,14 @@ struct ModelSpec {
     qint64 size;    // bytes
     QString license;
     QString homepage;
-    QString purpose; // short description shown in Preferences
+    QString purpose;          // short description shown in Preferences
+    QString estimatedRamLabel; // e.g. "~200 MiB while running"
 };
+
+// Stable lowercase tag for a ModelId. Used to namespace settings keys
+// (policy flags, future per-model state) so persisted state survives
+// enumerator reordering.
+QString modelIdKey(ModelId id);
 
 // Registry of downloadable ONNX models. Resolves a ModelId to the
 // on-disk path under AppPaths::modelsDir(), and handles the download

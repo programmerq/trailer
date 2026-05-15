@@ -99,6 +99,8 @@ set(TRAILER_SOURCES
     src/ui/DocumentView.h
     src/ui/MainWindow.cpp
     src/ui/MainWindow.h
+    src/ui/ModelManagerDialog.cpp
+    src/ui/ModelManagerDialog.h
     src/ui/AnimationBar.cpp
     src/ui/AnimationBar.h
     src/ui/AnnotationOverlay.cpp

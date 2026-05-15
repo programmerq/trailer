@@ -124,6 +124,29 @@ takes corporate sponsorship for a specific piece of work, the README
 says so by name. If a contributor is paid by an interested party,
 that lands in the commit message.
 
+## How Trailer reduces friction
+
+The reference user opens a file, does the thing, and closes the file.
+Anything between them and "the thing" is friction. Trailer pays the
+implementation cost so the user doesn't pay the attention cost.
+
+- **A control that won't work is greyed out, with a tooltip.** If a
+  menu item, button, or option can't act in the current context — a
+  document is the wrong type, an ML model is set to Never Download,
+  an editing operation isn't supported by the format — disable the
+  control and set a tooltip explaining where to go instead. Don't
+  let the user click and meet a popup that says "actually no." A
+  greyed-out item carries the same information without interrupting.
+- **A popup is a last resort.** Use them for irreversible actions,
+  for one-time consent (model downloads, redaction warning), or for
+  errors that can't be self-evident from the UI state. Never use a
+  popup to explain why a feature isn't available right now — that's
+  what disabled state plus tooltip is for.
+- **State changes are reflected immediately.** If the user flips a
+  policy in one dialog, the menus and toolbars that depend on it
+  update before the next user action — no "now restart the app" or
+  "now reopen the document."
+
 ## How Trailer fails gracefully
 
 The thing that protects Trailer's quality from "let's monetise this
