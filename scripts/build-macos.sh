@@ -28,7 +28,8 @@
 # Configurable via env vars:
 #   QPDF_VERSION                qpdf release tag to build (default 12.3.2)
 #   MACOSX_DEPLOYMENT_TARGET    minimum macOS version (default 11.0)
-#   WERROR                      ON/OFF for -DTRAILER_WERROR (default ON)
+#   WERROR                      ON/OFF for -DTRAILER_WERROR (default OFF;
+#                               flip ON to chase regressions locally)
 #   QT_ROOT_DIR / QTDIR         path to Qt install (auto-detects from
 #                               install-qt-action's $QT_ROOT_DIR, then
 #                               ~/Qt/6.*/macos, then `brew --prefix qt`)
@@ -54,7 +55,11 @@ fi
 QPDF_VERSION="${QPDF_VERSION:-12.3.2}"
 LIBJPEG_VERSION="${LIBJPEG_VERSION:-3.0.3}"
 MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
-WERROR="${WERROR:-ON}"
+# WERROR defaults OFF: AppleClang on Qt 6.11 + libc++ also surfaces
+# system-header warnings (-Wdouble-promotion, -Wshorten-64-to-32) that
+# CI's GCC on Qt 6.8 doesn't trip. Pass WERROR=ON to opt back in
+# locally if you're chasing a specific regression.
+WERROR="${WERROR:-OFF}"
 BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build-macos}"
 DEPS_DIR="${DEPS_DIR:-$REPO_ROOT/build-macos-deps}"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
@@ -88,7 +93,7 @@ if [[ ! -f "$REPO_ROOT/VERSION" ]]; then
     exit 1
 fi
 VERSION="$(tr -d '[:space:]' < "$REPO_ROOT/VERSION")"
-echo "Building Trailer $VERSION (macOS universal)"
+echo "Building Trailer $VERSION (macOS arm64)"
 
 # ---------------------------------------------------------------------
 # Resolve Qt.
@@ -183,26 +188,26 @@ else
 fi
 
 # ---------------------------------------------------------------------
-# Build qpdf as a static universal library.
+# Build qpdf as a static arm64 library.
 #
-# Homebrew qpdf is single-arch (matches the host) and dylib-only, so it
-# can't feed a universal, self-contained .app. We build qpdf from source
-# once and cache the install in $DEPS_DIR — subsequent runs skip this
-# step. Pass --rebuild to force a clean qpdf build.
+# Homebrew qpdf is dylib-only (and we want a static lib so the
+# resulting .app has no external qpdf dep at runtime). We build qpdf
+# from source once and cache the install in $DEPS_DIR — subsequent
+# runs skip this step. Pass --rebuild to force a clean qpdf build.
 #
 # qpdf discovers libjpeg via pkg_check_modules first, falling back to
 # find_path/find_library. We point both at $DEPS_DIR/jpeg-prefix (the
-# universal static lib built above) by:
-#   - setting PKG_CONFIG_PATH to ONLY that prefix (overriding
-#     /opt/homebrew/lib/pkgconfig from the runner's env) so
-#     pkg_check_modules picks our universal static jpeg, and
+# static lib built above) by:
+#   - setting PKG_CONFIG_LIBDIR to ONLY that prefix (overriding the
+#     runner's /opt/homebrew/lib/pkgconfig) so pkg_check_modules picks
+#     our static libjpeg, and
 #   - including the same prefix in CMAKE_PREFIX_PATH for the
 #     find_path/find_library fallback.
 # This is the same shape the Windows Dockerfile uses.
 # ---------------------------------------------------------------------
 QPDF_CONFIG="$DEPS_DIR/qpdf-prefix/lib/cmake/qpdf/qpdfConfig.cmake"
 if [[ ! -f "$QPDF_CONFIG" ]]; then
-    echo "==> Building qpdf $QPDF_VERSION static-universal"
+    echo "==> Building qpdf $QPDF_VERSION static-arm64"
     mkdir -p "$DEPS_DIR"
     if [[ ! -f "$DEPS_DIR/qpdf-$QPDF_VERSION.tar.gz" ]]; then
         curl -fsSL \
@@ -220,7 +225,7 @@ if [[ ! -f "$QPDF_CONFIG" ]]; then
     #
     # PKG_CONFIG_LIBDIR (not PATH) replaces pkg-config's entire search
     # space with our jpeg-prefix, so pkg_check_modules(libjpeg) picks
-    # our universal static libjpeg.a and pkg_check_modules(openssl /
+    # our static libjpeg.a and pkg_check_modules(openssl /
     # gnutls) returns FALSE.
     #
     # BUILD_TESTING=OFF skips ~150 qpdf test binaries.
@@ -246,13 +251,22 @@ if [[ ! -f "$QPDF_CONFIG" ]]; then
     # INTERFACE_LINK_LIBRARIES — so downstream consumers get `-ljpeg`
     # without a corresponding `-L<jpeg-prefix>/lib` flag and the link
     # fails. Rewrite the bare name to the absolute path so trailer's
-    # link finds our universal libjpeg.a without any extra dance.
+    # link finds our libjpeg.a without any extra dance.
     # (Compare libz, which qpdf finds via find_package(ZLIB) and
     # already exports as an absolute /.../libz.tbd path.)
-    sed -i.bak \
-        "s|;jpeg\"|;$JPEG_PREFIX/lib/libjpeg.a\"|g" \
-        "$DEPS_DIR/qpdf-prefix/lib/cmake/qpdf/libqpdfTargets.cmake"
-    rm -f "$DEPS_DIR/qpdf-prefix/lib/cmake/qpdf/libqpdfTargets.cmake.bak"
+    QPDF_TARGETS="$DEPS_DIR/qpdf-prefix/lib/cmake/qpdf/libqpdfTargets.cmake"
+    sed -i.bak "s|;jpeg\"|;$JPEG_PREFIX/lib/libjpeg.a\"|g" "$QPDF_TARGETS"
+    rm -f "$QPDF_TARGETS.bak"
+    # Post-condition: if qpdf's export format ever changes (different
+    # quoting, an extra token, etc.) the sed silently no-ops and the
+    # downstream trailer link fails later with a cryptic "library
+    # 'jpeg' not found". Catch the drift here instead.
+    if ! grep -q "$JPEG_PREFIX/lib/libjpeg.a" "$QPDF_TARGETS"; then
+        echo "ERROR: failed to rewrite libqpdfTargets.cmake's jpeg reference." >&2
+        echo "       qpdf's exported INTERFACE_LINK_LIBRARIES format may have" >&2
+        echo "       changed; inspect $QPDF_TARGETS and update the sed pattern." >&2
+        exit 1
+    fi
 else
     echo "==> Reusing cached qpdf install at $DEPS_DIR/qpdf-prefix"
     echo "    (run with --rebuild to force a clean qpdf build)"
@@ -324,7 +338,7 @@ echo "    no external dylib references"
 # ---------------------------------------------------------------------
 # Package as DMG.
 #
-# Filename is fixed (trailer-macos-universal.dmg) so CI's
+# Filename is fixed (trailer-macos-arm64.dmg) so CI's
 # upload-artifact step has a stable target. The bundle version is
 # already baked into the .app via TrailerVersion.h + CMake's
 # MACOSX_BUNDLE_BUNDLE_VERSION, so the version is visible inside the

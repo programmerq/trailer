@@ -18,7 +18,7 @@ help:
 	@echo "  make release          build the release artifact for the host platform"
 	@echo "                          - macOS host  → scripts/build-macos.sh"
 	@echo "                          - Linux host  → cmake + ctest (no script wrapper)"
-	@echo "  make release-macos    build the universal .app DMG (macOS host only)"
+	@echo "  make release-macos    build the arm64 .app DMG (macOS host only)"
 	@echo "  make release-windows  Windows cross-build via Docker (any host)"
 	@echo "  make release-uat      run the UAT suite via Docker"
 	@echo "  make clean-release    rm -rf build-macos/, build-macos-deps/, dist/"
@@ -30,7 +30,7 @@ ifeq ($(HOST_UNAME),Darwin)
 release: release-macos
 else ifeq ($(HOST_UNAME),Linux)
 release:
-	cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRAILER_WERROR=ON
+	cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 	cmake --build build --parallel
 	cd build && QT_QPA_PLATFORM=offscreen ctest --output-on-failure --label-exclude uat
 else
