@@ -1,13 +1,25 @@
-# Build pipeline for release artifacts.
+# Release-artifact build pipeline.
 #
-# Runs on PRs and manual dispatch so we can verify release builds
-# before cutting a tag. On tag pushes it also publishes a GitHub
-# pre-release with Linux/Windows artifacts attached.
+# Builds the self-contained per-platform release artifacts and runs
+# UAT. Triggered by:
+#   - Pull requests carrying the `release-candidate` label. The
+#     `labeled` event re-fires the workflow when the label is added
+#     to an existing PR, so artifact builds don't require a force-push
+#     after labeling.
+#   - Manual `workflow_dispatch` (e.g. building a tag SHA after the
+#     fact to seed the Publish Release workflow).
 #
-# UAT also runs at tag time — it's slow (driving the full Qt stack
-# under offscreen) and not worth blocking every PR on.
+# Intentionally NOT triggered on tag push — the companion Publish
+# Release workflow (release-publish.yml) handles tag pushes by
+# promoting an already-successful Release run's artifacts to a
+# GitHub Release. See README's "Release process" section.
 #
-# Release is the strict bar: `TRAILER_WERROR=ON` so any warning
+# precheck enforces that the top-level VERSION file has been bumped
+# off its -dev suffix before any heavy build burns CI minutes. All
+# build jobs `needs: [precheck]`, so a stale VERSION fails fast and
+# cheap (a ~30s Linux job) instead of after a 30-min macOS run.
+#
+# Release is the strict bar: TRAILER_WERROR=ON so any warning
 # regression introduced during the dev-phase loop (where WERROR is
 # advisory, see ci.yml) gets caught here before artifacts ship.
 
@@ -15,17 +27,61 @@ name: Release
 
 on:
   pull_request:
+    # `labeled` is in the list so adding the release-candidate label
+    # to an open PR retriggers the workflow. Without it, the heavy
+    # jobs wouldn't run until the next commit lands on the PR.
+    types: [opened, synchronize, reopened, labeled]
     branches: [main]
-  push:
-    tags:
-      - 'v*'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  precheck:
+    # Pre-flight gate. On a release-candidate PR (or workflow_dispatch),
+    # confirm the VERSION file doesn't still carry a -dev / -rc suffix.
+    # All heavy build jobs `needs: [precheck]`, so the macOS / Windows
+    # runners only burn minutes when the PR is actually a release
+    # candidate.
+    name: Pre-flight checks
+    runs-on: ubuntu-24.04
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'release-candidate')
+    outputs:
+      version: ${{ steps.read-version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: read-version
+        name: Validate VERSION
+        run: |
+          set -euo pipefail
+          if [ ! -f VERSION ]; then
+            echo "::error::VERSION file is missing at the repo root"
+            exit 1
+          fi
+          VERSION=$(tr -d '[:space:]' < VERSION)
+          if [ -z "$VERSION" ]; then
+            echo "::error::VERSION file is empty"
+            exit 1
+          fi
+          echo "VERSION=$VERSION"
+          # On PR runs (i.e. release-candidate label applied), the
+          # version must already be its target release value — no -dev
+          # or -rc tail. Dispatch runs bypass this so a maintainer
+          # can poke a build for any SHA (e.g. retroactively seeding
+          # artifacts for a tag).
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            if echo "$VERSION" | grep -qE -- '-dev$|-rc[0-9]*$'; then
+              echo "::error::VERSION='$VERSION' still carries a -dev/-rc suffix. Edit the VERSION file (and re-run cmake locally to regenerate TrailerVersion.h) before re-applying the release-candidate label."
+              exit 1
+            fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
   linux-build:
+    needs: [precheck]
     name: Linux build
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -59,7 +115,9 @@ jobs:
       - name: Stage Linux artifact
         # Bundle the binary plus a minimal README so users who
         # download the zip have something to read. Distro packaging
-        # (.deb / .AppImage / Flatpak) is a separate exercise.
+        # (.deb / .AppImage / Flatpak) is a separate exercise; this
+        # zip expects system Qt + qpdf to be installed via the user's
+        # package manager (see README's "Install" section).
         run: |
           mkdir -p dist/trailer-linux-x86_64
           cp build/trailer dist/trailer-linux-x86_64/
@@ -75,6 +133,7 @@ jobs:
           retention-days: 30
 
   windows-cross:
+    needs: [precheck]
     name: Windows cross-build (mingw-w64)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -91,7 +150,9 @@ jobs:
         # --in-container skips the docker-build branch since we just
         # built the image; the script then runs the cmake +
         # collect_dlls passes that produce build-windows/trailer.exe
-        # alongside every transitively-loaded DLL.
+        # alongside every transitively-loaded DLL. The result is a
+        # fully self-contained directory — no separate Qt/qpdf install
+        # needed on the user's Windows machine.
         run: |
           docker run --rm -v "$PWD":/work -w /work trailer-windows \
             bash scripts/build-windows.sh --in-container
@@ -112,50 +173,150 @@ jobs:
           retention-days: 30
 
   macos-build:
-    name: macOS .app build
-    # macOS runner minutes are expensive; keep this in manual/tag flows.
-    if: github.event_name != 'pull_request'
+    needs: [precheck]
+    name: macOS universal .app build
+    # macos-14 is Apple Silicon. Universal-binary support means a
+    # single artifact runs on Intel + Apple Silicon Macs; see the
+    # CMAKE_OSX_ARCHITECTURES line below.
     runs-on: macos-14
-    timeout-minutes: 45
+    timeout-minutes: 60
+    env:
+      # macOS 11 is the earliest version arm64 supports — also the
+      # floor every other universal-binary OSS project ships against.
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+      # qpdf is built from source for the macOS .app. The Windows
+      # Dockerfile pins 12.3.2 too, but the versions don't have to
+      # match across platforms — keeping them in lockstep just avoids
+      # behaviour-drift between the two release binaries.
+      QPDF_VERSION: 12.3.2
     steps:
       - uses: actions/checkout@v6
 
       - name: Install Qt
-        # Keep this in lockstep with setup-linux-build's Qt version.
+        # install-qt-action's macOS Qt has been universal (arm64 +
+        # x86_64) since Qt 6.2, so a single install covers both arches
+        # of the universal trailer.app. Keep this in lockstep with
+        # setup-linux-build's Qt version.
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.8.0'
           modules: 'qtpdf'
           cache: true
 
-      - name: Install macOS build deps
-        run: brew install qpdf ninja
+      - name: Install build deps
+        run: brew install ninja
 
-      - name: Configure
-        run: >-
-          cmake -S . -B build -G Ninja
-          -DCMAKE_BUILD_TYPE=Release
-          -DCMAKE_OSX_ARCHITECTURES=arm64
-          -DTRAILER_WERROR=ON
+      - name: Build static universal qpdf
+        # Homebrew qpdf is single-arch (matches the runner's host
+        # arch) and only ships as a dylib, neither of which works for
+        # the universal, self-contained .app we want. Build qpdf from
+        # source as a static lib targeting both arches; the resulting
+        # libqpdf.a folds into trailer's binary at link time, so the
+        # .app has zero external qpdf dependency at runtime.
+        #
+        # USE_IMPLICIT_CRYPTO=1 (qpdf's default) avoids pulling in
+        # openssl/gnutls; REQUIRE_LIBJPEG=0 lets qpdf fall back from
+        # zero-copy JPEG passthrough to its own re-encode path, which
+        # is acceptable for Trailer's PDF editing use cases and keeps
+        # us from needing a universal-libjpeg build too.
+        run: |
+          set -euo pipefail
+          mkdir -p build-deps
+          curl -fsSL \
+            "https://github.com/qpdf/qpdf/releases/download/v${QPDF_VERSION}/qpdf-${QPDF_VERSION}.tar.gz" \
+            -o /tmp/qpdf.tar.gz
+          tar -xf /tmp/qpdf.tar.gz -C build-deps
+          cmake -S "build-deps/qpdf-${QPDF_VERSION}" -B build-deps/qpdf-build -G Ninja \
+            -DCMAKE_INSTALL_PREFIX="$PWD/build-deps/qpdf-prefix" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET}" \
+            -DBUILD_STATIC_LIBS=ON \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DREQUIRE_CRYPTO_OPENSSL=0 \
+            -DREQUIRE_CRYPTO_GNUTLS=0 \
+            -DUSE_IMPLICIT_CRYPTO=1 \
+            -DREQUIRE_LIBJPEG=0 \
+            -DBUILD_DOC=0
+          cmake --build build-deps/qpdf-build --parallel
+          cmake --install build-deps/qpdf-build
+
+      - name: Configure trailer
+        # CMAKE_PREFIX_PATH points trailer's find_package(qpdf CONFIG)
+        # at the static install above so it picks our build over any
+        # system qpdf the runner might have.
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET}" \
+            -DCMAKE_PREFIX_PATH="$PWD/build-deps/qpdf-prefix" \
+            -DTRAILER_WERROR=ON
 
       - name: Build
         run: cmake --build build --parallel
 
+      - name: Bundle Qt frameworks (macdeployqt)
+        # macdeployqt rewrites the .app's @rpath references for Qt
+        # frameworks to @executable_path-relative paths and copies
+        # the frameworks into Contents/Frameworks. Combined with the
+        # static-linked qpdf above, this produces a drag-to-Applications
+        # .app with no external Homebrew / Qt dependency.
+        #
+        # Notarization is intentionally deferred — the .app is shipped
+        # unsigned and the release body documents the Gatekeeper
+        # quarantine bypass users need to run once.
+        run: |
+          "${QT_ROOT_DIR}/bin/macdeployqt" build/trailer.app -verbose=1
+
+      - name: Verify universal arches
+        # Defence-in-depth: confirm both arches are actually present
+        # in the produced binary. A misconfigured runner image or a
+        # silent CMake flag drift would otherwise ship a single-arch
+        # binary under a "universal" filename.
+        run: |
+          set -euo pipefail
+          ARCHES=$(lipo -archs build/trailer.app/Contents/MacOS/trailer)
+          echo "trailer arches: $ARCHES"
+          echo "$ARCHES" | grep -q arm64 \
+            || { echo "::error::missing arm64 slice"; exit 1; }
+          echo "$ARCHES" | grep -q x86_64 \
+            || { echo "::error::missing x86_64 slice"; exit 1; }
+
+      - name: Verify no external dylib references
+        # Anything pointing outside the .app (Homebrew, /opt, /usr/local)
+        # would break for users without the same toolchain installed
+        # locally. /usr/lib + /System are macOS-shipped libs we're
+        # allowed to depend on; @executable_path / @rpath / @loader_path
+        # resolve inside the bundle.
+        run: |
+          set -euo pipefail
+          EXT=$(otool -L build/trailer.app/Contents/MacOS/trailer \
+                | awk 'NR>1 {print $1}' \
+                | grep -vE '^(/usr/lib/|/System/|@executable_path|@rpath|@loader_path)' \
+                || true)
+          if [ -n "$EXT" ]; then
+            echo "::error::external dylib references inside the .app:"
+            echo "$EXT"
+            exit 1
+          fi
+          echo "no external dylib references"
+
       - name: Stage macOS artifact
         run: |
           mkdir -p dist
-          (cd build && zip -r ../dist/trailer-macos-arm64.zip trailer.app)
+          (cd build && zip -r ../dist/trailer-macos-universal.zip trailer.app)
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v7
         with:
-          name: trailer-macos-arm64
-          path: dist/trailer-macos-arm64.zip
+          name: trailer-macos-universal
+          path: dist/trailer-macos-universal.zip
           retention-days: 30
 
   uat:
-    name: UAT (tag only)
-    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [precheck]
+    name: UAT
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -169,45 +330,3 @@ jobs:
         run: |
           docker run --rm -v "$PWD":/work -w /work trailer-uat \
             bash scripts/run-uat.sh --in-container
-
-  github-release:
-    name: Attach artifacts to GitHub Release
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux-build, windows-cross, macos-build, uat]
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Download Linux artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: trailer-linux-x86_64
-          path: dist
-
-      - name: Download Windows artifact
-        uses: actions/download-artifact@v8
-        with:
-          name: trailer-windows-x86_64
-          path: dist
-
-      - name: Create / update release
-        uses: softprops/action-gh-release@v3
-        with:
-          # Pre-1.0 tags are pre-releases by convention. Once the
-          # project commits to backwards compatibility on minor
-          # bumps (see PHILOSOPHY.md), flip this off.
-          prerelease: true
-          files: |
-            dist/trailer-linux-x86_64.tar.gz
-            dist/trailer-windows-x86_64.zip
-          body: |
-            Pre-release build of Trailer. See PHILOSOPHY.md for what
-            "pre-release" means while we're in 0.x.
-
-            macOS `.app` artifacts are built for CI verification, but
-            are not attached to GitHub Releases yet. Signed/notarized
-            distribution and fully self-contained bundling (`macdeployqt`
-            + qpdf dylib fixups) are tracked separately.
