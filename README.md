@@ -134,15 +134,45 @@ ctest --test-dir build --output-on-failure
 ```
 
 CI runs the build + unit tests on Linux on every push and pull
-request (`.github/workflows/ci.yml`). Artifact builds run in
-`.github/workflows/release.yml` on pull requests, manual dispatch,
-and tag pushes for Linux native and Windows cross-build (mingw-w64
-in `docker/windows/Dockerfile`). macOS `.app` build verification
-runs on manual dispatch and tag pushes (not every PR). The GitHub
-pre-release publish step runs only for tag pushes and currently
-attaches Linux/Windows artifacts only; macOS release artifacts
-remain pending signed/notarized, self-contained packaging. UAT also
-stays tag-only to keep PR feedback fast.
+request (`.github/workflows/ci.yml`).
+
+## Release process
+
+Heavy artifact builds (Linux native, Windows cross-build via
+mingw-w64 in `docker/windows/Dockerfile`, and a universal macOS
+`.app`) plus the full UAT suite live in
+`.github/workflows/release.yml`. They are intentionally **not**
+triggered on every PR — macOS runner minutes bill at 10× Linux, and
+UAT is slow. Instead they are gated on a `release-candidate` label:
+
+1. Open a release PR that bumps `VERSION` off its `-dev` suffix
+   (e.g. `0.2.0-dev` → `0.2.0`). The CMake configure regenerates
+   `TrailerVersion.h` so `setApplicationVersion()` and the About
+   dialog pick up the new string.
+2. Add the `release-candidate` label. The label event re-triggers
+   the workflow; precheck rejects PRs whose `VERSION` still has the
+   `-dev` suffix, so the heavy macOS/Windows jobs only run on a
+   genuine release attempt.
+3. When the workflow is green, merge the PR with a policy that
+   preserves the PR HEAD SHA (fast-forward or merge-commit — **not
+   squash**, which would discard the SHA the artifacts were built
+   against).
+4. Tag that commit: `git tag v0.2.0 && git push origin v0.2.0`.
+5. `release-publish.yml` fires on the tag push, looks up the prior
+   successful Release run for the tagged SHA, downloads its artifacts,
+   and creates the GitHub Release. No rebuild — the bytes shipped to
+   users are exactly the bytes the release-candidate PR validated.
+
+If you need to seed artifacts for a tag the normal way didn't cover
+(e.g. an unattended squash merge dropped the SHA), trigger Release
+manually via `gh workflow run Release --ref=<SHA>` and then re-run
+the Publish Release job.
+
+The macOS `.app` is universal (Apple Silicon + Intel), self-contained
+(Qt frameworks bundled via `macdeployqt`; qpdf statically linked from
+a source build inside CI), and **unsigned** for 0.1.x. The release
+body documents the one-time Gatekeeper quarantine bypass users need
+to run.
 
 ## Philosophy
 
