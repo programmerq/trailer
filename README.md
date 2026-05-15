@@ -136,10 +136,13 @@ ctest --test-dir build --output-on-failure
 CI runs the build + unit tests on Linux on every push and pull
 request (`.github/workflows/ci.yml`). Artifact builds run in
 `.github/workflows/release.yml` on pull requests, manual dispatch,
-and tag pushes: Linux native, Windows cross-build (mingw-w64 in
-`docker/windows/Dockerfile`), and macOS `.app` (on macOS runners).
-The GitHub pre-release publish step runs only for tag pushes. UAT
-also stays tag-only to keep PR feedback fast.
+and tag pushes for Linux native and Windows cross-build (mingw-w64
+in `docker/windows/Dockerfile`). macOS `.app` build verification
+runs on manual dispatch and tag pushes (not every PR). The GitHub
+pre-release publish step runs only for tag pushes and currently
+attaches Linux/Windows artifacts only; macOS release artifacts
+remain pending signed/notarized, self-contained packaging. UAT also
+stays tag-only to keep PR feedback fast.
 
 ## Philosophy
 
