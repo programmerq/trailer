@@ -331,7 +331,7 @@ void TestUatFoundations::uat_fnd_011_macosNoWindowMenuProvidesFileActions() {
     QAction* newAction =
         findMenuAction(bar, QStringLiteral("&File"), QStringLiteral("&New"));
     QVERIFY(newAction);
-    const int before = app->windows().size();
+    const int before = static_cast<int>(app->windows().size());
     newAction->trigger();
     QApplication::processEvents();
     QVERIFY2(app->windows().size() >= before + 1,

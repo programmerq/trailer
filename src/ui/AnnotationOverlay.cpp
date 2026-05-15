@@ -254,7 +254,8 @@ void AnnotationOverlay::paintEvent(QPaintEvent * /*event*/) {
             if (!a.pressures.empty() && a.pressures.size() == a.points.size()) {
                 const qreal base = a.style.strokeWidth > 0.0 ? a.style.strokeWidth : 1.5;
                 for (size_t i = 1; i < a.points.size(); ++i) {
-                    const qreal pr = std::clamp<qreal>(a.pressures[i], 0.0, 1.0);
+                    const qreal pr = std::clamp<qreal>(static_cast<qreal>(a.pressures[i]),
+                                                       0.0, 1.0);
                     // Same cubic curve as SignatureCanvas so a
                     // light touch is light and a heavy touch is
                     // confidently thick. base is the minimum.

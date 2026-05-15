@@ -1275,8 +1275,8 @@ void MainWindow::onRemoveBackground() {
     req.failureSubject = tr("the background-removal model");
     req.isReady = [remover]() { return remover->isModelReady(); };
     req.kickoff = [remover]() { remover->ensureModelAvailable(); };
-    req.wireSignals = [this, remover](QProgressDialog *progress, bool *ready, bool *failed,
-                                      QString *failureMessage) {
+    req.wireSignals = [remover](QProgressDialog *progress, bool *ready, bool *failed,
+                                QString *failureMessage) {
         connect(remover.get(), &BackgroundRemover::downloadProgress, progress,
                 [progress](qint64 received, qint64 total) {
                     if (total <= 0) {

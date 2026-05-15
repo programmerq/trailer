@@ -94,8 +94,8 @@ bool isDownloadable(const ModelSpec &spec) {
 void refreshModelTable(Application *app, QTableWidget *table) {
     ModelRegistry &registry = app->modelRegistry();
     const QList<ModelId> ids = allManagedModelIds();
-    table->setRowCount(ids.size());
-    for (int row = 0; row < ids.size(); ++row) {
+    table->setRowCount(static_cast<int>(ids.size()));
+    for (int row = 0; row < static_cast<int>(ids.size()); ++row) {
         const ModelId id = ids.at(row);
         const ModelSpec spec = registry.spec(id);
         auto *name = new QTableWidgetItem(spec.displayName);
