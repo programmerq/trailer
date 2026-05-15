@@ -1,15 +1,8 @@
-# Tag-triggered release pipeline.
+# Build pipeline for release artifacts.
 #
-# Builds the Linux native binary on the host runner and the Windows
-# 64-bit binary via mingw-w64 in the existing Docker image
-# (docker/windows/Dockerfile + scripts/build-windows.sh). All work
-# happens on Linux runners — there is intentionally no macOS runner.
-# Cross-compiling to macOS from Linux is encumbered by Apple's SDK
-# licensing (the SDK is only legally redistributable from a Mac you
-# own) and macOS code-signing for distribution requires `codesign`
-# running on macOS. Producing a `.app` for users is therefore a manual
-# step performed on a Mac developer machine; it's intentionally
-# outside CI.
+# Runs on PRs and manual dispatch so we can verify artifact builds
+# before cutting a tag. On tag pushes it also publishes a GitHub
+# pre-release with the built artifacts attached.
 #
 # UAT also runs at tag time — it's slow (driving the full Qt stack
 # under offscreen) and not worth blocking every PR on.
@@ -21,9 +14,12 @@
 name: Release
 
 on:
+  pull_request:
+    branches: [main]
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
 
 jobs:
   linux-build:
@@ -112,8 +108,48 @@ jobs:
           path: dist/trailer-windows-x86_64.zip
           retention-days: 30
 
+  macos-build:
+    name: macOS .app build
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Qt
+        # Keep this in lockstep with setup-linux-build's Qt version.
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.8.0'
+          modules: 'qtpdf'
+          cache: true
+
+      - name: Install macOS build deps
+        run: brew install qpdf ninja
+
+      - name: Configure
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DTRAILER_WERROR=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Stage macOS artifact
+        run: |
+          mkdir -p dist
+          (cd build && zip -r ../dist/trailer-macos-arm64.zip trailer.app)
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: trailer-macos-arm64
+          path: dist/trailer-macos-arm64.zip
+          retention-days: 30
+
   uat:
     name: UAT (tag only)
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
@@ -130,7 +166,8 @@ jobs:
 
   github-release:
     name: Attach artifacts to GitHub Release
-    needs: [linux-build, windows-cross, uat]
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux-build, windows-cross, macos-build, uat]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -150,6 +187,12 @@ jobs:
           name: trailer-windows-x86_64
           path: dist
 
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v8
+        with:
+          name: trailer-macos-arm64
+          path: dist
+
       - name: Create / update release
         uses: softprops/action-gh-release@v3
         with:
@@ -160,11 +203,7 @@ jobs:
           files: |
             dist/trailer-linux-x86_64.tar.gz
             dist/trailer-windows-x86_64.zip
+            dist/trailer-macos-arm64.zip
           body: |
             Pre-release build of Trailer. See PHILOSOPHY.md for what
             "pre-release" means while we're in 0.x.
-
-            macOS users: no `.app` artifact ships from CI yet —
-            cross-compiling to macOS from Linux is encumbered by
-            SDK licensing and code-signing constraints. Build from
-            source on a Mac via the README's "Build" section.
