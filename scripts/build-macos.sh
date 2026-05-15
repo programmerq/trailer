@@ -117,9 +117,15 @@ EOF
 fi
 echo "Using Qt at: $QT_ROOT_DIR"
 
-for TOOL in cmake hdiutil curl tar lipo otool; do
+for TOOL in cmake ninja hdiutil curl tar lipo otool; do
     if ! command -v "$TOOL" >/dev/null 2>&1; then
         echo "Required tool '$TOOL' not found." >&2
+        case "$TOOL" in
+            cmake)   echo "  Install: brew install cmake (or https://cmake.org/download/)" >&2 ;;
+            ninja)   echo "  Install: brew install ninja" >&2 ;;
+            hdiutil|lipo|otool)
+                     echo "  Should ship with macOS / Xcode Command Line Tools (xcode-select --install)." >&2 ;;
+        esac
         exit 1
     fi
 done
