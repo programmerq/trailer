@@ -59,9 +59,13 @@ QString formatSize(qint64 bytes) {
     return QLocale().formattedDataSize(bytes, 1, QLocale::DataSizeIecFormat);
 }
 
-qint64 totalSizeBytes(const ModelRegistry &registry, const QList<ModelId> &ids) {
+// Bytes still to fetch — skips models already cached so the first-use
+// prompt doesn't quote a number that includes files we won't download.
+qint64 pendingDownloadSizeBytes(const ModelRegistry &registry, const QList<ModelId> &ids) {
     qint64 total = 0;
     for (ModelId id : ids) {
+        if (registry.isAvailable(id))
+            continue;
         const ModelSpec spec = registry.spec(id);
         if (spec.id == id && spec.size > 0)
             total += spec.size;
@@ -69,8 +73,14 @@ qint64 totalSizeBytes(const ModelRegistry &registry, const QList<ModelId> &ids) 
     return total;
 }
 
-bool anyNeverDownloadEnabled(Application *app, const QList<ModelId> &ids) {
+// "Never download" only blocks a feature when there's actually a
+// download pending. If the user already installed the model (manually
+// or before flipping the policy), the policy is a no-op for that id.
+bool anyPendingDownloadBlocked(Application *app, const QList<ModelId> &ids) {
+    ModelRegistry &reg = app->modelRegistry();
     for (ModelId id : ids) {
+        if (reg.isAvailable(id))
+            continue;
         if (ModelPolicy::isNeverDownload(app, id))
             return true;
     }
@@ -303,7 +313,7 @@ bool requestModelDownload(const ModelDownloadRequest &req) {
     // is a defensive guard against keyboard shortcuts or future call
     // paths that haven't picked up the same enable/disable logic. Fail
     // silently — the user has explicitly opted out of downloads.
-    if (anyNeverDownloadEnabled(req.app, req.required))
+    if (anyPendingDownloadBlocked(req.app, req.required))
         return false;
 
     QMessageBox box(req.parent);
@@ -311,7 +321,8 @@ bool requestModelDownload(const ModelDownloadRequest &req) {
     box.setIcon(QMessageBox::Question);
     box.setText(QObject::tr("%1 can download %2 for %3 (%4).")
                     .arg(req.featureName,
-                         formatSize(totalSizeBytes(req.app->modelRegistry(), req.required)),
+                         formatSize(pendingDownloadSizeBytes(req.app->modelRegistry(),
+                                                             req.required)),
                          req.modelLabel, req.licenseLabel));
     box.setInformativeText(
         QObject::tr("Runs locally on your device (no cloud processing). "
