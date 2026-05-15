@@ -117,16 +117,35 @@ jobs:
           merge-multiple: true
           github-token: ${{ github.token }}
 
-      - name: List downloaded artifacts
+      - name: List + rename artifacts for the release
+        # In-workflow artifact names are stable (no version) so the
+        # cross-run download lookup above works regardless of which
+        # release a build came from. The user-visible filenames on the
+        # GitHub Release should carry the version, though — rename
+        # to trailer-${V}-<platform>.<ext> before handing the files
+        # to action-gh-release.
         run: |
           set -euo pipefail
           ls -la dist/
-          for f in trailer-linux-x86_64.tar.gz trailer-windows-x86_64.zip trailer-macos-arm64.dmg; do
-            if [ ! -f "dist/$f" ]; then
-              echo "::error::expected artifact dist/$f is missing — run ${{ steps.find-run.outputs.run-id }} likely skipped a platform"
+          # tag is e.g. "v0.1.0"; strip the leading "v" for the
+          # filename so users see trailer-0.1.0-linux-x86_64.tar.gz
+          # (matching how `--version` and the About dialog print it).
+          TAG="${{ steps.target.outputs.tag }}"
+          V="${TAG#v}"
+          declare -A renames=(
+            [trailer-linux-x86_64.tar.gz]="trailer-${V}-linux-x86_64.tar.gz"
+            [trailer-windows-x86_64.zip]="trailer-${V}-windows-x86_64.zip"
+            [trailer-macos-arm64.dmg]="trailer-${V}-macos-arm64.dmg"
+          )
+          for src in "${!renames[@]}"; do
+            if [ ! -f "dist/$src" ]; then
+              echo "::error::expected artifact dist/$src is missing — run ${{ steps.find-run.outputs.run-id }} likely skipped a platform"
               exit 1
             fi
+            mv "dist/$src" "dist/${renames[$src]}"
           done
+          echo "After rename:"
+          ls -la dist/
 
       - name: Create / update GitHub Release
         uses: softprops/action-gh-release@v3
@@ -136,10 +155,8 @@ jobs:
           # project commits to backwards compatibility on minor
           # bumps (see PHILOSOPHY.md), flip this off.
           prerelease: true
-          files: |
-            dist/trailer-linux-x86_64.tar.gz
-            dist/trailer-windows-x86_64.zip
-            dist/trailer-macos-arm64.dmg
+          # Glob the versioned filenames written by the rename step.
+          files: dist/trailer-*
           body: |
             Pre-release build of Trailer. See PHILOSOPHY.md for what
             "pre-release" means while we're in 0.x.
