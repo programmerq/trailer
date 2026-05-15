@@ -134,13 +134,12 @@ ctest --test-dir build --output-on-failure
 ```
 
 CI runs the build + unit tests on Linux on every push and pull
-request (`.github/workflows/ci.yml`). The Windows binary is
-cross-compiled from Linux via the mingw-w64 toolchain in
-`docker/windows/Dockerfile`; that, plus the UAT suite, runs only
-on tag pushes (`.github/workflows/release.yml`). macOS builds are
-manual on a Mac developer machine — cross-compiling there from
-Linux is encumbered by SDK licensing and code-signing constraints,
-so it stays out of CI by design.
+request (`.github/workflows/ci.yml`). Artifact builds run in
+`.github/workflows/release.yml` on pull requests, manual dispatch,
+and tag pushes: Linux native, Windows cross-build (mingw-w64 in
+`docker/windows/Dockerfile`), and macOS `.app` (on macOS runners).
+The GitHub pre-release publish step runs only for tag pushes. UAT
+also stays tag-only to keep PR feedback fast.
 
 ## Philosophy
 
