@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFile>
 #include <QObject>
+#include <QSet>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QUrl>
@@ -19,6 +20,8 @@ class TestModelRegistry : public QObject {
     Q_OBJECT
   private slots:
     void builtinManifestHasAllIds();
+    void modelIdKeyIsStableAndUnique();
+    void estimatedRamLabelPopulated();
     void localPathLivesUnderModelsDir();
     void verifyHashAcceptsMatchingFile();
     void verifyHashRejectsTamperedFile();
@@ -50,6 +53,36 @@ void TestModelRegistry::builtinManifestHasAllIds() {
     QCOMPARE(list.size(), 8);
     // Spot-check one so a future rename doesn't silently break the UI.
     QCOMPARE(reg.spec(ModelId::U2NetP).fileName, QStringLiteral("u2netp.onnx"));
+}
+
+void TestModelRegistry::modelIdKeyIsStableAndUnique() {
+    // Settings keys (`ml_never_download_<modelIdKey>`) are persisted, so
+    // every id needs a stable, distinct tag.
+    const QList<ModelId> all = {ModelId::U2NetP,
+                                ModelId::BiRefNetLite,
+                                ModelId::MobileSamEncoder,
+                                ModelId::MobileSamDecoder,
+                                ModelId::PpOcrDetector,
+                                ModelId::PpOcrDirection,
+                                ModelId::PpOcrRecognizerLatin,
+                                ModelId::PpOcrRecognizerCjk};
+    QSet<QString> seen;
+    for (ModelId id : all) {
+        const QString key = modelIdKey(id);
+        QVERIFY(!key.isEmpty());
+        QVERIFY2(!seen.contains(key), qPrintable(key));
+        seen.insert(key);
+    }
+    // Pin a couple so a rename here doesn't silently invalidate existing
+    // settings on disk.
+    QCOMPARE(modelIdKey(ModelId::U2NetP), QStringLiteral("u2netp"));
+    QCOMPARE(modelIdKey(ModelId::MobileSamEncoder), QStringLiteral("mobile_sam_encoder"));
+}
+
+void TestModelRegistry::estimatedRamLabelPopulated() {
+    ModelRegistry reg;
+    for (const ModelSpec &spec : reg.manifest())
+        QVERIFY2(!spec.estimatedRamLabel.isEmpty(), qPrintable(spec.displayName));
 }
 
 void TestModelRegistry::localPathLivesUnderModelsDir() {
