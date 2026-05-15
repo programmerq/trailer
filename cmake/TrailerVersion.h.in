@@ -1,0 +1,7 @@
+#pragma once
+
+// Generated from the top-level VERSION file at configure time. Edit
+// VERSION (and re-run cmake) to bump the human-visible version string.
+// The release-candidate CI gate fails fast if this still carries a
+// "-dev" suffix at the time the release-candidate label is applied.
+#define TRAILER_VERSION_STRING "@TRAILER_VERSION_STRING@"

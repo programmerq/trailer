@@ -1,9 +1,25 @@
 cmake_minimum_required(VERSION 3.24)
 
+# Single source of truth for the human-visible version string. May carry
+# a "-dev" / "-rc" suffix; the CI release-candidate gate rejects such
+# suffixes before a release tag is cut. project(VERSION ...) only
+# accepts numeric MAJOR.MINOR.PATCH, so we strip the suffix for that
+# call but expose the full string to the generated TrailerVersion.h.
+file(READ "${CMAKE_SOURCE_DIR}/VERSION" TRAILER_VERSION_STRING)
+string(STRIP "${TRAILER_VERSION_STRING}" TRAILER_VERSION_STRING)
+string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" TRAILER_VERSION_NUMERIC
+       "${TRAILER_VERSION_STRING}")
+
 project(Trailer
-    VERSION 0.1.0
+    VERSION ${TRAILER_VERSION_NUMERIC}
     DESCRIPTION "Cross-platform PDF and image workbench"
     LANGUAGES CXX
+)
+
+configure_file(
+    "${CMAKE_SOURCE_DIR}/cmake/TrailerVersion.h.in"
+    "${CMAKE_BINARY_DIR}/generated/TrailerVersion.h"
+    @ONLY
 )
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
@@ -150,7 +166,11 @@ else()
 endif()
 
 add_library(trailer_core STATIC ${TRAILER_SOURCES} resources/trailer.qrc)
-target_include_directories(trailer_core PUBLIC src)
+target_include_directories(trailer_core
+    PUBLIC
+        src
+        "${CMAKE_BINARY_DIR}/generated"
+)
 target_link_libraries(trailer_core
     PUBLIC
         Qt6::Core

@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "TrailerVersion.h"
 #include "AnimationBar.h"
 #include "DocumentView.h"
 #include "AnnotationOverlay.h"
@@ -2317,7 +2318,8 @@ void MainWindow::onAbout() {
     QMessageBox::about(this, tr("About Trailer"),
                        tr("<h3>Trailer</h3>"
                           "<p>Cross-platform PDF and image workbench.</p>"
-                          "<p>Version 0.1.0 (Phase 1)</p>"));
+                          "<p>Version %1 (Phase 1)</p>")
+                           .arg(QString::fromLatin1(TRAILER_VERSION_STRING)));
 }
 
 void MainWindow::onAutoFillCurrentForm() {
