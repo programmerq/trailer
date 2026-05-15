@@ -1,10 +1,17 @@
 # macOS Packaging
 
-The macOS release artifact is a universal (`arm64` + `x86_64`),
+The macOS release artifact is an Apple Silicon (`arm64`),
 self-contained `trailer.app` shipped inside a drag-to-Applications
 DMG. `scripts/build-macos.sh` is the source of truth for the build —
 both `make release` (locally) and `.github/workflows/release.yml`
 (in CI) invoke it.
+
+Intel-Mac support is deferred: ONNX Runtime (which powers Trailer's
+ML features and is on the binary's link path) no longer publishes
+macOS `x86_64` or `universal2` prebuilts upstream, so the .app can't
+include an x86_64 slice without building ORT from source — a heavy
+extra step. Intel-Mac users can run this same script on their host
+to build a working arm64-or-x86_64 .app for their machine.
 
 ## Prerequisites
 
@@ -41,8 +48,8 @@ scripts/build-macos.sh
 On success:
 
 ```
-build-macos/trailer.app                 universal, self-contained
-dist/trailer-macos-universal.dmg        drag-to-Applications DMG
+build-macos/trailer.app                 arm64, self-contained
+dist/trailer-macos-arm64.dmg            drag-to-Applications DMG
 ```
 
 The version string baked into the `.app` (About dialog +
