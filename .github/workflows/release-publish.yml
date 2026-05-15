@@ -31,6 +31,15 @@ on:
   push:
     tags:
       - 'v*'
+  # release-autotag.yml dispatches this workflow after pushing the tag
+  # (a tag push made under GITHUB_TOKEN doesn't trigger downstream
+  # workflows, so the autotag job has to call us explicitly).
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g. v0.1.0). Defaults to the ref this workflow is run from.'
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -47,13 +56,35 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Resolve target tag + SHA
+        id: target
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # On tag push: github.ref_name is the tag, github.sha is its
+          # commit. On workflow_dispatch: resolve from the input (or
+          # fall back to the ref the workflow is dispatched from).
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ inputs.tag }}"
+            if [ -z "$TAG" ]; then
+              TAG="${{ github.ref_name }}"
+            fi
+          else
+            TAG="${{ github.ref_name }}"
+          fi
+          SHA=$(git rev-list -n 1 "$TAG")
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "Publishing $TAG (commit $SHA)"
+
       - name: Find prior successful Release run for this SHA
         id: find-run
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          SHA="${{ github.sha }}"
+          SHA="${{ steps.target.outputs.sha }}"
           echo "Looking up 'Release' workflow runs for commit $SHA"
           RUN_ID=$(gh run list \
             --repo "${{ github.repository }}" \
@@ -90,7 +121,7 @@ jobs:
         run: |
           set -euo pipefail
           ls -la dist/
-          for f in trailer-linux-x86_64.tar.gz trailer-windows-x86_64.zip trailer-macos-universal.zip; do
+          for f in trailer-linux-x86_64.tar.gz trailer-windows-x86_64.zip trailer-macos-universal.dmg; do
             if [ ! -f "dist/$f" ]; then
               echo "::error::expected artifact dist/$f is missing — run ${{ steps.find-run.outputs.run-id }} likely skipped a platform"
               exit 1
@@ -100,6 +131,7 @@ jobs:
       - name: Create / update GitHub Release
         uses: softprops/action-gh-release@v3
         with:
+          tag_name: ${{ steps.target.outputs.tag }}
           # Pre-1.0 tags are pre-releases by convention. Once the
           # project commits to backwards compatibility on minor
           # bumps (see PHILOSOPHY.md), flip this off.
@@ -107,17 +139,21 @@ jobs:
           files: |
             dist/trailer-linux-x86_64.tar.gz
             dist/trailer-windows-x86_64.zip
-            dist/trailer-macos-universal.zip
+            dist/trailer-macos-universal.dmg
           body: |
             Pre-release build of Trailer. See PHILOSOPHY.md for what
             "pre-release" means while we're in 0.x.
 
             ### macOS: drag-to-Applications install
 
-            The `.app` is universal (Apple Silicon + Intel) and
-            self-contained. For 0.1.x it is intentionally unsigned
-            and un-notarized, so the first launch triggers Gatekeeper.
-            Bypass the quarantine flag once after downloading:
+            The `.dmg` mounts to a Finder window with `trailer.app`
+            and an `Applications` shortcut — drag to install. The
+            bundled `.app` is universal (Apple Silicon + Intel) and
+            self-contained.
+
+            For 0.1.x the `.app` is intentionally unsigned and
+            un-notarized, so first launch triggers Gatekeeper. Bypass
+            the quarantine flag once after install:
 
                 xattr -dr com.apple.quarantine /Applications/trailer.app
 
