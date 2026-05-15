@@ -171,12 +171,14 @@ UAT is slow. Instead they are gated on a `release-candidate` label:
 
 3. Add the `release-candidate` label. The label event re-triggers
    the workflow; the precheck job:
-   - rejects `VERSION` strings still carrying a `-dev` / `-rc` suffix;
-   - rejects versions that already have a corresponding `v$VERSION`
-     git tag or GitHub Release upstream.
-
-   Both checks fail fast (a ~30s job) so the macOS/Windows runners
-   only burn minutes for a genuine, non-duplicate release attempt.
+   - reads `VERSION` and emits `is-release-ready=false` if it still
+     carries `-dev` / `-rc` — this **skips** the heavy build jobs
+     (precheck ✅, Linux/Windows/macOS/UAT ⊘ skipped) with a yellow
+     `::warning::` + step-summary note. The PR page stays green so
+     you can label-then-bump without a noisy ❌.
+   - hard-fails (red ❌) if `v$VERSION` already has a corresponding
+     git tag or GitHub Release upstream — that's a real duplicate-
+     release bug worth surfacing immediately.
 
 4. When the workflow is green, merge the PR with a policy that
    preserves the PR HEAD SHA (fast-forward or merge-commit — **not
@@ -187,9 +189,10 @@ UAT is slow. Instead they are gated on a `release-candidate` label:
    tags PR HEAD as `v$VERSION` and dispatches `release-publish.yml`.
    The publish workflow looks up the prior successful Release run
    for the tagged SHA, downloads its artifacts (Linux tarball,
-   Windows zip, macOS DMG), and creates the GitHub Release. No
-   rebuild — the bytes shipped to users are exactly the bytes the
-   release-candidate PR validated.
+   Windows zip, macOS DMG), renames them to versioned filenames
+   (`trailer-$VERSION-<platform>.<ext>`), and creates the GitHub
+   Release. No rebuild — the bytes shipped to users are exactly the
+   bytes the release-candidate PR validated.
 
 The macOS DMG contains an Apple Silicon (arm64) self-contained
 `trailer.app` (Qt frameworks bundled via `macdeployqt`; qpdf

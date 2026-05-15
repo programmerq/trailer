@@ -14,10 +14,15 @@
 # promoting an already-successful Release run's artifacts to a
 # GitHub Release. See README's "Release process" section.
 #
-# precheck enforces that the top-level VERSION file has been bumped
-# off its -dev suffix before any heavy build burns CI minutes. All
-# build jobs `needs: [precheck]`, so a stale VERSION fails fast and
-# cheap (a ~30s Linux job) instead of after a 30-min macOS run.
+# precheck reads the top-level VERSION file and decides whether to
+# run the heavy build jobs: if VERSION still carries a -dev / -rc
+# suffix, precheck succeeds (with a `::warning::` + step-summary
+# message) and emits `is-release-ready=false`. Heavy jobs gate on
+# that flag, so a not-yet-bumped VERSION shows up on the PR page as
+# precheck ✅ + heavy jobs skipped, rather than a noisy ❌.
+#
+# An already-published v$VERSION tag or release is a real bug
+# (duplicate release attempt) and stays a hard precheck failure.
 #
 # TRAILER_WERROR is OFF in CI: too many warnings fire from inside
 # Qt / libstdc++ / qpdf system headers (false-positive
@@ -45,11 +50,12 @@ permissions:
 
 jobs:
   precheck:
-    # Pre-flight gate. On a release-candidate PR (or workflow_dispatch),
-    # confirm the VERSION file doesn't still carry a -dev / -rc suffix.
-    # All heavy build jobs `needs: [precheck]`, so the macOS / Windows
-    # runners only burn minutes when the PR is actually a release
-    # candidate.
+    # Read VERSION + emit `is-release-ready` flag. Heavy build jobs
+    # `if: needs.precheck.outputs.is-release-ready == 'true'`, so a
+    # not-yet-bumped VERSION ('-dev' / '-rc' suffix) ends up as
+    # precheck ✅ + heavy jobs skipped rather than precheck ❌. The
+    # already-released check still fails red because that's a real
+    # duplicate-release bug.
     name: Pre-flight checks
     runs-on: ubuntu-24.04
     # Run when: (a) manual dispatch, (b) any push to an RC-labeled PR
@@ -68,10 +74,11 @@ jobs:
       )
     outputs:
       version: ${{ steps.read-version.outputs.version }}
+      is-release-ready: ${{ steps.read-version.outputs.is-release-ready }}
     steps:
       - uses: actions/checkout@v6
       - id: read-version
-        name: Validate VERSION
+        name: Read + validate VERSION
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -86,20 +93,33 @@ jobs:
             exit 1
           fi
           echo "VERSION=$VERSION"
-          # On PR runs (i.e. release-candidate label applied), the
-          # version must already be its target release value — no -dev
-          # or -rc tail. Dispatch runs bypass this so a maintainer
-          # can poke a build for any SHA (e.g. retroactively seeding
-          # artifacts for a tag).
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            if echo "$VERSION" | grep -qE -- '-dev$|-rc[0-9]*$'; then
-              echo "::error::VERSION='$VERSION' still carries a -dev/-rc suffix. Edit the VERSION file (and re-run cmake locally to regenerate TrailerVersion.h) before re-applying the release-candidate label."
-              exit 1
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+          # workflow_dispatch is an explicit "build this SHA" ask from a
+          # maintainer, so the dev-suffix gate doesn't apply. On a
+          # pull_request, a -dev / -rc VERSION means "release work in
+          # progress" — skip heavy build jobs and warn, instead of
+          # turning the PR red.
+          IS_RELEASE_READY=true
+          if echo "$VERSION" | grep -qE -- '-dev$|-rc[0-9]*$'; then
+            if [ "${{ github.event_name }}" = "pull_request" ]; then
+              IS_RELEASE_READY=false
+              echo "::warning::VERSION='$VERSION' still carries a -dev/-rc suffix; release-candidate heavy build jobs are skipped. Bump VERSION (and re-run cmake locally to regenerate TrailerVersion.h) to trigger the full build."
+              {
+                echo "## Release build skipped"
+                echo
+                echo "VERSION='\`$VERSION\`' still carries a development suffix. Bump it (drop the \`-dev\` / \`-rc\` tail and commit) to trigger the full release-candidate build on the next push."
+              } >> "$GITHUB_STEP_SUMMARY"
             fi
-            # Refuse to spend macOS/Windows minutes rebuilding a
-            # version that has already shipped. If the maintainer
-            # genuinely needs to re-cut, they can bump VERSION and
-            # try again.
+          fi
+          echo "is-release-ready=$IS_RELEASE_READY" >> "$GITHUB_OUTPUT"
+
+          # Once VERSION is release-ready, refuse to spend macOS/Windows
+          # minutes rebuilding a version that has already shipped — this
+          # is a real bug (duplicate release attempt), worth surfacing
+          # red. Skipped when IS_RELEASE_READY=false because dev-version
+          # tags wouldn't follow the v$VERSION pattern anyway.
+          if [ "$IS_RELEASE_READY" = "true" ]; then
             TAG="v$VERSION"
             if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
               echo "::error::A GitHub Release for $TAG already exists. Bump VERSION before re-applying the release-candidate label."
@@ -110,10 +130,10 @@ jobs:
               exit 1
             fi
           fi
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
   linux-build:
     needs: [precheck]
+    if: needs.precheck.outputs.is-release-ready == 'true'
     name: Linux build
     runs-on: ubuntu-24.04
     timeout-minutes: 30
@@ -169,6 +189,7 @@ jobs:
 
   windows-cross:
     needs: [precheck]
+    if: needs.precheck.outputs.is-release-ready == 'true'
     name: Windows cross-build (mingw-w64)
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -212,6 +233,7 @@ jobs:
 
   macos-build:
     needs: [precheck]
+    if: needs.precheck.outputs.is-release-ready == 'true'
     name: macOS .app build (Apple Silicon)
     # macos-14 is Apple Silicon. The artifact is arm64-only because
     # ONNX Runtime stopped shipping macOS x86_64 / universal2
@@ -256,6 +278,7 @@ jobs:
 
   uat:
     needs: [precheck]
+    if: needs.precheck.outputs.is-release-ready == 'true'
     name: UAT
     runs-on: ubuntu-24.04
     timeout-minutes: 45
