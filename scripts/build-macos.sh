@@ -1,11 +1,20 @@
 #!/usr/bin/env bash
-# Build trailer.app for macOS — universal, self-contained, packaged as
-# a drag-to-Applications DMG.
+# Build trailer.app for macOS — Apple Silicon (arm64), self-contained,
+# packaged as a drag-to-Applications DMG.
 #
 # Mirrors .github/workflows/release.yml's macos-build job. The script
 # is the source of truth; the workflow installs Qt + ninja and then
 # invokes this. Running locally produces the same DMG the release
 # pipeline does (modulo the toolchain pins).
+#
+# Why arm64-only and not a universal binary: ONNX Runtime stopped
+# shipping macOS x86_64 / universal2 prebuilts (only the
+# `onnxruntime-osx-arm64-X.Y.Z.tgz` tarball exists upstream as of
+# 2026-05). Trailer's ML features (background removal, OCR, SAM)
+# depend on ORT, so an x86_64 slice of the .app has nothing to link
+# against. Intel-Mac users can build from source via this same
+# script on their host (the cmake + qpdf + libjpeg paths all work
+# for x86_64 hosts too).
 #
 # Usage:
 #   scripts/build-macos.sh              # incremental: reuse qpdf deps
@@ -13,8 +22,8 @@
 #   make release                        # convenience wrapper (same thing)
 #
 # Output:
-#   build-macos/trailer.app                 universal, self-contained
-#   dist/trailer-macos-universal.dmg        drag-to-Applications DMG
+#   build-macos/trailer.app                 arm64, self-contained
+#   dist/trailer-macos-arm64.dmg            drag-to-Applications DMG
 #
 # Configurable via env vars:
 #   QPDF_VERSION                qpdf release tag to build (default 12.3.2)
@@ -43,6 +52,7 @@ if [[ "$(uname)" != "Darwin" ]]; then
 fi
 
 QPDF_VERSION="${QPDF_VERSION:-12.3.2}"
+LIBJPEG_VERSION="${LIBJPEG_VERSION:-3.0.3}"
 MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
 WERROR="${WERROR:-ON}"
 BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build-macos}"
@@ -131,12 +141,64 @@ for TOOL in cmake ninja hdiutil curl tar lipo otool; do
 done
 
 # ---------------------------------------------------------------------
+# Build libjpeg-turbo as a static arm64 library.
+#
+# qpdf 12.x hard-requires libjpeg (no opt-out: missing libjpeg is a
+# SEND_ERROR in libqpdf/CMakeLists.txt). Homebrew's jpeg-turbo is fine
+# in terms of arch (matches the host arm64) but only ships a dylib,
+# and we want a static lib so the resulting .app has no external
+# libjpeg dependency at runtime. Build from source — same approach
+# the Windows Dockerfile uses. Cached in $DEPS_DIR; --rebuild forces
+# a clean build.
+#
+# SIMD stays disabled because libjpeg-turbo's nasm-based SIMD adds
+# another toolchain dep without a meaningful win for the kind of
+# JPEG work qpdf does (mostly preserving streams, occasional decode).
+# ---------------------------------------------------------------------
+JPEG_PREFIX="$DEPS_DIR/jpeg-prefix"
+JPEG_CONFIG="$JPEG_PREFIX/lib/pkgconfig/libjpeg.pc"
+if [[ ! -f "$JPEG_CONFIG" ]]; then
+    echo "==> Building libjpeg-turbo $LIBJPEG_VERSION static-arm64"
+    mkdir -p "$DEPS_DIR"
+    if [[ ! -f "$DEPS_DIR/libjpeg-turbo-$LIBJPEG_VERSION.tar.gz" ]]; then
+        curl -fsSL \
+          "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_VERSION}/libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz" \
+          -o "$DEPS_DIR/libjpeg-turbo-$LIBJPEG_VERSION.tar.gz"
+    fi
+    rm -rf "$DEPS_DIR/libjpeg-turbo-$LIBJPEG_VERSION" "$DEPS_DIR/jpeg-build" "$JPEG_PREFIX"
+    tar -xf "$DEPS_DIR/libjpeg-turbo-$LIBJPEG_VERSION.tar.gz" -C "$DEPS_DIR"
+    cmake -S "$DEPS_DIR/libjpeg-turbo-$LIBJPEG_VERSION" -B "$DEPS_DIR/jpeg-build" -G Ninja \
+        -DCMAKE_INSTALL_PREFIX="$JPEG_PREFIX" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_OSX_ARCHITECTURES="arm64" \
+        -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
+        -DENABLE_SHARED=OFF \
+        -DENABLE_STATIC=ON \
+        -DWITH_SIMD=OFF \
+        -DWITH_TURBOJPEG=OFF
+    cmake --build "$DEPS_DIR/jpeg-build" --parallel
+    cmake --install "$DEPS_DIR/jpeg-build"
+else
+    echo "==> Reusing cached libjpeg-turbo install at $JPEG_PREFIX"
+fi
+
+# ---------------------------------------------------------------------
 # Build qpdf as a static universal library.
 #
 # Homebrew qpdf is single-arch (matches the host) and dylib-only, so it
 # can't feed a universal, self-contained .app. We build qpdf from source
 # once and cache the install in $DEPS_DIR — subsequent runs skip this
 # step. Pass --rebuild to force a clean qpdf build.
+#
+# qpdf discovers libjpeg via pkg_check_modules first, falling back to
+# find_path/find_library. We point both at $DEPS_DIR/jpeg-prefix (the
+# universal static lib built above) by:
+#   - setting PKG_CONFIG_PATH to ONLY that prefix (overriding
+#     /opt/homebrew/lib/pkgconfig from the runner's env) so
+#     pkg_check_modules picks our universal static jpeg, and
+#   - including the same prefix in CMAKE_PREFIX_PATH for the
+#     find_path/find_library fallback.
+# This is the same shape the Windows Dockerfile uses.
 # ---------------------------------------------------------------------
 QPDF_CONFIG="$DEPS_DIR/qpdf-prefix/lib/cmake/qpdf/qpdfConfig.cmake"
 if [[ ! -f "$QPDF_CONFIG" ]]; then
@@ -149,20 +211,48 @@ if [[ ! -f "$QPDF_CONFIG" ]]; then
     fi
     rm -rf "$DEPS_DIR/qpdf-$QPDF_VERSION" "$DEPS_DIR/qpdf-build"
     tar -xf "$DEPS_DIR/qpdf-$QPDF_VERSION.tar.gz" -C "$DEPS_DIR"
+    # USE_IMPLICIT_CRYPTO=OFF + REQUIRE_CRYPTO_NATIVE=ON forces qpdf
+    # to use its built-in (header-only) crypto and skip the openssl /
+    # gnutls detection paths entirely. Just disabling find_package()
+    # for those isn't enough — qpdf uses raw pkg_check_modules and
+    # find_library calls, which would otherwise locate Homebrew's
+    # arm64-only crypto dylibs and break the x86_64 link.
+    #
+    # PKG_CONFIG_LIBDIR (not PATH) replaces pkg-config's entire search
+    # space with our jpeg-prefix, so pkg_check_modules(libjpeg) picks
+    # our universal static libjpeg.a and pkg_check_modules(openssl /
+    # gnutls) returns FALSE.
+    #
+    # BUILD_TESTING=OFF skips ~150 qpdf test binaries.
+    PKG_CONFIG_LIBDIR="$DEPS_DIR/jpeg-prefix/lib/pkgconfig" \
     cmake -S "$DEPS_DIR/qpdf-$QPDF_VERSION" -B "$DEPS_DIR/qpdf-build" -G Ninja \
         -DCMAKE_INSTALL_PREFIX="$DEPS_DIR/qpdf-prefix" \
         -DCMAKE_BUILD_TYPE=Release \
-        -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+        -DCMAKE_OSX_ARCHITECTURES="arm64" \
         -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
+        -DCMAKE_PREFIX_PATH="$DEPS_DIR/jpeg-prefix" \
         -DBUILD_STATIC_LIBS=ON \
         -DBUILD_SHARED_LIBS=OFF \
-        -DREQUIRE_CRYPTO_OPENSSL=0 \
-        -DREQUIRE_CRYPTO_GNUTLS=0 \
-        -DUSE_IMPLICIT_CRYPTO=1 \
-        -DREQUIRE_LIBJPEG=0 \
+        -DBUILD_TESTING=OFF \
+        -DUSE_IMPLICIT_CRYPTO=OFF \
+        -DREQUIRE_CRYPTO_NATIVE=ON \
+        -DREQUIRE_CRYPTO_OPENSSL=OFF \
+        -DREQUIRE_CRYPTO_GNUTLS=OFF \
         -DBUILD_DOC=0
     cmake --build "$DEPS_DIR/qpdf-build" --parallel
     cmake --install "$DEPS_DIR/qpdf-build"
+    # qpdf's pkg_check_modules-based discovery records the bare lib
+    # name `jpeg` (not an absolute path) in its exported
+    # INTERFACE_LINK_LIBRARIES — so downstream consumers get `-ljpeg`
+    # without a corresponding `-L<jpeg-prefix>/lib` flag and the link
+    # fails. Rewrite the bare name to the absolute path so trailer's
+    # link finds our universal libjpeg.a without any extra dance.
+    # (Compare libz, which qpdf finds via find_package(ZLIB) and
+    # already exports as an absolute /.../libz.tbd path.)
+    sed -i.bak \
+        "s|;jpeg\"|;$JPEG_PREFIX/lib/libjpeg.a\"|g" \
+        "$DEPS_DIR/qpdf-prefix/lib/cmake/qpdf/libqpdfTargets.cmake"
+    rm -f "$DEPS_DIR/qpdf-prefix/lib/cmake/qpdf/libqpdfTargets.cmake.bak"
 else
     echo "==> Reusing cached qpdf install at $DEPS_DIR/qpdf-prefix"
     echo "    (run with --rebuild to force a clean qpdf build)"
@@ -173,11 +263,15 @@ fi
 # ---------------------------------------------------------------------
 echo "==> Configuring trailer"
 rm -rf "$BUILD_DIR"
+# CMAKE_PREFIX_PATH must include qpdf-prefix (for find_package(qpdf
+# CONFIG)) and jpeg-prefix (so the linker can resolve libjpeg, which
+# qpdf's patched INTERFACE_LINK_LIBRARIES points at as an absolute
+# path).
 cmake -S . -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_OSX_ARCHITECTURES="arm64;x86_64" \
+    -DCMAKE_OSX_ARCHITECTURES="arm64" \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
-    -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR;$DEPS_DIR/qpdf-prefix" \
+    -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR;$DEPS_DIR/qpdf-prefix;$DEPS_DIR/jpeg-prefix" \
     -DTRAILER_WERROR="$WERROR"
 
 echo "==> Building trailer.app"
@@ -205,17 +299,15 @@ echo "==> Bundling Qt frameworks via macdeployqt"
 "$QT_ROOT_DIR/bin/macdeployqt" "$APP_PATH" -verbose=1 -always-overwrite
 
 # ---------------------------------------------------------------------
-# Verify: both arches present, no external dylib refs leaking out of
-# the bundle. These guard against a misconfigured runner image or a
-# silent CMake flag drift shipping a single-arch or
-# Homebrew-dependent binary under the "universal" filename.
+# Verify: arm64 present, no external dylib refs leaking out of the
+# bundle. These guard against a misconfigured runner image or a silent
+# CMake flag drift shipping a wrong-arch or Homebrew-dependent binary.
 # ---------------------------------------------------------------------
 TRAILER_BIN="$APP_PATH/Contents/MacOS/trailer"
-echo "==> Verifying universal arches"
+echo "==> Verifying arch"
 ARCHES=$(lipo -archs "$TRAILER_BIN")
 echo "    arches: $ARCHES"
-echo "$ARCHES" | grep -q arm64  || { echo "ERROR: missing arm64 slice" >&2;  exit 1; }
-echo "$ARCHES" | grep -q x86_64 || { echo "ERROR: missing x86_64 slice" >&2; exit 1; }
+echo "$ARCHES" | grep -q arm64 || { echo "ERROR: missing arm64 slice" >&2; exit 1; }
 
 echo "==> Verifying no external dylib references"
 EXT=$(otool -L "$TRAILER_BIN" \
@@ -239,7 +331,7 @@ echo "    no external dylib references"
 # DMG even though the filename doesn't carry it.
 # ---------------------------------------------------------------------
 mkdir -p "$DIST_DIR"
-DMG_PATH="$DIST_DIR/trailer-macos-universal.dmg"
+DMG_PATH="$DIST_DIR/trailer-macos-arm64.dmg"
 rm -f "$DMG_PATH"
 
 STAGING_DIR="$(mktemp -d)"

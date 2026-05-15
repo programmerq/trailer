@@ -189,11 +189,12 @@ jobs:
 
   macos-build:
     needs: [precheck]
-    name: macOS universal .app build
-    # macos-14 is Apple Silicon. Universal-binary support means a
-    # single artifact runs on both Intel + Apple Silicon Macs; the
-    # CMAKE_OSX_ARCHITECTURES setting inside scripts/build-macos.sh
-    # drives the actual fat-binary build.
+    name: macOS .app build (Apple Silicon)
+    # macos-14 is Apple Silicon. The artifact is arm64-only because
+    # ONNX Runtime stopped shipping macOS x86_64 / universal2
+    # prebuilts (only `onnxruntime-osx-arm64-X.Y.Z.tgz` exists), and
+    # ORT is on trailer's link path for ML features. Intel-Mac users
+    # can build from source via scripts/build-macos.sh on their host.
     runs-on: macos-14
     timeout-minutes: 60
     steps:
@@ -226,8 +227,8 @@ jobs:
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v7
         with:
-          name: trailer-macos-universal
-          path: dist/trailer-macos-universal.dmg
+          name: trailer-macos-arm64
+          path: dist/trailer-macos-arm64.dmg
           retention-days: 30
 
   uat:

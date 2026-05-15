@@ -121,7 +121,7 @@ jobs:
         run: |
           set -euo pipefail
           ls -la dist/
-          for f in trailer-linux-x86_64.tar.gz trailer-windows-x86_64.zip trailer-macos-universal.dmg; do
+          for f in trailer-linux-x86_64.tar.gz trailer-windows-x86_64.zip trailer-macos-arm64.dmg; do
             if [ ! -f "dist/$f" ]; then
               echo "::error::expected artifact dist/$f is missing — run ${{ steps.find-run.outputs.run-id }} likely skipped a platform"
               exit 1
@@ -139,17 +139,20 @@ jobs:
           files: |
             dist/trailer-linux-x86_64.tar.gz
             dist/trailer-windows-x86_64.zip
-            dist/trailer-macos-universal.dmg
+            dist/trailer-macos-arm64.dmg
           body: |
             Pre-release build of Trailer. See PHILOSOPHY.md for what
             "pre-release" means while we're in 0.x.
 
-            ### macOS: drag-to-Applications install
+            ### macOS (Apple Silicon): drag-to-Applications install
 
             The `.dmg` mounts to a Finder window with `trailer.app`
             and an `Applications` shortcut — drag to install. The
-            bundled `.app` is universal (Apple Silicon + Intel) and
-            self-contained.
+            bundled `.app` is **Apple Silicon only** (ONNX Runtime,
+            which powers Trailer's ML features, no longer ships a
+            macOS x86_64 / universal2 prebuilt; Intel-Mac users can
+            build from source via `scripts/build-macos.sh` on their
+            host).
 
             For 0.1.x the `.app` is intentionally unsigned and
             un-notarized, so first launch triggers Gatekeeper. Bypass
