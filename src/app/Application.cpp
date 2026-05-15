@@ -212,8 +212,8 @@ void Application::installNoWindowMenuBar() {
 
     auto *closeWindowAction = fileMenu->addAction(tr("&Close Window"));
     closeWindowAction->setShortcut(QKeySequence::Close);
-    connect(closeWindowAction, &QAction::triggered, this, [this]() {
-        if (auto *w = qobject_cast<MainWindow *>(activeWindow())) {
+    connect(closeWindowAction, &QAction::triggered, this, []() {
+        if (auto *w = qobject_cast<MainWindow *>(QApplication::activeWindow())) {
             w->close();
         }
     });
