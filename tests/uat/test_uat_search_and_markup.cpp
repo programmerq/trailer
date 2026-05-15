@@ -106,7 +106,7 @@ QString writePdfWithOutline(const QString& path,
         return r;
     };
 
-    const int pageCount = titles.size();
+    const int pageCount = static_cast<int>(titles.size());
 
     // Build /Pages root first so each page's /Parent can point at it.
     QPDFObjectHandle pagesDict = QPDFObjectHandle::newDictionary();
@@ -147,7 +147,7 @@ QString writePdfWithOutline(const QString& path,
         item.replaceKey("/Parent", outlinesObj);
         // Destination: jump to top of page at current zoom.
         QPDFObjectHandle dest = QPDFObjectHandle::newArray();
-        dest.appendItem(pageObjs[i]);
+        dest.appendItem(pageObjs[static_cast<size_t>(i)]);
         dest.appendItem(QPDFObjectHandle::newName("/XYZ"));
         dest.appendItem(QPDFObjectHandle::newInteger(0));
         dest.appendItem(QPDFObjectHandle::newInteger(792));
@@ -155,9 +155,9 @@ QString writePdfWithOutline(const QString& path,
         item.replaceKey("/Dest", dest);
         itemObjs.push_back(pdf.makeIndirectObject(item));
     }
-    for (int i = 0; i < int(itemObjs.size()); ++i) {
+    for (size_t i = 0; i < itemObjs.size(); ++i) {
         if (i > 0) itemObjs[i].replaceKey("/Prev", itemObjs[i - 1]);
-        if (i + 1 < int(itemObjs.size())) {
+        if (i + 1 < itemObjs.size()) {
             itemObjs[i].replaceKey("/Next", itemObjs[i + 1]);
         }
     }

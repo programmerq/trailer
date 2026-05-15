@@ -418,7 +418,15 @@ void ImageDocument::flipHorizontal() {
     if (m_image.isNull() || m_animated)
         return;
     pushUndoSnapshot();
+    // Qt 6.9 introduced QImage::flipped(Qt::Orientations) and deprecated
+    // mirrored(); the deprecation warning fires under -Werror on Qt 6.11+
+    // local builds. CI's Qt 6.8 doesn't have flipped() yet, so we keep
+    // both paths until the minimum Qt version moves to 6.9.
+#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
+    m_image = m_image.flipped(Qt::Horizontal);
+#else
     m_image = m_image.mirrored(/*horizontally=*/true, /*vertically=*/false);
+#endif
     m_dirty = true;
     refreshView();
 }
@@ -427,7 +435,11 @@ void ImageDocument::flipVertical() {
     if (m_image.isNull() || m_animated)
         return;
     pushUndoSnapshot();
+#if QT_VERSION >= QT_VERSION_CHECK(6, 9, 0)
+    m_image = m_image.flipped(Qt::Vertical);
+#else
     m_image = m_image.mirrored(/*horizontally=*/false, /*vertically=*/true);
+#endif
     m_dirty = true;
     refreshView();
 }
