@@ -27,10 +27,14 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel
 ```
 
-The required PR build is warnings-only during 0.x. Warnings still
-print in the build log; they just don't fail. The tag-driven release
-pipeline passes `-DTRAILER_WERROR=ON` to catch any regressions at tag
-time. Use the flag locally when you want release-equivalent strictness:
+CI builds with warnings-as-errors **off** by default (both PR CI
+and the release pipeline). Too many warnings fire from inside
+Qt / libstdc++ / qpdf system headers — false-positive
+`-Wnull-dereference` template-instantiation noise, qpdf's
+`POINTERHOLDER_TRANSITION` `#warning`, etc. — to make strict
+`-Werror` workable. Warnings still print in the build log and
+trailer's own source is kept clean by review. Flip the strict bar
+on locally when you're chasing a specific regression:
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRAILER_WERROR=ON
@@ -154,7 +158,7 @@ UAT is slow. Instead they are gated on a `release-candidate` label:
    so a green local run is a strong signal CI will succeed:
 
    ```sh
-   make release          # host platform: macOS host → universal DMG
+   make release          # host platform: macOS host → arm64 DMG
    make release-windows  # Windows cross-build via Docker (any host)
    make release-uat      # UAT suite via Docker
    ```

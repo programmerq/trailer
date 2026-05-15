@@ -19,17 +19,23 @@
 # build jobs `needs: [precheck]`, so a stale VERSION fails fast and
 # cheap (a ~30s Linux job) instead of after a 30-min macOS run.
 #
-# Release is the strict bar: TRAILER_WERROR=ON so any warning
-# regression introduced during the dev-phase loop (where WERROR is
-# advisory, see ci.yml) gets caught here before artifacts ship.
+# TRAILER_WERROR is OFF in CI: too many warnings fire from inside
+# Qt / libstdc++ / qpdf system headers (false-positive
+# -Wnull-dereference template-instantiation noise, qpdf's
+# POINTERHOLDER_TRANSITION cpp #warning, etc.) to make strict
+# warnings-as-errors workable here. Warnings still print in the
+# build log; trailer's own source is kept warning-clean by review.
 
 name: Release
 
 on:
   pull_request:
     # `labeled` is in the list so adding the release-candidate label
-    # to an open PR retriggers the workflow. Without it, the heavy
-    # jobs wouldn't run until the next commit lands on the PR.
+    # to an open PR retriggers the workflow — without it, the heavy
+    # jobs wouldn't run until the next commit lands on the PR. The
+    # precheck `if:` below filters to the release-candidate label
+    # specifically so adding an unrelated label (e.g. `bug`) to an
+    # RC PR doesn't re-burn macOS minutes.
     types: [opened, synchronize, reopened, labeled]
     branches: [main]
   workflow_dispatch:
@@ -46,9 +52,20 @@ jobs:
     # candidate.
     name: Pre-flight checks
     runs-on: ubuntu-24.04
+    # Run when: (a) manual dispatch, (b) any push to an RC-labeled PR
+    # (opened/synchronize/reopened), or (c) the `release-candidate`
+    # label specifically being added. Adding any *other* label to an
+    # RC PR also fires a `labeled` event but the action.label.name
+    # check below skips it.
     if: |
       github.event_name == 'workflow_dispatch' ||
-      contains(github.event.pull_request.labels.*.name, 'release-candidate')
+      (
+        contains(github.event.pull_request.labels.*.name, 'release-candidate') &&
+        (
+          github.event.action != 'labeled' ||
+          github.event.label.name == 'release-candidate'
+        )
+      )
     outputs:
       version: ${{ steps.read-version.outputs.version }}
     steps:
@@ -112,10 +129,13 @@ jobs:
           max-size: 500M
 
       - name: Configure
+        # TRAILER_WERROR stays OFF: GCC's -Wnull-dereference and -Wcpp
+        # fire from inside Qt's qwidget.h, libstdc++ iterator headers,
+        # and qpdf's PointerHolder.hh — system-header noise we can't
+        # fix locally. Warnings still print in the log.
         run: >-
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Release
-          -DTRAILER_WERROR=ON
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
@@ -174,6 +194,9 @@ jobs:
 
       - name: Stage Windows artifact
         run: |
+          # docker writes build-windows/ as root; reclaim ownership
+          # before the host-side cp can write into it.
+          sudo chown -R "$(id -u):$(id -g)" build-windows
           cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
              build-windows/
           (cd build-windows && zip -r ../trailer-windows-x86_64.zip .)
