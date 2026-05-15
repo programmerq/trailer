@@ -1,0 +1,142 @@
+# Tag-triggered release publication.
+#
+# On `git push --tags` for `v*`, look up the most recent successful
+# Release workflow run for the same commit SHA, download its
+# artifacts, and attach them to a GitHub Release. No rebuild — the
+# bytes shipped are exactly the bytes the release-candidate PR
+# validated.
+#
+# The Release workflow (release.yml) is *not* triggered by tag push;
+# only by release-candidate-labeled PRs and workflow_dispatch. So the
+# usual flow is:
+#
+#   1. Open a release PR that bumps VERSION off its -dev suffix.
+#   2. Add the `release-candidate` label. Release workflow builds
+#      Linux/Windows/macOS-universal artifacts + runs UAT.
+#   3. Once green, merge the PR (using a merge policy that preserves
+#      the PR HEAD SHA — fast-forward or merge-commit, NOT squash;
+#      see README's "Release process" section).
+#   4. Tag that commit: `git tag v0.1.0 && git push origin v0.1.0`.
+#   5. This workflow fires, finds the build, attaches artifacts.
+#
+# If a tag is pushed for a SHA that was never built (e.g. squash
+# merge dropped it, or the maintainer tagged a different commit),
+# this workflow fails with a clear message. The recovery path is to
+# `gh workflow run Release --ref=<SHA>` to seed artifacts, then
+# re-run this workflow's failed job.
+
+name: Publish Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    name: Attach prior build to GitHub Release
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      # Required by softprops/action-gh-release to create / update
+      # the GitHub Release object and upload assets.
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Find prior successful Release run for this SHA
+        id: find-run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA="${{ github.sha }}"
+          echo "Looking up 'Release' workflow runs for commit $SHA"
+          RUN_ID=$(gh run list \
+            --repo "${{ github.repository }}" \
+            --workflow=Release \
+            --commit="$SHA" \
+            --status=success \
+            --limit=5 \
+            --json databaseId \
+            --jq '.[0].databaseId // empty')
+          if [ -z "$RUN_ID" ]; then
+            cat >&2 <<EOF
+          ::error::no successful Release workflow run found for $SHA.
+          To recover:
+            1. Trigger a Release build for this commit:
+                 gh workflow run Release --ref=$SHA
+            2. Wait for it to finish successfully.
+            3. Re-run this job from the Actions tab (or push the tag
+               again after deleting the failing run).
+          EOF
+            exit 1
+          fi
+          echo "Found Release run: $RUN_ID"
+          echo "run-id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts from prior build
+        uses: actions/download-artifact@v8
+        with:
+          run-id: ${{ steps.find-run.outputs.run-id }}
+          path: dist
+          merge-multiple: true
+          github-token: ${{ github.token }}
+
+      - name: List downloaded artifacts
+        run: |
+          set -euo pipefail
+          ls -la dist/
+          for f in trailer-linux-x86_64.tar.gz trailer-windows-x86_64.zip trailer-macos-universal.zip; do
+            if [ ! -f "dist/$f" ]; then
+              echo "::error::expected artifact dist/$f is missing — run ${{ steps.find-run.outputs.run-id }} likely skipped a platform"
+              exit 1
+            fi
+          done
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v3
+        with:
+          # Pre-1.0 tags are pre-releases by convention. Once the
+          # project commits to backwards compatibility on minor
+          # bumps (see PHILOSOPHY.md), flip this off.
+          prerelease: true
+          files: |
+            dist/trailer-linux-x86_64.tar.gz
+            dist/trailer-windows-x86_64.zip
+            dist/trailer-macos-universal.zip
+          body: |
+            Pre-release build of Trailer. See PHILOSOPHY.md for what
+            "pre-release" means while we're in 0.x.
+
+            ### macOS: drag-to-Applications install
+
+            The `.app` is universal (Apple Silicon + Intel) and
+            self-contained. For 0.1.x it is intentionally unsigned
+            and un-notarized, so the first launch triggers Gatekeeper.
+            Bypass the quarantine flag once after downloading:
+
+                xattr -dr com.apple.quarantine /Applications/trailer.app
+
+            or right-click the `.app` → Open → Open. Notarization is
+            tracked as a follow-up.
+
+            ### Windows
+
+            The `.zip` contains `trailer.exe` alongside every DLL it
+            transitively loads (Qt, qpdf, MinGW runtime) plus the Qt
+            Windows platform plugin. Extract anywhere and run.
+
+            ### Linux
+
+            The `.tar.gz` contains a dynamically-linked binary that
+            expects system Qt 6 + qpdf 11+. On Ubuntu 24.04 (noble):
+
+                sudo apt install libqt6core6 libqt6gui6 libqt6widgets6 \
+                                 libqt6pdf6 libqt6pdfwidgets6 libqpdf28
+
+            Distro packaging (.deb / AppImage / Flatpak) is a separate
+            effort.
