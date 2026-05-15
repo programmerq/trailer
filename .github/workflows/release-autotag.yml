@@ -1,0 +1,122 @@
+# Auto-tag a merged release-candidate PR and kick off the Publish
+# Release workflow.
+#
+# When a release-candidate PR is merged into main, this workflow:
+#   1. Reads VERSION at the PR's HEAD commit (the SHA artifacts were
+#      built against during the precheck → build run).
+#   2. Sanity-checks the version (precheck should have done this
+#      already, but the check is cheap).
+#   3. Tags that PR HEAD SHA as v$VERSION and pushes the tag.
+#   4. Dispatches release-publish.yml to attach the prior build's
+#      artifacts to a GitHub Release.
+#
+# Why tag PR HEAD (not the merge commit on main): only the PR HEAD
+# is guaranteed to have a corresponding successful Release run that
+# the publish workflow can promote. Merge-commit and fast-forward
+# merge policies preserve PR HEAD in main's history, so the tag is
+# still reachable from main. Squash merges discard the PR HEAD and
+# break this contract — see README's "Release process" section.
+#
+# Tag pushes made under GITHUB_TOKEN do NOT trigger downstream
+# workflows (GitHub's loop-prevention rule). That's why this job
+# dispatches the publish workflow explicitly via `gh workflow run`
+# rather than relying on release-publish.yml's `push.tags` trigger.
+
+name: Auto-tag release-candidate
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write   # to push the tag
+  actions: write    # to dispatch release-publish.yml
+
+jobs:
+  tag-and-publish:
+    name: Tag PR HEAD + dispatch publish
+    if: |
+      github.event.pull_request.merged == true &&
+      contains(github.event.pull_request.labels.*.name, 'release-candidate')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Check out the PR HEAD specifically — that's the SHA the
+          # Release workflow built artifacts against, and the SHA we
+          # want the tag to point at.
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Read VERSION at PR HEAD
+        id: version
+        run: |
+          set -euo pipefail
+          if [ ! -f VERSION ]; then
+            echo "::error::VERSION file missing at PR HEAD ${{ github.event.pull_request.head.sha }}"
+            exit 1
+          fi
+          VERSION=$(tr -d '[:space:]' < VERSION)
+          if [ -z "$VERSION" ]; then
+            echo "::error::VERSION file is empty"
+            exit 1
+          fi
+          # Defence in depth: precheck rejected -dev/-rc PRs before
+          # the heavy build ran, but a maintainer who force-merged
+          # past CI could still get here.
+          if echo "$VERSION" | grep -qE -- '-dev$|-rc[0-9]*$'; then
+            echo "::error::VERSION='$VERSION' carries a dev/rc suffix; refusing to tag."
+            exit 1
+          fi
+          TAG="v$VERSION"
+          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Tagging PR HEAD ${{ github.event.pull_request.head.sha }} as $TAG"
+
+      - name: Refuse if tag / release already exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          if git ls-remote --tags origin "refs/tags/$TAG" 2>/dev/null | grep -q .; then
+            echo "::error::Tag $TAG already exists upstream — refusing to re-tag. Bump VERSION on a follow-up PR."
+            exit 1
+          fi
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "::error::A release for $TAG already exists — refusing to re-publish. Bump VERSION on a follow-up PR."
+            exit 1
+          fi
+
+      - name: Push tag at PR HEAD
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          SHA="${{ github.event.pull_request.head.sha }}"
+          # github-actions[bot] is the canonical attribution for
+          # workflow-driven git operations; it matches what GitHub
+          # itself uses for things like auto-merge merge commits.
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" "$SHA" -m "Release $TAG"
+          git push origin "$TAG"
+          echo "Pushed $TAG → $SHA"
+
+      - name: Dispatch Publish Release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.version.outputs.tag }}"
+          # --ref runs the publish workflow against the workflow file
+          # as it exists at $TAG (which == PR HEAD == the merged
+          # commit). -f tag=$TAG passes the input explicitly so the
+          # publish job doesn't have to infer it from github.ref_name.
+          gh workflow run release-publish.yml \
+            --repo "${{ github.repository }}" \
+            --ref "$TAG" \
+            -f tag="$TAG"
+          echo "Dispatched release-publish.yml for $TAG"

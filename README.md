@@ -140,7 +140,7 @@ request (`.github/workflows/ci.yml`).
 
 Heavy artifact builds (Linux native, Windows cross-build via
 mingw-w64 in `docker/windows/Dockerfile`, and a universal macOS
-`.app`) plus the full UAT suite live in
+`.app` packaged as a DMG) plus the full UAT suite live in
 `.github/workflows/release.yml`. They are intentionally **not**
 triggered on every PR — macOS runner minutes bill at 10× Linux, and
 UAT is slow. Instead they are gated on a `release-candidate` label:
@@ -149,30 +149,63 @@ UAT is slow. Instead they are gated on a `release-candidate` label:
    (e.g. `0.2.0-dev` → `0.2.0`). The CMake configure regenerates
    `TrailerVersion.h` so `setApplicationVersion()` and the About
    dialog pick up the new string.
-2. Add the `release-candidate` label. The label event re-triggers
-   the workflow; precheck rejects PRs whose `VERSION` still has the
-   `-dev` suffix, so the heavy macOS/Windows jobs only run on a
-   genuine release attempt.
-3. When the workflow is green, merge the PR with a policy that
+2. **Run a local sanity-check** of the release build before
+   labeling. The same scripts CI uses are runnable as `make` targets,
+   so a green local run is a strong signal CI will succeed:
+
+   ```sh
+   make release          # host platform: macOS host → universal DMG
+   make release-windows  # Windows cross-build via Docker (any host)
+   make release-uat      # UAT suite via Docker
+   ```
+
+   `make release` honours whatever the `VERSION` file says — a
+   `0.1.0-dev` value bakes that string into the About dialog and the
+   bundle's `CFBundleShortVersionString`, so the build is clearly
+   marked as a dev one when you smoke-test it. Bump `VERSION` once
+   the build is green if you didn't already.
+
+3. Add the `release-candidate` label. The label event re-triggers
+   the workflow; the precheck job:
+   - rejects `VERSION` strings still carrying a `-dev` / `-rc` suffix;
+   - rejects versions that already have a corresponding `v$VERSION`
+     git tag or GitHub Release upstream.
+
+   Both checks fail fast (a ~30s job) so the macOS/Windows runners
+   only burn minutes for a genuine, non-duplicate release attempt.
+
+4. When the workflow is green, merge the PR with a policy that
    preserves the PR HEAD SHA (fast-forward or merge-commit — **not
    squash**, which would discard the SHA the artifacts were built
    against).
-4. Tag that commit: `git tag v0.2.0 && git push origin v0.2.0`.
-5. `release-publish.yml` fires on the tag push, looks up the prior
-   successful Release run for the tagged SHA, downloads its artifacts,
-   and creates the GitHub Release. No rebuild — the bytes shipped to
-   users are exactly the bytes the release-candidate PR validated.
 
-If you need to seed artifacts for a tag the normal way didn't cover
-(e.g. an unattended squash merge dropped the SHA), trigger Release
-manually via `gh workflow run Release --ref=<SHA>` and then re-run
-the Publish Release job.
+5. `release-autotag.yml` fires on the merged-and-labeled PR: it
+   tags PR HEAD as `v$VERSION` and dispatches `release-publish.yml`.
+   The publish workflow looks up the prior successful Release run
+   for the tagged SHA, downloads its artifacts (Linux tarball,
+   Windows zip, macOS DMG), and creates the GitHub Release. No
+   rebuild — the bytes shipped to users are exactly the bytes the
+   release-candidate PR validated.
 
-The macOS `.app` is universal (Apple Silicon + Intel), self-contained
-(Qt frameworks bundled via `macdeployqt`; qpdf statically linked from
-a source build inside CI), and **unsigned** for 0.1.x. The release
-body documents the one-time Gatekeeper quarantine bypass users need
-to run.
+The macOS DMG contains a universal (Apple Silicon + Intel),
+self-contained `trailer.app` (Qt frameworks bundled via
+`macdeployqt`; qpdf statically linked from a source build inside
+CI). For 0.1.x it ships **unsigned** — the release body documents
+the one-time Gatekeeper quarantine bypass users need to run.
+
+### Recovering from a missing prior build
+
+If a tag is pushed manually and no prior Release run exists for its
+SHA (e.g. a maintainer tagged a non-PR commit, or an unattended
+squash merge dropped the PR HEAD), `release-publish.yml` fails with
+a clear recovery message. Run
+
+```sh
+gh workflow run Release --ref=<SHA>
+```
+
+to seed artifacts for that commit, wait for it to finish, then
+re-run the failed Publish Release job from the Actions tab.
 
 ## Philosophy
 
