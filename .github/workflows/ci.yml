@@ -4,11 +4,11 @@
 # (Docker image build, mingw cross-link, dependency walk) and not worth
 # waiting through for every commit.
 #
-# Dev-phase posture (2026-05): the *required* build is warnings-only —
-# `-DTRAILER_WERROR=ON` is reserved for the release pipeline so a leaky
-# `-Wconversion` doesn't bounce unrelated PR work. Warnings still print
-# in the build log; they just don't fail. The release pipeline catches
-# regressions at tag time.
+# Both CI and the release pipeline build with TRAILER_WERROR=OFF.
+# GCC's -Wnull-dereference and -Werror=cpp fire from inside Qt,
+# libstdc++, and qpdf headers — system-header noise we can't fix
+# locally without patching upstream. Warnings still print in the
+# build log; trailer's own source is kept clean by review.
 
 name: CI
 
@@ -50,9 +50,8 @@ jobs:
           max-size: 500M
 
       - name: Configure
-        # Dev phase: warnings-only (TRAILER_WERROR defaults OFF).
-        # Tagged releases (release.yml) build with WERROR=ON for the
-        # strict bar.
+        # Warnings-only: TRAILER_WERROR defaults OFF (see workflow
+        # header for why).
         #
         # -G Ninja: ninja's scheduler beats make at filling cores when
         #    AUTOMOC's variable-cost steps land between compile units.
