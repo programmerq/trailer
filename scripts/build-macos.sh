@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build trailer.app for macOS — Apple Silicon (arm64), self-contained,
+# Build Trailer.app for macOS — Apple Silicon (arm64), self-contained,
 # packaged as a drag-to-Applications DMG.
 #
 # Mirrors .github/workflows/release.yml's macos-build job. The script
@@ -22,7 +22,7 @@
 #   make release                        # convenience wrapper (same thing)
 #
 # Output:
-#   build-macos/trailer.app                 arm64, self-contained
+#   build-macos/Trailer.app                 arm64, self-contained
 #   dist/trailer-macos-arm64.dmg            drag-to-Applications DMG
 #
 # Configurable via env vars:
@@ -288,7 +288,7 @@ cmake -S . -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR;$DEPS_DIR/qpdf-prefix;$DEPS_DIR/jpeg-prefix" \
     -DTRAILER_WERROR="$WERROR"
 
-echo "==> Building trailer.app"
+echo "==> Building Trailer.app"
 cmake --build "$BUILD_DIR" --parallel
 
 # Resolve the .app path. CMake builds an Application Bundle whose
@@ -296,8 +296,8 @@ cmake --build "$BUILD_DIR" --parallel
 # MACOSX_BUNDLE_BUNDLE_NAME ("Trailer") can flip the display name. Use
 # whichever directory CMake actually produced so this script doesn't
 # need to track that detail.
-if   [[ -d "$BUILD_DIR/trailer.app" ]]; then APP_PATH="$BUILD_DIR/trailer.app"
-elif [[ -d "$BUILD_DIR/Trailer.app" ]]; then APP_PATH="$BUILD_DIR/Trailer.app"
+if   [[ -d "$BUILD_DIR/Trailer.app" ]]; then APP_PATH="$BUILD_DIR/Trailer.app"
+elif [[ -d "$BUILD_DIR/trailer.app" ]]; then APP_PATH="$BUILD_DIR/trailer.app"
 else
     echo "ERROR: no .app bundle found under $BUILD_DIR" >&2
     exit 1
@@ -339,8 +339,18 @@ codesign -dv "$APP_PATH" 2>&1 | grep -E '^(Identifier|Sealed Resources|Info\.pli
 # Verify: arm64 present, no external dylib refs leaking out of the
 # bundle. These guard against a misconfigured runner image or a silent
 # CMake flag drift shipping a wrong-arch or Homebrew-dependent binary.
+#
+# Derive the executable name from Info.plist's CFBundleExecutable so
+# this script doesn't need to track CMakeLists.txt's target/OUTPUT_NAME
+# choice (`Trailer` on macOS, `trailer` everywhere else).
 # ---------------------------------------------------------------------
-TRAILER_BIN="$APP_PATH/Contents/MacOS/trailer"
+EXEC_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$APP_PATH/Contents/Info.plist")
+TRAILER_BIN="$APP_PATH/Contents/MacOS/$EXEC_NAME"
+if [[ ! -x "$TRAILER_BIN" ]]; then
+    echo "ERROR: executable not found at $TRAILER_BIN" >&2
+    echo "       Info.plist CFBundleExecutable=$EXEC_NAME but no matching file." >&2
+    exit 1
+fi
 echo "==> Verifying arch"
 ARCHES=$(lipo -archs "$TRAILER_BIN")
 echo "    arches: $ARCHES"
