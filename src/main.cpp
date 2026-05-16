@@ -7,11 +7,27 @@
 int main(int argc, char *argv[]) {
     trailer::Application app(argc, argv);
 
+#ifndef Q_OS_MACOS
+    // On macOS the Dock icon is set by the system from the .app
+    // bundle's CFBundleIconFile (Resources/trailer.icns), which
+    // carries every standard icon size (ic04 through ic10). Calling
+    // setWindowIcon here additionally pushes a QIcon into the running
+    // app's NSDockTile via Qt's QIcon→NSImage bridge — and that
+    // conversion picks a single resolution, which the Dock then
+    // upscales for retina. The result is a pixelated Dock icon while
+    // the app is running; quitting reveals the proper .icns variant
+    // briefly during the genie animation. Skip the override on macOS
+    // so the bundled .icns is authoritative.
+    //
+    // Other platforms still want the multi-resolution QIcon — window
+    // titlebar icons (Linux), Alt-Tab thumbnails, taskbar icons
+    // (Windows), etc.
     QIcon icon;
     for (int size : {16, 32, 64, 128, 256, 512, 1024}) {
         icon.addFile(QString(":/icons/trailer_%1.png").arg(size));
     }
     QApplication::setWindowIcon(icon);
+#endif
 
     const trailer::CommandLineResult cli = trailer::parseCommandLine(app.arguments());
 
