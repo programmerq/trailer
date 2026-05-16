@@ -313,6 +313,29 @@ echo "==> Bundling Qt frameworks via macdeployqt"
 "$QT_ROOT_DIR/bin/macdeployqt" "$APP_PATH" -verbose=1 -always-overwrite
 
 # ---------------------------------------------------------------------
+# Adhoc-sign the bundle.
+#
+# Some macdeployqt versions (notably Qt 6.11+) adhoc-sign the whole
+# bundle automatically; Qt 6.8's macdeployqt does not, leaving the
+# bundle in a half-signed state — the linker's automatic adhoc
+# signature covers the executable, but the bundle's Info.plist isn't
+# bound and Resources/ aren't sealed, and the signature identifier
+# stays as the binary name ("trailer") instead of the CFBundleIdentifier
+# ("org.trailer.Trailer"). macOS treats that as a non-standard
+# bundle and behaves oddly with the Dock icon and Gatekeeper.
+#
+# Explicit `codesign --deep --force --sign -` produces a proper adhoc
+# signature on both Qt versions. No identity required (no `--timestamp`
+# either, since adhoc signatures don't have a trust chain to anchor).
+# Notarization is still deferred — when wired up, swap `-` for a
+# Developer ID Application identity and add `--options runtime`.
+# ---------------------------------------------------------------------
+echo "==> Adhoc-signing the bundle"
+codesign --deep --force --sign - "$APP_PATH"
+codesign --verify --verbose "$APP_PATH" 2>&1
+codesign -dv "$APP_PATH" 2>&1 | grep -E '^(Identifier|Sealed Resources|Info\.plist|Format|Signature)'
+
+# ---------------------------------------------------------------------
 # Verify: arm64 present, no external dylib refs leaking out of the
 # bundle. These guard against a misconfigured runner image or a silent
 # CMake flag drift shipping a wrong-arch or Homebrew-dependent binary.
