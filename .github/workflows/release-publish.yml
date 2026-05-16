@@ -151,15 +151,18 @@ jobs:
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.target.outputs.tag }}
-          # Pre-1.0 tags are pre-releases by convention. Once the
-          # project commits to backwards compatibility on minor
-          # bumps (see PHILOSOPHY.md), flip this off.
-          prerelease: true
+          # Full release by default. A maintainer who wants to ship a
+          # pre-release tag (e.g. v0.2.0-rc1) can edit the release in
+          # the UI to flip the "Set as pre-release" checkbox after
+          # the workflow attaches the artifacts. Auto-detection from
+          # VERSION suffix is a future refinement — would require
+          # precheck.yml to accept -rc / -beta / -alpha tails too.
+          prerelease: false
           # Glob the versioned filenames written by the rename step.
           files: dist/trailer-*
           body: |
-            Pre-release build of Trailer. See PHILOSOPHY.md for what
-            "pre-release" means while we're in 0.x.
+            See PHILOSOPHY.md for what to expect from a 0.x build of
+            Trailer.
 
             ### macOS (Apple Silicon): drag-to-Applications install
 
