@@ -246,14 +246,15 @@ jobs:
       - uses: actions/checkout@v6
 
       - name: Install Qt
-        # install-qt-action's macOS Qt has been universal (arm64 +
-        # x86_64) since Qt 6.2, so a single install covers both arches
-        # of the universal trailer.app. Keep this in lockstep with
-        # setup-linux-build's Qt version. The action exports
-        # $QT_ROOT_DIR which scripts/build-macos.sh consumes.
+        # Keep in lockstep with setup-linux-build's Qt version so CI
+        # builds across platforms link against identical Qt. The
+        # action exports $QT_ROOT_DIR which scripts/build-macos.sh
+        # consumes. (Qt 6.11+'s macdeployqt auto-adhoc-signs the
+        # bundle, which our explicit codesign step then no-ops on —
+        # belt-and-suspenders for whenever this version moves.)
         uses: jurplel/install-qt-action@v4
         with:
-          version: '6.8.0'
+          version: '6.11.0'
           modules: 'qtpdf'
           cache: true
 

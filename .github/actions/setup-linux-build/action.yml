@@ -12,7 +12,14 @@ inputs:
   qt-version:
     description: Qt version passed to install-qt-action
     required: false
-    default: '6.8.0'
+    # Matches the default maintainer's local Qt install. Qt 6.11 is
+    # non-LTS (next LTS is 6.13, est. 2026); revisit when 6.13 ships
+    # if long-term-support backports matter more than aligning with
+    # local dev environments. Windows is pinned separately to 6.10.3
+    # in docker/windows/Dockerfile for MinGW-toolchain ABI matching;
+    # bumping it requires verifying the new Qt's win64_mingw GCC
+    # version still matches Ubuntu noble's mingw-w64-13.2.
+    default: '6.11.0'
 
 runs:
   using: composite
