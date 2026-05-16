@@ -52,7 +52,7 @@ The script auto-detects Qt under `~/Qt/6.*/macos`, then
 `brew --prefix qt`. To pin a different install, set `QT_ROOT_DIR`:
 
 ```sh
-export QT_ROOT_DIR=~/Qt/6.8.0/macos
+export QT_ROOT_DIR=~/Qt/6.11.0/macos
 scripts/build-macos.sh
 ```
 
