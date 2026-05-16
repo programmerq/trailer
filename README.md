@@ -195,7 +195,7 @@ UAT is slow. Instead they are gated on a `release-candidate` label:
    bytes the release-candidate PR validated.
 
 The macOS DMG contains an Apple Silicon (arm64) self-contained
-`trailer.app` (Qt frameworks bundled via `macdeployqt`; qpdf
+`Trailer.app` (Qt frameworks bundled via `macdeployqt`; qpdf
 statically linked from a source build inside CI). Intel-Mac support
 is deferred — ONNX Runtime, which powers Trailer's ML features, no
 longer publishes macOS x86_64 / universal2 prebuilts upstream, so a

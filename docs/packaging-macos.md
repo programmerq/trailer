@@ -1,7 +1,7 @@
 # macOS Packaging
 
 The macOS release artifact is an Apple Silicon (`arm64`),
-self-contained `trailer.app` shipped inside a drag-to-Applications
+self-contained `Trailer.app` shipped inside a drag-to-Applications
 DMG. `scripts/build-macos.sh` is the source of truth for the build —
 both `make release` (locally) and `.github/workflows/release.yml`
 (in CI) invoke it.
@@ -59,7 +59,7 @@ scripts/build-macos.sh
 On success:
 
 ```
-build-macos/trailer.app                 arm64, self-contained
+build-macos/Trailer.app                 arm64, self-contained
 dist/trailer-macos-arm64.dmg            drag-to-Applications DMG
 ```
 
@@ -98,7 +98,7 @@ If either check fails the script exits non-zero (and CI does too).
 
 For 0.1.x the `.app` is intentionally unsigned. The release body on
 GitHub Releases documents the one-time
-`xattr -dr com.apple.quarantine /Applications/trailer.app` users
+`xattr -dr com.apple.quarantine /Applications/Trailer.app` users
 need to run to bypass Gatekeeper.
 
 When Apple Developer ID signing + notarization is wired up, it'll

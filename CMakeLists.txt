@@ -215,6 +215,15 @@ target_link_libraries(trailer PRIVATE trailer_core)
 trailer_set_warnings(trailer)
 trailer_deploy_onnxruntime(trailer)
 
+# Title-case the macOS .app + the executable inside it (Trailer.app /
+# Contents/MacOS/Trailer). Matches Mac convention — every other app in
+# /Applications is Title Case. On Linux + Windows we keep the lowercase
+# `trailer` / `trailer.exe` shell-friendly name, since those platforms
+# don't lean as hard on visible casing.
+if(APPLE)
+    set_target_properties(trailer PROPERTIES OUTPUT_NAME "Trailer")
+endif()
+
 # Copy the .icns into the macOS bundle's Resources/ directory so Finder/Dock
 # pick it up, and tell Info.plist about the file via MACOSX_BUNDLE_ICON_FILE.
 if(APPLE AND EXISTS "${TRAILER_MACOS_ICON}")

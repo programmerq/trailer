@@ -166,7 +166,7 @@ jobs:
 
             ### macOS (Apple Silicon): drag-to-Applications install
 
-            The `.dmg` mounts to a Finder window with `trailer.app`
+            The `.dmg` mounts to a Finder window with `Trailer.app`
             and an `Applications` shortcut — drag to install. The
             bundled `.app` is **Apple Silicon only** (ONNX Runtime,
             which powers Trailer's ML features, no longer ships a
@@ -178,7 +178,7 @@ jobs:
             un-notarized, so first launch triggers Gatekeeper. Bypass
             the quarantine flag once after install:
 
-                xattr -dr com.apple.quarantine /Applications/trailer.app
+                xattr -dr com.apple.quarantine /Applications/Trailer.app
 
             or right-click the `.app` → Open → Open. Notarization is
             tracked as a follow-up.
