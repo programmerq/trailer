@@ -28,14 +28,21 @@ namespace trailer {
 
 namespace {
 
+// Vertical padding around the thumbnail inside each list item. The
+// 2026-05 HITL pass shrank the logical thumbnail to ~80x100 and
+// moved the page number from a separate text row below the image
+// into a corner badge drawn on top of it, so the only padding the
+// item needs is breathing room above and below the thumbnail.
+constexpr int kThumbVerticalPadding = 4;
+
 class ThumbnailDelegate : public QStyledItemDelegate {
   public:
     explicit ThumbnailDelegate(QListView *view) : QStyledItemDelegate(view), m_view(view) {}
 
-    QSize sizeHint(const QStyleOptionViewItem &option,
+    QSize sizeHint(const QStyleOptionViewItem & /*option*/,
                    const QModelIndex & /*index*/) const override {
         const QSize icon = m_view->iconSize();
-        const int h = icon.height() + option.fontMetrics.height() + 16;
+        const int h = icon.height() + 2 * kThumbVerticalPadding;
         return QSize(m_view->viewport()->width(), h);
     }
 
@@ -51,22 +58,48 @@ class ThumbnailDelegate : public QStyledItemDelegate {
         const QSize iconSize = m_view->iconSize();
         const QPixmap pm = qvariant_cast<QPixmap>(index.data(Qt::DecorationRole));
 
-        int y = option.rect.top() + 6;
-        int pixmapBottom = y + iconSize.height();
+        const int y = option.rect.top() + kThumbVerticalPadding;
+        QRect imageRect(option.rect.x(), y, option.rect.width(), iconSize.height());
         if (!pm.isNull()) {
+            // KeepAspectRatio preserves page proportions for mixed
+            // Letter/A4/landscape decks; the result is centred
+            // horizontally inside the column so portrait and
+            // landscape pages line up on their vertical midline.
             const QPixmap scaled =
                 pm.scaled(iconSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
             const int x = option.rect.x() + (option.rect.width() - scaled.width()) / 2;
             painter->drawPixmap(x, y, scaled);
-            pixmapBottom = y + scaled.height();
+            imageRect = QRect(x, y, scaled.width(), scaled.height());
         }
 
+        // Page-number badge in the lower-right corner of the
+        // thumbnail. Drawn here (not as a per-item child widget)
+        // so it scales with the thumbnail and costs only the
+        // painter's text run per visible item.
         const QString text = index.data(Qt::DisplayRole).toString();
-        painter->setPen(selected ? option.palette.highlightedText().color()
-                                 : option.palette.text().color());
-        const QRect textRect(option.rect.x(), pixmapBottom + 2, option.rect.width(),
-                             option.fontMetrics.height());
-        painter->drawText(textRect, Qt::AlignHCenter | Qt::AlignTop, text);
+        if (!text.isEmpty() && !pm.isNull()) {
+            const QFontMetrics fm(option.fontMetrics);
+            const int padX = 4;
+            const int padY = 1;
+            const int textW = fm.horizontalAdvance(text);
+            const int textH = fm.height();
+            const int badgeW = textW + 2 * padX;
+            const int badgeH = textH + 2 * padY;
+            // Tuck the badge inside the lower-right corner of the
+            // page image with a 2 px inset so it visually sits
+            // "on" the page rather than overflowing its edge.
+            const int inset = 2;
+            const int badgeX = imageRect.right() - badgeW - inset + 1;
+            const int badgeY = imageRect.bottom() - badgeH - inset + 1;
+            const QRect badgeRect(badgeX, badgeY, badgeW, badgeH);
+            QColor bg(0, 0, 0, 160);
+            painter->setRenderHint(QPainter::Antialiasing, true);
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(bg);
+            painter->drawRoundedRect(badgeRect, 3, 3);
+            painter->setPen(Qt::white);
+            painter->drawText(badgeRect, Qt::AlignCenter, text);
+        }
 
         painter->restore();
     }
