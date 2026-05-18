@@ -151,6 +151,7 @@ set(TRAILER_SOURCES
     src/ui/SignaturesDialog.h
     src/ui/ThumbnailModel.cpp
     src/ui/ThumbnailModel.h
+    src/util/TempPath.h
     src/platform/Share.h
 )
 

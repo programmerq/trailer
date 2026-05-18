@@ -2,6 +2,7 @@
 
 #include "ui/AnnotationOverlay.h"
 #include "ui/FormOverlay.h"
+#include "util/TempPath.h"
 
 #include <QApplication>
 #include <QDir>
@@ -30,7 +31,6 @@
 #include <QPrinter>
 #include <QScrollBar>
 #include <QSizeF>
-#include <QTemporaryFile>
 #include <QVBoxLayout>
 
 namespace trailer {
@@ -730,14 +730,12 @@ bool PdfDocument::reloadViewerFromEditor() {
     if (!m_editor || !m_editor->isValid()) {
         return false;
     }
-    auto preview = std::make_unique<QTemporaryFile>(QDir::tempPath() +
-                                                    QStringLiteral("/trailer-preview-XXXXXX.pdf"));
-    preview->setAutoRemove(true);
-    if (!preview->open()) {
+    auto preview =
+        std::make_unique<ScopedTempFile>(QStringLiteral("trailer-preview-XXXXXX.pdf"));
+    if (!preview->isValid()) {
         return false;
     }
-    const QString previewPath = preview->fileName();
-    preview->close();
+    const QString previewPath = preview->path();
     if (!m_editor->save(previewPath)) {
         return false;
     }
@@ -979,15 +977,13 @@ std::optional<PdfDocument::SaveContext> PdfDocument::saveBeginQpdfPhase(const QS
 
     if (ctx.sameFile) {
         // Stage to a temp file so a partial write doesn't clobber the
-        // original. The UI-phase rename is atomic.
-        auto temp = std::make_unique<QTemporaryFile>(QDir::tempPath() +
-                                                     QStringLiteral("/trailer-save-XXXXXX.pdf"));
-        temp->setAutoRemove(false); // we hand the file to the UI phase
-        if (!temp->open()) {
+        // original. The UI-phase rename is atomic. makeUniqueTempPath
+        // (not QTemporaryFile) so qpdf can open the path for writing
+        // on Windows — see util/TempPath.h for the rationale.
+        ctx.writePath = makeUniqueTempPath(QStringLiteral("trailer-save-XXXXXX.pdf"));
+        if (ctx.writePath.isEmpty()) {
             return std::nullopt;
         }
-        ctx.writePath = temp->fileName();
-        temp->close();
         if (!m_editor->save(ctx.writePath)) {
             QFile::remove(ctx.writePath);
             return std::nullopt;
@@ -1007,14 +1003,27 @@ bool PdfDocument::saveCommitOnUi(const SaveContext &ctx) {
         // over the file on Windows (Linux/macOS don't strictly need
         // this but it matches behaviour).
         m_doc->close();
+        // Same story for the qpdf editor: QPDF::processFile leaves
+        // m_path open for lazy stream reads, and Windows refuses
+        // DeleteFile on a handle opened without FILE_SHARE_DELETE.
+        // We rebuild a fresh editor from the post-rename file at the
+        // end of this method, so dropping the old one now costs
+        // nothing. (Linux/macOS would tolerate the open handle; this
+        // is purely a Windows shield.)
+        m_editor.reset();
+        auto restoreOnFailure = [this]() {
+            m_editor = std::make_unique<PdfEditor>();
+            m_editor->load(m_path);
+            m_doc->load(m_path);
+        };
         if (QFile::exists(ctx.targetPath) && !QFile::remove(ctx.targetPath)) {
             // Restore the original handle and bail; the staged temp
             // is leaked on disk but the user's file is untouched.
-            m_doc->load(m_path);
+            restoreOnFailure();
             return false;
         }
         if (!QFile::rename(ctx.writePath, ctx.targetPath)) {
-            m_doc->load(m_path);
+            restoreOnFailure();
             return false;
         }
     }

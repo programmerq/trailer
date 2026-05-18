@@ -1,5 +1,6 @@
 #include "document/PdfCommands.h"
 #include "document/PdfEditor.h"
+#include "util/TempPath.h"
 
 #include <qpdf/Pl_String.hh>
 #include <qpdf/QPDF.hh>
@@ -9,6 +10,7 @@
 #include <qpdf/QPDFWriter.hh>
 
 #include <QColor>
+#include <QFile>
 #include <QFileInfo>
 #include <QImage>
 #include <QPageSize>
@@ -714,12 +716,13 @@ void TestPdfEditor::rotatePageCommandIsReversible() {
 
     auto readRotation = [&editor]() -> int {
         // Save to a tmp, reopen via raw qpdf, read /Rotate.
-        QTemporaryFile tmp(QDir::tempPath() + "/rot_check_XXXXXX.pdf");
-        tmp.setAutoRemove(true);
-        if (!tmp.open())
+        // ScopedTempFile (not QTemporaryFile) because the latter holds
+        // the OS handle past close() on Windows, blocking qpdf's
+        // subsequent fopen("wb"). See src/util/TempPath.h.
+        ScopedTempFile tmp(QStringLiteral("rot_check_XXXXXX.pdf"));
+        if (!tmp.isValid())
             return -1;
-        const QString p = tmp.fileName();
-        tmp.close();
+        const QString p = tmp.path();
         if (!editor.save(p))
             return -1;
         QPDF reopened;
