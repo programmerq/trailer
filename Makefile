@@ -81,9 +81,12 @@ release-windows:
 
 # Native MSVC build (Windows host only). The PowerShell wrapper exits
 # non-zero if it's run on a non-Windows host or VS 2022 isn't installed,
-# so this rule is safe to expose as a make target.
+# so this rule is safe to expose as a make target. -Deploy runs
+# windeployqt + copies qpdf+MSVC runtime DLLs after tests pass, so
+# the build dir is a shippable self-contained directory (you can zip
+# build-trailer/ and run trailer.exe on a fresh Windows box).
 release-windows-native:
-	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-native.ps1 -RunUat
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-native.ps1 -RunUat -Deploy
 
 install-windows-deps:
 	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows-deps.ps1

@@ -42,6 +42,7 @@ param(
     [string]$Config = 'Release',
     [switch]$BuildOnly,
     [switch]$RunUat,
+    [switch]$Deploy,
     [switch]$Clean,
     [switch]$Werror
 )
@@ -144,53 +145,6 @@ Write-Host "==> cmake build" -ForegroundColor Green
 & cmake --build $BuildDir --config $Config --parallel
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-# Deploy Qt + qpdf DLLs next to trailer.exe so the binary works when
-# launched directly (double-click, Explorer, shortcut) - without
-# this, Windows' loader can't find Qt6Svg.dll etc. because Qt isn't
-# on the system PATH. The cross-compile (scripts/build-windows.sh)
-# does the equivalent via a manual objdump walk; on a native MSVC
-# build Qt ships windeployqt which knows the full plugin layout
-# (platforms\qwindows.dll, imageformats\, sqldrivers\, etc.) and
-# does the copy correctly.
-#
-# Idempotent: re-running on a deployed dir is a no-op for unchanged
-# DLLs, and any newly needed plugins get added without flushing.
-$exe = Join-Path $BuildDir 'trailer.exe'
-if (Test-Path $exe) {
-    Write-Host "==> Deploying Qt runtime via windeployqt" -ForegroundColor Green
-    $windeployqt = Join-Path $QtDir 'bin\windeployqt.exe'
-    if (-not (Test-Path $windeployqt)) {
-        Write-Error "windeployqt.exe not found at $windeployqt - Qt install is incomplete."
-    }
-    # --no-translations: we don't ship the Qt .qm files.
-    # --no-system-d3d-compiler: not needed for our Qt feature surface.
-    # --no-opengl-sw: we never request the software OpenGL fallback.
-    # --release / --debug picks the right ABI variant of every DLL.
-    $deployArgs = @('--release', '--no-translations',
-                    '--no-system-d3d-compiler', '--no-opengl-sw', $exe)
-    if ($Config -eq 'Debug') {
-        $deployArgs[0] = '--debug'
-    }
-    & $windeployqt @deployArgs
-    if ($LASTEXITCODE -ne 0) {
-        Write-Error "windeployqt failed (exit $LASTEXITCODE)"
-    }
-
-    # qpdf's MSVC prebuilt ships qpdf30.dll plus the MSVC redist
-    # runtimes (vcruntime140.dll, msvcp140.dll, ...). Copy the whole
-    # bin/ - the MSVC runtimes are usually installed system-wide but
-    # if a user is running on a fresh Windows install without VC++
-    # redist, bundling them avoids a separate "install VC++ redist"
-    # prompt.
-    Write-Host "==> Copying qpdf + MSVC runtime DLLs" -ForegroundColor Green
-    Get-ChildItem (Join-Path $QpdfDir 'bin\*.dll') -ErrorAction SilentlyContinue | ForEach-Object {
-        Copy-Item $_.FullName -Destination $BuildDir -Force
-    }
-
-    $dllCount = (Get-ChildItem $BuildDir -Filter '*.dll' -ErrorAction SilentlyContinue).Count
-    Write-Host "==> Deployed $dllCount DLLs alongside $exe" -ForegroundColor Green
-}
-
 if ($BuildOnly) {
     Write-Host "==> Build complete; tests skipped (-BuildOnly)." -ForegroundColor Green
     exit 0
@@ -237,3 +191,60 @@ if ($unitExit -ne 0 -or $uatExit -ne 0) {
 }
 
 Write-Host "==> All tests passed." -ForegroundColor Green
+
+if ($Deploy) {
+    # Deploy Qt + qpdf DLLs next to trailer.exe so the binary works
+    # when launched directly (double-click, Explorer, Start-menu
+    # shortcut). Without this, Windows' loader can't find Qt6Svg.dll
+    # etc. because Qt isn't on the system PATH. The cross-build
+    # script (scripts/build-windows.sh) handles this via a manual
+    # objdump walk; on a native MSVC build Qt ships windeployqt
+    # which knows the full plugin layout (platforms\qwindows.dll,
+    # imageformats\, tls\, ...) and copies them next to the exe.
+    #
+    # Runs after tests by design: windeployqt creates a local
+    # platforms\ dir with only qwindows.dll, which Qt's plugin
+    # loader then prefers over its built-in search path. ctest runs
+    # with QT_QPA_PLATFORM=offscreen, so any test running from a
+    # deployed build dir would fail to find qoffscreen.dll. We work
+    # around that below by copying qoffscreen.dll into the deployed
+    # platforms\ dir, but it's still cleaner to deploy only after
+    # the test pass we care about.
+    $exe = Join-Path $BuildDir 'trailer.exe'
+    if (-not (Test-Path $exe)) {
+        Write-Error "trailer.exe not found at $exe; nothing to deploy."
+    }
+    Write-Host "==> Deploying Qt runtime via windeployqt" -ForegroundColor Green
+    $windeployqt = Join-Path $QtDir 'bin\windeployqt.exe'
+    if (-not (Test-Path $windeployqt)) {
+        Write-Error "windeployqt.exe not found at $windeployqt - Qt install is incomplete."
+    }
+    $deployArgs = @('--release', '--no-translations',
+                    '--no-system-d3d-compiler', '--no-opengl-sw', $exe)
+    if ($Config -eq 'Debug') {
+        $deployArgs[0] = '--debug'
+    }
+    & $windeployqt @deployArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "windeployqt failed (exit $LASTEXITCODE)"
+    }
+
+    # Also drop qoffscreen.dll into platforms\ so the test binaries
+    # in this same directory keep working after deploy (ctest sets
+    # QT_QPA_PLATFORM=offscreen). Without this, a follow-up
+    # `make test` against a deployed build dir fails with "could
+    # not load the Qt platform plugin 'offscreen'".
+    $platformsDir = Join-Path $BuildDir 'platforms'
+    $qoffscreen = Join-Path $QtDir 'plugins\platforms\qoffscreen.dll'
+    if ((Test-Path $qoffscreen) -and (Test-Path $platformsDir)) {
+        Copy-Item $qoffscreen -Destination $platformsDir -Force
+    }
+
+    Write-Host "==> Copying qpdf + MSVC runtime DLLs" -ForegroundColor Green
+    Get-ChildItem (Join-Path $QpdfDir 'bin\*.dll') -ErrorAction SilentlyContinue | ForEach-Object {
+        Copy-Item $_.FullName -Destination $BuildDir -Force
+    }
+
+    $dllCount = (Get-ChildItem $BuildDir -Filter '*.dll' -ErrorAction SilentlyContinue).Count
+    Write-Host "==> Deployed $dllCount DLLs alongside $exe" -ForegroundColor Green
+}
