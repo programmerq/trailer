@@ -24,11 +24,14 @@ for the hard constraints (read both before making non-trivial changes).
   colour half (HEIC, OpenEXR, RAW, lcms2 colour management, OCR-embed-on-
   export, alt text) is unstarted.
 - **Phase 7 (stretch)** and **Phase 8 (distribution polish)** are partially
-  scoped. Linux DEB pipeline exists; macOS notarised .dmg and Windows
-  MSIX/NSIS do not.
+  scoped. Linux DEB / RPM, Windows MSI, macOS DMG pipelines all exist;
+  macOS notarisation is **off the table by project policy** (Trailer is
+  not enrolled in the Apple Developer Program); auto-update (Sparkle /
+  WinSparkle) is the next planned distribution work.
 
-The README still mentions "Phase 0" in places; trust this file and
-[`TODO.md`](TODO.md) over the README's status framing.
+For the tactical Now / Next / Later view of what's between releases,
+read [`ROADMAP.md`](ROADMAP.md). For the live pickable punch list,
+read [`TODO.md`](TODO.md).
 
 ## Hard constraints — non-negotiable
 

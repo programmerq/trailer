@@ -12,9 +12,9 @@ Smart Lasso / Instant Alpha, OCR). It is local-first by construction:
 no accounts, no telemetry, no cloud sync. See `PHILOSOPHY.md` for the
 full list of non-negotiables.
 
-Releases are tagged `v0.x.0`; see [CHANGELOG.md](CHANGELOG.md) for what
-shipped when, and [RELEASING.md](RELEASING.md) for the maintainer
-release runbook.
+Releases are tagged `v0.x.0`; see [CHANGELOG.md](CHANGELOG.md) for
+what shipped when, [ROADMAP.md](ROADMAP.md) for what's coming, and
+[RELEASING.md](RELEASING.md) for the maintainer release runbook.
 
 ## Requirements
 
