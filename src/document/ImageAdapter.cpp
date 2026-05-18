@@ -5,6 +5,7 @@
 #include "ui/AnnotationOverlay.h"
 
 #include <QColor>
+#include <QEvent>
 #include <QFileInfo>
 #include <QImageReader>
 #include <QImageWriter>
@@ -18,6 +19,7 @@
 #include <QPixmap>
 #include <QPrintDialog>
 #include <QPrinter>
+#include <QResizeEvent>
 #include <QRect>
 #include <QScrollArea>
 #include <QTransform>
@@ -259,6 +261,7 @@ QWidget *ImageDocument::createView(QWidget *parent) {
     scroll->setWidget(label);
     m_scroll = scroll;
     m_label = label;
+    installResizeWatcher();
 
     if (!m_animated && !m_image.isNull()) {
         auto *overlay = new AnnotationOverlay(label);
@@ -302,43 +305,104 @@ void ImageDocument::applyScale(double factor) {
 }
 
 void ImageDocument::zoomIn() {
+    // Any explicit zoom step puts the document back into Custom mode —
+    // the user is asking for a specific factor, not "track the
+    // viewport". Mirrors PdfDocument::applyZoomFactor's behaviour.
+    m_fitMode = FitMode::Custom;
     applyScale(m_scale * kZoomStep);
 }
 
 void ImageDocument::zoomOut() {
+    m_fitMode = FitMode::Custom;
     applyScale(m_scale / kZoomStep);
 }
 
 void ImageDocument::zoomActual() {
+    m_fitMode = FitMode::Custom;
     applyScale(1.0);
 }
 
 void ImageDocument::zoomFitWidth() {
-    if (!m_scroll || !m_label || m_image.isNull()) {
-        return;
-    }
-    const int available = m_scroll->viewport()->width();
-    if (available <= 0 || m_image.width() <= 0) {
-        return;
-    }
-    applyScale(static_cast<double>(available) / static_cast<double>(m_image.width()));
+    m_fitMode = FitMode::FitToWidth;
+    reapplyFitMode();
 }
 
 void ImageDocument::zoomFitPage() {
-    if (!m_scroll || !m_label || m_image.isNull()) {
+    m_fitMode = FitMode::FitInView;
+    reapplyFitMode();
+}
+
+void ImageDocument::reapplyFitMode() {
+    // No-op for Custom — the user has set an explicit scale factor and
+    // doesn't want it to track viewport size.
+    if (m_fitMode == FitMode::Custom)
         return;
-    }
+    if (!m_scroll || !m_label || m_image.isNull())
+        return;
     const int availW = m_scroll->viewport()->width();
     const int availH = m_scroll->viewport()->height();
-    if (availW <= 0 || availH <= 0 ||
-        m_image.width() <= 0 || m_image.height() <= 0) {
+    if (availW <= 0 || m_image.width() <= 0)
+        return;
+    if (m_fitMode == FitMode::FitToWidth) {
+        applyScale(static_cast<double>(availW) / static_cast<double>(m_image.width()));
         return;
     }
+    // FitInView: constrain both dimensions.
+    if (availH <= 0 || m_image.height() <= 0)
+        return;
     const double scaleW =
         static_cast<double>(availW) / static_cast<double>(m_image.width());
     const double scaleH =
         static_cast<double>(availH) / static_cast<double>(m_image.height());
     applyScale(std::min(scaleW, scaleH));
+}
+
+namespace {
+
+// Tiny QObject-derived helper. eventFilter is on QObject; ImageDocument
+// isn't a QObject (the adapter interfaces aren't QObject-aware) so we
+// can't install it directly. A small bridge owned by the scroll
+// area's viewport gets the same effect.
+//
+// Lifetime: parented to the viewport, so it dies with the widget
+// hierarchy. The alive-flag (shared with ImageDocument) handles the
+// case where the document is destroyed before the view — the flag
+// goes false and the watcher stops calling into freed memory.
+class FitModeResizeWatcher : public QObject {
+  public:
+    FitModeResizeWatcher(ImageDocument *doc, std::shared_ptr<bool> alive, QObject *parent)
+        : QObject(parent), m_doc(doc), m_alive(std::move(alive)) {}
+
+  protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (event->type() == QEvent::Resize && m_alive && *m_alive) {
+            m_doc->reapplyFitMode();
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+  private:
+    ImageDocument *m_doc;
+    std::shared_ptr<bool> m_alive;
+};
+
+} // namespace
+
+void ImageDocument::installResizeWatcher() {
+    if (!m_scroll || !m_scroll->viewport())
+        return;
+    if (m_resizeWatcher)
+        return;
+    if (!m_aliveFlag)
+        m_aliveFlag = std::make_shared<bool>(true);
+    auto *watcher = new FitModeResizeWatcher(this, m_aliveFlag, m_scroll->viewport());
+    m_scroll->viewport()->installEventFilter(watcher);
+    m_resizeWatcher = watcher;
+}
+
+ImageDocument::~ImageDocument() {
+    if (m_aliveFlag)
+        *m_aliveFlag = false;
 }
 
 void ImageDocument::refreshView() {
