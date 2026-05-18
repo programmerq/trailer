@@ -108,7 +108,7 @@ void TestIconResources::everyIconResourceLoads() {
     // not a transparent placeholder. An empty render would mean the
     // SVG parser silently rejected the file (malformed XML, etc.).
     const QPixmap pm = icon.pixmap(QSize(18, 18));
-    QCOMPARE(pm.size(), QSize(18, 18));
+    QCOMPARE(pm.deviceIndependentSize(), QSizeF(18, 18));
     const QImage img = pm.toImage();
     int opaque = 0;
     for (int y = 0; y < img.height() && opaque == 0; ++y) {

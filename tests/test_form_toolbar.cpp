@@ -153,7 +153,7 @@ void TestFormToolbar::everyActionHasARenderedIcon() {
         QVERIFY2(!pm.isNull(),
                  qPrintable(QStringLiteral("icon renders empty: %1")
                                 .arg(a->text())));
-        QCOMPARE(pm.size(), QSize(18, 18));
+        QCOMPARE(pm.deviceIndependentSize(), QSizeF(18, 18));
     }
 }
 
