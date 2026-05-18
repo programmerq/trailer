@@ -27,12 +27,20 @@ class ImageDocument : public IDocument {
     QString filePath() const override;
     QWidget *createView(QWidget *parent) override;
 
+    DocumentType documentType() const override { return DocumentType::Image; }
+
     bool supportsZoom() const override { return !m_animated && !m_image.isNull(); }
     void zoomIn() override;
     void zoomOut() override;
     void zoomActual() override;
     void zoomFitWidth() override;
     void zoomFitPage() override;
+
+    ZoomMode zoomMode() const override { return m_zoomMode; }
+    double zoomFactor() const override { return m_scale; }
+    void applyZoomState(ZoomMode mode, double factor) override;
+    int scrollY() const override;
+    void applyScrollY(int y) override;
 
     bool supportsPrint() const override { return !m_image.isNull(); }
     void print(QWidget *dialogParent) override;
@@ -94,6 +102,13 @@ class ImageDocument : public IDocument {
     std::vector<QImage> m_undoStack;
     std::vector<QImage> m_redoStack;
     double m_scale = 1.0;
+    // Tracks the user's intent (Fit-page, Fit-width, Actual, custom
+    // factor) so the persistence layer can round-trip the mode rather
+    // than rebuilding it from the scale alone. Image adapter has no
+    // explicit Qt mode — the scale is the source of truth at render
+    // time — but the saved state needs the original intent so a
+    // window resize after restore re-fits correctly.
+    ZoomMode m_zoomMode = ZoomMode::Actual;
     int m_frameCount = 0;
     bool m_animated = false;
     bool m_dirty = false;

@@ -20,6 +20,7 @@
 #include <QPrinter>
 #include <QRect>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QTransform>
 
 #include <cmath>
@@ -302,14 +303,17 @@ void ImageDocument::applyScale(double factor) {
 }
 
 void ImageDocument::zoomIn() {
+    m_zoomMode = ZoomMode::Custom;
     applyScale(m_scale * kZoomStep);
 }
 
 void ImageDocument::zoomOut() {
+    m_zoomMode = ZoomMode::Custom;
     applyScale(m_scale / kZoomStep);
 }
 
 void ImageDocument::zoomActual() {
+    m_zoomMode = ZoomMode::Actual;
     applyScale(1.0);
 }
 
@@ -321,6 +325,7 @@ void ImageDocument::zoomFitWidth() {
     if (available <= 0 || m_image.width() <= 0) {
         return;
     }
+    m_zoomMode = ZoomMode::FitToWidth;
     applyScale(static_cast<double>(available) / static_cast<double>(m_image.width()));
 }
 
@@ -334,11 +339,50 @@ void ImageDocument::zoomFitPage() {
         m_image.width() <= 0 || m_image.height() <= 0) {
         return;
     }
+    m_zoomMode = ZoomMode::FitInView;
     const double scaleW =
         static_cast<double>(availW) / static_cast<double>(m_image.width());
     const double scaleH =
         static_cast<double>(availH) / static_cast<double>(m_image.height());
     applyScale(std::min(scaleW, scaleH));
+}
+
+void ImageDocument::applyZoomState(ZoomMode mode, double factor) {
+    switch (mode) {
+    case ZoomMode::FitInView:
+        zoomFitPage();
+        return;
+    case ZoomMode::FitToWidth:
+        zoomFitWidth();
+        return;
+    case ZoomMode::Actual:
+        zoomActual();
+        return;
+    case ZoomMode::Custom:
+        if (factor > 0.0) {
+            m_zoomMode = ZoomMode::Custom;
+            applyScale(factor);
+        }
+        return;
+    }
+}
+
+int ImageDocument::scrollY() const {
+    if (!m_scroll)
+        return 0;
+    if (auto *bar = m_scroll->verticalScrollBar())
+        return bar->value();
+    return 0;
+}
+
+void ImageDocument::applyScrollY(int y) {
+    if (!m_scroll)
+        return;
+    auto *bar = m_scroll->verticalScrollBar();
+    if (!bar)
+        return;
+    const int clamped = std::clamp(y, bar->minimum(), bar->maximum());
+    bar->setValue(clamped);
 }
 
 void ImageDocument::refreshView() {

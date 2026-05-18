@@ -23,6 +23,30 @@ enum class ViewMode {
     Continuous,
 };
 
+// Coarse classification used by the state-persistence layer to key
+// per-type defaults (e.g. "all PDFs open at fit-to-page, all images
+// open at actual size"). Adapters return their type from
+// IDocument::documentType(). Kept tight on purpose — adding subtypes
+// (RasterImage vs Vector, scanned PDF vs born-digital) is a follow-up
+// once the per-type defaults UX is validated.
+enum class DocumentType {
+    Unknown,
+    Pdf,
+    Image,
+};
+
+// Zoom modes that the persistence layer can record and restore.
+// Mirrors QPdfView::ZoomMode (Custom / FitInView / FitToWidth) plus
+// an Actual entry — the latter is `Custom` with factor 1.0, but
+// adapters that don't expose the factor (image at native size) still
+// have a meaningful state to round-trip.
+enum class ZoomMode {
+    Custom,
+    FitInView,
+    FitToWidth,
+    Actual,
+};
+
 class IDocument {
   public:
     virtual ~IDocument() = default;
@@ -30,6 +54,29 @@ class IDocument {
     virtual QString displayName() const = 0;
     virtual QString filePath() const = 0;
     virtual QWidget *createView(QWidget *parent) = 0;
+
+    // Coarse type classification used by DocumentTypeDefaults. Defaults
+    // to Unknown so adapters that don't override (StubAdapter) are
+    // simply ignored by the persistence layer.
+    virtual DocumentType documentType() const { return DocumentType::Unknown; }
+
+    // Current zoom mode + factor. The mode tells the persistence
+    // layer how the user is viewing the document (Fit, Width, Custom);
+    // the factor is only meaningful when mode == Custom but is always
+    // returned for round-trip simplicity. Adapters without a viewer
+    // attached fall back to Custom / 1.0.
+    virtual ZoomMode zoomMode() const { return ZoomMode::Custom; }
+    virtual double zoomFactor() const { return 1.0; }
+    // Apply a previously-saved zoom state. `factor` is honoured only
+    // when `mode == ZoomMode::Custom`; the fit modes ignore it.
+    virtual void applyZoomState(ZoomMode /*mode*/, double /*factor*/) {}
+
+    // Vertical scroll position in viewport pixels. Captured at
+    // close-time and applied on reopen so the user lands at the same
+    // spot in a long document. Adapters that don't expose a scroll
+    // area report 0 and ignore applyScrollY().
+    virtual int scrollY() const { return 0; }
+    virtual void applyScrollY(int /*y*/) {}
 
     virtual bool supportsZoom() const { return false; }
     virtual void zoomIn() {}

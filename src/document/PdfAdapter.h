@@ -34,12 +34,20 @@ class PdfDocument : public IDocument {
     QString filePath() const override;
     QWidget *createView(QWidget *parent) override;
 
+    DocumentType documentType() const override { return DocumentType::Pdf; }
+
     bool supportsZoom() const override { return true; }
     void zoomIn() override;
     void zoomOut() override;
     void zoomActual() override;
     void zoomFitWidth() override;
     void zoomFitPage() override;
+
+    ZoomMode zoomMode() const override;
+    double zoomFactor() const override;
+    void applyZoomState(ZoomMode mode, double factor) override;
+    int scrollY() const override;
+    void applyScrollY(int y) override;
 
     bool supportsViewModes() const override { return true; }
     ViewMode viewMode() const override { return m_viewMode; }

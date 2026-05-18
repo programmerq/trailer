@@ -437,6 +437,70 @@ void PdfDocument::zoomFitPage() {
     m_view->setZoomMode(QPdfView::ZoomMode::FitInView);
 }
 
+ZoomMode PdfDocument::zoomMode() const {
+    if (!m_view)
+        return ZoomMode::Custom;
+    switch (m_view->zoomMode()) {
+    case QPdfView::ZoomMode::FitInView:
+        return ZoomMode::FitInView;
+    case QPdfView::ZoomMode::FitToWidth:
+        return ZoomMode::FitToWidth;
+    case QPdfView::ZoomMode::Custom:
+        break;
+    }
+    // QPdfView treats "actual size" as a custom zoom of 1.0. We report
+    // it separately so the persistence layer can preserve the user's
+    // intent (⌘0 vs an exact 100% custom factor) — they're identical
+    // mechanically but the user thinks of them differently.
+    if (qFuzzyCompare(m_view->zoomFactor(), 1.0))
+        return ZoomMode::Actual;
+    return ZoomMode::Custom;
+}
+
+double PdfDocument::zoomFactor() const {
+    return m_view ? m_view->zoomFactor() : 1.0;
+}
+
+void PdfDocument::applyZoomState(ZoomMode mode, double factor) {
+    if (!m_view)
+        return;
+    switch (mode) {
+    case ZoomMode::FitInView:
+        m_view->setZoomMode(QPdfView::ZoomMode::FitInView);
+        return;
+    case ZoomMode::FitToWidth:
+        m_view->setZoomMode(QPdfView::ZoomMode::FitToWidth);
+        return;
+    case ZoomMode::Actual:
+        applyZoomFactor(1.0);
+        return;
+    case ZoomMode::Custom:
+        if (factor > 0.0)
+            applyZoomFactor(factor);
+        return;
+    }
+}
+
+int PdfDocument::scrollY() const {
+    if (!m_view)
+        return 0;
+    return m_view->verticalScrollBar()->value();
+}
+
+void PdfDocument::applyScrollY(int y) {
+    if (!m_view)
+        return;
+    auto *bar = m_view->verticalScrollBar();
+    if (!bar)
+        return;
+    // Clamp to the bar's range — a saved scroll position from a doc
+    // that has since been edited (pages removed, zoom changed) may
+    // exceed the new maximum. Falling back to the closest valid
+    // value is friendlier than landing at 0.
+    const int clamped = std::clamp(y, bar->minimum(), bar->maximum());
+    bar->setValue(clamped);
+}
+
 QImage PdfDocument::renderThumbnail(int pageIndex, QSize targetSize) {
     if (!m_valid || pageIndex < 0 || pageIndex >= m_doc->pageCount()) {
         return {};
