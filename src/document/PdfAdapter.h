@@ -5,6 +5,7 @@
 #include "PdfCommands.h"
 #include "PdfEditor.h"
 #include "annotation/AnnotationStore.h"
+#include "util/TempPath.h"
 
 #include <QPointer>
 #include <QString>
@@ -12,8 +13,6 @@
 #include <functional>
 #include <memory>
 #include <optional>
-
-class QTemporaryFile;
 
 class QPdfDocument;
 class QPdfSearchModel;
@@ -184,7 +183,7 @@ class PdfDocument : public IDocument {
     mutable std::unique_ptr<QPdfBookmarkModel> m_bookmarkModel;
     mutable std::unique_ptr<QIdentityProxyModel> m_outlineProxy;
     std::unique_ptr<PdfEditor> m_editor;
-    std::unique_ptr<QTemporaryFile> m_previewFile;
+    std::unique_ptr<ScopedTempFile> m_previewFile;
     QPointer<QPdfView> m_view;
     QPointer<AnnotationOverlay> m_overlay;
     QPointer<FormOverlay> m_formOverlay;

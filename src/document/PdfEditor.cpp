@@ -15,7 +15,8 @@
 #include <QImage>
 #include <QPainter>
 #include <QPdfDocument>
-#include <QTemporaryFile>
+
+#include "util/TempPath.h"
 
 #include <algorithm>
 #include <cstdio>
@@ -890,14 +891,13 @@ bool PdfEditor::applyRedactions(const std::vector<Annotation> &annotations) {
 
     // Write the current editor state to a temp file so QPdfDocument can
     // render it. Qt's QPdfDocument is file-backed; it doesn't accept
-    // qpdf's in-memory graph directly. Using a QTemporaryFile with
-    // RAII cleanup is safer than managing a path by hand.
-    QTemporaryFile snapshot(QDir::tempPath() + QStringLiteral("/trailer-redact-XXXXXX.pdf"));
-    snapshot.setAutoRemove(true);
-    if (!snapshot.open())
+    // qpdf's in-memory graph directly. ScopedTempFile (not QTemporaryFile)
+    // because the latter holds the OS handle past close() on Windows,
+    // which makes qpdf's subsequent fopen("wb") fail with EACCES.
+    ScopedTempFile snapshot(QStringLiteral("trailer-redact-XXXXXX.pdf"));
+    if (!snapshot.isValid())
         return false;
-    const QString snapshotPath = snapshot.fileName();
-    snapshot.close();
+    const QString snapshotPath = snapshot.path();
     try {
         QPDFWriter writer(*m_qpdf, snapshotPath.toLocal8Bit().constData());
         writer.setStaticID(false);

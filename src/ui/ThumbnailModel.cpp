@@ -10,7 +10,7 @@
 #include <QMimeData>
 #include <QPixmap>
 #include <QScreen>
-#include <QTemporaryFile>
+#include "util/TempPath.h"
 #include <QUrl>
 
 #include <cmath>
@@ -75,12 +75,13 @@ QMimeData *ThumbnailModel::mimeData(const QModelIndexList &indexes) const {
     if (m_doc && !rows.empty() && m_doc->supportsEditing()) {
         const QString base = QFileInfo(m_doc->filePath()).completeBaseName();
         const QString hint = base.isEmpty() ? QStringLiteral("pages") : base;
-        QTemporaryFile tmp(QDir::tempPath() + QStringLiteral("/") + hint +
-                           QStringLiteral("-XXXXXX.pdf"));
-        tmp.setAutoRemove(false);
-        if (tmp.open()) {
-            const QString path = tmp.fileName();
-            tmp.close();
+        // makeUniqueTempPath (not QTemporaryFile) so qpdf can open the
+        // path for writing on Windows. The caller of mimeData() —
+        // typically a Qt drag-out target — takes ownership of the file
+        // we hand off via setUrls; we only remove on the extract
+        // failure path. See util/TempPath.h.
+        const QString path = makeUniqueTempPath(hint + QStringLiteral("-XXXXXX.pdf"));
+        if (!path.isEmpty()) {
             if (m_doc->extractPages(rows, path)) {
                 data->setUrls({QUrl::fromLocalFile(path)});
             } else {
