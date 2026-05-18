@@ -3,6 +3,22 @@
 # `ctest` run (which is `ctest -LE uat` in CI) skips them. Invoke
 # explicitly with `ctest -L uat` locally or via scripts/run-uat.sh.
 
+# Per-test environment. On Windows the `offscreen` Qt platform plugin
+# does not enumerate fonts through GDI the way the `windows` plugin
+# does, so without QT_QPA_FONTDIR pointing at the system font dir Qt
+# falls back to drawing text as filled vector paths. That looks fine on
+# screen but produces PDFs with no Tj operators and no /ToUnicode CMap
+# — searchable-text UATs (UAT-VWR-061..066) all fail because there is
+# nothing to find. Pointing at C:\Windows\Fonts gives QPdfWriter access
+# to Arial etc. and the resulting PDF has real PDF fonts. The variable
+# is harmless on Linux/macOS (their offscreen plugin uses fontconfig).
+set(_trailer_uat_env "QT_QPA_PLATFORM=offscreen")
+if(WIN32)
+    # CMake's ENVIRONMENT property is a ;-separated list; CMake will
+    # split on the embedded ; so we quote the value separately.
+    list(APPEND _trailer_uat_env "QT_QPA_FONTDIR=$ENV{SystemRoot}/Fonts")
+endif()
+
 function(trailer_add_uat_test name source)
     qt_add_executable(${name} ${source})
     target_link_libraries(${name} PRIVATE trailer_core Qt6::Test)
@@ -10,7 +26,7 @@ function(trailer_add_uat_test name source)
     add_test(NAME ${name} COMMAND ${name})
     set_tests_properties(${name} PROPERTIES
         LABELS "uat"
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        ENVIRONMENT "${_trailer_uat_env}"
     )
 endfunction()
 

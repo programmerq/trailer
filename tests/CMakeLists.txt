@@ -1,8 +1,21 @@
+# On Windows, unit tests that exercise QPdfWriter (test_adapters,
+# test_pdf_editor, …) need access to a font directory or Qt renders
+# text as filled vector paths instead of real PDF text. See the longer
+# explanation in tests/uat/CMakeLists.txt. The variable is harmless on
+# other platforms.
+set(_trailer_unit_env "")
+if(WIN32)
+    list(APPEND _trailer_unit_env "QT_QPA_FONTDIR=$ENV{SystemRoot}/Fonts")
+endif()
+
 function(trailer_add_test name source)
     qt_add_executable(${name} ${source})
     target_link_libraries(${name} PRIVATE trailer_core Qt6::Test)
     trailer_set_warnings(${name})
     add_test(NAME ${name} COMMAND ${name})
+    if(_trailer_unit_env)
+        set_tests_properties(${name} PROPERTIES ENVIRONMENT "${_trailer_unit_env}")
+    endif()
 endfunction()
 
 trailer_add_test(test_settings   test_settings.cpp)
