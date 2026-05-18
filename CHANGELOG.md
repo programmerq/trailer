@@ -16,13 +16,27 @@ entries terse and user-visible; CI / infrastructure churn lives in the
 
 ### Added
 
-- _Track features here as they land on `main` between releases._
+- **PDF page-op undo.** `Delete Pages`, `Move Page`, `Insert
+  Pages from File…`, and `Crop Pages…` are now undoable via the
+  existing `PdfCommand` stack. A single user gesture that affects
+  N pages (e.g. cropping a multi-selection) produces ONE command,
+  so one Ctrl-Z reverts the whole batch atomically.
 
 ### Changed
 
 ### Fixed
 
 ### Infrastructure
+
+- **Release tooling.** New `scripts/bump-version.sh` (VERSION-file
+  lifecycle), `scripts/release-notes.sh` (git-log → CHANGELOG
+  draft), `scripts/extract-changelog.sh` (CHANGELOG section →
+  GitHub Release body). `release-publish.yml` now splices the
+  CHANGELOG section for the tagged version into the release body.
+  `RELEASING.md` documents the cut-a-release runbook.
+- **README** refreshed: dropped the stale "Phase 0" framing,
+  reframed macOS unsigned-ness as project policy rather than a
+  follow-up, marked Intel-Mac support as in-scope future work.
 
 ## [0.1.0] - 2026-05-16
 
