@@ -106,6 +106,8 @@ set(TRAILER_SOURCES
     src/recent/RecentFiles.h
     src/settings/AppPaths.cpp
     src/settings/AppPaths.h
+    src/settings/DocumentTypeDefaults.cpp
+    src/settings/DocumentTypeDefaults.h
     src/settings/Settings.cpp
     src/settings/Settings.h
     src/signatures/Signature.h

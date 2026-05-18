@@ -3,6 +3,7 @@
 #include "ThumbnailModel.h"
 #include "annotation/AnnotationStore.h"
 #include "document/IDocument.h"
+#include "recent/RecentFiles.h"
 
 #include <QAbstractItemModel>
 #include <QDropEvent>
@@ -25,6 +26,24 @@
 #include <functional>
 
 namespace trailer {
+
+// Ensure the lightweight SidebarMode enum kept in recent/RecentFiles.h
+// stays in lock-step with Sidebar::Mode. Whenever a new mode is added
+// either side, this assert fires so the layering boundary is preserved
+// without recent/ having to pull in QtWidgets.
+static_assert(static_cast<int>(SidebarMode::Hidden) == static_cast<int>(Sidebar::Mode::Hidden),
+              "SidebarMode and Sidebar::Mode out of sync");
+static_assert(static_cast<int>(SidebarMode::Pages) == static_cast<int>(Sidebar::Mode::Pages),
+              "SidebarMode and Sidebar::Mode out of sync");
+static_assert(static_cast<int>(SidebarMode::SearchResults) ==
+                  static_cast<int>(Sidebar::Mode::SearchResults),
+              "SidebarMode and Sidebar::Mode out of sync");
+static_assert(static_cast<int>(SidebarMode::TableOfContents) ==
+                  static_cast<int>(Sidebar::Mode::TableOfContents),
+              "SidebarMode and Sidebar::Mode out of sync");
+static_assert(static_cast<int>(SidebarMode::HighlightsAndNotes) ==
+                  static_cast<int>(Sidebar::Mode::HighlightsAndNotes),
+              "SidebarMode and Sidebar::Mode out of sync");
 
 namespace {
 
