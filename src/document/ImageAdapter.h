@@ -22,18 +22,14 @@ class AnnotationOverlay;
 
 class ImageDocument : public IDocument {
   public:
-    // Mirrors QPdfView::ZoomMode but lives on the image side, which
-    // otherwise had no concept of "fit" being a persistent mode rather
-    // than a one-shot factor calculation. Re-applied on viewport resize
-    // so Ctrl+0 / Fit Width survive a window resize.
-    enum class FitMode { Custom, FitInView, FitToWidth };
-
     explicit ImageDocument(QString path);
     ~ImageDocument() override;
 
     QString displayName() const override;
     QString filePath() const override;
     QWidget *createView(QWidget *parent) override;
+
+    DocumentType documentType() const override { return DocumentType::Image; }
 
     bool supportsZoom() const override { return !m_animated && !m_image.isNull(); }
     void zoomIn() override;
@@ -44,6 +40,12 @@ class ImageDocument : public IDocument {
     QSize contentSizeHint() const override {
         return m_image.isNull() ? QSize{} : m_image.size();
     }
+
+    ZoomMode zoomMode() const override { return m_zoomMode; }
+    double zoomFactor() const override { return m_scale; }
+    void applyZoomState(ZoomMode mode, double factor) override;
+    int scrollY() const override;
+    void applyScrollY(int y) override;
 
     bool supportsPrint() const override { return !m_image.isNull(); }
     void print(QWidget *dialogParent) override;
@@ -91,11 +93,10 @@ class ImageDocument : public IDocument {
     void setAnimationPlaying(bool playing) override;
 
     // Test hook + resize callback. Reapplies the currently-active fit
-    // mode (no-op for FitMode::Custom). Used internally by the view's
-    // resize watcher; tests can call it directly to simulate a resize
-    // without needing a real Qt widget hierarchy.
+    // mode (no-op for ZoomMode::Custom / Actual). Used internally by
+    // the view's resize watcher; tests can call it directly to
+    // simulate a resize without needing a real Qt widget hierarchy.
     void reapplyFitMode();
-    FitMode fitMode() const { return m_fitMode; }
     double scaleFactor() const { return m_scale; }
 
   private:
@@ -128,7 +129,16 @@ class ImageDocument : public IDocument {
     std::vector<QImage> m_undoStack;
     std::vector<QImage> m_redoStack;
     double m_scale = 1.0;
-    FitMode m_fitMode = FitMode::Custom;
+    // Tracks the user's intent (Fit-page, Fit-width, Actual, custom
+    // factor) so the persistence layer can round-trip the mode and
+    // the resize watcher can re-fit on viewport changes. The image
+    // adapter has no Qt-level mode — the scale is the source of truth
+    // at render time — but storing the intent is what makes Ctrl+0
+    // survive a window resize and per-file/type defaults work. Default
+    // Custom (factor 1.0) for freshly-constructed docs that haven't
+    // been shown yet; applyInitialFitZoom flips it to FitInView once
+    // the view widget exists.
+    ZoomMode m_zoomMode = ZoomMode::Custom;
     int m_frameCount = 0;
     bool m_animated = false;
     bool m_dirty = false;

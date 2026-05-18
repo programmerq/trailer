@@ -2270,26 +2270,76 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // their card even without a PDF open.
     m_myCardAction->setEnabled(true);
 
-    // Restore the user's last-known view-state (currently just
-    // currentPage; zoom/scroll/sidebar are tracked in RecentFiles
-    // for future expansion). One-shot per document — switching
-    // tabs after manual navigation must not bounce back to the
-    // saved page.
+    // Restore view-state in priority order (Workstream I):
+    //   1. Per-file: the RecentEntry for this exact path, if it has
+    //      captured state — zoom, scroll, page, sidebar mode,
+    //      markup-toolbar visibility, window geometry/state.
+    //   2. Per-type: the last-closed defaults for this document's
+    //      type (PDF / Image). Applied only when there's no per-file
+    //      state and the doc has a recognised type.
+    //   3. Otherwise: leave the constructor / hardcoded defaults in
+    //      place. The hardcoded defaults are owned by Workstream A
+    //      (fit-to-content / sidebar hidden / markup-toolbar hidden);
+    //      this path just falls through to whatever they end up being.
+    //
+    // One-shot per document — switching tabs after manual navigation
+    // must not bounce back to the saved page.
     if (doc && !doc->filePath().isEmpty() && !m_restoredViewStateDocs.contains(doc)) {
         m_restoredViewStateDocs.insert(doc);
         const RecentEntry entry = m_app->recentFiles().findByPath(doc->filePath());
-        if (entry.currentPage >= 0 && doc->pageCount() > entry.currentPage) {
-            doc->goToPage(entry.currentPage);
+        if (!entry.path.isEmpty() && entry.hasViewState()) {
+            if (entry.currentPage >= 0 && doc->pageCount() > entry.currentPage) {
+                doc->goToPage(entry.currentPage);
+            }
+            doc->applyZoomState(entry.zoomMode, entry.zoomFactor);
+            if (entry.scrollY != 0) {
+                doc->applyScrollY(entry.scrollY);
+            }
+            m_sidebar->setMode(static_cast<Sidebar::Mode>(static_cast<int>(entry.sidebarMode)));
+            // Apply window-level layout first — restoreState() walks
+            // every dock/toolbar this MainWindow owns and sets its
+            // visibility from the blob, so the explicit show()/hide()
+            // calls below need to land *after* it to win.
+            if (!entry.windowGeometry.isEmpty()) {
+                restoreGeometry(entry.windowGeometry);
+            }
+            if (!entry.windowState.isEmpty()) {
+                restoreState(entry.windowState);
+            }
+            if (entry.markupToolbarVisible) {
+                m_markupToolbar->show();
+            } else {
+                m_markupToolbar->hide();
+            }
+        } else if (doc->documentType() != DocumentType::Unknown) {
+            // Per-type fallback: apply the last-closed defaults for
+            // this document's type, if any.
+            const DocumentTypeDefault def =
+                m_app->documentTypeDefaults().forType(doc->documentType());
+            if (def.hasState()) {
+                doc->applyZoomState(def.zoomMode, def.zoomFactor);
+                m_sidebar->setMode(
+                    static_cast<Sidebar::Mode>(static_cast<int>(def.sidebarMode)));
+                if (!def.windowGeometry.isEmpty()) {
+                    restoreGeometry(def.windowGeometry);
+                }
+                if (!def.windowState.isEmpty()) {
+                    restoreState(def.windowState);
+                }
+                if (def.markupToolbarVisible) {
+                    m_markupToolbar->show();
+                } else {
+                    m_markupToolbar->hide();
+                }
+            }
         }
     }
 
     // Markup toolbar is hidden by default — the user surfaces it via
     // View → Toggle Markup Toolbar (Ctrl+Shift+A) or the toolbar
-    // toggle on the main toolbar. The auto-show heuristic that used
-    // to flip it on the first time a markup-capable doc became
-    // current was loud chrome for a document-first workflow; the
-    // per-file / per-type memory work in workstream I will let the
-    // toolbar remember the user's preference instead.
+    // toggle on the main toolbar. Per-file / per-type state above
+    // restores the user's last-known preference; otherwise the
+    // toolbar stays hidden (document-first workflow).
     const bool canAnnotate = doc && doc->annotations() != nullptr;
 
     // Select All is available whenever there is an annotation store
@@ -2620,6 +2670,10 @@ int MainWindow::documentCount() const {
     return m_documentView->documentCount();
 }
 
+int MainWindow::documentAt(int index, IDocument **out) const {
+    return m_documentView->documentAt(index, out);
+}
+
 void MainWindow::dragEnterEvent(QDragEnterEvent *event) {
     if (event->mimeData()->hasUrls()) {
         event->acceptProposedAction();
@@ -2713,23 +2767,56 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     // user picks up where they left off on next reopen. We do this
     // before the save-prompt below — even if the user discards
     // unsaved annotations, the page they were looking at is worth
-    // remembering. Sidebar visibility is per-window, so it gets
-    // the same value for every doc.
-    const bool sidebarVisible = m_sidebar && m_sidebar->isVisible();
+    // remembering. Sidebar / markup-toolbar visibility, window
+    // geometry, and dock layout are per-window, so they get the same
+    // value for every doc in this frame.
+    const SidebarMode currentSidebar =
+        m_sidebar && m_sidebar->isVisible()
+            ? static_cast<SidebarMode>(static_cast<int>(m_sidebar->mode()))
+            : SidebarMode::Hidden;
+    const bool markupVisible = m_markupToolbar && m_markupToolbar->isVisible();
+    const QByteArray geometry = saveGeometry();
+    const QByteArray winState = saveState();
     const int total = m_documentView->documentCount();
     bool anyCaptured = false;
+    DocumentType lastCapturedType = DocumentType::Unknown;
+    DocumentTypeDefault typeSnapshot;
     for (int i = 0; i < total; ++i) {
         IDocument *doc = nullptr;
         if (!m_documentView->documentAt(i, &doc) || !doc)
             continue;
         if (doc->filePath().isEmpty())
             continue;
-        m_app->recentFiles().updateViewState(doc->filePath(), doc->currentPage(),
-                                             /*zoomFactor=*/0.0, /*scrollY=*/0, sidebarVisible);
+        RecentEntry state;
+        state.currentPage = doc->currentPage();
+        state.zoomFactor = doc->zoomFactor();
+        state.scrollY = doc->scrollY();
+        state.zoomMode = doc->zoomMode();
+        state.sidebarMode = currentSidebar;
+        state.markupToolbarVisible = markupVisible;
+        state.windowGeometry = geometry;
+        state.windowState = winState;
+        m_app->recentFiles().updateViewState(doc->filePath(), state);
         anyCaptured = true;
+        // Capture a snapshot for the per-type defaults too. Last-
+        // closed-of-type wins; the loop overwrites typeSnapshot
+        // each iteration so the final doc's state is what lands.
+        if (doc->documentType() != DocumentType::Unknown) {
+            lastCapturedType = doc->documentType();
+            typeSnapshot.zoomMode = state.zoomMode;
+            typeSnapshot.zoomFactor = state.zoomFactor;
+            typeSnapshot.sidebarMode = state.sidebarMode;
+            typeSnapshot.markupToolbarVisible = state.markupToolbarVisible;
+            typeSnapshot.windowGeometry = state.windowGeometry;
+            typeSnapshot.windowState = state.windowState;
+        }
     }
     if (anyCaptured)
         m_app->recentFiles().save();
+    if (lastCapturedType != DocumentType::Unknown) {
+        m_app->documentTypeDefaults().setForType(lastCapturedType, typeSnapshot);
+        m_app->documentTypeDefaults().save();
+    }
 
     // Headless / test environments (QT_QPA_PLATFORM=offscreen) skip
     // the unsaved-changes prompt: there's no human to click through

@@ -22,6 +22,7 @@
 #include <QResizeEvent>
 #include <QRect>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QTimer>
 #include <QTransform>
 
@@ -317,34 +318,34 @@ void ImageDocument::zoomIn() {
     // Any explicit zoom step puts the document back into Custom mode —
     // the user is asking for a specific factor, not "track the
     // viewport". Mirrors PdfDocument::applyZoomFactor's behaviour.
-    m_fitMode = FitMode::Custom;
+    m_zoomMode = ZoomMode::Custom;
     applyScale(m_scale * kZoomStep);
 }
 
 void ImageDocument::zoomOut() {
-    m_fitMode = FitMode::Custom;
+    m_zoomMode = ZoomMode::Custom;
     applyScale(m_scale / kZoomStep);
 }
 
 void ImageDocument::zoomActual() {
-    m_fitMode = FitMode::Custom;
+    m_zoomMode = ZoomMode::Actual;
     applyScale(1.0);
 }
 
 void ImageDocument::zoomFitWidth() {
-    m_fitMode = FitMode::FitToWidth;
+    m_zoomMode = ZoomMode::FitToWidth;
     reapplyFitMode();
 }
 
 void ImageDocument::zoomFitPage() {
-    m_fitMode = FitMode::FitInView;
+    m_zoomMode = ZoomMode::FitInView;
     reapplyFitMode();
 }
 
 void ImageDocument::reapplyFitMode() {
-    // No-op for Custom — the user has set an explicit scale factor and
-    // doesn't want it to track viewport size.
-    if (m_fitMode == FitMode::Custom)
+    // No-op for non-fit modes — the user has set an explicit scale
+    // factor (Custom/Actual) and doesn't want it to track viewport size.
+    if (m_zoomMode != ZoomMode::FitInView && m_zoomMode != ZoomMode::FitToWidth)
         return;
     if (!m_scroll || !m_label || m_image.isNull())
         return;
@@ -352,7 +353,7 @@ void ImageDocument::reapplyFitMode() {
     const int availH = m_scroll->viewport()->height();
     if (availW <= 0 || m_image.width() <= 0)
         return;
-    if (m_fitMode == FitMode::FitToWidth) {
+    if (m_zoomMode == ZoomMode::FitToWidth) {
         applyScale(static_cast<double>(availW) / static_cast<double>(m_image.width()));
         return;
     }
@@ -436,9 +437,47 @@ void ImageDocument::applyInitialFitZoom() {
     // Cap at 100%: a 200×100 thumbnail shouldn't blow up to fill the
     // window. Larger images shrink to fit instead.
     applyScale(std::min(1.0, fit));
-    // The user explicitly asked for fit-to-content as the open default,
-    // so park the mode there too. Subsequent window resizes will refit.
-    m_fitMode = FitMode::FitInView;
+    // Park the mode at FitInView so subsequent window resizes refit
+    // (the watcher above calls reapplyFitMode on each viewport resize).
+    m_zoomMode = ZoomMode::FitInView;
+}
+
+void ImageDocument::applyZoomState(ZoomMode mode, double factor) {
+    switch (mode) {
+    case ZoomMode::FitInView:
+        zoomFitPage();
+        return;
+    case ZoomMode::FitToWidth:
+        zoomFitWidth();
+        return;
+    case ZoomMode::Actual:
+        zoomActual();
+        return;
+    case ZoomMode::Custom:
+        if (factor > 0.0) {
+            m_zoomMode = ZoomMode::Custom;
+            applyScale(factor);
+        }
+        return;
+    }
+}
+
+int ImageDocument::scrollY() const {
+    if (!m_scroll)
+        return 0;
+    if (auto *bar = m_scroll->verticalScrollBar())
+        return bar->value();
+    return 0;
+}
+
+void ImageDocument::applyScrollY(int y) {
+    if (!m_scroll)
+        return;
+    auto *bar = m_scroll->verticalScrollBar();
+    if (!bar)
+        return;
+    const int clamped = std::clamp(y, bar->minimum(), bar->maximum());
+    bar->setValue(clamped);
 }
 
 void ImageDocument::refreshView() {

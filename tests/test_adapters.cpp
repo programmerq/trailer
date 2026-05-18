@@ -517,7 +517,7 @@ void TestAdapters::imageDocumentFitModeStartsCustom() {
     const QString path = writeTinyPng(dir.filePath("fm.png"), 32, 32);
 
     ImageDocument doc(path);
-    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::Custom);
+    QCOMPARE(doc.zoomMode(), ZoomMode::Custom);
 }
 
 void TestAdapters::imageDocumentZoomFitPageEntersFitInViewMode() {
@@ -535,7 +535,7 @@ void TestAdapters::imageDocumentZoomFitPageEntersFitInViewMode() {
     scroll->viewport()->resize(400, 200);
 
     doc.zoomFitPage();
-    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::FitInView);
+    QCOMPARE(doc.zoomMode(), ZoomMode::FitInView);
     // 100×50 inside a 400×200 viewport: width is the tighter dimension
     // (200/50 = 4, 400/100 = 4 — equal). Scale should be 4.
     QVERIFY(qFuzzyCompare(doc.scaleFactor(), 4.0));
@@ -554,7 +554,7 @@ void TestAdapters::imageDocumentZoomFitWidthEntersFitToWidthMode() {
     scroll->viewport()->resize(500, 100);
 
     doc.zoomFitWidth();
-    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::FitToWidth);
+    QCOMPARE(doc.zoomMode(), ZoomMode::FitToWidth);
     // 50px wide image filling a 500px viewport → scale 10.
     QVERIFY(qFuzzyCompare(doc.scaleFactor(), 10.0));
 }
@@ -572,20 +572,23 @@ void TestAdapters::imageDocumentExplicitZoomReturnsToCustomMode() {
     scroll->viewport()->resize(200, 200);
 
     doc.zoomFitPage();
-    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::FitInView);
+    QCOMPARE(doc.zoomMode(), ZoomMode::FitInView);
 
     doc.zoomIn();
-    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::Custom);
+    QCOMPARE(doc.zoomMode(), ZoomMode::Custom);
 
     doc.zoomFitWidth();
-    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::FitToWidth);
+    QCOMPARE(doc.zoomMode(), ZoomMode::FitToWidth);
 
     doc.zoomOut();
-    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::Custom);
+    QCOMPARE(doc.zoomMode(), ZoomMode::Custom);
 
     doc.zoomFitPage();
     doc.zoomActual();
-    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::Custom);
+    // zoomActual() reports the Actual mode rather than Custom — the
+    // user expressed "100%" as an intent, distinct from "I picked
+    // a custom factor that happens to be 1.0" (which Custom captures).
+    QCOMPARE(doc.zoomMode(), ZoomMode::Actual);
 }
 
 void TestAdapters::imageDocumentReapplyFitModeRefitsOnResize() {
@@ -761,7 +764,7 @@ void TestAdapters::imageDocumentResizeDoesNothingInCustomMode() {
     scroll->viewport()->resize(200, 200);
 
     doc.zoomIn();
-    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::Custom);
+    QCOMPARE(doc.zoomMode(), ZoomMode::Custom);
     const double scaleBefore = doc.scaleFactor();
 
     // Custom mode should NOT track viewport changes — the user's

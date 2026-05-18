@@ -36,6 +36,11 @@ class MainWindow : public QMainWindow {
 
     void addDocument(std::unique_ptr<IDocument> document);
     int documentCount() const;
+    // Pass-through to DocumentView::documentAt. Returns 1 on success
+    // and writes the document pointer through `out`; returns 0 with
+    // `*out = nullptr` on out-of-range or missing widget. Used by
+    // Application::onAboutToQuit to enumerate open paths.
+    int documentAt(int index, IDocument **out) const;
 
     // Lightweight status-bar feedback. Replaces operation-failure
     // QMessageBox::warning calls so the user is not punched in the

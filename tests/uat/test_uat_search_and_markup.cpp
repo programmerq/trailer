@@ -19,6 +19,8 @@
 #include "annotation/AnnotationStore.h"
 #include "app/Application.h"
 #include "document/IDocument.h"
+#include "recent/RecentFiles.h"
+#include "settings/DocumentTypeDefaults.h"
 #include "ui/AnnotationOverlay.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
@@ -320,6 +322,16 @@ void TestUatSearchAndMarkup::init() {
             w->close();
     }
     QApplication::processEvents();
+    // Reset persisted state so per-test "default open" assertions
+    // aren't poisoned by prior tests that closed docs with chrome
+    // showing. DocumentTypeDefaults' last-closed-wins behaviour is the
+    // production contract; the harness opts each case in explicitly by
+    // starting from a clean slate here.
+    if (auto *app = qobject_cast<Application *>(qApp)) {
+        app->recentFiles().clear();
+        app->documentTypeDefaults().setForType(DocumentType::Pdf, {});
+        app->documentTypeDefaults().setForType(DocumentType::Image, {});
+    }
 }
 
 // UAT-VWR-061 — Find matches in a PDF.
