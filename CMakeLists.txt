@@ -271,5 +271,15 @@ qt_add_executable(generate_icon_sheet tools/generate_icon_sheet.cpp)
 target_link_libraries(generate_icon_sheet PRIVATE trailer_core)
 trailer_set_warnings(generate_icon_sheet)
 
+# grab_screenshots — drives Application + MainWindow under the
+# offscreen plugin to write reference PNGs into docs/screenshots/.
+# Used to keep the Windows docs (and PR bodies for UI-visible work)
+# stocked without needing a real desktop session. Builds alongside
+# everything else so it doesn't bit-rot when the MainWindow API
+# evolves.
+qt_add_executable(grab_screenshots tools/grab_screenshots.cpp)
+target_link_libraries(grab_screenshots PRIVATE trailer_core)
+trailer_set_warnings(grab_screenshots)
+
 enable_testing()
 add_subdirectory(tests)

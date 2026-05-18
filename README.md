@@ -47,67 +47,96 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRAILER_WERROR=ON
 `brew install qpdf pkg-config`. Point CMake at the Qt install with
 `-DCMAKE_PREFIX_PATH=$(brew --prefix qt)` if it isn't auto-detected.
 
-**Windows.** The instructions below avoid the Qt online installer
-(which requires a free Qt Account). Both Qt 6 and qpdf are installed
-from source via [vcpkg](https://vcpkg.io). Run everything from a
-**Developer Command Prompt for VS 2022** so the MSVC toolchain is on
-`PATH`.
+**Windows.** Native MSVC build. Avoids both the Qt online installer
+(needs a free Qt Account) and the vcpkg Qt source build (one-to-three
+hours). Instead: `aqtinstall` for Qt's prebuilt MSVC binaries, the
+official qpdf MSVC prebuilt zip from GitHub.
 
-1. Install prerequisites:
-   - Visual Studio 2022 with the "Desktop development with C++"
-     workload (MSVC, Windows SDK, CMake).
-   - [Git for Windows](https://git-scm.com/download/win).
+**One-shot path** (does everything below + builds + tests):
 
-2. Install vcpkg (once per machine):
+```powershell
+scripts/install-windows-deps.ps1   # one-time, ~1 min
+scripts/build-windows-native.ps1   # build + unit tests
+scripts/build-windows-native.ps1 -RunUat   # build + unit + UAT
+```
 
-   ```bat
-   git clone https://github.com/microsoft/vcpkg.git C:\vcpkg
-   C:\vcpkg\bootstrap-vcpkg.bat
+Or via the Makefile from Git Bash / a Developer Command Prompt:
+
+```sh
+make install-windows-deps
+make test           # build + unit tests
+make test-uat       # build + unit + UAT
+```
+
+**Manual / step-by-step:**
+
+1. Install system prerequisites (one-time):
+   - **Visual Studio 2022** with the "Desktop development with C++"
+     workload (MSVC, Windows SDK).
+   - **CMake 3.24+** ([cmake.org](https://cmake.org/download/) or
+     `choco install cmake`).
+   - **Ninja** (`choco install ninja` or `winget install Ninja-build.Ninja`).
+   - **Python 3.9+** ([python.org](https://www.python.org/downloads/)
+     or `winget install Python.Python.3.12`) — only needed for the
+     `aqtinstall` step.
+   - **Git for Windows** ([git-scm.com](https://git-scm.com/download/win)).
+
+2. Install Qt and qpdf into a deps directory (default
+   `%USERPROFILE%\trailer-deps`):
+
+   ```powershell
+   scripts/install-windows-deps.ps1
+   # or override the install root:
+   scripts/install-windows-deps.ps1 -InstallRoot D:\trailer-deps
    ```
 
-3. Build Qt 6 + qpdf from source via vcpkg. **This is slow** — the
-   first Qt build takes roughly one to three hours depending on the
-   machine; subsequent Trailer configures are cheap because vcpkg
-   caches the result.
+   That fetches:
+   - Qt 6.10.3 `win64_msvc2022_64` + `qtpdf` module via `aqtinstall`.
+   - qpdf 12.3.2 MSVC 64-bit prebuilt from `github.com/qpdf/qpdf`.
 
-   ```bat
-   C:\vcpkg\vcpkg install ^
-       qtbase:x64-windows ^
-       qtpdf:x64-windows ^
-       qttools:x64-windows ^
-       qpdf:x64-windows
+   Qt 6.10.3 (not 6.11.x) because aqtinstall 3.3.0 doesn't yet
+   handle the toolchain-suffixed directory layout Qt 6.11+ uses on
+   `download.qt.io`. Linux/macOS CI is on 6.11.0; Windows is on
+   6.10.3 until aqt gains 6.11 support. The CMake floor is 6.5.
+
+3. Build + test:
+
+   ```powershell
+   scripts/build-windows-native.ps1
    ```
 
-4. Configure and build Trailer, pointing CMake at the vcpkg toolchain:
+   The wrapper auto-detects the deps from the install step (or set
+   `$env:TRAILER_DEPS` to point elsewhere). It enters the MSVC dev
+   shell, configures CMake with the right `CMAKE_PREFIX_PATH`, builds,
+   then runs `ctest -LE uat`. Pass `-RunUat` to also run the UAT
+   label. Pass `-Werror` to flip `TRAILER_WERROR=ON`.
+
+4. To do the same by hand (without the wrapper), open a **Developer
+   Command Prompt for VS 2022** and run:
 
    ```bat
-   cmake -S . -B build ^
-       -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake ^
-       -DVCPKG_TARGET_TRIPLET=x64-windows ^
-       -DCMAKE_BUILD_TYPE=Release
+   set DEPS=%USERPROFILE%\trailer-deps
+   cmake -S . -B build -G Ninja ^
+       -DCMAKE_BUILD_TYPE=Release ^
+       -DCMAKE_PREFIX_PATH=%DEPS%\Qt\6.10.3\msvc2022_64;%DEPS%\qpdf
    cmake --build build --config Release --parallel
+   set PATH=%DEPS%\Qt\6.10.3\msvc2022_64\bin;%DEPS%\qpdf\bin;%PATH%
+   set QT_QPA_PLATFORM=offscreen
+   set QT_QPA_FONTDIR=%SystemRoot%\Fonts
+   cd build && ctest -C Release --output-on-failure --label-exclude uat
    ```
 
-*Faster alternative — prebuilt Qt without the installer.* If the
-vcpkg Qt source build is too slow, grab the prebuilt Qt mirror via
-[`aqtinstall`](https://github.com/miurahr/aqtinstall) (also
-account-free):
-
-```bat
-pip install aqtinstall
-aqt install-qt windows desktop 6.8.0 win64_msvc2022_64 -m qtpdf
-```
-
-Then install only qpdf through vcpkg (step 3 shrinks to
-`vcpkg install qpdf:x64-windows`) and add `CMAKE_PREFIX_PATH` to the
-configure command:
-
-```bat
-cmake -S . -B build ^
-    -DCMAKE_PREFIX_PATH=C:\Qt\6.8.0\msvc2022_64 ^
-    -DCMAKE_TOOLCHAIN_FILE=C:\vcpkg\scripts\buildsystems\vcpkg.cmake ^
-    -DCMAKE_BUILD_TYPE=Release
-```
+*Why `QT_QPA_FONTDIR`?* Under `QT_QPA_PLATFORM=offscreen`, Qt 6 on
+Windows doesn't enumerate fonts through GDI the way the windowed
+plugin does, so `QPdfWriter` falls back to drawing text as filled
+vector paths (no `Tj` operators, no `/ToUnicode` CMap). That looks
+fine on screen but breaks search-related UATs and any test that
+generates searchable PDF fixtures. Pointing at the system fonts
+directory gives Qt access to Arial etc. The variable is harmless on
+Linux/macOS, where the offscreen plugin already routes through
+fontconfig. `tests/CMakeLists.txt` and `tests/uat/CMakeLists.txt`
+set this for you on Windows; you only need to export it manually if
+you run the test binaries directly.
 
 **Linux.** Install Qt via your distribution (`qt6-base-dev` on
 Debian/Ubuntu) or the Qt online installer. Install qpdf and pkg-config via
@@ -120,7 +149,12 @@ lives at [docker/windows/Dockerfile](docker/windows/Dockerfile)
 against the same toolchain). Run `scripts/build-windows.sh` — the
 script builds the image on first use, cross-compiles `trailer.exe`,
 and drops it plus required Qt and runtime DLLs into `build-windows/`.
-Intended for local use; not wired into CI.
+This path is what the release pipeline uses; the native MSVC
+[scripts/build-windows-native.ps1](scripts/build-windows-native.ps1)
+above is the fast-feedback path for developers working on a Windows
+box. PR CI runs both Linux (native) and Windows (native MSVC); the
+release pipeline still cross-compiles Windows via Docker so it can
+run on the same Ubuntu runner as the Linux build.
 
 ## Run
 
@@ -137,8 +171,11 @@ Drag files onto the running window to open them.
 ctest --test-dir build --output-on-failure
 ```
 
-CI runs the build + unit tests on Linux on every push and pull
-request (`.github/workflows/ci.yml`).
+CI runs the build + unit tests on **Linux** (Ubuntu 24.04, GCC) and
+**Windows** (windows-2022, MSVC 2022) on every push and pull request
+(`.github/workflows/ci.yml`). The Linux job uses ccache + mold for
+sub-minute warm builds; the Windows job uses ninja + cl.exe and
+caches the installed Qt via `jurplel/install-qt-action`.
 
 ## Release process
 

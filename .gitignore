@@ -20,3 +20,11 @@ test-*.jpg
 *.pdf
 !resources/**/*.pdf
 tests/data/
+
+# Reference screenshots produced by tools/grab_screenshots. The
+# offscreen Qt platform plugin doesn't emit byte-stable PNGs across
+# runs (ARGB rounding etc.), so committing them creates noisy diffs
+# in unrelated PRs. Regenerate locally with `make screenshots-windows`
+# (or scripts/build-windows-native.ps1 + grab_screenshots) when you
+# want fresh references to drop into a PR body.
+docs/screenshots/

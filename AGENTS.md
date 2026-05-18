@@ -69,6 +69,22 @@ separate module in many Qt distributions — install it explicitly if
 The build treats warnings as errors (`-Werror` / `/WX`). CI will fail on
 any new warning; fix them at the source rather than disabling the flag.
 
+**Windows native.** `scripts/install-windows-deps.ps1` then
+`scripts/build-windows-native.ps1` — full path documented in
+README's "Windows" section. Two Windows-specific gotchas to know
+when touching PDF I/O or UAT code:
+- `QTemporaryFile` keeps the OS handle alive past `close()` on
+  Windows; qpdf's subsequent `fopen("wb")` then fails with
+  `Permission denied`. Use `trailer::ScopedTempFile` /
+  `trailer::makeUniqueTempPath` from `src/util/TempPath.h` for any
+  temp file handed off to a non-Qt writer.
+- Under `QT_QPA_PLATFORM=offscreen`, Qt 6 on Windows has no font
+  directory unless `QT_QPA_FONTDIR=%SystemRoot%\Fonts` is set, so
+  `QPdfWriter` produces unsearchable PDFs (text rendered as filled
+  paths). `tests/CMakeLists.txt` and `tests/uat/CMakeLists.txt` set
+  the env var per-test on Windows; do the same for any new fixture
+  helper that runs outside ctest.
+
 ## Test
 
 Unit + UAT split. Unit tests run on every PR; UAT runs only on tag pushes
