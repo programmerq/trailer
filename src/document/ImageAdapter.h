@@ -33,6 +33,9 @@ class ImageDocument : public IDocument {
     void zoomActual() override;
     void zoomFitWidth() override;
     void zoomFitPage() override;
+    QSize contentSizeHint() const override {
+        return m_image.isNull() ? QSize{} : m_image.size();
+    }
 
     bool supportsPrint() const override { return !m_image.isNull(); }
     void print(QWidget *dialogParent) override;
@@ -83,6 +86,10 @@ class ImageDocument : public IDocument {
     void applyScale(double factor);
     void refreshView();
     void pushUndoSnapshot();
+    // Fit the image into the scroll viewport on first show. Capped at
+    // 100% so small icons don't blow up to fill the window. One-shot
+    // — later opens / re-shows keep whatever scale the user picked.
+    void applyInitialFitZoom();
 
     QString m_path;
     QImage m_image;
@@ -97,6 +104,8 @@ class ImageDocument : public IDocument {
     int m_frameCount = 0;
     bool m_animated = false;
     bool m_dirty = false;
+    // One-shot guard for applyInitialFitZoom.
+    bool m_initialZoomApplied = false;
 };
 
 class ImageAdapter : public IFormatAdapter {

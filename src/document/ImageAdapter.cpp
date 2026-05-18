@@ -20,6 +20,7 @@
 #include <QPrinter>
 #include <QRect>
 #include <QScrollArea>
+#include <QTimer>
 #include <QTransform>
 
 #include <cmath>
@@ -261,6 +262,14 @@ QWidget *ImageDocument::createView(QWidget *parent) {
     m_label = label;
 
     if (!m_animated && !m_image.isNull()) {
+        // Fit-to-content on first show, capped at 100%. Same shape as
+        // PdfDocument's applyInitialFitZoom: schedule on the event
+        // loop so the scroll-area viewport has settled, then either
+        // shrink-to-fit or leave the image at actual size.
+        QTimer::singleShot(0, scroll, [this]() { applyInitialFitZoom(); });
+    }
+
+    if (!m_animated && !m_image.isNull()) {
         auto *overlay = new AnnotationOverlay(label);
         overlay->setStore(&m_annotations);
         overlay->setDocumentToView(
@@ -339,6 +348,30 @@ void ImageDocument::zoomFitPage() {
     const double scaleH =
         static_cast<double>(availH) / static_cast<double>(m_image.height());
     applyScale(std::min(scaleW, scaleH));
+}
+
+void ImageDocument::applyInitialFitZoom() {
+    if (m_initialZoomApplied)
+        return;
+    if (!m_scroll || !m_label || m_image.isNull())
+        return;
+    const int availW = m_scroll->viewport()->width();
+    const int availH = m_scroll->viewport()->height();
+    if (availW <= 0 || availH <= 0 ||
+        m_image.width() <= 0 || m_image.height() <= 0) {
+        // Layout hasn't settled — retry on the next tick.
+        QTimer::singleShot(0, m_scroll, [this]() { applyInitialFitZoom(); });
+        return;
+    }
+    m_initialZoomApplied = true;
+    const double scaleW =
+        static_cast<double>(availW) / static_cast<double>(m_image.width());
+    const double scaleH =
+        static_cast<double>(availH) / static_cast<double>(m_image.height());
+    const double fit = std::min(scaleW, scaleH);
+    // Cap at 100%: a 200×100 thumbnail shouldn't blow up to fill the
+    // window. Larger images shrink to fit instead.
+    applyScale(std::min(1.0, fit));
 }
 
 void ImageDocument::refreshView() {
