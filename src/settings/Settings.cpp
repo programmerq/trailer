@@ -110,6 +110,19 @@ void Settings::load() {
             m_recentMax = static_cast<int>(*v);
         }
     }
+    if (auto *session = tbl["session"].as_table()) {
+        if (auto v = (*session)["restore_previous_windows"].value<bool>()) {
+            m_restorePreviousWindows = *v;
+        }
+        if (auto *arr = (*session)["open_files"].as_array()) {
+            m_sessionOpenFiles.clear();
+            for (const auto &node : *arr) {
+                if (auto v = node.value<std::string>()) {
+                    m_sessionOpenFiles.append(fromStd(*v));
+                }
+            }
+        }
+    }
     // Legacy [redaction] section. Older installs persisted this single
     // first-use flag in its own table; new installs use the unified
     // [first_use] table below. Read both for backwards compatibility,
@@ -142,12 +155,22 @@ void Settings::save() const {
         generalTbl.insert("last_save_dir", toStd(m_lastSaveDir));
     }
 
+    toml::array sessionFiles;
+    for (const QString &p : m_sessionOpenFiles) {
+        sessionFiles.push_back(toStd(p));
+    }
+
     toml::table tbl{
         {"general", std::move(generalTbl)},
         {"files",
          toml::table{
              {"auto_save", m_autoSave},
              {"recent_max", static_cast<int64_t>(m_recentMax)},
+         }},
+        {"session",
+         toml::table{
+             {"restore_previous_windows", m_restorePreviousWindows},
+             {"open_files", std::move(sessionFiles)},
          }},
         {"first_use", std::move(firstUse)},
     };
@@ -180,6 +203,12 @@ void Settings::setRecentMax(int value) {
 }
 void Settings::setLastSaveDir(const QString &value) {
     m_lastSaveDir = value;
+}
+void Settings::setRestorePreviousWindows(bool value) {
+    m_restorePreviousWindows = value;
+}
+void Settings::setSessionOpenFiles(const QStringList &value) {
+    m_sessionOpenFiles = value;
 }
 
 void Settings::setFirstUseAcknowledged(const QString &key, bool value) {

@@ -2,6 +2,7 @@
 
 #include <QHash>
 #include <QString>
+#include <QStringList>
 
 namespace trailer {
 
@@ -36,6 +37,21 @@ class Settings {
 
     int recentMax() const { return m_recentMax; }
     void setRecentMax(int value);
+
+    // When true, Trailer reopens whatever files were open at the time
+    // of the last quit (macOS-style "quit and keep windows" across
+    // every platform). When the user launches Trailer with explicit
+    // file arguments, the session list is ignored — those files
+    // override the persisted set. Default: on.
+    bool restorePreviousWindows() const { return m_restorePreviousWindows; }
+    void setRestorePreviousWindows(bool value);
+
+    // List of file paths that were open at the last aboutToQuit.
+    // Persisted under [session].open_files; the launch path consults
+    // this only when restorePreviousWindows() is true AND no CLI
+    // files were supplied.
+    QStringList sessionOpenFiles() const { return m_sessionOpenFiles; }
+    void setSessionOpenFiles(const QStringList &value);
 
     // Directory the user last saved into. Used to seed Save-As file
     // dialogs so successive saves of related documents land in the
@@ -77,6 +93,11 @@ class Settings {
     OpenFilesIn m_openFilesIn = OpenFilesIn::NewWindow;
     bool m_autoSave = true;
     int m_recentMax = 50;
+    // macOS-style "pick up where you left off" default — on. The
+    // Settings → General preferences UI exposes a checkbox to flip
+    // this; users who prefer a clean launch each time turn it off.
+    bool m_restorePreviousWindows = true;
+    QStringList m_sessionOpenFiles;
     QString m_lastSaveDir;
     QHash<QString, bool> m_firstUseFlags;
 };
