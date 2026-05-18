@@ -66,7 +66,10 @@ $qtVerified = Join-Path $qtTarget "$QtVersion\msvc2022_64\lib\cmake\Qt6\Qt6Confi
 if ($SkipQt) {
     Write-Host "==> Qt: skipped (-SkipQt)" -ForegroundColor Yellow
 } elseif ((Test-Path $qtVerified) -and (-not $Force)) {
-    Write-Host "==> Qt $QtVersion: already installed at $qtTarget\$QtVersion (pass -Force to reinstall)" -ForegroundColor Green
+    # ${var} braces because PowerShell otherwise parses "$QtVersion:"
+    # as a scope reference (like $global:foo) and bails with a parse
+    # error. Same in the Qt-installed message below.
+    Write-Host "==> Qt ${QtVersion}: already installed at ${qtTarget}\${QtVersion} (pass -Force to reinstall)" -ForegroundColor Green
 } else {
     Write-Host "==> Installing Qt $QtVersion ($QtArch) via aqtinstall …" -ForegroundColor Green
 
@@ -88,7 +91,7 @@ if ($SkipQt) {
     if (-not (Test-Path $qtVerified)) {
         Write-Error "Qt install completed but Qt6Config.cmake is missing at $qtVerified."
     }
-    Write-Host "==> Qt $QtVersion installed to $qtTarget\$QtVersion" -ForegroundColor Green
+    Write-Host "==> Qt ${QtVersion} installed to ${qtTarget}\${QtVersion}" -ForegroundColor Green
 }
 
 # --- qpdf --------------------------------------------------------------
@@ -98,9 +101,9 @@ $qpdfVerified = Join-Path $qpdfTarget 'lib\cmake\qpdf\qpdfConfig.cmake'
 if ($SkipQpdf) {
     Write-Host "==> qpdf: skipped (-SkipQpdf)" -ForegroundColor Yellow
 } elseif ((Test-Path $qpdfVerified) -and (-not $Force)) {
-    Write-Host "==> qpdf $QpdfVersion: already installed at $qpdfTarget (pass -Force to reinstall)" -ForegroundColor Green
+    Write-Host "==> qpdf ${QpdfVersion}: already installed at ${qpdfTarget} (pass -Force to reinstall)" -ForegroundColor Green
 } else {
-    Write-Host "==> Installing qpdf $QpdfVersion (MSVC 64-bit prebuilt) …" -ForegroundColor Green
+    Write-Host "==> Installing qpdf ${QpdfVersion} (MSVC 64-bit prebuilt) …" -ForegroundColor Green
 
     $zipName = "qpdf-$QpdfVersion-msvc64.zip"
     $zipUrl = "https://github.com/qpdf/qpdf/releases/download/v$QpdfVersion/$zipName"

@@ -78,12 +78,21 @@ if (-not $BuildDir) {
     $BuildDir = Join-Path $depsRoot 'build-trailer'
 }
 
-# Sanity check
+# Sanity check. The null guards are explicit because $QtDir stays
+# unset when nothing's installed under $depsRoot yet, and passing
+# $null to Join-Path bails with the unhelpful "Cannot bind argument
+# to parameter 'Path' because it is an empty string".
+if (-not $QtDir) {
+    Write-Error "Could not find a Qt install under '$depsRoot\Qt\<version>\msvc2022_64'. Run scripts/install-windows-deps.ps1 first, or pass -QtDir explicitly."
+    exit 1
+}
 if (-not (Test-Path (Join-Path $QtDir 'lib\cmake\Qt6\Qt6Config.cmake'))) {
     Write-Error "Qt6Config.cmake not found at $QtDir\lib\cmake\Qt6. Pass -QtDir or run scripts/install-windows-deps.ps1."
+    exit 1
 }
 if (-not (Test-Path (Join-Path $QpdfDir 'lib\cmake\qpdf\qpdfConfig.cmake'))) {
     Write-Error "qpdfConfig.cmake not found at $QpdfDir\lib\cmake\qpdf. Pass -QpdfDir or run scripts/install-windows-deps.ps1."
+    exit 1
 }
 
 # Enter the MSVC developer environment. We do this in-process via
