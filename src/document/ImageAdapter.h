@@ -5,6 +5,7 @@
 #include "annotation/AnnotationStore.h"
 
 #include <QImage>
+#include <QObject>
 #include <QPointer>
 #include <QString>
 #include <QStringList>
@@ -21,7 +22,14 @@ class AnnotationOverlay;
 
 class ImageDocument : public IDocument {
   public:
+    // Mirrors QPdfView::ZoomMode but lives on the image side, which
+    // otherwise had no concept of "fit" being a persistent mode rather
+    // than a one-shot factor calculation. Re-applied on viewport resize
+    // so Ctrl+0 / Fit Width survive a window resize.
+    enum class FitMode { Custom, FitInView, FitToWidth };
+
     explicit ImageDocument(QString path);
+    ~ImageDocument() override;
 
     QString displayName() const override;
     QString filePath() const override;
@@ -79,10 +87,23 @@ class ImageDocument : public IDocument {
     bool isAnimationPlaying() const override;
     void setAnimationPlaying(bool playing) override;
 
+    // Test hook + resize callback. Reapplies the currently-active fit
+    // mode (no-op for FitMode::Custom). Used internally by the view's
+    // resize watcher; tests can call it directly to simulate a resize
+    // without needing a real Qt widget hierarchy.
+    void reapplyFitMode();
+    FitMode fitMode() const { return m_fitMode; }
+    double scaleFactor() const { return m_scale; }
+
   private:
     void applyScale(double factor);
     void refreshView();
     void pushUndoSnapshot();
+    // Installed as an event filter on the QScrollArea's viewport so
+    // we get notified when the user resizes the window. The viewport
+    // is a child of the scroll area; QResizeEvents on it correspond
+    // exactly to changes in the available drawing area for fit modes.
+    void installResizeWatcher();
 
     QString m_path;
     QImage m_image;
@@ -90,10 +111,17 @@ class ImageDocument : public IDocument {
     QPointer<QLabel> m_label;
     QPointer<QMovie> m_movie;
     QPointer<AnnotationOverlay> m_overlay;
+    QPointer<QObject> m_resizeWatcher;
+    // Sentinel shared with the resize watcher (which is a QObject
+    // parented to a Qt widget and may outlive `this`). Flipped to
+    // false in our destructor so the watcher's eventFilter stops
+    // dereferencing this document.
+    std::shared_ptr<bool> m_aliveFlag;
     AnnotationStore m_annotations;
     std::vector<QImage> m_undoStack;
     std::vector<QImage> m_redoStack;
     double m_scale = 1.0;
+    FitMode m_fitMode = FitMode::Custom;
     int m_frameCount = 0;
     bool m_animated = false;
     bool m_dirty = false;

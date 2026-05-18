@@ -5,11 +5,15 @@
 #include "document/PdfAdapter.h"
 
 #include <QImage>
+#include <QKeyEvent>
 #include <QLabel>
 #include <QObject>
 #include <QPainter>
+#include <QPdfView>
 #include <QPdfWriter>
+#include <QResizeEvent>
 #include <QScrollArea>
+#include <QScrollBar>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -42,6 +46,15 @@ class TestAdapters : public QObject {
     void imageDocumentUndoRestoresPriorState();
     void imageDocumentSaveFlattensAnnotationsIntoPixels();
     void imageDocumentAnnotationUndoTakesPrecedenceOverImageUndo();
+    void imageDocumentFitModeStartsCustom();
+    void imageDocumentZoomFitPageEntersFitInViewMode();
+    void imageDocumentZoomFitWidthEntersFitToWidthMode();
+    void imageDocumentExplicitZoomReturnsToCustomMode();
+    void imageDocumentReapplyFitModeRefitsOnResize();
+    void imageDocumentResizeDoesNothingInCustomMode();
+    void pdfViewReflowsOnResizeInFitInView();
+    void pdfDownArrowStepsPageImmediatelyInFitMode();
+    void imageDocumentResizeEventTriggersRefit();
 };
 
 void TestAdapters::pdfAdapterAdvertisesPdfExtension() {
@@ -496,6 +509,303 @@ void TestAdapters::imageDocumentAnnotationUndoTakesPrecedenceOverImageUndo() {
     QVERIFY(doc.canUndo());
     doc.undo();
     QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+}
+
+void TestAdapters::imageDocumentFitModeStartsCustom() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("fm.png"), 32, 32);
+
+    ImageDocument doc(path);
+    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::Custom);
+}
+
+void TestAdapters::imageDocumentZoomFitPageEntersFitInViewMode() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("fp.png"), 100, 50);
+
+    ImageDocument doc(path);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
+    QVERIFY(scroll != nullptr);
+    // Force a viewport size — without a real show()/event-loop tick
+    // the QScrollArea has 0×0 viewport on macOS offscreen.
+    scroll->resize(400, 200);
+    scroll->viewport()->resize(400, 200);
+
+    doc.zoomFitPage();
+    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::FitInView);
+    // 100×50 inside a 400×200 viewport: width is the tighter dimension
+    // (200/50 = 4, 400/100 = 4 — equal). Scale should be 4.
+    QVERIFY(qFuzzyCompare(doc.scaleFactor(), 4.0));
+}
+
+void TestAdapters::imageDocumentZoomFitWidthEntersFitToWidthMode() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("fw.png"), 50, 200);
+
+    ImageDocument doc(path);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
+    QVERIFY(scroll != nullptr);
+    scroll->resize(500, 100);
+    scroll->viewport()->resize(500, 100);
+
+    doc.zoomFitWidth();
+    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::FitToWidth);
+    // 50px wide image filling a 500px viewport → scale 10.
+    QVERIFY(qFuzzyCompare(doc.scaleFactor(), 10.0));
+}
+
+void TestAdapters::imageDocumentExplicitZoomReturnsToCustomMode() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("ez.png"), 40, 40);
+
+    ImageDocument doc(path);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
+    QVERIFY(scroll != nullptr);
+    scroll->resize(200, 200);
+    scroll->viewport()->resize(200, 200);
+
+    doc.zoomFitPage();
+    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::FitInView);
+
+    doc.zoomIn();
+    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::Custom);
+
+    doc.zoomFitWidth();
+    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::FitToWidth);
+
+    doc.zoomOut();
+    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::Custom);
+
+    doc.zoomFitPage();
+    doc.zoomActual();
+    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::Custom);
+}
+
+void TestAdapters::imageDocumentReapplyFitModeRefitsOnResize() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("rf.png"), 50, 50);
+
+    ImageDocument doc(path);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
+    QVERIFY(scroll != nullptr);
+    scroll->resize(200, 200);
+    scroll->viewport()->resize(200, 200);
+
+    doc.zoomFitPage();
+    const double scaleBefore = doc.scaleFactor();
+    QVERIFY(qFuzzyCompare(scaleBefore, 4.0));
+
+    // Grow the viewport; reapplyFitMode should re-fit the image to
+    // the new size. Simulates the user resizing the window.
+    scroll->viewport()->resize(400, 400);
+    doc.reapplyFitMode();
+    const double scaleAfter = doc.scaleFactor();
+    QVERIFY2(qFuzzyCompare(scaleAfter, 8.0),
+             qPrintable(QStringLiteral("expected refit to 8.0 after resize, got %1")
+                            .arg(scaleAfter)));
+}
+
+void TestAdapters::pdfViewReflowsOnResizeInFitInView() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("fit.pdf");
+
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 800, 200), Qt::AlignCenter, "page");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    QVERIFY(view != nullptr);
+    auto *pdfView = qobject_cast<QPdfView *>(view.get());
+    QVERIFY2(pdfView != nullptr, "expected createView to return a QPdfView");
+
+    // Empirical check of QPdfView's behaviour in FitInView mode. As
+    // of Qt 6.11, QPdfView::zoomFactor() always returns the
+    // user-supplied factor (default 1.0) even when zoomMode is a
+    // fit mode — the rendered scale is computed internally per paint
+    // and not exposed. So we observe the vertical scroll range:
+    // - If FitInView reflows on resize, the page always fits the
+    //   viewport and the scrollbar range is small / unchanged with
+    //   the viewport area.
+    // - If FitInView didn't reflow, shrinking the viewport would
+    //   leave the same render-pixel content in a smaller viewport
+    //   and the scroll range would balloon.
+    //
+    // We force SinglePage so there's exactly one page to fit; the
+    // default Continuous mode adds inter-page spacing and an
+    // inherent extra scroll length unrelated to the fit math.
+    pdfView->setPageMode(QPdfView::PageMode::SinglePage);
+    pdfView->show();
+    pdfView->resize(800, 600);
+    pdfView->setZoomMode(QPdfView::ZoomMode::FitInView);
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+    const int largeRange =
+        pdfView->verticalScrollBar()->maximum() - pdfView->verticalScrollBar()->minimum();
+
+    pdfView->resize(200, 150);
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+    const int smallRange =
+        pdfView->verticalScrollBar()->maximum() - pdfView->verticalScrollBar()->minimum();
+
+    // Both scroll ranges should be small/comparable because FitInView
+    // always sizes the page to fit. A non-reflowing implementation
+    // would leave the large-render pixels in a 200×150 viewport,
+    // producing a very large vertical scroll range. We test the
+    // signal is bounded rather than zero (Qt's centring + page
+    // margins can produce a tiny non-zero range).
+    QVERIFY2(smallRange < 100,
+             qPrintable(QStringLiteral("FitInView appears not to reflow on shrink: "
+                                       "small viewport scroll range = %1")
+                            .arg(smallRange)));
+    QVERIFY2(largeRange < 100,
+             qPrintable(QStringLiteral("FitInView produced unexpected scroll range: %1")
+                            .arg(largeRange)));
+}
+
+void TestAdapters::pdfDownArrowStepsPageImmediatelyInFitMode() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("multi.pdf");
+
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        for (int i = 0; i < 3; ++i) {
+            painter.drawText(QRect(100, 100, 800, 200), Qt::AlignCenter,
+                             QStringLiteral("Page %1").arg(i + 1));
+            if (i < 2)
+                writer.newPage();
+        }
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    QCOMPARE(doc.pageCount(), 3);
+    // SinglePage so Down/PageDown go through the per-page step path
+    // rather than the QAbstractScrollArea-level continuous scroll.
+    doc.setViewMode(ViewMode::SinglePage);
+
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *pdfView = qobject_cast<QPdfView *>(view.get());
+    QVERIFY(pdfView != nullptr);
+    pdfView->show();
+    pdfView->resize(800, 600);
+    QCoreApplication::processEvents();
+
+    // Enter fit-to-page mode. In this mode the entire page should
+    // fit the viewport, so Down should step immediately to the next
+    // page rather than scrolling first.
+    doc.zoomFitPage();
+    QCoreApplication::processEvents();
+    QTest::qWait(20);
+    QCOMPARE(doc.currentPage(), 0);
+
+    // Send a Down key event directly to the view.
+    QKeyEvent down(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    QCoreApplication::sendEvent(pdfView, &down);
+    QCoreApplication::processEvents();
+    QTest::qWait(20);
+    QCOMPARE(doc.currentPage(), 1);
+
+    QKeyEvent down2(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    QCoreApplication::sendEvent(pdfView, &down2);
+    QCoreApplication::processEvents();
+    QTest::qWait(20);
+    QCOMPARE(doc.currentPage(), 2);
+
+    // At the last page, Down should NOT step further (no wrap).
+    QKeyEvent down3(QEvent::KeyPress, Qt::Key_Down, Qt::NoModifier);
+    QCoreApplication::sendEvent(pdfView, &down3);
+    QCoreApplication::processEvents();
+    QTest::qWait(20);
+    QCOMPARE(doc.currentPage(), 2);
+
+    // Up should walk back without first scrolling.
+    QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+    QCoreApplication::sendEvent(pdfView, &up);
+    QCoreApplication::processEvents();
+    QTest::qWait(20);
+    QCOMPARE(doc.currentPage(), 1);
+}
+
+void TestAdapters::imageDocumentResizeDoesNothingInCustomMode() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("cust.png"), 50, 50);
+
+    ImageDocument doc(path);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
+    QVERIFY(scroll != nullptr);
+    scroll->resize(200, 200);
+    scroll->viewport()->resize(200, 200);
+
+    doc.zoomIn();
+    QCOMPARE(doc.fitMode(), ImageDocument::FitMode::Custom);
+    const double scaleBefore = doc.scaleFactor();
+
+    // Custom mode should NOT track viewport changes — the user's
+    // explicit zoom factor stays put.
+    scroll->viewport()->resize(400, 400);
+    doc.reapplyFitMode();
+    QCOMPARE(doc.scaleFactor(), scaleBefore);
+}
+
+void TestAdapters::imageDocumentResizeEventTriggersRefit() {
+    // Exercises the resize-watcher wiring end-to-end: deliver an
+    // actual QResizeEvent to the viewport and check the scale tracks
+    // it without manually calling reapplyFitMode(). This is the
+    // regression guard for "the eventFilter is actually installed
+    // and routes to reapplyFitMode."
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("e2e.png"), 80, 40);
+
+    ImageDocument doc(path);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
+    QVERIFY(scroll != nullptr);
+    scroll->resize(400, 200);
+    scroll->viewport()->resize(400, 200);
+
+    doc.zoomFitPage();
+    const double scaleBefore = doc.scaleFactor();
+    QVERIFY(qFuzzyCompare(scaleBefore, 5.0));
+
+    // Resize via an actual event delivery — what Qt does on a real
+    // window resize.
+    QResizeEvent resizeEv(QSize(800, 400), QSize(400, 200));
+    QCoreApplication::sendEvent(scroll->viewport(), &resizeEv);
+    // The event handler reads the viewport's current size, so set
+    // it explicitly to match the new size as Qt would before the
+    // event fires.
+    scroll->viewport()->resize(800, 400);
+    QResizeEvent resizeEv2(QSize(800, 400), QSize(400, 200));
+    QCoreApplication::sendEvent(scroll->viewport(), &resizeEv2);
+    const double scaleAfter = doc.scaleFactor();
+    QVERIFY2(qFuzzyCompare(scaleAfter, 10.0),
+             qPrintable(QStringLiteral("expected 10.0 after resize event, got %1")
+                            .arg(scaleAfter)));
 }
 
 QTEST_MAIN(TestAdapters)

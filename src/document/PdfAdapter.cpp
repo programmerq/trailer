@@ -71,15 +71,39 @@ class NavigablePdfView : public QPdfView {
             auto *nav = pageNavigator();
             const int current = nav->currentPage();
             const int last = document() ? document()->pageCount() - 1 : 0;
+            // In fit modes the entire page is meant to fit the viewport,
+            // so Down/Space should step to the next page outright. The
+            // "scroll until you hit the bottom, then step" behaviour is
+            // correct for Custom zoom (the user might be reading a
+            // zoomed-in page) but wrong for fit modes — with slightly
+            // varying page sizes the user otherwise sees a small scroll
+            // before the step.
+            const bool inFitMode = zoomMode() == QPdfView::ZoomMode::FitInView ||
+                                   zoomMode() == QPdfView::ZoomMode::FitToWidth;
+            const bool stepDownReady = inFitMode || atBottom;
+            const bool stepUpReady = inFitMode || atTop;
             if ((key == Qt::Key_Down || key == Qt::Key_PageDown || key == Qt::Key_Space) &&
-                atBottom && current < last) {
+                stepDownReady && current < last) {
+                // Capture the active fit mode before jumping so we can
+                // re-apply it after the page change — passing the
+                // current zoomFactor instead would freeze the view at
+                // whatever scale the previous page chose, which is
+                // wrong when page sizes vary.
+                const QPdfView::ZoomMode mode = zoomMode();
                 nav->jump(current + 1, QPointF{}, zoomFactor());
+                if (inFitMode) {
+                    setZoomMode(mode);
+                }
                 verticalScrollBar()->setValue(verticalScrollBar()->minimum());
                 e->accept();
                 return;
             }
-            if ((key == Qt::Key_Up || key == Qt::Key_PageUp) && atTop && current > 0) {
+            if ((key == Qt::Key_Up || key == Qt::Key_PageUp) && stepUpReady && current > 0) {
+                const QPdfView::ZoomMode mode = zoomMode();
                 nav->jump(current - 1, QPointF{}, zoomFactor());
+                if (inFitMode) {
+                    setZoomMode(mode);
+                }
                 verticalScrollBar()->setValue(verticalScrollBar()->maximum());
                 e->accept();
                 return;
