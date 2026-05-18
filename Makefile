@@ -14,7 +14,10 @@
 # and route `make release` / `make test` to the PowerShell wrappers.
 
 .PHONY: help release release-macos release-windows release-windows-native \
-        release-uat test test-uat install-windows-deps clean-release
+        release-uat test test-uat install-windows-deps clean-release \
+        screenshots-windows \
+        bump-release bump-post-release bump-patch bump-minor bump-major \
+        release-notes show-changelog
 
 # `uname` exists on Linux, macOS, Git Bash, and MSYS. PowerShell-only
 # environments don't have it; in that case `release` falls through to
@@ -38,8 +41,23 @@ help:
 	@echo "  make install-windows-deps      install Qt + qpdf (Windows host only)"
 	@echo "  make clean-release             rm -rf build-macos/, build-macos-deps/, dist/"
 	@echo ""
+	@echo "VERSION-file lifecycle (see RELEASING.md, scripts/bump-version.sh):"
+	@echo ""
+	@echo "  make bump-release              strip -dev/-rc suffix (use before tagging)"
+	@echo "  make bump-post-release         bump patch + add -dev (use after tagging)"
+	@echo "  make bump-patch                bump patch, keep -dev"
+	@echo "  make bump-minor                bump minor (reset patch), keep -dev"
+	@echo "  make bump-major                bump major (reset minor + patch), keep -dev"
+	@echo ""
+	@echo "Release-notes helpers:"
+	@echo ""
+	@echo "  make release-notes             draft CHANGELOG entries since the last v* tag"
+	@echo "  make show-changelog VERSION=X.Y.Z"
+	@echo "                                 print the CHANGELOG.md section for VERSION"
+	@echo "                                 (what the GitHub Release body will splice in)"
+	@echo ""
 	@echo "All targets honour the VERSION file as the canonical version"
-	@echo "string. Bump VERSION (and reconfigure cmake) before tagging."
+	@echo "string. Don't hand-edit VERSION; use the bump-* targets."
 
 # ---------------------------------------------------------------- release
 # Host-platform dispatch. Linux/macOS go straight to their build
@@ -105,3 +123,32 @@ release-uat:
 
 clean-release:
 	rm -rf build-macos build-macos-deps dist
+
+# ---------------------------------------------------------------- version + changelog
+# VERSION lifecycle. See scripts/bump-version.sh + RELEASING.md.
+# These targets do NOT decide which bump kind to apply — that's a
+# release-time human decision per project policy.
+
+bump-release:
+	scripts/bump-version.sh release
+
+bump-post-release:
+	scripts/bump-version.sh post-release
+
+bump-patch:
+	scripts/bump-version.sh patch
+
+bump-minor:
+	scripts/bump-version.sh minor
+
+bump-major:
+	scripts/bump-version.sh major
+
+release-notes:
+	@scripts/release-notes.sh
+
+show-changelog:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Usage: make show-changelog VERSION=X.Y.Z" >&2; exit 2; \
+	fi
+	@scripts/extract-changelog.sh "$(VERSION)"
