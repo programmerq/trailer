@@ -78,6 +78,83 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
 
+  build-and-test-windows:
+    name: Windows build + unit tests (MSVC)
+    runs-on: windows-2022
+    # Native Windows build path. Mirrors what scripts/build-windows-native.ps1
+    # does locally: aqtinstall Qt + qpdf MSVC prebuilt + MSVC 2022 +
+    # ninja → ctest. This catches Windows-only regressions before
+    # release (the cross-build via mingw in release.yml uses a
+    # different toolchain and can paper over MSVC-specific issues
+    # like the QTemporaryFile-vs-qpdf write conflict).
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Qt
+        # Pinned to 6.10.3 because aqtinstall 3.3.0 / install-qt-action
+        # don't yet handle the toolchain-suffixed directory layout Qt
+        # 6.11.x uses on download.qt.io. Bump in lockstep with
+        # .github/actions/setup-linux-build once aqt fixes that.
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.10.3'
+          arch: 'win64_msvc2022_64'
+          modules: 'qtpdf'
+          cache: true
+
+      - name: Install qpdf (MSVC prebuilt)
+        # Microsoft Visual C++ prebuilt zip from the upstream qpdf
+        # release page. Match the version that scripts/install-windows-
+        # deps.ps1 defaults to so a green CI run matches what local
+        # developers see.
+        shell: pwsh
+        run: |
+          $qpdfVersion = '12.3.2'
+          $zip = "qpdf-$qpdfVersion-msvc64.zip"
+          Invoke-WebRequest "https://github.com/qpdf/qpdf/releases/download/v$qpdfVersion/$zip" -OutFile $zip -UseBasicParsing
+          Expand-Archive -Path $zip -DestinationPath . -Force
+          Move-Item "qpdf-$qpdfVersion-msvc64" "$env:GITHUB_WORKSPACE/qpdf"
+          # Make qpdf's bin discoverable for ctest (Qt's bin is added
+          # by install-qt-action via QT_ROOT_DIR + Path edits).
+          "$env:GITHUB_WORKSPACE\qpdf\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+
+      - name: Setup MSVC environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Configure
+        # Ninja is the right generator on Windows too: it parallelises
+        # AUTOMOC + compile better than MSBuild on a small project,
+        # and the resulting CMakeCache lines up with what
+        # scripts/build-windows-native.ps1 produces locally. We don't
+        # use ccache here — sccache would be the Windows equivalent
+        # but the cold build is fast enough (<2 min on the runner)
+        # that the cache-management cost isn't worth it yet.
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            "-DCMAKE_PREFIX_PATH=$env:QT_ROOT_DIR;$env:GITHUB_WORKSPACE/qpdf"
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --parallel
+
+      - name: Unit tests
+        # QT_QPA_FONTDIR is set so QPdfWriter has access to Arial etc.
+        # under the offscreen platform plugin. Without this, Qt 6 on
+        # Windows draws text as filled vector paths and search-related
+        # tests can't find anything in the generated PDFs. See the
+        # comment in tests/uat/CMakeLists.txt.
+        working-directory: build
+        shell: pwsh
+        run: ctest -C Release --output-on-failure --label-exclude uat
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QPA_FONTDIR: C:\Windows\Fonts
+
   clang-format:
     name: clang-format (advisory)
     runs-on: ubuntu-24.04

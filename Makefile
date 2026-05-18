@@ -7,35 +7,70 @@
 # lives in Makefile rules — they're thin wrappers.
 #
 # Run `make help` for a summary.
+#
+# Windows: GNU Make works fine on Windows when invoked from a
+# Developer Command Prompt or Git Bash (both ship with chocolatey
+# `make`). On Windows, `uname` reports MINGW*/MSYS* — we detect that
+# and route `make release` / `make test` to the PowerShell wrappers.
 
-.PHONY: help release release-macos release-windows release-uat clean-release
+.PHONY: help release release-macos release-windows release-windows-native \
+        release-uat test test-uat install-windows-deps clean-release
 
-HOST_UNAME := $(shell uname)
+# `uname` exists on Linux, macOS, Git Bash, and MSYS. PowerShell-only
+# environments don't have it; in that case `release` falls through to
+# the "Unsupported host" branch. Users on bare PowerShell should call
+# scripts/build-windows-native.ps1 directly.
+HOST_UNAME := $(shell uname 2>/dev/null || echo Unknown)
 
 help:
-	@echo "Trailer release-artifact targets (mirror CI's release.yml):"
+	@echo "Trailer build + release targets:"
 	@echo ""
-	@echo "  make release          build the release artifact for the host platform"
-	@echo "                          - macOS host  → scripts/build-macos.sh"
-	@echo "                          - Linux host  → cmake + ctest (no script wrapper)"
-	@echo "  make release-macos    build the arm64 .app DMG (macOS host only)"
-	@echo "  make release-windows  Windows cross-build via Docker (any host)"
-	@echo "  make release-uat      run the UAT suite via Docker"
-	@echo "  make clean-release    rm -rf build-macos/, build-macos-deps/, dist/"
+	@echo "  make release                   release artifact for the host platform"
+	@echo "                                   - macOS host    → scripts/build-macos.sh"
+	@echo "                                   - Linux host    → cmake + ctest"
+	@echo "                                   - Windows host  → scripts/build-windows-native.ps1"
+	@echo "  make test                      build + run unit tests on the host"
+	@echo "  make test-uat                  build + run UAT suite on the host"
+	@echo "  make release-macos             build the arm64 .app DMG (macOS host only)"
+	@echo "  make release-windows           Windows cross-build via Docker (any host)"
+	@echo "  make release-windows-native    native MSVC build (Windows host only)"
+	@echo "  make release-uat               run the UAT suite via Docker"
+	@echo "  make install-windows-deps      install Qt + qpdf (Windows host only)"
+	@echo "  make clean-release             rm -rf build-macos/, build-macos-deps/, dist/"
 	@echo ""
 	@echo "All targets honour the VERSION file as the canonical version"
 	@echo "string. Bump VERSION (and reconfigure cmake) before tagging."
 
+# ---------------------------------------------------------------- release
+# Host-platform dispatch. Linux/macOS go straight to their build
+# pipelines; Windows (detected by uname's MINGW/MSYS prefix when called
+# from Git Bash) re-enters the PowerShell wrapper. The Windows branch
+# also handles the case where someone runs `make` from chocolatey-make
+# on plain cmd.exe — uname returns "Windows" there.
 ifeq ($(HOST_UNAME),Darwin)
 release: release-macos
+test: release-macos
+test-uat:
+	scripts/run-uat.sh --host
 else ifeq ($(HOST_UNAME),Linux)
-release:
+release: test
+test:
 	cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 	cmake --build build --parallel
 	cd build && QT_QPA_PLATFORM=offscreen ctest --output-on-failure --label-exclude uat
+test-uat:
+	scripts/run-uat.sh --host
+else ifneq (,$(findstring MINGW,$(HOST_UNAME))$(findstring MSYS,$(HOST_UNAME))$(findstring Windows,$(HOST_UNAME)))
+release: release-windows-native
+test:
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-native.ps1
+test-uat:
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-native.ps1 -RunUat
 else
 release:
 	@echo "Unsupported host: $(HOST_UNAME)"; exit 1
+test: release
+test-uat: release
 endif
 
 release-macos:
@@ -43,6 +78,24 @@ release-macos:
 
 release-windows:
 	scripts/build-windows.sh
+
+# Native MSVC build (Windows host only). The PowerShell wrapper exits
+# non-zero if it's run on a non-Windows host or VS 2022 isn't installed,
+# so this rule is safe to expose as a make target.
+release-windows-native:
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-native.ps1 -RunUat
+
+install-windows-deps:
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows-deps.ps1
+
+# Regenerate the Windows reference screenshots under docs/screenshots/
+# windows. Builds + invokes tools/grab_screenshots, which drives
+# Application + MainWindow under the offscreen plugin (works over
+# SSH / on CI / on a headless box). Re-run after any UI change that
+# meaningfully affects the toolbar or viewer layout.
+screenshots-windows:
+	powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-windows-native.ps1 -BuildOnly
+	powershell -NoProfile -ExecutionPolicy Bypass -Command "$$repo=(Get-Location).Path; $$env:TRAILER_DEPS=if ($$env:TRAILER_DEPS) { $$env:TRAILER_DEPS } else { Join-Path $$env:USERPROFILE 'trailer-deps' }; $$env:Path = (Join-Path $$env:TRAILER_DEPS 'Qt\6.10.3\msvc2022_64\bin') + ';' + (Join-Path $$env:TRAILER_DEPS 'qpdf\bin') + ';' + $$env:Path; $$env:QT_QPA_PLATFORM='offscreen'; $$env:QT_QPA_FONTDIR='C:\Windows\Fonts'; & (Join-Path $$env:TRAILER_DEPS 'build-trailer\grab_screenshots.exe') (Join-Path $$repo 'docs\screenshots\windows')"
 
 release-uat:
 	scripts/run-uat.sh
