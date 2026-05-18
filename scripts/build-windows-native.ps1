@@ -144,6 +144,53 @@ Write-Host "==> cmake build" -ForegroundColor Green
 & cmake --build $BuildDir --config $Config --parallel
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+# Deploy Qt + qpdf DLLs next to trailer.exe so the binary works when
+# launched directly (double-click, Explorer, shortcut) - without
+# this, Windows' loader can't find Qt6Svg.dll etc. because Qt isn't
+# on the system PATH. The cross-compile (scripts/build-windows.sh)
+# does the equivalent via a manual objdump walk; on a native MSVC
+# build Qt ships windeployqt which knows the full plugin layout
+# (platforms\qwindows.dll, imageformats\, sqldrivers\, etc.) and
+# does the copy correctly.
+#
+# Idempotent: re-running on a deployed dir is a no-op for unchanged
+# DLLs, and any newly needed plugins get added without flushing.
+$exe = Join-Path $BuildDir 'trailer.exe'
+if (Test-Path $exe) {
+    Write-Host "==> Deploying Qt runtime via windeployqt" -ForegroundColor Green
+    $windeployqt = Join-Path $QtDir 'bin\windeployqt.exe'
+    if (-not (Test-Path $windeployqt)) {
+        Write-Error "windeployqt.exe not found at $windeployqt - Qt install is incomplete."
+    }
+    # --no-translations: we don't ship the Qt .qm files.
+    # --no-system-d3d-compiler: not needed for our Qt feature surface.
+    # --no-opengl-sw: we never request the software OpenGL fallback.
+    # --release / --debug picks the right ABI variant of every DLL.
+    $deployArgs = @('--release', '--no-translations',
+                    '--no-system-d3d-compiler', '--no-opengl-sw', $exe)
+    if ($Config -eq 'Debug') {
+        $deployArgs[0] = '--debug'
+    }
+    & $windeployqt @deployArgs
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "windeployqt failed (exit $LASTEXITCODE)"
+    }
+
+    # qpdf's MSVC prebuilt ships qpdf30.dll plus the MSVC redist
+    # runtimes (vcruntime140.dll, msvcp140.dll, ...). Copy the whole
+    # bin/ - the MSVC runtimes are usually installed system-wide but
+    # if a user is running on a fresh Windows install without VC++
+    # redist, bundling them avoids a separate "install VC++ redist"
+    # prompt.
+    Write-Host "==> Copying qpdf + MSVC runtime DLLs" -ForegroundColor Green
+    Get-ChildItem (Join-Path $QpdfDir 'bin\*.dll') -ErrorAction SilentlyContinue | ForEach-Object {
+        Copy-Item $_.FullName -Destination $BuildDir -Force
+    }
+
+    $dllCount = (Get-ChildItem $BuildDir -Filter '*.dll' -ErrorAction SilentlyContinue).Count
+    Write-Host "==> Deployed $dllCount DLLs alongside $exe" -ForegroundColor Green
+}
+
 if ($BuildOnly) {
     Write-Host "==> Build complete; tests skipped (-BuildOnly)." -ForegroundColor Green
     exit 0
