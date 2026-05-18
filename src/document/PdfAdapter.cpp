@@ -31,7 +31,10 @@
 #include <QPrinter>
 #include <QScrollBar>
 #include <QSizeF>
+#include <QTimer>
 #include <QVBoxLayout>
+
+#include <cmath>
 
 namespace trailer {
 
@@ -205,6 +208,13 @@ QWidget *PdfDocument::createView(QWidget *parent) {
     view->setDocument(m_doc.get());
     view->setZoomMode(QPdfView::ZoomMode::Custom);
     view->setZoomFactor(1.0);
+    // Fit-to-content on first show. Defer to the event loop so the
+    // viewport has its real size after the tab insert + layout pass.
+    // Re-checks zero size and bails — a later resize will re-trigger
+    // this via the standard QPdfView FitInView path if it stuck. The
+    // small-doc upscale guard is the spec: docs that already fit at
+    // 100% stay at 100% rather than blowing up to fill the window.
+    QTimer::singleShot(0, view, [this, view]() { applyInitialFitZoom(view); });
     // QPdfView paints search matches using the palette's Highlight
     // role. Override to a translucent yellow so matches look like
     // a marker-pen highlighter instead of a system selection.
@@ -459,6 +469,51 @@ void PdfDocument::zoomFitPage() {
     if (!m_view)
         return;
     m_view->setZoomMode(QPdfView::ZoomMode::FitInView);
+}
+
+QSize PdfDocument::contentSizeHint() const {
+    if (!m_valid || !m_doc || m_doc->pageCount() <= 0)
+        return {};
+    const QSizeF pts = m_doc->pagePointSize(0);
+    if (pts.isEmpty())
+        return {};
+    // QPdfView maps 1 PDF point to 1 logical pixel at zoom 1.0, so
+    // the natural display size in CSS pixels is just the point size.
+    return QSize(static_cast<int>(std::ceil(pts.width())),
+                 static_cast<int>(std::ceil(pts.height())));
+}
+
+void PdfDocument::applyInitialFitZoom(QPdfView *view) {
+    if (!view || !m_doc || m_doc->pageCount() <= 0)
+        return;
+    if (m_initialZoomApplied)
+        return;
+    const QSizeF pagePts = m_doc->pagePointSize(0);
+    if (pagePts.isEmpty())
+        return;
+    const QSize vp = view->viewport()->size();
+    if (vp.width() <= 0 || vp.height() <= 0) {
+        // Layout hasn't settled — retry on the next tick. The retry
+        // chain stops as soon as the viewport reports a real size or
+        // the view is destroyed.
+        QTimer::singleShot(0, view, [this, view]() { applyInitialFitZoom(view); });
+        return;
+    }
+    m_initialZoomApplied = true;
+    const QMargins m = view->documentMargins();
+    const double availW = std::max(1, vp.width() - m.left() - m.right());
+    const double availH = std::max(1, vp.height() - m.top() - m.bottom());
+    const double scaleW = availW / pagePts.width();
+    const double scaleH = availH / pagePts.height();
+    const double fit = std::min(scaleW, scaleH);
+    if (fit >= 1.0) {
+        // Doc already fits at 100% — leave it at actual size rather
+        // than upscaling. zoomFactor was already set to 1.0 above.
+        return;
+    }
+    // Use FitInView so a later window resize re-fits without the user
+    // having to hit ⌘0 again. zoomFitPage() picks the same mode.
+    view->setZoomMode(QPdfView::ZoomMode::FitInView);
 }
 
 QImage PdfDocument::renderThumbnail(int pageIndex, QSize targetSize) {

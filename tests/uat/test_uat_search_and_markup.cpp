@@ -953,9 +953,11 @@ void TestUatSearchAndMarkup::uat_ann_070_hidingToolbarRestoresTextSelection() {
     QCOMPARE(store->count(), shapesBefore);
 }
 
-// UAT-ANN-080 — Opening a fillable / annotatable document auto-shows
-// the markup toolbar so the user doesn't have to discover the View
-// menu to find their pen.
+// UAT-ANN-080 — Opening an annotatable document does NOT auto-show
+// the markup toolbar. The toolbar stays hidden until the user opts
+// in via View → Toggle Markup Toolbar (Ctrl+Shift+A) or the
+// toolbar's own toggle action. The pre-2026-05 auto-show heuristic
+// was loud chrome for a document-first workflow.
 void TestUatSearchAndMarkup::uat_ann_080_markupToolbarAutoShownOnEditableDoc() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
@@ -970,13 +972,22 @@ void TestUatSearchAndMarkup::uat_ann_080_markupToolbarAutoShownOnEditableDoc() {
     QVERIFY(mw);
     auto *markup = mw->findChild<MarkupToolbar *>();
     QVERIFY(markup);
+    QVERIFY2(!markup->isVisible(),
+             "Markup toolbar must stay hidden by default on a fresh open");
+
+    // The View → Toggle Markup Toolbar action surfaces it on demand.
+    QAction *toggle = findMenuAction(mw->menuBar(), QStringLiteral("&View"),
+                                     QStringLiteral("Toggle &Markup Toolbar"));
+    QVERIFY2(toggle, "View → Toggle Markup Toolbar action not found");
+    toggle->trigger();
+    QApplication::processEvents();
     QVERIFY2(markup->isVisible(),
-             "Markup toolbar must be visible after opening an annotatable doc");
+             "Toggle action must reveal the markup toolbar on demand");
 }
 
-// UAT-ANN-081 — A user who explicitly hides the markup toolbar must
-// not see it pop back open the next time they focus the same window.
-// The auto-show is once per document, not per focus.
+// UAT-ANN-081 — The markup toolbar's hidden default sticks across
+// tab/focus switches; refreshing the current document does not
+// resurrect a hidden toolbar.
 void TestUatSearchAndMarkup::uat_ann_081_markupToolbarRespectsExplicitHide() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
@@ -991,11 +1002,7 @@ void TestUatSearchAndMarkup::uat_ann_081_markupToolbarRespectsExplicitHide() {
     QVERIFY(mw);
     auto *markup = mw->findChild<MarkupToolbar *>();
     QVERIFY(markup);
-    QVERIFY(markup->isVisible());
-
-    // User hides it.
-    markup->hide();
-    QApplication::processEvents();
+    QVERIFY2(!markup->isVisible(), "Toolbar hidden by default on open");
 
     // Re-trigger the current-document path — same effect as a tab
     // switch in the legacy NewTab mode, or any focus-driven refresh.
@@ -1007,8 +1014,7 @@ void TestUatSearchAndMarkup::uat_ann_081_markupToolbarRespectsExplicitHide() {
                               Q_ARG(trailer::IDocument *, doc));
     QApplication::processEvents();
 
-    QVERIFY2(!markup->isVisible(), "Once the user has hidden the markup toolbar for a doc, "
-                                   "it must not auto-show again on subsequent focus changes");
+    QVERIFY2(!markup->isVisible(), "Markup toolbar must not auto-show on focus refresh");
 }
 
 // UAT-ANN-082 — Underline / Highlight / StrikeOut are text-aware

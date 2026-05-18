@@ -40,6 +40,11 @@ class IDocument {
     // zoomFitWidth, which only constrains horizontally. Bound to ⌘0
     // following Adobe Acrobat's PDF-reader convention.
     virtual void zoomFitPage() {}
+    // Natural display size of the document's primary content (page 0
+    // for PDF, the image for raster docs) in logical pixels at 100%
+    // zoom. Used by MainWindow to size the window to fit on first
+    // open. Default empty — non-display docs (stub adapter) opt out.
+    virtual QSize contentSizeHint() const { return {}; }
 
     virtual bool supportsViewModes() const { return false; }
     virtual ViewMode viewMode() const { return ViewMode::SinglePage; }

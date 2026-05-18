@@ -497,16 +497,30 @@ void MainWindow::buildMainToolbar() {
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_mainToolbar->addWidget(spacer);
 
-    // Search field is always visible in the toolbar now. The old
-    // floating SearchBar that toggled in/out of the central layout
-    // has been removed; m_searchBar is parented to the toolbar.
-    // We don't call show() — Qt propagates visibility from the
-    // QMainWindow at the next show event, and an explicit show()
-    // on a child of a still-hidden ancestor has no effect on the
-    // explicitly-hidden flag, so leaving it alone is correct.
+    // Search collapses to an icon button by default. The button sits
+    // on the right of the main toolbar; clicking it (or Ctrl+F)
+    // expands the SearchBar in place and hides the button. Esc /
+    // empty query restore the button. Keeping the bar reparented to
+    // the toolbar (rather than swapping widgets) preserves the
+    // signals and counter state wired up in the constructor.
+    m_searchButton = new QToolButton(m_mainToolbar);
+    m_searchButton->setIcon(
+        themedActionIcon(QStringLiteral(":/icons/actions/view-search.svg"), m_mainToolbar));
+    m_searchButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    m_searchButton->setToolTip(tr("Search (%1)").arg(QKeySequence(QKeySequence::Find).toString(
+        QKeySequence::NativeText)));
+    connect(m_searchButton, &QToolButton::clicked, this, &MainWindow::showSearchBar);
+    m_mainToolbar->addWidget(m_searchButton);
+
     m_searchBar->setParent(m_mainToolbar);
     m_searchBar->setMaximumWidth(360);
     m_mainToolbar->addWidget(m_searchBar);
+    // hide() after addWidget so the explicit-hidden flag is set
+    // against the just-reparented widget. QToolBar::addWidget wraps
+    // the bar in a QWidgetAction that drives visibility from its
+    // parent, so the hide() has to follow the addWidget call to
+    // win the race on first show.
+    m_searchBar->hide();
 }
 
 void MainWindow::buildEditMenu(QMenu *editMenu) {
@@ -564,15 +578,19 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
 }
 
 void MainWindow::showSearchBar() {
-    // The search bar lives in the main toolbar and is always
-    // visible. Cmd-F just focuses the input field so the user can
-    // type immediately. The supportsSearch gate stays — for
+    // Expand the collapsed SearchBar inline in the main toolbar. The
+    // search button hides; the bar (parented at toolbar build time)
+    // unhides and takes focus. supportsSearch gate stays — for
     // documents that can't search, focusing the field would invite
     // the user to type into a no-op.
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsSearch()) {
         return;
     }
+    if (m_searchButton) {
+        m_searchButton->setVisible(false);
+    }
+    m_searchBar->setVisible(true);
     m_searchBar->focusInput();
     // Open the sidebar in Search Results mode so the user sees
     // pages-with-matches as they type. The polling timer pushes
@@ -584,14 +602,18 @@ void MainWindow::showSearchBar() {
 }
 
 void MainWindow::hideSearchBar() {
-    // "Hide" used to remove the floating search bar from the
-    // central column; with the toolbar embedding it's a soft
-    // dismiss that returns focus to the document and clears any
-    // active query so the highlighted matches go away.
+    // Collapse the bar back to the icon button. Clears any active
+    // query so the highlighted matches go away and the document gets
+    // focus back. Triggered by SearchBar::dismissed (Esc, X button)
+    // and by a document switch that doesn't support search.
     if (auto *doc = m_documentView->currentDocument()) {
         doc->clearSearch();
     }
     m_searchBar->setMatchCounter(0, 0);
+    m_searchBar->setVisible(false);
+    if (m_searchButton) {
+        m_searchButton->setVisible(true);
+    }
     m_documentView->setFocus();
 }
 
@@ -2015,7 +2037,90 @@ void MainWindow::updateTitleForDocument(IDocument *doc) {
     }
 }
 
+void MainWindow::applyInitialWindowSize(IDocument *doc) {
+    if (m_initialSizingApplied)
+        return;
+    if (!doc)
+        return;
+    const QSize content = doc->contentSizeHint();
+    if (content.isEmpty())
+        return;
+    m_initialSizingApplied = true;
+
+    QScreen *scr = screen();
+    if (!scr) {
+        scr = QGuiApplication::primaryScreen();
+    }
+    if (!scr)
+        return;
+
+    const QRect avail = scr->availableGeometry();
+    if (avail.isEmpty())
+        return;
+
+    // 90%-of-screen ceiling so the window doesn't fill the display
+    // edge-to-edge. The user always sees some background to drag
+    // the window or click another app.
+    const QSize maxSize(static_cast<int>(avail.width() * 0.9),
+                        static_cast<int>(avail.height() * 0.9));
+    constexpr int kMinW = 1100;
+    constexpr int kMinH = 750;
+    const QSize minSize(kMinW, kMinH);
+
+    // Estimate chrome (everything around the document viewport):
+    // status bar, menu bar on non-mac, main / markup toolbars, plus
+    // window decorations. Use frameGeometry() vs the central widget
+    // size if the central widget already laid out; otherwise fall
+    // back to a fixed margin.
+    QSize chrome;
+    if (m_documentView && m_documentView->size().isValid() &&
+        m_documentView->width() > 0 && m_documentView->height() > 0) {
+        chrome = size() - m_documentView->size();
+    } else {
+        chrome = QSize(32, 120);
+    }
+    if (chrome.width() < 0)
+        chrome.setWidth(0);
+    if (chrome.height() < 0)
+        chrome.setHeight(0);
+
+    // Aim for the viewport to host the content at 100% — fit-to-
+    // content = actual size, which is the most readable default.
+    QSize wantViewport = content;
+    // Available viewport space within the screen ceiling.
+    const QSize maxViewport(std::max(1, maxSize.width() - chrome.width()),
+                            std::max(1, maxSize.height() - chrome.height()));
+
+    // If the doc doesn't fit at 100%, scale the viewport target down,
+    // but not below 75% of content. A scale lower than 0.75 means
+    // the doc is bigger than the screen can comfortably hold — use
+    // the screen ceiling and let fit-to-content pick whatever zoom
+    // it gives.
+    if (wantViewport.width() > maxViewport.width() ||
+        wantViewport.height() > maxViewport.height()) {
+        const double scaleW = static_cast<double>(maxViewport.width()) /
+                              static_cast<double>(content.width());
+        const double scaleH = static_cast<double>(maxViewport.height()) /
+                              static_cast<double>(content.height());
+        const double rawScale = std::min(scaleW, scaleH);
+        const double scale = std::max(0.75, std::min(1.0, rawScale));
+        wantViewport = QSize(static_cast<int>(content.width() * scale),
+                             static_cast<int>(content.height() * scale));
+    }
+
+    QSize windowTarget(wantViewport.width() + chrome.width(),
+                       wantViewport.height() + chrome.height());
+    windowTarget = windowTarget.expandedTo(minSize).boundedTo(maxSize);
+    resize(windowTarget);
+}
+
 void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
+    // One-shot fit-to-content window resize. Drives the first frame
+    // when the user opens a single file from cold start; later doc
+    // changes (tab switches, opening into the same window) leave
+    // the size alone so the user's adjustments stick.
+    applyInitialWindowSize(doc);
+
     m_sidebar->setDocument(doc);
     m_animationBar->setDocument(doc);
     m_inspector->setDocument(doc);
@@ -2055,6 +2160,13 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     m_findAction->setEnabled(hasSearch);
     m_findNextAction->setEnabled(hasSearch);
     m_findPreviousAction->setEnabled(hasSearch);
+    if (m_searchButton) {
+        m_searchButton->setEnabled(hasSearch);
+        m_searchButton->setToolTip(hasSearch
+            ? tr("Search (%1)").arg(QKeySequence(QKeySequence::Find).toString(
+                  QKeySequence::NativeText))
+            : tr("Search is not available for this document type."));
+    }
     if (!hasSearch && m_searchBar->isVisible()) {
         hideSearchBar();
     }
@@ -2171,16 +2283,14 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
         }
     }
 
-    // Auto-show the markup toolbar the first time we see a document
-    // that supports annotations. Same once-per-doc pattern as the form
-    // overlay above — an explicit hide by the user sticks. Documents
-    // without an AnnotationStore (Stub adapter) are excluded so we
-    // never show a toolbar that would be useless.
+    // Markup toolbar is hidden by default — the user surfaces it via
+    // View → Toggle Markup Toolbar (Ctrl+Shift+A) or the toolbar
+    // toggle on the main toolbar. The auto-show heuristic that used
+    // to flip it on the first time a markup-capable doc became
+    // current was loud chrome for a document-first workflow; the
+    // per-file / per-type memory work in workstream I will let the
+    // toolbar remember the user's preference instead.
     const bool canAnnotate = doc && doc->annotations() != nullptr;
-    if (canAnnotate && !m_autoShownMarkupDocs.contains(doc) && !m_markupToolbar->isVisible()) {
-        m_autoShownMarkupDocs.insert(doc);
-        m_markupToolbar->show();
-    }
 
     // Select All is available whenever there is an annotation store
     // (the overlay exists and the user can place annotations). The
