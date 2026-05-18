@@ -155,6 +155,19 @@ if ($BuildOnly) {
 # stdout/stderr.
 $env:Path = "$QtDir\bin;$QpdfDir\bin;$env:Path"
 
+# Run the test binaries against the offscreen Qt platform plugin so
+# they don't try to open real windows. Over an SSH session there's
+# no interactive display to attach to, and the default `windows`
+# plugin will at best emit noisy QWARN lines and at worst hang
+# waiting on a console session. Mirrors what Linux CI does via its
+# step `env: { QT_QPA_PLATFORM: offscreen }` block.
+#
+# QT_QPA_FONTDIR is set per-test by tests/CMakeLists.txt /
+# tests/uat/CMakeLists.txt — we don't need to export it here.
+if (-not $env:QT_QPA_PLATFORM) {
+    $env:QT_QPA_PLATFORM = 'offscreen'
+}
+
 Push-Location $BuildDir
 try {
     Write-Host "==> Unit tests (ctest -LE uat)" -ForegroundColor Green

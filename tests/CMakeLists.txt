@@ -1,11 +1,29 @@
-# On Windows, unit tests that exercise QPdfWriter (test_adapters,
-# test_pdf_editor, …) need access to a font directory or Qt renders
-# text as filled vector paths instead of real PDF text. See the longer
-# explanation in tests/uat/CMakeLists.txt. The variable is harmless on
-# other platforms.
+# On Windows the unit-test environment needs two tweaks that are
+# safe-but-redundant elsewhere:
+#
+#   QT_QPA_PLATFORM=offscreen — the default `windows` plugin tries to
+#     talk to a real GUI session, which over SSH (or any non-
+#     interactive shell) is at best noisy and at worst makes
+#     widget/icon-pixel tests behave differently due to DPI
+#     awareness, monitor scaling, etc. Linux CI sets this in its
+#     workflow `env:` block; we set it per-test here so it survives
+#     any shell that runs ctest.
+#
+#   QT_QPA_FONTDIR=%SystemRoot%\Fonts — under the offscreen plugin
+#     Qt 6 on Windows has no font directory, so QPdfWriter renders
+#     text as filled vector paths (no Tj, no /ToUnicode). See the
+#     longer explanation in tests/uat/CMakeLists.txt.
+#
+# Both are harmless on Linux/macOS — their offscreen plugin routes
+# through fontconfig / CoreText. We still scope to WIN32 so the
+# property stays empty and unit-test runs on other platforms keep
+# inheriting whatever the workflow / shell already set.
 set(_trailer_unit_env "")
 if(WIN32)
-    list(APPEND _trailer_unit_env "QT_QPA_FONTDIR=$ENV{SystemRoot}/Fonts")
+    list(APPEND _trailer_unit_env
+        "QT_QPA_PLATFORM=offscreen"
+        "QT_QPA_FONTDIR=$ENV{SystemRoot}/Fonts"
+    )
 endif()
 
 function(trailer_add_test name source)
