@@ -2,9 +2,20 @@
 
 #include "PdfEditor.h"
 
+#include <qpdf/QPDF.hh>
+#include <qpdf/QPDFObjectHandle.hh>
+#include <qpdf/QPDFPageDocumentHelper.hh>
+#include <qpdf/QPDFPageObjectHelper.hh>
+
 #include <QObject>
 
+#include <algorithm>
+#include <set>
+#include <utility>
+
 namespace trailer {
+
+// ---- Rotate ---------------------------------------------------------------
 
 RotatePageCommand::RotatePageCommand(int pageIndex, int degreesClockwise)
     : m_pageIndex(pageIndex), m_degrees(degreesClockwise) {}
@@ -24,6 +35,271 @@ bool RotatePageCommand::revert(PdfEditor &editor) {
 
 QString RotatePageCommand::description() const {
     return QObject::tr("Rotate Page");
+}
+
+// ---- Delete ---------------------------------------------------------------
+
+DeletePagesCommand::DeletePagesCommand(std::vector<int> pageIndices) {
+    // Normalise: dedupe and sort ascending. Storing in ascending
+    // order makes revert(N) trivially correct — we re-insert in the
+    // same order so each `addPageAt(refIndex == i)` places the page
+    // back at exactly its original position because earlier
+    // re-inserts already filled in positions 0..i-1.
+    std::set<int> unique(pageIndices.begin(), pageIndices.end());
+    m_indices.assign(unique.begin(), unique.end());
+}
+
+bool DeletePagesCommand::apply(PdfEditor &editor) {
+    QPDF *pdf = editor.qpdf();
+    if (!editor.isValid() || !pdf)
+        return false;
+    if (m_indices.empty())
+        return false;
+    try {
+        QPDFPageDocumentHelper helper(*pdf);
+        auto pages = helper.getAllPages();
+        const int total = static_cast<int>(pages.size());
+        if (static_cast<int>(m_indices.size()) >= total)
+            return false; // refuse to delete every page
+        for (int idx : m_indices) {
+            if (idx < 0 || idx >= total)
+                return false; // any bad index aborts the whole delete
+        }
+
+        // Capture page handles (object-handle copies) BEFORE removal
+        // so revert can re-insert. qpdf reference-counts page objects
+        // through QPDFObjectHandle; the handle survives removal from
+        // the page tree.
+        if (m_captured.empty()) {
+            m_captured.reserve(m_indices.size());
+            for (int idx : m_indices) {
+                m_captured.push_back(pages[static_cast<size_t>(idx)].getObjectHandle());
+            }
+        }
+
+        // Remove from highest to lowest so each removal doesn't
+        // shift the indices of pages we haven't yet processed.
+        for (auto it = m_indices.rbegin(); it != m_indices.rend(); ++it) {
+            helper.removePage(pages[static_cast<size_t>(*it)]);
+        }
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+bool DeletePagesCommand::revert(PdfEditor &editor) {
+    QPDF *pdf = editor.qpdf();
+    if (!editor.isValid() || !pdf)
+        return false;
+    if (m_captured.empty())
+        return false;
+    try {
+        QPDFPageDocumentHelper helper(*pdf);
+        // Re-insert in ascending order. For each captured page, place
+        // it before the page currently at its original index; if its
+        // original index equals the current page count, append at end.
+        for (size_t i = 0; i < m_indices.size(); ++i) {
+            const int origIndex = m_indices[i];
+            QPDFPageObjectHelper page(m_captured[i]);
+            auto current = helper.getAllPages();
+            if (origIndex >= static_cast<int>(current.size())) {
+                helper.addPage(page, /*first=*/false);
+            } else {
+                helper.addPageAt(page, /*before=*/true, current[static_cast<size_t>(origIndex)]);
+            }
+        }
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+QString DeletePagesCommand::description() const {
+    return m_indices.size() > 1U ? QObject::tr("Delete Pages") : QObject::tr("Delete Page");
+}
+
+// ---- Move -----------------------------------------------------------------
+
+MovePageCommand::MovePageCommand(int from, int to) : m_from(from), m_to(to) {}
+
+bool MovePageCommand::apply(PdfEditor &editor) {
+    if (!editor.isValid())
+        return false;
+    if (m_from == m_to)
+        return false;
+    editor.movePage(m_from, m_to);
+    return true;
+}
+
+bool MovePageCommand::revert(PdfEditor &editor) {
+    if (!editor.isValid())
+        return false;
+    // Inverse: move(to, from). After apply(from, to), the page is at
+    // `to`; moving from `to` back to `from` restores the prior order
+    // because every other page shifts symmetrically by one slot.
+    editor.movePage(m_to, m_from);
+    return true;
+}
+
+QString MovePageCommand::description() const {
+    return QObject::tr("Move Page");
+}
+
+// ---- Insert ---------------------------------------------------------------
+
+InsertPagesCommand::InsertPagesCommand(QString sourcePath, int insertAtIndex)
+    : m_sourcePath(std::move(sourcePath)), m_insertAtIndex(insertAtIndex) {}
+
+bool InsertPagesCommand::apply(PdfEditor &editor) {
+    QPDF *pdf = editor.qpdf();
+    if (!editor.isValid() || !pdf)
+        return false;
+    const int before = editor.pageCount();
+    if (!editor.insertPagesFrom(m_sourcePath, m_insertAtIndex))
+        return false;
+    const int after = editor.pageCount();
+    if (after <= before) {
+        // The editor returned true but no pages were actually
+        // inserted — treat as a soft failure so the command isn't
+        // pushed onto the undo stack with no work to revert.
+        return false;
+    }
+    // Stash actual position + count for revert. PdfEditor clamps the
+    // index into [0, pageCount] internally; reproduce that here so
+    // revert removes the correct contiguous range. We only set this
+    // on the first apply so a subsequent apply (after revert) reuses
+    // the original snapshot — keeps undo behaviour stable even if
+    // the source file changes between apply()s.
+    if (m_insertedCount == 0) {
+        m_insertedCount = after - before;
+        m_clampedIndex = std::clamp(m_insertAtIndex, 0, before);
+    }
+    return true;
+}
+
+bool InsertPagesCommand::revert(PdfEditor &editor) {
+    QPDF *pdf = editor.qpdf();
+    if (!editor.isValid() || !pdf)
+        return false;
+    if (m_insertedCount <= 0 || m_clampedIndex < 0)
+        return false;
+    try {
+        QPDFPageDocumentHelper helper(*pdf);
+        auto pages = helper.getAllPages();
+        const int total = static_cast<int>(pages.size());
+        if (m_clampedIndex + m_insertedCount > total)
+            return false; // someone else mutated the doc; abort
+        // Walk the inserted range from the bottom up so removals
+        // don't shift the indices of pages still queued for removal.
+        for (int i = m_clampedIndex + m_insertedCount - 1; i >= m_clampedIndex; --i) {
+            helper.removePage(pages[static_cast<size_t>(i)]);
+        }
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+QString InsertPagesCommand::description() const {
+    return QObject::tr("Insert Pages");
+}
+
+// ---- Crop -----------------------------------------------------------------
+
+CropPageCommand::CropPageCommand(std::vector<int> pageIndices, double leftPts, double topPts,
+                                 double rightPts, double bottomPts)
+    : m_left(leftPts), m_top(topPts), m_right(rightPts), m_bottom(bottomPts) {
+    // Dedupe + sort. Order doesn't strictly matter for crop, but
+    // keeps revert deterministic and matches DeletePagesCommand's
+    // convention.
+    std::set<int> unique(pageIndices.begin(), pageIndices.end());
+    m_indices.assign(unique.begin(), unique.end());
+}
+
+bool CropPageCommand::apply(PdfEditor &editor) {
+    QPDF *pdf = editor.qpdf();
+    if (!editor.isValid() || !pdf)
+        return false;
+    if (m_indices.empty())
+        return false;
+
+    try {
+        QPDFPageDocumentHelper helper(*pdf);
+        auto pages = helper.getAllPages();
+        const int total = static_cast<int>(pages.size());
+
+        const bool firstApply = m_originalCropBoxes.empty();
+        if (firstApply) {
+            m_originalCropBoxes.reserve(m_indices.size());
+        }
+
+        bool any = false;
+        for (size_t i = 0; i < m_indices.size(); ++i) {
+            const int idx = m_indices[i];
+            if (idx < 0 || idx >= total) {
+                if (firstApply)
+                    m_originalCropBoxes.emplace_back(std::nullopt);
+                continue;
+            }
+            // Snapshot the current /CropBox (or nullopt if none) on
+            // the first apply only. Subsequent applies (after
+            // revert) reuse the original snapshot so revert
+            // continues to restore the pre-very-first state.
+            QPDFObjectHandle pageObj = pages[static_cast<size_t>(idx)].getObjectHandle();
+            if (firstApply) {
+                if (pageObj.hasKey("/CropBox")) {
+                    m_originalCropBoxes.emplace_back(pageObj.getKey("/CropBox").shallowCopy());
+                } else {
+                    m_originalCropBoxes.emplace_back(std::nullopt);
+                }
+            }
+            if (editor.cropPage(idx, m_left, m_top, m_right, m_bottom)) {
+                any = true;
+            }
+        }
+        return any;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+bool CropPageCommand::revert(PdfEditor &editor) {
+    QPDF *pdf = editor.qpdf();
+    if (!editor.isValid() || !pdf)
+        return false;
+    if (m_originalCropBoxes.empty())
+        return false;
+    try {
+        auto pages = QPDFPageDocumentHelper(*pdf).getAllPages();
+        const int total = static_cast<int>(pages.size());
+        // m_originalCropBoxes is keyed parallel to m_indices. A page
+        // that wasn't cropped on the first apply (out-of-range or
+        // oversized margins) has a nullopt slot but we still walked
+        // past it. Walk m_indices here and restore only where the
+        // page is still in range.
+        for (size_t i = 0; i < m_indices.size(); ++i) {
+            const int idx = m_indices[i];
+            if (idx < 0 || idx >= total)
+                continue;
+            QPDFObjectHandle pageObj = pages[static_cast<size_t>(idx)].getObjectHandle();
+            const auto &orig = m_originalCropBoxes[i];
+            if (orig.has_value()) {
+                pageObj.replaceKey("/CropBox", *orig);
+            } else {
+                // No prior /CropBox; remove the one apply() added so
+                // the page falls back to its /MediaBox default.
+                pageObj.removeKey("/CropBox");
+            }
+        }
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+QString CropPageCommand::description() const {
+    return m_indices.size() > 1U ? QObject::tr("Crop Pages") : QObject::tr("Crop Page");
 }
 
 } // namespace trailer

@@ -250,26 +250,16 @@ items have landed; the commit hash is in the strikethrough line.
   - **Test on 1x, 2x, 3x displays** — manual; CI is offscreen
     only.
 
-- **PDF undo/redo — rotate done, others scoped.** A
+- **PDF undo/redo — done for the five top-level mutations.** A
   `PdfCommand` interface lives in `src/document/PdfCommands.h`,
-  paired with the first concrete command (`RotatePageCommand`).
-  `PdfDocument` keeps undo / redo stacks of `PdfCommand`s
+  paired with concrete commands for every qpdf-level page op the
+  user can trigger today: `RotatePageCommand`, `DeletePagesCommand`,
+  `MovePageCommand`, `InsertPagesCommand`, and `CropPageCommand`
+  (the last one batches an N-page crop into a single undoable
+  action). `PdfDocument` keeps undo / redo stacks of `PdfCommand`s
   parallel to the existing AnnotationStore undo log; the unified
   `IDocument::undo` / `redo` route to the most-recently-touched
   stack via an `m_lastUndoSource` heuristic.
-
-  Remaining qpdf mutations to wire up the same way:
-  - **DeletePagesCommand** — needs to capture
-    `QPDFObjectHandle` references before the delete so the
-    revert path can re-insert them at the original positions.
-    qpdf retains the underlying objects until garbage-collected
-    on save, so retained handles stay valid through the
-    in-memory session.
-  - **MovePageCommand** — trivial inverse: move(to, from).
-  - **InsertPagesCommand** — capture insert index + count;
-    revert deletes that range.
-  - **CropPageCommand** — capture original `/CropBox`; revert
-    re-sets it.
 
   Better-but-bigger follow-up: merge the AnnotationStore log
   and the PdfCommand stack into one chronological undo list so
@@ -277,6 +267,17 @@ items have landed; the commit hash is in the strikethrough line.
   did, regardless of which subsystem produced it. The
   `m_lastUndoSource` heuristic gets it right for the common
   one-action-back case but not for interleaved sequences.
+
+  Other small follow-ups in the same area:
+  - Annotation re-indexing on delete/move/insert. The undo
+    stacks don't currently coordinate with `AnnotationStore`'s
+    `Annotation::page` field, so an annotation on page 3 of a
+    4-page doc whose page 1 gets deleted still claims page 3
+    even though the actual page-3 content is now at index 2.
+    Save-time round-tripping papers over this for the simple
+    case but a sidebar that filters by page can show stale
+    results until the next reload. See `docs/uat/03-pdf-pages.md`
+    UAT-PDF-070 / UAT-PDF-071.
 
 - ~~**PDF save / export to a worker thread.**~~ Done — split into
   `PdfDocument::saveBeginQpdfPhase` (worker-thread qpdf phase) and
