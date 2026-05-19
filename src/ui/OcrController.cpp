@@ -196,6 +196,12 @@ void OcrController::submitPage(IDocument *doc, int page, MlPriority priority, bo
                 return;
             // OcrEngine::recognize cooperates with the same token
             // shape — it polls between detection and per-box rec.
+            // If the engine has no model on disk, recognize() returns
+            // empty; we deliberately do NOT cache an empty result in
+            // that case so the next visible-page enqueue can retry
+            // once the model lands.
+            if (!engine->isModelReady())
+                return;
             QVector<OcrEngine::TextBlock> blocks = engine->recognize(source, &token);
             if (token.isCancelled())
                 return;
