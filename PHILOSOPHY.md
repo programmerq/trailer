@@ -141,7 +141,21 @@ implementation cost so the user doesn't pay the attention cost.
   for one-time consent (model downloads, redaction warning), or for
   errors that can't be self-evident from the UI state. Never use a
   popup to explain why a feature isn't available right now — that's
-  what disabled state plus tooltip is for.
+  what disabled state plus tooltip is for. And never use a popup to
+  report "I tried and the result wasn't useful": drop the bad result
+  silently and let the user retry. A popup that just says "no" is
+  noise the user has to dismiss before continuing.
+- **Prefer the document over the dialog.** When a feature has output
+  to show or parameters to gather, surface them on the content itself
+  before reaching for a modal — a drag-handle, a hover chip, a
+  sparkle badge on a menu item, an inline status-bar link, a
+  selectable layer painted over the page. Modal dialogs are reserved
+  for genuinely up-front decisions (page range, file picker, "are
+  you sure?") that the user wouldn't want to make implicitly. If the
+  feature's output is text, it lands in the document; if the output
+  is a yes/no signal, it's a badge; if the output is a long-running
+  computation, it's a status-bar indicator. The recurring direction
+  of travel is dialog → in-place, never the reverse.
 - **State changes are reflected immediately.** If the user flips a
   policy in one dialog, the menus and toolbars that depend on it
   update before the next user action — no "now restart the app" or
