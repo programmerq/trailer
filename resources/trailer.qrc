@@ -44,6 +44,7 @@
         <file alias="view-fit-page.svg">icons/actions/view-fit-page.svg</file>
         <file alias="view-fit-width.svg">icons/actions/view-fit-width.svg</file>
         <file alias="view-search.svg">icons/actions/view-search.svg</file>
+        <file alias="badge-sparkle.svg">icons/actions/badge-sparkle.svg</file>
         <file alias="page-rotate-left.svg">icons/actions/page-rotate-left.svg</file>
         <file alias="page-rotate-right.svg">icons/actions/page-rotate-right.svg</file>
         <file alias="panel-sidebar.svg">icons/actions/panel-sidebar.svg</file>
