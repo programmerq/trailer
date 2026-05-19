@@ -126,6 +126,8 @@ set(TRAILER_SOURCES
     src/ui/MainWindow.h
     src/ui/ModelManagerDialog.cpp
     src/ui/ModelManagerDialog.h
+    src/ui/OcrController.cpp
+    src/ui/OcrController.h
     src/ui/AnimationBar.cpp
     src/ui/AnimationBar.h
     src/ui/AnnotationOverlay.cpp

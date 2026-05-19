@@ -28,6 +28,8 @@ class MarkupToolbar;
 class SearchBar;
 class Sidebar;
 
+class OcrController;
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -292,6 +294,18 @@ class MainWindow : public QMainWindow {
     // no modal — this is the canonical "background ML work is
     // happening" affordance for the user.
     QLabel *m_mlIndicator = nullptr;
+
+    // Auto-OCR pump. Owns an OcrEngine and tracks the in-flight
+    // submissions for the current document; signals from the document
+    // view feed visible-page changes into it. The controller is
+    // parented to this MainWindow so it dies with the window.
+    OcrController *m_ocrController = nullptr;
+
+    // Status-bar "Text isn't selectable here. Recognize text on this
+    // page." offer for large documents that we skipped auto-OCR for.
+    // Shown only when the active doc is large + non-OCR'd; hidden
+    // otherwise so the status bar stays clean.
+    QWidget *m_largeDocOcrHint = nullptr;
 };
 
 } // namespace trailer
