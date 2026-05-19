@@ -63,6 +63,13 @@ void pumpUntil(int deadlineMs, const std::function<bool()> &done) {
 
 class TestSamController : public QObject {
     Q_OBJECT
+  public:
+    // Owned by the hand-rolled main() below so each test method shares
+    // a single Application instance — QApplication is a process-wide
+    // singleton and constructing it twice (which QTEST_MAIN combined
+    // with per-test stack instances was doing) segfaults on teardown.
+    Application *app = nullptr;
+
   private slots:
     void initTestCase();
     void uat_sam_ctl_010_LruEvictsOldestAfterCapacity();
@@ -83,11 +90,7 @@ void TestSamController::initTestCase() {
 }
 
 void TestSamController::uat_sam_ctl_010_LruEvictsOldestAfterCapacity() {
-    int argc = 1;
-    char appName[] = "tsc";
-    char *argv[] = {appName, nullptr};
-    Application app(argc, argv);
-    SamController ctl(&app);
+    SamController ctl(app);
 
     QCOMPARE(SamController::kLruCapacity, 3);
 
@@ -109,11 +112,7 @@ void TestSamController::uat_sam_ctl_010_LruEvictsOldestAfterCapacity() {
 }
 
 void TestSamController::uat_sam_ctl_020_BurstOfRequestsThrottlesDispatches() {
-    int argc = 1;
-    char appName[] = "tsc";
-    char *argv[] = {appName, nullptr};
-    Application app(argc, argv);
-    SamController ctl(&app);
+    SamController ctl(app);
     ctl.setDocument(fakeDoc(1), 0);
 
     // Without real ONNX models, requestSegment still dispatches to
@@ -147,11 +146,7 @@ void TestSamController::uat_sam_ctl_020_BurstOfRequestsThrottlesDispatches() {
 }
 
 void TestSamController::uat_sam_ctl_030_PurgeDocumentDropsCacheEntries() {
-    int argc = 1;
-    char appName[] = "tsc";
-    char *argv[] = {appName, nullptr};
-    Application app(argc, argv);
-    SamController ctl(&app);
+    SamController ctl(app);
 
     QCOMPARE(ctl.cacheSizeForTest(), 0);
 
@@ -174,5 +169,15 @@ void TestSamController::uat_sam_ctl_030_PurgeDocumentDropsCacheEntries() {
     QCOMPARE(ctl.cacheSizeForTest(), 0);
 }
 
-QTEST_MAIN(TestSamController)
+// Hand-rolled main rather than QTEST_MAIN — we need exactly one
+// trailer::Application (which subclasses QApplication) for the whole
+// binary; QTEST_MAIN constructs a plain QApplication, which conflicts
+// with per-test Application instances on the stack.
+int main(int argc, char *argv[]) {
+    trailer::Application app(argc, argv);
+    TestSamController tc;
+    tc.app = &app;
+    return QTest::qExec(&tc, argc, argv);
+}
+
 #include "test_sam_controller.moc"
