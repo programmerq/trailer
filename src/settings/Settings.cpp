@@ -110,6 +110,19 @@ void Settings::load() {
             m_recentMax = static_cast<int>(*v);
         }
     }
+    if (auto *session = tbl["session"].as_table()) {
+        if (auto v = (*session)["restore_previous_windows"].value<bool>()) {
+            m_restorePreviousWindows = *v;
+        }
+        if (auto *arr = (*session)["open_files"].as_array()) {
+            m_sessionOpenFiles.clear();
+            for (const auto &node : *arr) {
+                if (auto v = node.value<std::string>()) {
+                    m_sessionOpenFiles.append(fromStd(*v));
+                }
+            }
+        }
+    }
     // Legacy [redaction] section. Older installs persisted this single
     // first-use flag in its own table; new installs use the unified
     // [first_use] table below. Read both for backwards compatibility,
@@ -124,6 +137,17 @@ void Settings::load() {
             if (auto v = node.value<bool>()) {
                 m_firstUseFlags.insert(fromStd(std::string(k.str())), *v);
             }
+        }
+    }
+    if (auto *mlScheduler = tbl["ml"]["scheduler"].as_table()) {
+        if (auto v = (*mlScheduler)["recognize_text_in_background"].value<bool>()) {
+            m_mlRecognizeTextInBackground = *v;
+        }
+        if (auto v = (*mlScheduler)["preload_segmentation_on_tool_activation"].value<bool>()) {
+            m_mlPreloadSegmentationOnToolActivation = *v;
+        }
+        if (auto v = (*mlScheduler)["run_on_battery"].value<bool>()) {
+            m_mlRunOnBattery = *v;
         }
     }
 }
@@ -142,6 +166,21 @@ void Settings::save() const {
         generalTbl.insert("last_save_dir", toStd(m_lastSaveDir));
     }
 
+    toml::array sessionFiles;
+    for (const QString &p : m_sessionOpenFiles) {
+        sessionFiles.push_back(toStd(p));
+    }
+
+    toml::table mlSchedulerTbl{
+        {"recognize_text_in_background", m_mlRecognizeTextInBackground},
+        {"preload_segmentation_on_tool_activation", m_mlPreloadSegmentationOnToolActivation},
+        {"run_on_battery", m_mlRunOnBattery},
+    };
+
+    toml::table mlTbl{
+        {"scheduler", std::move(mlSchedulerTbl)},
+    };
+
     toml::table tbl{
         {"general", std::move(generalTbl)},
         {"files",
@@ -149,7 +188,13 @@ void Settings::save() const {
              {"auto_save", m_autoSave},
              {"recent_max", static_cast<int64_t>(m_recentMax)},
          }},
+        {"session",
+         toml::table{
+             {"restore_previous_windows", m_restorePreviousWindows},
+             {"open_files", std::move(sessionFiles)},
+         }},
         {"first_use", std::move(firstUse)},
+        {"ml", std::move(mlTbl)},
     };
 
     AppPaths::ensureDirExists(QFileInfo(m_filePath).absolutePath());
@@ -180,6 +225,24 @@ void Settings::setRecentMax(int value) {
 }
 void Settings::setLastSaveDir(const QString &value) {
     m_lastSaveDir = value;
+}
+void Settings::setRestorePreviousWindows(bool value) {
+    m_restorePreviousWindows = value;
+}
+void Settings::setSessionOpenFiles(const QStringList &value) {
+    m_sessionOpenFiles = value;
+}
+
+void Settings::setMlRecognizeTextInBackground(bool value) {
+    m_mlRecognizeTextInBackground = value;
+}
+
+void Settings::setMlPreloadSegmentationOnToolActivation(bool value) {
+    m_mlPreloadSegmentationOnToolActivation = value;
+}
+
+void Settings::setMlRunOnBattery(bool value) {
+    m_mlRunOnBattery = value;
 }
 
 void Settings::setFirstUseAcknowledged(const QString &key, bool value) {

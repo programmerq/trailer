@@ -1,5 +1,6 @@
 #include "annotation/AnnotationStore.h"
 
+#include <QElapsedTimer>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
 
@@ -18,6 +19,11 @@ class TestAnnotationStore : public QObject {
     void changedSignalFiresOnMutations();
     void undoRedoReversesAddRemoveUpdate();
     void redoStackClearsOnNewMutation();
+    void compoundCollapsesMultipleUpdatesIntoOneUndo();
+    void compoundWithoutMutationsLeavesUndoStackUntouched();
+    void compoundNestedBeginEndBehavesAsSingle();
+    void compoundAbortLeavesStoreSaneOnNextMutation();
+    void undoIsFastForLargeStore();
 };
 
 namespace {
@@ -179,6 +185,159 @@ void TestAnnotationStore::redoStackClearsOnNewMutation() {
     QVERIFY(!store.canRedo());
     QCOMPARE(store.count(), 1);
     QVERIFY(store.find(id) == nullptr);
+}
+
+// Workstream D3 — a "user gesture" wrapped in beginCompound/endCompound
+// produces exactly one undo step regardless of how many update() calls
+// fired during the gesture. Mirrors the 60-frame drag case in the
+// AnnotationOverlay: 60 update()s should collapse into one Ctrl+Z.
+void TestAnnotationStore::compoundCollapsesMultipleUpdatesIntoOneUndo() {
+    AnnotationStore store;
+    const int id = store.add(makeRect(0, QRectF(0, 0, 10, 10)));
+    const QRectF original = store.find(id)->bounds;
+    QCOMPARE(store.count(), 1);
+
+    store.beginCompound();
+    // Simulate a 50-frame drag.
+    for (int i = 0; i < 50; ++i) {
+        Annotation a = *store.find(id);
+        a.bounds = QRectF(QPointF(double(i), double(i)), QSizeF(10, 10));
+        QVERIFY(store.update(a));
+    }
+    store.endCompound();
+
+    QCOMPARE(store.find(id)->bounds, QRectF(QPointF(49.0, 49.0), QSizeF(10, 10)));
+    QVERIFY(store.canUndo());
+
+    // Exactly ONE undo step reverts the whole drag to the pre-gesture
+    // state.  This is the user-visible behaviour the workstream is
+    // pinning: pressing Ctrl+Z after dragging should not unwind 50
+    // individual sub-steps.
+    store.undo();
+    QCOMPARE(store.find(id)->bounds, original);
+    // The add() that created the annotation still has its own undo
+    // step; canUndo() is therefore still true, but the in-place
+    // edits collapse into one revertible frame, not 50.
+    QVERIFY(store.canUndo());
+    QVERIFY(store.find(id) != nullptr);
+}
+
+// A compound that begins and ends without any mutation leaves the
+// history exactly as it was — no phantom no-op undo frame appears.
+// Drives the click-without-drag case: the overlay begins a compound
+// at mousePress to be ready for a move, but if the user releases
+// without moving there should be nothing to undo.
+void TestAnnotationStore::compoundWithoutMutationsLeavesUndoStackUntouched() {
+    AnnotationStore store;
+    store.add(makeRect(0, QRectF()));
+    QVERIFY(store.canUndo());
+
+    // Drain the undo stack — only the add() should be on it.
+    store.beginCompound();
+    store.endCompound();
+    QVERIFY(store.canUndo()); // still revertible (the add())
+
+    store.undo();
+    QCOMPARE(store.count(), 0);
+    // No second undo step exists — the empty compound did not push.
+    QVERIFY(!store.canUndo());
+}
+
+// Nested beginCompound/endCompound pairs collapse into a single
+// gesture — the outer pair is the one that gates lazy-push. Models
+// composite handlers that internally compose update() chains.
+void TestAnnotationStore::compoundNestedBeginEndBehavesAsSingle() {
+    AnnotationStore store;
+    const int id = store.add(makeRect(0, QRectF(0, 0, 10, 10)));
+
+    store.beginCompound();
+    {
+        store.beginCompound();
+        Annotation a = *store.find(id);
+        a.bounds = QRectF(5, 5, 10, 10);
+        QVERIFY(store.update(a));
+        store.endCompound();
+    }
+    // Second mutation outside the inner pair but inside the outer.
+    {
+        Annotation a = *store.find(id);
+        a.bounds = QRectF(10, 10, 10, 10);
+        QVERIFY(store.update(a));
+    }
+    store.endCompound();
+
+    // Exactly one undo step covers BOTH mutations.
+    QCOMPARE(store.find(id)->bounds, QRectF(10, 10, 10, 10));
+    store.undo();
+    QCOMPARE(store.find(id)->bounds, QRectF(0, 0, 10, 10));
+}
+
+// Simulates a Cmd-Tab mid-drag: beginCompound, a couple of mutations,
+// then endCompound (NOT another beginCompound). Subsequent mutations
+// outside the abandoned gesture must push their own undo step so the
+// user's next action is still individually revertible.
+void TestAnnotationStore::compoundAbortLeavesStoreSaneOnNextMutation() {
+    AnnotationStore store;
+    const int id = store.add(makeRect(0, QRectF(0, 0, 10, 10)));
+    QCOMPARE(store.count(), 1);
+
+    store.beginCompound();
+    Annotation a = *store.find(id);
+    a.bounds = QRectF(5, 5, 10, 10);
+    QVERIFY(store.update(a));
+    // Drag aborted by app-deactivate: overlay calls endCompound()
+    // from its abortInFlightDrag path.
+    store.endCompound();
+
+    // The next user action must push its own history frame.
+    Annotation b = *store.find(id);
+    b.bounds = QRectF(50, 50, 10, 10);
+    QVERIFY(store.update(b));
+
+    // Two undo steps: revert the post-abort update, then revert the
+    // compound (drag) to the pre-drag state.
+    store.undo();
+    QCOMPARE(store.find(id)->bounds, QRectF(5, 5, 10, 10));
+    store.undo();
+    QCOMPARE(store.find(id)->bounds, QRectF(0, 0, 10, 10));
+}
+
+// Perf sanity for Workstream E.1 — undo on a large store must not be
+// O(N * undoSteps). Pre-fix, every undo rescanned the annotation list
+// to recompute m_nextId; with 200 annotations and 50 undos that's
+// 10k iterations purely for id bookkeeping, plus the vector copy.
+// Track nextId per snapshot so the rescan disappears.
+//
+// The threshold below is loose (1.5s on a 5-year-old laptop is fine);
+// the goal is to catch a regression that re-introduces the O(N)
+// rescan, not to measure absolute speed. Adjust the threshold up if
+// CI emulation comes in slower than this leaves headroom for.
+void TestAnnotationStore::undoIsFastForLargeStore() {
+    AnnotationStore store;
+    // Build 200 distinct annotations, recording 200 history frames.
+    constexpr int kCount = 200;
+    for (int i = 0; i < kCount; ++i) {
+        store.add(makeRect(0, QRectF(double(i), double(i), 5, 5)));
+    }
+    QCOMPARE(store.count(), kCount);
+    // AnnotationStore caps undo history at 64 frames (kMaxUndo). Run
+    // 50 undos so we have headroom inside the cap; if kMaxUndo were
+    // ever raised this still passes.
+    constexpr int kUndos = 50;
+    QElapsedTimer timer;
+    timer.start();
+    for (int i = 0; i < kUndos; ++i) {
+        store.undo();
+    }
+    const qint64 elapsedMs = timer.elapsed();
+    // Loose threshold for slow CI emulation: native macOS hits this
+    // in well under 50ms, but Docker-on-macOS amd64 emulation can
+    // run 5–10× slower, so 500ms keeps headroom while still failing
+    // loudly on a real regression (the O(N*S) variant would still
+    // pass on native but starts pushing against this bound on CI).
+    QVERIFY2(elapsedMs < 500,
+             qPrintable(QStringLiteral("50 undos on 200-annotation store took %1ms (>500ms)")
+                            .arg(elapsedMs)));
 }
 
 QTEST_MAIN(TestAnnotationStore)
