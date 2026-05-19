@@ -4,6 +4,25 @@ Items noted during development that aren't blocking the current phase.
 Should be picked up before shipping or when the surrounding area is
 worked on.
 
+Three recurring sources feed this file:
+
+- **HITL passes** — the maintainer driving the actual app and writing
+  down what annoyed them. Captures power-user friction. Dated
+  subsections below (e.g. *2026-04-30 HITL pass*, *2026-05-19 HITL
+  pass*) are the precedent format.
+- **Reference-user smoke sessions** — a non-maintainer opening a
+  fresh build and performing three small tasks while a note-taker
+  records observations. Captures fresh-eyes friction, which tends to
+  point at different bugs than the HITL passes do. Protocol lives in
+  [`docs/smoke-session.md`](docs/smoke-session.md); findings land
+  here under a dated `## YYYY-MM-DD smoke session` subsection in the
+  same shape as the HITL entries.
+- **Multi-perspective audits** — read-only sweeps by reviewer-chair
+  agents (privacy, accessibility, security, etc.) that surface
+  structural gaps the live use doesn't expose. See
+  [`docs/audit-2026-05-19.md`](docs/audit-2026-05-19.md) for the
+  current snapshot.
+
 ## 2026-05-19 HITL pass (live use on Windows 11; applies cross-platform)
 
 Driven by the user opening a real document on Windows and walking through
