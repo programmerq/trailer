@@ -139,6 +139,17 @@ void Settings::load() {
             }
         }
     }
+    if (auto *mlScheduler = tbl["ml"]["scheduler"].as_table()) {
+        if (auto v = (*mlScheduler)["recognize_text_in_background"].value<bool>()) {
+            m_mlRecognizeTextInBackground = *v;
+        }
+        if (auto v = (*mlScheduler)["preload_segmentation_on_tool_activation"].value<bool>()) {
+            m_mlPreloadSegmentationOnToolActivation = *v;
+        }
+        if (auto v = (*mlScheduler)["run_on_battery"].value<bool>()) {
+            m_mlRunOnBattery = *v;
+        }
+    }
 }
 
 void Settings::save() const {
@@ -160,6 +171,16 @@ void Settings::save() const {
         sessionFiles.push_back(toStd(p));
     }
 
+    toml::table mlSchedulerTbl{
+        {"recognize_text_in_background", m_mlRecognizeTextInBackground},
+        {"preload_segmentation_on_tool_activation", m_mlPreloadSegmentationOnToolActivation},
+        {"run_on_battery", m_mlRunOnBattery},
+    };
+
+    toml::table mlTbl{
+        {"scheduler", std::move(mlSchedulerTbl)},
+    };
+
     toml::table tbl{
         {"general", std::move(generalTbl)},
         {"files",
@@ -173,6 +194,7 @@ void Settings::save() const {
              {"open_files", std::move(sessionFiles)},
          }},
         {"first_use", std::move(firstUse)},
+        {"ml", std::move(mlTbl)},
     };
 
     AppPaths::ensureDirExists(QFileInfo(m_filePath).absolutePath());
@@ -209,6 +231,18 @@ void Settings::setRestorePreviousWindows(bool value) {
 }
 void Settings::setSessionOpenFiles(const QStringList &value) {
     m_sessionOpenFiles = value;
+}
+
+void Settings::setMlRecognizeTextInBackground(bool value) {
+    m_mlRecognizeTextInBackground = value;
+}
+
+void Settings::setMlPreloadSegmentationOnToolActivation(bool value) {
+    m_mlPreloadSegmentationOnToolActivation = value;
+}
+
+void Settings::setMlRunOnBattery(bool value) {
+    m_mlRunOnBattery = value;
 }
 
 void Settings::setFirstUseAcknowledged(const QString &key, bool value) {

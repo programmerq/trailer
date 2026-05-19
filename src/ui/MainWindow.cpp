@@ -22,6 +22,7 @@
 #include "app/Application.h"
 #include "filters/ImageFilter.h"
 #include "ml/BackgroundRemover.h"
+#include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "ml/OcrEngine.h"
 #include "platform/Share.h"
@@ -79,7 +80,6 @@
 #include "document/ImageAdapter.h"
 
 namespace trailer {
-
 
 MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent), m_app(app) {
     setAcceptDrops(true);
@@ -273,6 +273,36 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     buildMenus();
     rebuildRecentMenu();
     onCurrentDocumentChanged(nullptr);
+
+    // Tiny permanent widget on the right edge of the status bar that
+    // shows whenever MlScheduler has a non-Idle task running. The
+    // refresh closure lives next to the widget so we don't pay the
+    // bookkeeping cost of a member slot. Connected via the
+    // scheduler's statsChanged() signal which is queued from the
+    // worker thread; the lambda runs on the GUI thread and is safe
+    // to touch QLabel state. No-op when the scheduler is idle.
+    m_mlIndicator = new QLabel(QStringLiteral("ML"), this);
+    m_mlIndicator->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
+    m_mlIndicator->setMargin(2);
+    m_mlIndicator->setVisible(false);
+    statusBar()->addPermanentWidget(m_mlIndicator);
+    auto refreshMlIndicator = [this]() {
+        const auto stats = m_app->mlScheduler().stats();
+        // Idle priority is reserved for "we don't care if this never
+        // runs" speculative work — the user doesn't need feedback for
+        // it, so leave the indicator hidden. Any priority above Idle
+        // shows up.
+        const bool show = stats.running > 0 && stats.runningPriority != MlPriority::Idle;
+        m_mlIndicator->setVisible(show);
+        if (show) {
+            m_mlIndicator->setToolTip(stats.runningLabel);
+        } else {
+            m_mlIndicator->setToolTip(QString());
+        }
+    };
+    connect(&m_app->mlScheduler(), &MlScheduler::statsChanged, this, refreshMlIndicator,
+            Qt::QueuedConnection);
+    refreshMlIndicator();
 
     // Auto-save loop. Tick every 30 s; each tick saves any document
     // that is dirty AND has been saved at least once (filePath() is
@@ -551,7 +581,7 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
     m_selectAllAction = editMenu->addAction(tr("Select &All"));
     m_selectAllAction->setShortcut(QKeySequence::SelectAll);
     connect(m_selectAllAction, &QAction::triggered, this, [this]() {
-        if (auto* overlay = findChild<AnnotationOverlay*>()) {
+        if (auto *overlay = findChild<AnnotationOverlay *>()) {
             overlay->selectAll();
         }
     });

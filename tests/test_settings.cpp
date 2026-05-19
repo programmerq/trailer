@@ -17,6 +17,8 @@ class TestSettings : public QObject {
     void enumConversions();
     void firstUseFlagsRoundTrip();
     void sessionRoundTrips();
+    void mlSchedulerDefaults();
+    void mlSchedulerRoundTrip();
 };
 
 void TestSettings::defaults() {
@@ -32,6 +34,9 @@ void TestSettings::defaults() {
     QCOMPARE(s.redactionWarningAcknowledged(), false);
     QCOMPARE(s.restorePreviousWindows(), true);
     QVERIFY(s.sessionOpenFiles().isEmpty());
+    QCOMPARE(s.mlRecognizeTextInBackground(), true);
+    QCOMPARE(s.mlPreloadSegmentationOnToolActivation(), true);
+    QCOMPARE(s.mlRunOnBattery(), false);
 }
 
 void TestSettings::roundTrip() {
@@ -116,6 +121,34 @@ void TestSettings::sessionRoundTrips() {
     QCOMPARE(reloaded.sessionOpenFiles().size(), 2);
     QCOMPARE(reloaded.sessionOpenFiles().first(), QStringLiteral("/tmp/a.pdf"));
     QCOMPARE(reloaded.sessionOpenFiles().last(), QStringLiteral("/tmp/b.png"));
+}
+
+void TestSettings::mlSchedulerDefaults() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Settings s(dir.filePath("missing.toml"));
+    s.load();
+    QCOMPARE(s.mlRecognizeTextInBackground(), true);
+    QCOMPARE(s.mlPreloadSegmentationOnToolActivation(), true);
+    QCOMPARE(s.mlRunOnBattery(), false);
+}
+
+void TestSettings::mlSchedulerRoundTrip() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("settings.toml");
+    {
+        Settings s(path);
+        s.setMlRecognizeTextInBackground(false);
+        s.setMlPreloadSegmentationOnToolActivation(false);
+        s.setMlRunOnBattery(true);
+        s.save();
+    }
+    Settings reloaded(path);
+    reloaded.load();
+    QCOMPARE(reloaded.mlRecognizeTextInBackground(), false);
+    QCOMPARE(reloaded.mlPreloadSegmentationOnToolActivation(), false);
+    QCOMPARE(reloaded.mlRunOnBattery(), true);
 }
 
 QTEST_MAIN(TestSettings)

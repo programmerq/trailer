@@ -1,5 +1,6 @@
 #include "BackgroundRemover.h"
 
+#include "CancellationToken.h"
 #include "ModelRegistry.h"
 #include "OnnxSession.h"
 
@@ -134,10 +135,12 @@ void BackgroundRemover::ensureModelAvailable() {
     m_registry->ensureAvailable(ModelId::U2NetP);
 }
 
-QImage BackgroundRemover::remove(const QImage &source) {
+QImage BackgroundRemover::remove(const QImage &source, const CancellationToken *cancel) {
     if (source.isNull())
         return {};
     if (!isModelReady())
+        return {};
+    if (CancellationToken::isCancelled(cancel))
         return {};
 
     auto session = OnnxSession::fromFile(m_registry->localPath(ModelId::U2NetP));
@@ -166,6 +169,11 @@ QImage BackgroundRemover::remove(const QImage &source) {
         qWarning() << "BackgroundRemover: inference failed";
         return {};
     }
+    // Check after the forward pass — that's the dominant cost.
+    // The mask-to-alpha post-processing below is fast so we don't
+    // need a second checkpoint mid-loop.
+    if (CancellationToken::isCancelled(cancel))
+        return {};
 
     const QImage alpha = maskToAlpha(results->front().data, source.width(), source.height());
     if (alpha.isNull())

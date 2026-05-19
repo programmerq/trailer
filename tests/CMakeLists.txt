@@ -55,5 +55,8 @@ trailer_add_test(test_model_registry test_model_registry.cpp)
 trailer_add_test(test_background_remover test_background_remover.cpp)
 trailer_add_test(test_sam_session test_sam_session.cpp)
 trailer_add_test(test_ocr_engine test_ocr_engine.cpp)
+trailer_add_test(test_cancellation_token test_cancellation_token.cpp)
+trailer_add_test(test_power_source test_power_source.cpp)
+trailer_add_test(test_ml_scheduler test_ml_scheduler.cpp)
 
 add_subdirectory(uat)
