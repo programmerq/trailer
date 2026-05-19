@@ -2,6 +2,7 @@
 
 #include "ui/AnnotationOverlay.h"
 #include "ui/FormOverlay.h"
+#include "ui/SelectableTextLayer.h"
 #include "util/TempPath.h"
 
 #include <QApplication>
@@ -357,6 +358,52 @@ QWidget *PdfDocument::createView(QWidget *parent) {
     QObject::connect(view, &QPdfView::zoomFactorChanged, overlay,
                      QOverload<>::of(&QWidget::update));
     view->viewport()->installEventFilter(overlay);
+
+    // --- Selectable-text layer (Phase 6F / Workstream F) ---
+    // Sits beneath the annotation overlay so user-drawn shapes paint
+    // on top of any highlighted selection. Initially empty (no OCR
+    // results); MainWindow's auto-OCR pump or the Recognize Text
+    // dialog populates the store and the layer wakes up.
+    auto *textLayer = new SelectableTextLayer(view->viewport());
+    textLayer->setStore(&m_selectableText);
+    textLayer->setDocToView([this, pageOriginInView](QPointF p, int page) {
+        if (!m_view)
+            return p;
+        const double z = m_view->zoomFactor();
+        const QPointF origin = pageOriginInView(page);
+        return QPointF(origin.x() + p.x() * z, origin.y() + p.y() * z);
+    });
+    textLayer->setPageAtView([this, pageOriginInView](QPointF viewPt) -> int {
+        if (!m_view || !m_doc)
+            return -1;
+        const double z = m_view->zoomFactor();
+        const int total = m_doc->pageCount();
+        for (int i = 0; i < total; ++i) {
+            const QPointF origin = pageOriginInView(i);
+            const QSizeF pt = m_doc->pagePointSize(i);
+            const QRectF rect(origin.x(), origin.y(), pt.width() * z, pt.height() * z);
+            if (rect.contains(viewPt))
+                return i;
+        }
+        return m_view->pageNavigator()->currentPage();
+    });
+    textLayer->setCurrentPage(view->pageNavigator()->currentPage());
+    textLayer->setGeometry(view->viewport()->rect());
+    textLayer->lower(); // sit below annotation overlay in the z-order
+    textLayer->show();
+    m_textLayer = textLayer;
+
+    QObject::connect(view->pageNavigator(), &QPdfPageNavigator::currentPageChanged, textLayer,
+                     [textLayer](int page) {
+                         if (textLayer)
+                             textLayer->setCurrentPage(page);
+                     });
+    QObject::connect(view->verticalScrollBar(), &QScrollBar::valueChanged, textLayer,
+                     QOverload<>::of(&QWidget::update));
+    QObject::connect(view->horizontalScrollBar(), &QScrollBar::valueChanged, textLayer,
+                     QOverload<>::of(&QWidget::update));
+    QObject::connect(view, &QPdfView::zoomFactorChanged, textLayer,
+                     QOverload<>::of(&QWidget::update));
 
     // --- Form overlay (Phase 5) ---
     auto *formOverlay = new FormOverlay(view->viewport());

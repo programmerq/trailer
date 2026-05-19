@@ -25,6 +25,7 @@ namespace trailer {
 
 class AnnotationOverlay;
 class FormOverlay;
+class SelectableTextLayer;
 
 class PdfDocument : public IDocument {
   public:
@@ -204,6 +205,7 @@ class PdfDocument : public IDocument {
     std::unique_ptr<ScopedTempFile> m_previewFile;
     QPointer<QPdfView> m_view;
     QPointer<AnnotationOverlay> m_overlay;
+    QPointer<SelectableTextLayer> m_textLayer;
     QPointer<FormOverlay> m_formOverlay;
     AnnotationStore m_annotations;
     SelectableTextStore m_selectableText;

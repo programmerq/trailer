@@ -20,6 +20,7 @@ class QScrollArea;
 namespace trailer {
 
 class AnnotationOverlay;
+class SelectableTextLayer;
 
 class ImageDocument : public IDocument {
   public:
@@ -125,6 +126,7 @@ class ImageDocument : public IDocument {
     QPointer<QLabel> m_label;
     QPointer<QMovie> m_movie;
     QPointer<AnnotationOverlay> m_overlay;
+    QPointer<SelectableTextLayer> m_textLayer;
     QPointer<QObject> m_resizeWatcher;
     // Sentinel shared with the resize watcher (which is a QObject
     // parented to a Qt widget and may outlive `this`). Flipped to

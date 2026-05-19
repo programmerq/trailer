@@ -3,6 +3,7 @@
 #include "annotation/AnnotationStore.h"
 #include "filters/ImageFilter.h"
 #include "ui/AnnotationOverlay.h"
+#include "ui/SelectableTextLayer.h"
 
 #include <QColor>
 #include <QEvent>
@@ -274,6 +275,20 @@ QWidget *ImageDocument::createView(QWidget *parent) {
     }
 
     if (!m_animated && !m_image.isNull()) {
+        // Stacking order on the QLabel host: SelectableTextLayer
+        // sits beneath the AnnotationOverlay so a user-drawn
+        // annotation paints over selectable-text highlights. The
+        // I-beam cursor lives on the text layer; the overlay was
+        // changed to no longer claim it unconditionally.
+        auto *textLayer = new SelectableTextLayer(label);
+        textLayer->setStore(&m_selectableText);
+        textLayer->setDocToView(
+            [this](QPointF p, int /*page*/) { return QPointF(p.x() * m_scale, p.y() * m_scale); });
+        textLayer->setPageAtView([](QPointF) { return 0; });
+        textLayer->setGeometry(label->rect());
+        textLayer->show();
+        m_textLayer = textLayer;
+
         auto *overlay = new AnnotationOverlay(label);
         overlay->setStore(&m_annotations);
         overlay->setDocumentToView(
@@ -293,6 +308,8 @@ QWidget *ImageDocument::createView(QWidget *parent) {
         });
         overlay->setGeometry(label->rect());
         overlay->show();
+        // Raise so the overlay paints on top of the text layer.
+        overlay->raise();
         m_overlay = overlay;
     }
 
@@ -311,6 +328,9 @@ void ImageDocument::applyScale(double factor) {
     m_label->adjustSize();
     if (m_overlay) {
         m_overlay->setGeometry(m_label->rect());
+    }
+    if (m_textLayer) {
+        m_textLayer->setGeometry(m_label->rect());
     }
 }
 

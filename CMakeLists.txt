@@ -150,6 +150,8 @@ set(TRAILER_SOURCES
     src/ui/SamSegmentDialog.h
     src/ui/SearchBar.cpp
     src/ui/SearchBar.h
+    src/ui/SelectableTextLayer.cpp
+    src/ui/SelectableTextLayer.h
     src/ui/Sidebar.cpp
     src/ui/Sidebar.h
     src/ui/SignatureCaptureDialog.cpp
