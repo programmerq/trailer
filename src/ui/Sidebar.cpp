@@ -300,9 +300,15 @@ void Sidebar::setDocument(IDocument *doc) {
     m_outline->setModel(doc ? doc->outlineModel() : nullptr);
     m_outline->expandAll();
     if (auto *store = doc ? doc->annotations() : nullptr) {
-        connect(store, &AnnotationStore::changed, this, &Sidebar::refreshAnnotations,
+        // Route changed() through the debouncer rather than calling
+        // refreshAnnotations directly. The store emits one changed()
+        // per mutation, and an undo / Cmd+A delete fan-out can fire
+        // hundreds back-to-back; the QListWidget rebuild dominates if
+        // we run it on every emit.
+        connect(store, &AnnotationStore::changed, this, &Sidebar::scheduleAnnotationRefresh,
                 Qt::UniqueConnection);
     }
+    invalidateHighlightsAndNotesCache();
     refreshAnnotations();
     // Re-apply the current mode so a doc swap (or removing the
     // doc) honours the picker's last choice. Hidden stays hidden;
@@ -434,6 +440,26 @@ bool isHighlightOrNoteType(AnnotationType t) {
 
 } // namespace
 
+void Sidebar::scheduleAnnotationRefresh() {
+    // First emit in this event-loop tick: schedule a 0-ms single-
+    // shot that drains all subsequent emits into one rebuild. The
+    // highlights count cache is invalidated synchronously so any
+    // listener calling highlightsAndNotesCount() before the
+    // singleShot fires still gets a fresh count.
+    invalidateHighlightsAndNotesCache();
+    if (m_annotationRefreshScheduled)
+        return;
+    m_annotationRefreshScheduled = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_annotationRefreshScheduled = false;
+        refreshAnnotations();
+    });
+}
+
+void Sidebar::invalidateHighlightsAndNotesCache() {
+    m_highlightsAndNotesCountCache = -1;
+}
+
 void Sidebar::refreshAnnotations() {
     m_annotations->clear();
     if (!m_doc)
@@ -503,16 +529,29 @@ void Sidebar::refreshAnnotations() {
 }
 
 int Sidebar::highlightsAndNotesCount() const {
-    if (!m_doc)
+    // Cached result; -1 means "stale, recompute". MainWindow polls
+    // this on every annotation store changed() signal, so a burst of
+    // 50+ emits during an undo of a long drag would otherwise rescan
+    // m_annotations 50+ times. invalidateHighlightsAndNotesCache()
+    // hooks into scheduleAnnotationRefresh so the cache stays in
+    // sync with the list widget rebuild.
+    if (m_highlightsAndNotesCountCache >= 0)
+        return m_highlightsAndNotesCountCache;
+    if (!m_doc) {
+        m_highlightsAndNotesCountCache = 0;
         return 0;
+    }
     auto *store = m_doc->annotations();
-    if (!store)
+    if (!store) {
+        m_highlightsAndNotesCountCache = 0;
         return 0;
+    }
     int count = 0;
     for (const Annotation &a : store->annotations()) {
         if (isHighlightOrNoteType(a.type))
             ++count;
     }
+    m_highlightsAndNotesCountCache = count;
     return count;
 }
 
