@@ -1,8 +1,10 @@
 #pragma once
 
 #include "document/DocumentRegistry.h"
+#include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "recent/RecentFiles.h"
+#include "settings/DocumentTypeDefaults.h"
 #include "settings/Settings.h"
 
 #include <QApplication>
@@ -25,10 +27,19 @@ class Application : public QApplication {
     void openFiles(const QStringList &paths);
     void clearRecent();
 
+    // Reopen the documents persisted at the last aboutToQuit. Honours
+    // the user's "Restore previous windows on launch" setting. Called
+    // from main.cpp when the user launches with no CLI file args.
+    // Returns true if at least one file was restored — the caller then
+    // skips spawning an empty MainWindow.
+    bool restorePreviousSession();
+
     Settings &settings() { return m_settings; }
     RecentFiles &recentFiles() { return m_recent; }
+    DocumentTypeDefaults &documentTypeDefaults() { return m_typeDefaults; }
     DocumentRegistry &registry() { return m_registry; }
     ModelRegistry &modelRegistry() { return m_modelRegistry; }
+    MlScheduler &mlScheduler() { return m_mlScheduler; }
 
     // Return the first existing window, or spawn one if none exist.
     // Idempotent: callers can use it to "make sure there's a window".
@@ -49,6 +60,10 @@ class Application : public QApplication {
 
   private slots:
     void onWindowDestroyed(QObject *window);
+    // Snapshot the paths of every currently-open document into
+    // Settings::sessionOpenFiles so the next launch can reopen them.
+    // Wired to QCoreApplication::aboutToQuit.
+    void onAboutToQuit();
 
   private:
     void notifyWindowsRecentChanged();
@@ -61,8 +76,13 @@ class Application : public QApplication {
 
     Settings m_settings;
     RecentFiles m_recent;
+    DocumentTypeDefaults m_typeDefaults;
     DocumentRegistry m_registry;
     ModelRegistry m_modelRegistry;
+    // Single ML task scheduler shared across MainWindows. Holds a
+    // worker thread + power-policy watcher; lives as long as the
+    // QApplication so its destructor blocks on outstanding tasks.
+    MlScheduler m_mlScheduler{&m_settings};
     QList<QPointer<MainWindow>> m_windows;
 #ifdef Q_OS_MACOS
     QPointer<QMenuBar> m_noWindowMenuBar;

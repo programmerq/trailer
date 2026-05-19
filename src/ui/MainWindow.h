@@ -3,16 +3,20 @@
 #include "document/IDocument.h"
 
 #include <QActionGroup>
+#include <QHash>
 #include <QMainWindow>
 #include <QSet>
 #include <QStringList>
+#include <cstdint>
 #include <memory>
 
 class QCloseEvent;
 class QTimer;
 
 class QAction;
+class QLabel;
 class QMenu;
+class QToolButton;
 
 namespace trailer {
 
@@ -26,6 +30,8 @@ class MarkupToolbar;
 class SearchBar;
 class Sidebar;
 
+class OcrController;
+
 class MainWindow : public QMainWindow {
     Q_OBJECT
 
@@ -35,6 +41,11 @@ class MainWindow : public QMainWindow {
 
     void addDocument(std::unique_ptr<IDocument> document);
     int documentCount() const;
+    // Pass-through to DocumentView::documentAt. Returns 1 on success
+    // and writes the document pointer through `out`; returns 0 with
+    // `*out = nullptr` on out-of-range or missing widget. Used by
+    // Application::onAboutToQuit to enumerate open paths.
+    int documentAt(int index, IDocument **out) const;
 
     // Lightweight status-bar feedback. Replaces operation-failure
     // QMessageBox::warning calls so the user is not punched in the
@@ -169,6 +180,34 @@ class MainWindow : public QMainWindow {
     void updateTitleForDocument(IDocument *doc);
     void updateUndoRedoActions(IDocument *doc);
     int selectedPageForEdit(IDocument *doc) const;
+    // Size the window to fit the first document opened. Clamped to a
+    // 1100×750 floor and a 90%-of-screen ceiling so very small docs
+    // don't shrink the window and very large ones don't fill the
+    // screen. Caps the implied zoom at ~75% — we'd rather have a
+    // big-but-screen-bounded window than a small one where the doc
+    // is unreadable. One-shot per window; subsequent file opens
+    // leave the size alone.
+    void applyInitialWindowSize(IDocument *doc);
+
+    // Trigger a background scoring pass through MlScheduler so we know
+    // whether to badge the Remove Background menu entry for `doc`. The
+    // scoring itself is pure CPU but routed through the scheduler so it
+    // is cooperatively cancellable when the document closes mid-compute
+    // and honours the battery toggle (Prefetch is dropped on battery
+    // when mlRunOnBattery=false; that's the right trade-off — the badge
+    // is a nicety, not a feature). One-shot per document pointer: once
+    // we have a verdict we cache it and skip rescoring on subsequent
+    // tab switches. Called from onCurrentDocumentChanged; safe to call
+    // for non-image documents (no-ops).
+    void scheduleBackgroundCandidateScore(IDocument *doc);
+
+    // Apply the cached badge state for `doc` to the Remove Background
+    // menu action: a 12px "sparkle" glyph + a positive tooltip when
+    // the heuristic says this image looks promising, otherwise no
+    // icon and the policy-aware tooltip set by applyMlPolicy(). Idempo-
+    // tent; called whenever the active document changes or the scorer
+    // finishes a pass.
+    void updateRemoveBackgroundBadge(IDocument *doc);
 
     Application *m_app;
     DocumentView *m_documentView = nullptr;
@@ -178,6 +217,10 @@ class MainWindow : public QMainWindow {
     MarkupToolbar *m_markupToolbar = nullptr;
     FormToolbar *m_formToolbar = nullptr;
     SearchBar *m_searchBar = nullptr;
+    // Collapsed-state proxy for the search bar in the main toolbar.
+    // Clicking the button expands m_searchBar inline and hides the
+    // button; dismissing the bar (Esc, empty query) does the reverse.
+    QToolButton *m_searchButton = nullptr;
     Sidebar *m_sidebar = nullptr;
     QMenu *m_recentMenu = nullptr;
 
@@ -214,15 +257,14 @@ class MainWindow : public QMainWindow {
     // is open. Honours `Settings::autoSave()`; flipping that off
     // pauses the timer.
     QTimer *m_autoSaveTimer = nullptr;
-    // Same once-per-doc tracking for the markup toolbar's auto-show
-    // behaviour. The toolbar starts hidden; the first time a document
-    // that supports annotations becomes current, we show it. After that,
-    // the user's explicit hide/show choice is sticky for that document.
-    QSet<const IDocument *> m_autoShownMarkupDocs;
     // Documents whose recent-file view state has already been
     // restored on focus. Tracked per-document so a tab switch
     // doesn't bounce the user back to the saved page mid-session.
     QSet<const IDocument *> m_restoredViewStateDocs;
+    // One-shot guard for applyInitialWindowSize. True after the
+    // first opened doc has driven a resize so opening additional
+    // tabs in the same window doesn't bounce the geometry around.
+    bool m_initialSizingApplied = false;
     QAction *m_autoFillFormAction = nullptr;
     QAction *m_myCardAction = nullptr;
     QAction *m_manageSignaturesAction = nullptr;
@@ -266,6 +308,40 @@ class MainWindow : public QMainWindow {
 
     QAction *m_previousPageAction = nullptr;
     QAction *m_nextPageAction = nullptr;
+
+    // Permanent status-bar widget that shows whenever the
+    // MlScheduler has a non-Idle task running. Tooltip carries the
+    // running task's label (e.g. "Recognizing text…"). Hidden when
+    // the scheduler is idle so the status bar stays clean. PHILOSOPHY:
+    // no modal — this is the canonical "background ML work is
+    // happening" affordance for the user.
+    QLabel *m_mlIndicator = nullptr;
+
+    // Auto-OCR pump. Owns an OcrEngine and tracks the in-flight
+    // submissions for the current document; signals from the document
+    // view feed visible-page changes into it. The controller is
+    // parented to this MainWindow so it dies with the window.
+    OcrController *m_ocrController = nullptr;
+
+    // Status-bar "Text isn't selectable here. Recognize text on this
+    // page." offer for large documents that we skipped auto-OCR for.
+    // Shown only when the active doc is large + non-OCR'd; hidden
+    // otherwise so the status bar stays clean.
+    QWidget *m_largeDocOcrHint = nullptr;
+
+    // Decoration applied to the Remove Background menu entry when the
+    // current image is a strong candidate for background removal. The
+    // scoring runs once per image-document open through MlScheduler at
+    // Prefetch priority; the resulting flag flips the action's icon to
+    // a "sparkle" glyph and adjusts the tooltip. Per-document so a tab
+    // switch between an image and a PDF reverts the badge cleanly.
+    // Plain pointer key — entries are removed when the doc closes
+    // (DocumentView::documentClosed signal in onCurrentDocumentChanged).
+    QSet<const IDocument *> m_backgroundCandidateDocs;
+    // Pending scoring jobs keyed by document pointer so we can cancel
+    // them if the doc closes mid-compute. Maps to the MlScheduler task
+    // id returned by submit(); zero means no in-flight job.
+    QHash<const IDocument *, std::uint64_t> m_pendingCandidateJobs;
 };
 
 } // namespace trailer

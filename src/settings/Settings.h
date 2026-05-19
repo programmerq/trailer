@@ -2,6 +2,7 @@
 
 #include <QHash>
 #include <QString>
+#include <QStringList>
 
 namespace trailer {
 
@@ -37,12 +38,51 @@ class Settings {
     int recentMax() const { return m_recentMax; }
     void setRecentMax(int value);
 
+    // When true, Trailer reopens whatever files were open at the time
+    // of the last quit (macOS-style "quit and keep windows" across
+    // every platform). When the user launches Trailer with explicit
+    // file arguments, the session list is ignored — those files
+    // override the persisted set. Default: on.
+    bool restorePreviousWindows() const { return m_restorePreviousWindows; }
+    void setRestorePreviousWindows(bool value);
+
+    // List of file paths that were open at the last aboutToQuit.
+    // Persisted under [session].open_files; the launch path consults
+    // this only when restorePreviousWindows() is true AND no CLI
+    // files were supplied.
+    QStringList sessionOpenFiles() const { return m_sessionOpenFiles; }
+    void setSessionOpenFiles(const QStringList &value);
+
     // Directory the user last saved into. Used to seed Save-As file
     // dialogs so successive saves of related documents land in the
     // same folder rather than always defaulting to ~/Documents. The
     // value is best-effort — empty string means "use platform default".
     QString lastSaveDir() const { return m_lastSaveDir; }
     void setLastSaveDir(const QString &value);
+
+    // [ml.scheduler] knobs (see PHILOSOPHY: don't chew battery
+    // greedily). Read by MlScheduler when deciding whether to admit
+    // speculative work.
+    //
+    //   mlRecognizeTextInBackground — run OCR on currently-visible
+    //     pages so the search index is warm. Off => OCR only fires
+    //     on explicit user action.
+    //   mlPreloadSegmentationOnToolActivation — when the user picks
+    //     Instant Alpha / Smart Lasso, kick off the MobileSAM
+    //     encoder for the current image so the first click is fast.
+    //   mlRunOnBattery — when on battery, run *all* priorities. Off
+    //     (the default) restricts to UserAction only; Prefetch /
+    //     Idle / VisiblePage submissions get pre-cancelled.
+    bool mlRecognizeTextInBackground() const { return m_mlRecognizeTextInBackground; }
+    void setMlRecognizeTextInBackground(bool value);
+
+    bool mlPreloadSegmentationOnToolActivation() const {
+        return m_mlPreloadSegmentationOnToolActivation;
+    }
+    void setMlPreloadSegmentationOnToolActivation(bool value);
+
+    bool mlRunOnBattery() const { return m_mlRunOnBattery; }
+    void setMlRunOnBattery(bool value);
 
     // Whether the user has seen the one-time "redaction is not
     // defence-grade" warning (DESIGN §6.11.6). True = do not show
@@ -77,8 +117,21 @@ class Settings {
     OpenFilesIn m_openFilesIn = OpenFilesIn::NewWindow;
     bool m_autoSave = true;
     int m_recentMax = 50;
+    // macOS-style "pick up where you left off" default — on. The
+    // Settings → General preferences UI exposes a checkbox to flip
+    // this; users who prefer a clean launch each time turn it off.
+    bool m_restorePreviousWindows = true;
+    QStringList m_sessionOpenFiles;
     QString m_lastSaveDir;
     QHash<QString, bool> m_firstUseFlags;
+    // [ml.scheduler] defaults. Background recognition + tool-
+    // activation preload are *on* so the app feels fast; running
+    // speculative work on battery is *off* so the laptop doesn't
+    // get hot on a coffee-shop trip. Flip via the eventual
+    // Preferences UI; persisted under [ml.scheduler] in settings.toml.
+    bool m_mlRecognizeTextInBackground = true;
+    bool m_mlPreloadSegmentationOnToolActivation = true;
+    bool m_mlRunOnBattery = false;
 };
 
 QString themeToString(Theme value);

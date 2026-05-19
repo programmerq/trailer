@@ -1,10 +1,26 @@
 #pragma once
 
+#include "document/IDocument.h"
+
+#include <QByteArray>
 #include <QDateTime>
 #include <QList>
 #include <QString>
 
 namespace trailer {
+
+// Mirrors Sidebar::Mode by name + ordinal. Lives in this header so
+// recent/ doesn't have to pull in ui/Sidebar.h (which transitively
+// drags in QtWidgets); ui/Sidebar.cpp converts between the two with
+// a single static_assert-guarded cast. Keep the order in sync with
+// Sidebar::Mode.
+enum class SidebarMode : int {
+    Hidden = 0,
+    Pages = 1,
+    SearchResults = 2,
+    TableOfContents = 3,
+    HighlightsAndNotes = 4,
+};
 
 struct RecentEntry {
     QString path;
@@ -18,7 +34,32 @@ struct RecentEntry {
     int currentPage = -1;
     double zoomFactor = 0.0;
     int scrollY = 0;
+    // Legacy: persisted for back-compat with pre-Workstream-I
+    // recent.json files. The new sidebarMode field below is the
+    // source of truth; sidebarVisible is derived from it on save
+    // (false ↔ Hidden, true ↔ anything else) and only consulted on
+    // load when sidebarMode is absent.
     bool sidebarVisible = true;
+    // Workstream I additions. Defaults represent "no captured state"
+    // so an entry written by an older Trailer still loads cleanly.
+    ZoomMode zoomMode = ZoomMode::Custom;
+    SidebarMode sidebarMode = SidebarMode::Hidden;
+    bool markupToolbarVisible = false;
+    // Qt saveGeometry() / saveState() blobs. Empty means "not yet
+    // captured" — the window keeps its constructor-time geometry and
+    // dock layout. Stored base64-encoded in recent.json so the JSON
+    // remains human-inspectable.
+    QByteArray windowGeometry;
+    QByteArray windowState;
+
+    // True when the entry carries any captured view-state. Used by
+    // the restore path to decide whether to apply per-file state or
+    // fall through to per-type defaults / hardcoded defaults.
+    bool hasViewState() const {
+        return currentPage >= 0 || zoomFactor > 0.0 || scrollY != 0 ||
+               zoomMode != ZoomMode::Custom || markupToolbarVisible ||
+               !windowGeometry.isEmpty() || !windowState.isEmpty();
+    }
 };
 
 class RecentFiles {
@@ -32,12 +73,13 @@ class RecentFiles {
     void add(const QString &path);
     void clear();
 
-    // Update the view-state fields of the entry whose canonical path
-    // matches `path`. No-op if the entry doesn't exist (the user
-    // closed a file that was never in the list, e.g. a temp scratch
-    // doc). Caller is responsible for invoking save() to persist.
-    void updateViewState(const QString &path, int currentPage, double zoomFactor, int scrollY,
-                         bool sidebarVisible);
+    // Replace the view-state fields of the entry whose canonical
+    // path matches `path`. No-op if the entry doesn't exist (the
+    // user closed a file that was never in the list, e.g. a temp
+    // scratch doc). Caller is responsible for invoking save() to
+    // persist. `state` carries only the view-state subset of
+    // RecentEntry — path / displayName / openedAt are untouched.
+    void updateViewState(const QString &path, const RecentEntry &state);
 
     // Look up the captured view-state for `path` (canonical match).
     // Returns a default-constructed entry (path empty) if no match.

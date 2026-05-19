@@ -34,9 +34,17 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
     m_settings.load();
     m_recent.setMaxEntries(m_settings.recentMax());
     m_recent.load();
+    m_typeDefaults.load();
 
     m_registry.registerAdapter(std::make_unique<PdfAdapter>());
     m_registry.registerAdapter(std::make_unique<ImageAdapter>());
+
+    // Snapshot the open file list at quit. Done via aboutToQuit (not
+    // closeEvent on each window) so we capture every window before any
+    // is torn down — closeEvent ordering is platform-dependent and a
+    // window that's already deleted has no documents to enumerate.
+    connect(this, &QCoreApplication::aboutToQuit, this, &Application::onAboutToQuit);
+
 #ifdef Q_OS_MACOS
     installNoWindowMenuBar();
 #endif
@@ -172,6 +180,59 @@ void Application::onWindowDestroyed(QObject *window) {
                                        return p.data() == window || p.isNull();
                                    }),
                     m_windows.end());
+}
+
+bool Application::restorePreviousSession() {
+    if (!m_settings.restorePreviousWindows())
+        return false;
+    const QStringList stored = m_settings.sessionOpenFiles();
+    QStringList paths;
+    paths.reserve(stored.size());
+    // Filter out paths that no longer exist — a stale session entry
+    // from a deleted file should not pop up an error dialog on launch.
+    // We silently drop them; the file remains in the recent list (if
+    // present there) so the user can re-locate it via File → Open
+    // Recent if the underlying file comes back.
+    for (const QString &p : stored) {
+        if (!p.isEmpty() && QFileInfo::exists(p)) {
+            paths.append(p);
+        }
+    }
+    if (paths.isEmpty())
+        return false;
+    openFiles(paths);
+    return !m_windows.isEmpty();
+}
+
+void Application::onAboutToQuit() {
+    // Walk every still-live window for its open documents.
+    //   - macOS Cmd+Q: QCoreApplication::quit() doesn't fire
+    //     closeEvents on the windows; they're still alive in
+    //     m_windows when aboutToQuit lands, so this walk catches
+    //     the session.
+    //   - Linux / Windows lastWindowClosed → app quits: by the time
+    //     we get here, every window has already been deleted via
+    //     WA_DeleteOnClose, so m_windows is empty and the session
+    //     list is empty too — which is correct, since the user
+    //     manually closed every window before the implicit quit.
+    //   - Explicit menu Quit on Linux/Win: same as macOS Cmd+Q.
+    QStringList paths;
+    for (const auto &ptr : m_windows) {
+        if (!ptr)
+            continue;
+        const int total = ptr->documentCount();
+        for (int i = 0; i < total; ++i) {
+            IDocument *doc = nullptr;
+            if (!ptr->documentAt(i, &doc) || !doc)
+                continue;
+            const QString p = doc->filePath();
+            if (!p.isEmpty() && !paths.contains(p)) {
+                paths.append(p);
+            }
+        }
+    }
+    m_settings.setSessionOpenFiles(paths);
+    m_settings.save();
 }
 
 #ifdef Q_OS_MACOS

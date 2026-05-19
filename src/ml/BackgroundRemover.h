@@ -6,6 +6,7 @@
 
 namespace trailer {
 
+class CancellationToken;
 class ModelRegistry;
 
 // Removes the background from an image by producing a per-pixel
@@ -43,7 +44,13 @@ class BackgroundRemover : public QObject {
     // ready or inference fails. Successful result is an ARGB32
     // image the same size as the input, with background pixels
     // driven toward alpha 0. Non-background pixels keep their RGB.
-    QImage remove(const QImage &source);
+    //
+    // `cancel` is a cooperative cancellation token (see
+    // CancellationToken.h). Defaults to nullptr — existing call
+    // sites stay unchanged. The token is checked at entry and
+    // right after the ONNX forward pass; an interrupted run
+    // returns a null QImage.
+    QImage remove(const QImage &source, const CancellationToken *cancel = nullptr);
 
   signals:
     // Download progress from the underlying registry.

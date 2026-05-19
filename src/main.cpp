@@ -32,6 +32,12 @@ int main(int argc, char *argv[]) {
     const trailer::CommandLineResult cli = trailer::parseCommandLine(app.arguments());
 
     if (cli.paths.isEmpty()) {
+        // Workstream I: "quit and keep windows" across every platform.
+        // If the user had files open at the last quit AND opted in to
+        // session restore (default: on), reopen them now. Explicit CLI
+        // args always win — they're a direct request that overrides the
+        // persisted session.
+        const bool restored = app.restorePreviousSession();
 #ifdef Q_OS_MACOS
         // Mac convention: launching with no document opens no
         // window. The Dock icon and menu bar stay live; the user
@@ -40,9 +46,14 @@ int main(int argc, char *argv[]) {
         //
         // Without this branch, ensureWindow() pops a blank canvas
         // that the user has to manually close even if they
-        // double-clicked the Dock icon by accident.
+        // double-clicked the Dock icon by accident. Session-restore
+        // (above) takes precedence — if a session was restored, the
+        // restored windows are what the user sees.
+        (void)restored;
 #else
-        app.ensureWindow();
+        if (!restored) {
+            app.ensureWindow();
+        }
 #endif
     } else {
         app.openFiles(cli.paths);

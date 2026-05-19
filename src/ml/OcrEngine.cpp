@@ -1,5 +1,6 @@
 #include "OcrEngine.h"
 
+#include "CancellationToken.h"
 #include "ModelRegistry.h"
 #include "OnnxSession.h"
 
@@ -466,8 +467,11 @@ QString OcrEngine::recognizeBox(const QImage &crop, float *confOut) {
     return ctcDecode(result->front().data, T, C, m_dict, confOut);
 }
 
-QVector<OcrEngine::TextBlock> OcrEngine::recognize(const QImage &source) {
+QVector<OcrEngine::TextBlock> OcrEngine::recognize(const QImage &source,
+                                                   const CancellationToken *cancel) {
     if (source.isNull() || !isModelReady())
+        return {};
+    if (CancellationToken::isCancelled(cancel))
         return {};
 
     if (!m_detector) {
@@ -480,13 +484,23 @@ QVector<OcrEngine::TextBlock> OcrEngine::recognize(const QImage &source) {
         return {};
     if (m_dict.isEmpty() && !loadDictionary())
         return {};
+    if (CancellationToken::isCancelled(cancel))
+        return {};
 
     const QVector<QRect> boxes = detectBoxes(source);
+    // Check between detector and recognizer stages — detection is
+    // the long pole on bigger pages and bailing here saves the
+    // dominant cost when the doc closes mid-OCR.
+    if (CancellationToken::isCancelled(cancel))
+        return {};
+
     QVector<TextBlock> blocks;
     blocks.reserve(boxes.size());
 
     const QImage canvas = source.convertToFormat(QImage::Format_RGB888);
     for (const QRect &box : boxes) {
+        if (CancellationToken::isCancelled(cancel))
+            break;
         const QRect clipped = box.intersected(QRect(QPoint(), canvas.size()));
         if (clipped.width() < 4 || clipped.height() < 4)
             continue;

@@ -3,8 +3,10 @@
 #include "annotation/AnnotationStore.h"
 #include "filters/ImageFilter.h"
 #include "ui/AnnotationOverlay.h"
+#include "ui/SelectableTextLayer.h"
 
 #include <QColor>
+#include <QEvent>
 #include <QFileInfo>
 #include <QImageReader>
 #include <QImageWriter>
@@ -18,8 +20,11 @@
 #include <QPixmap>
 #include <QPrintDialog>
 #include <QPrinter>
+#include <QResizeEvent>
 #include <QRect>
 #include <QScrollArea>
+#include <QScrollBar>
+#include <QTimer>
 #include <QTransform>
 
 #include <cmath>
@@ -259,8 +264,31 @@ QWidget *ImageDocument::createView(QWidget *parent) {
     scroll->setWidget(label);
     m_scroll = scroll;
     m_label = label;
+    installResizeWatcher();
 
     if (!m_animated && !m_image.isNull()) {
+        // Fit-to-content on first show, capped at 100%. Same shape as
+        // PdfDocument's applyInitialFitZoom: schedule on the event
+        // loop so the scroll-area viewport has settled, then either
+        // shrink-to-fit or leave the image at actual size.
+        QTimer::singleShot(0, scroll, [this]() { applyInitialFitZoom(); });
+    }
+
+    if (!m_animated && !m_image.isNull()) {
+        // Stacking order on the QLabel host: SelectableTextLayer
+        // sits beneath the AnnotationOverlay so a user-drawn
+        // annotation paints over selectable-text highlights. The
+        // I-beam cursor lives on the text layer; the overlay was
+        // changed to no longer claim it unconditionally.
+        auto *textLayer = new SelectableTextLayer(label);
+        textLayer->setStore(&m_selectableText);
+        textLayer->setDocToView(
+            [this](QPointF p, int /*page*/) { return QPointF(p.x() * m_scale, p.y() * m_scale); });
+        textLayer->setPageAtView([](QPointF) { return 0; });
+        textLayer->setGeometry(label->rect());
+        textLayer->show();
+        m_textLayer = textLayer;
+
         auto *overlay = new AnnotationOverlay(label);
         overlay->setStore(&m_annotations);
         overlay->setDocumentToView(
@@ -280,6 +308,8 @@ QWidget *ImageDocument::createView(QWidget *parent) {
         });
         overlay->setGeometry(label->rect());
         overlay->show();
+        // Raise so the overlay paints on top of the text layer.
+        overlay->raise();
         m_overlay = overlay;
     }
 
@@ -299,46 +329,175 @@ void ImageDocument::applyScale(double factor) {
     if (m_overlay) {
         m_overlay->setGeometry(m_label->rect());
     }
+    if (m_textLayer) {
+        m_textLayer->setGeometry(m_label->rect());
+    }
 }
 
 void ImageDocument::zoomIn() {
+    // Any explicit zoom step puts the document back into Custom mode —
+    // the user is asking for a specific factor, not "track the
+    // viewport". Mirrors PdfDocument::applyZoomFactor's behaviour.
+    m_zoomMode = ZoomMode::Custom;
     applyScale(m_scale * kZoomStep);
 }
 
 void ImageDocument::zoomOut() {
+    m_zoomMode = ZoomMode::Custom;
     applyScale(m_scale / kZoomStep);
 }
 
 void ImageDocument::zoomActual() {
+    m_zoomMode = ZoomMode::Actual;
     applyScale(1.0);
 }
 
 void ImageDocument::zoomFitWidth() {
-    if (!m_scroll || !m_label || m_image.isNull()) {
-        return;
-    }
-    const int available = m_scroll->viewport()->width();
-    if (available <= 0 || m_image.width() <= 0) {
-        return;
-    }
-    applyScale(static_cast<double>(available) / static_cast<double>(m_image.width()));
+    m_zoomMode = ZoomMode::FitToWidth;
+    reapplyFitMode();
 }
 
 void ImageDocument::zoomFitPage() {
-    if (!m_scroll || !m_label || m_image.isNull()) {
+    m_zoomMode = ZoomMode::FitInView;
+    reapplyFitMode();
+}
+
+void ImageDocument::reapplyFitMode() {
+    // No-op for non-fit modes — the user has set an explicit scale
+    // factor (Custom/Actual) and doesn't want it to track viewport size.
+    if (m_zoomMode != ZoomMode::FitInView && m_zoomMode != ZoomMode::FitToWidth)
         return;
-    }
+    if (!m_scroll || !m_label || m_image.isNull())
+        return;
     const int availW = m_scroll->viewport()->width();
     const int availH = m_scroll->viewport()->height();
-    if (availW <= 0 || availH <= 0 ||
-        m_image.width() <= 0 || m_image.height() <= 0) {
+    if (availW <= 0 || m_image.width() <= 0)
+        return;
+    if (m_zoomMode == ZoomMode::FitToWidth) {
+        applyScale(static_cast<double>(availW) / static_cast<double>(m_image.width()));
         return;
     }
+    // FitInView: constrain both dimensions.
+    if (availH <= 0 || m_image.height() <= 0)
+        return;
     const double scaleW =
         static_cast<double>(availW) / static_cast<double>(m_image.width());
     const double scaleH =
         static_cast<double>(availH) / static_cast<double>(m_image.height());
     applyScale(std::min(scaleW, scaleH));
+}
+
+namespace {
+
+// Tiny QObject-derived helper. eventFilter is on QObject; ImageDocument
+// isn't a QObject (the adapter interfaces aren't QObject-aware) so we
+// can't install it directly. A small bridge owned by the scroll
+// area's viewport gets the same effect.
+//
+// Lifetime: parented to the viewport, so it dies with the widget
+// hierarchy. The alive-flag (shared with ImageDocument) handles the
+// case where the document is destroyed before the view — the flag
+// goes false and the watcher stops calling into freed memory.
+class FitModeResizeWatcher : public QObject {
+  public:
+    FitModeResizeWatcher(ImageDocument *doc, std::shared_ptr<bool> alive, QObject *parent)
+        : QObject(parent), m_doc(doc), m_alive(std::move(alive)) {}
+
+  protected:
+    bool eventFilter(QObject *watched, QEvent *event) override {
+        if (event->type() == QEvent::Resize && m_alive && *m_alive) {
+            m_doc->reapplyFitMode();
+        }
+        return QObject::eventFilter(watched, event);
+    }
+
+  private:
+    ImageDocument *m_doc;
+    std::shared_ptr<bool> m_alive;
+};
+
+} // namespace
+
+void ImageDocument::installResizeWatcher() {
+    if (!m_scroll || !m_scroll->viewport())
+        return;
+    if (m_resizeWatcher)
+        return;
+    if (!m_aliveFlag)
+        m_aliveFlag = std::make_shared<bool>(true);
+    auto *watcher = new FitModeResizeWatcher(this, m_aliveFlag, m_scroll->viewport());
+    m_scroll->viewport()->installEventFilter(watcher);
+    m_resizeWatcher = watcher;
+}
+
+ImageDocument::~ImageDocument() {
+    if (m_aliveFlag)
+        *m_aliveFlag = false;
+}
+
+void ImageDocument::applyInitialFitZoom() {
+    if (m_initialZoomApplied)
+        return;
+    if (!m_scroll || !m_label || m_image.isNull())
+        return;
+    const int availW = m_scroll->viewport()->width();
+    const int availH = m_scroll->viewport()->height();
+    if (availW <= 0 || availH <= 0 ||
+        m_image.width() <= 0 || m_image.height() <= 0) {
+        // Layout hasn't settled — retry on the next tick.
+        QTimer::singleShot(0, m_scroll, [this]() { applyInitialFitZoom(); });
+        return;
+    }
+    m_initialZoomApplied = true;
+    const double scaleW =
+        static_cast<double>(availW) / static_cast<double>(m_image.width());
+    const double scaleH =
+        static_cast<double>(availH) / static_cast<double>(m_image.height());
+    const double fit = std::min(scaleW, scaleH);
+    // Cap at 100%: a 200×100 thumbnail shouldn't blow up to fill the
+    // window. Larger images shrink to fit instead.
+    applyScale(std::min(1.0, fit));
+    // Park the mode at FitInView so subsequent window resizes refit
+    // (the watcher above calls reapplyFitMode on each viewport resize).
+    m_zoomMode = ZoomMode::FitInView;
+}
+
+void ImageDocument::applyZoomState(ZoomMode mode, double factor) {
+    switch (mode) {
+    case ZoomMode::FitInView:
+        zoomFitPage();
+        return;
+    case ZoomMode::FitToWidth:
+        zoomFitWidth();
+        return;
+    case ZoomMode::Actual:
+        zoomActual();
+        return;
+    case ZoomMode::Custom:
+        if (factor > 0.0) {
+            m_zoomMode = ZoomMode::Custom;
+            applyScale(factor);
+        }
+        return;
+    }
+}
+
+int ImageDocument::scrollY() const {
+    if (!m_scroll)
+        return 0;
+    if (auto *bar = m_scroll->verticalScrollBar())
+        return bar->value();
+    return 0;
+}
+
+void ImageDocument::applyScrollY(int y) {
+    if (!m_scroll)
+        return;
+    auto *bar = m_scroll->verticalScrollBar();
+    if (!bar)
+        return;
+    const int clamped = std::clamp(y, bar->minimum(), bar->maximum());
+    bar->setValue(clamped);
 }
 
 void ImageDocument::refreshView() {
@@ -373,6 +532,11 @@ void ImageDocument::pushUndoSnapshot() {
         m_undoStack.erase(m_undoStack.begin());
     }
     m_redoStack.clear();
+    // Any pixel-level mutation invalidates the OCR cache for the
+    // single page. The next auto-OCR pump will re-enqueue work for
+    // the now-stale page; until then, the SelectableTextLayer paints
+    // nothing for it (no popup, no error — quiet degradation).
+    m_selectableText.invalidate(0);
 }
 
 void ImageDocument::undo() {
@@ -386,6 +550,8 @@ void ImageDocument::undo() {
     m_image = m_undoStack.back();
     m_undoStack.pop_back();
     m_dirty = !m_undoStack.empty() || m_dirty;
+    // The page contents changed — clear any cached OCR.
+    m_selectableText.invalidate(0);
     refreshView();
 }
 
@@ -400,6 +566,7 @@ void ImageDocument::redo() {
     m_image = m_redoStack.back();
     m_redoStack.pop_back();
     m_dirty = true;
+    m_selectableText.invalidate(0);
     refreshView();
 }
 
