@@ -665,6 +665,41 @@ which clears it).
 - A single `Cmd/Ctrl+Z` (Undo) restores all removed annotations
   at once (not one-by-one).
 
+### UAT-ANN-127 — Drag-to-move generates one undo step
+
+**Preconditions:** A document with at least one annotation. Select
+tool active; the annotation is selected.
+
+**Steps:**
+1. Press inside the annotation's bounds.
+2. Drag the mouse across the page (multiple mouse-move events fire
+   per drag).
+3. Release.
+4. Press `Cmd/Ctrl+Z`.
+
+**Expected:**
+- The annotation moves with the drag (its bounds shift in doc
+  space).
+- Exactly one `Cmd/Ctrl+Z` returns the annotation to its
+  pre-drag position. The drag is not unwound in micro-steps.
+- The same applies to dragging a corner resize handle.
+
+### UAT-ANN-128 — Click on an existing annotation with a drawing tool active selects it
+
+**Preconditions:** A document with at least one annotation. A
+drawing tool (e.g. Arrow, Rectangle) is active.
+
+**Steps:**
+1. Click on an existing annotation (press + release at the same
+   point, no drag).
+
+**Expected:**
+- No new annotation is created.
+- The clicked annotation is selected (selection ring appears,
+  Delete / arrow-key nudge work).
+- A subsequent click-drag on empty space still draws a new shape
+  with the active drawing tool.
+
 ---
 
 ## Known gaps

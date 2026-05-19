@@ -38,7 +38,13 @@ class ThumbnailModel : public QAbstractListModel {
 
   private:
     IDocument *m_doc = nullptr;
-    QSize m_size{128, 160};
+    // Logical thumbnail size used by ThumbnailDelegate. Shrunk from
+    // 128x160 in the 2026-05 HITL pass to roughly double sidebar
+    // density. Preserves the original 0.8 aspect (matches Letter
+    // /A4 close enough that KeepAspectRatio leaves nothing pinned
+    // to one edge), and pairs with the page-number badge drawn
+    // inside the thumbnail (no separate text row below).
+    QSize m_size{80, 100};
     mutable QHash<int, QPixmap> m_cache;
     std::vector<int> m_filter;
 };

@@ -223,8 +223,9 @@ class AnnotationOverlay : public QWidget {
 
     // Helper: which corner-handle (if any) lives at this view-space
     // point for the currently-selected annotation. Returns None
-    // when nothing's selected or the click missed the ~10 px handle
-    // hit zone.
+    // when nothing's selected or the click missed the ~6 px handle
+    // hit zone (shrunk from 10 to keep body-clicks on short
+    // Line/Arrow annotations from being eaten by the corner).
     ResizeHandle handleAt(const QPointF &viewPt) const;
     // Compute the four handle rects in view space for the given
     // annotation bounds.

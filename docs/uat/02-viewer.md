@@ -246,6 +246,11 @@ functional.
 
 ## Zoom
 
+Fresh documents open at **fit-to-content** — the page (PDF) or image
+is scaled to fit the viewport, capped at 100%. Documents that already
+fit at 100% are shown at actual size rather than upscaling. Use
+`Actual Size` (Ctrl+1 / Cmd+1) to override.
+
 ### UAT-VWR-040 — Zoom In
 
 **Preconditions:** A PDF or image is open at 100% zoom.
@@ -355,11 +360,14 @@ functional.
 
 **Preconditions:** A PDF with text is open.
 **Steps:**
-1. `Edit > Find…` (shortcut `Cmd+F` / `Ctrl+F`).
+1. `Edit > Find…` (shortcut `Cmd+F` / `Ctrl+F`), or click the
+   magnifying-glass icon on the right of the main toolbar.
 **Expected:**
-- A search bar appears at the top of the central area.
+- The search button on the main toolbar expands inline into the full
+  search field with arrows and X button.
 - Focus is in the search field.
 - An X button is visible for dismissal.
+- Dismissing the bar (X or Escape) collapses it back to the icon button.
 
 ### UAT-VWR-061 — Find matches in a PDF
 
@@ -387,7 +395,7 @@ functional.
 **Steps:**
 1. Press Escape while the field has focus.
 **Expected:**
-- The search bar closes.
+- The search bar collapses back to its icon button on the main toolbar.
 - Highlights are cleared.
 
 ### UAT-VWR-064 — Clear search via X button
@@ -396,7 +404,7 @@ functional.
 **Steps:**
 1. Click the X.
 **Expected:**
-- Search bar closes; highlights cleared.
+- Search bar collapses back to its icon button; highlights cleared.
 
 ### UAT-VWR-065 — Search with no matches
 

@@ -12,6 +12,7 @@
 
 namespace trailer {
 
+class CancellationToken;
 class ModelRegistry;
 class OnnxSession;
 
@@ -69,7 +70,16 @@ class OcrEngine : public QObject {
     // Coordinates in the returned blocks are in source's pixel
     // space. Returns an empty vector if the models aren't ready or
     // inference fails.
-    QVector<TextBlock> recognize(const QImage &source);
+    //
+    // `cancel` is a cooperative cancellation token (see
+    // CancellationToken.h). Defaults to nullptr — existing call
+    // sites stay unchanged. When non-null, the engine polls
+    // isCancelled() at four checkpoints: entry, after detection,
+    // before each per-box recognition, and after dictionary load.
+    // On cancellation, recognize() returns whatever blocks were
+    // already completed (so a partial result is still useful) and
+    // exits the recognition loop.
+    QVector<TextBlock> recognize(const QImage &source, const CancellationToken *cancel = nullptr);
 
     // Last inference's binarized detection map, same size as the
     // most recent `source`. Exposed for tests and debug overlays.

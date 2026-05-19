@@ -16,6 +16,8 @@ class TestRecent : public QObject {
     void clearEmptiesList();
     void viewStateRoundTripsAndRestoresOnLookup();
     void viewStateUpdateNoOpsForUnknownPath();
+    void extendedViewStateRoundTrips();
+    void legacyViewStateLoadsGracefully();
 };
 
 namespace {
@@ -107,9 +109,13 @@ void TestRecent::viewStateRoundTripsAndRestoresOnLookup() {
         // Simulate the user closing on page 42 with the sidebar
         // hidden. zoom/scroll fields are intentionally non-zero so
         // we can confirm the JSON round-trip carries them.
-        r.updateViewState(docPath, /*currentPage=*/42,
-                          /*zoomFactor=*/1.5, /*scrollY=*/120,
-                          /*sidebarVisible=*/false);
+        RecentEntry state;
+        state.currentPage = 42;
+        state.zoomFactor = 1.5;
+        state.scrollY = 120;
+        state.zoomMode = ZoomMode::Custom;
+        state.sidebarMode = SidebarMode::Hidden;
+        r.updateViewState(docPath, state);
         r.save();
     }
 
@@ -129,8 +135,83 @@ void TestRecent::viewStateUpdateNoOpsForUnknownPath() {
     RecentFiles r(dir.filePath("recent.json"));
     // Updating a path that's not in the list must silently do
     // nothing — closing a never-recented document shouldn't add it.
-    r.updateViewState(dir.filePath("ghost.pdf"), 7, 1.0, 0, true);
+    RecentEntry state;
+    state.currentPage = 7;
+    state.zoomFactor = 1.0;
+    state.sidebarMode = SidebarMode::Pages;
+    r.updateViewState(dir.filePath("ghost.pdf"), state);
     QVERIFY(r.entries().isEmpty());
+}
+
+void TestRecent::extendedViewStateRoundTrips() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString recentPath = dir.filePath("recent.json");
+    const QString docPath = touch(dir, "doc.pdf");
+
+    const QByteArray geom = QByteArray::fromHex("01020304deadbeef");
+    const QByteArray winState = QByteArray::fromHex("aabbccdd11223344");
+
+    {
+        RecentFiles r(recentPath);
+        r.add(docPath);
+        RecentEntry state;
+        state.currentPage = 7;
+        state.zoomFactor = 2.0;
+        state.scrollY = 350;
+        state.zoomMode = ZoomMode::FitToWidth;
+        state.sidebarMode = SidebarMode::TableOfContents;
+        state.markupToolbarVisible = true;
+        state.windowGeometry = geom;
+        state.windowState = winState;
+        r.updateViewState(docPath, state);
+        r.save();
+    }
+
+    RecentFiles reloaded(recentPath);
+    reloaded.load();
+    const RecentEntry e = reloaded.findByPath(docPath);
+    QVERIFY(!e.path.isEmpty());
+    QCOMPARE(e.zoomMode, ZoomMode::FitToWidth);
+    QCOMPARE(e.sidebarMode, SidebarMode::TableOfContents);
+    QCOMPARE(e.markupToolbarVisible, true);
+    QCOMPARE(e.windowGeometry, geom);
+    QCOMPARE(e.windowState, winState);
+    QVERIFY(e.hasViewState());
+}
+
+void TestRecent::legacyViewStateLoadsGracefully() {
+    // Simulate a pre-Workstream-I recent.json that only carries the
+    // original fields. The new entries should default sensibly:
+    //   - sidebarMode derived from sidebar_visible (true → Pages).
+    //   - zoomMode defaults to Custom.
+    //   - markup_toolbar_visible defaults to false.
+    //   - window geometry / state remain empty.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString recentPath = dir.filePath("recent.json");
+    const char *legacy =
+        R"([{"path":"/tmp/legacy.pdf","display_name":"legacy.pdf",)"
+        R"("opened_at":"2026-04-01T12:00:00Z","current_page":3,)"
+        R"("zoom_factor":1.25,"scroll_y":50,"sidebar_visible":true}])";
+    QFile f(recentPath);
+    QVERIFY(f.open(QIODevice::WriteOnly));
+    f.write(legacy);
+    f.close();
+
+    RecentFiles r(recentPath);
+    r.load();
+    QCOMPARE(r.entries().size(), 1);
+    const RecentEntry e = r.entries().first();
+    QCOMPARE(e.currentPage, 3);
+    QCOMPARE(e.zoomFactor, 1.25);
+    QCOMPARE(e.scrollY, 50);
+    QCOMPARE(e.sidebarVisible, true);
+    QCOMPARE(e.sidebarMode, SidebarMode::Pages);
+    QCOMPARE(e.zoomMode, ZoomMode::Custom);
+    QCOMPARE(e.markupToolbarVisible, false);
+    QVERIFY(e.windowGeometry.isEmpty());
+    QVERIFY(e.windowState.isEmpty());
 }
 
 QTEST_MAIN(TestRecent)

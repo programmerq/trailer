@@ -34,12 +34,21 @@ class PdfDocument : public IDocument {
     QString filePath() const override;
     QWidget *createView(QWidget *parent) override;
 
+    DocumentType documentType() const override { return DocumentType::Pdf; }
+
     bool supportsZoom() const override { return true; }
     void zoomIn() override;
     void zoomOut() override;
     void zoomActual() override;
     void zoomFitWidth() override;
     void zoomFitPage() override;
+    QSize contentSizeHint() const override;
+
+    ZoomMode zoomMode() const override;
+    double zoomFactor() const override;
+    void applyZoomState(ZoomMode mode, double factor) override;
+    int scrollY() const override;
+    void applyScrollY(int y) override;
 
     bool supportsViewModes() const override { return true; }
     ViewMode viewMode() const override { return m_viewMode; }
@@ -159,6 +168,11 @@ class PdfDocument : public IDocument {
   private:
     void applyViewMode();
     void applyZoomFactor(double factor);
+    // Fit the freshly-opened doc into the viewport on first show.
+    // Caps at 100% — small documents stay at actual size rather than
+    // being upscaled. One-shot: subsequent currentDocumentChanged
+    // events leave the user's zoom alone.
+    void applyInitialFitZoom(QPdfView *view);
     bool reloadViewerFromEditor();
     // Called from the search model's rowsInserted signal on the GUI
     // thread once the asynchronous search produces at least one hit.
@@ -194,6 +208,10 @@ class PdfDocument : public IDocument {
     bool m_dirty = false;
     bool m_annotationsModified = false;
     bool m_needsPassword = false;
+    // One-shot guard for applyInitialFitZoom — fit-to-content is
+    // applied the first time the viewport has a real size, then never
+    // again so the user's zoom choices stick.
+    bool m_initialZoomApplied = false;
 
     // qpdf-mutation undo stacks. Each PdfCommand owns its own
     // forward+revert state (e.g. a RotatePageCommand keeps the

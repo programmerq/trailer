@@ -22,6 +22,7 @@
 #include "app/Application.h"
 #include "filters/ImageFilter.h"
 #include "ml/BackgroundRemover.h"
+#include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "ml/OcrEngine.h"
 #include "platform/Share.h"
@@ -79,7 +80,6 @@
 #include "document/ImageAdapter.h"
 
 namespace trailer {
-
 
 MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent), m_app(app) {
     setAcceptDrops(true);
@@ -273,6 +273,36 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     buildMenus();
     rebuildRecentMenu();
     onCurrentDocumentChanged(nullptr);
+
+    // Tiny permanent widget on the right edge of the status bar that
+    // shows whenever MlScheduler has a non-Idle task running. The
+    // refresh closure lives next to the widget so we don't pay the
+    // bookkeeping cost of a member slot. Connected via the
+    // scheduler's statsChanged() signal which is queued from the
+    // worker thread; the lambda runs on the GUI thread and is safe
+    // to touch QLabel state. No-op when the scheduler is idle.
+    m_mlIndicator = new QLabel(QStringLiteral("ML"), this);
+    m_mlIndicator->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
+    m_mlIndicator->setMargin(2);
+    m_mlIndicator->setVisible(false);
+    statusBar()->addPermanentWidget(m_mlIndicator);
+    auto refreshMlIndicator = [this]() {
+        const auto stats = m_app->mlScheduler().stats();
+        // Idle priority is reserved for "we don't care if this never
+        // runs" speculative work — the user doesn't need feedback for
+        // it, so leave the indicator hidden. Any priority above Idle
+        // shows up.
+        const bool show = stats.running > 0 && stats.runningPriority != MlPriority::Idle;
+        m_mlIndicator->setVisible(show);
+        if (show) {
+            m_mlIndicator->setToolTip(stats.runningLabel);
+        } else {
+            m_mlIndicator->setToolTip(QString());
+        }
+    };
+    connect(&m_app->mlScheduler(), &MlScheduler::statsChanged, this, refreshMlIndicator,
+            Qt::QueuedConnection);
+    refreshMlIndicator();
 
     // Auto-save loop. Tick every 30 s; each tick saves any document
     // that is dirty AND has been saved at least once (filePath() is
@@ -497,16 +527,30 @@ void MainWindow::buildMainToolbar() {
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_mainToolbar->addWidget(spacer);
 
-    // Search field is always visible in the toolbar now. The old
-    // floating SearchBar that toggled in/out of the central layout
-    // has been removed; m_searchBar is parented to the toolbar.
-    // We don't call show() — Qt propagates visibility from the
-    // QMainWindow at the next show event, and an explicit show()
-    // on a child of a still-hidden ancestor has no effect on the
-    // explicitly-hidden flag, so leaving it alone is correct.
+    // Search collapses to an icon button by default. The button sits
+    // on the right of the main toolbar; clicking it (or Ctrl+F)
+    // expands the SearchBar in place and hides the button. Esc /
+    // empty query restore the button. Keeping the bar reparented to
+    // the toolbar (rather than swapping widgets) preserves the
+    // signals and counter state wired up in the constructor.
+    m_searchButton = new QToolButton(m_mainToolbar);
+    m_searchButton->setIcon(
+        themedActionIcon(QStringLiteral(":/icons/actions/view-search.svg"), m_mainToolbar));
+    m_searchButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    m_searchButton->setToolTip(tr("Search (%1)").arg(QKeySequence(QKeySequence::Find).toString(
+        QKeySequence::NativeText)));
+    connect(m_searchButton, &QToolButton::clicked, this, &MainWindow::showSearchBar);
+    m_mainToolbar->addWidget(m_searchButton);
+
     m_searchBar->setParent(m_mainToolbar);
     m_searchBar->setMaximumWidth(360);
     m_mainToolbar->addWidget(m_searchBar);
+    // hide() after addWidget so the explicit-hidden flag is set
+    // against the just-reparented widget. QToolBar::addWidget wraps
+    // the bar in a QWidgetAction that drives visibility from its
+    // parent, so the hide() has to follow the addWidget call to
+    // win the race on first show.
+    m_searchBar->hide();
 }
 
 void MainWindow::buildEditMenu(QMenu *editMenu) {
@@ -537,7 +581,7 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
     m_selectAllAction = editMenu->addAction(tr("Select &All"));
     m_selectAllAction->setShortcut(QKeySequence::SelectAll);
     connect(m_selectAllAction, &QAction::triggered, this, [this]() {
-        if (auto* overlay = findChild<AnnotationOverlay*>()) {
+        if (auto *overlay = findChild<AnnotationOverlay *>()) {
             overlay->selectAll();
         }
     });
@@ -564,15 +608,19 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
 }
 
 void MainWindow::showSearchBar() {
-    // The search bar lives in the main toolbar and is always
-    // visible. Cmd-F just focuses the input field so the user can
-    // type immediately. The supportsSearch gate stays — for
+    // Expand the collapsed SearchBar inline in the main toolbar. The
+    // search button hides; the bar (parented at toolbar build time)
+    // unhides and takes focus. supportsSearch gate stays — for
     // documents that can't search, focusing the field would invite
     // the user to type into a no-op.
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsSearch()) {
         return;
     }
+    if (m_searchButton) {
+        m_searchButton->setVisible(false);
+    }
+    m_searchBar->setVisible(true);
     m_searchBar->focusInput();
     // Open the sidebar in Search Results mode so the user sees
     // pages-with-matches as they type. The polling timer pushes
@@ -584,14 +632,18 @@ void MainWindow::showSearchBar() {
 }
 
 void MainWindow::hideSearchBar() {
-    // "Hide" used to remove the floating search bar from the
-    // central column; with the toolbar embedding it's a soft
-    // dismiss that returns focus to the document and clears any
-    // active query so the highlighted matches go away.
+    // Collapse the bar back to the icon button. Clears any active
+    // query so the highlighted matches go away and the document gets
+    // focus back. Triggered by SearchBar::dismissed (Esc, X button)
+    // and by a document switch that doesn't support search.
     if (auto *doc = m_documentView->currentDocument()) {
         doc->clearSearch();
     }
     m_searchBar->setMatchCounter(0, 0);
+    m_searchBar->setVisible(false);
+    if (m_searchButton) {
+        m_searchButton->setVisible(true);
+    }
     m_documentView->setFocus();
 }
 
@@ -2015,7 +2067,90 @@ void MainWindow::updateTitleForDocument(IDocument *doc) {
     }
 }
 
+void MainWindow::applyInitialWindowSize(IDocument *doc) {
+    if (m_initialSizingApplied)
+        return;
+    if (!doc)
+        return;
+    const QSize content = doc->contentSizeHint();
+    if (content.isEmpty())
+        return;
+    m_initialSizingApplied = true;
+
+    QScreen *scr = screen();
+    if (!scr) {
+        scr = QGuiApplication::primaryScreen();
+    }
+    if (!scr)
+        return;
+
+    const QRect avail = scr->availableGeometry();
+    if (avail.isEmpty())
+        return;
+
+    // 90%-of-screen ceiling so the window doesn't fill the display
+    // edge-to-edge. The user always sees some background to drag
+    // the window or click another app.
+    const QSize maxSize(static_cast<int>(avail.width() * 0.9),
+                        static_cast<int>(avail.height() * 0.9));
+    constexpr int kMinW = 1100;
+    constexpr int kMinH = 750;
+    const QSize minSize(kMinW, kMinH);
+
+    // Estimate chrome (everything around the document viewport):
+    // status bar, menu bar on non-mac, main / markup toolbars, plus
+    // window decorations. Use frameGeometry() vs the central widget
+    // size if the central widget already laid out; otherwise fall
+    // back to a fixed margin.
+    QSize chrome;
+    if (m_documentView && m_documentView->size().isValid() &&
+        m_documentView->width() > 0 && m_documentView->height() > 0) {
+        chrome = size() - m_documentView->size();
+    } else {
+        chrome = QSize(32, 120);
+    }
+    if (chrome.width() < 0)
+        chrome.setWidth(0);
+    if (chrome.height() < 0)
+        chrome.setHeight(0);
+
+    // Aim for the viewport to host the content at 100% — fit-to-
+    // content = actual size, which is the most readable default.
+    QSize wantViewport = content;
+    // Available viewport space within the screen ceiling.
+    const QSize maxViewport(std::max(1, maxSize.width() - chrome.width()),
+                            std::max(1, maxSize.height() - chrome.height()));
+
+    // If the doc doesn't fit at 100%, scale the viewport target down,
+    // but not below 75% of content. A scale lower than 0.75 means
+    // the doc is bigger than the screen can comfortably hold — use
+    // the screen ceiling and let fit-to-content pick whatever zoom
+    // it gives.
+    if (wantViewport.width() > maxViewport.width() ||
+        wantViewport.height() > maxViewport.height()) {
+        const double scaleW = static_cast<double>(maxViewport.width()) /
+                              static_cast<double>(content.width());
+        const double scaleH = static_cast<double>(maxViewport.height()) /
+                              static_cast<double>(content.height());
+        const double rawScale = std::min(scaleW, scaleH);
+        const double scale = std::max(0.75, std::min(1.0, rawScale));
+        wantViewport = QSize(static_cast<int>(content.width() * scale),
+                             static_cast<int>(content.height() * scale));
+    }
+
+    QSize windowTarget(wantViewport.width() + chrome.width(),
+                       wantViewport.height() + chrome.height());
+    windowTarget = windowTarget.expandedTo(minSize).boundedTo(maxSize);
+    resize(windowTarget);
+}
+
 void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
+    // One-shot fit-to-content window resize. Drives the first frame
+    // when the user opens a single file from cold start; later doc
+    // changes (tab switches, opening into the same window) leave
+    // the size alone so the user's adjustments stick.
+    applyInitialWindowSize(doc);
+
     m_sidebar->setDocument(doc);
     m_animationBar->setDocument(doc);
     m_inspector->setDocument(doc);
@@ -2055,6 +2190,13 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     m_findAction->setEnabled(hasSearch);
     m_findNextAction->setEnabled(hasSearch);
     m_findPreviousAction->setEnabled(hasSearch);
+    if (m_searchButton) {
+        m_searchButton->setEnabled(hasSearch);
+        m_searchButton->setToolTip(hasSearch
+            ? tr("Search (%1)").arg(QKeySequence(QKeySequence::Find).toString(
+                  QKeySequence::NativeText))
+            : tr("Search is not available for this document type."));
+    }
     if (!hasSearch && m_searchBar->isVisible()) {
         hideSearchBar();
     }
@@ -2158,29 +2300,77 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // their card even without a PDF open.
     m_myCardAction->setEnabled(true);
 
-    // Restore the user's last-known view-state (currently just
-    // currentPage; zoom/scroll/sidebar are tracked in RecentFiles
-    // for future expansion). One-shot per document — switching
-    // tabs after manual navigation must not bounce back to the
-    // saved page.
+    // Restore view-state in priority order (Workstream I):
+    //   1. Per-file: the RecentEntry for this exact path, if it has
+    //      captured state — zoom, scroll, page, sidebar mode,
+    //      markup-toolbar visibility, window geometry/state.
+    //   2. Per-type: the last-closed defaults for this document's
+    //      type (PDF / Image). Applied only when there's no per-file
+    //      state and the doc has a recognised type.
+    //   3. Otherwise: leave the constructor / hardcoded defaults in
+    //      place. The hardcoded defaults are owned by Workstream A
+    //      (fit-to-content / sidebar hidden / markup-toolbar hidden);
+    //      this path just falls through to whatever they end up being.
+    //
+    // One-shot per document — switching tabs after manual navigation
+    // must not bounce back to the saved page.
     if (doc && !doc->filePath().isEmpty() && !m_restoredViewStateDocs.contains(doc)) {
         m_restoredViewStateDocs.insert(doc);
         const RecentEntry entry = m_app->recentFiles().findByPath(doc->filePath());
-        if (entry.currentPage >= 0 && doc->pageCount() > entry.currentPage) {
-            doc->goToPage(entry.currentPage);
+        if (!entry.path.isEmpty() && entry.hasViewState()) {
+            if (entry.currentPage >= 0 && doc->pageCount() > entry.currentPage) {
+                doc->goToPage(entry.currentPage);
+            }
+            doc->applyZoomState(entry.zoomMode, entry.zoomFactor);
+            if (entry.scrollY != 0) {
+                doc->applyScrollY(entry.scrollY);
+            }
+            m_sidebar->setMode(static_cast<Sidebar::Mode>(static_cast<int>(entry.sidebarMode)));
+            // Apply window-level layout first — restoreState() walks
+            // every dock/toolbar this MainWindow owns and sets its
+            // visibility from the blob, so the explicit show()/hide()
+            // calls below need to land *after* it to win.
+            if (!entry.windowGeometry.isEmpty()) {
+                restoreGeometry(entry.windowGeometry);
+            }
+            if (!entry.windowState.isEmpty()) {
+                restoreState(entry.windowState);
+            }
+            if (entry.markupToolbarVisible) {
+                m_markupToolbar->show();
+            } else {
+                m_markupToolbar->hide();
+            }
+        } else if (doc->documentType() != DocumentType::Unknown) {
+            // Per-type fallback: apply the last-closed defaults for
+            // this document's type, if any.
+            const DocumentTypeDefault def =
+                m_app->documentTypeDefaults().forType(doc->documentType());
+            if (def.hasState()) {
+                doc->applyZoomState(def.zoomMode, def.zoomFactor);
+                m_sidebar->setMode(
+                    static_cast<Sidebar::Mode>(static_cast<int>(def.sidebarMode)));
+                if (!def.windowGeometry.isEmpty()) {
+                    restoreGeometry(def.windowGeometry);
+                }
+                if (!def.windowState.isEmpty()) {
+                    restoreState(def.windowState);
+                }
+                if (def.markupToolbarVisible) {
+                    m_markupToolbar->show();
+                } else {
+                    m_markupToolbar->hide();
+                }
+            }
         }
     }
 
-    // Auto-show the markup toolbar the first time we see a document
-    // that supports annotations. Same once-per-doc pattern as the form
-    // overlay above — an explicit hide by the user sticks. Documents
-    // without an AnnotationStore (Stub adapter) are excluded so we
-    // never show a toolbar that would be useless.
+    // Markup toolbar is hidden by default — the user surfaces it via
+    // View → Toggle Markup Toolbar (Ctrl+Shift+A) or the toolbar
+    // toggle on the main toolbar. Per-file / per-type state above
+    // restores the user's last-known preference; otherwise the
+    // toolbar stays hidden (document-first workflow).
     const bool canAnnotate = doc && doc->annotations() != nullptr;
-    if (canAnnotate && !m_autoShownMarkupDocs.contains(doc) && !m_markupToolbar->isVisible()) {
-        m_autoShownMarkupDocs.insert(doc);
-        m_markupToolbar->show();
-    }
 
     // Select All is available whenever there is an annotation store
     // (the overlay exists and the user can place annotations). The
@@ -2510,6 +2700,10 @@ int MainWindow::documentCount() const {
     return m_documentView->documentCount();
 }
 
+int MainWindow::documentAt(int index, IDocument **out) const {
+    return m_documentView->documentAt(index, out);
+}
+
 void MainWindow::dragEnterEvent(QDragEnterEvent *event) {
     if (event->mimeData()->hasUrls()) {
         event->acceptProposedAction();
@@ -2603,23 +2797,56 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     // user picks up where they left off on next reopen. We do this
     // before the save-prompt below — even if the user discards
     // unsaved annotations, the page they were looking at is worth
-    // remembering. Sidebar visibility is per-window, so it gets
-    // the same value for every doc.
-    const bool sidebarVisible = m_sidebar && m_sidebar->isVisible();
+    // remembering. Sidebar / markup-toolbar visibility, window
+    // geometry, and dock layout are per-window, so they get the same
+    // value for every doc in this frame.
+    const SidebarMode currentSidebar =
+        m_sidebar && m_sidebar->isVisible()
+            ? static_cast<SidebarMode>(static_cast<int>(m_sidebar->mode()))
+            : SidebarMode::Hidden;
+    const bool markupVisible = m_markupToolbar && m_markupToolbar->isVisible();
+    const QByteArray geometry = saveGeometry();
+    const QByteArray winState = saveState();
     const int total = m_documentView->documentCount();
     bool anyCaptured = false;
+    DocumentType lastCapturedType = DocumentType::Unknown;
+    DocumentTypeDefault typeSnapshot;
     for (int i = 0; i < total; ++i) {
         IDocument *doc = nullptr;
         if (!m_documentView->documentAt(i, &doc) || !doc)
             continue;
         if (doc->filePath().isEmpty())
             continue;
-        m_app->recentFiles().updateViewState(doc->filePath(), doc->currentPage(),
-                                             /*zoomFactor=*/0.0, /*scrollY=*/0, sidebarVisible);
+        RecentEntry state;
+        state.currentPage = doc->currentPage();
+        state.zoomFactor = doc->zoomFactor();
+        state.scrollY = doc->scrollY();
+        state.zoomMode = doc->zoomMode();
+        state.sidebarMode = currentSidebar;
+        state.markupToolbarVisible = markupVisible;
+        state.windowGeometry = geometry;
+        state.windowState = winState;
+        m_app->recentFiles().updateViewState(doc->filePath(), state);
         anyCaptured = true;
+        // Capture a snapshot for the per-type defaults too. Last-
+        // closed-of-type wins; the loop overwrites typeSnapshot
+        // each iteration so the final doc's state is what lands.
+        if (doc->documentType() != DocumentType::Unknown) {
+            lastCapturedType = doc->documentType();
+            typeSnapshot.zoomMode = state.zoomMode;
+            typeSnapshot.zoomFactor = state.zoomFactor;
+            typeSnapshot.sidebarMode = state.sidebarMode;
+            typeSnapshot.markupToolbarVisible = state.markupToolbarVisible;
+            typeSnapshot.windowGeometry = state.windowGeometry;
+            typeSnapshot.windowState = state.windowState;
+        }
     }
     if (anyCaptured)
         m_app->recentFiles().save();
+    if (lastCapturedType != DocumentType::Unknown) {
+        m_app->documentTypeDefaults().setForType(lastCapturedType, typeSnapshot);
+        m_app->documentTypeDefaults().save();
+    }
 
     // Headless / test environments (QT_QPA_PLATFORM=offscreen) skip
     // the unsaved-changes prompt: there's no human to click through

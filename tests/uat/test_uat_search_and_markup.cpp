@@ -19,6 +19,8 @@
 #include "annotation/AnnotationStore.h"
 #include "app/Application.h"
 #include "document/IDocument.h"
+#include "recent/RecentFiles.h"
+#include "settings/DocumentTypeDefaults.h"
 #include "ui/AnnotationOverlay.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
@@ -303,6 +305,8 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_ann_124_dragHandleResizesSelectedAnnotation();
     void uat_ann_125_selectAllSelectsEveryAnnotation();
     void uat_ann_126_selectAllThenDeleteRemovesAllInOneUndo();
+    void uat_ann_127_dragGeneratesOneUndoStep();
+    void uat_ann_128_clickOnAnnotationWithDrawingToolSelects();
     void uat_toc_010_outlineDisabledOnPlainPdf();
     void uat_toc_011_outlineExposedForPdfWithBookmarks();
     void uat_toc_012_clickingOutlineEntryNavigatesToPage();
@@ -320,6 +324,16 @@ void TestUatSearchAndMarkup::init() {
             w->close();
     }
     QApplication::processEvents();
+    // Reset persisted state so per-test "default open" assertions
+    // aren't poisoned by prior tests that closed docs with chrome
+    // showing. DocumentTypeDefaults' last-closed-wins behaviour is the
+    // production contract; the harness opts each case in explicitly by
+    // starting from a clean slate here.
+    if (auto *app = qobject_cast<Application *>(qApp)) {
+        app->recentFiles().clear();
+        app->documentTypeDefaults().setForType(DocumentType::Pdf, {});
+        app->documentTypeDefaults().setForType(DocumentType::Image, {});
+    }
 }
 
 // UAT-VWR-061 — Find matches in a PDF.
@@ -953,9 +967,11 @@ void TestUatSearchAndMarkup::uat_ann_070_hidingToolbarRestoresTextSelection() {
     QCOMPARE(store->count(), shapesBefore);
 }
 
-// UAT-ANN-080 — Opening a fillable / annotatable document auto-shows
-// the markup toolbar so the user doesn't have to discover the View
-// menu to find their pen.
+// UAT-ANN-080 — Opening an annotatable document does NOT auto-show
+// the markup toolbar. The toolbar stays hidden until the user opts
+// in via View → Toggle Markup Toolbar (Ctrl+Shift+A) or the
+// toolbar's own toggle action. The pre-2026-05 auto-show heuristic
+// was loud chrome for a document-first workflow.
 void TestUatSearchAndMarkup::uat_ann_080_markupToolbarAutoShownOnEditableDoc() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
@@ -970,13 +986,22 @@ void TestUatSearchAndMarkup::uat_ann_080_markupToolbarAutoShownOnEditableDoc() {
     QVERIFY(mw);
     auto *markup = mw->findChild<MarkupToolbar *>();
     QVERIFY(markup);
+    QVERIFY2(!markup->isVisible(),
+             "Markup toolbar must stay hidden by default on a fresh open");
+
+    // The View → Toggle Markup Toolbar action surfaces it on demand.
+    QAction *toggle = findMenuAction(mw->menuBar(), QStringLiteral("&View"),
+                                     QStringLiteral("Toggle &Markup Toolbar"));
+    QVERIFY2(toggle, "View → Toggle Markup Toolbar action not found");
+    toggle->trigger();
+    QApplication::processEvents();
     QVERIFY2(markup->isVisible(),
-             "Markup toolbar must be visible after opening an annotatable doc");
+             "Toggle action must reveal the markup toolbar on demand");
 }
 
-// UAT-ANN-081 — A user who explicitly hides the markup toolbar must
-// not see it pop back open the next time they focus the same window.
-// The auto-show is once per document, not per focus.
+// UAT-ANN-081 — The markup toolbar's hidden default sticks across
+// tab/focus switches; refreshing the current document does not
+// resurrect a hidden toolbar.
 void TestUatSearchAndMarkup::uat_ann_081_markupToolbarRespectsExplicitHide() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
@@ -991,11 +1016,7 @@ void TestUatSearchAndMarkup::uat_ann_081_markupToolbarRespectsExplicitHide() {
     QVERIFY(mw);
     auto *markup = mw->findChild<MarkupToolbar *>();
     QVERIFY(markup);
-    QVERIFY(markup->isVisible());
-
-    // User hides it.
-    markup->hide();
-    QApplication::processEvents();
+    QVERIFY2(!markup->isVisible(), "Toolbar hidden by default on open");
 
     // Re-trigger the current-document path — same effect as a tab
     // switch in the legacy NewTab mode, or any focus-driven refresh.
@@ -1007,8 +1028,7 @@ void TestUatSearchAndMarkup::uat_ann_081_markupToolbarRespectsExplicitHide() {
                               Q_ARG(trailer::IDocument *, doc));
     QApplication::processEvents();
 
-    QVERIFY2(!markup->isVisible(), "Once the user has hidden the markup toolbar for a doc, "
-                                   "it must not auto-show again on subsequent focus changes");
+    QVERIFY2(!markup->isVisible(), "Markup toolbar must not auto-show on focus refresh");
 }
 
 // UAT-ANN-082 — Underline / Highlight / StrikeOut are text-aware
@@ -1776,6 +1796,86 @@ void TestUatSearchAndMarkup::uat_ann_126_selectAllThenDeleteRemovesAllInOneUndo(
     f.store->undo();
     QApplication::processEvents();
     QCOMPARE(f.store->count(), 2);
+}
+
+// UAT-ANN-127 — Drag-to-move an annotation produces exactly one undo
+// step. Workstream D3 wraps the per-frame update() calls during a
+// drag inside beginCompound/endCompound; without it a 60-frame drag
+// pushed 60 history frames and Ctrl+Z unwound the drag in micro-
+// steps, hanging the UI on Sidebar rebuilds.
+void TestUatSearchAndMarkup::uat_ann_127_dragGeneratesOneUndoStep() {
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch, QStringLiteral("127"));
+    QVERIFY(f.overlay);
+    QVERIFY(f.drawnId != 0);
+    QCOMPARE(f.store->count(), 1);
+
+    // Select the rectangle first (Select tool is sticky: a single
+    // click selects, a second click + drag begins the move).
+    sendMouse(f.overlay, QEvent::MouseButtonPress, QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease, QPoint(260, 295), Qt::LeftButton);
+    QApplication::processEvents();
+    QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
+
+    const QRectF before = f.store->find(f.drawnId)->bounds;
+
+    // Drag from inside the annotation to a new position. Multiple
+    // mouse-move events fire per drag — each would push its own undo
+    // frame without compound mode.
+    sendMouse(f.overlay, QEvent::MouseButtonPress, QPoint(260, 295), Qt::LeftButton);
+    for (int i = 1; i <= 20; ++i) {
+        sendMouse(f.overlay, QEvent::MouseMove, QPoint(260 + i * 2, 295 + i * 2),
+                  Qt::LeftButton);
+    }
+    sendMouse(f.overlay, QEvent::MouseButtonRelease, QPoint(300, 335), Qt::LeftButton);
+    QApplication::processEvents();
+
+    const QRectF after = f.store->find(f.drawnId)->bounds;
+    QVERIFY2(after.topLeft() != before.topLeft(),
+             "Drag should have shifted the annotation's top-left in doc space");
+
+    // Count how many undos it takes to revert the drag back to the
+    // pre-drag bounds. With compound mode, this must be exactly one.
+    int steps = 0;
+    while (f.store->canUndo() && f.store->find(f.drawnId)
+           && f.store->find(f.drawnId)->bounds != before) {
+        f.store->undo();
+        ++steps;
+        if (steps > 5) break; // belt-and-braces, never expected to hit
+    }
+    QCOMPARE(steps, 1);
+    QVERIFY(f.store->find(f.drawnId) != nullptr);
+    QCOMPARE(f.store->find(f.drawnId)->bounds, before);
+}
+
+// UAT-ANN-128 — Clicking on an existing annotation while a drawing
+// tool (e.g. Arrow) is active selects the annotation rather than
+// creating a new overlapping one. Workstream D1: the press handler
+// hit-tests existing annotations BEFORE the drawing-tool path.
+void TestUatSearchAndMarkup::uat_ann_128_clickOnAnnotationWithDrawingToolSelects() {
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch, QStringLiteral("128"));
+    QVERIFY(f.overlay);
+    QVERIFY(f.drawnId != 0);
+    QCOMPARE(f.store->count(), 1);
+
+    // Switch to the Rectangle drawing tool (a "draws on drag" tool;
+    // Arrow / Ellipse would behave the same — Rectangle is the easy
+    // one to drive through the markup-toolbar action).
+    auto *markup = f.mw->findChild<MarkupToolbar *>();
+    QVERIFY(markup);
+    QAction *rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
+    QVERIFY(rectAction);
+    rectAction->setChecked(true);
+    QApplication::processEvents();
+    QVERIFY(f.overlay->activeTool() == AnnotationTool::Rectangle);
+
+    // Click on the existing rectangle (no drag — press + release at
+    // the same point).
+    sendMouse(f.overlay, QEvent::MouseButtonPress, QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease, QPoint(260, 295), Qt::LeftButton);
+    QApplication::processEvents();
+
+    QCOMPARE(f.store->count(), 1); // no new annotation created
+    QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG

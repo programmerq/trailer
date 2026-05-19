@@ -5,6 +5,7 @@
 #include "annotation/AnnotationStore.h"
 
 #include <QImage>
+#include <QObject>
 #include <QPointer>
 #include <QString>
 #include <QStringList>
@@ -22,10 +23,13 @@ class AnnotationOverlay;
 class ImageDocument : public IDocument {
   public:
     explicit ImageDocument(QString path);
+    ~ImageDocument() override;
 
     QString displayName() const override;
     QString filePath() const override;
     QWidget *createView(QWidget *parent) override;
+
+    DocumentType documentType() const override { return DocumentType::Image; }
 
     bool supportsZoom() const override { return !m_animated && !m_image.isNull(); }
     void zoomIn() override;
@@ -33,6 +37,15 @@ class ImageDocument : public IDocument {
     void zoomActual() override;
     void zoomFitWidth() override;
     void zoomFitPage() override;
+    QSize contentSizeHint() const override {
+        return m_image.isNull() ? QSize{} : m_image.size();
+    }
+
+    ZoomMode zoomMode() const override { return m_zoomMode; }
+    double zoomFactor() const override { return m_scale; }
+    void applyZoomState(ZoomMode mode, double factor) override;
+    int scrollY() const override;
+    void applyScrollY(int y) override;
 
     bool supportsPrint() const override { return !m_image.isNull(); }
     void print(QWidget *dialogParent) override;
@@ -79,10 +92,26 @@ class ImageDocument : public IDocument {
     bool isAnimationPlaying() const override;
     void setAnimationPlaying(bool playing) override;
 
+    // Test hook + resize callback. Reapplies the currently-active fit
+    // mode (no-op for ZoomMode::Custom / Actual). Used internally by
+    // the view's resize watcher; tests can call it directly to
+    // simulate a resize without needing a real Qt widget hierarchy.
+    void reapplyFitMode();
+    double scaleFactor() const { return m_scale; }
+
   private:
     void applyScale(double factor);
     void refreshView();
     void pushUndoSnapshot();
+    // Installed as an event filter on the QScrollArea's viewport so
+    // we get notified when the user resizes the window. The viewport
+    // is a child of the scroll area; QResizeEvents on it correspond
+    // exactly to changes in the available drawing area for fit modes.
+    void installResizeWatcher();
+    // Fit the image into the scroll viewport on first show. Capped at
+    // 100% so small icons don't blow up to fill the window. One-shot
+    // — later opens / re-shows keep whatever scale the user picked.
+    void applyInitialFitZoom();
 
     QString m_path;
     QImage m_image;
@@ -90,13 +119,31 @@ class ImageDocument : public IDocument {
     QPointer<QLabel> m_label;
     QPointer<QMovie> m_movie;
     QPointer<AnnotationOverlay> m_overlay;
+    QPointer<QObject> m_resizeWatcher;
+    // Sentinel shared with the resize watcher (which is a QObject
+    // parented to a Qt widget and may outlive `this`). Flipped to
+    // false in our destructor so the watcher's eventFilter stops
+    // dereferencing this document.
+    std::shared_ptr<bool> m_aliveFlag;
     AnnotationStore m_annotations;
     std::vector<QImage> m_undoStack;
     std::vector<QImage> m_redoStack;
     double m_scale = 1.0;
+    // Tracks the user's intent (Fit-page, Fit-width, Actual, custom
+    // factor) so the persistence layer can round-trip the mode and
+    // the resize watcher can re-fit on viewport changes. The image
+    // adapter has no Qt-level mode — the scale is the source of truth
+    // at render time — but storing the intent is what makes Ctrl+0
+    // survive a window resize and per-file/type defaults work. Default
+    // Custom (factor 1.0) for freshly-constructed docs that haven't
+    // been shown yet; applyInitialFitZoom flips it to FitInView once
+    // the view widget exists.
+    ZoomMode m_zoomMode = ZoomMode::Custom;
     int m_frameCount = 0;
     bool m_animated = false;
     bool m_dirty = false;
+    // One-shot guard for applyInitialFitZoom.
+    bool m_initialZoomApplied = false;
 };
 
 class ImageAdapter : public IFormatAdapter {

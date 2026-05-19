@@ -44,7 +44,11 @@ class Sidebar : public QDockWidget {
     Mode mode() const { return m_mode; }
     // Number of items currently in the Highlights & Notes list.
     // MainWindow uses this to gate the picker entry's enabled state
-    // — empty list = greyed-out menu entry.
+    // — empty list = greyed-out menu entry. Cached and invalidated
+    // by the debounced refresh tick so a burst of changed() signals
+    // (e.g. an undo unwinding a 60-frame drag back when each frame
+    // pushed its own history step) doesn't re-scan the annotation
+    // vector on every emit.
     int highlightsAndNotesCount() const;
     // Switch presentation. Hidden hides the dock; the others bring
     // it back if it was hidden. Pages/SearchResults reuse the same
@@ -73,6 +77,16 @@ class Sidebar : public QDockWidget {
 
   private:
     void applyMode();
+    // Coalesce a burst of AnnotationStore::changed() signals into a
+    // single QListWidget rebuild on the next event-loop tick. Each
+    // emit calls scheduleAnnotationRefresh(), which fires a 0-ms
+    // single-shot timer; if more emits arrive before the timer
+    // expires they're folded into the same tick. This is the
+    // ~95%-win debounce alternative to a differential update of the
+    // list widget. Cache invalidation for highlightsAndNotesCount()
+    // hooks into the same tick.
+    void scheduleAnnotationRefresh();
+    void invalidateHighlightsAndNotesCache();
 
     IDocument *m_doc = nullptr;
     QStackedWidget *m_stack = nullptr;
@@ -92,6 +106,14 @@ class Sidebar : public QDockWidget {
     bool m_syncingSelection = false;
     Mode m_mode = Mode::Hidden;
     std::vector<int> m_searchMatchPages;
+    // Debounce state for refreshAnnotations(). m_annotationRefreshScheduled
+    // is set on the first changed() in a tick and cleared when the
+    // single-shot fires; subsequent emits during the same tick early-
+    // exit. m_highlightsAndNotesCount caches the result of
+    // highlightsAndNotesCount() and is set back to -1 to mark the
+    // cache dirty.
+    bool m_annotationRefreshScheduled = false;
+    mutable int m_highlightsAndNotesCountCache = -1;
 };
 
 } // namespace trailer

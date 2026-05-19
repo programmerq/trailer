@@ -12,6 +12,7 @@
 
 namespace trailer {
 
+class CancellationToken;
 class ModelRegistry;
 class OnnxSession;
 
@@ -52,7 +53,12 @@ class SamSession : public QObject {
     // geometry on the session. Call once per image; subsequent
     // segment() calls reuse the cache. Returns false on failure
     // (model missing, ORT error).
-    bool prepare(const QImage &source);
+    //
+    // `cancel` is a cooperative cancellation token; the encoder
+    // checks it at entry and just before the (long) ONNX run. On
+    // cancellation prepare() returns false without populating the
+    // embedding so a subsequent segment() does not run.
+    bool prepare(const QImage &source, const CancellationToken *cancel = nullptr);
 
     // Run the decoder against the cached embedding with the given
     // prompts. `positives` and `negatives` are in original-image pixel
@@ -60,7 +66,11 @@ class SamSession : public QObject {
     // image, or a null QImage on failure. The result is also stashed
     // so contourFromLastMask() can extract a polygon without re-running
     // inference.
-    QImage segment(const QVector<QPoint> &positives, const QVector<QPoint> &negatives);
+    //
+    // `cancel` is checked at entry and just before the decoder
+    // ONNX run; cancellation returns a null QImage.
+    QImage segment(const QVector<QPoint> &positives, const QVector<QPoint> &negatives,
+                   const CancellationToken *cancel = nullptr);
 
     // Convenience: apply the last mask to `source` (which should be
     // the same image passed to prepare()) as an alpha channel. Pixels

@@ -12,7 +12,9 @@ class QCloseEvent;
 class QTimer;
 
 class QAction;
+class QLabel;
 class QMenu;
+class QToolButton;
 
 namespace trailer {
 
@@ -35,6 +37,11 @@ class MainWindow : public QMainWindow {
 
     void addDocument(std::unique_ptr<IDocument> document);
     int documentCount() const;
+    // Pass-through to DocumentView::documentAt. Returns 1 on success
+    // and writes the document pointer through `out`; returns 0 with
+    // `*out = nullptr` on out-of-range or missing widget. Used by
+    // Application::onAboutToQuit to enumerate open paths.
+    int documentAt(int index, IDocument **out) const;
 
     // Lightweight status-bar feedback. Replaces operation-failure
     // QMessageBox::warning calls so the user is not punched in the
@@ -169,6 +176,14 @@ class MainWindow : public QMainWindow {
     void updateTitleForDocument(IDocument *doc);
     void updateUndoRedoActions(IDocument *doc);
     int selectedPageForEdit(IDocument *doc) const;
+    // Size the window to fit the first document opened. Clamped to a
+    // 1100×750 floor and a 90%-of-screen ceiling so very small docs
+    // don't shrink the window and very large ones don't fill the
+    // screen. Caps the implied zoom at ~75% — we'd rather have a
+    // big-but-screen-bounded window than a small one where the doc
+    // is unreadable. One-shot per window; subsequent file opens
+    // leave the size alone.
+    void applyInitialWindowSize(IDocument *doc);
 
     Application *m_app;
     DocumentView *m_documentView = nullptr;
@@ -178,6 +193,10 @@ class MainWindow : public QMainWindow {
     MarkupToolbar *m_markupToolbar = nullptr;
     FormToolbar *m_formToolbar = nullptr;
     SearchBar *m_searchBar = nullptr;
+    // Collapsed-state proxy for the search bar in the main toolbar.
+    // Clicking the button expands m_searchBar inline and hides the
+    // button; dismissing the bar (Esc, empty query) does the reverse.
+    QToolButton *m_searchButton = nullptr;
     Sidebar *m_sidebar = nullptr;
     QMenu *m_recentMenu = nullptr;
 
@@ -214,15 +233,14 @@ class MainWindow : public QMainWindow {
     // is open. Honours `Settings::autoSave()`; flipping that off
     // pauses the timer.
     QTimer *m_autoSaveTimer = nullptr;
-    // Same once-per-doc tracking for the markup toolbar's auto-show
-    // behaviour. The toolbar starts hidden; the first time a document
-    // that supports annotations becomes current, we show it. After that,
-    // the user's explicit hide/show choice is sticky for that document.
-    QSet<const IDocument *> m_autoShownMarkupDocs;
     // Documents whose recent-file view state has already been
     // restored on focus. Tracked per-document so a tab switch
     // doesn't bounce the user back to the saved page mid-session.
     QSet<const IDocument *> m_restoredViewStateDocs;
+    // One-shot guard for applyInitialWindowSize. True after the
+    // first opened doc has driven a resize so opening additional
+    // tabs in the same window doesn't bounce the geometry around.
+    bool m_initialSizingApplied = false;
     QAction *m_autoFillFormAction = nullptr;
     QAction *m_myCardAction = nullptr;
     QAction *m_manageSignaturesAction = nullptr;
@@ -266,6 +284,14 @@ class MainWindow : public QMainWindow {
 
     QAction *m_previousPageAction = nullptr;
     QAction *m_nextPageAction = nullptr;
+
+    // Permanent status-bar widget that shows whenever the
+    // MlScheduler has a non-Idle task running. Tooltip carries the
+    // running task's label (e.g. "Recognizing text…"). Hidden when
+    // the scheduler is idle so the status bar stays clean. PHILOSOPHY:
+    // no modal — this is the canonical "background ML work is
+    // happening" affordance for the user.
+    QLabel *m_mlIndicator = nullptr;
 };
 
 } // namespace trailer
