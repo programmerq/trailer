@@ -303,6 +303,8 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_ann_124_dragHandleResizesSelectedAnnotation();
     void uat_ann_125_selectAllSelectsEveryAnnotation();
     void uat_ann_126_selectAllThenDeleteRemovesAllInOneUndo();
+    void uat_ann_127_dragGeneratesOneUndoStep();
+    void uat_ann_128_clickOnAnnotationWithDrawingToolSelects();
     void uat_toc_010_outlineDisabledOnPlainPdf();
     void uat_toc_011_outlineExposedForPdfWithBookmarks();
     void uat_toc_012_clickingOutlineEntryNavigatesToPage();
@@ -1776,6 +1778,86 @@ void TestUatSearchAndMarkup::uat_ann_126_selectAllThenDeleteRemovesAllInOneUndo(
     f.store->undo();
     QApplication::processEvents();
     QCOMPARE(f.store->count(), 2);
+}
+
+// UAT-ANN-127 — Drag-to-move an annotation produces exactly one undo
+// step. Workstream D3 wraps the per-frame update() calls during a
+// drag inside beginCompound/endCompound; without it a 60-frame drag
+// pushed 60 history frames and Ctrl+Z unwound the drag in micro-
+// steps, hanging the UI on Sidebar rebuilds.
+void TestUatSearchAndMarkup::uat_ann_127_dragGeneratesOneUndoStep() {
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch, QStringLiteral("127"));
+    QVERIFY(f.overlay);
+    QVERIFY(f.drawnId != 0);
+    QCOMPARE(f.store->count(), 1);
+
+    // Select the rectangle first (Select tool is sticky: a single
+    // click selects, a second click + drag begins the move).
+    sendMouse(f.overlay, QEvent::MouseButtonPress, QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease, QPoint(260, 295), Qt::LeftButton);
+    QApplication::processEvents();
+    QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
+
+    const QRectF before = f.store->find(f.drawnId)->bounds;
+
+    // Drag from inside the annotation to a new position. Multiple
+    // mouse-move events fire per drag — each would push its own undo
+    // frame without compound mode.
+    sendMouse(f.overlay, QEvent::MouseButtonPress, QPoint(260, 295), Qt::LeftButton);
+    for (int i = 1; i <= 20; ++i) {
+        sendMouse(f.overlay, QEvent::MouseMove, QPoint(260 + i * 2, 295 + i * 2),
+                  Qt::LeftButton);
+    }
+    sendMouse(f.overlay, QEvent::MouseButtonRelease, QPoint(300, 335), Qt::LeftButton);
+    QApplication::processEvents();
+
+    const QRectF after = f.store->find(f.drawnId)->bounds;
+    QVERIFY2(after.topLeft() != before.topLeft(),
+             "Drag should have shifted the annotation's top-left in doc space");
+
+    // Count how many undos it takes to revert the drag back to the
+    // pre-drag bounds. With compound mode, this must be exactly one.
+    int steps = 0;
+    while (f.store->canUndo() && f.store->find(f.drawnId)
+           && f.store->find(f.drawnId)->bounds != before) {
+        f.store->undo();
+        ++steps;
+        if (steps > 5) break; // belt-and-braces, never expected to hit
+    }
+    QCOMPARE(steps, 1);
+    QVERIFY(f.store->find(f.drawnId) != nullptr);
+    QCOMPARE(f.store->find(f.drawnId)->bounds, before);
+}
+
+// UAT-ANN-128 — Clicking on an existing annotation while a drawing
+// tool (e.g. Arrow) is active selects the annotation rather than
+// creating a new overlapping one. Workstream D1: the press handler
+// hit-tests existing annotations BEFORE the drawing-tool path.
+void TestUatSearchAndMarkup::uat_ann_128_clickOnAnnotationWithDrawingToolSelects() {
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch, QStringLiteral("128"));
+    QVERIFY(f.overlay);
+    QVERIFY(f.drawnId != 0);
+    QCOMPARE(f.store->count(), 1);
+
+    // Switch to the Rectangle drawing tool (a "draws on drag" tool;
+    // Arrow / Ellipse would behave the same — Rectangle is the easy
+    // one to drive through the markup-toolbar action).
+    auto *markup = f.mw->findChild<MarkupToolbar *>();
+    QVERIFY(markup);
+    QAction *rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
+    QVERIFY(rectAction);
+    rectAction->setChecked(true);
+    QApplication::processEvents();
+    QVERIFY(f.overlay->activeTool() == AnnotationTool::Rectangle);
+
+    // Click on the existing rectangle (no drag — press + release at
+    // the same point).
+    sendMouse(f.overlay, QEvent::MouseButtonPress, QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease, QPoint(260, 295), Qt::LeftButton);
+    QApplication::processEvents();
+
+    QCOMPARE(f.store->count(), 1); // no new annotation created
+    QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG

@@ -59,10 +59,19 @@ void AnnotationOverlay::abortInFlightDrag() {
     if (!m_dragging && !m_movingSelected && m_resizingHandle == ResizeHandle::None) {
         return;
     }
+    const bool hadCompound = m_movingSelected || m_resizingHandle != ResizeHandle::None;
     m_dragging = false;
     m_movingSelected = false;
     m_resizingHandle = ResizeHandle::None;
     m_inkPoints.clear();
+    // If the drag was a move or resize, the store has an open
+    // compound gesture that must be closed so the next user action
+    // doesn't merge into the abandoned gesture's undo frame. The
+    // pre-gesture snapshot already on the undo stack stays — undo
+    // restores it as if the drag had been cancelled cleanly.
+    if (hadCompound && m_store) {
+        m_store->endCompound();
+    }
     update();
 }
 
@@ -450,8 +459,9 @@ void AnnotationOverlay::paintEvent(QPaintEvent * /*event*/) {
             p.setBrush(Qt::NoBrush);
             p.drawRect(inflated);
             // Resize handles: solid white interior, accent border,
-            // 10x10 view-space px. Easy to grab without the user
-            // having to hit a 1-pixel corner.
+            // 6x6 view-space px (see handleRect). Big enough to grab
+            // with a mouse, small enough that on a short Line/Arrow
+            // a body-click doesn't fall inside the corner's hit zone.
             QPen hpen(accent);
             hpen.setStyle(Qt::SolidLine);
             hpen.setWidth(1);
@@ -605,17 +615,12 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent *event) {
         event->ignore();
         return;
     }
-    // Select-tool press has three behaviours depending on what the
-    // user clicked: hitting a corner handle of the selected
-    // annotation begins a resize drag; hitting an existing
-    // annotation selects (and may begin a move drag) it; hitting
-    // empty space clears any selection and falls through to text-
-    // selection. Selection is sticky between clicks until the user
-    // clicks empty space or invokes Esc / Delete.
+    // Resize-handle hit always wins — handles are drawn on top of
+    // the annotation and overlap its body, so a corner click must
+    // begin a resize rather than a select-and-move. Runs only when
+    // the Select tool is active because handles are only drawn
+    // (and therefore only meaningful as a hit target) during Select.
     if (m_tool == AnnotationTool::Select) {
-        // Check for a handle hit first — handles overlap the
-        // annotation's outer rect, so they need precedence over the
-        // body-hit-test that begins a move drag.
         const ResizeHandle handle = handleAt(event->position());
         if (handle != ResizeHandle::None && m_store) {
             if (const Annotation *a = m_store->find(m_selectedAnnotationId)) {
@@ -623,37 +628,66 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent *event) {
                 m_dragPage = a->page;
                 m_resizeStartDoc = toDoc(event->position(), a->page);
                 m_resizeOriginalBounds = a->bounds;
+                // Coalesce per-frame update()s during the resize into
+                // one undo step. mouseReleaseEvent (or abortInFlightDrag)
+                // calls endCompound() to close it.
+                m_store->beginCompound();
                 update();
                 return;
             }
         }
-        const int hitId = hitTest(event->position());
-        if (hitId != 0) {
-            const bool wasAlreadySelected = (m_selectedAnnotationId == hitId);
-            if (!wasAlreadySelected) {
-                m_selectedAnnotationId = hitId;
-                emit selectionChanged(hitId);
-            }
-            // A direct click replaces any multi-selection from selectAll().
-            m_extraSelectedIds.clear();
-            m_pendingSelection.clear();
-            if (wasAlreadySelected && m_store) {
-                if (const Annotation *a = m_store->find(hitId)) {
-                    // Begin a move-drag: track the press point and
-                    // the original bounds so mouseMoveEvent can
-                    // translate without accumulating drift.
-                    m_movingSelected = true;
-                    m_dragPage = a->page;
-                    m_moveStartDoc = toDoc(event->position(), a->page);
-                    m_moveOriginalBounds = a->bounds;
-                }
-            }
-            setFocus(Qt::MouseFocusReason); // accept Delete / arrow keys
-            update();
-            return;
+    }
+    // Hit-test against existing annotations BEFORE the drawing-tool
+    // path. A click that lands on an existing annotation routes to
+    // select + prepare-to-move regardless of which tool is active —
+    // otherwise a user with the Arrow tool active who clicks on an
+    // existing arrow would get a new overlapping arrow rather than
+    // selecting the one they aimed at.
+    //
+    // The Select tool keeps a sticky multi-step semantics: first
+    // click selects, second click on the same annotation begins the
+    // move drag. A drawing tool short-circuits to immediate
+    // select-and-prepare-to-move; the move only "commits" if the
+    // user actually drags, since the compound is lazy-pushed (see
+    // AnnotationStore::pushHistory).
+    const int hitId = hitTest(event->position());
+    if (hitId != 0) {
+        const bool wasAlreadySelected = (m_selectedAnnotationId == hitId);
+        if (!wasAlreadySelected) {
+            m_selectedAnnotationId = hitId;
+            emit selectionChanged(hitId);
         }
-        // Empty-space click: clear any annotation selection and let
-        // the text-selection drag below run.
+        m_extraSelectedIds.clear();
+        m_pendingSelection.clear();
+        // Prepare a move-drag. For the Select tool we keep the
+        // existing "click twice to drag" affordance (UAT-ANN-120
+        // pins single-click as a pure-select gesture, not a move).
+        // For drawing tools the user's click target was clearly the
+        // annotation, so begin the move immediately.
+        const bool readyToMove = (m_tool != AnnotationTool::Select) || wasAlreadySelected;
+        if (readyToMove && m_store) {
+            if (const Annotation *a = m_store->find(hitId)) {
+                m_movingSelected = true;
+                m_dragPage = a->page;
+                m_moveStartDoc = toDoc(event->position(), a->page);
+                m_moveOriginalBounds = a->bounds;
+                // Begin compound; pushHistory is lazy so a click-
+                // without-drag adds no undo frame.
+                m_store->beginCompound();
+            }
+        }
+        setFocus(Qt::MouseFocusReason); // accept Delete / arrow keys
+        update();
+        return;
+    }
+    // Empty-space click. For Select-tool we clear any annotation
+    // selection (the user is starting a fresh text-selection drag),
+    // then fall through to the text-selection drag setup below. For
+    // drawing tools we leave the existing selection alone — the
+    // user's intent is to draw a new shape; previously-selected
+    // annotations stay selected so Delete / arrow keys still apply
+    // to them.
+    if (m_tool == AnnotationTool::Select) {
         if (m_selectedAnnotationId != 0 || !m_extraSelectedIds.empty()) {
             m_selectedAnnotationId = 0;
             m_extraSelectedIds.clear();
@@ -769,20 +803,26 @@ void AnnotationOverlay::mouseMoveEvent(QMouseEvent *event) {
 void AnnotationOverlay::mouseReleaseEvent(QMouseEvent *event) {
     if (event->button() != Qt::LeftButton)
         return;
-    // End-of-resize bookkeeping: same idea as the move drag —
-    // bounds were updated incrementally; clear the state on
-    // release.
+    // End-of-resize bookkeeping: bounds were updated incrementally
+    // every frame inside one compound gesture. Close the compound
+    // so the whole drag is one undo step; the click-without-drag
+    // edge case is handled by the lazy-push in pushHistory().
     if (m_resizingHandle != ResizeHandle::None) {
         m_resizingHandle = ResizeHandle::None;
+        if (m_store) {
+            m_store->endCompound();
+        }
         update();
         return;
     }
-    // End-of-move bookkeeping: the bounds were updated incrementally
-    // in mouseMoveEvent; release just clears the drag state. The
-    // already-emitted store changed() signals took care of paint
-    // and dirty propagation.
+    // End-of-move bookkeeping. Same shape as resize: close the
+    // compound; the changed() signals emitted per-frame already
+    // drove the repaint and Inspector refresh.
     if (m_movingSelected) {
         m_movingSelected = false;
+        if (m_store) {
+            m_store->endCompound();
+        }
         update();
         return;
     }
@@ -1170,7 +1210,17 @@ QRectF AnnotationOverlay::selectedViewRectForTest() const {
 }
 
 QRectF AnnotationOverlay::handleRect(const QRectF &viewBounds, ResizeHandle which) const {
-    constexpr double kSize = 10.0; // view-space px per side
+    // The handle hit zone is the bounding box around each corner that the
+    // user can press to begin a resize drag. We shrink this from 10×10 to
+    // 6×6 because Line and Arrow annotations have endpoints that coincide
+    // with the bbox corners — a 10×10 zone covers most of a short
+    // line/arrow's body and steals body-clicks (which should begin a
+    // move drag) away from the move path. 6×6 is small enough that even
+    // short shapes have a graspable body, and large enough for keyboard-
+    // and-mouse desktop users to land on with a normal pointer.
+    // Shape-aware (endpoint-only) handles for Line/Arrow are a follow-up
+    // PR.
+    constexpr double kSize = 6.0; // view-space px per side
     constexpr double kHalf = kSize / 2.0;
     QPointF c;
     switch (which) {
