@@ -3,9 +3,11 @@
 #include "document/IDocument.h"
 
 #include <QActionGroup>
+#include <QHash>
 #include <QMainWindow>
 #include <QSet>
 #include <QStringList>
+#include <cstdint>
 #include <memory>
 
 class QCloseEvent;
@@ -187,6 +189,26 @@ class MainWindow : public QMainWindow {
     // leave the size alone.
     void applyInitialWindowSize(IDocument *doc);
 
+    // Trigger a background scoring pass through MlScheduler so we know
+    // whether to badge the Remove Background menu entry for `doc`. The
+    // scoring itself is pure CPU but routed through the scheduler so it
+    // is cooperatively cancellable when the document closes mid-compute
+    // and honours the battery toggle (Prefetch is dropped on battery
+    // when mlRunOnBattery=false; that's the right trade-off — the badge
+    // is a nicety, not a feature). One-shot per document pointer: once
+    // we have a verdict we cache it and skip rescoring on subsequent
+    // tab switches. Called from onCurrentDocumentChanged; safe to call
+    // for non-image documents (no-ops).
+    void scheduleBackgroundCandidateScore(IDocument *doc);
+
+    // Apply the cached badge state for `doc` to the Remove Background
+    // menu action: a 12px "sparkle" glyph + a positive tooltip when
+    // the heuristic says this image looks promising, otherwise no
+    // icon and the policy-aware tooltip set by applyMlPolicy(). Idempo-
+    // tent; called whenever the active document changes or the scorer
+    // finishes a pass.
+    void updateRemoveBackgroundBadge(IDocument *doc);
+
     Application *m_app;
     DocumentView *m_documentView = nullptr;
     AnimationBar *m_animationBar = nullptr;
@@ -306,6 +328,20 @@ class MainWindow : public QMainWindow {
     // Shown only when the active doc is large + non-OCR'd; hidden
     // otherwise so the status bar stays clean.
     QWidget *m_largeDocOcrHint = nullptr;
+
+    // Decoration applied to the Remove Background menu entry when the
+    // current image is a strong candidate for background removal. The
+    // scoring runs once per image-document open through MlScheduler at
+    // Prefetch priority; the resulting flag flips the action's icon to
+    // a "sparkle" glyph and adjusts the tooltip. Per-document so a tab
+    // switch between an image and a PDF reverts the badge cleanly.
+    // Plain pointer key — entries are removed when the doc closes
+    // (DocumentView::documentClosed signal in onCurrentDocumentChanged).
+    QSet<const IDocument *> m_backgroundCandidateDocs;
+    // Pending scoring jobs keyed by document pointer so we can cancel
+    // them if the doc closes mid-compute. Maps to the MlScheduler task
+    // id returned by submit(); zero means no in-flight job.
+    QHash<const IDocument *, std::uint64_t> m_pendingCandidateJobs;
 };
 
 } // namespace trailer

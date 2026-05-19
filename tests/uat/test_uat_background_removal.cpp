@@ -31,14 +31,31 @@
 //   uat_bgr_030_removeBackgroundNoopsWithoutModel
 //       Without any cached model, BackgroundRemover.remove() returns
 //       a null QImage and no replaceImage side effect occurs.
+//   uat_bgr_040_neverDownloadPolicyDisablesMenuWithTooltip
+//       With the U²-Net model marked Never Download and absent from
+//       the cache, the Tools → Remove Background menu entry is
+//       disabled and carries a tooltip that points the user at
+//       Tools → Manage ML Models…  No popup is raised.
+//   uat_bgr_050_goodCandidateImageSurfacesBadge
+//       Opening a photo-like fixture (high edge density + saturation)
+//       triggers the heuristic; once the MlScheduler finishes the
+//       Prefetch task, the Remove Background action picks up a
+//       non-null icon (the "sparkle" badge).
+//   uat_bgr_060_flatDocumentImageHasNoBadge
+//       Opening a flat document-like fixture (near-white + thin text
+//       bands) leaves the Remove Background action with no badge icon
+//       after the scoring pass completes.
 
 #include "app/Application.h"
 #include "document/ImageAdapter.h"
+#include "ml/BackgroundCandidateScorer.h"
 #include "ml/BackgroundRemover.h"
+#include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "settings/AppPaths.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
+#include "ui/ModelManagerDialog.h"
 
 #include <QAction>
 #include <QDir>
@@ -47,6 +64,8 @@
 #include <QImage>
 #include <QMenu>
 #include <QMenuBar>
+#include <QPainter>
+#include <QPainterPath>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -94,6 +113,114 @@ QString writeSampleImage(const QString &path) {
     return path;
 }
 
+// "Photo-like" fixture: a parrot-style subject covering most of the
+// frame, with high-frequency feather detail and several saturated
+// colour patches. Designed to clear BackgroundCandidateScorer's
+// recommend threshold. Mirrors the unit-test bird fixture so the
+// scorer's verdict matches between unit and UAT paths.
+QString writePhotoLikeImage(const QString &path) {
+    const int w = 256;
+    const int h = 192;
+    QImage img(w, h, QImage::Format_ARGB32);
+    QPainter p(&img);
+    // Background — sky gradient with hue rotation for non-trivial
+    // saturation variance.
+    for (int y = 0; y < h; ++y) {
+        const float t = static_cast<float>(y) / static_cast<float>(h - 1);
+        const int r = 100 + static_cast<int>(t * 40);
+        const int g = 140 + static_cast<int>(t * 60);
+        const int b = 220 - static_cast<int>(t * 80);
+        p.setPen(QColor(r, g, b));
+        p.drawLine(0, y, w, y);
+    }
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(Qt::NoPen);
+    // Bird body — radial saturated subject covering ~40% of the frame.
+    QRadialGradient body(QPointF(w * 0.45, h * 0.55), w * 0.35);
+    body.setColorAt(0.0, QColor(240, 80, 30));
+    body.setColorAt(0.7, QColor(180, 30, 40));
+    body.setColorAt(1.0, QColor(80, 20, 50));
+    p.setBrush(body);
+    p.drawEllipse(QPointF(w * 0.45, h * 0.55), w * 0.36, h * 0.45);
+    // Wing.
+    p.setBrush(QColor(30, 140, 80));
+    QPainterPath wing;
+    wing.moveTo(w * 0.20, h * 0.50);
+    wing.cubicTo(w * 0.10, h * 0.70, w * 0.30, h * 0.85, w * 0.55, h * 0.78);
+    wing.cubicTo(w * 0.50, h * 0.65, w * 0.40, h * 0.55, w * 0.20, h * 0.50);
+    p.drawPath(wing);
+    // Feather stripes — drives the mean Sobel response.
+    p.setPen(QPen(QColor(20, 20, 20), 2));
+    for (int i = 0; i < 14; ++i) {
+        const float t = static_cast<float>(i) / 14.0f;
+        const int y0 = static_cast<int>(h * (0.30f + t * 0.55f));
+        p.drawLine(static_cast<int>(w * 0.15), y0, static_cast<int>(w * 0.75), y0 + 3);
+    }
+    p.setPen(QPen(QColor(255, 220, 30), 2));
+    for (int i = 0; i < 6; ++i) {
+        const float t = static_cast<float>(i) / 6.0f;
+        const int y0 = static_cast<int>(h * (0.50f + t * 0.30f));
+        p.drawLine(static_cast<int>(w * 0.25), y0, static_cast<int>(w * 0.65), y0 + 6);
+    }
+    p.setPen(Qt::NoPen);
+    // Beak.
+    p.setBrush(QColor(255, 180, 30));
+    QPainterPath beak;
+    beak.moveTo(w * 0.60, h * 0.35);
+    beak.lineTo(w * 0.85, h * 0.40);
+    beak.lineTo(w * 0.60, h * 0.50);
+    beak.closeSubpath();
+    p.drawPath(beak);
+    // Eye.
+    p.setBrush(QColor(20, 20, 20));
+    p.drawEllipse(QPointF(w * 0.55, h * 0.40), w * 0.04, w * 0.04);
+    p.setBrush(QColor(255, 255, 255));
+    p.drawEllipse(QPointF(w * 0.555, h * 0.395), w * 0.012, w * 0.012);
+    p.end();
+    img.save(path, "PNG");
+    return path;
+}
+
+// "Flat-document-like" fixture: near-white page with two thin bands
+// of dark text. Designed to score below the badge threshold.
+QString writeFlatDocumentImage(const QString &path) {
+    const int w = 192;
+    const int h = 256;
+    QImage img(w, h, QImage::Format_ARGB32);
+    img.fill(QColor(248, 248, 248));
+    QPainter p(&img);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(30, 30, 30));
+    const int textHeight = 6;
+    for (int row = 0; row < 2; ++row) {
+        const int y = (row == 0 ? h * 30 / 100 : h * 60 / 100);
+        for (int word = 0; word < 6; ++word) {
+            const int x = 10 + word * (w - 20) / 6;
+            const int wWord = (w - 30) / 6 - 4;
+            p.drawRect(x, y, wWord, textHeight);
+        }
+    }
+    p.end();
+    img.save(path, "PNG");
+    return path;
+}
+
+// Drain the MlScheduler so the test sees the Prefetch scoring pass
+// finish before we read the action's icon. waitForIdle() blocks until
+// the queue is empty AND no task is running; processEvents catches
+// the queued result-application step that fires the badge update.
+void drainScheduler(Application *app, int budgetMs = 4000) {
+    app->mlScheduler().waitForIdle(budgetMs);
+    // Repeatedly flush the event queue. The worker's
+    // QMetaObject::invokeMethod posts a QMetaCallEvent which the GUI
+    // loop processes; one processEvents picks up the result-application
+    // step, and a second flush catches any further events it queued
+    // (icon-pixmap caching from themedActionIcon can trigger one).
+    for (int i = 0; i < 5; ++i) {
+        QApplication::processEvents(QEventLoop::AllEvents, 50);
+    }
+}
+
 bool seedU2NetPIntoAppCache() {
     const QString src = QString::fromLocal8Bit(qgetenv("TRAILER_TEST_U2NETP"));
     if (src.isEmpty() || !QFileInfo::exists(src))
@@ -114,6 +241,9 @@ class TestUatBackgroundRemoval : public QObject {
     void uat_bgr_010_removeBackgroundMenuActionWired();
     void uat_bgr_020_removeBackgroundAppliesAlphaWithRealModel();
     void uat_bgr_030_removeBackgroundNoopsWithoutModel();
+    void uat_bgr_040_neverDownloadPolicyDisablesMenuWithTooltip();
+    void uat_bgr_050_goodCandidateImageSurfacesBadge();
+    void uat_bgr_060_flatDocumentImageHasNoBadge();
 
   private:
     QTemporaryDir m_scratch;
@@ -126,10 +256,27 @@ void TestUatBackgroundRemoval::init() {
     }
     QApplication::processEvents();
 
+    // Drain any leftover MlScheduler work — Prefetch scoring from the
+    // previous slot may still be in flight (cancelled via the about-
+    // to-be-removed signal but the worker thread still drains its
+    // current task to completion).
+    if (auto *app = qobject_cast<Application *>(qApp)) {
+        app->mlScheduler().cancelAll();
+        app->mlScheduler().waitForIdle(2000);
+        QApplication::processEvents();
+    }
+
     // Wipe any model cache from a previous slot so each test starts
     // with a predictable state.
     const QString cached = QDir(AppPaths::modelsDir()).filePath(QStringLiteral("u2netp.onnx"));
     QFile::remove(cached);
+
+    // Clear any leaked never-download policy bit so this slot starts
+    // with the default policy. The bgr_040 case toggles it on and
+    // we don't want the flag to leak into bgr_050 / bgr_060.
+    if (auto *app = qobject_cast<Application *>(qApp)) {
+        ModelPolicy::setNeverDownload(app, ModelId::U2NetP, false);
+    }
 }
 
 void TestUatBackgroundRemoval::uat_bgr_010_removeBackgroundMenuActionWired() {
@@ -224,6 +371,89 @@ void TestUatBackgroundRemoval::uat_bgr_030_removeBackgroundNoopsWithoutModel() {
     QVERIFY2(result.isNull(), "remove() with no cached model must return null");
     QVERIFY(!imgDoc->isDirty());
     QVERIFY(!imgDoc->canUndo());
+}
+
+void TestUatBackgroundRemoval::uat_bgr_040_neverDownloadPolicyDisablesMenuWithTooltip() {
+    QVERIFY(m_scratch.isValid());
+    const QString imgPath = writeSampleImage(m_scratch.filePath(QStringLiteral("bgr040.png")));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    // Pre-condition: the model is NOT on disk (init() wiped it) AND
+    // the user (via Manage ML Models) has marked it Never Download.
+    ModelPolicy::setNeverDownload(app, ModelId::U2NetP, true);
+
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+
+    QAction *action = findActionByText(mw->menuBar(), QStringLiteral("Remove &Background"));
+    QVERIFY2(action, "Tools → Remove Background action is missing");
+    QVERIFY2(!action->isEnabled(),
+             "Remove Background should be disabled when policy says Never Download");
+    const QString tip = action->toolTip();
+    QVERIFY2(!tip.isEmpty(), "Disabled action must carry a tooltip explaining why");
+    QVERIFY2(
+        tip.contains(QStringLiteral("Manage ML Models")),
+        qPrintable(QString("Tooltip should point at Tools → Manage ML Models…: '%1'").arg(tip)));
+}
+
+void TestUatBackgroundRemoval::uat_bgr_050_goodCandidateImageSurfacesBadge() {
+    QVERIFY(m_scratch.isValid());
+    const QString imgPath = writePhotoLikeImage(m_scratch.filePath(QStringLiteral("bgr050.png")));
+
+    // Sanity-check the fixture directly through the scorer — if this
+    // fails the test's expectation about the badge is moot and the
+    // fixture / threshold need tuning.
+    {
+        QImage probe(imgPath);
+        QVERIFY(!probe.isNull());
+        const auto verdict = BackgroundCandidateScorer::score(probe);
+        QVERIFY2(verdict.combined >= BackgroundCandidateScorer::kRecommendThreshold,
+                 qPrintable(QString("photo fixture scored %1 — below threshold %2; "
+                                    "tighten the fixture or relax the threshold")
+                                .arg(verdict.combined)
+                                .arg(BackgroundCandidateScorer::kRecommendThreshold)));
+    }
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+    // Heuristic scoring runs through MlScheduler at Prefetch priority.
+    // Wait for it (and the queued GUI-thread badge update) to land
+    // before we read the action's icon.
+    drainScheduler(app);
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    QAction *action = findActionByText(mw->menuBar(), QStringLiteral("Remove &Background"));
+    QVERIFY(action);
+    QVERIFY2(!action->icon().isNull(), "Photo-like fixture should clear the recommend threshold "
+                                       "and pick up the badge sparkle icon.");
+    QVERIFY2(action->toolTip().contains(QStringLiteral("works well")),
+             qPrintable(QString("Positive-hint tooltip missing: '%1'").arg(action->toolTip())));
+}
+
+void TestUatBackgroundRemoval::uat_bgr_060_flatDocumentImageHasNoBadge() {
+    QVERIFY(m_scratch.isValid());
+    const QString imgPath =
+        writeFlatDocumentImage(m_scratch.filePath(QStringLiteral("bgr060.png")));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+    drainScheduler(app);
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    QAction *action = findActionByText(mw->menuBar(), QStringLiteral("Remove &Background"));
+    QVERIFY(action);
+    QVERIFY2(action->icon().isNull(), "Flat document fixture should not clear the recommend "
+                                      "threshold — no badge icon should be set.");
 }
 
 int main(int argc, char **argv) {
