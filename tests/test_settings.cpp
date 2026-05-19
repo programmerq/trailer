@@ -16,6 +16,8 @@ class TestSettings : public QObject {
     void missingFileYieldsDefaults();
     void enumConversions();
     void firstUseFlagsRoundTrip();
+    void mlSchedulerDefaults();
+    void mlSchedulerRoundTrip();
 };
 
 void TestSettings::defaults() {
@@ -29,6 +31,9 @@ void TestSettings::defaults() {
     QCOMPARE(s.autoSave(), true);
     QCOMPARE(s.recentMax(), 50);
     QCOMPARE(s.redactionWarningAcknowledged(), false);
+    QCOMPARE(s.mlRecognizeTextInBackground(), true);
+    QCOMPARE(s.mlPreloadSegmentationOnToolActivation(), true);
+    QCOMPARE(s.mlRunOnBattery(), false);
 }
 
 void TestSettings::roundTrip() {
@@ -95,6 +100,34 @@ void TestSettings::firstUseFlagsRoundTrip() {
     QVERIFY(reloaded.firstUseAcknowledged(QStringLiteral("ml_never_download_u2netp")));
     QVERIFY(reloaded.firstUseAcknowledged(QStringLiteral("ml_never_download_mobile_sam_encoder")));
     QVERIFY(!reloaded.firstUseAcknowledged(QStringLiteral("ml_never_download_pp_ocr_detector")));
+}
+
+void TestSettings::mlSchedulerDefaults() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Settings s(dir.filePath("missing.toml"));
+    s.load();
+    QCOMPARE(s.mlRecognizeTextInBackground(), true);
+    QCOMPARE(s.mlPreloadSegmentationOnToolActivation(), true);
+    QCOMPARE(s.mlRunOnBattery(), false);
+}
+
+void TestSettings::mlSchedulerRoundTrip() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("settings.toml");
+    {
+        Settings s(path);
+        s.setMlRecognizeTextInBackground(false);
+        s.setMlPreloadSegmentationOnToolActivation(false);
+        s.setMlRunOnBattery(true);
+        s.save();
+    }
+    Settings reloaded(path);
+    reloaded.load();
+    QCOMPARE(reloaded.mlRecognizeTextInBackground(), false);
+    QCOMPARE(reloaded.mlPreloadSegmentationOnToolActivation(), false);
+    QCOMPARE(reloaded.mlRunOnBattery(), true);
 }
 
 QTEST_MAIN(TestSettings)

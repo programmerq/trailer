@@ -92,6 +92,9 @@ set(TRAILER_SOURCES
     src/filters/ImageFilter.h
     src/ml/BackgroundRemover.cpp
     src/ml/BackgroundRemover.h
+    src/ml/CancellationToken.h
+    src/ml/MlScheduler.cpp
+    src/ml/MlScheduler.h
     src/ml/ModelDownloader.cpp
     src/ml/ModelDownloader.h
     src/ml/ModelRegistry.cpp
@@ -102,6 +105,8 @@ set(TRAILER_SOURCES
     src/ml/OnnxSession.h
     src/ml/SamSession.cpp
     src/ml/SamSession.h
+    src/platform/PowerSource.cpp
+    src/platform/PowerSource.h
     src/recent/RecentFiles.cpp
     src/recent/RecentFiles.h
     src/settings/AppPaths.cpp
@@ -189,6 +194,11 @@ target_link_libraries(trailer_core
 )
 if(APPLE)
     target_link_libraries(trailer_core PUBLIC "-framework AppKit")
+    # PowerSource.cpp uses IOPSGetProvidingPowerSourceType from
+    # IOKit/ps/IOPowerSources.h. IOKit + CoreFoundation are macOS-
+    # only frameworks; gated inside the APPLE block so the default
+    # link line on Linux / Windows stays free of macOS-isms.
+    target_link_libraries(trailer_core PRIVATE "-framework IOKit" "-framework CoreFoundation")
 endif()
 trailer_set_warnings(trailer_core)
 
