@@ -34,8 +34,9 @@
 #include "ModelManagerDialog.h"
 #include "OcrController.h"
 #include "OcrResultsDialog.h"
-#include "SamSegmentDialog.h"
+#include "SamController.h"
 #include "SelectableTextLayer.h"
+#include "document/ImageAdapter.h"
 #include "document/SelectableTextStore.h"
 
 #include <QAction>
@@ -82,7 +83,6 @@
 #include <QtConcurrent>
 #include <QVBoxLayout>
 #include <QWidget>
-#include "document/ImageAdapter.h"
 
 namespace trailer {
 
@@ -146,6 +146,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
 
     m_documentView = new DocumentView(center);
     m_ocrController = new OcrController(m_app, this);
+    m_samController = new SamController(m_app, this);
     connect(m_documentView, &DocumentView::currentDocumentChanged, this,
             &MainWindow::onCurrentDocumentChanged);
     // Window-per-file: when the last document in this window is
@@ -169,6 +170,13 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         }
         m_autoEnabledFormDocs.remove(doc);
         m_restoredViewStateDocs.remove(doc);
+        // Drop the SAM encoder cache + cancel in-flight tasks for this
+        // doc. Without this a closed document's address could be
+        // recycled by the allocator and a fresh document at the same
+        // address would inherit the stale cache.
+        if (m_samController) {
+            m_samController->purgeDocument(doc);
+        }
     });
 
     m_animationBar = new AnimationBar(center);
@@ -1513,6 +1521,29 @@ bool ensureSamModelsReady(MainWindow *parent, SamSession &session) {
     return requestModelDownload(req);
 }
 
+// Tools-menu shortcut for Instant Alpha / Smart Lasso. The Workstream G
+// rework moved the segmentation interaction out of a modal dialog and
+// onto the document overlay. The menu entries stay so existing
+// keyboard shortcuts and the Tools menu surface still trigger the
+// feature; both reduce to "show the markup toolbar, activate the
+// right tool, run the encoder download dialog once if needed".
+void activateSamTool(MainWindow *parent, MarkupToolbar *toolbar, AnnotationTool tool) {
+    if (!parent || !toolbar)
+        return;
+    // Ensure the models are on disk before flipping the tool — the
+    // download progress dialog is reachable through the existing
+    // ModelDownloadRequest plumbing. PHILOSOPHY: this is the only
+    // popup in the SAM flow (one-time consent for a download); the
+    // rest of the interaction is inline.
+    SamSession session(&parent->app()->modelRegistry());
+    if (!ensureSamModelsReady(parent, session))
+        return;
+    // Show the markup toolbar so the user can see which tool is now
+    // active, then flip the radio.
+    toolbar->show();
+    toolbar->setActiveTool(tool);
+}
+
 bool ensureOcrModelsReady(MainWindow *parent, OcrEngine &engine) {
     ModelDownloadRequest req;
     req.app = parent->app();
@@ -1557,72 +1588,23 @@ void MainWindow::onInstantAlpha() {
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsEditing())
         return;
-    auto *imgDoc = dynamic_cast<ImageDocument *>(doc);
-    if (!imgDoc)
+    if (!dynamic_cast<ImageDocument *>(doc))
         return;
-
-    SamSession session(&m_app->modelRegistry());
-    if (!ensureSamModelsReady(this, session))
-        return;
-
-    SamSegmentDialog dialog(SamSegmentDialog::Mode::InstantAlpha, imgDoc->image(), &session, this);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-
-    const QImage result = dialog.resultImage();
-    if (result.isNull()) {
-        flashError(tr("Instant Alpha failed — no selection was produced. "
-                      "Try adding more points."));
-        return;
-    }
-    if (!imgDoc->replaceImage(result)) {
-        flashError(tr("Instant Alpha failed — could not apply the selection "
-                      "to the current image."));
-        return;
-    }
-    m_sidebar->refreshThumbnails();
-    updateTitleForDocument(doc);
+    // Workstream G: the modal SamSegmentDialog is gone. The menu entry
+    // now just activates the InstantAlpha tool mode on the markup
+    // toolbar (showing the toolbar first if it was hidden), and the
+    // user paints on the document directly. The toolbar's tool radio
+    // is the source of truth.
+    activateSamTool(this, m_markupToolbar, AnnotationTool::InstantAlpha);
 }
 
 void MainWindow::onSmartLasso() {
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsEditing())
         return;
-    auto *imgDoc = dynamic_cast<ImageDocument *>(doc);
-    if (!imgDoc)
+    if (!dynamic_cast<ImageDocument *>(doc))
         return;
-
-    SamSession session(&m_app->modelRegistry());
-    if (!ensureSamModelsReady(this, session))
-        return;
-
-    SamSegmentDialog dialog(SamSegmentDialog::Mode::SmartLasso, imgDoc->image(), &session, this);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-
-    const QPolygon poly = dialog.resultPolygon();
-    if (poly.isEmpty()) {
-        flashError(tr("Smart Lasso failed — no object outline was produced."));
-        return;
-    }
-
-    // Phase 6C ships Smart Lasso as a crop-to-object: we take the
-    // polygon's bounding rectangle and let ImageDocument's existing
-    // undo-safe cropToRect do the work. A true polygon mask + feather
-    // flow is a later phase; the SAM segmentation already gives us
-    // the outline on screen for users to review.
-    const QRect bounds = poly.boundingRect().intersected(QRect(QPoint(), imgDoc->image().size()));
-    if (bounds.width() < 2 || bounds.height() < 2) {
-        flashError(tr("Smart Lasso failed — selection is too small to crop to."));
-        return;
-    }
-    if (!imgDoc->cropToRect(bounds.x(), bounds.y(), bounds.width(), bounds.height())) {
-        flashError(tr("Smart Lasso failed — could not crop to the selected "
-                      "object."));
-        return;
-    }
-    m_sidebar->refreshThumbnails();
-    updateTitleForDocument(doc);
+    activateSamTool(this, m_markupToolbar, AnnotationTool::SmartLasso);
 }
 
 void MainWindow::onRecognizeText() {
@@ -2341,7 +2323,64 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
         if (auto *overlay = findChild<AnnotationOverlay *>()) {
             connect(overlay, &AnnotationOverlay::selectionChanged, this,
                     &MainWindow::onAnnotationSelectionChanged, Qt::UniqueConnection);
+            // Wire SAM plumbing into the overlay so the InstantAlpha /
+            // SmartLasso tool branches can fire decoder passes and
+            // commit results without going through a modal dialog. The
+            // raw IDocument pointer (IDocument is not a QObject) is
+            // re-checked against the active doc on every invocation;
+            // documentAboutToBeRemoved cancels pending SAM work before
+            // the doc is destroyed, so by the time the handlers fire
+            // the pointer is either live or the controller has already
+            // forgotten it.
+            auto *imgDoc = dynamic_cast<ImageDocument *>(doc);
+            overlay->setSamController(m_samController);
+            if (imgDoc) {
+                DocumentView *dvPtr = m_documentView;
+                IDocument *expectedDoc = doc;
+                overlay->setSamImageProvider([dvPtr, expectedDoc, imgDoc]() -> QImage {
+                    if (!dvPtr || dvPtr->currentDocument() != expectedDoc)
+                        return {};
+                    return imgDoc->image();
+                });
+                QPointer<MainWindow> mwPtr(this);
+                overlay->setInstantAlphaCommitHandler(
+                    [mwPtr, dvPtr, expectedDoc, imgDoc](const QImage &result) {
+                        if (!mwPtr || !dvPtr || dvPtr->currentDocument() != expectedDoc ||
+                            result.isNull())
+                            return;
+                        if (!imgDoc->replaceImage(result))
+                            return;
+                        mwPtr->m_sidebar->refreshThumbnails();
+                        mwPtr->updateTitleForDocument(expectedDoc);
+                    });
+                overlay->setSmartLassoCommitHandler(
+                    [mwPtr, dvPtr, expectedDoc, imgDoc](const QPolygon &poly) {
+                        if (!mwPtr || !dvPtr || dvPtr->currentDocument() != expectedDoc ||
+                            poly.isEmpty())
+                            return;
+                        const QRect bounds =
+                            poly.boundingRect().intersected(QRect(QPoint(), imgDoc->image().size()));
+                        if (bounds.width() < 2 || bounds.height() < 2)
+                            return;
+                        if (!imgDoc->cropToRect(bounds.x(), bounds.y(), bounds.width(),
+                                                bounds.height()))
+                            return;
+                        mwPtr->m_sidebar->refreshThumbnails();
+                        mwPtr->updateTitleForDocument(expectedDoc);
+                    });
+            } else {
+                overlay->setSamImageProvider({});
+                overlay->setInstantAlphaCommitHandler({});
+                overlay->setSmartLassoCommitHandler({});
+            }
+            if (m_samController) {
+                m_samController->setDocument(doc, doc->currentPage());
+            }
+        } else if (m_samController) {
+            m_samController->setDocument(nullptr, 0);
         }
+    } else if (m_samController) {
+        m_samController->setDocument(nullptr, 0);
     }
 
     const bool hasPrint = doc && doc->supportsPrint();
@@ -2572,6 +2611,26 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     m_markupToolbar->setToolVisible(AnnotationTool::Underline, hasText);
     m_markupToolbar->setToolVisible(AnnotationTool::Highlight, hasText);
     m_markupToolbar->setToolVisible(AnnotationTool::StrikeOut, hasText);
+
+    // SAM tools (Instant Alpha / Smart Lasso): image-only, and only
+    // when the MobileSAM models are reachable (cached on disk, or
+    // policy allows downloading them). PHILOSOPHY: a tool the user
+    // cannot act on is hidden, not greyed — the markup toolbar
+    // shouldn't carry buttons that just pop up "actually no" tooltips.
+    const bool samImageEligible = canEdit && isImage;
+    bool samPolicyAllows = true;
+    if (samImageEligible) {
+        ModelRegistry &reg = m_app->modelRegistry();
+        for (ModelId id : {ModelId::MobileSamEncoder, ModelId::MobileSamDecoder}) {
+            if (!reg.isAvailable(id) && ModelPolicy::isNeverDownload(m_app, id)) {
+                samPolicyAllows = false;
+                break;
+            }
+        }
+    }
+    const bool samToolsVisible = samImageEligible && samPolicyAllows;
+    m_markupToolbar->setToolVisible(AnnotationTool::InstantAlpha, samToolsVisible);
+    m_markupToolbar->setToolVisible(AnnotationTool::SmartLasso, samToolsVisible);
 
     // Sidebar TOC picker entry: enabled iff the active document has
     // an outline. If we were already in TableOfContents mode and the

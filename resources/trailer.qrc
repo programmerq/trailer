@@ -34,6 +34,8 @@
         <file alias="tool-underline.svg">icons/actions/tool-underline.svg</file>
         <file alias="tool-strikeout.svg">icons/actions/tool-strikeout.svg</file>
         <file alias="tool-redact.svg">icons/actions/tool-redact.svg</file>
+        <file alias="tool-instant-alpha.svg">icons/actions/tool-instant-alpha.svg</file>
+        <file alias="tool-smart-lasso.svg">icons/actions/tool-smart-lasso.svg</file>
         <file alias="tool-autofill.svg">icons/actions/tool-autofill.svg</file>
         <file alias="tool-sign-here.svg">icons/actions/tool-sign-here.svg</file>
         <file alias="tool-checkmark.svg">icons/actions/tool-checkmark.svg</file>

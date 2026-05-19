@@ -1,45 +1,47 @@
 // UAT harness — Instant Alpha + Smart Lasso (Phase 6 §6.3.3 / §6.3.6,
 // DESIGN §6.1.5).
 //
-// Both features run through the shared SamSegmentDialog, which is
-// modal and impossible to drive under QT_QPA_PLATFORM=offscreen. So we
-// exercise the menu wiring plus the integration pieces the slots rely
-// on, and drive SamSession + ImageDocument directly — the same
-// inputs/outputs the menu slots push through.
+// Workstream G moved both features out of the modal `SamSegmentDialog`
+// into in-document tool modes on the markup toolbar's overlay. The
+// harness now drives the AnnotationOverlay + SamController directly.
 //
 //   uat_sam_010_instantAlphaMenuActionWired
 //       Tools → Instant Alpha… exists and is enabled for an image
-//       document.
+//       document. Triggering it activates the InstantAlpha tool on
+//       the markup toolbar.
 //   uat_sam_020_smartLassoMenuActionWired
 //       Tools → Smart Lasso… exists and is enabled for an image
-//       document.
+//       document. Triggering it activates the SmartLasso tool on the
+//       markup toolbar.
 //   uat_sam_030_instantAlphaAppliesAlphaWithRealModels
 //       With TRAILER_TEST_SAM_ENCODER + TRAILER_TEST_SAM_DECODER
-//       seeded into AppPaths::modelsDir(), SamSession.prepare() +
-//       segment() + applyAsAlpha() yields an ARGB image the same
-//       size as the input, and ImageDocument::replaceImage() flips
-//       isDirty() + canUndo(). Gated on both env vars being set.
+//       seeded into AppPaths::modelsDir(), the InstantAlpha tool path
+//       through SamSession.prepare() + segment() + applyAsAlpha()
+//       yields an ARGB image the same size as the input, and the
+//       overlay's commit handler routes that into
+//       ImageDocument::replaceImage. Tab marks dirty + canUndo.
 //   uat_sam_040_smartLassoCropsToObjectBoundsWithRealModels
-//       Same seeded-cache path, but uses contourFromLastMask() to get
-//       the polygon and calls ImageDocument::cropToRect() on its
-//       bounding rect — mirrors the Smart Lasso slot's shipping
-//       behaviour (Phase 6C simplification: crop, not polygon mask).
+//       Same seeded-cache path, but uses the SmartLasso commit
+//       handler to call cropToRect with the contour's bounding rect.
 //   uat_sam_050_instantAlphaNoopsWithoutModels
-//       With no cached models the SamSession reports isModelReady()
-//       false and segment() returns a null mask; no document
-//       mutation occurs.
-//
-// Without real models the inference slots are skipped — the plumbing
-// around the menu actions, model-registry dispatch, and undo wiring
-// is still exercised on every CI run.
+//       Without models, the controller's prepare returns false and
+//       segment() yields a null mask; no document mutation occurs.
+//   uat_sam_060_overlayDispatchesPromptThroughController
+//       Synthesise a SAM prompt via the overlay's test seam; the
+//       controller's dispatch counter increments — proving the
+//       overlay → controller wiring is intact even without real
+//       models (decoder returns null but the dispatch still flows).
 
 #include "app/Application.h"
 #include "document/ImageAdapter.h"
 #include "ml/ModelRegistry.h"
 #include "ml/SamSession.h"
 #include "settings/AppPaths.h"
+#include "ui/AnnotationOverlay.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
+#include "ui/MarkupToolbar.h"
+#include "ui/SamController.h"
 
 #include <QAction>
 #include <QDir>
@@ -138,6 +140,7 @@ class TestUatInstantAlphaAndSmartLasso : public QObject {
     void uat_sam_030_instantAlphaAppliesAlphaWithRealModels();
     void uat_sam_040_smartLassoCropsToObjectBoundsWithRealModels();
     void uat_sam_050_instantAlphaNoopsWithoutModels();
+    void uat_sam_060_overlayDispatchesPromptThroughController();
 
   private:
     QTemporaryDir m_scratch;
@@ -318,6 +321,61 @@ void TestUatInstantAlphaAndSmartLasso::uat_sam_050_instantAlphaNoopsWithoutModel
 
     QVERIFY(!imgDoc->isDirty());
     QVERIFY(!imgDoc->canUndo());
+}
+
+void TestUatInstantAlphaAndSmartLasso::uat_sam_060_overlayDispatchesPromptThroughController() {
+    QVERIFY(m_scratch.isValid());
+    const QString imgPath = writeSampleScene(m_scratch.filePath(QStringLiteral("sam060.png")));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    auto *imgDoc = dynamic_cast<ImageDocument *>(dv->currentDocument());
+    QVERIFY(imgDoc);
+
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
+    QVERIFY2(overlay, "Active image document should expose an AnnotationOverlay");
+    auto *controller = overlay->samController();
+    QVERIFY2(controller, "Overlay should be wired to a SamController");
+
+    // Make sure the toolbar is visible so its tool radio is interactive,
+    // then activate InstantAlpha on the toolbar (the same path the menu
+    // shortcut takes via activateSamTool). Skipping the menu entry
+    // keeps us off the model-download dialog (which would have to
+    // hit the network); we drive the overlay's tool mode directly.
+    auto *toolbar = mw->findChild<MarkupToolbar *>();
+    QVERIFY(toolbar);
+    toolbar->show();
+    overlay->setActiveTool(AnnotationTool::InstantAlpha);
+    QVERIFY(overlay->isSamToolActiveForTest());
+
+    // Synthesise a positive prompt via the overlay's test seam. The
+    // controller's dispatch counter increments because requestSegment
+    // routes through MlScheduler; the decoder returns a null mask
+    // because models aren't loaded, but the dispatch path is what
+    // we're exercising here.
+    const int beforeDispatches = controller->decoderDispatchCountForTest();
+    const QPointF prompt(imgDoc->image().width() / 2.0, imgDoc->image().height() / 2.0);
+    QVERIFY(overlay->simulateSamPromptForTest(prompt, /*positive=*/true));
+    // Spin briefly so the scheduler can pick up the request.
+    for (int i = 0; i < 20; ++i) {
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 5);
+        if (controller->decoderDispatchCountForTest() > beforeDispatches)
+            break;
+    }
+    QVERIFY2(controller->decoderDispatchCountForTest() > beforeDispatches,
+             "Synthesising a SAM prompt should have driven a decoder dispatch");
+
+    // Tool deactivation drops the SAM preview + cancels pending work.
+    overlay->setActiveTool(AnnotationTool::Select);
+    QVERIFY(!overlay->isSamToolActiveForTest());
+    QVERIFY(overlay->samPreviewMaskForTest().isNull());
 }
 
 int main(int argc, char **argv) {
