@@ -30,6 +30,13 @@ class DocumentView : public QTabWidget {
   signals:
     void allTabsClosed();
     void currentDocumentChanged(IDocument *document);
+    // Emitted just before a document is destroyed (after its tab is
+    // removed). Listeners that hold raw IDocument* keys (e.g.
+    // MainWindow's background-candidate score cache, MlScheduler-
+    // bound work tagged with the doc pointer) use this to flush
+    // entries and cancel pending tasks so a recycled allocator
+    // address can't collide with a stale key.
+    void documentAboutToBeRemoved(IDocument *document);
 
   private slots:
     void onTabCloseRequested(int index);
