@@ -88,6 +88,24 @@ class SamSession : public QObject {
     // Empty if prepare() has not succeeded.
     QSize preparedSize() const;
 
+    // Accessors for the controller's LRU cache. The controller stores
+    // copies of the encoder embedding + geometry keyed by
+    // (doc, page, image-hash); on a cache hit it restores the session's
+    // internal state via `setCachedState` so a subsequent segment()
+    // run uses the right embedding without re-encoding.
+    //
+    // These are intentionally not part of the public single-session
+    // workflow — they only matter when an outer LRU is doing its own
+    // bookkeeping. `cachedState` returns false when the session has
+    // not been prepared yet.
+    bool cachedState(std::vector<float> &outEmbedding, QSize &outOrigSize, float &outScale) const;
+    void setCachedState(std::vector<float> embedding, QSize origSize, float scale);
+
+    // The Grayscale8 mask produced by the last segment() call. Null
+    // when no segment has run. Used by the overlay's commit path so
+    // it doesn't have to re-run the decoder against the same prompts.
+    QImage lastMask() const { return m_lastMask; }
+
   signals:
     void downloadProgress(qint64 received, qint64 total);
     // Both encoder and decoder are on disk and verified.

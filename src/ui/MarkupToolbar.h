@@ -56,6 +56,10 @@ class MarkupToolbar : public QToolBar {
     // (Underline / Highlight / StrikeOut). Tracked so we can hide it
     // when every tool in that group is hidden — see setToolVisible.
     QAction *m_textAwareSeparator = nullptr;
+    // Separator immediately before the SAM tool group
+    // (InstantAlpha / SmartLasso). Tracked so we can hide it on
+    // PDF or animated documents where neither tool can run.
+    QAction *m_samSeparator = nullptr;
 };
 
 } // namespace trailer

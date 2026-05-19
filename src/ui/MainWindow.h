@@ -31,6 +31,7 @@ class SearchBar;
 class Sidebar;
 
 class OcrController;
+class SamController;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -322,6 +323,11 @@ class MainWindow : public QMainWindow {
     // view feed visible-page changes into it. The controller is
     // parented to this MainWindow so it dies with the window.
     OcrController *m_ocrController = nullptr;
+    // SAM (Instant Alpha / Smart Lasso) controller. Owns a shared
+    // SamSession + an LRU cache of prepared encoder embeddings. Wired
+    // into the AnnotationOverlay for the active doc so click/drag
+    // events on the document drive segmentation directly.
+    SamController *m_samController = nullptr;
 
     // Status-bar "Text isn't selectable here. Recognize text on this
     // page." offer for large documents that we skipped auto-OCR for.

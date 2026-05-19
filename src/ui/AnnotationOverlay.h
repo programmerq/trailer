@@ -3,10 +3,12 @@
 #include "annotation/Annotation.h"
 
 #include <QImage>
+#include <QPoint>
 #include <QPointF>
 #include <QPointer>
 #include <QRectF>
 #include <QString>
+#include <QVector>
 #include <QWidget>
 
 #include <functional>
@@ -18,6 +20,7 @@ class QTabletEvent;
 namespace trailer {
 
 class AnnotationStore;
+class SamController;
 
 class AnnotationOverlay : public QWidget {
     Q_OBJECT
@@ -69,6 +72,35 @@ class AnnotationOverlay : public QWidget {
     // magnified view. If unset, ZoomLens renders as an empty circle.
     using SourceSampler = std::function<QImage(QRectF docRect, QSize outPixels, int page)>;
     void setSourceSampler(SourceSampler fn);
+
+    // Wire in the SAM controller + a callback that returns the current
+    // raster image in document-coordinate pixels. Used by the
+    // InstantAlpha / SmartLasso tools to drive the encoder prepare on
+    // activation and live segmentation during drag. `imageProvider`
+    // returns a null QImage when the active doc is not a raster image
+    // (PDFs etc) — the overlay's tool branches gate on that to no-op.
+    // The commit callbacks (`onInstantAlphaCommit`, `onSmartLassoCommit`)
+    // are invoked with the final result on a successful gesture; they
+    // are wired by MainWindow to push the result through ImageDocument.
+    using ImageProvider = std::function<QImage()>;
+    using InstantAlphaCommit = std::function<void(const QImage &alphaImage)>;
+    using SmartLassoCommit = std::function<void(const QPolygon &polygon)>;
+    void setSamController(SamController *controller);
+    SamController *samController() const { return m_samController; }
+    void setSamImageProvider(ImageProvider fn);
+    void setInstantAlphaCommitHandler(InstantAlphaCommit fn);
+    void setSmartLassoCommitHandler(SmartLassoCommit fn);
+    // True iff a SAM tool is the active tool. Test convenience.
+    bool isSamToolActiveForTest() const;
+    // The current preview mask (Grayscale8, same size as the prepared
+    // image). Empty when no preview has been computed. Test seam.
+    QImage samPreviewMaskForTest() const { return m_samMask; }
+    // Test seam: synthesise a primary positive prompt at the given
+    // doc-space point (Instant Alpha workflow). Drives the same code
+    // path as a mousePressEvent inside the overlay, minus the QMouseEvent
+    // construction. Returns true if the request was forwarded to the
+    // controller.
+    bool simulateSamPromptForTest(QPointF docPoint, bool positive);
 
     // Per-match rectangle for the search-highlight pass. The overlay
     // paints siblings in low-opacity yellow and the current match in
@@ -134,6 +166,26 @@ class AnnotationOverlay : public QWidget {
     QPointF toDoc(const QPointF &viewPt, int page) const;
     int pageAt(const QPointF &viewPt) const;
     int hitTest(const QPointF &viewPt) const;
+
+    // SAM workflow helpers.
+    bool isSamTool() const {
+        return m_tool == AnnotationTool::InstantAlpha || m_tool == AnnotationTool::SmartLasso;
+    }
+    // Push the current SAM prompt set to the controller for a fresh
+    // decoder pass. The callback stashes the mask on the overlay and
+    // triggers a repaint.
+    void requestSamPreview();
+    // Restart the SAM workflow for the current tool — drop the
+    // accumulated prompts, clear the preview mask, kick off a
+    // prepare() if not already cached.
+    void resetSamState();
+    // Commit Instant Alpha — apply the last mask to the source image
+    // as alpha and hand it back through the commit handler. Drops the
+    // tool state afterward so the next gesture starts fresh.
+    void commitInstantAlpha();
+    // Commit Smart Lasso — emit the polygon from the last mask. Drops
+    // the tool state afterward.
+    void commitSmartLasso();
     void openInlineEditor(int annotationId);
     // Cancel any in-flight drag (shape-creation, selection move,
     // resize handle) without committing it to the AnnotationStore.
@@ -187,6 +239,30 @@ class AnnotationOverlay : public QWidget {
     PageAtView m_pageAtView;
     TextSelectionProvider m_textSelection;
     SourceSampler m_sourceSampler;
+
+    // SAM tool plumbing. The overlay does not own the controller —
+    // MainWindow does — and merely forwards drag events into it.
+    SamController *m_samController = nullptr;
+    ImageProvider m_samImageProvider;
+    InstantAlphaCommit m_instantAlphaCommit;
+    SmartLassoCommit m_smartLassoCommit;
+    // Latest preview mask emitted by the controller, in source-image
+    // pixel coordinates. Repainted on every overlay paint when a SAM
+    // tool is active.
+    QImage m_samMask;
+    // Prompt points in source-image pixel coordinates. Instant Alpha
+    // ever uses a single positive (refreshed on every drag-update);
+    // Smart Lasso accumulates points across clicks until commit.
+    QVector<QPoint> m_samPositives;
+    QVector<QPoint> m_samNegatives;
+    // True while the encoder is preparing — the cursor briefly turns
+    // into a wait shape so the user knows the first click won't fire
+    // until prepare lands.
+    bool m_samPreparing = false;
+    // True while the user is mid-drag with Instant Alpha (button down).
+    // mouseMove updates the single positive point; mouseRelease commits
+    // the alpha cut to the document.
+    bool m_samDraggingInstant = false;
 
     QPointer<QWidget> m_inlineEditor;
     int m_inlineEditorAnnotationId = 0;

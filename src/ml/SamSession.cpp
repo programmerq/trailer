@@ -259,6 +259,26 @@ QSize SamSession::preparedSize() const {
     return m_origSize;
 }
 
+bool SamSession::cachedState(std::vector<float> &outEmbedding, QSize &outOrigSize,
+                             float &outScale) const {
+    if (m_embedding.empty())
+        return false;
+    outEmbedding = m_embedding;
+    outOrigSize = m_origSize;
+    outScale = m_scale;
+    return true;
+}
+
+void SamSession::setCachedState(std::vector<float> embedding, QSize origSize, float scale) {
+    m_embedding = std::move(embedding);
+    m_origSize = origSize;
+    m_scale = scale;
+    // A cached restore invalidates the last mask — it was produced
+    // against potentially-different prompts. segment() will fill it
+    // again on the next call.
+    m_lastMask = QImage();
+}
+
 bool SamSession::prepare(const QImage &source, const CancellationToken *cancel) {
     if (source.isNull() || !isModelReady())
         return false;

@@ -1,5 +1,6 @@
 #include "AnnotationOverlay.h"
 
+#include "SamController.h"
 #include "annotation/AnnotationStore.h"
 
 #include <QContextMenuEvent>
@@ -88,6 +89,7 @@ void AnnotationOverlay::setStore(AnnotationStore *store) {
 }
 
 void AnnotationOverlay::setActiveTool(AnnotationTool tool) {
+    const AnnotationTool previous = m_tool;
     m_tool = tool;
     const bool interactive = tool != AnnotationTool::None;
     setAttribute(Qt::WA_TransparentForMouseEvents, !interactive);
@@ -116,6 +118,24 @@ void AnnotationOverlay::setActiveTool(AnnotationTool tool) {
         // away — otherwise a later Signature selection could surprise
         // them with a stale image.
         m_pendingSignaturePath.clear();
+    }
+    // SAM tool lifecycle. Activating a SAM tool kicks off a prepare
+    // pass (if not cached); deactivating drops any pending prompts
+    // and the preview mask so a later re-activation starts clean.
+    if (isSamTool()) {
+        if (previous != tool) {
+            resetSamState();
+        }
+    } else if (previous == AnnotationTool::InstantAlpha ||
+               previous == AnnotationTool::SmartLasso) {
+        m_samMask = QImage();
+        m_samPositives.clear();
+        m_samNegatives.clear();
+        m_samDraggingInstant = false;
+        m_samPreparing = false;
+        if (m_samController) {
+            m_samController->cancelAll();
+        }
     }
     update();
 }
@@ -155,6 +175,169 @@ void AnnotationOverlay::setTextSelectionProvider(TextSelectionProvider fn) {
 
 void AnnotationOverlay::setSourceSampler(SourceSampler fn) {
     m_sourceSampler = std::move(fn);
+    update();
+}
+
+void AnnotationOverlay::setSamController(SamController *controller) {
+    m_samController = controller;
+}
+
+void AnnotationOverlay::setSamImageProvider(ImageProvider fn) {
+    m_samImageProvider = std::move(fn);
+}
+
+void AnnotationOverlay::setInstantAlphaCommitHandler(InstantAlphaCommit fn) {
+    m_instantAlphaCommit = std::move(fn);
+}
+
+void AnnotationOverlay::setSmartLassoCommitHandler(SmartLassoCommit fn) {
+    m_smartLassoCommit = std::move(fn);
+}
+
+bool AnnotationOverlay::isSamToolActiveForTest() const {
+    return isSamTool();
+}
+
+bool AnnotationOverlay::simulateSamPromptForTest(QPointF docPoint, bool positive) {
+    if (!isSamTool() || !m_samController)
+        return false;
+    const QPoint p(static_cast<int>(docPoint.x()), static_cast<int>(docPoint.y()));
+    if (m_tool == AnnotationTool::InstantAlpha) {
+        m_samPositives = {p};
+        m_samNegatives.clear();
+    } else {
+        if (positive)
+            m_samPositives.append(p);
+        else
+            m_samNegatives.append(p);
+    }
+    requestSamPreview();
+    return true;
+}
+
+void AnnotationOverlay::resetSamState() {
+    m_samPositives.clear();
+    m_samNegatives.clear();
+    m_samMask = QImage();
+    m_samDraggingInstant = false;
+    m_samPreparing = false;
+    if (!m_samController || !m_samImageProvider) {
+        update();
+        return;
+    }
+    const QImage source = m_samImageProvider();
+    if (source.isNull()) {
+        update();
+        return;
+    }
+    // Encoder runs once per image. Cache-hit short-circuits to a
+    // synchronous "prepared=true"; cache-miss queues an MlScheduler
+    // task at UserAction priority. The cursor briefly turns into a
+    // wait shape so the user knows the first click won't fire until
+    // prepare lands.
+    if (!m_samController->isModelReady()) {
+        // Toolbar guards on this, but be defensive — no popup, just
+        // no-op.
+        update();
+        return;
+    }
+    if (m_samController->isCachedForActive(source)) {
+        // Already prepared for this (doc, page, hash) — proceed
+        // immediately. SamController::prepareForActive will short-
+        // circuit but going through it bumps the LRU.
+        m_samPreparing = false;
+    } else {
+        m_samPreparing = true;
+        setCursor(Qt::BusyCursor);
+    }
+    QPointer<AnnotationOverlay> self(this);
+    m_samController->prepareForActive(source, [self](bool /*ok*/) {
+        if (!self)
+            return;
+        self->m_samPreparing = false;
+        // Restore the SAM-tool cursor. A null mask means the encoder
+        // failed (model error or cancellation); we still pull the
+        // cursor back so the user isn't stuck in a wait shape.
+        self->setCursor(self->isSamTool() ? Qt::CrossCursor : Qt::ArrowCursor);
+        self->update();
+    });
+    update();
+}
+
+void AnnotationOverlay::requestSamPreview() {
+    if (!m_samController)
+        return;
+    if (m_samPositives.isEmpty() && m_samNegatives.isEmpty())
+        return;
+    QPointer<AnnotationOverlay> self(this);
+    m_samController->requestSegment(m_samPositives, m_samNegatives,
+                                    [self](const QImage &mask) {
+                                        if (!self)
+                                            return;
+                                        // PHILOSOPHY: a null/empty mask
+                                        // is silent — no popup. The
+                                        // user is mid-drag; their next
+                                        // click might land somewhere
+                                        // that works.
+                                        self->m_samMask = mask;
+                                        self->update();
+                                    });
+}
+
+void AnnotationOverlay::commitInstantAlpha() {
+    if (!m_samController || !m_samImageProvider || !m_instantAlphaCommit) {
+        resetSamState();
+        return;
+    }
+    const QImage source = m_samImageProvider();
+    if (source.isNull() || m_samMask.isNull()) {
+        // PHILOSOPHY: no popup; the user can re-click and try again.
+        m_samMask = QImage();
+        update();
+        return;
+    }
+    // Render the alpha-cut on the GUI thread — the mask lives in the
+    // controller's session, but applyAsAlpha is read-only and cheap.
+    QImage result = source.convertToFormat(QImage::Format_ARGB32);
+    if (result.size() != m_samMask.size()) {
+        // Mask vs image mismatch — usually means the user clicked
+        // before the prepare landed. Silently drop the commit; the
+        // status bar already flashed prepare's progress chip.
+        return;
+    }
+    for (int y = 0; y < result.height(); ++y) {
+        auto *dst = reinterpret_cast<QRgb *>(result.scanLine(y));
+        const uchar *msk = m_samMask.constScanLine(y);
+        for (int x = 0; x < result.width(); ++x) {
+            const QRgb px = dst[x];
+            dst[x] = qRgba(qRed(px), qGreen(px), qBlue(px), msk[x]);
+        }
+    }
+    m_instantAlphaCommit(result);
+    // Drop the prompt + mask so the next drag starts fresh; keep the
+    // prepared encoder cached.
+    m_samPositives.clear();
+    m_samNegatives.clear();
+    m_samMask = QImage();
+    m_samDraggingInstant = false;
+    update();
+}
+
+void AnnotationOverlay::commitSmartLasso() {
+    if (!m_samController || !m_smartLassoCommit) {
+        resetSamState();
+        return;
+    }
+    const QPolygon poly = m_samController->lastContour();
+    if (poly.isEmpty()) {
+        // PHILOSOPHY: no popup. Smart Lasso needs at least one
+        // positive prompt to produce a polygon.
+        return;
+    }
+    m_smartLassoCommit(poly);
+    m_samPositives.clear();
+    m_samNegatives.clear();
+    m_samMask = QImage();
     update();
 }
 
@@ -506,13 +689,70 @@ void AnnotationOverlay::paintEvent(QPaintEvent * /*event*/) {
         }
     }
 
+    // SAM tool preview: tinted mask + prompt markers. Drawn on top of
+    // annotations so the user sees what's being selected against the
+    // page content, but using a translucent blue so they can still
+    // read the underlying image. Polygon outline for Smart Lasso.
+    if (isSamTool() && (!m_samPositives.isEmpty() || !m_samNegatives.isEmpty())) {
+        if (!m_samMask.isNull()) {
+            // The mask is in source-image pixel coords; map to view by
+            // walking the mask + using m_docToView for the bbox corners.
+            const QRectF maskRect(QPointF(0, 0),
+                                  QPointF(static_cast<qreal>(m_samMask.width()),
+                                          static_cast<qreal>(m_samMask.height())));
+            const QRectF viewRect = docRectToView(maskRect, m_page);
+            // Build an ARGB tint of the mask so QPainter can stretch
+            // it through the doc→view transform without alpha
+            // surprises.
+            QImage tint(m_samMask.size(), QImage::Format_ARGB32);
+            tint.fill(Qt::transparent);
+            for (int y = 0; y < tint.height(); ++y) {
+                auto *dst = reinterpret_cast<QRgb *>(tint.scanLine(y));
+                const uchar *src = m_samMask.constScanLine(y);
+                for (int x = 0; x < tint.width(); ++x) {
+                    if (src[x])
+                        dst[x] = qRgba(64, 128, 255, 96);
+                }
+            }
+            p.drawImage(viewRect, tint);
+        }
+        // Polygon outline for Smart Lasso.
+        if (m_tool == AnnotationTool::SmartLasso && m_samController) {
+            const QPolygon poly = m_samController->lastContour();
+            if (!poly.isEmpty()) {
+                QPolygonF scaled;
+                scaled.reserve(poly.size());
+                for (const QPoint &pt : poly) {
+                    scaled.append(m_docToView(QPointF(pt), m_page));
+                }
+                QPen outline(QColor(255, 200, 40), 2.0);
+                outline.setJoinStyle(Qt::RoundJoin);
+                p.setPen(outline);
+                p.setBrush(Qt::NoBrush);
+                p.drawPolygon(scaled);
+            }
+        }
+        // Prompt markers — green for positive, red for negative.
+        auto drawMarker = [&](QPoint srcPt, QColor colour) {
+            const QPointF c = m_docToView(QPointF(srcPt), m_page);
+            p.setPen(QPen(Qt::white, 2.0));
+            p.setBrush(colour);
+            p.drawEllipse(c, 5.0, 5.0);
+        };
+        for (const QPoint &pt : m_samPositives)
+            drawMarker(pt, QColor(64, 192, 80));
+        for (const QPoint &pt : m_samNegatives)
+            drawMarker(pt, QColor(220, 64, 64));
+    }
+
     // Only paint a shape preview when the active tool actually
     // creates a shape on release. With Select active the drag
     // routes to text selection (highlight rectangles drawn above
     // via m_pendingSelection), so leaking a Rectangle / Ellipse
     // outline here makes the user think they're in box-drawing
     // mode and confuses the affordance.
-    if (m_dragging && m_tool != AnnotationTool::None && m_tool != AnnotationTool::Select) {
+    if (m_dragging && m_tool != AnnotationTool::None && m_tool != AnnotationTool::Select &&
+        !isSamTool()) {
         Annotation preview;
         preview.page = m_dragPage;
         preview.type = [this]() {
@@ -616,6 +856,59 @@ bool AnnotationOverlay::eventFilter(QObject *obj, QEvent *event) {
 void AnnotationOverlay::mousePressEvent(QMouseEvent *event) {
     if (!m_store || m_tool == AnnotationTool::None) {
         event->ignore();
+        return;
+    }
+    // SAM tools take a different press path entirely: clicks become
+    // SAM prompts, not annotation drags. Kept in this dedicated branch
+    // so the existing drawing-tool flow isn't strewn with isSamTool()
+    // conditionals.
+    if (isSamTool()) {
+        // Allow LMB and RMB only; ignore other buttons. RMB acts as a
+        // negative-prompt shortcut for Smart Lasso.
+        if (event->button() != Qt::LeftButton && event->button() != Qt::RightButton) {
+            event->ignore();
+            return;
+        }
+        if (m_samPreparing) {
+            // Encoder still working — swallow the click so we don't
+            // queue a no-op decoder pass. The user sees a wait cursor
+            // until prepare finishes.
+            event->accept();
+            return;
+        }
+        const int page = pageAt(event->position());
+        const QPointF docF = toDoc(event->position(), page);
+        const QPoint p(static_cast<int>(docF.x()), static_cast<int>(docF.y()));
+        const bool negative = (event->button() == Qt::RightButton) ||
+                              (event->modifiers() & Qt::ShiftModifier);
+        if (m_tool == AnnotationTool::InstantAlpha) {
+            // Instant Alpha is a single-positive workflow. The press
+            // begins a drag that mouseMove keeps updating; the
+            // release commits.
+            if (negative) {
+                // Negative prompts have no meaning for Instant Alpha;
+                // silently swallow the click rather than confusing the
+                // preview.
+                event->accept();
+                return;
+            }
+            m_samPositives = {p};
+            m_samNegatives.clear();
+            m_samDraggingInstant = true;
+        } else {
+            // Smart Lasso — accumulate prompts across clicks. Commit
+            // is explicit (Enter or double-click) so the user can keep
+            // refining.
+            if (negative) {
+                m_samNegatives.append(p);
+            } else {
+                m_samPositives.append(p);
+            }
+        }
+        setFocus(Qt::MouseFocusReason); // accept Enter / Esc keys
+        requestSamPreview();
+        update();
+        event->accept();
         return;
     }
     if (event->button() != Qt::LeftButton) {
@@ -724,6 +1017,20 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent *event) {
 }
 
 void AnnotationOverlay::mouseMoveEvent(QMouseEvent *event) {
+    // SAM drag tracking. For Instant Alpha the single positive prompt
+    // follows the cursor while the button is down; the controller
+    // throttles to ~30 Hz so a rapid drag does not saturate the
+    // decoder. Smart Lasso uses discrete clicks — no drag tracking.
+    if (isSamTool() && m_samDraggingInstant && m_tool == AnnotationTool::InstantAlpha) {
+        const int page = pageAt(event->position());
+        const QPointF docF = toDoc(event->position(), page);
+        const QPoint p(static_cast<int>(docF.x()), static_cast<int>(docF.y()));
+        m_samPositives = {p};
+        requestSamPreview();
+        update();
+        return;
+    }
+
     // Resize drag: shift the relevant corner of the original bounds
     // by the cursor delta in doc space. Use the original bounds as
     // the anchor so dragging a small distance resizes by exactly
@@ -808,6 +1115,25 @@ void AnnotationOverlay::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void AnnotationOverlay::mouseReleaseEvent(QMouseEvent *event) {
+    // SAM release. Instant Alpha commits on release; Smart Lasso waits
+    // for an explicit commit (Enter / double-click).
+    if (isSamTool() && m_samDraggingInstant && event->button() == Qt::LeftButton &&
+        m_tool == AnnotationTool::InstantAlpha) {
+        m_samDraggingInstant = false;
+        // The throttle may still have a pending decoder dispatch — if
+        // so, the controller will flush it shortly. In practice the
+        // mouseMove that landed at this release already drove the
+        // latest decoder; commit against whatever we currently have.
+        commitInstantAlpha();
+        event->accept();
+        return;
+    }
+    // Smart Lasso swallows the release (the click already added a
+    // prompt in mousePressEvent).
+    if (isSamTool() && m_tool == AnnotationTool::SmartLasso) {
+        event->accept();
+        return;
+    }
     if (event->button() != Qt::LeftButton)
         return;
     // End-of-resize bookkeeping: bounds were updated incrementally
@@ -1120,6 +1446,17 @@ void AnnotationOverlay::mouseDoubleClickEvent(QMouseEvent *event) {
         event->ignore();
         return;
     }
+    // Smart Lasso commit gesture: a double-click on the canvas means
+    // "I'm done refining — apply." A single-click already added a
+    // prompt point in mousePressEvent; the double-click consumes
+    // that same point twice (once for the first press, once for the
+    // second) which we tolerate — the duplicate point doesn't change
+    // the SAM output.
+    if (m_tool == AnnotationTool::SmartLasso && !m_samPositives.isEmpty()) {
+        commitSmartLasso();
+        event->accept();
+        return;
+    }
     const int id = hitTest(event->position());
     if (id == 0) {
         event->ignore();
@@ -1129,6 +1466,26 @@ void AnnotationOverlay::mouseDoubleClickEvent(QMouseEvent *event) {
 }
 
 void AnnotationOverlay::keyPressEvent(QKeyEvent *event) {
+    // SAM keyboard handlers run before the annotation-selection
+    // branch so they fire even when nothing is "selected" in the
+    // annotation-store sense.
+    if (isSamTool()) {
+        if (event->key() == Qt::Key_Escape) {
+            m_samPositives.clear();
+            m_samNegatives.clear();
+            m_samMask = QImage();
+            m_samDraggingInstant = false;
+            update();
+            event->accept();
+            return;
+        }
+        if (m_tool == AnnotationTool::SmartLasso &&
+            (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)) {
+            commitSmartLasso();
+            event->accept();
+            return;
+        }
+    }
     if (m_selectedAnnotationId == 0 || !m_store) {
         event->ignore();
         return;
