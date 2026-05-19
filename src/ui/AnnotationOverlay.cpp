@@ -91,8 +91,15 @@ void AnnotationOverlay::setActiveTool(AnnotationTool tool) {
     m_tool = tool;
     const bool interactive = tool != AnnotationTool::None;
     setAttribute(Qt::WA_TransparentForMouseEvents, !interactive);
+    // Select-tool cursor used to be an unconditional I-beam over the
+    // document area, which lied to the user on raster-text images
+    // where nothing was selectable. The honest I-beam now lives on
+    // SelectableTextLayer (which sits beneath the overlay): it shows
+    // only over actual cached text blocks. For Select here, fall back
+    // to the arrow so SelectableTextLayer's cursor wins under the
+    // pointer. For drawing tools, the cross cursor still applies.
     const Qt::CursorShape shape = tool == AnnotationTool::None     ? Qt::ArrowCursor
-                                  : tool == AnnotationTool::Select ? Qt::IBeamCursor
+                                  : tool == AnnotationTool::Select ? Qt::ArrowCursor
                                                                    : Qt::CrossCursor;
     setCursor(shape);
     if (tool != AnnotationTool::Select) {

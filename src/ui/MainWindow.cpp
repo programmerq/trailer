@@ -30,8 +30,11 @@
 #include "ml/SamSession.h"
 #include "recent/RecentFiles.h"
 #include "ModelManagerDialog.h"
+#include "OcrController.h"
 #include "OcrResultsDialog.h"
 #include "SamSegmentDialog.h"
+#include "SelectableTextLayer.h"
+#include "document/SelectableTextStore.h"
 
 #include <QAction>
 #include <QDragEnterEvent>
@@ -140,6 +143,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     connect(m_searchBar, &SearchBar::dismissed, this, &MainWindow::hideSearchBar);
 
     m_documentView = new DocumentView(center);
+    m_ocrController = new OcrController(m_app, this);
     connect(m_documentView, &DocumentView::currentDocumentChanged, this,
             &MainWindow::onCurrentDocumentChanged);
     // Window-per-file: when the last document in this window is
@@ -302,6 +306,35 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     };
     connect(&m_app->mlScheduler(), &MlScheduler::statsChanged, this, refreshMlIndicator,
             Qt::QueuedConnection);
+
+    // Large-doc OCR hint chip. Hidden by default; shown when the
+    // current document has more pages than the auto-OCR pump will
+    // handle (>50) and the visible page has no cached OCR results.
+    // The chip's link triggers a UserAction OCR for the visible
+    // page. PHILOSOPHY: no popup that says "no" — this is the
+    // affordance to *do* the thing, not the modal that says we
+    // didn't.
+    auto *hint = new QWidget(this);
+    auto *hintLayout = new QHBoxLayout(hint);
+    hintLayout->setContentsMargins(0, 0, 0, 0);
+    hintLayout->setSpacing(4);
+    auto *hintLabel = new QLabel(tr("Text isn't selectable here."), hint);
+    auto *hintLink = new QLabel(
+        tr("<a href=\"#recognize\">Recognize text on this page</a>"), hint);
+    hintLink->setTextFormat(Qt::RichText);
+    hintLink->setOpenExternalLinks(false);
+    connect(hintLink, &QLabel::linkActivated, this, [this](const QString &) {
+        auto *doc = m_documentView->currentDocument();
+        if (!doc)
+            return;
+        const int page = doc->currentPage();
+        m_ocrController->submitUserPages(doc, {page}, /*forceRerun=*/false);
+    });
+    hintLayout->addWidget(hintLabel);
+    hintLayout->addWidget(hintLink);
+    hint->setVisible(false);
+    statusBar()->addPermanentWidget(hint);
+    m_largeDocOcrHint = hint;
     refreshMlIndicator();
 
     // Auto-save loop. Tick every 30 s; each tick saves any document
@@ -1557,58 +1590,38 @@ void MainWindow::onSmartLasso() {
 
 void MainWindow::onRecognizeText() {
     auto *doc = m_documentView->currentDocument();
-    if (!doc)
-        return;
-    auto *imgDoc = dynamic_cast<ImageDocument *>(doc);
-    if (!imgDoc)
-        return;
-    const QImage source = imgDoc->image();
-    if (source.isNull())
+    if (!doc || !doc->supportsSelectableText())
         return;
 
-    // The engine has to live for the duration of the worker thread,
-    // so it goes on the heap held by a shared_ptr captured by the
-    // lambda. ensureOcrModelsReady is itself an async-with-progress
-    // flow — block here until models land or the user cancels that
-    // dialog, then kick off the actual inference job below.
-    auto engine = std::make_shared<OcrEngine>(&m_app->modelRegistry());
-    if (!ensureOcrModelsReady(this, *engine))
+    // Show the parameter-supply dialog. The dialog itself does not
+    // run OCR — results stream into the document's
+    // SelectableTextStore via OcrController, and the user reads them
+    // in-place via SelectableTextLayer.
+    // Language options: shipped manifest currently has only the
+    // Latin recognizer. We pass an empty list so the dialog hides
+    // the row; once the CJK recognizer is on the manifest, expand
+    // this list and the row appears automatically.
+    QStringList languageOptions;
+    RecognizeTextDialog dialog(doc->pageCount(), doc->currentPage(), doc->hasTextLayer(),
+                               languageOptions, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    const std::vector<int> pages = dialog.resolvedPages();
+    if (pages.empty())
         return;
 
-    // Inference is the slow part — 1-5 s on a typical scan — so it
-    // runs on a worker thread. The progress dialog is indeterminate
-    // (we don't have stage-by-stage progress from OcrEngine yet);
-    // Cancel just stops us from opening the results dialog when the
-    // future completes — actual mid-inference cancellation is a
-    // follow-up.
-    auto *progress = new QProgressDialog(tr("Recognising text…"), tr("Cancel"), 0, 0, this);
-    progress->setWindowModality(Qt::WindowModal);
-    progress->setMinimumDuration(0);
-    progress->setAutoClose(false);
-    progress->setAutoReset(false);
+    // Ensure models are present. ensureOcrModelsReady runs an
+    // async-with-progress consent / download flow on the very first
+    // call; on subsequent calls (cache hit) it returns immediately.
+    // The engine instance here is short-lived — only used to gate
+    // the model-download step. The OcrController owns the long-lived
+    // engine used for actual inference.
+    OcrEngine gateEngine(&m_app->modelRegistry());
+    if (!ensureOcrModelsReady(this, gateEngine))
+        return;
 
-    auto *watcher = new QFutureWatcher<QVector<OcrEngine::TextBlock>>(this);
-    connect(progress, &QProgressDialog::canceled, watcher, &QFutureWatcherBase::cancel);
-    connect(watcher, &QFutureWatcher<QVector<OcrEngine::TextBlock>>::finished, this,
-            [this, watcher, progress, doc]() {
-                const bool wasCanceled = progress->wasCanceled();
-                progress->close();
-                progress->deleteLater();
-                QVector<OcrEngine::TextBlock> blocks;
-                if (!wasCanceled) {
-                    blocks = watcher->result();
-                }
-                watcher->deleteLater();
-                if (wasCanceled)
-                    return;
-                OcrResultsDialog dialog(
-                    doc->filePath().isEmpty() ? doc->displayName() : doc->filePath(), blocks, this);
-                dialog.exec();
-            });
-
-    QFuture<QVector<OcrEngine::TextBlock>> future =
-        QtConcurrent::run([source, engine]() { return engine->recognize(source); });
-    watcher->setFuture(future);
+    m_ocrController->submitUserPages(doc, pages, dialog.forceRerun());
+    flashStatus(tr("Recognizing text for %1 page(s)…").arg(pages.size()));
 }
 
 void MainWindow::onExportAs() {
@@ -2151,6 +2164,17 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // the size alone so the user's adjustments stick.
     applyInitialWindowSize(doc);
 
+    // Update the auto-OCR controller. It cancels in-flight
+    // submissions for the previous doc and starts following the
+    // new one. The visible-page enqueue is driven from the page-
+    // tracking timer below once the doc has settled.
+    if (m_ocrController) {
+        m_ocrController->setDocument(doc);
+        if (doc && doc->supportsSelectableText()) {
+            m_ocrController->onVisiblePageChanged(doc->currentPage());
+        }
+    }
+
     m_sidebar->setDocument(doc);
     m_animationBar->setDocument(doc);
     m_inspector->setDocument(doc);
@@ -2267,11 +2291,18 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
                   {ModelId::MobileSamEncoder, ModelId::MobileSamDecoder});
     applyMlPolicy(m_smartLassoAction, canEdit && isImage,
                   {ModelId::MobileSamEncoder, ModelId::MobileSamDecoder});
-    // Recognize Text only reads pixels, so it doesn't need
-    // supportsEditing() — any opened image qualifies, even a
-    // read-only-format one. PDFs are deferred to a later phase.
-    applyMlPolicy(m_recognizeTextAction, doc != nullptr && isImage,
+    // Recognize Text reads pixels for both images and PDFs (Workstream
+    // F brought PDFs into scope). Documents that don't expose a
+    // SelectableTextStore (StubAdapter) stay disabled.
+    const bool canOcr = doc != nullptr && doc->supportsSelectableText();
+    applyMlPolicy(m_recognizeTextAction, canOcr,
                   {ModelId::PpOcrDetector, ModelId::PpOcrRecognizerLatin});
+    if (!canOcr && m_recognizeTextAction) {
+        m_recognizeTextAction->setToolTip(
+            doc ? tr("Recognize Text needs a document with selectable raster "
+                     "content.")
+                : tr("Open a document to recognize text."));
+    }
     m_exportAsAction->setEnabled(doc != nullptr && isImage);
     m_exportPasswordProtectedAction->setEnabled(doc && doc->supportsPasswordExport());
     m_reduceFileSizeAction->setEnabled(doc && doc->supportsFileSizeReduction());
@@ -2412,6 +2443,21 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
 
     syncViewModeActions(doc);
     updateTitleForDocument(doc);
+
+    // Large-doc OCR hint chip. We surface it only when:
+    //  - The doc supports OCR (raster pages we can recognize).
+    //  - The page count is above the auto-OCR threshold.
+    //  - The visible page is not already cached in the OCR store.
+    if (m_largeDocOcrHint) {
+        bool show = false;
+        if (m_ocrController && m_ocrController->isLargeDoc() && doc && doc->supportsSelectableText()) {
+            auto *store = doc->selectableText();
+            if (store && !store->hasResults(doc->currentPage())) {
+                show = true;
+            }
+        }
+        m_largeDocOcrHint->setVisible(show);
+    }
 }
 
 void MainWindow::onActiveAnnotationStoreChanged() {

@@ -86,6 +86,8 @@ set(TRAILER_SOURCES
     src/document/PdfCommands.h
     src/document/PdfEditor.cpp
     src/document/PdfEditor.h
+    src/document/SelectableTextStore.cpp
+    src/document/SelectableTextStore.h
     src/document/StubAdapter.cpp
     src/document/StubAdapter.h
     src/filters/ImageFilter.cpp
@@ -124,6 +126,8 @@ set(TRAILER_SOURCES
     src/ui/MainWindow.h
     src/ui/ModelManagerDialog.cpp
     src/ui/ModelManagerDialog.h
+    src/ui/OcrController.cpp
+    src/ui/OcrController.h
     src/ui/AnimationBar.cpp
     src/ui/AnimationBar.h
     src/ui/AnnotationOverlay.cpp
@@ -148,6 +152,8 @@ set(TRAILER_SOURCES
     src/ui/SamSegmentDialog.h
     src/ui/SearchBar.cpp
     src/ui/SearchBar.h
+    src/ui/SelectableTextLayer.cpp
+    src/ui/SelectableTextLayer.h
     src/ui/Sidebar.cpp
     src/ui/Sidebar.h
     src/ui/SignatureCaptureDialog.cpp

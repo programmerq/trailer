@@ -4,6 +4,7 @@
 #include "IFormatAdapter.h"
 #include "PdfCommands.h"
 #include "PdfEditor.h"
+#include "SelectableTextStore.h"
 #include "annotation/AnnotationStore.h"
 #include "util/TempPath.h"
 
@@ -24,6 +25,7 @@ namespace trailer {
 
 class AnnotationOverlay;
 class FormOverlay;
+class SelectableTextLayer;
 
 class PdfDocument : public IDocument {
   public:
@@ -151,6 +153,9 @@ class PdfDocument : public IDocument {
     bool saveCommitOnUi(const SaveContext &ctx);
 
     AnnotationStore *annotations() override { return &m_annotations; }
+    SelectableTextStore *selectableText() override { return &m_selectableText; }
+    bool supportsSelectableText() const override { return m_valid; }
+    QImage renderPageForOcr(int pageIndex) const override;
     void setAnnotationTool(AnnotationTool tool) override;
     void setAnnotationStyle(const AnnotationStyle &style) override;
     void setPendingAnnotationText(const QString &text) override;
@@ -200,8 +205,10 @@ class PdfDocument : public IDocument {
     std::unique_ptr<ScopedTempFile> m_previewFile;
     QPointer<QPdfView> m_view;
     QPointer<AnnotationOverlay> m_overlay;
+    QPointer<SelectableTextLayer> m_textLayer;
     QPointer<FormOverlay> m_formOverlay;
     AnnotationStore m_annotations;
+    SelectableTextStore m_selectableText;
     ViewMode m_viewMode = ViewMode::Continuous;
     int m_currentResult = -1;
     bool m_valid = false;

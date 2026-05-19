@@ -3,6 +3,7 @@
 #include "annotation/AnnotationStore.h"
 #include "filters/ImageFilter.h"
 #include "ui/AnnotationOverlay.h"
+#include "ui/SelectableTextLayer.h"
 
 #include <QColor>
 #include <QEvent>
@@ -274,6 +275,20 @@ QWidget *ImageDocument::createView(QWidget *parent) {
     }
 
     if (!m_animated && !m_image.isNull()) {
+        // Stacking order on the QLabel host: SelectableTextLayer
+        // sits beneath the AnnotationOverlay so a user-drawn
+        // annotation paints over selectable-text highlights. The
+        // I-beam cursor lives on the text layer; the overlay was
+        // changed to no longer claim it unconditionally.
+        auto *textLayer = new SelectableTextLayer(label);
+        textLayer->setStore(&m_selectableText);
+        textLayer->setDocToView(
+            [this](QPointF p, int /*page*/) { return QPointF(p.x() * m_scale, p.y() * m_scale); });
+        textLayer->setPageAtView([](QPointF) { return 0; });
+        textLayer->setGeometry(label->rect());
+        textLayer->show();
+        m_textLayer = textLayer;
+
         auto *overlay = new AnnotationOverlay(label);
         overlay->setStore(&m_annotations);
         overlay->setDocumentToView(
@@ -293,6 +308,8 @@ QWidget *ImageDocument::createView(QWidget *parent) {
         });
         overlay->setGeometry(label->rect());
         overlay->show();
+        // Raise so the overlay paints on top of the text layer.
+        overlay->raise();
         m_overlay = overlay;
     }
 
@@ -311,6 +328,9 @@ void ImageDocument::applyScale(double factor) {
     m_label->adjustSize();
     if (m_overlay) {
         m_overlay->setGeometry(m_label->rect());
+    }
+    if (m_textLayer) {
+        m_textLayer->setGeometry(m_label->rect());
     }
 }
 
@@ -512,6 +532,11 @@ void ImageDocument::pushUndoSnapshot() {
         m_undoStack.erase(m_undoStack.begin());
     }
     m_redoStack.clear();
+    // Any pixel-level mutation invalidates the OCR cache for the
+    // single page. The next auto-OCR pump will re-enqueue work for
+    // the now-stale page; until then, the SelectableTextLayer paints
+    // nothing for it (no popup, no error — quiet degradation).
+    m_selectableText.invalidate(0);
 }
 
 void ImageDocument::undo() {
@@ -525,6 +550,8 @@ void ImageDocument::undo() {
     m_image = m_undoStack.back();
     m_undoStack.pop_back();
     m_dirty = !m_undoStack.empty() || m_dirty;
+    // The page contents changed — clear any cached OCR.
+    m_selectableText.invalidate(0);
     refreshView();
 }
 
@@ -539,6 +566,7 @@ void ImageDocument::redo() {
     m_image = m_redoStack.back();
     m_redoStack.pop_back();
     m_dirty = true;
+    m_selectableText.invalidate(0);
     refreshView();
 }
 

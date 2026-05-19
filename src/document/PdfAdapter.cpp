@@ -2,6 +2,7 @@
 
 #include "ui/AnnotationOverlay.h"
 #include "ui/FormOverlay.h"
+#include "ui/SelectableTextLayer.h"
 #include "util/TempPath.h"
 
 #include <QApplication>
@@ -358,6 +359,52 @@ QWidget *PdfDocument::createView(QWidget *parent) {
                      QOverload<>::of(&QWidget::update));
     view->viewport()->installEventFilter(overlay);
 
+    // --- Selectable-text layer (Phase 6F / Workstream F) ---
+    // Sits beneath the annotation overlay so user-drawn shapes paint
+    // on top of any highlighted selection. Initially empty (no OCR
+    // results); MainWindow's auto-OCR pump or the Recognize Text
+    // dialog populates the store and the layer wakes up.
+    auto *textLayer = new SelectableTextLayer(view->viewport());
+    textLayer->setStore(&m_selectableText);
+    textLayer->setDocToView([this, pageOriginInView](QPointF p, int page) {
+        if (!m_view)
+            return p;
+        const double z = m_view->zoomFactor();
+        const QPointF origin = pageOriginInView(page);
+        return QPointF(origin.x() + p.x() * z, origin.y() + p.y() * z);
+    });
+    textLayer->setPageAtView([this, pageOriginInView](QPointF viewPt) -> int {
+        if (!m_view || !m_doc)
+            return -1;
+        const double z = m_view->zoomFactor();
+        const int total = m_doc->pageCount();
+        for (int i = 0; i < total; ++i) {
+            const QPointF origin = pageOriginInView(i);
+            const QSizeF pt = m_doc->pagePointSize(i);
+            const QRectF rect(origin.x(), origin.y(), pt.width() * z, pt.height() * z);
+            if (rect.contains(viewPt))
+                return i;
+        }
+        return m_view->pageNavigator()->currentPage();
+    });
+    textLayer->setCurrentPage(view->pageNavigator()->currentPage());
+    textLayer->setGeometry(view->viewport()->rect());
+    textLayer->lower(); // sit below annotation overlay in the z-order
+    textLayer->show();
+    m_textLayer = textLayer;
+
+    QObject::connect(view->pageNavigator(), &QPdfPageNavigator::currentPageChanged, textLayer,
+                     [textLayer](int page) {
+                         if (textLayer)
+                             textLayer->setCurrentPage(page);
+                     });
+    QObject::connect(view->verticalScrollBar(), &QScrollBar::valueChanged, textLayer,
+                     QOverload<>::of(&QWidget::update));
+    QObject::connect(view->horizontalScrollBar(), &QScrollBar::valueChanged, textLayer,
+                     QOverload<>::of(&QWidget::update));
+    QObject::connect(view, &QPdfView::zoomFactorChanged, textLayer,
+                     QOverload<>::of(&QWidget::update));
+
     // --- Form overlay (Phase 5) ---
     auto *formOverlay = new FormOverlay(view->viewport());
     formOverlay->setDocumentToView([this, pageOriginInView](QPointF p, int page) {
@@ -578,6 +625,35 @@ void PdfDocument::applyScrollY(int y) {
     // value is friendlier than landing at 0.
     const int clamped = std::clamp(y, bar->minimum(), bar->maximum());
     bar->setValue(clamped);
+}
+
+QImage PdfDocument::renderPageForOcr(int pageIndex) const {
+    if (!m_valid || !m_doc || pageIndex < 0 || pageIndex >= m_doc->pageCount()) {
+        return {};
+    }
+    // PP-OCRv3 caps the long side at 960 px internally, but we want a
+    // little extra so smaller scans render legible glyphs. A 144 DPI
+    // raster of a US-letter page is ~1224×1584 — comfortably above the
+    // detector's stride threshold and well below the 4× memory blow-up
+    // a 300 DPI render would cost on long PDFs.
+    constexpr double kDpi = 144.0;
+    const QSizeF pagePts = m_doc->pagePointSize(pageIndex);
+    if (pagePts.isEmpty())
+        return {};
+    const int w = std::max(1, static_cast<int>(pagePts.width() / 72.0 * kDpi));
+    const int h = std::max(1, static_cast<int>(pagePts.height() / 72.0 * kDpi));
+    QImage rendered = m_doc->render(pageIndex, QSize(w, h));
+    if (rendered.isNull())
+        return rendered;
+    // Background-flatten so the OCR detector sees a white-paper
+    // colour rather than transparent pixels (which the detector reads
+    // as "outside the document").
+    QImage canvas(rendered.size(), QImage::Format_ARGB32_Premultiplied);
+    canvas.fill(Qt::white);
+    QPainter painter(&canvas);
+    painter.drawImage(0, 0, rendered);
+    painter.end();
+    return canvas;
 }
 
 QImage PdfDocument::renderThumbnail(int pageIndex, QSize targetSize) {
@@ -903,6 +979,12 @@ bool PdfDocument::reloadViewerFromEditor() {
             m_view->pageNavigator()->jump(savedPage, QPointF{}, savedZoom);
         }
     }
+    // Any reload is the result of a page-level mutation (rotate,
+    // delete, move, crop, insert). The OCR cache is keyed on the raw
+    // page raster — clear it wholesale rather than try to be clever
+    // about which pages survived. The auto-OCR pump will re-enqueue
+    // work for the visible page after the reload settles.
+    m_selectableText.clear();
     return true;
 }
 

@@ -16,6 +16,7 @@ class QModelIndex;
 namespace trailer {
 
 class AnnotationStore;
+class SelectableTextStore;
 
 enum class ViewMode {
     SinglePage,
@@ -230,6 +231,26 @@ class IDocument {
     virtual bool save(const QString & /*newPath*/ = {}) { return false; }
 
     virtual AnnotationStore *annotations() { return nullptr; }
+
+    // In-document OCR cache. Returns nullptr for adapters that
+    // cannot host OCR results (StubAdapter, raw text views, etc.).
+    // Image and PDF adapters return a per-document store; callers
+    // listen on its `changed()` signal to know when fresh blocks
+    // have landed for the current page. The store is owned by the
+    // document and outlives any UI overlay attached to it.
+    virtual SelectableTextStore *selectableText() { return nullptr; }
+    // Convenience pre-check: true iff selectableText() returns a non-
+    // null store. Default false so adapters that don't override are
+    // skipped by the auto-OCR pump.
+    virtual bool supportsSelectableText() const { return false; }
+    // Render `pageIndex` to a raster suitable for OCR. PdfDocument
+    // does this through Qt PDF; ImageDocument returns its source
+    // image directly (page 0 only). Returns a null image when the
+    // document cannot satisfy the request. The default empty image
+    // signals "this adapter does not support OCR submission" so the
+    // scheduler will simply not enqueue work.
+    virtual QImage renderPageForOcr(int /*pageIndex*/) const { return {}; }
+
     virtual void setAnnotationTool(AnnotationTool /*tool*/) {}
     virtual void setAnnotationStyle(const AnnotationStyle & /*style*/) {}
     // Preset for the next Text annotation — used by FormToolbar's
