@@ -12,6 +12,7 @@ class QCloseEvent;
 class QTimer;
 
 class QAction;
+class QLabel;
 class QMenu;
 
 namespace trailer {
@@ -266,6 +267,14 @@ class MainWindow : public QMainWindow {
 
     QAction *m_previousPageAction = nullptr;
     QAction *m_nextPageAction = nullptr;
+
+    // Permanent status-bar widget that shows whenever the
+    // MlScheduler has a non-Idle task running. Tooltip carries the
+    // running task's label (e.g. "Recognizing text…"). Hidden when
+    // the scheduler is idle so the status bar stays clean. PHILOSOPHY:
+    // no modal — this is the canonical "background ML work is
+    // happening" affordance for the user.
+    QLabel *m_mlIndicator = nullptr;
 };
 
 } // namespace trailer

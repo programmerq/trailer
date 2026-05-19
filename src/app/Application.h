@@ -1,6 +1,7 @@
 #pragma once
 
 #include "document/DocumentRegistry.h"
+#include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "recent/RecentFiles.h"
 #include "settings/Settings.h"
@@ -29,6 +30,7 @@ class Application : public QApplication {
     RecentFiles &recentFiles() { return m_recent; }
     DocumentRegistry &registry() { return m_registry; }
     ModelRegistry &modelRegistry() { return m_modelRegistry; }
+    MlScheduler &mlScheduler() { return m_mlScheduler; }
 
     // Return the first existing window, or spawn one if none exist.
     // Idempotent: callers can use it to "make sure there's a window".
@@ -63,6 +65,10 @@ class Application : public QApplication {
     RecentFiles m_recent;
     DocumentRegistry m_registry;
     ModelRegistry m_modelRegistry;
+    // Single ML task scheduler shared across MainWindows. Holds a
+    // worker thread + power-policy watcher; lives as long as the
+    // QApplication so its destructor blocks on outstanding tasks.
+    MlScheduler m_mlScheduler{&m_settings};
     QList<QPointer<MainWindow>> m_windows;
 #ifdef Q_OS_MACOS
     QPointer<QMenuBar> m_noWindowMenuBar;
