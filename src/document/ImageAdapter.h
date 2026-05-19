@@ -2,6 +2,7 @@
 
 #include "IDocument.h"
 #include "IFormatAdapter.h"
+#include "SelectableTextStore.h"
 #include "annotation/AnnotationStore.h"
 
 #include <QImage>
@@ -54,6 +55,11 @@ class ImageDocument : public IDocument {
     QImage renderThumbnail(int pageIndex, QSize targetSize) override;
 
     AnnotationStore *annotations() override { return &m_annotations; }
+    SelectableTextStore *selectableText() override { return &m_selectableText; }
+    bool supportsSelectableText() const override { return !m_image.isNull() && !m_animated; }
+    QImage renderPageForOcr(int pageIndex) const override {
+        return pageIndex == 0 ? m_image : QImage();
+    }
     void setAnnotationTool(AnnotationTool tool) override;
     void setAnnotationStyle(const AnnotationStyle &style) override;
     void setPendingAnnotationText(const QString &text) override;
@@ -126,6 +132,7 @@ class ImageDocument : public IDocument {
     // dereferencing this document.
     std::shared_ptr<bool> m_aliveFlag;
     AnnotationStore m_annotations;
+    SelectableTextStore m_selectableText;
     std::vector<QImage> m_undoStack;
     std::vector<QImage> m_redoStack;
     double m_scale = 1.0;

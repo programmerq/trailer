@@ -580,6 +580,35 @@ void PdfDocument::applyScrollY(int y) {
     bar->setValue(clamped);
 }
 
+QImage PdfDocument::renderPageForOcr(int pageIndex) const {
+    if (!m_valid || !m_doc || pageIndex < 0 || pageIndex >= m_doc->pageCount()) {
+        return {};
+    }
+    // PP-OCRv3 caps the long side at 960 px internally, but we want a
+    // little extra so smaller scans render legible glyphs. A 144 DPI
+    // raster of a US-letter page is ~1224×1584 — comfortably above the
+    // detector's stride threshold and well below the 4× memory blow-up
+    // a 300 DPI render would cost on long PDFs.
+    constexpr double kDpi = 144.0;
+    const QSizeF pagePts = m_doc->pagePointSize(pageIndex);
+    if (pagePts.isEmpty())
+        return {};
+    const int w = std::max(1, static_cast<int>(pagePts.width() / 72.0 * kDpi));
+    const int h = std::max(1, static_cast<int>(pagePts.height() / 72.0 * kDpi));
+    QImage rendered = m_doc->render(pageIndex, QSize(w, h));
+    if (rendered.isNull())
+        return rendered;
+    // Background-flatten so the OCR detector sees a white-paper
+    // colour rather than transparent pixels (which the detector reads
+    // as "outside the document").
+    QImage canvas(rendered.size(), QImage::Format_ARGB32_Premultiplied);
+    canvas.fill(Qt::white);
+    QPainter painter(&canvas);
+    painter.drawImage(0, 0, rendered);
+    painter.end();
+    return canvas;
+}
+
 QImage PdfDocument::renderThumbnail(int pageIndex, QSize targetSize) {
     if (!m_valid || pageIndex < 0 || pageIndex >= m_doc->pageCount()) {
         return {};
@@ -903,6 +932,12 @@ bool PdfDocument::reloadViewerFromEditor() {
             m_view->pageNavigator()->jump(savedPage, QPointF{}, savedZoom);
         }
     }
+    // Any reload is the result of a page-level mutation (rotate,
+    // delete, move, crop, insert). The OCR cache is keyed on the raw
+    // page raster — clear it wholesale rather than try to be clever
+    // about which pages survived. The auto-OCR pump will re-enqueue
+    // work for the visible page after the reload settles.
+    m_selectableText.clear();
     return true;
 }
 

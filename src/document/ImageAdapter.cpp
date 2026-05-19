@@ -512,6 +512,11 @@ void ImageDocument::pushUndoSnapshot() {
         m_undoStack.erase(m_undoStack.begin());
     }
     m_redoStack.clear();
+    // Any pixel-level mutation invalidates the OCR cache for the
+    // single page. The next auto-OCR pump will re-enqueue work for
+    // the now-stale page; until then, the SelectableTextLayer paints
+    // nothing for it (no popup, no error — quiet degradation).
+    m_selectableText.invalidate(0);
 }
 
 void ImageDocument::undo() {
@@ -525,6 +530,8 @@ void ImageDocument::undo() {
     m_image = m_undoStack.back();
     m_undoStack.pop_back();
     m_dirty = !m_undoStack.empty() || m_dirty;
+    // The page contents changed — clear any cached OCR.
+    m_selectableText.invalidate(0);
     refreshView();
 }
 
@@ -539,6 +546,7 @@ void ImageDocument::redo() {
     m_image = m_redoStack.back();
     m_redoStack.pop_back();
     m_dirty = true;
+    m_selectableText.invalidate(0);
     refreshView();
 }
 

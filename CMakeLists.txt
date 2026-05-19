@@ -86,6 +86,8 @@ set(TRAILER_SOURCES
     src/document/PdfCommands.h
     src/document/PdfEditor.cpp
     src/document/PdfEditor.h
+    src/document/SelectableTextStore.cpp
+    src/document/SelectableTextStore.h
     src/document/StubAdapter.cpp
     src/document/StubAdapter.h
     src/filters/ImageFilter.cpp
