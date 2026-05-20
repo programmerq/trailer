@@ -101,6 +101,19 @@ sustain.
   maintenance burden. New features land when they're earned by a
   real workflow, not because a similar app has them. "We don't do
   that" is a complete answer.
+- **Hand-tuned values stay hand-tuned; reasons live in code.** Trailer
+  doesn't collect telemetry, doesn't A/B-test, and won't acquire the
+  data that would let it auto-tune thresholds in the field. The
+  consequence is that magic numbers — ML confidence cutoffs, badge
+  trigger scores, debounce intervals, fit-zoom caps, hit-target
+  sizes — are chosen by hand, and they stay chosen by hand. The
+  durability rule is that every such constant lives next to a
+  comment explaining what it represents, what range was tried, and
+  what symptom would justify changing it. A future contributor
+  rebalancing one of these numbers should be able to read the
+  comment, agree or disagree with the trade-off as stated, and
+  commit a new value with an updated rationale — not guess at
+  intent from the variable name.
 
 ## How decisions get made
 
