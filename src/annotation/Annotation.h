@@ -37,6 +37,12 @@ enum class AnnotationTool {
     SmartLasso,   // multi-point prompt; crop-to-object on commit
 };
 
+// API: do not renumber or remove values. Each value is the canonical
+// in-memory representation of a PDF /Subtype that PdfEditor's
+// readAnnotations / writeAnnotations pair maps to and from. Renumbering
+// silently changes the mapping for every PDF Trailer has ever saved.
+// New annotation kinds are appended at the end; deprecated kinds are
+// left in place and marked [[deprecated]] rather than removed.
 enum class AnnotationType {
     Rectangle,
     Ellipse,

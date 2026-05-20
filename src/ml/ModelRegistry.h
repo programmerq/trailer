@@ -10,9 +10,12 @@ namespace trailer {
 
 class ModelDownloader;
 
-// Stable string ids for every model Trailer knows about. New models
-// get a new id; ids never change or get re-used because they pin the
-// on-disk filename.
+// API: do not renumber or remove values. Each value pins an on-disk
+// model filename via ModelRegistry::modelIdKey, and the corresponding
+// `ml_never_download_<key>` first-use flags in settings.toml. New
+// models get a new id (appended); ids never change or get re-used.
+// Deprecated models stay in the enum and get marked [[deprecated]]
+// so any old settings.toml entries referencing them keep working.
 enum class ModelId {
     // Background removal
     U2NetP,

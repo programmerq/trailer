@@ -26,6 +26,12 @@ class Sidebar : public QDockWidget {
     // HighlightsAndNotes requires text-aware highlights) are kept
     // as enum members so the picker can dim them rather than
     // hide them from the menu.
+    // API: append-only. Once persisted view-state lands (sweet-moser's
+    // wave-1 Workstream I), each value is serialised by ordinal in
+    // RecentEntry.sidebarMode + DocumentTypeDefault.sidebarMode.
+    // Renumbering at that point silently swaps modes for every recent
+    // file. New modes are appended; deferred modes (TableOfContents,
+    // HighlightsAndNotes) stay where they are.
     enum class Mode {
         Hidden,
         Pages,             // page thumbnails for the active document

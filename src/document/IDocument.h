@@ -18,6 +18,9 @@ namespace trailer {
 class AnnotationStore;
 class SelectableTextStore;
 
+// API: append-only. Persisted by ordinal once the in-flight branch's
+// per-file view-state lands. Renumbering swaps a user's saved view
+// mode silently. Add new modes at the end; never reorder or remove.
 enum class ViewMode {
     SinglePage,
     TwoPages,
