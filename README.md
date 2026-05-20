@@ -301,10 +301,15 @@ project intends to stay that way.
 
 ## License
 
-Trailer is MIT-licensed — see [LICENSE](LICENSE).
+Trailer's source is MIT-licensed — see [LICENSE](LICENSE).
 
-Third-party components that ship with the binary (Qt, ONNX Runtime,
-qpdf, toml++, the PaddleOCR English dictionary) and the ONNX model
+The *binary* Trailer ships dynamically links Qt 6, which is LGPL-3.0.
+Downstream packagers redistributing a Trailer build must therefore
+also ship Qt's unmodified shared libraries and a copy of the LGPL-3.0
+text alongside the executable, satisfying the LGPL's relinking
+allowance. The other third-party components — ONNX Runtime, qpdf,
+toml++, the PaddleOCR English dictionary — and the ONNX model
 weights Trailer downloads on first use (U²-Net, MobileSAM, PP-OCRv3)
-each carry their own license. They are enumerated in
+each carry their own license. All of them are enumerated, with
+attribution and notice requirements, in
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).
