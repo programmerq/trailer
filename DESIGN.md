@@ -1022,49 +1022,84 @@ A single settings window with the following panes:
 ## 7. Keyboard shortcuts
 
 Cross-platform table; use `Ctrl` on Windows/Linux and `⌘` on macOS unless
-noted otherwise.
+noted otherwise. Source of truth is `src/ui/MainWindow.cpp` — every row
+here is reconciled against the live `setShortcut` calls. Rows tagged
+*Planned* are intended bindings whose underlying action either isn't
+implemented yet or hasn't been wired to a shortcut.
 
-> **Drift warning.** This table is the design intent. Several rows
-> have drifted from the live wiring in `src/ui/MainWindow.cpp` — in
-> particular, *Actual size* and *Fit* use `Ctrl+1` / `Ctrl+0` rather
-> than the `Ctrl+Alt+0` / `Ctrl+Alt+9` shown below, and
-> *Next/previous page* are bound to `PageUp/PageDown` rather than
-> `Alt+↑/↓`. A full audit-and-update of this table against
-> `MainWindow.cpp` is open follow-up work. Until then, the live
-> bindings in `MainWindow.cpp` are the source of truth. Rows marked
-> *(unbound)* are listed here as intended bindings that haven't been
-> wired yet.
+**File**
 
 | Action | Shortcut |
 |---|---|
 | Open | `Ctrl/⌘+O` |
 | Save | `Ctrl/⌘+S` |
 | Save As | `Ctrl/⌘+Shift+S` |
-| Export | `Ctrl/⌘+Shift+E` *(unbound — Export As is `Tools > Export As…`, no shortcut)* |
+| Export As | *Planned* — `Ctrl/⌘+Shift+E` intended; action wired (`Tools > Export As…`) but no shortcut bound yet |
 | Close window | `Ctrl/⌘+W` |
 | Quit | `Ctrl+Q` (Linux/Win) / `⌘Q` (Mac) |
 | Print | `Ctrl/⌘+P` |
-| Copy / Cut / Paste | `Ctrl/⌘+C / X / V` |
+
+**Edit**
+
+| Action | Shortcut |
+|---|---|
+| Undo / Redo | `Ctrl/⌘+Z` / `Ctrl/⌘+Shift+Z` |
 | Select All | `Ctrl/⌘+A` |
 | Find | `Ctrl/⌘+F` |
 | Find Next / Previous | `Ctrl/⌘+G` / `Ctrl/⌘+Shift+G` |
-| Undo / Redo | `Ctrl/⌘+Z` / `Ctrl/⌘+Shift+Z` |
-| Show / hide markup toolbar | `Ctrl/⌘+Shift+A` |
-| Show / hide inspector | `Ctrl/⌘+I` |
-| Show / hide sidebar | `Ctrl/⌘+Shift+D` |
-| Adjust size | `Ctrl/⌘+Alt/Option+I` *(unbound)* |
-| Adjust colour | `Ctrl/⌘+Alt/Option+C` *(unbound)* |
-| Remove background | `Ctrl/⌘+Shift+K` *(unbound)* |
-| Magnifier | `` ` `` (backtick) |
-| Full screen | `F11` (Win/Linux) / `Ctrl+⌘+F` (Mac) *(unbound — feature not implemented, see §6.1.7)* |
-| Next tab / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
-| Next page / previous page | `Alt/Option+↓` / `Alt/Option+↑` *(drifted — live bindings are `PageDown` / `PageUp`)* |
-| Next document in window / previous | `Alt/Option+PageDown` / `Alt/Option+PageUp` |
-| Zoom in / out | `Ctrl/⌘+Alt/Option++` / `Ctrl/⌘+Alt/Option+-` |
-| Actual size | `Ctrl/⌘+Alt/Option+0` *(drifted — live binding is `Ctrl+1`)* |
-| Fit | `Ctrl/⌘+Alt/Option+9` *(drifted — live binding is `Ctrl+0` for fit-page, `Ctrl+2` for fit-width)* |
 
-All shortcuts are reassignable in Settings → Shortcuts.
+(Copy / Cut / Paste have no app-level menu action; native Qt widgets handle
+the standard shortcuts inside text inputs.)
+
+**View**
+
+| Action | Shortcut |
+|---|---|
+| Show / hide sidebar | `Ctrl/⌘+Shift+D` |
+| Show / hide markup toolbar | `Ctrl/⌘+Shift+A` |
+| Show / hide form toolbar | `Ctrl/⌘+Shift+B` |
+| Show / hide inspector | `Ctrl/⌘+I` |
+| Magnifier | `` ` `` (backtick) |
+| Full screen | *Planned* — `F11` (Win/Linux) / `Ctrl+⌘+F` (Mac) intended; feature not implemented, see §6.1.7 |
+| Zoom in | `Ctrl/⌘+=` (and the platform `QKeySequence::ZoomIn`) |
+| Zoom out | `Ctrl/⌘+-` (the platform `QKeySequence::ZoomOut`) |
+| Fit page | `Ctrl/⌘+0` |
+| Actual size | `Ctrl/⌘+1` |
+| Fit width | `Ctrl/⌘+2` |
+
+**Go (page navigation)**
+
+| Action | Shortcut |
+|---|---|
+| First page | `Ctrl/⌘+Home` |
+| Previous page (Go menu) | `Ctrl/⌘+Left` |
+| Next page (Go menu) | `Ctrl/⌘+Right` |
+| Last page | `Ctrl/⌘+End` |
+| Previous page (viewer) | `PageUp` |
+| Next page (viewer) | `PageDown` |
+| Go to page… | `Ctrl/⌘+Alt/Option+G` |
+
+**Tools / image**
+
+| Action | Shortcut |
+|---|---|
+| Rotate left | `Ctrl/⌘+L` |
+| Rotate right | `Ctrl/⌘+R` |
+| Fill forms | `Ctrl/⌘+Shift+F` |
+| Take screenshot | `Ctrl/⌘+Shift+3` |
+| Adjust size | *Planned* — `Ctrl/⌘+Alt/Option+I` intended; action wired (`Tools > Adjust Size…`) but no shortcut bound yet |
+| Adjust colour | *Planned* — `Ctrl/⌘+Alt/Option+C` intended; action wired but no shortcut bound yet |
+| Remove background | *Planned* — `Ctrl/⌘+Shift+K` intended; action wired (`Tools > Remove Background`) but no shortcut bound yet |
+
+**Window**
+
+| Action | Shortcut |
+|---|---|
+| Minimize | `Ctrl/⌘+M` |
+| Next tab / previous tab | *Planned* — `Ctrl+Tab` / `Ctrl+Shift+Tab` intended; no application-level shortcut bound (Qt's QTabWidget handles internal navigation but not via these keys) |
+| Next / previous document in window | *Planned* — `Alt/Option+PageDown` / `Alt/Option+PageUp` intended; not bound |
+
+All shipped shortcuts are reassignable in Settings → Shortcuts.
 
 ---
 
