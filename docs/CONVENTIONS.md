@@ -55,12 +55,14 @@ should have grown a `supportsX()` capability bit + a virtual hook.
 ## 2. qpdf mutations are `PdfCommand` subclasses
 
 Anything that mutates the on-disk PDF — page rotate, delete, move,
-crop — is a `PdfCommand` subclass with symmetric `apply` / `revert`
-methods.
+insert, crop — is a `PdfCommand` subclass with symmetric `apply` /
+`revert` methods.
 
-**Anchor files:** `src/document/PdfCommands.{h,cpp}`,
+**Anchor files:** `src/document/PdfCommands.{h,cpp}` (which now
+defines `RotatePageCommand`, `DeletePagesCommand`, `MovePageCommand`,
+`InsertPagesCommand`, `CropPageCommand`),
 `src/document/PdfEditor.{h,cpp}`. `RotatePageCommand` is the
-canonical example.
+template the others followed.
 
 **Pattern.** Each command captures enough state at construction to
 make both directions invertible. The document owns two stacks of

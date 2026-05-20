@@ -1155,10 +1155,10 @@ features, which are intentionally excluded:
   to add a new document type.)
 - Mutations split between two undo mechanisms by category:
   **`PdfCommand` subclasses** (`src/document/PdfCommands.h`) for
-  qpdf-level page operations — rotate today, with delete / move /
-  insert / crop tracked as the next subclasses to add following the
-  same template — with symmetric `apply` / `revert`; and
-  **`AnnotationStore` snapshot undo**
+  qpdf-level page operations — `RotatePageCommand`,
+  `DeletePagesCommand`, `MovePageCommand`, `InsertPagesCommand`,
+  `CropPageCommand` all shipped (PR #25) — with symmetric
+  `apply` / `revert`; and **`AnnotationStore` snapshot undo**
   (`src/annotation/AnnotationStore.h`) for annotation create /
   modify / delete via whole-store snapshots. The two stacks share a
   cross-routing heuristic (`MainWindow::m_lastUndoSource`); a future

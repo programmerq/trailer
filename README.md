@@ -286,6 +286,9 @@ project intends to stay that way.
 |---|---|
 | [DESIGN.md](DESIGN.md) | Full product spec — phases, features, scope. |
 | [PHILOSOPHY.md](PHILOSOPHY.md) | Hard constraints — what stays in, what's off-limits, the friction-reduction rules. |
+| [ROADMAP.md](ROADMAP.md) | Tactical Now / Next / Later view of what's between releases. |
+| [CHANGELOG.md](CHANGELOG.md) | What shipped when, per release tag. Keep-a-Changelog format. |
+| [RELEASING.md](RELEASING.md) | Maintainer release runbook — VERSION bump, tag, draft release notes. |
 | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Patterns the code already follows (document adapters, PdfCommand, AnnotationStore, UAT slot naming, vendored deps). Recipe-shaped — for adding new code that fits. |
 | [docs/smoke-session.md](docs/smoke-session.md) | Reference-user smoke-session protocol: a non-maintainer opens a fresh build and runs three tasks. Run before minor-version bumps. |
 | [docs/cross-platform-sprint.md](docs/cross-platform-sprint.md) | Planning artifact grouping current cross-platform packaging items into one sprint. |
