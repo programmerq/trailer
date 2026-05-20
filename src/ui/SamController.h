@@ -54,9 +54,15 @@ class SamController : public QObject {
     explicit SamController(Application *app, QObject *parent = nullptr);
     ~SamController() override;
 
-    // Pixel-data hash; same definition as
-    // `SelectableTextStore::hashImageContent`. Re-declared here so the
-    // header doesn't have to pull in the OCR cache headers.
+    // Pixel-data hash used as a cache key for the encoder LRU.
+    // Distinct from `SelectableTextStore::hashImageContent` despite
+    // serving a similar purpose: the OCR store needs a hash that's
+    // stable across QImage format conversions (it canonicalises to
+    // Format_RGB888 first), while this hash is keyed by the exact
+    // image we encoded — folding image.format() and walking the
+    // raw buffer including row padding is fine for "is this the
+    // same image we already encoded?" semantics and avoids the
+    // format-conversion copy on every key compute.
     static std::uint64_t hashImageContent(const QImage &image);
 
     // Switch which document is "active" for the tool. Cancels any
@@ -202,7 +208,13 @@ class SamController : public QObject {
     IDocument *m_doc = nullptr;
     int m_page = 0;
 
-    std::unique_ptr<SamSession> m_session;
+    // shared_ptr (not unique) so worker-thread lambdas can capture
+    // a copy by value and keep the session alive past controller
+    // destruction. cancelAll() flips active tokens but the encoder
+    // pass may still be running when the controller frees; the
+    // shared_ptr defers SamSession destruction until the worker
+    // exits.
+    std::shared_ptr<SamSession> m_session;
 
     // LRU cache. Linear scan over kLruCapacity entries is cheap.
     std::deque<CacheEntry> m_cache;

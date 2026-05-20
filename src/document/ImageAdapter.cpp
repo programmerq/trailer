@@ -271,7 +271,17 @@ QWidget *ImageDocument::createView(QWidget *parent) {
         // PdfDocument's applyInitialFitZoom: schedule on the event
         // loop so the scroll-area viewport has settled, then either
         // shrink-to-fit or leave the image at actual size.
-        QTimer::singleShot(0, scroll, [this]() { applyInitialFitZoom(); });
+        // Capture m_aliveFlag so the timer no-ops if the document is
+        // destroyed before this tick fires — `this` would otherwise
+        // dangle (the view widget is deleteLater()'d but the document
+        // is destroyed immediately when the tab closes).
+        if (!m_aliveFlag)
+            m_aliveFlag = std::make_shared<bool>(true);
+        auto alive = m_aliveFlag;
+        QTimer::singleShot(0, scroll, [this, alive]() {
+            if (alive && *alive)
+                applyInitialFitZoom();
+        });
     }
 
     if (!m_animated && !m_image.isNull()) {
@@ -444,8 +454,16 @@ void ImageDocument::applyInitialFitZoom() {
     const int availH = m_scroll->viewport()->height();
     if (availW <= 0 || availH <= 0 ||
         m_image.width() <= 0 || m_image.height() <= 0) {
-        // Layout hasn't settled — retry on the next tick.
-        QTimer::singleShot(0, m_scroll, [this]() { applyInitialFitZoom(); });
+        // Layout hasn't settled — retry on the next tick. Guard with
+        // the alive flag the resize watcher already maintains, so a
+        // tab close mid-retry doesn't dereference a freed document.
+        if (!m_aliveFlag)
+            m_aliveFlag = std::make_shared<bool>(true);
+        auto alive = m_aliveFlag;
+        QTimer::singleShot(0, m_scroll, [this, alive]() {
+            if (alive && *alive)
+                applyInitialFitZoom();
+        });
         return;
     }
     m_initialZoomApplied = true;

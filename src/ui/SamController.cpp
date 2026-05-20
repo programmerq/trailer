@@ -61,7 +61,7 @@ std::uint64_t SamController::hashImageContent(const QImage &image) {
 
 SamController::SamController(Application *app, QObject *parent)
     : QObject(parent), m_app(app),
-      m_session(std::make_unique<SamSession>(app ? &app->modelRegistry() : nullptr)) {}
+      m_session(std::make_shared<SamSession>(app ? &app->modelRegistry() : nullptr)) {}
 
 SamController::~SamController() {
     cancelAll();
@@ -216,7 +216,12 @@ void SamController::prepareForActive(const QImage &image, PreparedCallback onPre
     // dereference `controller` unconditionally.
     QPointer<SamController> selfGuard(this);
     SamController *controller = this;
-    SamSession *sess = m_session.get();
+    // Capture the session by shared_ptr — the encoder lambda may
+    // outlive the controller; the shared_ptr keeps SamSession alive
+    // until the lambda exits (cancellation flips the token, the
+    // encoder bails at its next checkpoint, and the shared_ptr
+    // drops on lambda return).
+    std::shared_ptr<SamSession> sess = m_session;
     auto handle = m_app->mlScheduler().submit(
         MlPriority::UserAction, tr("Preparing Instant Alpha / Smart Lasso…"),
         [selfGuard, controller, sess, image, key,
@@ -326,7 +331,10 @@ void SamController::dispatchDecoder(QVector<QPoint> positives, QVector<QPoint> n
 
     QPointer<SamController> selfGuard(this);
     SamController *controller = this;
-    SamSession *sess = m_session.get();
+    // Capture the session by shared_ptr so the decoder lambda owns
+    // a strong reference for the duration of the inference, even if
+    // the controller is destroyed mid-flight.
+    std::shared_ptr<SamSession> sess = m_session;
     auto handle = m_app->mlScheduler().submit(
         MlPriority::UserAction, tr("Segmenting…"),
         [selfGuard, controller, sess, positives = std::move(positives),

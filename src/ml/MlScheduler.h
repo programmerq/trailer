@@ -193,6 +193,11 @@ class MlScheduler : public QObject {
     QString m_runningLabel;
     MlTaskId m_runningId = 0;
     bool m_running = false;
+    // Running task's cancellation token. Held here (as well as on the
+    // worker thread's local Task copy) so cancel() / cancelAll() can
+    // flip it without racing with the worker loop's pop. Cleared
+    // under m_mutex when the running slot is released.
+    CancellationTokenPtr m_runningToken;
 
     std::atomic<MlTaskId> m_nextId{1};
     std::thread m_worker;

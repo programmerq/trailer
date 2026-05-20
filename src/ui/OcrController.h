@@ -109,7 +109,13 @@ class OcrController : public QObject {
     // calls setDocument(nullptr) before destroying a document, so
     // this never dangles in practice.
     IDocument *m_doc = nullptr;
-    std::unique_ptr<OcrEngine> m_engine;
+    // shared_ptr (not unique) so worker-thread lambdas can capture
+    // a copy by value and keep the engine alive past controller
+    // destruction. cancelAll() in the destructor flips every active
+    // token, but the worker may still be inside an inference step
+    // when the controller frees; the shared_ptr defers OcrEngine
+    // destruction until the lambda exits.
+    std::shared_ptr<OcrEngine> m_engine;
     std::unordered_map<PendingKey, MlTaskId, PendingKeyHash> m_pending;
 };
 

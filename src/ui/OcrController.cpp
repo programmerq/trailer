@@ -17,7 +17,7 @@ namespace trailer {
 
 OcrController::OcrController(Application *app, QObject *parent)
     : QObject(parent), m_app(app),
-      m_engine(std::make_unique<OcrEngine>(app ? &app->modelRegistry() : nullptr)) {}
+      m_engine(std::make_shared<OcrEngine>(app ? &app->modelRegistry() : nullptr)) {}
 
 OcrController::~OcrController() {
     cancelAll();
@@ -180,7 +180,11 @@ void OcrController::submitPage(IDocument *doc, int page, MlPriority priority, bo
     } else {
         label = tr("Recognizing text (prefetch)…");
     }
-    auto *engine = m_engine.get();
+    // Capture the engine by shared_ptr so the worker lambda extends
+    // the engine's lifetime past controller destruction — cancellation
+    // is the right exit, but the worker may still be mid-inference
+    // when the controller frees.
+    std::shared_ptr<OcrEngine> engine = m_engine;
 
     // We can't QPointer-track an IDocument directly because the
     // interface doesn't derive from QObject. Instead capture the

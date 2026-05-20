@@ -138,17 +138,19 @@ void MlScheduler::cancel(MlTaskId id) {
     CancellationTokenPtr targetToken;
     {
         std::unique_lock<std::mutex> lk(m_mutex);
-        if (m_running && m_runningId == id) {
-            // Currently running — we can't pop it out of execution,
-            // but flipping its token gives the worker a checkpoint
-            // to bail at. The token is also held by the worker
-            // thread, but the lookup here goes through the
-            // separate copy that the queue stashed.
+        // Currently-running task: can't pop it out of execution, but
+        // flipping its token gives the worker a checkpoint to bail at
+        // on its next poll. m_runningToken is the same shared_ptr the
+        // worker is holding, so a flip here is visible there.
+        if (m_running && m_runningId == id && m_runningToken) {
+            targetToken = m_runningToken;
         }
-        for (const auto &task : m_queue) {
-            if (task.id == id) {
-                targetToken = task.token;
-                break;
+        if (!targetToken) {
+            for (const auto &task : m_queue) {
+                if (task.id == id) {
+                    targetToken = task.token;
+                    break;
+                }
             }
         }
     }
@@ -161,11 +163,17 @@ void MlScheduler::cancelAll() {
     std::vector<CancellationTokenPtr> tokens;
     {
         std::unique_lock<std::mutex> lk(m_mutex);
-        tokens.reserve(m_queue.size());
+        tokens.reserve(m_queue.size() + 1);
         for (auto &task : m_queue) {
             if (task.token) {
                 tokens.push_back(task.token);
             }
+        }
+        // Include the running task so doc-close / shutdown stops
+        // long-running inference promptly. The worker holds its own
+        // copy of the same shared_ptr; a flip here propagates.
+        if (m_running && m_runningToken) {
+            tokens.push_back(m_runningToken);
         }
     }
     for (auto &tok : tokens) {
@@ -181,11 +189,16 @@ void MlScheduler::cancelMatching(
     std::vector<CancellationTokenPtr> tokens;
     {
         std::unique_lock<std::mutex> lk(m_mutex);
-        tokens.reserve(m_queue.size());
+        tokens.reserve(m_queue.size() + 1);
         for (auto &task : m_queue) {
             if (task.token && predicate(task.label, task.priority)) {
                 tokens.push_back(task.token);
             }
+        }
+        // Running task: predicate runs against the same (label, priority)
+        // pair the worker pulled off the queue.
+        if (m_running && m_runningToken && predicate(m_runningLabel, m_runningPriority)) {
+            tokens.push_back(m_runningToken);
         }
     }
     for (auto &tok : tokens) {
@@ -211,11 +224,15 @@ void MlScheduler::stop() {
         }
         m_stopping = true;
         m_powerWatcherStop = true;
-        // Cancel everything queued so a stuck worker can wind down.
+        // Cancel everything queued and the running task so a stuck
+        // worker can wind down at its next cooperative checkpoint.
         for (auto &task : m_queue) {
             if (task.token) {
                 task.token->cancel();
             }
+        }
+        if (m_runningToken) {
+            m_runningToken->cancel();
         }
         m_cv.notify_all();
         m_powerCv.notify_all();
@@ -263,6 +280,7 @@ void MlScheduler::workerLoop() {
             m_runningPriority = task.priority;
             m_runningLabel = task.label;
             m_runningId = task.id;
+            m_runningToken = task.token;
             m_running = true;
         }
         emit statsChanged();
@@ -287,6 +305,7 @@ void MlScheduler::workerLoop() {
             m_runningId = 0;
             m_runningLabel.clear();
             m_runningPriority = MlPriority::Idle;
+            m_runningToken.reset();
             // Wake waitForIdle().
             m_cv.notify_all();
         }
