@@ -24,62 +24,84 @@ the bridge — what's happening between releases at a glance.
   shift meaningfully — not for every commit. Frequent thrash
   signals unclear strategy, not responsiveness.
 
-Last meaningful update: post-0.1.0 ship + survey of the
-`claude/mystifying-proskuriakova-e07cb6` branch (2026-05-18).
+Last meaningful update: post-0.1.0 ship + reframe after PR #24
+landed and the post-#25 HITL pass surfaced gaps (2026-05-20).
 
 ---
 
-## In flight (about to land)
+## Recently landed (PR #24 + PR #25 + PR #26)
 
-A 30-commit working branch, `claude/mystifying-proskuriakova-e07cb6`
-(SHA `ac12fb7`), sits ahead of main coordinating 9 workstreams across
-4 "waves." When it lands, it materially reshapes the rest of this
-roadmap — the lists below already account for it as if merged.
+The 30-commit working branch that this section described as
+"in flight" through 2026-05-18 **merged onto main as PR #24** on
+2026-05-19 (squash-merge commit `4dba247 HITL waves 1-4`). The
+roadmap was not updated at the time; the 2026-05-20 reframe corrects
+the picture below. The branch ref `claude/mystifying-proskuriakova-
+e07cb6` still exists but is now *behind* main (its tip is the
+merge-base) — there's nothing to recover from it that isn't already
+on main.
+
+What actually shipped, with what's still rough flagged inline:
 
 - **Wave 1 — UX defaults + persistence (A, B, C, I).** Markup
   toolbar hidden by default, search bar collapses to icon button,
   initial window-size clamp, fit-to-content default zoom; fit-mode
-  persistence + per-page fit on arrow keys; thumbnail height halved
-  with in-pixmap page-number badge; **per-file + per-type +
-  per-window state restoration**, including macOS-style "open the
-  windows you left open." New `Settings` `[session]` +
+  persistence + per-page fit on arrow keys; thumbnail size halved
+  to 80×100 with in-pixmap page-number badge
+  ([src/ui/Sidebar.cpp:94](src/ui/Sidebar.cpp:94)); per-file +
+  per-type + per-window state restoration including macOS-style
+  "open the windows you left open." New `Settings` `[session]` +
   `[ml.scheduler]` blocks. New module
-  `src/settings/DocumentTypeDefaults`.
+  `src/settings/DocumentTypeDefaults`. **Rough edge:** the thumbnail
+  delegate's `sizeHint` returns 108 px per row but live sidebars
+  still render rows much taller — captured in
+  [TODO.md](TODO.md)'s 2026-05-20 HITL section. Search-bar close
+  button doesn't collapse the toolbar slot (QWidgetAction wrapper
+  not hidden) — same place.
 - **Wave 2 — ML governance + annotation perf (D, E, J).**
   `src/ml/MlScheduler` (single-worker priority queue:
-  `UserAction > VisiblePage > Prefetch > Idle`, with 30s power-policy
-  re-evaluation), `src/ml/CancellationToken`,
-  `src/platform/PowerSource`. Threaded through OcrEngine, SamSession,
-  BackgroundRemover. Annotation hit-test order swap (existing
-  annotations are tested before drawing tools), 6×6 handles,
-  **compound undo** (`AnnotationStore::beginCompound/endCompound`),
+  `UserAction > VisiblePage > Prefetch > Idle`, with 30s
+  power-policy re-evaluation), `src/ml/CancellationToken`,
+  `src/platform/PowerSource`. Threaded through OcrEngine,
+  SamSession, BackgroundRemover. Annotation hit-test order swap
+  (existing annotations tested before drawing tools), 6×6 handles,
+  compound undo (`AnnotationStore::beginCompound/endCompound`),
   sidebar debounce, status-bar ML indicator.
-- **Wave 3 — OCR in-place (F).** `SelectableTextStore` (per-doc
-  per-page hash-keyed OCR cache, in-memory), `SelectableTextLayer`
-  (transparent overlay with honest cursor + drag-select + Ctrl+C),
-  `OcrController` (per-window pump: VisiblePage + ±1 Prefetch).
-  `PdfDocument::renderPageForOcr` at 144 DPI on white. Rebuilt
-  `RecognizeTextDialog` as a parameter UI. Large-doc (>50 pages)
-  hint chip in the status bar.
+- **Wave 3 — OCR + SAM in-place (F, G).** `SelectableTextStore`
+  (per-doc per-page hash-keyed OCR cache, in-memory),
+  `SelectableTextLayer` (transparent overlay with honest cursor +
+  drag-select + Ctrl+C), `OcrController` (per-window pump:
+  VisiblePage + ±1 Prefetch). `PdfDocument::renderPageForOcr` at
+  144 DPI on white. Rebuilt `RecognizeTextDialog` as a parameter
+  UI. Large-doc (>50 pages) hint chip. Smart Lasso / Instant Alpha
+  in-place via `AnnotationOverlay` tool modes (Workstream G's
+  merge — preload-on-tool-activation caller is the open follow-up;
+  see Now item 2 below).
 - **Wave 4 — Background-removal polish (H).**
   `BackgroundCandidateScorer` (Sobel edges / HSV saturation /
   luminance bimodality, threshold 0.50). Sparkle badge on the
   Tools→Remove Background action. Removal routed through
   `MlScheduler` at `UserAction`; modal `QProgressDialog` replaced
-  by the status-bar indicator. **`DocumentView::documentAboutToBeRemoved`**
-  signal for cache invalidation before raw `IDocument*` keys dangle.
+  by the status-bar indicator. `DocumentView::documentAboutToBeRemoved`
+  signal for cache invalidation before raw `IDocument*` keys
+  dangle.
+- **PR #25 — release infrastructure.** CHANGELOG, RELEASING
+  runbook, VERSION + release-notes scripts; PDF page-op undo
+  (rotate/delete/move/insert/crop); ROADMAP scaffolding. The
+  ROADMAP wave summary above was authored by PR #25 but missed
+  the PR #24 landing date.
+- **PR #26 — audit + process scaffolding.** 15-lens audit,
+  CONVENTIONS.md, smoke-session protocol, TODO source-type
+  preamble.
 
-Workstream G (SAM preload on tool activation) is **declared but not
-delivered** — the `mlPreloadSegmentationOnToolActivation` setting
-round-trips through toml; no caller reads it yet. That's the first
-item in *Now* below.
+Anything still rough from Wave 1 lives in
+[TODO.md](TODO.md)'s 2026-05-20 HITL section, not back in this
+file.
 
 ---
 
 ## Now (next release window)
 
-Pickable in this order. Anything that *requires* the in-flight
-branch to be merged is flagged.
+Pickable in this order.
 
 1. **Signed-update channel for macOS** (Sparkle 2 is the leading
    candidate). The requirement, not the implementation: existing
@@ -97,35 +119,40 @@ branch to be merged is flagged.
    amendment. The point of all this is: when our release pipeline
    is compromised, existing users don't get malware as an
    "update."
-2. **Land + integrate the in-flight branch on main.** Includes a
-   CHANGELOG `[Unreleased]` pass for every user-visible wave delta,
-   an AGENTS.md update codifying the new conventions (MlScheduler
-   contract + status-bar indicator + no modal progress + cancel-on-
-   battery; `documentAboutToBeRemoved` for raw-`IDocument*`-keyed
-   caches; three-tier persistence pattern), and the matching UAT
-   slot reconciliation. The branch tested green on its own; the
-   integration risk is mostly merge mechanics and doc reconciliation.
-3. **Workstream G — SAM preload via `MlScheduler`.** *(Requires
-   branch merged.)* Wire Instant Alpha / Smart Lasso tool activation
-   to submit a `Prefetch SamSession::prepare` for the current image
-   when `mlPreloadSegmentationOnToolActivation` is on. Mechanical;
-   the scheduler, the cancellation token, and the setting are all
-   present. Completes the wave-2/3/4 ML governance arc.
-4. **Unified `AnnotationStore` + `PdfCommand` undo log.** *(Was
-   "Next" last round; bumps because of the branch.)* Compound
-   annotation undo collapses a drag to one undo frame, which makes
-   the `m_lastUndoSource` heuristic between AnnotationStore and
-   PdfCommand stacks more visibly wrong on interleaved gestures
-   (rotate → drag → rotate now confuses Cmd-Z). Replace the
-   heuristic with a single chronological log of typed entries.
-5. **Continuous-mode annotation drift fix.** Same as last round —
-   overlay uses `pageNavigator()->currentPage()`, so annotations
-   only render correctly on the page Qt PDF reports as current.
-   **Scope first** — fix may need per-page overlay widgets or a
+2. **Workstream G — SAM preload via `MlScheduler`.** Wire Instant
+   Alpha / Smart Lasso tool activation to submit a
+   `Prefetch SamSession::prepare` for the current image when
+   `mlPreloadSegmentationOnToolActivation` is on. The
+   `mlPreloadSegmentationOnToolActivation` setting round-trips
+   through toml today but no caller reads it yet; the scheduler,
+   the cancellation token, and the setting are all present.
+   Mechanical; completes the wave-2/3/4 ML governance arc.
+3. **2026-05-20 HITL pass items.** Captured in
+   [TODO.md](TODO.md)'s `## 2026-05-20 HITL pass` section. The
+   rectangle-disappears bug is the highest priority — annotations
+   silently vanishing on user interaction is data loss. Restyle-
+   from-Inspector and auto-Select-after-placement are the same
+   surface area and likely cheap once the underlying issue is
+   found. Thumbnail row-height, search-bar close, Cmd-A scope,
+   page-mode shortcuts, and content-aware first-open defaults are
+   each independent and pickable.
+4. **Unified `AnnotationStore` + `PdfCommand` undo log.** Wave 2
+   shipped compound annotation undo (`beginCompound` /
+   `endCompound`), which collapses a drag to one undo frame and
+   makes the `m_lastUndoSource` heuristic between AnnotationStore
+   and PdfCommand stacks more visibly wrong on interleaved
+   gestures (rotate → drag → rotate now confuses Cmd-Z). Replace
+   the heuristic with a single chronological log of typed
+   entries.
+5. **Continuous-mode annotation drift fix.** Overlay uses
+   `pageNavigator()->currentPage()`, so annotations only render
+   correctly on the page Qt PDF reports as current. **Scope
+   first** — fix may need per-page overlay widgets or a
    view-geometry query Qt PDF doesn't yet expose.
 6. **House rule: every fix lands with a paired UAT slot.** Still
-   live. The in-flight branch demonstrates the bar — every wave
-   shipped UAT slots alongside.
+   live. PR #24 demonstrated the bar — every wave shipped UAT
+   slots alongside; the post-#25 HITL items should follow the
+   same template.
 
 ## Next
 
@@ -138,16 +165,16 @@ Planned, not yet started.
    pick a different macOS implementation, the Windows side
    follows whatever shape that takes (e.g. a custom GitHub-
    Releases checker would generalise across both OSes for free).
-8. **Preferences pane.** *(Tied to the in-flight branch.)* Three
-   new `[ml.scheduler]` settings have no UI; Reset Trailer
-   Settings, AutoFill, Manage ML Models live in scattered menu
-   locations. A unified Preferences dialog organised by section
-   (View / Markup / Forms / ML / Behaviour) is timely.
+8. **Preferences pane.** Three new `[ml.scheduler]` settings landed
+   in PR #24 but have no UI; Reset Trailer Settings, AutoFill,
+   Manage ML Models live in scattered menu locations. A unified
+   Preferences dialog organised by section (View / Markup / Forms /
+   ML / Behaviour) is timely.
 9. **First-time OCR download via the background pump.** Today
    `OcrController` no-ops when the model isn't ready. Routing
    download progress through `MlScheduler` would let auto-OCR
    transparently kick off the first download for new users.
-   (TODO comment exists in the branch source.)
+   (TODO comment exists in `OcrController`.)
 10. **Linux `PowerSource` implementation.** Today returns
     `Unknown`, so speculative ML runs at full tilt on a Linux
     laptop on battery. Read `/sys/class/power_supply/*/online`.
@@ -190,13 +217,13 @@ not the *scope* or *timing*.
 - **Intel Mac binary.** Either an ML-disabled-everywhere mode OR a
   third-party ONNX x86_64 bundle — both sanctioned by project
   policy. Low priority.
-- **Remaining Phase 6 format / colour work.** OCR-in-place is now
-  done in flight; remaining: **HEIC, OpenEXR, RAW** read support;
+- **Remaining Phase 6 format / colour work.** OCR-in-place landed
+  in PR #24; remaining: **HEIC, OpenEXR, RAW** read support;
   **lcms2** colour management (Assign Profile, Soft Proof);
   **OCR-embed-on-PDF-export**; **alt text generation**. The
   `MlScheduler` foundation makes anything inference-shaped
   (notably alt text) substantially cheaper to ship — the natural
-  next candidates after the in-flight branch.
+  next candidates now that the foundation is in place.
 - **`MlScheduler` per-priority eviction policies + concurrent
   workers.** Today single-worker, pre-cancels on submit but doesn't
   impose per-priority CPU/memory caps. As feature count grows ("I
@@ -211,16 +238,10 @@ not the *scope* or *timing*.
   outside `DocumentView`'s lifetime. The contract is implicit and a
   recycled-allocator-address bug class is one missed subscription
   away.
-- **Architecture conventions doc** (e.g. `docs/architecture.md` or
-  an expanded AGENTS.md "Conventions"). The in-flight branch
-  establishes three durable patterns — three-tier persistence,
-  MlScheduler-as-canonical-ML-runner, `documentAboutToBeRemoved`
-  for raw-pointer-keyed caches — that future contributors will
-  re-discover the hard way without a written recipe.
 - **Refactor: split `MainWindow` into `MainWindow` +
-  `DocumentSessionCoordinator`.** The branch concentrated +696
-  lines in `onCurrentDocumentChanged` and friends. Not blocking
-  but the gravity is getting strong.
+  `DocumentSessionCoordinator`.** PR #24 concentrated +696 lines
+  in `onCurrentDocumentChanged` and friends. Not blocking but the
+  gravity is getting strong.
 - **Phase 7 stretch.** 3D viewing (USD, Collada, OBJ, STL); scanner
   support (SANE / WIA / ImageCaptureCore); camera import
   (libgphoto2); photo location / map view; local search index +
@@ -230,13 +251,13 @@ not the *scope* or *timing*.
   (worth bumping up — Trailer's strings are already `tr(…)`-wrapped,
   and OCR now exposes multi-language selection in the dialog);
   user-facing documentation site.
-- **Path to 1.0 — closer than it looked.** The in-flight branch
-  pushes Trailer through most of the "open it, do one thing, move
-  on" feature mandate. The remaining bar from PHILOSOPHY.md is now
-  primarily a *stability* test: on-disk format thrash needs to
-  settle, the UX-defaults debate needs to quiet down for a minor
-  cycle or two. 1.0 is not a calendar event but it is no longer a
-  scope question — it's a quality question.
+- **Path to 1.0 — closer than it looked.** PR #24 pushed Trailer
+  through most of the "open it, do one thing, move on" feature
+  mandate. The remaining bar from PHILOSOPHY.md is now primarily a
+  *stability* test: on-disk format thrash needs to settle, the
+  UX-defaults debate needs to quiet down for a minor cycle or two.
+  1.0 is not a calendar event but it is no longer a scope
+  question — it's a quality question.
 
 ## Won't have
 
@@ -270,9 +291,9 @@ Explicitly off the table so they stop eating planning oxygen.
 
 ## Risks
 
-- **Raw `IDocument*` keys outside `DocumentView` lifetime.** The
-  in-flight branch's `OcrController` + Remove-Background-candidate
-  cache hold raw pointers safely because they subscribe to a new
+- **Raw `IDocument*` keys outside `DocumentView` lifetime.** PR
+  #24's `OcrController` + Remove-Background-candidate cache hold
+  raw pointers safely because they subscribe to a new
   `documentAboutToBeRemoved` signal. The contract is *implicit* —
   any future code path that destroys a document outside
   `DocumentView::onTabCloseRequested` will silently keep stale
@@ -305,21 +326,24 @@ Explicitly off the table so they stop eating planning oxygen.
   workflows like "I want SAM ready *while* OCR runs" will start
   to feel slow. **Mitigation:** tracked under *Later*; not yet
   user-visible.
-- **Implicit contracts compound.** The in-flight branch
-  introduces several quiet conventions: the `QPointer<…>`
-  worker-write-back pattern in `OcrController`; the per-priority
-  setting names under `[ml.scheduler]`; the
-  `Sidebar::Mode` ↔ `RecentFiles::SidebarMode` synchronization
-  via `static_assert`. These work but are easy to break with
-  innocent refactors. **Mitigation:** the conventions doc under
-  *Later* is the right home; write it before the second
-  consumer of each pattern lands.
-- **Multi-workstream coordination via commit subjects only.** The
-  in-flight branch coordinated 9 workstreams across 4 waves with
-  no tracking doc; the structure exists only in commit messages.
-  This worked once; it scales badly. **Mitigation:** when the
-  next multi-stream branch is on the horizon, open a tracking
-  document (or issue) before the first commit.
+- **Implicit contracts compound.** PR #24 introduced several quiet
+  conventions: the `QPointer<…>` worker-write-back pattern in
+  `OcrController`; the per-priority setting names under
+  `[ml.scheduler]`; the `Sidebar::Mode` ↔
+  `RecentFiles::SidebarMode` synchronization via `static_assert`.
+  These work but are easy to break with innocent refactors.
+  **Mitigation:** CONVENTIONS.md (added in PR #26) is the right
+  home; extend it as new patterns crystallise. The risk is now
+  about *drift between CONVENTIONS.md and the code*, not about
+  the conventions being uncodified.
+- **Multi-workstream coordination via commit subjects only.** PR
+  #24 coordinated 9 workstreams across 4 waves with no tracking
+  doc; the structure existed only in commit messages. This worked
+  once; it scales badly, and the resulting ROADMAP staleness
+  (this very reframe) is one of the second-order costs.
+  **Mitigation:** when the next multi-stream branch is on the
+  horizon, open a tracking document (or issue) before the first
+  commit, and update ROADMAP at merge time, not before.
 - **CHANGELOG discipline drift.** New convention as of the
   release-tooling pass — `[Unreleased]` is updated as features
   land. **Mitigation:** `scripts/release-notes.sh v$PREV..HEAD`
