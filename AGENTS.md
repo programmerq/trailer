@@ -73,8 +73,20 @@ PdfWidgets PrintSupport`, qpdf 11+, a C++20 compiler. `qtpdf` is a
 separate module in many Qt distributions — install it explicitly if
 `find_package(Qt6 COMPONENTS Pdf)` fails (see README).
 
-The build treats warnings as errors (`-Werror` / `/WX`). CI will fail on
-any new warning; fix them at the source rather than disabling the flag.
+CI builds with `-Werror` **off** by default — Qt / libstdc++ / qpdf
+system-header noise (false-positive `-Wnull-dereference`,
+`POINTERHOLDER_TRANSITION`, etc.) makes strict `-Werror` unworkable
+in CI. Trailer's own source is kept clean by review; the
+`claude/ci-harden-dev-phase` branch is converting the strict
+`-Werror` job into an advisory non-blocking comment. To opt into the
+strict build locally:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRAILER_WERROR=ON
+```
+
+Run this when chasing a regression or before landing a refactor that
+touches a lot of templated code.
 
 **Windows native.** `scripts/install-windows-deps.ps1` then
 `scripts/build-windows-native.ps1` — full path documented in
