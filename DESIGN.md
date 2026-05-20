@@ -327,28 +327,29 @@ specialised case).
 
 ### 4.1 Read support
 
-| Category | Format | Notes |
-|---|---|---|
-| Vector / page | PDF | First-class. Includes form fields, embedded fonts, annotations |
-| Raster — common | PNG, JPEG, GIF (still and animated), BMP, TIFF, WebP | First-class |
-| Raster — Apple-popular | HEIC / HEIF | Requires libheif; gate if unavailable |
-| Raster — wide gamut | OpenEXR, HDR (Radiance) | Tone-map for display; preserve on export |
-| Raster — RAW | CR2, DNG, NEF, ARW, ORF, RAF, etc. | Read-only via LibRaw; export to TIFF/PNG |
-| Raster — legacy | ICO, ICNS, PPM, PGM, PBM, TGA, SGI, XBM, PICT, PNTG | Best-effort; may be read-only |
-| Vector | SVG | Render to raster for editing; preserve on save-as-SVG when no edits applied |
-| Vector | Adobe Illustrator (AI) | Only when PDF content is embedded (the common case) |
-| 3D scene | USD, USDA, USDC | Stretch goal (Phase 7) |
-| 3D scene | Collada (.dae) | Stretch goal (Phase 7) |
-| 3D mesh | OBJ, STL | Stretch goal (Phase 7) |
+| Category | Format | Status | Notes |
+|---|---|---|---|
+| Vector / page | PDF | Shipped | First-class. Includes form fields, embedded fonts, annotations |
+| Raster — common | PNG, JPEG, GIF (still and animated), BMP, TIFF, WebP | Shipped | First-class; in the file-open filter |
+| Raster — Apple-popular | HEIC / HEIF | Shipped | Loaded via the platform's HEIC plugin; in the file-open filter |
+| Raster — legacy | ICO, ICNS, PPM, PGM, PBM, TGA, SGI, XBM, PICT, PNTG | Partial | Loadable via `QImageReader` when the user picks "All files (\*)"; not in the documented open filter. Best-effort, may be read-only |
+| Raster — wide gamut | OpenEXR, HDR (Radiance) | Planned (Phase 6) | Not in the open filter today. Tone-map for display; preserve on export |
+| Raster — RAW | CR2, DNG, NEF, ARW, ORF, RAF, etc. | Planned (Phase 6) | Not implemented. Intended path: read-only via LibRaw; export to TIFF/PNG |
+| Vector | SVG | Planned | Render to raster for editing; preserve on save-as-SVG when no edits applied |
+| Vector | Adobe Illustrator (AI) | Planned | Only when PDF content is embedded (the common case) |
+| 3D scene | USD, USDA, USDC | Stretch (Phase 7) | |
+| 3D scene | Collada (.dae) | Stretch (Phase 7) | |
+| 3D mesh | OBJ, STL | Stretch (Phase 7) | |
 
 ### 4.2 Write / export support
 
-| Format | Notes |
-|---|---|
-| PDF | Including with annotations, optionally flattened, optionally encrypted |
-| PNG, JPEG, JPEG-2000, TIFF, WebP, BMP, GIF | Quality / compression options exposed where applicable |
-| HEIC | When libheif present and licensed appropriately for the target platform |
-| OpenEXR | Preserve high-dynamic-range data |
+| Format | Status | Notes |
+|---|---|---|
+| PDF | Shipped | Including with annotations, optionally flattened, optionally encrypted |
+| PNG, JPEG, TIFF, BMP, WebP | Shipped | In the Export As dialog (`MainWindow::onExportAs`) |
+| JPEG-2000 | Planned | Not in the Export As dialog today |
+| HEIC | Planned (Phase 6) | When libheif is present and licensed for the target platform; export path not implemented yet |
+| OpenEXR | Planned (Phase 6) | Preserve high-dynamic-range data; not implemented yet |
 
 ### 4.3 Explicitly out of scope
 
@@ -369,8 +370,11 @@ specialised case).
 - **Tabs:** Standard tabbed-document support. Drag a tab off to detach it into
   its own window. Drag a window onto another's tab strip to merge.
 - **Multi-document window:** Selecting "Open" with multiple files, or dragging
-  multiple files onto an existing window, adds them to the sidebar of that
-  window. Useful for batch operations.
+  multiple files onto an existing window, opens each file as a tab in a
+  single window (image batches in particular share one window so the user
+  can flip through them via the tab strip). A planned follow-up is a
+  sidebar "document list" mode that replaces the tab strip for batch
+  navigation — see `TODO.md` *Window / document model*.
 
 ### 5.2 Layout regions
 
@@ -388,9 +392,14 @@ specialised case).
 └──────────┴────────────────────────────────┘
 ```
 
-- Sidebar is collapsible.
-- Sidebar mode is selectable: **Thumbnails / Contact Sheet / Table of Contents
-  / Bookmarks / Highlights & Notes / Annotations**.
+- Sidebar is collapsible — **Hidden** is the default.
+- Sidebar mode is selectable: **Hidden / Thumbnails / Search Results /
+  Table of Contents / Highlights & Notes**. Earlier drafts of this doc
+  named a *Contact Sheet*, *Bookmarks*, and standalone *Annotations*
+  mode; the shipped set consolidated those (Table of Contents reads
+  `QPdfBookmarkModel`; Highlights & Notes filters annotation types that
+  carry text). See `TODO.md` item #16 in the 2026-04-30 HITL pass for
+  the rationale.
 - A second toolbar — the **Markup toolbar** — appears beneath the title bar
   when toggled (default shortcut `Ctrl/⌘+Shift+A`).
 
