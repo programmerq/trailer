@@ -446,8 +446,9 @@ Acceptance criteria.**
 
 #### 6.1.2 View modes
 
-- **What:** Single Page, Two Pages, Continuous Scroll. Thumbnails sidebar,
-  Contact Sheet (grid of all pages).
+- **What:** Single Page, Two Pages, Continuous Scroll. Thumbnails sidebar
+  is shipped. Contact Sheet (grid of all pages) is **Planned** — not in
+  the shipped sidebar modes (§5.2).
 - **UI:** `View` menu and toolbar buttons.
 - **Notes:** Continuous Scroll must virtualise — only render pages within and
   near the viewport.
@@ -485,10 +486,13 @@ Acceptance criteria.**
 
 #### 6.1.7 Full-screen / presentation
 
+- **Status:** **Planned** — not implemented on `main` today. No
+  `Enter Full Screen` or `Slideshow` action is wired in
+  `src/ui/MainWindow.cpp`; no `F11` handler exists.
 - **What:** Distraction-free full-screen mode and a slideshow mode for PDFs.
-- **UI:** `View > Enter Full Screen` (`Ctrl/⌘+Ctrl+F` on Mac convention,
-  `F11` on Windows/Linux). `View > Slideshow` for PDF-as-presentation with
-  on-screen controls.
+- **UI (intended):** `View > Enter Full Screen` (`Ctrl/⌘+Ctrl+F` on Mac
+  convention, `F11` on Windows/Linux). `View > Slideshow` for
+  PDF-as-presentation with on-screen controls.
 
 #### 6.1.8 HDR display
 
@@ -534,7 +538,8 @@ Acceptance criteria.**
 
 - **What:** Convert a scanned PDF into a searchable PDF by running OCR and
   embedding an invisible text layer aligned with the rendered glyphs.
-- **UI:** `File > Export…` with an "Embed text (OCR)" checkbox.
+- **UI:** `Tools > Export As…` with an "Embed text (OCR)" checkbox
+  (checkbox itself is Planned — not in the shipped dialog).
 - **Notes:** Tesseract again. Preserve the visual fidelity of the original;
   the text layer is selectable but invisible.
 - **Acceptance:** A 50-page scanned PDF becomes searchable; text-selection
@@ -631,7 +636,7 @@ Acceptance criteria.**
 #### 6.3.7 Quartz-equivalent filters
 
 - **What:** Apply colour or processing filters during export.
-- **UI:** `File > Export…` exposes a "Filter" dropdown with built-ins:
+- **UI:** `Tools > Export As…` exposes a "Filter" dropdown with built-ins:
   Black & White, Greyscale, Sepia, Reduce File Size, Lighten, Blue Tone, Grey
   Tone, Custom… (loads a user-supplied LUT).
 - **Notes:** Implemented as a filter pipeline. Users can author and load
@@ -669,8 +674,10 @@ Acceptance criteria.**
 - **Capture methods:**
   - **Trackpad:** Sign with finger or stylus on a precision trackpad. Pressure
     sensitivity where supported.
-  - **Camera:** Sign on white paper, hold up to webcam; OpenCV-based capture
-    extracts the signature with transparency.
+  - **Camera (Planned):** Sign on white paper, hold up to webcam;
+    OpenCV-based capture extracts the signature with transparency.
+    Not implemented on `main` today — `SignatureCaptureDialog` ships
+    only Draw and Import tabs.
   - **Tablet / stylus:** Any HID stylus device (Wacom, Surface Pen, XP-Pen,
     Huion). `QTabletEvent`.
   - **Image import:** Drop in a PNG/JPEG of a signature; auto-extract dark
@@ -773,7 +780,7 @@ Acceptance criteria.**
 #### 6.5.8 Convert image file types
 
 - **What:** Re-save in another format.
-- **UI:** `File > Export…` exposes the Format dropdown. Default list shows the
+- **UI:** `Tools > Export As…` exposes the Format dropdown. Default list shows the
   big eight (HEIC, JPEG, JPEG-2000, OpenEXR, PDF, PNG, TIFF, WebP); hold
   `Option/Alt` to expose specialised / older formats.
 - **Per-format options:**
@@ -943,7 +950,8 @@ Acceptance criteria.**
 #### 6.11.4 Password-protect a PDF
 
 - **What:** Encrypt a PDF with passwords.
-- **UI:** `File > Export…` → Permissions button. Two layers:
+- **UI:** `File > Export as Password-Protected PDF…` (a dedicated menu
+  entry, not the general Export As dialog). Two layers:
   1. **Open password** — required to open the document.
   2. **Owner password** — required to bypass per-feature restrictions.
 - **Granular permissions** (each a checkbox):
@@ -960,7 +968,8 @@ Acceptance criteria.**
 
 - **What:** Re-encode a PDF to be smaller, typically by recompressing
   embedded images.
-- **UI:** `File > Export…` → "Reduce File Size" filter. Detail options:
+- **UI:** `File > Reduce File Size…` (a dedicated menu entry, not a
+  filter on the general Export As dialog). Detail options:
   - Create Linearised PDF (fast web view).
   - Optimise images for screen (downsample to display DPI).
   - Re-encode images as JPEG (with quality slider).
@@ -1015,12 +1024,23 @@ A single settings window with the following panes:
 Cross-platform table; use `Ctrl` on Windows/Linux and `⌘` on macOS unless
 noted otherwise.
 
+> **Drift warning.** This table is the design intent. Several rows
+> have drifted from the live wiring in `src/ui/MainWindow.cpp` — in
+> particular, *Actual size* and *Fit* use `Ctrl+1` / `Ctrl+0` rather
+> than the `Ctrl+Alt+0` / `Ctrl+Alt+9` shown below, and
+> *Next/previous page* are bound to `PageUp/PageDown` rather than
+> `Alt+↑/↓`. A full audit-and-update of this table against
+> `MainWindow.cpp` is open follow-up work. Until then, the live
+> bindings in `MainWindow.cpp` are the source of truth. Rows marked
+> *(unbound)* are listed here as intended bindings that haven't been
+> wired yet.
+
 | Action | Shortcut |
 |---|---|
 | Open | `Ctrl/⌘+O` |
 | Save | `Ctrl/⌘+S` |
 | Save As | `Ctrl/⌘+Shift+S` |
-| Export | `Ctrl/⌘+Shift+E` |
+| Export | `Ctrl/⌘+Shift+E` *(unbound — Export As is `Tools > Export As…`, no shortcut)* |
 | Close window | `Ctrl/⌘+W` |
 | Quit | `Ctrl+Q` (Linux/Win) / `⌘Q` (Mac) |
 | Print | `Ctrl/⌘+P` |
@@ -1032,17 +1052,17 @@ noted otherwise.
 | Show / hide markup toolbar | `Ctrl/⌘+Shift+A` |
 | Show / hide inspector | `Ctrl/⌘+I` |
 | Show / hide sidebar | `Ctrl/⌘+Shift+D` |
-| Adjust size | `Ctrl/⌘+Alt/Option+I` |
-| Adjust colour | `Ctrl/⌘+Alt/Option+C` |
-| Remove background | `Ctrl/⌘+Shift+K` |
+| Adjust size | `Ctrl/⌘+Alt/Option+I` *(unbound)* |
+| Adjust colour | `Ctrl/⌘+Alt/Option+C` *(unbound)* |
+| Remove background | `Ctrl/⌘+Shift+K` *(unbound)* |
 | Magnifier | `` ` `` (backtick) |
-| Full screen | `F11` (Win/Linux) / `Ctrl+⌘+F` (Mac) |
+| Full screen | `F11` (Win/Linux) / `Ctrl+⌘+F` (Mac) *(unbound — feature not implemented, see §6.1.7)* |
 | Next tab / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
-| Next page / previous page | `Alt/Option+↓` / `Alt/Option+↑` |
+| Next page / previous page | `Alt/Option+↓` / `Alt/Option+↑` *(drifted — live bindings are `PageDown` / `PageUp`)* |
 | Next document in window / previous | `Alt/Option+PageDown` / `Alt/Option+PageUp` |
 | Zoom in / out | `Ctrl/⌘+Alt/Option++` / `Ctrl/⌘+Alt/Option+-` |
-| Actual size | `Ctrl/⌘+Alt/Option+0` |
-| Fit | `Ctrl/⌘+Alt/Option+9` |
+| Actual size | `Ctrl/⌘+Alt/Option+0` *(drifted — live binding is `Ctrl+1`)* |
+| Fit | `Ctrl/⌘+Alt/Option+9` *(drifted — live binding is `Ctrl+0` for fit-page, `Ctrl+2` for fit-width)* |
 
 All shortcuts are reassignable in Settings → Shortcuts.
 
