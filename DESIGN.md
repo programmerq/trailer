@@ -1403,26 +1403,36 @@ phase status markers below summarise it inline.
 
 ## 13. Open questions for the implementing agent
 
-The following should be resolved early in Phase 0 and the resolutions should
-update this document.
+Originally a Phase-0 to-resolve list. The first three are resolved
+in code; questions 4–6 remain open against unbuilt subsystems.
 
-1. **Qt 6 with C++ vs. PySide6.** Pick one and commit. (Recommendation: C++
-   for performance; PySide6 if the team is small and time-constrained.)
-2. **Poppler vs. MuPDF for PDF rendering.** Both work. Poppler is GPL/LGPL;
-   MuPDF is AGPL/commercial. Licence implications drive the choice.
-3. **Background-removal model.** Bundle vs. on-demand download. Bundling
-   costs ~50–200 MB on disk; downloading requires explicit consent on first
-   use. The latter aligns better with our local-first principle.
-4. **Map tile provider.** OpenStreetMap public tiles have a usage policy that
-   may not suit a desktop app shipping at scale. Alternatives: bundle an
-   offline tile pack (large), or self-host a tile server (operational
-   burden), or punt and just open a URL in the browser.
-5. **3D viewer.** Building this in-app vs. embedding an existing viewer.
-   USD's reference Hydra renderer is an option; a simpler scenegraph using
-   Open3D may suffice.
-6. **Stylus / pressure on Linux.** `QTabletEvent` works on X11 with
-   xf86-input-wacom; Wayland support is improving but uneven. Plan for
-   graceful degradation.
+1. ~~**Qt 6 with C++ vs. PySide6.**~~ **Resolved: Qt 6 with C++20.**
+   See `CMakeLists.txt`, `AGENTS.md` §*What Trailer is*, and the
+   `trailer_stack` memory note.
+2. ~~**Poppler vs. MuPDF for PDF rendering.**~~ **Resolved: neither
+   — Qt PDF.** `QPdfView` + `QPdfDocument` ship with Qt 6 and avoid
+   both the GPL/LGPL and AGPL/commercial licence surfaces. See
+   `src/document/PdfAdapter.cpp` and the README *Requirements*
+   section (Qt 6 *Pdf* + *PdfWidgets* + *PrintSupport* components).
+3. ~~**Background-removal model.**~~ **Resolved: on-demand download
+   with explicit consent.** ONNX Runtime + U²-Net via
+   `ModelDownloader`; user is shown the URL before download and the
+   first-use dialog records consent in `[first_use]`. See
+   `src/ml/BackgroundRemover.cpp` and PHILOSOPHY's *No telemetry*
+   bullet.
+4. **Map tile provider** — *Still open*. Photo location / map view
+   is Phase 7 stretch (§10) and not started; the question reactivates
+   when that phase begins. OpenStreetMap public-tile usage policy
+   conflict remains; the offline-tile-pack and "punt to browser"
+   alternatives are still both on the table.
+5. **3D viewer** — *Still open*. Also Phase 7 stretch. USD's
+   reference Hydra renderer vs. a simpler scenegraph (Open3D) hasn't
+   been chosen; defer the decision to whoever opens Phase 7.
+6. **Stylus / pressure on Linux** — *Still open in practice*.
+   `QTabletEvent` is wired in the signature canvas and works on X11
+   with xf86-input-wacom; Wayland support is uneven and untested at
+   scale. Graceful degradation is the plan; a structured pass to
+   verify on a Wayland desktop hasn't happened yet.
 
 ---
 
