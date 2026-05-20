@@ -1090,7 +1090,12 @@ void PdfDocument::deletePages(const std::vector<int> &pageIndices) {
     if (static_cast<int>(pageIndices.size()) >= before) {
         return; // refuse to delete every page
     }
-    m_editor->deletePages(pageIndices);
+    auto cmd = std::make_unique<DeletePagesCommand>(pageIndices);
+    if (!cmd->apply(*m_editor))
+        return;
+    m_pdfUndoStack.push_back(std::move(cmd));
+    m_pdfRedoStack.clear();
+    m_lastUndoSource = UndoSource::PdfCommand;
     if (reloadViewerFromEditor()) {
         m_dirty = true;
     }
@@ -1106,9 +1111,13 @@ bool PdfDocument::cropPage(int pageIndex, double leftPts, double topPts, double 
                            double bottomPts) {
     if (!m_valid || !m_editor || !m_editor->isValid())
         return false;
-    if (!m_editor->cropPage(pageIndex, leftPts, topPts, rightPts, bottomPts)) {
+    auto cmd = std::make_unique<CropPageCommand>(std::vector<int>{pageIndex}, leftPts, topPts,
+                                                 rightPts, bottomPts);
+    if (!cmd->apply(*m_editor))
         return false;
-    }
+    m_pdfUndoStack.push_back(std::move(cmd));
+    m_pdfRedoStack.clear();
+    m_lastUndoSource = UndoSource::PdfCommand;
     if (reloadViewerFromEditor()) {
         m_dirty = true;
         return true;
@@ -1121,14 +1130,15 @@ bool PdfDocument::cropPages(const std::vector<int> &pageIndices, double leftPts,
     if (!m_valid || !m_editor || !m_editor->isValid() || pageIndices.empty()) {
         return false;
     }
-    bool any = false;
-    for (int idx : pageIndices) {
-        if (m_editor->cropPage(idx, leftPts, topPts, rightPts, bottomPts)) {
-            any = true;
-        }
-    }
-    if (!any)
+    // A single user gesture cropping N pages produces ONE command so
+    // Ctrl-Z reverts the whole batch atomically (CropPageCommand
+    // captures each affected page's original /CropBox internally).
+    auto cmd = std::make_unique<CropPageCommand>(pageIndices, leftPts, topPts, rightPts, bottomPts);
+    if (!cmd->apply(*m_editor))
         return false;
+    m_pdfUndoStack.push_back(std::move(cmd));
+    m_pdfRedoStack.clear();
+    m_lastUndoSource = UndoSource::PdfCommand;
     if (reloadViewerFromEditor()) {
         m_dirty = true;
         return true;
@@ -1140,9 +1150,16 @@ bool PdfDocument::insertPagesFrom(const QString &sourcePath, int insertAtIndex) 
     if (!m_valid || !m_editor || !m_editor->isValid()) {
         return false;
     }
-    if (!m_editor->insertPagesFrom(sourcePath, insertAtIndex)) {
+    auto cmd = std::make_unique<InsertPagesCommand>(sourcePath, insertAtIndex);
+    if (!cmd->apply(*m_editor)) {
+        // apply() returns false on any failure (bad source, no pages,
+        // qpdf throw). Don't push a failed command — mirrors the
+        // rotatePage pattern.
         return false;
     }
+    m_pdfUndoStack.push_back(std::move(cmd));
+    m_pdfRedoStack.clear();
+    m_lastUndoSource = UndoSource::PdfCommand;
     if (reloadViewerFromEditor()) {
         m_dirty = true;
         return true;
@@ -1158,7 +1175,12 @@ void PdfDocument::movePage(int from, int to) {
     if (from < 0 || from >= total || to < 0 || to >= total || from == to) {
         return;
     }
-    m_editor->movePage(from, to);
+    auto cmd = std::make_unique<MovePageCommand>(from, to);
+    if (!cmd->apply(*m_editor))
+        return;
+    m_pdfUndoStack.push_back(std::move(cmd));
+    m_pdfRedoStack.clear();
+    m_lastUndoSource = UndoSource::PdfCommand;
     if (reloadViewerFromEditor()) {
         m_dirty = true;
     }

@@ -147,6 +147,86 @@ jobs:
           echo "After rename:"
           ls -la dist/
 
+      - name: Build release body
+        id: body
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.target.outputs.tag }}"
+          V="${TAG#v}"
+
+          BODY_FILE="$(mktemp)"
+
+          # Splice in the CHANGELOG section for this version, when one
+          # exists. extract-changelog.sh exits non-zero if there's no
+          # `## [V] - DATE` heading — we fall back to a "no changelog"
+          # marker so the maintainer notices and edits the release in
+          # the UI rather than shipping a silent boilerplate-only body.
+          if [ -f CHANGELOG.md ] && scripts/extract-changelog.sh "$V" > "$BODY_FILE.changelog" 2>/dev/null; then
+              printf '## What changed\n\n'                  >> "$BODY_FILE"
+              cat "$BODY_FILE.changelog"                    >> "$BODY_FILE"
+              printf '\n\nFull changelog: [CHANGELOG.md](https://github.com/${{ github.repository }}/blob/'"$TAG"'/CHANGELOG.md).\n\n---\n\n' >> "$BODY_FILE"
+          else
+              printf '<!-- No CHANGELOG.md section found for %s. Edit this release in the UI to add release notes. -->\n\n' "$V" >> "$BODY_FILE"
+              echo "::warning::No CHANGELOG.md section for $V found — release body will use the install-instructions boilerplate only. Run scripts/extract-changelog.sh $V locally to verify the section heading matches."
+          fi
+
+          # Install-instructions boilerplate. Kept here (not in
+          # CHANGELOG) because it's per-platform mechanics that don't
+          # change release-over-release; the CHANGELOG is what changes.
+          cat >> "$BODY_FILE" <<EOF
+          See PHILOSOPHY.md for what to expect from a 0.x build of
+          Trailer.
+
+          ### macOS (Apple Silicon): drag-to-Applications install
+
+          The \`.dmg\` mounts to a Finder window with \`Trailer.app\`
+          and an \`Applications\` shortcut — drag to install. The
+          bundled \`.app\` is **Apple Silicon only** for now (ONNX
+          Runtime, which powers Trailer's ML features, no longer
+          ships a macOS x86_64 / universal2 prebuilt). An Intel-Mac
+          binary — either an ML-disabled build or a third-party ONNX
+          bundle — is tracked as future work; until then Intel-Mac
+          users can build from source via \`scripts/build-macos.sh\`
+          on their host.
+
+          The \`.app\` ships **unsigned and un-notarized** by project
+          policy. First launch triggers Gatekeeper; bypass the
+          quarantine flag once after install:
+
+              xattr -dr com.apple.quarantine /Applications/Trailer.app
+
+          …or right-click the \`.app\` → Open → Open.
+
+          ### Windows
+
+          The \`.zip\` contains \`trailer.exe\` alongside every DLL it
+          transitively loads (Qt, qpdf, MinGW runtime) plus the Qt
+          Windows platform plugin. Extract anywhere and run.
+
+          The \`.msi\` is a signed-by-no-one installer that places
+          Trailer under \`Program Files\`. Smart Screen may warn on
+          first run; click "More info" → "Run anyway".
+
+          ### Linux
+
+          The \`.tar.gz\` contains a dynamically-linked binary that
+          expects system Qt 6 + qpdf 11+. On Ubuntu 24.04 (noble):
+
+              sudo apt install libqt6core6 libqt6gui6 libqt6widgets6 \\
+                               libqt6pdf6 libqt6pdfwidgets6 libqpdf28
+
+          A Debian \`.deb\` and a Fedora 40 \`.rpm\` are also
+          attached; install with \`sudo dpkg -i\` or \`sudo dnf
+          install ./<file>.rpm\`. AppImage / Flatpak distribution is
+          tracked as a separate effort.
+          EOF
+
+          echo "body-file=$BODY_FILE" >> "$GITHUB_OUTPUT"
+
+          echo "---- Release body preview ----"
+          cat "$BODY_FILE"
+          echo "---- end preview ----"
+
       - name: Create / update GitHub Release
         uses: softprops/action-gh-release@v3
         with:
@@ -160,42 +240,4 @@ jobs:
           prerelease: false
           # Glob the versioned filenames written by the rename step.
           files: dist/trailer-*
-          body: |
-            See PHILOSOPHY.md for what to expect from a 0.x build of
-            Trailer.
-
-            ### macOS (Apple Silicon): drag-to-Applications install
-
-            The `.dmg` mounts to a Finder window with `Trailer.app`
-            and an `Applications` shortcut — drag to install. The
-            bundled `.app` is **Apple Silicon only** (ONNX Runtime,
-            which powers Trailer's ML features, no longer ships a
-            macOS x86_64 / universal2 prebuilt; Intel-Mac users can
-            build from source via `scripts/build-macos.sh` on their
-            host).
-
-            For 0.1.x the `.app` is intentionally unsigned and
-            un-notarized, so first launch triggers Gatekeeper. Bypass
-            the quarantine flag once after install:
-
-                xattr -dr com.apple.quarantine /Applications/Trailer.app
-
-            or right-click the `.app` → Open → Open. Notarization is
-            tracked as a follow-up.
-
-            ### Windows
-
-            The `.zip` contains `trailer.exe` alongside every DLL it
-            transitively loads (Qt, qpdf, MinGW runtime) plus the Qt
-            Windows platform plugin. Extract anywhere and run.
-
-            ### Linux
-
-            The `.tar.gz` contains a dynamically-linked binary that
-            expects system Qt 6 + qpdf 11+. On Ubuntu 24.04 (noble):
-
-                sudo apt install libqt6core6 libqt6gui6 libqt6widgets6 \
-                                 libqt6pdf6 libqt6pdfwidgets6 libqpdf28
-
-            Distro packaging (.deb / AppImage / Flatpak) is a separate
-            effort.
+          body_path: ${{ steps.body.outputs.body-file }}

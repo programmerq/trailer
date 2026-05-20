@@ -1,12 +1,20 @@
 # Trailer
 
 Cross-platform PDF and image workbench. See [DESIGN.md](DESIGN.md) for the
-full specification.
+full specification, [PHILOSOPHY.md](PHILOSOPHY.md) for the hard
+constraints, and [AGENTS.md](AGENTS.md) for the current phase / sprint
+state.
 
-This repository is at **Phase 0 — Foundations**: a runnable skeleton with
-window/tab/sidebar shell, settings and recent-files persistence, a command-
-line open pipeline, and a stub document adapter. PDF/image rendering starts
-in Phase 1.
+Trailer reads PDFs and the common image formats, supports markup,
+signatures, form filling, redaction, page operations (rotate / delete /
+move / crop / insert), and on-device ML features (background removal,
+Smart Lasso / Instant Alpha, OCR). It is local-first by construction:
+no accounts, no telemetry, no cloud sync. See `PHILOSOPHY.md` for the
+full list of non-negotiables.
+
+Releases are tagged `v0.x.0`; see [CHANGELOG.md](CHANGELOG.md) for
+what shipped when, [ROADMAP.md](ROADMAP.md) for what's coming, and
+[RELEASING.md](RELEASING.md) for the maintainer release runbook.
 
 ## Requirements
 
@@ -233,14 +241,23 @@ UAT is slow. Instead they are gated on a `release-candidate` label:
 
 The macOS DMG contains an Apple Silicon (arm64) self-contained
 `Trailer.app` (Qt frameworks bundled via `macdeployqt`; qpdf
-statically linked from a source build inside CI). Intel-Mac support
-is deferred — ONNX Runtime, which powers Trailer's ML features, no
-longer publishes macOS x86_64 / universal2 prebuilts upstream, so a
-universal binary isn't viable while ML features are link-time deps.
-Intel-Mac users can build from source via `scripts/build-macos.sh`
-on their host. For 0.1.x the `.app` ships **unsigned** — the
-release body documents the one-time Gatekeeper quarantine bypass
-users need to run.
+statically linked from a source build inside CI). An Intel-Mac
+binary is tracked as future work — ONNX Runtime no longer
+publishes a macOS x86_64 / universal2 prebuilt upstream, so the
+choices are either an ML-disabled build that ships everywhere or a
+third-party ONNX x86_64 bundle; either is acceptable when someone
+picks it up. Intel-Mac users can build from source via
+`scripts/build-macos.sh` on their host until then.
+
+The bundled `.app` ships **unsigned and un-notarized** by project
+policy — Trailer is not enrolled in the Apple Developer Program.
+The release body documents the one-time Gatekeeper quarantine
+bypass users need to run on first launch (`xattr -dr
+com.apple.quarantine /Applications/Trailer.app`). An ed25519-signed
+auto-update channel (Sparkle 2 is the leading candidate) is
+tracked separately in [ROADMAP.md](ROADMAP.md) — those signatures
+protect the update channel itself and don't require Apple
+enrollment.
 
 ### Recovering from a missing prior build
 

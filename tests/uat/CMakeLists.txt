@@ -65,3 +65,6 @@ trailer_add_uat_test(test_uat_instant_alpha_and_smart_lasso
     test_uat_instant_alpha_and_smart_lasso.cpp)
 
 trailer_add_uat_test(test_uat_recognize_text test_uat_recognize_text.cpp)
+
+trailer_add_uat_test(test_uat_pdf_pages test_uat_pdf_pages.cpp)
+target_link_libraries(test_uat_pdf_pages PRIVATE Qt6::Pdf Qt6::PdfWidgets)

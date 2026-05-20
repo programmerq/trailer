@@ -15,10 +15,17 @@
 #include <QImage>
 #include <QPageSize>
 #include <QPainter>
+#include <QDir>
+#include <QPdfDocument>
+#include <QPdfSelection>
 #include <QPdfWriter>
 #include <QRectF>
 #include <QTemporaryDir>
+#include <QTemporaryFile>
 #include <QtTest/QtTest>
+
+#include <array>
+#include <optional>
 
 using namespace trailer;
 
@@ -168,6 +175,15 @@ class TestPdfEditor : public QObject {
     void annotationRectangleEmitsAppearanceStream();
     void annotationEllipseAndLineAndInkEmitAppearanceStreams();
     void rotatePageCommandIsReversible();
+    void deletePagesCommandIsReversible();
+    void deletePagesCommandRejectsDeletingEveryPage();
+    void deletePagesCommandIsIdempotentAcrossApplyRevertApply();
+    void movePageCommandIsReversible();
+    void movePageCommandRejectsSameIndex();
+    void insertPagesCommandIsReversible();
+    void insertPagesCommandFailureDoesNotMutate();
+    void cropPageCommandIsReversibleAndBatched();
+    void cropPageCommandRestoresAbsentCropBox();
     void saveWithPasswordGatesLoad();
     void saveWithPasswordEmptyOwnerUsesUserPassword();
     void unlockRecoversLoadedButLockedEditor();
@@ -750,6 +766,291 @@ void TestPdfEditor::rotatePageCommandIsReversible() {
     QCOMPARE(readRotation(), 90);
 
     Q_UNUSED(dst);
+}
+
+// DeletePagesCommand: apply removes the named pages; revert restores
+// them at their original positions; re-apply lands on the same final
+// page count as a single apply.
+void TestPdfEditor::deletePagesCommandIsReversible() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 4);
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+    QCOMPARE(editor.pageCount(), 4);
+
+    DeletePagesCommand cmd({1, 2});
+    QVERIFY(cmd.apply(editor));
+    QCOMPARE(editor.pageCount(), 2);
+
+    QVERIFY(cmd.revert(editor));
+    QCOMPARE(editor.pageCount(), 4);
+
+    QVERIFY(cmd.apply(editor));
+    QCOMPARE(editor.pageCount(), 2);
+
+    QCOMPARE(cmd.description(), QStringLiteral("Delete Pages"));
+}
+
+// Deleting the only page must be refused — a zero-page PDF is
+// unsavable in practice and the PdfDocument layer relies on the
+// command surfacing the failure via a false apply().
+void TestPdfEditor::deletePagesCommandRejectsDeletingEveryPage() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 2);
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    DeletePagesCommand cmd({0, 1});
+    QVERIFY2(!cmd.apply(editor),
+             "Deleting every page must fail so the doc never reaches zero pages");
+    QCOMPARE(editor.pageCount(), 2);
+}
+
+// Edge case for the capture-handles strategy: ensure that capture
+// only happens on the first apply, so a second apply (post-revert)
+// re-uses the SAME handles and produces the same end state.
+void TestPdfEditor::deletePagesCommandIsIdempotentAcrossApplyRevertApply() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 3);
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    DeletePagesCommand cmd({0});
+    QVERIFY(cmd.apply(editor));
+    QCOMPARE(editor.pageCount(), 2);
+    QVERIFY(cmd.revert(editor));
+    QCOMPARE(editor.pageCount(), 3);
+    QVERIFY(cmd.apply(editor));
+    QCOMPARE(editor.pageCount(), 2);
+    QVERIFY(cmd.revert(editor));
+    QCOMPARE(editor.pageCount(), 3);
+
+    // Save to disk after the round-trip and confirm the file
+    // still has 3 pages — guards against the captured handles
+    // becoming dangling references that qpdf serialises as garbage.
+    const QString dst = dir.filePath("dst.pdf");
+    QVERIFY(editor.save(dst));
+    PdfEditor round;
+    QVERIFY(round.load(dst));
+    QCOMPARE(round.pageCount(), 3);
+}
+
+// MovePageCommand: apply runs move(from, to); revert is move(to, from)
+// — the inverse re-creates the original ordering because every other
+// page shifts by exactly one slot in the opposite direction.
+void TestPdfEditor::movePageCommandIsReversible() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 4);
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+    QCOMPARE(editor.pageCount(), 4);
+
+    // Page-order fingerprint via extracted text. writeSamplePdf
+    // stamps "Page N" centered on each page, so the per-position
+    // text after a save + QPdfDocument reload is a stable
+    // identifier that survives qpdf's object-number reshuffling on
+    // removePage/addPage. (Object IDs change across move; the
+    // *content* doesn't — and content is what undo/redo has to
+    // restore.)
+    auto pageTexts = [&editor]() -> QStringList {
+        ScopedTempFile tmp(QStringLiteral("move_check_XXXXXX.pdf"));
+        if (!tmp.isValid())
+            return {};
+        if (!editor.save(tmp.path()))
+            return {};
+        QPdfDocument doc;
+        if (doc.load(tmp.path()) != QPdfDocument::Error::None)
+            return {};
+        QStringList texts;
+        for (int i = 0; i < doc.pageCount(); ++i) {
+            texts << doc.getAllText(i).text().simplified();
+        }
+        return texts;
+    };
+
+    const QStringList textsBefore = pageTexts();
+    QCOMPARE(textsBefore.size(), 4);
+    QCOMPARE(textsBefore.at(0), QStringLiteral("Page 1"));
+    QCOMPARE(textsBefore.at(3), QStringLiteral("Page 4"));
+
+    MovePageCommand cmd(0, 3);
+    QVERIFY(cmd.apply(editor));
+    QCOMPARE(editor.pageCount(), 4);
+    const QStringList textsAfterApply = pageTexts();
+    // The page from index 0 ("Page 1") has moved AND the result is
+    // genuinely a reorder (not a no-op). PdfEditor::movePage's
+    // bounded-`to` semantic ("insert before original index `to`")
+    // puts the moved page at index `to-1` when from<to — so the
+    // landing position for move(0, 3) is 2, not 3. This test pins
+    // that observed semantic; the only relevant invariant for the
+    // command is that revert undoes whatever apply did.
+    QCOMPARE(textsAfterApply.at(2), QStringLiteral("Page 1"));
+    QVERIFY(textsAfterApply != textsBefore);
+
+    QVERIFY(cmd.revert(editor));
+    QCOMPARE(editor.pageCount(), 4);
+    const QStringList textsAfterRevert = pageTexts();
+    // Full revert: the ordered text list matches the pre-apply
+    // ordered list — the move's inverse really did restore the
+    // original ordering, not just the page count.
+    QCOMPARE(textsAfterRevert, textsBefore);
+
+    QCOMPARE(cmd.description(), QStringLiteral("Move Page"));
+}
+
+// from == to is a degenerate move — apply() must return false so the
+// caller doesn't push an empty command onto the undo stack.
+void TestPdfEditor::movePageCommandRejectsSameIndex() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 2);
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    MovePageCommand cmd(1, 1);
+    QVERIFY2(!cmd.apply(editor),
+             "Move from N to N must fail — there's nothing to do and nothing to revert");
+}
+
+// InsertPagesCommand: apply inserts N pages from a source file at
+// the given index; revert removes that contiguous range. The
+// command snapshots count + clamped index on the first apply so
+// revert removes exactly what apply added.
+void TestPdfEditor::insertPagesCommandIsReversible() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString base = writeSamplePdf(dir.filePath("base.pdf"), 2);
+    const QString extra = writeSamplePdf(dir.filePath("extra.pdf"), 3);
+
+    PdfEditor editor;
+    QVERIFY(editor.load(base));
+    QCOMPARE(editor.pageCount(), 2);
+
+    InsertPagesCommand cmd(extra, 1);
+    QVERIFY(cmd.apply(editor));
+    QCOMPARE(editor.pageCount(), 5);
+
+    QVERIFY(cmd.revert(editor));
+    QCOMPARE(editor.pageCount(), 2);
+
+    QVERIFY(cmd.apply(editor));
+    QCOMPARE(editor.pageCount(), 5);
+
+    QCOMPARE(cmd.description(), QStringLiteral("Insert Pages"));
+}
+
+// apply() must return false on bad source paths so PdfDocument
+// doesn't push a no-op command onto the undo stack.
+void TestPdfEditor::insertPagesCommandFailureDoesNotMutate() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString base = writeSamplePdf(dir.filePath("base.pdf"), 2);
+
+    PdfEditor editor;
+    QVERIFY(editor.load(base));
+
+    InsertPagesCommand cmd(dir.filePath("does-not-exist.pdf"), 0);
+    QVERIFY2(!cmd.apply(editor),
+             "apply() must fail when the source can't be opened");
+    QCOMPARE(editor.pageCount(), 2);
+}
+
+// CropPageCommand: a single command can crop N pages atomically;
+// revert restores each affected page's prior /CropBox in lockstep.
+// Test against the qpdf-level /CropBox dictionary because that's
+// what external readers honour.
+void TestPdfEditor::cropPageCommandIsReversibleAndBatched() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 3);
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    auto readCropBox = [&editor](int page) -> std::optional<std::array<double, 4>> {
+        // Save, reopen via raw qpdf, read /CropBox.
+        // ScopedTempFile (not QTemporaryFile) because the latter holds
+        // the OS handle past close() on Windows, blocking qpdf's
+        // subsequent fopen("wb"). See src/util/TempPath.h — same
+        // reason rotatePageCommandIsReversible uses it above.
+        ScopedTempFile tmp(QStringLiteral("crop_check_XXXXXX.pdf"));
+        if (!tmp.isValid())
+            return std::nullopt;
+        const QString p = tmp.path();
+        if (!editor.save(p))
+            return std::nullopt;
+        QPDF re;
+        re.processFile(p.toLocal8Bit().constData());
+        auto pages = QPDFPageDocumentHelper(re).getAllPages();
+        if (page < 0 || page >= static_cast<int>(pages.size()))
+            return std::nullopt;
+        QPDFObjectHandle box = pages[static_cast<size_t>(page)].getObjectHandle().getKey("/CropBox");
+        if (!box.isArray() || box.getArrayNItems() < 4)
+            return std::nullopt;
+        return std::array<double, 4>{
+            box.getArrayItem(0).getNumericValue(),
+            box.getArrayItem(1).getNumericValue(),
+            box.getArrayItem(2).getNumericValue(),
+            box.getArrayItem(3).getNumericValue(),
+        };
+    };
+
+    // Pre-condition: no /CropBox on any page (QPdfWriter doesn't set
+    // one), so readCropBox returns nullopt.
+    QVERIFY(!readCropBox(0).has_value());
+    QVERIFY(!readCropBox(1).has_value());
+    QVERIFY(!readCropBox(2).has_value());
+
+    CropPageCommand cmd({0, 1, 2}, 10.0, 10.0, 10.0, 10.0);
+    QVERIFY(cmd.apply(editor));
+    // After apply each page should have a /CropBox.
+    QVERIFY(readCropBox(0).has_value());
+    QVERIFY(readCropBox(1).has_value());
+    QVERIFY(readCropBox(2).has_value());
+
+    QVERIFY(cmd.revert(editor));
+    // After revert no page should have a /CropBox.
+    QVERIFY(!readCropBox(0).has_value());
+    QVERIFY(!readCropBox(1).has_value());
+    QVERIFY(!readCropBox(2).has_value());
+
+    QVERIFY(cmd.apply(editor));
+    QVERIFY(readCropBox(0).has_value());
+
+    QCOMPARE(cmd.description(), QStringLiteral("Crop Pages"));
+}
+
+// Specific edge case: a page that already has a /CropBox (because the
+// source PDF set one) should be restored to that exact array on
+// revert, not to "no /CropBox key".
+void TestPdfEditor::cropPageCommandRestoresAbsentCropBox() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeSamplePdf(dir.filePath("src.pdf"), 1);
+
+    PdfEditor editor;
+    QVERIFY(editor.load(src));
+
+    // Single-page command labelled in singular.
+    CropPageCommand cmd({0}, 5.0, 5.0, 5.0, 5.0);
+    QCOMPARE(cmd.description(), QStringLiteral("Crop Page"));
+
+    QVERIFY(cmd.apply(editor));
+    QVERIFY(cmd.revert(editor));
+
+    // Pre-apply had no /CropBox; revert must have removed the one
+    // apply added rather than leaving an empty array behind.
+    auto pages = QPDFPageDocumentHelper(*editor.qpdf()).getAllPages();
+    QVERIFY(!pages.front().getObjectHandle().hasKey("/CropBox"));
 }
 
 // ---------- Encryption (Phase 5) ------------------------------------------

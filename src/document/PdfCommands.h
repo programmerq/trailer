@@ -1,7 +1,9 @@
 #pragma once
 
+#include <qpdf/QPDFObjectHandle.hh>
+
 #include <QString>
-#include <memory>
+#include <optional>
 #include <vector>
 
 namespace trailer {
@@ -47,6 +49,111 @@ class RotatePageCommand : public PdfCommand {
   private:
     int m_pageIndex;
     int m_degrees;
+};
+
+// Delete one or more pages by their indices in the page tree at
+// apply() time. On the first apply(), the command captures a
+// QPDFObjectHandle to each page so revert() can re-insert them at
+// their original positions. qpdf retains the underlying page
+// dictionary as long as something holds a handle to it, so the
+// captured handles remain valid across the remove + re-insert
+// cycle for the lifetime of the in-memory session.
+//
+// Re-applying after a revert re-removes by index. Indices captured
+// at construction are stable across the apply→revert→apply round
+// because revert restores the original positions.
+class DeletePagesCommand : public PdfCommand {
+  public:
+    explicit DeletePagesCommand(std::vector<int> pageIndices);
+    bool apply(PdfEditor &editor) override;
+    bool revert(PdfEditor &editor) override;
+    QString description() const override;
+
+  private:
+    // Sorted unique indices to delete, in ascending order.
+    std::vector<int> m_indices;
+    // Captured page handles, in the same order as m_indices. Empty
+    // until the first apply().
+    std::vector<QPDFObjectHandle> m_captured;
+};
+
+// Move the page at `from` to position `to`. The revert is NOT
+// `movePage(to, from)` — PdfEditor::movePage's bounded-`to` semantic
+// (insert before what was originally at `to`, never append at end)
+// is asymmetric, so the inverse can't be expressed as another
+// bounded movePage call. Instead, the command captures the moved
+// page's QPDFObjectHandle on the first apply; revert removes it from
+// wherever it currently sits and re-inserts it at the original
+// `from` (appending at end when `from` was the last slot). Same
+// handle-capture trick DeletePagesCommand uses for the same reason.
+class MovePageCommand : public PdfCommand {
+  public:
+    MovePageCommand(int from, int to);
+    bool apply(PdfEditor &editor) override;
+    bool revert(PdfEditor &editor) override;
+    QString description() const override;
+
+  private:
+    int m_from;
+    int m_to;
+    // Filled in on the first apply().
+    std::optional<QPDFObjectHandle> m_movedPage;
+};
+
+// Insert all pages from `sourcePath` at `insertAtIndex`. The
+// command captures the actual insert position and the number of
+// pages inserted on the first successful apply(), so revert
+// removes that exact contiguous range. Re-applying re-runs the
+// insertion (the source file path is retained).
+//
+// apply() returns false if the source can't be opened, has no
+// pages, or qpdf raises any other error during insertion. In that
+// case the editor is not mutated and the PdfDocument layer must
+// not push the command to the undo stack.
+class InsertPagesCommand : public PdfCommand {
+  public:
+    InsertPagesCommand(QString sourcePath, int insertAtIndex);
+    bool apply(PdfEditor &editor) override;
+    bool revert(PdfEditor &editor) override;
+    QString description() const override;
+
+  private:
+    QString m_sourcePath;
+    int m_insertAtIndex;
+    // Filled in on the first apply(). Used by both revert (to know
+    // which contiguous range to drop) and a subsequent re-apply (to
+    // produce the same insertion range even if the underlying file
+    // changes between apply()s, which is a corner case we tolerate
+    // by remembering the count from the original apply).
+    int m_clampedIndex = -1;
+    int m_insertedCount = 0;
+};
+
+// Crop one or more pages by setting their /CropBox to the rectangle
+// derived from the supplied margins. The command captures each
+// affected page's original /CropBox (which may be absent — in PDF
+// the default is /MediaBox) so revert() restores the prior state
+// exactly. A single user gesture that crops N pages produces ONE
+// CropPageCommand instance with N captured entries, so undo reverts
+// the whole batch atomically.
+class CropPageCommand : public PdfCommand {
+  public:
+    CropPageCommand(std::vector<int> pageIndices, double leftPts, double topPts, double rightPts,
+                    double bottomPts);
+    bool apply(PdfEditor &editor) override;
+    bool revert(PdfEditor &editor) override;
+    QString description() const override;
+
+  private:
+    std::vector<int> m_indices;
+    double m_left;
+    double m_top;
+    double m_right;
+    double m_bottom;
+    // Per-page original /CropBox, indexed parallel to m_indices.
+    // std::nullopt means the page did not have a /CropBox at all
+    // — revert removes the key rather than restoring an empty array.
+    std::vector<std::optional<QPDFObjectHandle>> m_originalCropBoxes;
 };
 
 } // namespace trailer

@@ -112,14 +112,19 @@ Sidebar `Pages` tab.
 - The deleted pages are gone from the reopened PDF.
 - Remaining pages are in the correct order.
 
-### UAT-PDF-014 — Delete is undoable (Known gap)
+### UAT-PDF-014 — Delete is undoable
 
 **Preconditions:** PDF open, a page just deleted (dirty, not yet saved).
 **Steps:**
 1. `Edit > Undo` (`Cmd+Z` / `Ctrl+Z`).
-**Expected (future):** the deletion reverses; the page reappears.
-**Current:** PDF edits are not on the undo stack; `Undo` is either
-disabled or only reverses annotation edits. Cross-ref TODO.md.
+**Expected:**
+- The deletion reverses; the deleted page reappears at its original
+  position. Multi-select deletions reappear together.
+- A subsequent `Edit > Redo` re-applies the deletion.
+- The dirty mark on the tab tracks the undo/redo state.
+
+Pinned by harness slot `uat_pdf_014_deleteUndoRedo` in
+`tests/uat/test_uat_pdf_pages.cpp`.
 
 ---
 
@@ -155,6 +160,19 @@ disabled or only reverses annotation edits. Cross-ref TODO.md.
 2. Reopen.
 **Expected:**
 - The order matches what the Sidebar showed before save.
+
+### UAT-PDF-024 — Move is undoable
+
+**Preconditions:** PDF open, a page just moved (dirty, not yet saved).
+**Steps:**
+1. `Edit > Undo` (`Cmd+Z` / `Ctrl+Z`).
+**Expected:**
+- The moved page returns to its original position; every other page
+  shifts back by the inverse delta.
+- A subsequent `Edit > Redo` re-applies the move.
+
+Pinned by harness slot `uat_pdf_024_moveUndoRedo` in
+`tests/uat/test_uat_pdf_pages.cpp`.
 
 ---
 
@@ -217,6 +235,23 @@ PDF on disk.
 **Expected:**
 - Page count matches what the Sidebar showed before save.
 - Inserted pages are in the correct positions and render correctly.
+
+### UAT-PDF-035 — Insert is undoable
+
+**Preconditions:** PDF open, a multi-page insertion just performed
+(dirty, not yet saved).
+**Steps:**
+1. `Edit > Undo` (`Cmd+Z` / `Ctrl+Z`).
+**Expected:**
+- All N inserted pages disappear in a single undo step; the document
+  returns to its pre-insertion page count and content.
+- A subsequent `Edit > Redo` re-runs the insertion from the same
+  source file.
+- A failed insertion (bad path, non-PDF, cancel) does NOT land on the
+  undo stack — it shows an error and the document is unchanged.
+
+Pinned by harness slot `uat_pdf_035_insertUndoRedo` in
+`tests/uat/test_uat_pdf_pages.cpp`.
 
 ---
 
@@ -312,6 +347,22 @@ visible alongside.
 2. Reopen.
 **Expected:**
 - Cropped pages reopen with the same visible area.
+
+### UAT-PDF-056 — Crop is undoable, in one step for N pages
+
+**Preconditions:** PDF open, a crop just applied to N pages (dirty,
+not yet saved). An `Apply to all pages` batch crop counts here.
+**Steps:**
+1. `Edit > Undo` (`Cmd+Z` / `Ctrl+Z`).
+**Expected:**
+- Every cropped page returns to its prior /CropBox (or to the
+  /MediaBox default if no /CropBox existed beforehand) in a single
+  undo step. One Ctrl-Z undoes the whole batch.
+- A subsequent `Edit > Redo` re-applies the same crop to all N
+  pages.
+
+Pinned by harness slot `uat_pdf_056_cropUndoRedo` in
+`tests/uat/test_uat_pdf_pages.cpp`.
 
 ---
 
@@ -412,12 +463,27 @@ behaviour is deliberate.
 
 ## Known gaps
 
-### UAT-PDF-090 — PDF undo/redo for page edits (Known gap)
+### UAT-PDF-090 — PDF undo/redo for page edits
 
-See TODO.md. PDF edit actions (rotate, delete, move, crop, insert) are
-not on the undo stack. Annotation edits are. Selecting `Edit > Undo`
-while only page-edits are pending either does nothing or only reverses
-annotations.
+All five page-level qpdf mutations (rotate, delete, move, crop,
+insert) land on the PdfCommand undo stack, parallel to the
+AnnotationStore log. `Edit > Undo` prefers the most-recently-touched
+stack via an `m_lastUndoSource` heuristic (see
+`src/document/PdfAdapter.cpp`).
+
+Individual case coverage:
+- Rotate — UAT-PDF-005 (the 360° spin) implicitly exercises this;
+  see `test_pdf_editor.cpp::rotatePageCommandIsReversible` for the
+  command-level pin.
+- Delete — UAT-PDF-014.
+- Move — UAT-PDF-024.
+- Insert — UAT-PDF-035.
+- Crop — UAT-PDF-056.
+
+Known follow-up: merging the AnnotationStore log and the PdfCommand
+stack into one chronological undo list so multi-action undo always
+pops the most recent thing the user did, regardless of which
+subsystem produced it. See TODO.md.
 
 ### UAT-PDF-091 — PDF export to image (Known gap)
 
