@@ -18,13 +18,15 @@ Each file covers a coherent slice of the product:
 | [04-image-editing.md](04-image-editing.md) | Image edits: rotate, flip, resize, crop, colour adjust, export, animation playback |
 | [05-annotations.md](05-annotations.md) | Markup toolbar, all annotation types, Inspector, inline editing, text markup, undo/redo, PDF round-trip |
 | [06-cross-cutting.md](06-cross-cutting.md) | Theme, screenshot tool, keyboard shortcut matrix, multi-window, process lifecycle |
+| [07-security.md](07-security.md) | Password-protected PDFs, permissions, redaction (Phase 5) |
 
 ## Test case format
 
 Each case has a stable ID of the form `UAT-<area>-<NNN>` (area matches the
 file prefix — `FND` foundations, `VWR` viewer, `PDF` pdf pages, `IMG`
-images, `ANN` annotations). IDs are append-only; when a case is removed,
-mark it obsolete rather than reusing the number.
+images, `ANN` annotations, `XCT` cross-cutting, `SEC` security). IDs are
+append-only; when a case is removed, mark it obsolete rather than reusing
+the number.
 
 ```
 ### UAT-XXX-NNN — Short title
