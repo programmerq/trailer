@@ -4,6 +4,7 @@
 #include "IFormatAdapter.h"
 #include "PdfCommands.h"
 #include "PdfEditor.h"
+#include "SelectableTextStore.h"
 #include "annotation/AnnotationStore.h"
 #include "util/TempPath.h"
 
@@ -24,6 +25,7 @@ namespace trailer {
 
 class AnnotationOverlay;
 class FormOverlay;
+class SelectableTextLayer;
 
 class PdfDocument : public IDocument {
   public:
@@ -34,12 +36,21 @@ class PdfDocument : public IDocument {
     QString filePath() const override;
     QWidget *createView(QWidget *parent) override;
 
+    DocumentType documentType() const override { return DocumentType::Pdf; }
+
     bool supportsZoom() const override { return true; }
     void zoomIn() override;
     void zoomOut() override;
     void zoomActual() override;
     void zoomFitWidth() override;
     void zoomFitPage() override;
+    QSize contentSizeHint() const override;
+
+    ZoomMode zoomMode() const override;
+    double zoomFactor() const override;
+    void applyZoomState(ZoomMode mode, double factor) override;
+    int scrollY() const override;
+    void applyScrollY(int y) override;
 
     bool supportsViewModes() const override { return true; }
     ViewMode viewMode() const override { return m_viewMode; }
@@ -142,6 +153,9 @@ class PdfDocument : public IDocument {
     bool saveCommitOnUi(const SaveContext &ctx);
 
     AnnotationStore *annotations() override { return &m_annotations; }
+    SelectableTextStore *selectableText() override { return &m_selectableText; }
+    bool supportsSelectableText() const override { return m_valid; }
+    QImage renderPageForOcr(int pageIndex) const override;
     void setAnnotationTool(AnnotationTool tool) override;
     void setAnnotationStyle(const AnnotationStyle &style) override;
     void setPendingAnnotationText(const QString &text) override;
@@ -159,6 +173,11 @@ class PdfDocument : public IDocument {
   private:
     void applyViewMode();
     void applyZoomFactor(double factor);
+    // Fit the freshly-opened doc into the viewport on first show.
+    // Caps at 100% — small documents stay at actual size rather than
+    // being upscaled. One-shot: subsequent currentDocumentChanged
+    // events leave the user's zoom alone.
+    void applyInitialFitZoom(QPdfView *view);
     bool reloadViewerFromEditor();
     // Called from the search model's rowsInserted signal on the GUI
     // thread once the asynchronous search produces at least one hit.
@@ -186,14 +205,20 @@ class PdfDocument : public IDocument {
     std::unique_ptr<ScopedTempFile> m_previewFile;
     QPointer<QPdfView> m_view;
     QPointer<AnnotationOverlay> m_overlay;
+    QPointer<SelectableTextLayer> m_textLayer;
     QPointer<FormOverlay> m_formOverlay;
     AnnotationStore m_annotations;
+    SelectableTextStore m_selectableText;
     ViewMode m_viewMode = ViewMode::Continuous;
     int m_currentResult = -1;
     bool m_valid = false;
     bool m_dirty = false;
     bool m_annotationsModified = false;
     bool m_needsPassword = false;
+    // One-shot guard for applyInitialFitZoom — fit-to-content is
+    // applied the first time the viewport has a real size, then never
+    // again so the user's zoom choices stick.
+    bool m_initialZoomApplied = false;
 
     // qpdf-mutation undo stacks. Each PdfCommand owns its own
     // forward+revert state (e.g. a RotatePageCommand keeps the

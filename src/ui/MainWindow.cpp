@@ -21,7 +21,10 @@
 #include "annotation/AnnotationStore.h"
 #include "app/Application.h"
 #include "filters/ImageFilter.h"
+#include "ml/BackgroundCandidateScorer.h"
 #include "ml/BackgroundRemover.h"
+#include "ml/CancellationToken.h"
+#include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "ml/OcrEngine.h"
 #include "platform/Share.h"
@@ -29,8 +32,12 @@
 #include "ml/SamSession.h"
 #include "recent/RecentFiles.h"
 #include "ModelManagerDialog.h"
+#include "OcrController.h"
 #include "OcrResultsDialog.h"
-#include "SamSegmentDialog.h"
+#include "SamController.h"
+#include "SelectableTextLayer.h"
+#include "document/ImageAdapter.h"
+#include "document/SelectableTextStore.h"
 
 #include <QAction>
 #include <QDragEnterEvent>
@@ -76,10 +83,8 @@
 #include <QtConcurrent>
 #include <QVBoxLayout>
 #include <QWidget>
-#include "document/ImageAdapter.h"
 
 namespace trailer {
-
 
 MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent), m_app(app) {
     setAcceptDrops(true);
@@ -140,6 +145,8 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     connect(m_searchBar, &SearchBar::dismissed, this, &MainWindow::hideSearchBar);
 
     m_documentView = new DocumentView(center);
+    m_ocrController = new OcrController(m_app, this);
+    m_samController = new SamController(m_app, this);
     connect(m_documentView, &DocumentView::currentDocumentChanged, this,
             &MainWindow::onCurrentDocumentChanged);
     // Window-per-file: when the last document in this window is
@@ -148,6 +155,29 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // closing the final tab discards the now-empty window, which is
     // also what the user expects.
     connect(m_documentView, &DocumentView::allTabsClosed, this, &MainWindow::close);
+    // Flush per-document state keyed by raw IDocument pointer before
+    // the document is destroyed. The MlScheduler owns the cancellation
+    // tokens for in-flight work; cancelling here keeps the worker
+    // from dereferencing a stale doc in its result-application step.
+    connect(m_documentView, &DocumentView::documentAboutToBeRemoved, this, [this](IDocument *doc) {
+        if (!doc)
+            return;
+        m_backgroundCandidateDocs.remove(doc);
+        auto it = m_pendingCandidateJobs.find(doc);
+        if (it != m_pendingCandidateJobs.end()) {
+            m_app->mlScheduler().cancel(it.value());
+            m_pendingCandidateJobs.erase(it);
+        }
+        m_autoEnabledFormDocs.remove(doc);
+        m_restoredViewStateDocs.remove(doc);
+        // Drop the SAM encoder cache + cancel in-flight tasks for this
+        // doc. Without this a closed document's address could be
+        // recycled by the allocator and a fresh document at the same
+        // address would inherit the stale cache.
+        if (m_samController) {
+            m_samController->purgeDocument(doc);
+        }
+    });
 
     m_animationBar = new AnimationBar(center);
     m_animationBar->hide();
@@ -273,6 +303,65 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     buildMenus();
     rebuildRecentMenu();
     onCurrentDocumentChanged(nullptr);
+
+    // Tiny permanent widget on the right edge of the status bar that
+    // shows whenever MlScheduler has a non-Idle task running. The
+    // refresh closure lives next to the widget so we don't pay the
+    // bookkeeping cost of a member slot. Connected via the
+    // scheduler's statsChanged() signal which is queued from the
+    // worker thread; the lambda runs on the GUI thread and is safe
+    // to touch QLabel state. No-op when the scheduler is idle.
+    m_mlIndicator = new QLabel(QStringLiteral("ML"), this);
+    m_mlIndicator->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
+    m_mlIndicator->setMargin(2);
+    m_mlIndicator->setVisible(false);
+    statusBar()->addPermanentWidget(m_mlIndicator);
+    auto refreshMlIndicator = [this]() {
+        const auto stats = m_app->mlScheduler().stats();
+        // Idle priority is reserved for "we don't care if this never
+        // runs" speculative work — the user doesn't need feedback for
+        // it, so leave the indicator hidden. Any priority above Idle
+        // shows up.
+        const bool show = stats.running > 0 && stats.runningPriority != MlPriority::Idle;
+        m_mlIndicator->setVisible(show);
+        if (show) {
+            m_mlIndicator->setToolTip(stats.runningLabel);
+        } else {
+            m_mlIndicator->setToolTip(QString());
+        }
+    };
+    connect(&m_app->mlScheduler(), &MlScheduler::statsChanged, this, refreshMlIndicator,
+            Qt::QueuedConnection);
+
+    // Large-doc OCR hint chip. Hidden by default; shown when the
+    // current document has more pages than the auto-OCR pump will
+    // handle (>50) and the visible page has no cached OCR results.
+    // The chip's link triggers a UserAction OCR for the visible
+    // page. PHILOSOPHY: no popup that says "no" — this is the
+    // affordance to *do* the thing, not the modal that says we
+    // didn't.
+    auto *hint = new QWidget(this);
+    auto *hintLayout = new QHBoxLayout(hint);
+    hintLayout->setContentsMargins(0, 0, 0, 0);
+    hintLayout->setSpacing(4);
+    auto *hintLabel = new QLabel(tr("Text isn't selectable here."), hint);
+    auto *hintLink = new QLabel(
+        tr("<a href=\"#recognize\">Recognize text on this page</a>"), hint);
+    hintLink->setTextFormat(Qt::RichText);
+    hintLink->setOpenExternalLinks(false);
+    connect(hintLink, &QLabel::linkActivated, this, [this](const QString &) {
+        auto *doc = m_documentView->currentDocument();
+        if (!doc)
+            return;
+        const int page = doc->currentPage();
+        m_ocrController->submitUserPages(doc, {page}, /*forceRerun=*/false);
+    });
+    hintLayout->addWidget(hintLabel);
+    hintLayout->addWidget(hintLink);
+    hint->setVisible(false);
+    statusBar()->addPermanentWidget(hint);
+    m_largeDocOcrHint = hint;
+    refreshMlIndicator();
 
     // Auto-save loop. Tick every 30 s; each tick saves any document
     // that is dirty AND has been saved at least once (filePath() is
@@ -497,16 +586,30 @@ void MainWindow::buildMainToolbar() {
     spacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     m_mainToolbar->addWidget(spacer);
 
-    // Search field is always visible in the toolbar now. The old
-    // floating SearchBar that toggled in/out of the central layout
-    // has been removed; m_searchBar is parented to the toolbar.
-    // We don't call show() — Qt propagates visibility from the
-    // QMainWindow at the next show event, and an explicit show()
-    // on a child of a still-hidden ancestor has no effect on the
-    // explicitly-hidden flag, so leaving it alone is correct.
+    // Search collapses to an icon button by default. The button sits
+    // on the right of the main toolbar; clicking it (or Ctrl+F)
+    // expands the SearchBar in place and hides the button. Esc /
+    // empty query restore the button. Keeping the bar reparented to
+    // the toolbar (rather than swapping widgets) preserves the
+    // signals and counter state wired up in the constructor.
+    m_searchButton = new QToolButton(m_mainToolbar);
+    m_searchButton->setIcon(
+        themedActionIcon(QStringLiteral(":/icons/actions/view-search.svg"), m_mainToolbar));
+    m_searchButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
+    m_searchButton->setToolTip(
+        tr("Search (%1)").arg(QKeySequence(QKeySequence::Find).toString(QKeySequence::NativeText)));
+    connect(m_searchButton, &QToolButton::clicked, this, &MainWindow::showSearchBar);
+    m_mainToolbar->addWidget(m_searchButton);
+
     m_searchBar->setParent(m_mainToolbar);
     m_searchBar->setMaximumWidth(360);
     m_mainToolbar->addWidget(m_searchBar);
+    // hide() after addWidget so the explicit-hidden flag is set
+    // against the just-reparented widget. QToolBar::addWidget wraps
+    // the bar in a QWidgetAction that drives visibility from its
+    // parent, so the hide() has to follow the addWidget call to
+    // win the race on first show.
+    m_searchBar->hide();
 }
 
 void MainWindow::buildEditMenu(QMenu *editMenu) {
@@ -537,7 +640,7 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
     m_selectAllAction = editMenu->addAction(tr("Select &All"));
     m_selectAllAction->setShortcut(QKeySequence::SelectAll);
     connect(m_selectAllAction, &QAction::triggered, this, [this]() {
-        if (auto* overlay = findChild<AnnotationOverlay*>()) {
+        if (auto *overlay = findChild<AnnotationOverlay *>()) {
             overlay->selectAll();
         }
     });
@@ -564,15 +667,19 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
 }
 
 void MainWindow::showSearchBar() {
-    // The search bar lives in the main toolbar and is always
-    // visible. Cmd-F just focuses the input field so the user can
-    // type immediately. The supportsSearch gate stays — for
+    // Expand the collapsed SearchBar inline in the main toolbar. The
+    // search button hides; the bar (parented at toolbar build time)
+    // unhides and takes focus. supportsSearch gate stays — for
     // documents that can't search, focusing the field would invite
     // the user to type into a no-op.
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsSearch()) {
         return;
     }
+    if (m_searchButton) {
+        m_searchButton->setVisible(false);
+    }
+    m_searchBar->setVisible(true);
     m_searchBar->focusInput();
     // Open the sidebar in Search Results mode so the user sees
     // pages-with-matches as they type. The polling timer pushes
@@ -584,14 +691,18 @@ void MainWindow::showSearchBar() {
 }
 
 void MainWindow::hideSearchBar() {
-    // "Hide" used to remove the floating search bar from the
-    // central column; with the toolbar embedding it's a soft
-    // dismiss that returns focus to the document and clears any
-    // active query so the highlighted matches go away.
+    // Collapse the bar back to the icon button. Clears any active
+    // query so the highlighted matches go away and the document gets
+    // focus back. Triggered by SearchBar::dismissed (Esc, X button)
+    // and by a document switch that doesn't support search.
     if (auto *doc = m_documentView->currentDocument()) {
         doc->clearSearch();
     }
     m_searchBar->setMatchCounter(0, 0);
+    m_searchBar->setVisible(false);
+    if (m_searchButton) {
+        m_searchButton->setVisible(true);
+    }
     m_documentView->setFocus();
 }
 
@@ -914,6 +1025,12 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     connect(m_adjustColourAction, &QAction::triggered, this, &MainWindow::onAdjustColour);
 
     m_removeBackgroundAction = toolsMenu->addAction(tr("Remove &Background"));
+    // The icon slot stays empty by default — only the
+    // BackgroundCandidateScorer's "this looks promising" hint flips it
+    // on (see updateRemoveBackgroundBadge / scheduleBackgroundCandidateScore).
+    // Leaving the QAction iconless means the menu entry stays visually
+    // quiet for documents where the heuristic decides there's nothing
+    // to surface.
     connect(m_removeBackgroundAction, &QAction::triggered, this, &MainWindow::onRemoveBackground);
 
     m_instantAlphaAction = toolsMenu->addAction(tr("&Instant Alpha…"));
@@ -1301,51 +1418,64 @@ void MainWindow::onRemoveBackground() {
     if (!requestModelDownload(req))
         return;
 
-    // Inference goes on a worker thread. u2netp on 320x320 is sub-
-    // second on a modern CPU but larger canvases / older hardware can
-    // hit a couple of seconds. The dialog is indeterminate; cancel
-    // suppresses the result-application step but the worker thread
-    // itself runs to completion.
-    auto *progress = new QProgressDialog(tr("Removing background…"), tr("Cancel"), 0, 0, this);
-    progress->setWindowModality(Qt::WindowModal);
-    progress->setMinimumDuration(0);
-    progress->setAutoClose(false);
-    progress->setAutoReset(false);
-
-    auto *watcher = new QFutureWatcher<QImage>(this);
-    connect(progress, &QProgressDialog::canceled, watcher, &QFutureWatcherBase::cancel);
-    connect(watcher, &QFutureWatcher<QImage>::finished, this,
-            [this, watcher, progress, doc, imgDoc, remover]() {
-                const bool wasCanceled = progress->wasCanceled();
-                progress->close();
-                progress->deleteLater();
-                QImage result;
-                if (!wasCanceled)
-                    result = watcher->result();
-                watcher->deleteLater();
-                if (wasCanceled)
-                    return;
-                if (result.isNull()) {
-                    flashError(tr("Remove Background failed — "
-                                  "model may be missing or corrupt; "
-                                  "try re-downloading from Manage "
-                                  "ML Models."));
-                    return;
-                }
-                if (!imgDoc->replaceImage(result)) {
-                    flashError(tr("Remove Background failed — "
-                                  "could not apply the result to the "
-                                  "document."));
-                    return;
-                }
-                m_sidebar->refreshThumbnails();
-                updateTitleForDocument(doc);
-            });
-
+    // Inference runs through MlScheduler at UserAction priority so:
+    //
+    //   - cancellation propagates when the document closes or the
+    //     window is destroyed (Application owns the scheduler — on
+    //     shutdown its destructor blocks until the worker drains, and
+    //     in-flight tokens flip via cancelAll() if a future caller
+    //     wires that into the close path);
+    //   - the wave-2 status-bar indicator shows "Removing background…"
+    //     while the work is in flight, replacing the modal
+    //     QProgressDialog the previous implementation used (the user
+    //     gets non-blocking feedback at the bottom-right of the window
+    //     instead of a centred modal that steals focus);
+    //   - the battery-policy reactor sees this is UserAction and lets
+    //     it run regardless of mlRunOnBattery — a no-op behaviourally
+    //     for this priority, but the right plumbing for consistency
+    //     with other features in this wave.
+    //
+    // The result-application step lands back on the GUI thread via
+    // QMetaObject::invokeMethod so we can safely touch ImageDocument
+    // and the sidebar. PHILOSOPHY: on null/failure we simply do not
+    // apply — no popup, no flashError. Transient inference failure is
+    // rare; the user can re-run from the menu, or open
+    // Tools → Manage ML Models…  to verify the cache (which is also
+    // what the disabled-entry tooltip points at when the
+    // "Never download" policy is the cause).
     const QImage source = imgDoc->image();
-    QFuture<QImage> future =
-        QtConcurrent::run([source, remover]() { return remover->remove(source); });
-    watcher->setFuture(future);
+    auto *self = this;
+    auto handle =
+        m_app->mlScheduler().submit(MlPriority::UserAction, tr("Removing background…"),
+                                    [self, source, doc, imgDoc, remover](CancellationToken &token) {
+                                        const QImage result = remover->remove(source, &token);
+                                        if (token.isCancelled() || result.isNull()) {
+                                            // Cancellation or transient failure: bail without
+                                            // touching the document. The status-bar indicator
+                                            // clears automatically when the scheduler reports
+                                            // idle.
+                                            return;
+                                        }
+                                        // Apply on the GUI thread. We snapshot the doc pointer
+                                        // and re-check it against the active document — if the
+                                        // user closed or switched away between submission and
+                                        // completion, drop the result so we don't mutate a
+                                        // different document underfoot.
+                                        QMetaObject::invokeMethod(
+                                            self,
+                                            [self, doc, imgDoc, result]() {
+                                                auto *current =
+                                                    self->m_documentView->currentDocument();
+                                                if (current != doc)
+                                                    return;
+                                                if (!imgDoc->replaceImage(result))
+                                                    return;
+                                                self->m_sidebar->refreshThumbnails();
+                                                self->updateTitleForDocument(doc);
+                                            },
+                                            Qt::QueuedConnection);
+                                    });
+    Q_UNUSED(handle);
 }
 
 // Pre-flights for MobileSAM (Instant Alpha / Smart Lasso) and PP-OCR
@@ -1389,6 +1519,29 @@ bool ensureSamModelsReady(MainWindow *parent, SamSession &session) {
                          });
     };
     return requestModelDownload(req);
+}
+
+// Tools-menu shortcut for Instant Alpha / Smart Lasso. The Workstream G
+// rework moved the segmentation interaction out of a modal dialog and
+// onto the document overlay. The menu entries stay so existing
+// keyboard shortcuts and the Tools menu surface still trigger the
+// feature; both reduce to "show the markup toolbar, activate the
+// right tool, run the encoder download dialog once if needed".
+void activateSamTool(MainWindow *parent, MarkupToolbar *toolbar, AnnotationTool tool) {
+    if (!parent || !toolbar)
+        return;
+    // Ensure the models are on disk before flipping the tool — the
+    // download progress dialog is reachable through the existing
+    // ModelDownloadRequest plumbing. PHILOSOPHY: this is the only
+    // popup in the SAM flow (one-time consent for a download); the
+    // rest of the interaction is inline.
+    SamSession session(&parent->app()->modelRegistry());
+    if (!ensureSamModelsReady(parent, session))
+        return;
+    // Show the markup toolbar so the user can see which tool is now
+    // active, then flip the radio.
+    toolbar->show();
+    toolbar->setActiveTool(tool);
 }
 
 bool ensureOcrModelsReady(MainWindow *parent, OcrEngine &engine) {
@@ -1435,128 +1588,59 @@ void MainWindow::onInstantAlpha() {
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsEditing())
         return;
-    auto *imgDoc = dynamic_cast<ImageDocument *>(doc);
-    if (!imgDoc)
+    if (!dynamic_cast<ImageDocument *>(doc))
         return;
-
-    SamSession session(&m_app->modelRegistry());
-    if (!ensureSamModelsReady(this, session))
-        return;
-
-    SamSegmentDialog dialog(SamSegmentDialog::Mode::InstantAlpha, imgDoc->image(), &session, this);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-
-    const QImage result = dialog.resultImage();
-    if (result.isNull()) {
-        flashError(tr("Instant Alpha failed — no selection was produced. "
-                      "Try adding more points."));
-        return;
-    }
-    if (!imgDoc->replaceImage(result)) {
-        flashError(tr("Instant Alpha failed — could not apply the selection "
-                      "to the current image."));
-        return;
-    }
-    m_sidebar->refreshThumbnails();
-    updateTitleForDocument(doc);
+    // Workstream G: the modal SamSegmentDialog is gone. The menu entry
+    // now just activates the InstantAlpha tool mode on the markup
+    // toolbar (showing the toolbar first if it was hidden), and the
+    // user paints on the document directly. The toolbar's tool radio
+    // is the source of truth.
+    activateSamTool(this, m_markupToolbar, AnnotationTool::InstantAlpha);
 }
 
 void MainWindow::onSmartLasso() {
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsEditing())
         return;
-    auto *imgDoc = dynamic_cast<ImageDocument *>(doc);
-    if (!imgDoc)
+    if (!dynamic_cast<ImageDocument *>(doc))
         return;
-
-    SamSession session(&m_app->modelRegistry());
-    if (!ensureSamModelsReady(this, session))
-        return;
-
-    SamSegmentDialog dialog(SamSegmentDialog::Mode::SmartLasso, imgDoc->image(), &session, this);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-
-    const QPolygon poly = dialog.resultPolygon();
-    if (poly.isEmpty()) {
-        flashError(tr("Smart Lasso failed — no object outline was produced."));
-        return;
-    }
-
-    // Phase 6C ships Smart Lasso as a crop-to-object: we take the
-    // polygon's bounding rectangle and let ImageDocument's existing
-    // undo-safe cropToRect do the work. A true polygon mask + feather
-    // flow is a later phase; the SAM segmentation already gives us
-    // the outline on screen for users to review.
-    const QRect bounds = poly.boundingRect().intersected(QRect(QPoint(), imgDoc->image().size()));
-    if (bounds.width() < 2 || bounds.height() < 2) {
-        flashError(tr("Smart Lasso failed — selection is too small to crop to."));
-        return;
-    }
-    if (!imgDoc->cropToRect(bounds.x(), bounds.y(), bounds.width(), bounds.height())) {
-        flashError(tr("Smart Lasso failed — could not crop to the selected "
-                      "object."));
-        return;
-    }
-    m_sidebar->refreshThumbnails();
-    updateTitleForDocument(doc);
+    activateSamTool(this, m_markupToolbar, AnnotationTool::SmartLasso);
 }
 
 void MainWindow::onRecognizeText() {
     auto *doc = m_documentView->currentDocument();
-    if (!doc)
-        return;
-    auto *imgDoc = dynamic_cast<ImageDocument *>(doc);
-    if (!imgDoc)
-        return;
-    const QImage source = imgDoc->image();
-    if (source.isNull())
+    if (!doc || !doc->supportsSelectableText())
         return;
 
-    // The engine has to live for the duration of the worker thread,
-    // so it goes on the heap held by a shared_ptr captured by the
-    // lambda. ensureOcrModelsReady is itself an async-with-progress
-    // flow — block here until models land or the user cancels that
-    // dialog, then kick off the actual inference job below.
-    auto engine = std::make_shared<OcrEngine>(&m_app->modelRegistry());
-    if (!ensureOcrModelsReady(this, *engine))
+    // Show the parameter-supply dialog. The dialog itself does not
+    // run OCR — results stream into the document's
+    // SelectableTextStore via OcrController, and the user reads them
+    // in-place via SelectableTextLayer.
+    // Language options: shipped manifest currently has only the
+    // Latin recognizer. We pass an empty list so the dialog hides
+    // the row; once the CJK recognizer is on the manifest, expand
+    // this list and the row appears automatically.
+    QStringList languageOptions;
+    RecognizeTextDialog dialog(doc->pageCount(), doc->currentPage(), doc->hasTextLayer(),
+                               languageOptions, this);
+    if (dialog.exec() != QDialog::Accepted)
+        return;
+    const std::vector<int> pages = dialog.resolvedPages();
+    if (pages.empty())
         return;
 
-    // Inference is the slow part — 1-5 s on a typical scan — so it
-    // runs on a worker thread. The progress dialog is indeterminate
-    // (we don't have stage-by-stage progress from OcrEngine yet);
-    // Cancel just stops us from opening the results dialog when the
-    // future completes — actual mid-inference cancellation is a
-    // follow-up.
-    auto *progress = new QProgressDialog(tr("Recognising text…"), tr("Cancel"), 0, 0, this);
-    progress->setWindowModality(Qt::WindowModal);
-    progress->setMinimumDuration(0);
-    progress->setAutoClose(false);
-    progress->setAutoReset(false);
+    // Ensure models are present. ensureOcrModelsReady runs an
+    // async-with-progress consent / download flow on the very first
+    // call; on subsequent calls (cache hit) it returns immediately.
+    // The engine instance here is short-lived — only used to gate
+    // the model-download step. The OcrController owns the long-lived
+    // engine used for actual inference.
+    OcrEngine gateEngine(&m_app->modelRegistry());
+    if (!ensureOcrModelsReady(this, gateEngine))
+        return;
 
-    auto *watcher = new QFutureWatcher<QVector<OcrEngine::TextBlock>>(this);
-    connect(progress, &QProgressDialog::canceled, watcher, &QFutureWatcherBase::cancel);
-    connect(watcher, &QFutureWatcher<QVector<OcrEngine::TextBlock>>::finished, this,
-            [this, watcher, progress, doc]() {
-                const bool wasCanceled = progress->wasCanceled();
-                progress->close();
-                progress->deleteLater();
-                QVector<OcrEngine::TextBlock> blocks;
-                if (!wasCanceled) {
-                    blocks = watcher->result();
-                }
-                watcher->deleteLater();
-                if (wasCanceled)
-                    return;
-                OcrResultsDialog dialog(
-                    doc->filePath().isEmpty() ? doc->displayName() : doc->filePath(), blocks, this);
-                dialog.exec();
-            });
-
-    QFuture<QVector<OcrEngine::TextBlock>> future =
-        QtConcurrent::run([source, engine]() { return engine->recognize(source); });
-    watcher->setFuture(future);
+    m_ocrController->submitUserPages(doc, pages, dialog.forceRerun());
+    flashStatus(tr("Recognizing text for %1 page(s)…").arg(pages.size()));
 }
 
 void MainWindow::onExportAs() {
@@ -2015,7 +2099,207 @@ void MainWindow::updateTitleForDocument(IDocument *doc) {
     }
 }
 
+void MainWindow::applyInitialWindowSize(IDocument *doc) {
+    if (m_initialSizingApplied)
+        return;
+    if (!doc)
+        return;
+    const QSize content = doc->contentSizeHint();
+    if (content.isEmpty())
+        return;
+    m_initialSizingApplied = true;
+
+    QScreen *scr = screen();
+    if (!scr) {
+        scr = QGuiApplication::primaryScreen();
+    }
+    if (!scr)
+        return;
+
+    const QRect avail = scr->availableGeometry();
+    if (avail.isEmpty())
+        return;
+
+    // 90%-of-screen ceiling so the window doesn't fill the display
+    // edge-to-edge. The user always sees some background to drag
+    // the window or click another app.
+    const QSize maxSize(static_cast<int>(avail.width() * 0.9),
+                        static_cast<int>(avail.height() * 0.9));
+    constexpr int kMinW = 1100;
+    constexpr int kMinH = 750;
+    const QSize minSize(kMinW, kMinH);
+
+    // Estimate chrome (everything around the document viewport):
+    // status bar, menu bar on non-mac, main / markup toolbars, plus
+    // window decorations. Use frameGeometry() vs the central widget
+    // size if the central widget already laid out; otherwise fall
+    // back to a fixed margin.
+    QSize chrome;
+    if (m_documentView && m_documentView->size().isValid() && m_documentView->width() > 0 &&
+        m_documentView->height() > 0) {
+        chrome = size() - m_documentView->size();
+    } else {
+        chrome = QSize(32, 120);
+    }
+    if (chrome.width() < 0)
+        chrome.setWidth(0);
+    if (chrome.height() < 0)
+        chrome.setHeight(0);
+
+    // Aim for the viewport to host the content at 100% — fit-to-
+    // content = actual size, which is the most readable default.
+    QSize wantViewport = content;
+    // Available viewport space within the screen ceiling.
+    const QSize maxViewport(std::max(1, maxSize.width() - chrome.width()),
+                            std::max(1, maxSize.height() - chrome.height()));
+
+    // If the doc doesn't fit at 100%, scale the viewport target down,
+    // but not below 75% of content. A scale lower than 0.75 means
+    // the doc is bigger than the screen can comfortably hold — use
+    // the screen ceiling and let fit-to-content pick whatever zoom
+    // it gives.
+    if (wantViewport.width() > maxViewport.width() ||
+        wantViewport.height() > maxViewport.height()) {
+        const double scaleW =
+            static_cast<double>(maxViewport.width()) / static_cast<double>(content.width());
+        const double scaleH =
+            static_cast<double>(maxViewport.height()) / static_cast<double>(content.height());
+        const double rawScale = std::min(scaleW, scaleH);
+        const double scale = std::max(0.75, std::min(1.0, rawScale));
+        wantViewport = QSize(static_cast<int>(content.width() * scale),
+                             static_cast<int>(content.height() * scale));
+    }
+
+    QSize windowTarget(wantViewport.width() + chrome.width(),
+                       wantViewport.height() + chrome.height());
+    windowTarget = windowTarget.expandedTo(minSize).boundedTo(maxSize);
+    resize(windowTarget);
+}
+
+void MainWindow::scheduleBackgroundCandidateScore(IDocument *doc) {
+    // Only meaningful for image documents — PDFs can't have background
+    // removed, so we never even consider badging the menu entry for
+    // them. We also bail early if there's no live menu entry yet (the
+    // function can be reached on synthetic doc-changes during startup).
+    auto *imgDoc = dynamic_cast<ImageDocument *>(doc);
+    if (!imgDoc || !m_removeBackgroundAction)
+        return;
+    // Idempotent: if we've already scored this doc pointer, skip. The
+    // verdict is keyed by raw pointer so closing and reopening the same
+    // file rescores — adapter pointers don't survive close().
+    if (m_backgroundCandidateDocs.contains(doc))
+        return;
+    // If a job is already in flight for this doc, don't queue a second
+    // one. The pending-jobs map is the source of truth.
+    if (m_pendingCandidateJobs.contains(doc))
+        return;
+
+    // Snapshot a thumbnail off the GUI thread before submitting. The
+    // scorer must NOT touch IDocument from the worker — adapters may
+    // mutate state in response to GUI events, and renderThumbnail
+    // creates Qt widgets along its hot path on some adapters. We do
+    // the render here on the GUI thread (cheap — image scaled down to
+    // 128 px on the short side) and hand a fully-detached QImage to
+    // the worker.
+    constexpr int kScoringThumb = 128;
+    const QImage thumb = imgDoc->renderThumbnail(0, QSize(kScoringThumb, kScoringThumb));
+    if (thumb.isNull()) {
+        // No thumbnail available — treat as "no badge" and remember it
+        // so we don't poll repeatedly on tab switches.
+        m_backgroundCandidateDocs.remove(doc);
+        return;
+    }
+
+    auto *self = this;
+    auto handle = m_app->mlScheduler().submit(
+        MlPriority::Prefetch, tr("Scoring image…"), [self, doc, thumb](CancellationToken &token) {
+            const bool recommend = BackgroundCandidateScorer::isRecommended(thumb, &token);
+            if (token.isCancelled())
+                return;
+            // Apply the verdict back on the GUI thread. The doc
+            // pointer is a raw observer that may dangle if the user
+            // closed the document while scoring; the lambda checks
+            // identity against the current document before touching
+            // any member state. Closing tabs cancels the pending
+            // jobs map up-front so this lambda body should not fire
+            // for a stale doc.
+            QMetaObject::invokeMethod(
+                self,
+                [self, doc, recommend]() {
+                    // Drop the in-flight entry first — even if the
+                    // doc was swapped out, the slot is no longer
+                    // pending.
+                    self->m_pendingCandidateJobs.remove(doc);
+                    if (recommend) {
+                        self->m_backgroundCandidateDocs.insert(doc);
+                    } else {
+                        self->m_backgroundCandidateDocs.remove(doc);
+                    }
+                    // Refresh the badge only when the verdict applies
+                    // to the document the user is currently looking at.
+                    if (self->m_documentView->currentDocument() == doc) {
+                        self->updateRemoveBackgroundBadge(doc);
+                    }
+                },
+                Qt::QueuedConnection);
+        });
+    m_pendingCandidateJobs.insert(doc, handle.id);
+}
+
+void MainWindow::updateRemoveBackgroundBadge(IDocument *doc) {
+    if (!m_removeBackgroundAction)
+        return;
+    const bool recommended = doc && m_backgroundCandidateDocs.contains(doc);
+    // QAction::toolTip() returns text() when no explicit tooltip has
+    // been set, so an "is it empty?" check would always be false.
+    // Compare against the policy-blocked tooltip string instead:
+    // applyMlPolicy() either sets that exact string (when the policy
+    // is blocking) or clears it with QString() (the default).
+    const QString policyTip = tr("This model is set to Never Download. "
+                                 "Open Tools → Manage ML Models… to allow it.");
+    const QString badgeTip = tr("Background removal works well for this kind of image.");
+    const bool policyBlocked = m_removeBackgroundAction->toolTip() == policyTip;
+    if (recommended) {
+        // Sparkle glyph signals "this image looks like a good
+        // candidate." We use the same themedActionIcon helper the rest
+        // of the menu uses so the badge follows the active palette
+        // (light vs dark theme).
+        m_removeBackgroundAction->setIcon(
+            themedActionIcon(QStringLiteral(":/icons/actions/badge-sparkle.svg"), this));
+        // The policy tooltip always wins — if the user has the model
+        // marked Never Download, "this image looks like a good
+        // candidate" is misleading next to a disabled menu entry.
+        if (!policyBlocked) {
+            m_removeBackgroundAction->setToolTip(badgeTip);
+        }
+    } else {
+        m_removeBackgroundAction->setIcon(QIcon());
+        // Only clear the tooltip if we'd previously set the positive
+        // hint. Don't stomp on a policy-driven tooltip.
+        if (m_removeBackgroundAction->toolTip() == badgeTip) {
+            m_removeBackgroundAction->setToolTip(QString());
+        }
+    }
+}
+
 void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
+    // One-shot fit-to-content window resize. Drives the first frame
+    // when the user opens a single file from cold start; later doc
+    // changes (tab switches, opening into the same window) leave
+    // the size alone so the user's adjustments stick.
+    applyInitialWindowSize(doc);
+
+    // Update the auto-OCR controller. It cancels in-flight
+    // submissions for the previous doc and starts following the
+    // new one. The visible-page enqueue is driven from the page-
+    // tracking timer below once the doc has settled.
+    if (m_ocrController) {
+        m_ocrController->setDocument(doc);
+        if (doc && doc->supportsSelectableText()) {
+            m_ocrController->onVisiblePageChanged(doc->currentPage());
+        }
+    }
+
     m_sidebar->setDocument(doc);
     m_animationBar->setDocument(doc);
     m_inspector->setDocument(doc);
@@ -2039,7 +2323,64 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
         if (auto *overlay = findChild<AnnotationOverlay *>()) {
             connect(overlay, &AnnotationOverlay::selectionChanged, this,
                     &MainWindow::onAnnotationSelectionChanged, Qt::UniqueConnection);
+            // Wire SAM plumbing into the overlay so the InstantAlpha /
+            // SmartLasso tool branches can fire decoder passes and
+            // commit results without going through a modal dialog. The
+            // raw IDocument pointer (IDocument is not a QObject) is
+            // re-checked against the active doc on every invocation;
+            // documentAboutToBeRemoved cancels pending SAM work before
+            // the doc is destroyed, so by the time the handlers fire
+            // the pointer is either live or the controller has already
+            // forgotten it.
+            auto *imgDoc = dynamic_cast<ImageDocument *>(doc);
+            overlay->setSamController(m_samController);
+            if (imgDoc) {
+                DocumentView *dvPtr = m_documentView;
+                IDocument *expectedDoc = doc;
+                overlay->setSamImageProvider([dvPtr, expectedDoc, imgDoc]() -> QImage {
+                    if (!dvPtr || dvPtr->currentDocument() != expectedDoc)
+                        return {};
+                    return imgDoc->image();
+                });
+                QPointer<MainWindow> mwPtr(this);
+                overlay->setInstantAlphaCommitHandler(
+                    [mwPtr, dvPtr, expectedDoc, imgDoc](const QImage &result) {
+                        if (!mwPtr || !dvPtr || dvPtr->currentDocument() != expectedDoc ||
+                            result.isNull())
+                            return;
+                        if (!imgDoc->replaceImage(result))
+                            return;
+                        mwPtr->m_sidebar->refreshThumbnails();
+                        mwPtr->updateTitleForDocument(expectedDoc);
+                    });
+                overlay->setSmartLassoCommitHandler(
+                    [mwPtr, dvPtr, expectedDoc, imgDoc](const QPolygon &poly) {
+                        if (!mwPtr || !dvPtr || dvPtr->currentDocument() != expectedDoc ||
+                            poly.isEmpty())
+                            return;
+                        const QRect bounds =
+                            poly.boundingRect().intersected(QRect(QPoint(), imgDoc->image().size()));
+                        if (bounds.width() < 2 || bounds.height() < 2)
+                            return;
+                        if (!imgDoc->cropToRect(bounds.x(), bounds.y(), bounds.width(),
+                                                bounds.height()))
+                            return;
+                        mwPtr->m_sidebar->refreshThumbnails();
+                        mwPtr->updateTitleForDocument(expectedDoc);
+                    });
+            } else {
+                overlay->setSamImageProvider({});
+                overlay->setInstantAlphaCommitHandler({});
+                overlay->setSmartLassoCommitHandler({});
+            }
+            if (m_samController) {
+                m_samController->setDocument(doc, doc->currentPage());
+            }
+        } else if (m_samController) {
+            m_samController->setDocument(nullptr, 0);
         }
+    } else if (m_samController) {
+        m_samController->setDocument(nullptr, 0);
     }
 
     const bool hasPrint = doc && doc->supportsPrint();
@@ -2055,6 +2396,14 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     m_findAction->setEnabled(hasSearch);
     m_findNextAction->setEnabled(hasSearch);
     m_findPreviousAction->setEnabled(hasSearch);
+    if (m_searchButton) {
+        m_searchButton->setEnabled(hasSearch);
+        m_searchButton->setToolTip(
+            hasSearch
+                ? tr("Search (%1)")
+                      .arg(QKeySequence(QKeySequence::Find).toString(QKeySequence::NativeText))
+                : tr("Search is not available for this document type."));
+    }
     if (!hasSearch && m_searchBar->isVisible()) {
         hideSearchBar();
     }
@@ -2115,21 +2464,40 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             }
         }
         action->setEnabled(baseEnabled && !policyBlocksPending);
+        // PHILOSOPHY: when a feature is unavailable because of the
+        // ML-policy gate, the menu entry stays disabled and the
+        // tooltip points the user at exactly where to fix it. No
+        // popup, ever — the user clicks the menu, sees a greyed-out
+        // entry with a one-line explanation, and knows where to go.
         action->setToolTip(baseEnabled && policyBlocksPending
-                               ? tr("Set to Never Download in Manage ML Models. "
-                                    "Open that dialog to allow downloads.")
+                               ? tr("This model is set to Never Download. "
+                                    "Open Tools → Manage ML Models… to allow it.")
                                : QString());
     };
     applyMlPolicy(m_removeBackgroundAction, canEdit && isImage, {ModelId::U2NetP});
+    // Schedule the background-candidate heuristic for image docs we
+    // haven't scored yet; the result feeds updateRemoveBackgroundBadge
+    // below (and also lands again from the scorer's completion
+    // callback, so a tab switch immediately after a scoring pass
+    // doesn't drop the verdict). Non-image docs are no-ops.
+    scheduleBackgroundCandidateScore(doc);
+    updateRemoveBackgroundBadge(doc);
     applyMlPolicy(m_instantAlphaAction, canEdit && isImage,
                   {ModelId::MobileSamEncoder, ModelId::MobileSamDecoder});
     applyMlPolicy(m_smartLassoAction, canEdit && isImage,
                   {ModelId::MobileSamEncoder, ModelId::MobileSamDecoder});
-    // Recognize Text only reads pixels, so it doesn't need
-    // supportsEditing() — any opened image qualifies, even a
-    // read-only-format one. PDFs are deferred to a later phase.
-    applyMlPolicy(m_recognizeTextAction, doc != nullptr && isImage,
+    // Recognize Text reads pixels for both images and PDFs (Workstream
+    // F brought PDFs into scope). Documents that don't expose a
+    // SelectableTextStore (StubAdapter) stay disabled.
+    const bool canOcr = doc != nullptr && doc->supportsSelectableText();
+    applyMlPolicy(m_recognizeTextAction, canOcr,
                   {ModelId::PpOcrDetector, ModelId::PpOcrRecognizerLatin});
+    if (!canOcr && m_recognizeTextAction) {
+        m_recognizeTextAction->setToolTip(
+            doc ? tr("Recognize Text needs a document with selectable raster "
+                     "content.")
+                : tr("Open a document to recognize text."));
+    }
     m_exportAsAction->setEnabled(doc != nullptr && isImage);
     m_exportPasswordProtectedAction->setEnabled(doc && doc->supportsPasswordExport());
     m_reduceFileSizeAction->setEnabled(doc && doc->supportsFileSizeReduction());
@@ -2158,29 +2526,76 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // their card even without a PDF open.
     m_myCardAction->setEnabled(true);
 
-    // Restore the user's last-known view-state (currently just
-    // currentPage; zoom/scroll/sidebar are tracked in RecentFiles
-    // for future expansion). One-shot per document — switching
-    // tabs after manual navigation must not bounce back to the
-    // saved page.
+    // Restore view-state in priority order (Workstream I):
+    //   1. Per-file: the RecentEntry for this exact path, if it has
+    //      captured state — zoom, scroll, page, sidebar mode,
+    //      markup-toolbar visibility, window geometry/state.
+    //   2. Per-type: the last-closed defaults for this document's
+    //      type (PDF / Image). Applied only when there's no per-file
+    //      state and the doc has a recognised type.
+    //   3. Otherwise: leave the constructor / hardcoded defaults in
+    //      place. The hardcoded defaults are owned by Workstream A
+    //      (fit-to-content / sidebar hidden / markup-toolbar hidden);
+    //      this path just falls through to whatever they end up being.
+    //
+    // One-shot per document — switching tabs after manual navigation
+    // must not bounce back to the saved page.
     if (doc && !doc->filePath().isEmpty() && !m_restoredViewStateDocs.contains(doc)) {
         m_restoredViewStateDocs.insert(doc);
         const RecentEntry entry = m_app->recentFiles().findByPath(doc->filePath());
-        if (entry.currentPage >= 0 && doc->pageCount() > entry.currentPage) {
-            doc->goToPage(entry.currentPage);
+        if (!entry.path.isEmpty() && entry.hasViewState()) {
+            if (entry.currentPage >= 0 && doc->pageCount() > entry.currentPage) {
+                doc->goToPage(entry.currentPage);
+            }
+            doc->applyZoomState(entry.zoomMode, entry.zoomFactor);
+            if (entry.scrollY != 0) {
+                doc->applyScrollY(entry.scrollY);
+            }
+            m_sidebar->setMode(static_cast<Sidebar::Mode>(static_cast<int>(entry.sidebarMode)));
+            // Apply window-level layout first — restoreState() walks
+            // every dock/toolbar this MainWindow owns and sets its
+            // visibility from the blob, so the explicit show()/hide()
+            // calls below need to land *after* it to win.
+            if (!entry.windowGeometry.isEmpty()) {
+                restoreGeometry(entry.windowGeometry);
+            }
+            if (!entry.windowState.isEmpty()) {
+                restoreState(entry.windowState);
+            }
+            if (entry.markupToolbarVisible) {
+                m_markupToolbar->show();
+            } else {
+                m_markupToolbar->hide();
+            }
+        } else if (doc->documentType() != DocumentType::Unknown) {
+            // Per-type fallback: apply the last-closed defaults for
+            // this document's type, if any.
+            const DocumentTypeDefault def =
+                m_app->documentTypeDefaults().forType(doc->documentType());
+            if (def.hasState()) {
+                doc->applyZoomState(def.zoomMode, def.zoomFactor);
+                m_sidebar->setMode(static_cast<Sidebar::Mode>(static_cast<int>(def.sidebarMode)));
+                if (!def.windowGeometry.isEmpty()) {
+                    restoreGeometry(def.windowGeometry);
+                }
+                if (!def.windowState.isEmpty()) {
+                    restoreState(def.windowState);
+                }
+                if (def.markupToolbarVisible) {
+                    m_markupToolbar->show();
+                } else {
+                    m_markupToolbar->hide();
+                }
+            }
         }
     }
 
-    // Auto-show the markup toolbar the first time we see a document
-    // that supports annotations. Same once-per-doc pattern as the form
-    // overlay above — an explicit hide by the user sticks. Documents
-    // without an AnnotationStore (Stub adapter) are excluded so we
-    // never show a toolbar that would be useless.
+    // Markup toolbar is hidden by default — the user surfaces it via
+    // View → Toggle Markup Toolbar (Ctrl+Shift+A) or the toolbar
+    // toggle on the main toolbar. Per-file / per-type state above
+    // restores the user's last-known preference; otherwise the
+    // toolbar stays hidden (document-first workflow).
     const bool canAnnotate = doc && doc->annotations() != nullptr;
-    if (canAnnotate && !m_autoShownMarkupDocs.contains(doc) && !m_markupToolbar->isVisible()) {
-        m_autoShownMarkupDocs.insert(doc);
-        m_markupToolbar->show();
-    }
 
     // Select All is available whenever there is an annotation store
     // (the overlay exists and the user can place annotations). The
@@ -2196,6 +2611,26 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     m_markupToolbar->setToolVisible(AnnotationTool::Underline, hasText);
     m_markupToolbar->setToolVisible(AnnotationTool::Highlight, hasText);
     m_markupToolbar->setToolVisible(AnnotationTool::StrikeOut, hasText);
+
+    // SAM tools (Instant Alpha / Smart Lasso): image-only, and only
+    // when the MobileSAM models are reachable (cached on disk, or
+    // policy allows downloading them). PHILOSOPHY: a tool the user
+    // cannot act on is hidden, not greyed — the markup toolbar
+    // shouldn't carry buttons that just pop up "actually no" tooltips.
+    const bool samImageEligible = canEdit && isImage;
+    bool samPolicyAllows = true;
+    if (samImageEligible) {
+        ModelRegistry &reg = m_app->modelRegistry();
+        for (ModelId id : {ModelId::MobileSamEncoder, ModelId::MobileSamDecoder}) {
+            if (!reg.isAvailable(id) && ModelPolicy::isNeverDownload(m_app, id)) {
+                samPolicyAllows = false;
+                break;
+            }
+        }
+    }
+    const bool samToolsVisible = samImageEligible && samPolicyAllows;
+    m_markupToolbar->setToolVisible(AnnotationTool::InstantAlpha, samToolsVisible);
+    m_markupToolbar->setToolVisible(AnnotationTool::SmartLasso, samToolsVisible);
 
     // Sidebar TOC picker entry: enabled iff the active document has
     // an outline. If we were already in TableOfContents mode and the
@@ -2222,6 +2657,21 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
 
     syncViewModeActions(doc);
     updateTitleForDocument(doc);
+
+    // Large-doc OCR hint chip. We surface it only when:
+    //  - The doc supports OCR (raster pages we can recognize).
+    //  - The page count is above the auto-OCR threshold.
+    //  - The visible page is not already cached in the OCR store.
+    if (m_largeDocOcrHint) {
+        bool show = false;
+        if (m_ocrController && m_ocrController->isLargeDoc() && doc && doc->supportsSelectableText()) {
+            auto *store = doc->selectableText();
+            if (store && !store->hasResults(doc->currentPage())) {
+                show = true;
+            }
+        }
+        m_largeDocOcrHint->setVisible(show);
+    }
 }
 
 void MainWindow::onActiveAnnotationStoreChanged() {
@@ -2510,6 +2960,10 @@ int MainWindow::documentCount() const {
     return m_documentView->documentCount();
 }
 
+int MainWindow::documentAt(int index, IDocument **out) const {
+    return m_documentView->documentAt(index, out);
+}
+
 void MainWindow::dragEnterEvent(QDragEnterEvent *event) {
     if (event->mimeData()->hasUrls()) {
         event->acceptProposedAction();
@@ -2603,23 +3057,56 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     // user picks up where they left off on next reopen. We do this
     // before the save-prompt below — even if the user discards
     // unsaved annotations, the page they were looking at is worth
-    // remembering. Sidebar visibility is per-window, so it gets
-    // the same value for every doc.
-    const bool sidebarVisible = m_sidebar && m_sidebar->isVisible();
+    // remembering. Sidebar / markup-toolbar visibility, window
+    // geometry, and dock layout are per-window, so they get the same
+    // value for every doc in this frame.
+    const SidebarMode currentSidebar =
+        m_sidebar && m_sidebar->isVisible()
+            ? static_cast<SidebarMode>(static_cast<int>(m_sidebar->mode()))
+            : SidebarMode::Hidden;
+    const bool markupVisible = m_markupToolbar && m_markupToolbar->isVisible();
+    const QByteArray geometry = saveGeometry();
+    const QByteArray winState = saveState();
     const int total = m_documentView->documentCount();
     bool anyCaptured = false;
+    DocumentType lastCapturedType = DocumentType::Unknown;
+    DocumentTypeDefault typeSnapshot;
     for (int i = 0; i < total; ++i) {
         IDocument *doc = nullptr;
         if (!m_documentView->documentAt(i, &doc) || !doc)
             continue;
         if (doc->filePath().isEmpty())
             continue;
-        m_app->recentFiles().updateViewState(doc->filePath(), doc->currentPage(),
-                                             /*zoomFactor=*/0.0, /*scrollY=*/0, sidebarVisible);
+        RecentEntry state;
+        state.currentPage = doc->currentPage();
+        state.zoomFactor = doc->zoomFactor();
+        state.scrollY = doc->scrollY();
+        state.zoomMode = doc->zoomMode();
+        state.sidebarMode = currentSidebar;
+        state.markupToolbarVisible = markupVisible;
+        state.windowGeometry = geometry;
+        state.windowState = winState;
+        m_app->recentFiles().updateViewState(doc->filePath(), state);
         anyCaptured = true;
+        // Capture a snapshot for the per-type defaults too. Last-
+        // closed-of-type wins; the loop overwrites typeSnapshot
+        // each iteration so the final doc's state is what lands.
+        if (doc->documentType() != DocumentType::Unknown) {
+            lastCapturedType = doc->documentType();
+            typeSnapshot.zoomMode = state.zoomMode;
+            typeSnapshot.zoomFactor = state.zoomFactor;
+            typeSnapshot.sidebarMode = state.sidebarMode;
+            typeSnapshot.markupToolbarVisible = state.markupToolbarVisible;
+            typeSnapshot.windowGeometry = state.windowGeometry;
+            typeSnapshot.windowState = state.windowState;
+        }
     }
     if (anyCaptured)
         m_app->recentFiles().save();
+    if (lastCapturedType != DocumentType::Unknown) {
+        m_app->documentTypeDefaults().setForType(lastCapturedType, typeSnapshot);
+        m_app->documentTypeDefaults().save();
+    }
 
     // Headless / test environments (QT_QPA_PLATFORM=offscreen) skip
     // the unsaved-changes prompt: there's no human to click through

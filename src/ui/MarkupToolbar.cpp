@@ -83,6 +83,23 @@ MarkupToolbar::MarkupToolbar(QWidget *parent) : QToolBar(parent) {
     redactAction->setToolTip(tr("Redact — paint a permanent black block. Content is rasterised "
                                 "on save. Not a defence-grade redaction tool."));
 
+    // Captured so we can hide the group on documents the SAM tools
+    // can't run against (PDFs, animated GIFs, missing models).
+    m_samSeparator = addSeparator();
+
+    auto *instantAlphaAction =
+        makeToolAction(tr("Instant Alpha"), AnnotationTool::InstantAlpha,
+                       QStringLiteral(":/icons/actions/tool-instant-alpha.svg"));
+    instantAlphaAction->setToolTip(tr("Instant Alpha — click on a region to make it transparent. "
+                                      "Drag to refine; release to apply."));
+
+    auto *smartLassoAction =
+        makeToolAction(tr("Smart Lasso"), AnnotationTool::SmartLasso,
+                       QStringLiteral(":/icons/actions/tool-smart-lasso.svg"));
+    smartLassoAction->setToolTip(tr("Smart Lasso — click on an object to select it. Shift- or "
+                                    "right-click adds exclusions. Press Enter or double-click to "
+                                    "commit."));
+
     addSeparator();
 
     auto *strokeBtn = new QToolButton(this);
@@ -214,17 +231,27 @@ void MarkupToolbar::setToolVisible(AnnotationTool tool, bool visible) {
     // the preceding separator. Otherwise we leave two adjacent
     // dividers wrapping an empty region. The check runs on every
     // change so re-showing one tool brings the separator back.
+    auto visibleByTool = [this](AnnotationTool t) {
+        auto i = m_toolActions.find(t);
+        return i != m_toolActions.end() && i.value()->isVisible();
+    };
     const bool isTextAware = tool == AnnotationTool::Highlight ||
                              tool == AnnotationTool::Underline || tool == AnnotationTool::StrikeOut;
     if (isTextAware && m_textAwareSeparator) {
-        auto visibleByTool = [this](AnnotationTool t) {
-            auto i = m_toolActions.find(t);
-            return i != m_toolActions.end() && i.value()->isVisible();
-        };
         const bool anyVisible = visibleByTool(AnnotationTool::Highlight) ||
                                 visibleByTool(AnnotationTool::Underline) ||
                                 visibleByTool(AnnotationTool::StrikeOut);
         m_textAwareSeparator->setVisible(anyVisible);
+    }
+    // SAM group: identical pattern. The MainWindow hides both on
+    // PDFs / animated docs / when the SAM models policy is "Never
+    // Download" so a non-actionable button never appears.
+    const bool isSam =
+        tool == AnnotationTool::InstantAlpha || tool == AnnotationTool::SmartLasso;
+    if (isSam && m_samSeparator) {
+        const bool anyVisible = visibleByTool(AnnotationTool::InstantAlpha) ||
+                                visibleByTool(AnnotationTool::SmartLasso);
+        m_samSeparator->setVisible(anyVisible);
     }
 }
 

@@ -27,6 +27,14 @@ enum class AnnotationTool {
     ZoomLens,
     Signature, // drag-place a saved signature PNG (§6.4.3)
     Redaction, // paints over a region; flattened permanently on save
+    // SAM-driven segmentation tools (DESIGN §6.3.3 / §6.3.6).
+    // These do not produce an annotation in AnnotationStore; instead
+    // they drive a live-preview mask on the overlay and commit a
+    // pixel mutation via ImageDocument::replaceImage/cropToRect.
+    // Listed here so the toolbar can use the same activation model
+    // as the drawing tools.
+    InstantAlpha, // single positive prompt; alpha-cut on release
+    SmartLasso,   // multi-point prompt; crop-to-object on commit
 };
 
 enum class AnnotationType {

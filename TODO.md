@@ -4,6 +4,83 @@ Items noted during development that aren't blocking the current phase.
 Should be picked up before shipping or when the surrounding area is
 worked on.
 
+## 2026-05-19 HITL pass (live use on Windows 11; applies cross-platform)
+
+Driven by the user opening a real document on Windows and walking through
+the friction points. Landed as PR #24 in four waves; the items listed
+here are explicit scope deferrals from that pass — features that the PR
+addressed in a "good enough for now" form with a known better follow-up,
+or behaviours the four agents flagged but didn't fix.
+
+### Annotation handles (Workstream D follow-up)
+
+- **Shape-aware handles for Line / Arrow.** Wave 2 shrank the corner
+  handle hit-zone from 10×10 to 6×6 so the arrow body is reachable for
+  drag-to-move. The real fix is endpoint-only handles for the line-like
+  shapes: `handleAt()` should branch on `Annotation::type` and return
+  two endpoint zones for Line/Arrow + the existing four corner zones
+  for everything else. `handleRect()` for non-bbox handles needs to
+  stop relying on `viewBounds.topLeft()`/`bottomRight()`.
+
+### OCR (Workstream F follow-up)
+
+- **Embed OCR text on PDF export.** When the user exports an image to
+  PDF (`MainWindow::onExportAs` → PDF filter) or runs an OCR-required
+  export on a raster-text PDF, the recognised `TextBlock`s should be
+  embedded as an invisible PDF text layer so the exported file is
+  searchable in other PDF readers. The `SelectableTextStore` already
+  holds the geometry and text — wire it through `QPdfWriter`.
+- **Disk cache of OCR results.** In-memory only today; reopens re-OCR
+  the same pages. Key by `(file-path-hash, page-content-hash)` and
+  store under `AppPaths::cacheDir()`.
+- **Word-level selection.** PP-OCRv3 emits per-region polygons;
+  `SelectableTextLayer` snaps the selection to whole blocks. Splitting
+  each block into word-bounded sub-rects would feel more natural
+  matched against the displayed glyphs.
+- **Auto-trigger model download from background OCR submissions.**
+  Today only the explicit `Tools → Recognize Text…` dialog drives
+  `ensureOcrModelsReady` (the consent + download prompt). The
+  visible-page auto-pump silently no-ops when the model isn't on disk.
+  Surfacing a one-time "Recognize text on this document?" prompt the
+  first time auto-OCR would fire on a model-missing system would close
+  the loop, but the UX has to be carefully not-popup-shaped.
+
+### ML scheduler (Workstream J follow-up)
+
+- **Linux power detection.** `src/platform/PowerSource.cpp` stubs to
+  `PowerState::OnAC` on Linux. Reading `/sys/class/power_supply/*/online`
+  (and falling through to `OnAC` when the path doesn't exist on a
+  desktop) is a small extension; the test seam is already in place.
+
+### SAM (Workstream G follow-up)
+
+- **Encoder cache eviction beyond simple LRU.** The 3-entry LRU is a
+  conservative default; if users hit memory pressure with multiple
+  large PDF pages cached, switch to a memory-budget-based policy or
+  expose a settings.toml knob.
+
+### Background removal (Workstream H follow-up)
+
+- **Disk cache of candidate scores.** The CPU heuristic runs once per
+  image-document open. Caching the result by file-path-hash would skip
+  the recompute on reopen.
+
+### General
+
+- **Sidebar differential update.** Wave 2 debounced
+  `AnnotationStore::changed` via 0-ms `singleShot`, which is the big
+  win. A follow-up could turn `Sidebar::refreshAnnotations` into a
+  proper add/remove/update diff against the `QListWidget` instead of a
+  clear-and-rebuild; not worth the complexity until profiling shows it
+  matters.
+- **Inspector debounce.** Same pattern as Sidebar, lower priority — the
+  Inspector's per-emit update is lighter (single annotation) so it
+  doesn't dominate the undo-replay cost today.
+- **Inspector tracking of restored chrome.** Workstream I restores
+  per-file / per-type window geometry + dock state + markup-toolbar
+  visibility; Inspector visibility isn't currently in that set. Adding
+  it would round out the persistence story.
+
 ## 2026-04-30 HITL pass (live use on macOS)
 
 Captured from the user driving the actual app on a Mac. Each entry is

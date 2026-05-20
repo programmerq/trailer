@@ -613,15 +613,30 @@ smaller than the full image.
 
 ---
 
-## Recognize Text (Phase 6)
+## Recognize Text (Phase 6 / Workstream F)
 
-Recognize Text uses PP-OCRv3 (PaddleOCR) to extract text from images.
-Two models are involved: a DBNet detector (~2.4 MB) and a CRNN
+Recognize Text uses PP-OCRv3 (PaddleOCR) to extract text from raster
+content. Two models ship: a DBNet detector (~2.4 MB) and a CRNN
 recognizer (~8.9 MB). Both download on first use; subsequent runs
-reuse the on-disk cache under `AppPaths::modelsDir()`. Recognition
-runs on the UI thread behind a wait cursor — a ~2 MP scan finishes
-in 1–2 s on a modern CPU. OCR is a read-only operation; the document
-is never marked dirty by the feature.
+reuse the on-disk cache under `AppPaths::modelsDir()`.
+
+After Workstream F the feature is no longer a "dump text into a
+dialog" affair. OCR results feed each document's
+`SelectableTextStore`, and the user reads them in-place via a
+transparent `SelectableTextLayer` overlay sitting beneath the
+annotation overlay. The I-beam cursor shows only when the cursor is
+inside a recognised text block; drag-select snaps to block
+boundaries; Ctrl+C / Cmd+C copies the joined selection to the
+clipboard in reading order.
+
+Submissions go through `MlScheduler`:
+- Visible page on the active document: `VisiblePage` priority.
+- ±1 neighbour pages: `Prefetch` priority.
+- Explicit `Tools > Recognize Text…` dialog: `UserAction` priority.
+
+Large documents (>50 pages) skip the automatic visible-page pump.
+A status-bar offer ("Text isn't selectable here. Recognize text on
+this page") provides the explicit affordance instead.
 
 ### UAT-IMG-120 — Recognize Text first-use download
 
@@ -633,7 +648,11 @@ of a receipt or document). No PP-OCR files in the models cache.
 - Confirmation prompt mentioning the ~11 MB download (Apache 2.0).
 - On accept, a progress dialog shows both models downloading in
   sequence; they land in the models cache with matching SHA-256.
-- A "Recognized Text" dialog opens listing the extracted lines.
+- The Recognize Text parameter dialog opens (page scope: Current /
+  All / Range; force-rerun checkbox hidden because the image has
+  no text layer to bypass).
+- Clicking Run submits the OCR through the ML scheduler; the
+  status-bar ML indicator shows "Recognizing text…" while it runs.
 
 ### UAT-IMG-121 — Recognize Text already-cached
 
@@ -642,33 +661,41 @@ of a receipt or document). No PP-OCR files in the models cache.
 1. `Tools > Recognize Text…`.
 **Expected:**
 - No confirmation prompt, no network activity, no progress dialog.
-- Wait cursor appears for ~1–2 s, then the results dialog opens.
+- The parameter dialog opens immediately.
+- After Run, the status-bar indicator briefly shows the running
+  task; once recognition completes the I-beam cursor appears over
+  the lines on the image.
 
-### UAT-IMG-122 — Copy extracted text
+### UAT-IMG-122 — Drag-select recognised text
 
-**Preconditions:** Results dialog open with recognised lines.
+**Preconditions:** Recognise Text completed on the current image.
 **Steps:**
-1. Press `Copy All`.
+1. Move the cursor over a recognised line — the I-beam shape
+   appears.
+2. Press and drag across one or more lines.
 **Expected:**
-- All recognised lines are placed on the clipboard, one per line.
-- No OS clipboard error dialog.
+- The dragged blocks receive a translucent selection highlight.
+- Pressing Ctrl+C / Cmd+C copies the joined text to the clipboard
+  with newlines between blocks in reading order.
 
-### UAT-IMG-123 — Save extracted text to TXT
+### UAT-IMG-123 — Cursor is honest outside text
 
-**Preconditions:** Results dialog open with recognised lines.
+**Preconditions:** Recognise Text completed on the current image
+with at least one recognised block.
 **Steps:**
-1. Press `Save as TXT…`.
-2. Choose a filename.
+1. Move the cursor over the empty area outside any recognised line.
 **Expected:**
-- A UTF-8 `.txt` file is written with one recognised line per line.
-- The file opens cleanly in any text editor.
+- The cursor stays as the arrow / default; no I-beam appears.
 
-### UAT-IMG-124 — Recognize Text on PDF (deferred)
+### UAT-IMG-124 — Recognize Text on PDF
 
-**Preconditions:** A PDF is the active document.
+**Preconditions:** A PDF is the active document (any number of
+pages).
 **Expected:**
-- `Tools > Recognize Text…` is greyed out. Image-only in Phase 6;
-  PDF-page OCR is a later phase (see Known gaps).
+- `Tools > Recognize Text…` is enabled — Workstream F brought PDFs
+  into scope.
+- The dialog offers a "Force re-run even if a text layer exists"
+  checkbox so a corner-watermark-only PDF can be fully OCR'd.
 
 ### UAT-IMG-125 — Recognize Text on a blank image
 
@@ -676,20 +703,32 @@ of a receipt or document). No PP-OCR files in the models cache.
 swatch).
 **Steps:**
 1. `Tools > Recognize Text…`.
+2. Click Run.
 **Expected:**
-- Results dialog opens with the summary line "No text was detected
-  in this image." and an empty text box.
-- No error dialog.
+- The status-bar indicator briefly shows the running task.
+- The SelectableTextStore receives an entry with zero blocks.
+- No I-beam appears anywhere over the image.
+- No error popup.
 
 ### UAT-IMG-126 — Recognize Text is read-only
 
 **Preconditions:** Fresh image opened (no prior edits).
 **Steps:**
 1. `Tools > Recognize Text…`.
-2. Close the results dialog.
+2. Click Run.
 **Expected:**
 - Tab is still clean (no dirty indicator).
 - `Edit > Undo` is disabled — OCR adds no undo entry.
+
+### UAT-IMG-127 — Large document hint chip
+
+**Preconditions:** A PDF with more than 50 pages, no text layer, no
+cached OCR for the visible page.
+**Expected:**
+- The status-bar shows a small "Text isn't selectable here.
+  Recognize text on this page" chip.
+- Clicking the link kicks off a UserAction OCR for the visible
+  page; the chip hides once results land.
 
 ---
 

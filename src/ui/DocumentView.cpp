@@ -62,6 +62,12 @@ void DocumentView::onTabCloseRequested(int index) {
     }
     QWidget *view = widget(index);
     removeTab(index);
+    // Emit the about-to-be-removed signal before erasing the
+    // unique_ptr so listeners can flush state keyed by the doc
+    // pointer (cancel any pending MlScheduler tasks, drop cache
+    // entries) while the pointer is still valid to compare against.
+    IDocument *doc = m_documents[static_cast<size_t>(index)].get();
+    emit documentAboutToBeRemoved(doc);
     if (view) {
         view->deleteLater();
     }

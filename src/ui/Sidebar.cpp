@@ -3,6 +3,7 @@
 #include "ThumbnailModel.h"
 #include "annotation/AnnotationStore.h"
 #include "document/IDocument.h"
+#include "recent/RecentFiles.h"
 
 #include <QAbstractItemModel>
 #include <QDropEvent>
@@ -26,16 +27,41 @@
 
 namespace trailer {
 
+// Ensure the lightweight SidebarMode enum kept in recent/RecentFiles.h
+// stays in lock-step with Sidebar::Mode. Whenever a new mode is added
+// either side, this assert fires so the layering boundary is preserved
+// without recent/ having to pull in QtWidgets.
+static_assert(static_cast<int>(SidebarMode::Hidden) == static_cast<int>(Sidebar::Mode::Hidden),
+              "SidebarMode and Sidebar::Mode out of sync");
+static_assert(static_cast<int>(SidebarMode::Pages) == static_cast<int>(Sidebar::Mode::Pages),
+              "SidebarMode and Sidebar::Mode out of sync");
+static_assert(static_cast<int>(SidebarMode::SearchResults) ==
+                  static_cast<int>(Sidebar::Mode::SearchResults),
+              "SidebarMode and Sidebar::Mode out of sync");
+static_assert(static_cast<int>(SidebarMode::TableOfContents) ==
+                  static_cast<int>(Sidebar::Mode::TableOfContents),
+              "SidebarMode and Sidebar::Mode out of sync");
+static_assert(static_cast<int>(SidebarMode::HighlightsAndNotes) ==
+                  static_cast<int>(Sidebar::Mode::HighlightsAndNotes),
+              "SidebarMode and Sidebar::Mode out of sync");
+
 namespace {
+
+// Vertical padding around the thumbnail inside each list item. The
+// 2026-05 HITL pass shrank the logical thumbnail to ~80x100 and
+// moved the page number from a separate text row below the image
+// into a corner badge drawn on top of it, so the only padding the
+// item needs is breathing room above and below the thumbnail.
+constexpr int kThumbVerticalPadding = 4;
 
 class ThumbnailDelegate : public QStyledItemDelegate {
   public:
     explicit ThumbnailDelegate(QListView *view) : QStyledItemDelegate(view), m_view(view) {}
 
-    QSize sizeHint(const QStyleOptionViewItem &option,
+    QSize sizeHint(const QStyleOptionViewItem & /*option*/,
                    const QModelIndex & /*index*/) const override {
         const QSize icon = m_view->iconSize();
-        const int h = icon.height() + option.fontMetrics.height() + 16;
+        const int h = icon.height() + 2 * kThumbVerticalPadding;
         return QSize(m_view->viewport()->width(), h);
     }
 
@@ -51,22 +77,48 @@ class ThumbnailDelegate : public QStyledItemDelegate {
         const QSize iconSize = m_view->iconSize();
         const QPixmap pm = qvariant_cast<QPixmap>(index.data(Qt::DecorationRole));
 
-        int y = option.rect.top() + 6;
-        int pixmapBottom = y + iconSize.height();
+        const int y = option.rect.top() + kThumbVerticalPadding;
+        QRect imageRect(option.rect.x(), y, option.rect.width(), iconSize.height());
         if (!pm.isNull()) {
+            // KeepAspectRatio preserves page proportions for mixed
+            // Letter/A4/landscape decks; the result is centred
+            // horizontally inside the column so portrait and
+            // landscape pages line up on their vertical midline.
             const QPixmap scaled =
                 pm.scaled(iconSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
             const int x = option.rect.x() + (option.rect.width() - scaled.width()) / 2;
             painter->drawPixmap(x, y, scaled);
-            pixmapBottom = y + scaled.height();
+            imageRect = QRect(x, y, scaled.width(), scaled.height());
         }
 
+        // Page-number badge in the lower-right corner of the
+        // thumbnail. Drawn here (not as a per-item child widget)
+        // so it scales with the thumbnail and costs only the
+        // painter's text run per visible item.
         const QString text = index.data(Qt::DisplayRole).toString();
-        painter->setPen(selected ? option.palette.highlightedText().color()
-                                 : option.palette.text().color());
-        const QRect textRect(option.rect.x(), pixmapBottom + 2, option.rect.width(),
-                             option.fontMetrics.height());
-        painter->drawText(textRect, Qt::AlignHCenter | Qt::AlignTop, text);
+        if (!text.isEmpty() && !pm.isNull()) {
+            const QFontMetrics fm(option.fontMetrics);
+            const int padX = 4;
+            const int padY = 1;
+            const int textW = fm.horizontalAdvance(text);
+            const int textH = fm.height();
+            const int badgeW = textW + 2 * padX;
+            const int badgeH = textH + 2 * padY;
+            // Tuck the badge inside the lower-right corner of the
+            // page image with a 2 px inset so it visually sits
+            // "on" the page rather than overflowing its edge.
+            const int inset = 2;
+            const int badgeX = imageRect.right() - badgeW - inset + 1;
+            const int badgeY = imageRect.bottom() - badgeH - inset + 1;
+            const QRect badgeRect(badgeX, badgeY, badgeW, badgeH);
+            QColor bg(0, 0, 0, 160);
+            painter->setRenderHint(QPainter::Antialiasing, true);
+            painter->setPen(Qt::NoPen);
+            painter->setBrush(bg);
+            painter->drawRoundedRect(badgeRect, 3, 3);
+            painter->setPen(Qt::white);
+            painter->drawText(badgeRect, Qt::AlignCenter, text);
+        }
 
         painter->restore();
     }
@@ -248,9 +300,15 @@ void Sidebar::setDocument(IDocument *doc) {
     m_outline->setModel(doc ? doc->outlineModel() : nullptr);
     m_outline->expandAll();
     if (auto *store = doc ? doc->annotations() : nullptr) {
-        connect(store, &AnnotationStore::changed, this, &Sidebar::refreshAnnotations,
+        // Route changed() through the debouncer rather than calling
+        // refreshAnnotations directly. The store emits one changed()
+        // per mutation, and an undo / Cmd+A delete fan-out can fire
+        // hundreds back-to-back; the QListWidget rebuild dominates if
+        // we run it on every emit.
+        connect(store, &AnnotationStore::changed, this, &Sidebar::scheduleAnnotationRefresh,
                 Qt::UniqueConnection);
     }
+    invalidateHighlightsAndNotesCache();
     refreshAnnotations();
     // Re-apply the current mode so a doc swap (or removing the
     // doc) honours the picker's last choice. Hidden stays hidden;
@@ -382,6 +440,26 @@ bool isHighlightOrNoteType(AnnotationType t) {
 
 } // namespace
 
+void Sidebar::scheduleAnnotationRefresh() {
+    // First emit in this event-loop tick: schedule a 0-ms single-
+    // shot that drains all subsequent emits into one rebuild. The
+    // highlights count cache is invalidated synchronously so any
+    // listener calling highlightsAndNotesCount() before the
+    // singleShot fires still gets a fresh count.
+    invalidateHighlightsAndNotesCache();
+    if (m_annotationRefreshScheduled)
+        return;
+    m_annotationRefreshScheduled = true;
+    QTimer::singleShot(0, this, [this]() {
+        m_annotationRefreshScheduled = false;
+        refreshAnnotations();
+    });
+}
+
+void Sidebar::invalidateHighlightsAndNotesCache() {
+    m_highlightsAndNotesCountCache = -1;
+}
+
 void Sidebar::refreshAnnotations() {
     m_annotations->clear();
     if (!m_doc)
@@ -451,16 +529,29 @@ void Sidebar::refreshAnnotations() {
 }
 
 int Sidebar::highlightsAndNotesCount() const {
-    if (!m_doc)
+    // Cached result; -1 means "stale, recompute". MainWindow polls
+    // this on every annotation store changed() signal, so a burst of
+    // 50+ emits during an undo of a long drag would otherwise rescan
+    // m_annotations 50+ times. invalidateHighlightsAndNotesCache()
+    // hooks into scheduleAnnotationRefresh so the cache stays in
+    // sync with the list widget rebuild.
+    if (m_highlightsAndNotesCountCache >= 0)
+        return m_highlightsAndNotesCountCache;
+    if (!m_doc) {
+        m_highlightsAndNotesCountCache = 0;
         return 0;
+    }
     auto *store = m_doc->annotations();
-    if (!store)
+    if (!store) {
+        m_highlightsAndNotesCountCache = 0;
         return 0;
+    }
     int count = 0;
     for (const Annotation &a : store->annotations()) {
         if (isHighlightOrNoteType(a.type))
             ++count;
     }
+    m_highlightsAndNotesCountCache = count;
     return count;
 }
 

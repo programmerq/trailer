@@ -1,5 +1,6 @@
 #include "SamSession.h"
 
+#include "CancellationToken.h"
 #include "ModelRegistry.h"
 #include "OnnxSession.h"
 
@@ -258,8 +259,30 @@ QSize SamSession::preparedSize() const {
     return m_origSize;
 }
 
-bool SamSession::prepare(const QImage &source) {
+bool SamSession::cachedState(std::vector<float> &outEmbedding, QSize &outOrigSize,
+                             float &outScale) const {
+    if (m_embedding.empty())
+        return false;
+    outEmbedding = m_embedding;
+    outOrigSize = m_origSize;
+    outScale = m_scale;
+    return true;
+}
+
+void SamSession::setCachedState(std::vector<float> embedding, QSize origSize, float scale) {
+    m_embedding = std::move(embedding);
+    m_origSize = origSize;
+    m_scale = scale;
+    // A cached restore invalidates the last mask — it was produced
+    // against potentially-different prompts. segment() will fill it
+    // again on the next call.
+    m_lastMask = QImage();
+}
+
+bool SamSession::prepare(const QImage &source, const CancellationToken *cancel) {
     if (source.isNull() || !isModelReady())
+        return false;
+    if (CancellationToken::isCancelled(cancel))
         return false;
 
     if (!m_encoder) {
@@ -277,6 +300,12 @@ bool SamSession::prepare(const QImage &source) {
     const auto inputs = m_encoder->inputNames();
     const auto outputs = m_encoder->outputNames();
     if (inputs.isEmpty() || outputs.isEmpty())
+        return false;
+
+    // Check just before the long ONNX run — the encoder is the
+    // expensive half of MobileSAM (80-120 ms on CPU; image-size
+    // dependent).
+    if (CancellationToken::isCancelled(cancel))
         return false;
 
     TensorSpec in;
@@ -300,10 +329,13 @@ bool SamSession::prepare(const QImage &source) {
     return true;
 }
 
-QImage SamSession::segment(const QVector<QPoint> &positives, const QVector<QPoint> &negatives) {
+QImage SamSession::segment(const QVector<QPoint> &positives, const QVector<QPoint> &negatives,
+                           const CancellationToken *cancel) {
     if (m_embedding.empty() || !m_decoder || m_origSize.isEmpty())
         return {};
     if (positives.isEmpty() && negatives.isEmpty())
+        return {};
+    if (CancellationToken::isCancelled(cancel))
         return {};
 
     // Pack coords and labels. MobileSAM wants a padding point with
@@ -389,6 +421,11 @@ QImage SamSession::segment(const QVector<QPoint> &positives, const QVector<QPoin
     if (maskOut.isEmpty() && !outputs.isEmpty()) {
         maskOut = outputs.front().toUtf8(); // fall back to first output
     }
+    // Decoder run is fast (<10 ms) but still worth checking; the
+    // caller might have closed the document between the click and
+    // this point.
+    if (CancellationToken::isCancelled(cancel))
+        return {};
     auto results = m_decoder->run(inputsVec, {maskOut});
     if (!results || results->empty()) {
         qWarning() << "SamSession: decoder inference failed";

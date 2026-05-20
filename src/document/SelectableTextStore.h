@@ -1,0 +1,99 @@
+#pragma once
+
+#include "ml/OcrEngine.h"
+
+#include <QObject>
+
+#include <cstdint>
+#include <unordered_map>
+#include <vector>
+
+class QImage;
+
+namespace trailer {
+
+// Per-document, per-page cache of OCR results. Holds a vector of
+// `OcrEngine::TextBlock` keyed by page index so multi-page PDFs round-
+// trip cleanly (single-page documents only ever populate page 0).
+//
+// In-memory only — no disk persistence in this phase. Re-OCRing on
+// reopen is acceptable; a disk cache is a follow-up.
+//
+// Invalidation is by content hash: callers stash the source-image hash
+// alongside the results, and a page-level edit (rotate/crop/replace)
+// signals invalidation through `invalidate(page)`. A future call to
+// `put()` with a different hash for the same page is allowed and just
+// replaces the entry.
+//
+// The store is a QObject so the UI overlay can listen for `changed()`
+// after an OCR submission completes. Emissions are queued onto the GUI
+// thread because OCR runs on the MlScheduler's worker thread; callers
+// should `QObject::moveToThread` the store onto the UI thread before
+// connecting to `changed()` (it is constructed on the UI thread by the
+// document adapters, so no manual move is needed in practice).
+class SelectableTextStore : public QObject {
+    Q_OBJECT
+  public:
+    struct PageEntry {
+        std::uint64_t contentHash = 0;
+        std::vector<OcrEngine::TextBlock> blocks;
+    };
+
+    explicit SelectableTextStore(QObject *parent = nullptr);
+
+    // True iff `put()` has been called for `pageIndex` and no
+    // subsequent `invalidate()` has cleared it.
+    bool hasResults(int pageIndex) const;
+
+    // Returns the OCR blocks for `pageIndex`. Empty when no results
+    // exist for that page — callers should pre-check with
+    // `hasResults()` if they need to disambiguate "we OCR'd and got
+    // zero blocks" from "we never OCR'd".
+    const std::vector<OcrEngine::TextBlock> &blocks(int pageIndex) const;
+
+    // Stash the result of a successful OCR pass. `contentHash` is the
+    // hash of the source image at the time of OCR (used by callers to
+    // detect a stale cache after a page-level edit). Overwrites any
+    // existing entry for the page. Emits `pageChanged(pageIndex)` and
+    // `changed()`.
+    void put(int pageIndex, std::uint64_t contentHash,
+             std::vector<OcrEngine::TextBlock> blocks);
+
+    // Drop the entry for `pageIndex`. Idempotent — invalidating a
+    // page that was never populated is a no-op. Emits `pageChanged`
+    // and `changed()` only when an entry was actually removed.
+    void invalidate(int pageIndex);
+
+    // Drop every cached entry. Used on document close / replace.
+    // Emits `changed()` if anything was actually cleared.
+    void clear();
+
+    // Read-only view of the recorded hash for a page. Returns 0 when
+    // there is no entry. Used by the auto-OCR scheduler to decide
+    // whether the current rendered page is still represented in the
+    // store.
+    std::uint64_t contentHashFor(int pageIndex) const;
+
+  signals:
+    // Emitted whenever the entry for `pageIndex` is added, replaced,
+    // or removed. The overlay listens for this and refreshes its
+    // hit-test cache for the affected page.
+    void pageChanged(int pageIndex);
+
+    // Fires after any change. Wired to the SelectableTextLayer's
+    // generic repaint so the layer doesn't need a per-page slot.
+    void changed();
+
+  private:
+    std::unordered_map<int, PageEntry> m_entries;
+    static const std::vector<OcrEngine::TextBlock> kEmpty;
+};
+
+// Compute a stable 64-bit hash of a QImage's pixel data. Cheap-ish
+// (linear in pixel count, no allocations) and good enough to detect a
+// rotated / cropped / replaced page. Not cryptographic — this is purely
+// for cache invalidation. Returns 0 for null images so callers can use
+// it as a "nothing to hash" sentinel.
+std::uint64_t hashImageContent(const QImage &image);
+
+} // namespace trailer

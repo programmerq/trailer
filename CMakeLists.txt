@@ -86,12 +86,19 @@ set(TRAILER_SOURCES
     src/document/PdfCommands.h
     src/document/PdfEditor.cpp
     src/document/PdfEditor.h
+    src/document/SelectableTextStore.cpp
+    src/document/SelectableTextStore.h
     src/document/StubAdapter.cpp
     src/document/StubAdapter.h
     src/filters/ImageFilter.cpp
     src/filters/ImageFilter.h
+    src/ml/BackgroundCandidateScorer.cpp
+    src/ml/BackgroundCandidateScorer.h
     src/ml/BackgroundRemover.cpp
     src/ml/BackgroundRemover.h
+    src/ml/CancellationToken.h
+    src/ml/MlScheduler.cpp
+    src/ml/MlScheduler.h
     src/ml/ModelDownloader.cpp
     src/ml/ModelDownloader.h
     src/ml/ModelRegistry.cpp
@@ -102,10 +109,14 @@ set(TRAILER_SOURCES
     src/ml/OnnxSession.h
     src/ml/SamSession.cpp
     src/ml/SamSession.h
+    src/platform/PowerSource.cpp
+    src/platform/PowerSource.h
     src/recent/RecentFiles.cpp
     src/recent/RecentFiles.h
     src/settings/AppPaths.cpp
     src/settings/AppPaths.h
+    src/settings/DocumentTypeDefaults.cpp
+    src/settings/DocumentTypeDefaults.h
     src/settings/Settings.cpp
     src/settings/Settings.h
     src/signatures/Signature.h
@@ -117,6 +128,8 @@ set(TRAILER_SOURCES
     src/ui/MainWindow.h
     src/ui/ModelManagerDialog.cpp
     src/ui/ModelManagerDialog.h
+    src/ui/OcrController.cpp
+    src/ui/OcrController.h
     src/ui/AnimationBar.cpp
     src/ui/AnimationBar.h
     src/ui/AnnotationOverlay.cpp
@@ -137,10 +150,12 @@ set(TRAILER_SOURCES
     src/ui/MyCardDialog.h
     src/ui/OcrResultsDialog.cpp
     src/ui/OcrResultsDialog.h
-    src/ui/SamSegmentDialog.cpp
-    src/ui/SamSegmentDialog.h
+    src/ui/SamController.cpp
+    src/ui/SamController.h
     src/ui/SearchBar.cpp
     src/ui/SearchBar.h
+    src/ui/SelectableTextLayer.cpp
+    src/ui/SelectableTextLayer.h
     src/ui/Sidebar.cpp
     src/ui/Sidebar.h
     src/ui/SignatureCaptureDialog.cpp
@@ -189,6 +204,11 @@ target_link_libraries(trailer_core
 )
 if(APPLE)
     target_link_libraries(trailer_core PUBLIC "-framework AppKit")
+    # PowerSource.cpp uses IOPSGetProvidingPowerSourceType from
+    # IOKit/ps/IOPowerSources.h. IOKit + CoreFoundation are macOS-
+    # only frameworks; gated inside the APPLE block so the default
+    # link line on Linux / Windows stays free of macOS-isms.
+    target_link_libraries(trailer_core PRIVATE "-framework IOKit" "-framework CoreFoundation")
 endif()
 trailer_set_warnings(trailer_core)
 

@@ -16,11 +16,36 @@ class QModelIndex;
 namespace trailer {
 
 class AnnotationStore;
+class SelectableTextStore;
 
 enum class ViewMode {
     SinglePage,
     TwoPages,
     Continuous,
+};
+
+// Coarse classification used by the state-persistence layer to key
+// per-type defaults (e.g. "all PDFs open at fit-to-page, all images
+// open at actual size"). Adapters return their type from
+// IDocument::documentType(). Kept tight on purpose — adding subtypes
+// (RasterImage vs Vector, scanned PDF vs born-digital) is a follow-up
+// once the per-type defaults UX is validated.
+enum class DocumentType {
+    Unknown,
+    Pdf,
+    Image,
+};
+
+// Zoom modes that the persistence layer can record and restore.
+// Mirrors QPdfView::ZoomMode (Custom / FitInView / FitToWidth) plus
+// an Actual entry — the latter is `Custom` with factor 1.0, but
+// adapters that don't expose the factor (image at native size) still
+// have a meaningful state to round-trip.
+enum class ZoomMode {
+    Custom,
+    FitInView,
+    FitToWidth,
+    Actual,
 };
 
 class IDocument {
@@ -31,6 +56,29 @@ class IDocument {
     virtual QString filePath() const = 0;
     virtual QWidget *createView(QWidget *parent) = 0;
 
+    // Coarse type classification used by DocumentTypeDefaults. Defaults
+    // to Unknown so adapters that don't override (StubAdapter) are
+    // simply ignored by the persistence layer.
+    virtual DocumentType documentType() const { return DocumentType::Unknown; }
+
+    // Current zoom mode + factor. The mode tells the persistence
+    // layer how the user is viewing the document (Fit, Width, Custom);
+    // the factor is only meaningful when mode == Custom but is always
+    // returned for round-trip simplicity. Adapters without a viewer
+    // attached fall back to Custom / 1.0.
+    virtual ZoomMode zoomMode() const { return ZoomMode::Custom; }
+    virtual double zoomFactor() const { return 1.0; }
+    // Apply a previously-saved zoom state. `factor` is honoured only
+    // when `mode == ZoomMode::Custom`; the fit modes ignore it.
+    virtual void applyZoomState(ZoomMode /*mode*/, double /*factor*/) {}
+
+    // Vertical scroll position in viewport pixels. Captured at
+    // close-time and applied on reopen so the user lands at the same
+    // spot in a long document. Adapters that don't expose a scroll
+    // area report 0 and ignore applyScrollY().
+    virtual int scrollY() const { return 0; }
+    virtual void applyScrollY(int /*y*/) {}
+
     virtual bool supportsZoom() const { return false; }
     virtual void zoomIn() {}
     virtual void zoomOut() {}
@@ -40,6 +88,11 @@ class IDocument {
     // zoomFitWidth, which only constrains horizontally. Bound to ⌘0
     // following Adobe Acrobat's PDF-reader convention.
     virtual void zoomFitPage() {}
+    // Natural display size of the document's primary content (page 0
+    // for PDF, the image for raster docs) in logical pixels at 100%
+    // zoom. Used by MainWindow to size the window to fit on first
+    // open. Default empty — non-display docs (stub adapter) opt out.
+    virtual QSize contentSizeHint() const { return {}; }
 
     virtual bool supportsViewModes() const { return false; }
     virtual ViewMode viewMode() const { return ViewMode::SinglePage; }
@@ -178,6 +231,26 @@ class IDocument {
     virtual bool save(const QString & /*newPath*/ = {}) { return false; }
 
     virtual AnnotationStore *annotations() { return nullptr; }
+
+    // In-document OCR cache. Returns nullptr for adapters that
+    // cannot host OCR results (StubAdapter, raw text views, etc.).
+    // Image and PDF adapters return a per-document store; callers
+    // listen on its `changed()` signal to know when fresh blocks
+    // have landed for the current page. The store is owned by the
+    // document and outlives any UI overlay attached to it.
+    virtual SelectableTextStore *selectableText() { return nullptr; }
+    // Convenience pre-check: true iff selectableText() returns a non-
+    // null store. Default false so adapters that don't override are
+    // skipped by the auto-OCR pump.
+    virtual bool supportsSelectableText() const { return false; }
+    // Render `pageIndex` to a raster suitable for OCR. PdfDocument
+    // does this through Qt PDF; ImageDocument returns its source
+    // image directly (page 0 only). Returns a null image when the
+    // document cannot satisfy the request. The default empty image
+    // signals "this adapter does not support OCR submission" so the
+    // scheduler will simply not enqueue work.
+    virtual QImage renderPageForOcr(int /*pageIndex*/) const { return {}; }
+
     virtual void setAnnotationTool(AnnotationTool /*tool*/) {}
     virtual void setAnnotationStyle(const AnnotationStyle & /*style*/) {}
     // Preset for the next Text annotation — used by FormToolbar's
