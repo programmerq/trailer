@@ -1583,7 +1583,7 @@ QRectF AnnotationOverlay::handleRect(const QRectF &viewBounds, ResizeHandle whic
     // short shapes have a graspable body, and large enough for keyboard-
     // and-mouse desktop users to land on with a normal pointer.
     // Shape-aware (endpoint-only) handles for Line/Arrow are a follow-up
-    // PR.
+    // PR (see TODO.md ## 2026-05-19 HITL pass).
     constexpr double kSize = 6.0; // view-space px per side
     constexpr double kHalf = kSize / 2.0;
     QPointF c;
