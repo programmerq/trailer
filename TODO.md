@@ -100,6 +100,28 @@ or behaviours the four agents flagged but didn't fix.
   visibility; Inspector visibility isn't currently in that set. Adding
   it would round out the persistence story.
 
+### From the 2026-05-20 post-merge audit (see [`docs/audit-2026-05-19.md`](docs/audit-2026-05-19.md) §§12-15)
+
+- **`Settings::mlPreloadSegmentationOnToolActivation` has no
+  production caller.** The setting is a public Settings API
+  (getter/setter, persisted under `[ml.scheduler]`, tested) but
+  `SamController.cpp` never reads it. The eager-preload-on-tool-
+  activation path the name promises isn't wired. Either wire it
+  (the SAM encoder cache + preload submit is the obvious shape)
+  or mark the setter `[[deprecated]]` and drop the public-API
+  commitment. Audit ref: API-NEW-CRIT-1.
+
+- **UAT area-code legend in `docs/uat/README.md` is structurally
+  incomplete.** Spec enumerates 7 codes (FND, VWR, PDF, IMG, ANN,
+  XCT, SEC); the test harness uses 13 distinct slot prefixes
+  (af, ann, bgr, fnd, frm, hn, ocr, red, sam, sec, sig, toc,
+  vwr). The CONVENTIONS §7 "1:1 pairing" claim is right for the
+  codes that match (fnd, vwr, ann, sec) but doesn't account for
+  the mismatch on the rest. Resolution paths: (a) rename slots
+  to match spec codes; (b) document the category/file-grouping
+  convention separately; (c) update the spec to add the test-
+  suite codes. Audit ref: DOC-FOLLOWUP-1.
+
 ## 2026-04-30 HITL pass (live use on macOS)
 
 Captured from the user driving the actual app on a Mac. Each entry is
