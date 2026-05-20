@@ -951,12 +951,14 @@ void TestPdfEditor::cropPageCommandIsReversibleAndBatched() {
 
     auto readCropBox = [&editor](int page) -> std::optional<std::array<double, 4>> {
         // Save, reopen via raw qpdf, read /CropBox.
-        QTemporaryFile tmp(QDir::tempPath() + "/crop_check_XXXXXX.pdf");
-        tmp.setAutoRemove(true);
-        if (!tmp.open())
+        // ScopedTempFile (not QTemporaryFile) because the latter holds
+        // the OS handle past close() on Windows, blocking qpdf's
+        // subsequent fopen("wb"). See src/util/TempPath.h — same
+        // reason rotatePageCommandIsReversible uses it above.
+        ScopedTempFile tmp(QStringLiteral("crop_check_XXXXXX.pdf"));
+        if (!tmp.isValid())
             return std::nullopt;
-        const QString p = tmp.fileName();
-        tmp.close();
+        const QString p = tmp.path();
         if (!editor.save(p))
             return std::nullopt;
         QPDF re;
