@@ -1127,39 +1127,70 @@ features, which are intentionally excluded:
 
 ### 9.1 Document model
 
-- `IDocument` interface with `IPdfDocument`, `IImageDocument`, `IMultiDocument`,
-  `IThreeDDocument` implementations.
-- All document state changes go through a **command pattern** (one command =
-  one undo-redo entry, one auto-save snapshot trigger).
-- Documents expose an event stream that the UI subscribes to for reactive
-  updates.
+- `IDocument` interface (`src/document/IDocument.h`) with concrete
+  implementations `PdfDocument`, `ImageDocument`, `StubDocument`. Each
+  is paired with an `IFormatAdapter` subclass registered into
+  `DocumentRegistry` at startup; the registry dispatches file opens
+  by extension. Capability methods (`supportsZoom`, `supportsEditing`,
+  …) gate UI on a per-format basis. (See
+  [`docs/CONVENTIONS.md`](../docs/CONVENTIONS.md) §1 for the recipe
+  to add a new document type.)
+- Mutations split between two undo mechanisms by category:
+  **`PdfCommand` subclasses** (`src/document/PdfCommands.h`) for
+  qpdf-level page operations — rotate today, delete / move / insert
+  / crop drafted on the in-flight branch — with symmetric
+  `apply` / `revert`; and **`AnnotationStore` snapshot undo**
+  (`src/annotation/AnnotationStore.h`) for annotation create /
+  modify / delete via whole-store snapshots. The two stacks share a
+  cross-routing heuristic (`MainWindow::m_lastUndoSource`); a future
+  unified chronological log is roadmap-tracked.
+- Documents expose Qt signals (`IDocument::stateChanged` and
+  format-specific signals on the concrete subclasses) for UI to
+  observe.
 
 ### 9.2 Storage layout
+
+All paths below are computed by `src/settings/AppPaths.cpp` and
+correspond to one-line accessors there. Directories listed as
+*Reserved* exist in `AppPaths` and are created at need, but no
+shipped feature populates them yet — they're the on-disk seats
+that the planned subsystems below will plug into.
 
 ```
 ${app_data}/
   trailer/
     settings.toml            # User settings
     recent.json              # Recent files (last 50)
+    cards.toml               # AutoFill cards (My Card and others)
     signatures/
-      sig_<uuid>.png         # The signature image (PNG with alpha)
-      sig_<uuid>.json        # Metadata (label, created, description)
-    autofill/
-      cards.toml             # AutoFill cards (My Card and others)
-    versions/
-      <doc_hash>/
-        v_<timestamp>.bin    # Version blobs
-        index.sqlite         # Per-document version index
-    ocr_cache/
-      <image_hash>.json      # Cached OCR results (sidecar by content hash)
-    icc/                     # User-supplied ICC profiles
-    filters/                 # User-supplied colour filters
-    plugins/                 # User-installed format adapter plugins
+      sig_<YYYYMMDDhhmmsszzz>_<NNN>.png   # Signature image (PNG with alpha)
+      sig_<YYYYMMDDhhmmsszzz>_<NNN>.json  # Metadata (label, created, description)
+    models/                  # ONNX model weights downloaded on first use
+                             # (U²-Net, MobileSAM, PP-OCRv3)
+    autofill/                # Reserved — additional autofill data
+                             # beyond cards.toml
+    versions/                # Reserved — per-document version blobs
+                             # (Phase 7 auto-save / browse versions)
+    ocr_cache/               # Reserved — disk-persisted OCR results
+                             # (the in-flight branch uses an in-memory
+                             # SelectableTextStore per doc; persistence
+                             # is the follow-up)
+    icc/                     # Reserved — user-supplied ICC profiles
+                             # (lcms2 colour-management Phase 6)
+    filters/                 # Reserved — user-supplied colour filters
+    plugins/                 # Reserved — user-installed format adapter
+                             # plugins (Phase 8+; §9.3 below)
     logs/
       trailer_<date>.log     # Local logs only
 ```
 
 ### 9.3 Plugin interface
+
+**Status:** Planned (Phase 8+). The `plugins/` directory is reserved
+on disk and `IFormatAdapter` is the right shape for third-party
+adapters, but no plugin-loading code is shipped today — adapters
+are registered in-process by `Application` startup. The design
+below is the intended contract for the eventual loader.
 
 A plugin is a shared library (`.dll` / `.so` / `.dylib`) that registers one
 or more `IFormatAdapter` implementations at startup. Format adapters declare:
@@ -1173,6 +1204,12 @@ Windows AppContainer where applicable, Linux seccomp / bubblewrap on Flatpak
 builds).
 
 ### 9.4 Local search
+
+**Status:** Planned. No SQLite FTS index, no `Ctrl/⌘+K` command
+palette, no `search.sqlite` on disk today. In-document Find
+(`Ctrl/⌘+F`, §6.2.1) and the OCR pump's `SelectableTextStore` are
+the shipped pieces. The cross-document index below is the intended
+shape when it lands.
 
 - SQLite full-text search index over: filename, document title metadata,
   user-assigned keywords, OCR-recognised text, PDF text content of opened
