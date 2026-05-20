@@ -249,17 +249,15 @@ items have landed; the commit hash is in the strikethrough line.
   if a non-maintainer drives the menu hierarchy looking for an
   action that isn't where they expect.
 
-- ~~**DESIGN.md §7 keyboard-shortcut table audit.**~~ Done in
-  `d09e43b` — table is now reconciled against
-  `src/ui/MainWindow.cpp`'s `setShortcut` calls, grouped by menu
-  category, missing shortcuts added (Form toolbar, First/Last page,
-  Go to page, Rotate L/R, Fill forms, Screenshot, Minimize), and
-  unbound rows tagged *Planned* (Export As, Adjust Size, Adjust
-  Colour, Remove Background, Full Screen, tab nav, doc nav). The
-  drift-warning callout is gone. Rebinding the *Planned* shortcuts
-  themselves is its own small follow-up — one or two lines of
-  `setShortcut` per action — but the doc now tells the truth either
-  way.
+- ~~**DESIGN.md §7 keyboard-shortcut table audit.**~~ Done — table
+  reconciled against `src/ui/MainWindow.cpp`'s `setShortcut` calls
+  in `d09e43b`. Four of the *Planned* rebindings landed
+  immediately (Export As `Ctrl+Shift+E`, Adjust Size `Ctrl+Alt+I`,
+  Adjust Colour `Ctrl+Alt+C`, Remove Background `Ctrl+Shift+K`);
+  the remaining *Planned* shortcuts in §7 (Full Screen, tab nav,
+  doc nav) wait on the underlying actions — Full Screen needs the
+  feature itself (§6.1.7); tab/doc nav across documents in a
+  window needs a navigation contract that doesn't exist yet.
 
 ## Cross-cutting
 

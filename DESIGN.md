@@ -1034,7 +1034,7 @@ implemented yet or hasn't been wired to a shortcut.
 | Open | `Ctrl/⌘+O` |
 | Save | `Ctrl/⌘+S` |
 | Save As | `Ctrl/⌘+Shift+S` |
-| Export As | *Planned* — `Ctrl/⌘+Shift+E` intended; action wired (`Tools > Export As…`) but no shortcut bound yet |
+| Export As | `Ctrl/⌘+Shift+E` |
 | Close window | `Ctrl/⌘+W` |
 | Quit | `Ctrl+Q` (Linux/Win) / `⌘Q` (Mac) |
 | Print | `Ctrl/⌘+P` |
@@ -1087,9 +1087,9 @@ the standard shortcuts inside text inputs.)
 | Rotate right | `Ctrl/⌘+R` |
 | Fill forms | `Ctrl/⌘+Shift+F` |
 | Take screenshot | `Ctrl/⌘+Shift+3` |
-| Adjust size | *Planned* — `Ctrl/⌘+Alt/Option+I` intended; action wired (`Tools > Adjust Size…`) but no shortcut bound yet |
-| Adjust colour | *Planned* — `Ctrl/⌘+Alt/Option+C` intended; action wired but no shortcut bound yet |
-| Remove background | *Planned* — `Ctrl/⌘+Shift+K` intended; action wired (`Tools > Remove Background`) but no shortcut bound yet |
+| Adjust size | `Ctrl/⌘+Alt/Option+I` |
+| Adjust colour | `Ctrl/⌘+Alt/Option+C` |
+| Remove background | `Ctrl/⌘+Shift+K` |
 
 **Window**
 
