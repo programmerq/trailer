@@ -18,6 +18,13 @@ namespace trailer {
 class AnnotationStore;
 class SelectableTextStore;
 
+// API: session-only today — `ViewMode` is *not* persisted in
+// `recent.json`, `settings.toml`, or `DocumentTypeDefaults` (only
+// `ZoomMode` is, via string keys). If view-mode persistence is ever
+// added, follow the existing `ZoomMode` pattern in
+// `src/settings/DocumentTypeDefaults.cpp` (string keys round-tripped
+// via a `viewModeKey()` helper) rather than persisting the ordinal,
+// so the C++ enum stays renumber-safe.
 enum class ViewMode {
     SinglePage,
     TwoPages,

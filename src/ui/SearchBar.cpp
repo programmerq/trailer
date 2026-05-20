@@ -30,16 +30,19 @@ SearchBar::SearchBar(QWidget *parent) : QWidget(parent) {
     m_prev = new QToolButton(this);
     m_prev->setIcon(style()->standardIcon(QStyle::SP_ArrowUp));
     m_prev->setToolTip(tr("Previous match"));
+    m_prev->setAccessibleName(tr("Previous match"));
     connect(m_prev, &QToolButton::clicked, this, &SearchBar::findPreviousRequested);
 
     m_next = new QToolButton(this);
     m_next->setIcon(style()->standardIcon(QStyle::SP_ArrowDown));
     m_next->setToolTip(tr("Next match"));
+    m_next->setAccessibleName(tr("Next match"));
     connect(m_next, &QToolButton::clicked, this, &SearchBar::findNextRequested);
 
     m_close = new QToolButton(this);
     m_close->setIcon(style()->standardIcon(QStyle::SP_DialogCloseButton));
     m_close->setToolTip(tr("Close search"));
+    m_close->setAccessibleName(tr("Close search"));
     connect(m_close, &QToolButton::clicked, this, &SearchBar::dismissed);
 
     layout->addWidget(m_input, 1);

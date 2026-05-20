@@ -6,6 +6,13 @@
 
 namespace trailer {
 
+// API: these two enums are serialised by their *string* mapping in
+// settings.toml ("new_tab" / "new_window" / "same_window"; "system" /
+// "light" / "dark"), not by ordinal. The C++ enum may be renumbered
+// freely; what must never change is the string a value maps to in
+// Settings::openFilesInToString / themeToString and the parser pair.
+// Adding new values means adding new string mappings; removing a
+// value silently breaks any settings.toml that names it.
 enum class OpenFilesIn {
     NewTab,
     NewWindow,

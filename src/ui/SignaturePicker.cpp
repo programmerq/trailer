@@ -6,6 +6,7 @@
 
 #include <QAction>
 #include <QIcon>
+#include <QLocale>
 #include <QMenu>
 #include <QPixmap>
 #include <QSize>
@@ -59,7 +60,11 @@ QString SignaturePicker::show(QWidget* parent, const QPoint& globalPos) {
             // something we can map back to the signature without
             // a second store load.
             a->setData(static_cast<int>(i));
-            a->setToolTip(s.createdAt.toString(Qt::ISODate));
+            // SignatureStore writes createdAt in UTC (see
+            // SignatureStore.cpp's QDateTime::currentDateTimeUtc);
+            // convert to local time before formatting so the tooltip
+            // shows the user's wall-clock time, not the UTC clock.
+            a->setToolTip(QLocale().toString(s.createdAt.toLocalTime(), QLocale::ShortFormat));
         }
         menu.addSeparator();
     }

@@ -1019,12 +1019,15 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     toolsMenu->addSeparator();
 
     m_adjustSizeAction = toolsMenu->addAction(tr("Adjust Si&ze…"));
+    m_adjustSizeAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_I));
     connect(m_adjustSizeAction, &QAction::triggered, this, &MainWindow::onAdjustSize);
 
     m_adjustColourAction = toolsMenu->addAction(tr("Adjust Co&lour…"));
+    m_adjustColourAction->setShortcut(QKeySequence(Qt::CTRL | Qt::ALT | Qt::Key_C));
     connect(m_adjustColourAction, &QAction::triggered, this, &MainWindow::onAdjustColour);
 
     m_removeBackgroundAction = toolsMenu->addAction(tr("Remove &Background"));
+    m_removeBackgroundAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_K));
     // The icon slot stays empty by default — only the
     // BackgroundCandidateScorer's "this looks promising" hint flips it
     // on (see updateRemoveBackgroundBadge / scheduleBackgroundCandidateScore).
@@ -1054,6 +1057,7 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     toolsMenu->addSeparator();
 
     m_exportAsAction = toolsMenu->addAction(tr("&Export As…"));
+    m_exportAsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_E));
     connect(m_exportAsAction, &QAction::triggered, this, &MainWindow::onExportAs);
 
     m_cropImageAction = toolsMenu->addAction(tr("Crop &Image…"));

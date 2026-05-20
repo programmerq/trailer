@@ -4,6 +4,25 @@ Items noted during development that aren't blocking the current phase.
 Should be picked up before shipping or when the surrounding area is
 worked on.
 
+Three recurring sources feed this file:
+
+- **HITL passes** — the maintainer driving the actual app and writing
+  down what annoyed them. Captures power-user friction. Dated
+  subsections below (e.g. *2026-04-30 HITL pass*, *2026-05-19 HITL
+  pass*) are the precedent format.
+- **Reference-user smoke sessions** — a non-maintainer opening a
+  fresh build and performing three small tasks while a note-taker
+  records observations. Captures fresh-eyes friction, which tends to
+  point at different bugs than the HITL passes do. Protocol lives in
+  [`docs/smoke-session.md`](docs/smoke-session.md); findings land
+  here under a dated `## YYYY-MM-DD smoke session` subsection in the
+  same shape as the HITL entries.
+- **Multi-perspective audits** — read-only sweeps by reviewer-chair
+  agents (privacy, accessibility, security, etc.) that surface
+  structural gaps the live use doesn't expose. See
+  [`docs/audit-2026-05-19.md`](docs/audit-2026-05-19.md) for the
+  current snapshot.
+
 ## 2026-05-19 HITL pass (live use on Windows 11; applies cross-platform)
 
 Driven by the user opening a real document on Windows and walking through
@@ -81,18 +100,44 @@ or behaviours the four agents flagged but didn't fix.
   visibility; Inspector visibility isn't currently in that set. Adding
   it would round out the persistence story.
 
+### From the 2026-05-20 post-merge audit (see [`docs/audit-2026-05-19.md`](docs/audit-2026-05-19.md) §§12-15)
+
+- **`Settings::mlPreloadSegmentationOnToolActivation` has no
+  production caller.** The setting is a public Settings API
+  (getter/setter, persisted under `[ml.scheduler]`, tested) but
+  `SamController.cpp` never reads it. The eager-preload-on-tool-
+  activation path the name promises isn't wired. Either wire it
+  (the SAM encoder cache + preload submit is the obvious shape)
+  or mark the setter `[[deprecated]]` and drop the public-API
+  commitment. Audit ref: API-NEW-CRIT-1.
+
+- **UAT area-code legend in `docs/uat/README.md` is structurally
+  incomplete.** Spec enumerates 7 codes (FND, VWR, PDF, IMG, ANN,
+  XCT, SEC); the test harness uses 13 distinct slot prefixes
+  (af, ann, bgr, fnd, frm, hn, ocr, red, sam, sec, sig, toc,
+  vwr). The CONVENTIONS §7 "1:1 pairing" claim is right for the
+  codes that match (fnd, vwr, ann, sec) but doesn't account for
+  the mismatch on the rest. Resolution paths: (a) rename slots
+  to match spec codes; (b) document the category/file-grouping
+  convention separately; (c) update the spec to add the test-
+  suite codes. Audit ref: DOC-FOLLOWUP-1.
+
 ## 2026-04-30 HITL pass (live use on macOS)
 
 Captured from the user driving the actual app on a Mac. Each entry is
 a discrete change; we'll knock them out in priority order. Crossed-off
 items have landed; the commit hash is in the strikethrough line.
 
-> **2026-05-11 audit:** most of this section is already in the code.
-> Verified-done items are struck through with the reference; the only
-> remaining bullets are #1 (Dock-drop — needs runtime repro on
-> macOS), #16 (sidebar TOC / Highlights & Notes — placeholders,
-> blocked on underlying features), and #18 (search-match yellow —
-> needs a custom highlight overlay over `QPdfView`).
+> **2026-05-19 audit:** every item in this section has now landed.
+> Item-line strikethroughs carry the commit reference. The earlier
+> 2026-05-11 audit flagged #1 (Dock-drop), #16 (sidebar TOC /
+> Highlights & Notes), and #18 (search-match yellow) as remaining;
+> all three landed between May 11 and May 19: #1 via live-drag
+> confirmation on 2026-05-13 (the in-process path was already
+> green), #16 via the 2026-05-13 sidebar-modes pass, and #18 via
+> `1503c42 feat: highlighter-yellow search-match overlay`. The
+> section is retained as a historical record of the HITL pass, not
+> as a live work queue.
 
 ### Bugs (data loss / broken affordance)
 
@@ -219,8 +264,22 @@ items have landed; the commit hash is in the strikethrough line.
 
 - **Menu organisation review.** Some items currently under Tools may
   belong under File (Export As, Take Screenshot) or Edit (Flip, Rotate,
-  Adjust Size, Adjust Colour). Revisit once Phase 4 markup actions land,
-  so we can organise them as a group.
+  Adjust Size, Adjust Colour). The original gating ("revisit once
+  Phase 4 markup actions land") has been met — Phase 4 shipped — but
+  the review itself hasn't happened. Pick up as part of the next
+  reference-user smoke session ([`docs/smoke-session.md`](docs/smoke-session.md))
+  if a non-maintainer drives the menu hierarchy looking for an
+  action that isn't where they expect.
+
+- ~~**DESIGN.md §7 keyboard-shortcut table audit.**~~ Done — table
+  reconciled against `src/ui/MainWindow.cpp`'s `setShortcut` calls
+  in `d09e43b`. Four of the *Planned* rebindings landed
+  immediately (Export As `Ctrl+Shift+E`, Adjust Size `Ctrl+Alt+I`,
+  Adjust Colour `Ctrl+Alt+C`, Remove Background `Ctrl+Shift+K`);
+  the remaining *Planned* shortcuts in §7 (Full Screen, tab nav,
+  doc nav) wait on the underlying actions — Full Screen needs the
+  feature itself (§6.1.7); tab/doc nav across documents in a
+  window needs a navigation contract that doesn't exist yet.
 
 ## Cross-cutting
 
@@ -231,11 +290,10 @@ items have landed; the commit hash is in the strikethrough line.
   gaps were in custom-rendered raster content that asked the
   document for logical-pixel sized images and let Qt scale them up
   blurry on 2x displays.
-  - **Sidebar thumbnails** (commit pending) now render at
-    `m_size * devicePixelRatio` native pixels and stamp
-    `setDevicePixelRatio` on the result so Qt uses the high-DPI
-    bitmap at logical layout size. No more soft thumbnails on
-    Retina.
+  - **Sidebar thumbnails** render at `m_size * devicePixelRatio`
+    native pixels and stamp `setDevicePixelRatio` on the result
+    (`src/ui/ThumbnailModel.cpp:159`) so Qt uses the high-DPI bitmap
+    at logical layout size. No more soft thumbnails on Retina.
   - **Screenshot capture** (`screen->grabWindow(0)`) is already
     DPR-correct: the returned pixmap is native pixels and saving
     to PNG writes the high-resolution data.
@@ -526,17 +584,15 @@ and any future feature where input variety is the whole point.
 
 ### Cross-cutting polish items
 
-- **Designer / non-technical-user review.** The items above came out of
-  one ~15-minute walkthrough. A focused pass that watches a real user
-  drive the app end-to-end (open a file → markup → sign → save) will
-  surface more of these subtle behaviours. Schedule this before any 1.0
-  polish milestone. Watch for:
-  - Any modal dialog that interrupts work on the document.
-  - Tools that appear enabled but do nothing (or the wrong thing) for
-    the active document type.
-  - Any action that requires the user to already know where to look
-    (hidden toolbars, menu-only entry points for common tasks).
-  - Loss of direct manipulation (things the user made but can't then
-    grab, move, or edit).
-  - Feedback that's too loud (popups) or too quiet (no visible change
-    after a successful action).
+- **Designer / non-technical-user review.** Now codified as the
+  reference-user smoke session — see
+  [`docs/smoke-session.md`](docs/smoke-session.md) for the protocol
+  (fresh build, non-maintainer observer, three open-do-close cycles
+  on a text PDF + scanned PDF + photo, observations land in a dated
+  subsection of this file). The original bullets that lived here —
+  modal dialogs that interrupt, controls enabled-but-noop, hidden
+  entry points, lost direct manipulation, too-loud/too-quiet feedback
+  — are now covered as positive rules in PHILOSOPHY's *How Trailer
+  reduces friction* section. The trigger remains: schedule a smoke
+  session before any 1.0 polish milestone, and opportunistically
+  whenever a willing non-maintainer is in the room.

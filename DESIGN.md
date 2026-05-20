@@ -4,9 +4,9 @@
 > up, sign it, export it. No accounts. No cloud. No telemetry. Just the file
 > in front of you.
 
-**Status:** Initial spec, ready for implementation
-**Target platforms:** Windows 10/11 (x64, ARM64), macOS 12+ (x64, Apple Silicon), Linux (x64, ARM64; X11 and Wayland)
-**License intent:** Permissive (MIT or Apache-2.0; pick one before first release)
+**Status:** Phases 0–5 shipped; Phase 6 in flight (ML core landed, format/colour-management half unstarted). See [AGENTS.md](AGENTS.md) §*Phase status* for the live state and [TODO.md](TODO.md) for the work queue.
+**Target platforms:** Windows 10/11 (x64, ARM64), macOS 12+ (Apple Silicon shipped, x86_64 deferred — see [docs/packaging-macos.md](docs/packaging-macos.md)), Linux (x64, ARM64; X11 and Wayland).
+**License:** MIT — see [LICENSE](LICENSE) and the constraints in [PHILOSOPHY.md](PHILOSOPHY.md).
 
 ---
 
@@ -327,28 +327,29 @@ specialised case).
 
 ### 4.1 Read support
 
-| Category | Format | Notes |
-|---|---|---|
-| Vector / page | PDF | First-class. Includes form fields, embedded fonts, annotations |
-| Raster — common | PNG, JPEG, GIF (still and animated), BMP, TIFF, WebP | First-class |
-| Raster — Apple-popular | HEIC / HEIF | Requires libheif; gate if unavailable |
-| Raster — wide gamut | OpenEXR, HDR (Radiance) | Tone-map for display; preserve on export |
-| Raster — RAW | CR2, DNG, NEF, ARW, ORF, RAF, etc. | Read-only via LibRaw; export to TIFF/PNG |
-| Raster — legacy | ICO, ICNS, PPM, PGM, PBM, TGA, SGI, XBM, PICT, PNTG | Best-effort; may be read-only |
-| Vector | SVG | Render to raster for editing; preserve on save-as-SVG when no edits applied |
-| Vector | Adobe Illustrator (AI) | Only when PDF content is embedded (the common case) |
-| 3D scene | USD, USDA, USDC | Stretch goal (Phase 7) |
-| 3D scene | Collada (.dae) | Stretch goal (Phase 7) |
-| 3D mesh | OBJ, STL | Stretch goal (Phase 7) |
+| Category | Format | Status | Notes |
+|---|---|---|---|
+| Vector / page | PDF | Shipped | First-class. Includes form fields, embedded fonts, annotations |
+| Raster — common | PNG, JPEG, GIF (still and animated), BMP, TIFF, WebP | Shipped | First-class; in the file-open filter |
+| Raster — Apple-popular | HEIC / HEIF | Shipped | Loaded via the platform's HEIC plugin; in the file-open filter |
+| Raster — legacy | ICO, ICNS, PPM, PGM, PBM, TGA, SGI, XBM, PICT, PNTG | Partial | Loadable via `QImageReader` when the user picks "All files (\*)"; not in the documented open filter. Best-effort, may be read-only |
+| Raster — wide gamut | OpenEXR, HDR (Radiance) | Planned (Phase 6) | Not in the open filter today. Tone-map for display; preserve on export |
+| Raster — RAW | CR2, DNG, NEF, ARW, ORF, RAF, etc. | Planned (Phase 6) | Not implemented. Intended path: read-only via LibRaw; export to TIFF/PNG |
+| Vector | SVG | Planned | Render to raster for editing; preserve on save-as-SVG when no edits applied |
+| Vector | Adobe Illustrator (AI) | Planned | Only when PDF content is embedded (the common case) |
+| 3D scene | USD, USDA, USDC | Stretch (Phase 7) | |
+| 3D scene | Collada (.dae) | Stretch (Phase 7) | |
+| 3D mesh | OBJ, STL | Stretch (Phase 7) | |
 
 ### 4.2 Write / export support
 
-| Format | Notes |
-|---|---|
-| PDF | Including with annotations, optionally flattened, optionally encrypted |
-| PNG, JPEG, JPEG-2000, TIFF, WebP, BMP, GIF | Quality / compression options exposed where applicable |
-| HEIC | When libheif present and licensed appropriately for the target platform |
-| OpenEXR | Preserve high-dynamic-range data |
+| Format | Status | Notes |
+|---|---|---|
+| PDF | Shipped | Including with annotations, optionally flattened, optionally encrypted |
+| PNG, JPEG, TIFF, BMP, WebP | Shipped | In the Export As dialog (`MainWindow::onExportAs`) |
+| JPEG-2000 | Planned | Not in the Export As dialog today |
+| HEIC | Planned (Phase 6) | When libheif is present and licensed for the target platform; export path not implemented yet |
+| OpenEXR | Planned (Phase 6) | Preserve high-dynamic-range data; not implemented yet |
 
 ### 4.3 Explicitly out of scope
 
@@ -369,8 +370,11 @@ specialised case).
 - **Tabs:** Standard tabbed-document support. Drag a tab off to detach it into
   its own window. Drag a window onto another's tab strip to merge.
 - **Multi-document window:** Selecting "Open" with multiple files, or dragging
-  multiple files onto an existing window, adds them to the sidebar of that
-  window. Useful for batch operations.
+  multiple files onto an existing window, opens each file as a tab in a
+  single window (image batches in particular share one window so the user
+  can flip through them via the tab strip). A planned follow-up is a
+  sidebar "document list" mode that replaces the tab strip for batch
+  navigation — see `TODO.md` *Window / document model*.
 
 ### 5.2 Layout regions
 
@@ -388,9 +392,14 @@ specialised case).
 └──────────┴────────────────────────────────┘
 ```
 
-- Sidebar is collapsible.
-- Sidebar mode is selectable: **Thumbnails / Contact Sheet / Table of Contents
-  / Bookmarks / Highlights & Notes / Annotations**.
+- Sidebar is collapsible — **Hidden** is the default.
+- Sidebar mode is selectable: **Hidden / Thumbnails / Search Results /
+  Table of Contents / Highlights & Notes**. Earlier drafts of this doc
+  named a *Contact Sheet*, *Bookmarks*, and standalone *Annotations*
+  mode; the shipped set consolidated those (Table of Contents reads
+  `QPdfBookmarkModel`; Highlights & Notes filters annotation types that
+  carry text). See `TODO.md` item #16 in the 2026-04-30 HITL pass for
+  the rationale.
 - A second toolbar — the **Markup toolbar** — appears beneath the title bar
   when toggled (default shortcut `Ctrl/⌘+Shift+A`).
 
@@ -437,8 +446,9 @@ Acceptance criteria.**
 
 #### 6.1.2 View modes
 
-- **What:** Single Page, Two Pages, Continuous Scroll. Thumbnails sidebar,
-  Contact Sheet (grid of all pages).
+- **What:** Single Page, Two Pages, Continuous Scroll. Thumbnails sidebar
+  is shipped. Contact Sheet (grid of all pages) is **Planned** — not in
+  the shipped sidebar modes (§5.2).
 - **UI:** `View` menu and toolbar buttons.
 - **Notes:** Continuous Scroll must virtualise — only render pages within and
   near the viewport.
@@ -476,10 +486,13 @@ Acceptance criteria.**
 
 #### 6.1.7 Full-screen / presentation
 
+- **Status:** **Planned** — not implemented on `main` today. No
+  `Enter Full Screen` or `Slideshow` action is wired in
+  `src/ui/MainWindow.cpp`; no `F11` handler exists.
 - **What:** Distraction-free full-screen mode and a slideshow mode for PDFs.
-- **UI:** `View > Enter Full Screen` (`Ctrl/⌘+Ctrl+F` on Mac convention,
-  `F11` on Windows/Linux). `View > Slideshow` for PDF-as-presentation with
-  on-screen controls.
+- **UI (intended):** `View > Enter Full Screen` (`Ctrl/⌘+Ctrl+F` on Mac
+  convention, `F11` on Windows/Linux). `View > Slideshow` for
+  PDF-as-presentation with on-screen controls.
 
 #### 6.1.8 HDR display
 
@@ -525,7 +538,8 @@ Acceptance criteria.**
 
 - **What:** Convert a scanned PDF into a searchable PDF by running OCR and
   embedding an invisible text layer aligned with the rendered glyphs.
-- **UI:** `File > Export…` with an "Embed text (OCR)" checkbox.
+- **UI:** `Tools > Export As…` with an "Embed text (OCR)" checkbox
+  (checkbox itself is Planned — not in the shipped dialog).
 - **Notes:** Tesseract again. Preserve the visual fidelity of the original;
   the text layer is selectable but invisible.
 - **Acceptance:** A 50-page scanned PDF becomes searchable; text-selection
@@ -573,6 +587,24 @@ Acceptance criteria.**
   - **Shape Style** — line thickness, dash pattern, drop shadow.
   - **Border Color** / **Fill Color** — colour pickers with recents.
   - **Text Style** — font, size, weight, colour.
+
+- **What persists on save (PDF round-trip policy).** Trailer's
+  `PdfEditor` reads and writes ten PDF `/Subtype` kinds:
+  `/Square` (Rectangle), `/Circle` (Ellipse), `/Line`, `/Polyline`
+  (Arrow), `/Ink`, `/FreeText` (Text + SpeechBubble), `/Text`
+  (sticky Note), `/Highlight`, `/Underline`, `/StrikeOut`. Anything
+  else — `/PrinterMark`, `/TrapNet`, `/Watermark`, third-party
+  vendor-specific `/Subtype`s — is preserved as long as the document
+  is open in Trailer but **silently dropped** on save. Signatures
+  and Redactions are not persisted as `/Annot` objects either: they
+  are flattened into the page's content stream (Signature → image
+  stamp, Redaction → opaque black rasterised over the original
+  content). Once saved, a flattened signature or redaction cannot
+  be edited; this is by design (a redaction must be permanent, and
+  a signature represents intent-to-sign, not a draggable object).
+  This policy is locked in for 1.0 — see
+  [`docs/audit-2026-05-19.md`](docs/audit-2026-05-19.md) §9
+  (API surface stability).
 
 #### 6.3.2 Highlight, underline, strikethrough
 
@@ -622,7 +654,7 @@ Acceptance criteria.**
 #### 6.3.7 Quartz-equivalent filters
 
 - **What:** Apply colour or processing filters during export.
-- **UI:** `File > Export…` exposes a "Filter" dropdown with built-ins:
+- **UI:** `Tools > Export As…` exposes a "Filter" dropdown with built-ins:
   Black & White, Greyscale, Sepia, Reduce File Size, Lighten, Blue Tone, Grey
   Tone, Custom… (loads a user-supplied LUT).
 - **Notes:** Implemented as a filter pipeline. Users can author and load
@@ -660,8 +692,10 @@ Acceptance criteria.**
 - **Capture methods:**
   - **Trackpad:** Sign with finger or stylus on a precision trackpad. Pressure
     sensitivity where supported.
-  - **Camera:** Sign on white paper, hold up to webcam; OpenCV-based capture
-    extracts the signature with transparency.
+  - **Camera (Planned):** Sign on white paper, hold up to webcam;
+    OpenCV-based capture extracts the signature with transparency.
+    Not implemented on `main` today — `SignatureCaptureDialog` ships
+    only Draw and Import tabs.
   - **Tablet / stylus:** Any HID stylus device (Wacom, Surface Pen, XP-Pen,
     Huion). `QTabletEvent`.
   - **Image import:** Drop in a PNG/JPEG of a signature; auto-extract dark
@@ -764,7 +798,7 @@ Acceptance criteria.**
 #### 6.5.8 Convert image file types
 
 - **What:** Re-save in another format.
-- **UI:** `File > Export…` exposes the Format dropdown. Default list shows the
+- **UI:** `Tools > Export As…` exposes the Format dropdown. Default list shows the
   big eight (HEIC, JPEG, JPEG-2000, OpenEXR, PDF, PNG, TIFF, WebP); hold
   `Option/Alt` to expose specialised / older formats.
 - **Per-format options:**
@@ -934,7 +968,8 @@ Acceptance criteria.**
 #### 6.11.4 Password-protect a PDF
 
 - **What:** Encrypt a PDF with passwords.
-- **UI:** `File > Export…` → Permissions button. Two layers:
+- **UI:** `File > Export as Password-Protected PDF…` (a dedicated menu
+  entry, not the general Export As dialog). Two layers:
   1. **Open password** — required to open the document.
   2. **Owner password** — required to bypass per-feature restrictions.
 - **Granular permissions** (each a checkbox):
@@ -951,7 +986,8 @@ Acceptance criteria.**
 
 - **What:** Re-encode a PDF to be smaller, typically by recompressing
   embedded images.
-- **UI:** `File > Export…` → "Reduce File Size" filter. Detail options:
+- **UI:** `File > Reduce File Size…` (a dedicated menu entry, not a
+  filter on the general Export As dialog). Detail options:
   - Create Linearised PDF (fast web view).
   - Optimise images for screen (downsample to display DPI).
   - Re-encode images as JPEG (with quality slider).
@@ -1004,38 +1040,84 @@ A single settings window with the following panes:
 ## 7. Keyboard shortcuts
 
 Cross-platform table; use `Ctrl` on Windows/Linux and `⌘` on macOS unless
-noted otherwise.
+noted otherwise. Source of truth is `src/ui/MainWindow.cpp` — every row
+here is reconciled against the live `setShortcut` calls. Rows tagged
+*Planned* are intended bindings whose underlying action either isn't
+implemented yet or hasn't been wired to a shortcut.
+
+**File**
 
 | Action | Shortcut |
 |---|---|
 | Open | `Ctrl/⌘+O` |
 | Save | `Ctrl/⌘+S` |
 | Save As | `Ctrl/⌘+Shift+S` |
-| Export | `Ctrl/⌘+Shift+E` |
+| Export As | `Ctrl/⌘+Shift+E` |
 | Close window | `Ctrl/⌘+W` |
 | Quit | `Ctrl+Q` (Linux/Win) / `⌘Q` (Mac) |
 | Print | `Ctrl/⌘+P` |
-| Copy / Cut / Paste | `Ctrl/⌘+C / X / V` |
+
+**Edit**
+
+| Action | Shortcut |
+|---|---|
+| Undo / Redo | `Ctrl/⌘+Z` / `Ctrl/⌘+Shift+Z` |
 | Select All | `Ctrl/⌘+A` |
 | Find | `Ctrl/⌘+F` |
 | Find Next / Previous | `Ctrl/⌘+G` / `Ctrl/⌘+Shift+G` |
-| Undo / Redo | `Ctrl/⌘+Z` / `Ctrl/⌘+Shift+Z` |
-| Show / hide markup toolbar | `Ctrl/⌘+Shift+A` |
-| Show / hide inspector | `Ctrl/⌘+I` |
+
+(Copy / Cut / Paste have no app-level menu action; native Qt widgets handle
+the standard shortcuts inside text inputs.)
+
+**View**
+
+| Action | Shortcut |
+|---|---|
 | Show / hide sidebar | `Ctrl/⌘+Shift+D` |
+| Show / hide markup toolbar | `Ctrl/⌘+Shift+A` |
+| Show / hide form toolbar | `Ctrl/⌘+Shift+B` |
+| Show / hide inspector | `Ctrl/⌘+I` |
+| Magnifier | `` ` `` (backtick) |
+| Full screen | *Planned* — `F11` (Win/Linux) / `Ctrl+⌘+F` (Mac) intended; feature not implemented, see §6.1.7 |
+| Zoom in | `Ctrl/⌘+=` (and the platform `QKeySequence::ZoomIn`) |
+| Zoom out | `Ctrl/⌘+-` (the platform `QKeySequence::ZoomOut`) |
+| Fit page | `Ctrl/⌘+0` |
+| Actual size | `Ctrl/⌘+1` |
+| Fit width | `Ctrl/⌘+2` |
+
+**Go (page navigation)**
+
+| Action | Shortcut |
+|---|---|
+| First page | `Ctrl/⌘+Home` |
+| Previous page (Go menu) | `Ctrl/⌘+Left` |
+| Next page (Go menu) | `Ctrl/⌘+Right` |
+| Last page | `Ctrl/⌘+End` |
+| Previous page (viewer) | `PageUp` |
+| Next page (viewer) | `PageDown` |
+| Go to page… | `Ctrl/⌘+Alt/Option+G` |
+
+**Tools / image**
+
+| Action | Shortcut |
+|---|---|
+| Rotate left | `Ctrl/⌘+L` |
+| Rotate right | `Ctrl/⌘+R` |
+| Fill forms | `Ctrl/⌘+Shift+F` |
+| Take screenshot | `Ctrl/⌘+Shift+3` |
 | Adjust size | `Ctrl/⌘+Alt/Option+I` |
 | Adjust colour | `Ctrl/⌘+Alt/Option+C` |
 | Remove background | `Ctrl/⌘+Shift+K` |
-| Magnifier | `` ` `` (backtick) |
-| Full screen | `F11` (Win/Linux) / `Ctrl+⌘+F` (Mac) |
-| Next tab / previous tab | `Ctrl+Tab` / `Ctrl+Shift+Tab` |
-| Next page / previous page | `Alt/Option+↓` / `Alt/Option+↑` |
-| Next document in window / previous | `Alt/Option+PageDown` / `Alt/Option+PageUp` |
-| Zoom in / out | `Ctrl/⌘+Alt/Option++` / `Ctrl/⌘+Alt/Option+-` |
-| Actual size | `Ctrl/⌘+Alt/Option+0` |
-| Fit | `Ctrl/⌘+Alt/Option+9` |
 
-All shortcuts are reassignable in Settings → Shortcuts.
+**Window**
+
+| Action | Shortcut |
+|---|---|
+| Minimize | `Ctrl/⌘+M` |
+| Next tab / previous tab | *Planned* — `Ctrl+Tab` / `Ctrl+Shift+Tab` intended; no application-level shortcut bound (Qt's QTabWidget handles internal navigation but not via these keys) |
+| Next / previous document in window | *Planned* — `Alt/Option+PageDown` / `Alt/Option+PageUp` intended; not bound |
+
+All shipped shortcuts are reassignable in Settings → Shortcuts.
 
 ---
 
@@ -1063,39 +1145,73 @@ features, which are intentionally excluded:
 
 ### 9.1 Document model
 
-- `IDocument` interface with `IPdfDocument`, `IImageDocument`, `IMultiDocument`,
-  `IThreeDDocument` implementations.
-- All document state changes go through a **command pattern** (one command =
-  one undo-redo entry, one auto-save snapshot trigger).
-- Documents expose an event stream that the UI subscribes to for reactive
-  updates.
+- `IDocument` interface (`src/document/IDocument.h`) with concrete
+  implementations `PdfDocument`, `ImageDocument`, `StubDocument`. Each
+  is paired with an `IFormatAdapter` subclass registered into
+  `DocumentRegistry` at startup; the registry dispatches file opens
+  by extension. Capability methods (`supportsZoom`, `supportsEditing`,
+  …) gate UI on a per-format basis. (See
+  [`docs/CONVENTIONS.md`](../docs/CONVENTIONS.md) §1 for the recipe
+  to add a new document type.)
+- Mutations split between two undo mechanisms by category:
+  **`PdfCommand` subclasses** (`src/document/PdfCommands.h`) for
+  qpdf-level page operations — `RotatePageCommand`,
+  `DeletePagesCommand`, `MovePageCommand`, `InsertPagesCommand`,
+  `CropPageCommand` all shipped (PR #25) — with symmetric
+  `apply` / `revert`; and **`AnnotationStore` snapshot undo**
+  (`src/annotation/AnnotationStore.h`) for annotation create /
+  modify / delete via whole-store snapshots. The two stacks share a
+  cross-routing heuristic (`MainWindow::m_lastUndoSource`); a future
+  unified chronological log is roadmap-tracked.
+- Documents expose Qt signals (`IDocument::stateChanged` and
+  format-specific signals on the concrete subclasses) for UI to
+  observe.
 
 ### 9.2 Storage layout
+
+All paths below are computed by `src/settings/AppPaths.cpp` and
+correspond to one-line accessors there. Directories listed as
+*Reserved* exist in `AppPaths` and are created at need, but no
+shipped feature populates them yet — they're the on-disk seats
+that the planned subsystems below will plug into.
 
 ```
 ${app_data}/
   trailer/
-    settings.toml            # User settings
+    settings.toml            # User settings — top-level keys plus
+                             # [first_use], [session], [ml.scheduler]
+                             # topical tables; see CONVENTIONS §8.
     recent.json              # Recent files (last 50)
+    cards.toml               # AutoFill cards (My Card and others)
     signatures/
-      sig_<uuid>.png         # The signature image (PNG with alpha)
-      sig_<uuid>.json        # Metadata (label, created, description)
-    autofill/
-      cards.toml             # AutoFill cards (My Card and others)
-    versions/
-      <doc_hash>/
-        v_<timestamp>.bin    # Version blobs
-        index.sqlite         # Per-document version index
-    ocr_cache/
-      <image_hash>.json      # Cached OCR results (sidecar by content hash)
-    icc/                     # User-supplied ICC profiles
-    filters/                 # User-supplied colour filters
-    plugins/                 # User-installed format adapter plugins
+      sig_<YYYYMMDDhhmmsszzz>_<NNN>.png   # Signature image (PNG with alpha)
+      sig_<YYYYMMDDhhmmsszzz>_<NNN>.json  # Metadata (label, created, description)
+    models/                  # ONNX model weights downloaded on first use
+                             # (U²-Net, MobileSAM, PP-OCRv3)
+    autofill/                # Reserved — additional autofill data
+                             # beyond cards.toml
+    versions/                # Reserved — per-document version blobs
+                             # (Phase 7 auto-save / browse versions)
+    ocr_cache/               # Reserved — disk-persisted OCR results
+                             # (today's in-memory SelectableTextStore
+                             # holds per-doc; disk persistence is a
+                             # tracked follow-up)
+    icc/                     # Reserved — user-supplied ICC profiles
+                             # (lcms2 colour-management Phase 6)
+    filters/                 # Reserved — user-supplied colour filters
+    plugins/                 # Reserved — user-installed format adapter
+                             # plugins (Phase 8+; §9.3 below)
     logs/
       trailer_<date>.log     # Local logs only
 ```
 
 ### 9.3 Plugin interface
+
+**Status:** Planned (Phase 8+). The `plugins/` directory is reserved
+on disk and `IFormatAdapter` is the right shape for third-party
+adapters, but no plugin-loading code is shipped today — adapters
+are registered in-process by `Application` startup. The design
+below is the intended contract for the eventual loader.
 
 A plugin is a shared library (`.dll` / `.so` / `.dylib`) that registers one
 or more `IFormatAdapter` implementations at startup. Format adapters declare:
@@ -1109,6 +1225,12 @@ Windows AppContainer where applicable, Linux seccomp / bubblewrap on Flatpak
 builds).
 
 ### 9.4 Local search
+
+**Status:** Planned. No SQLite FTS index, no `Ctrl/⌘+K` command
+palette, no `search.sqlite` on disk today. In-document Find
+(`Ctrl/⌘+F`, §6.2.1) and the OCR pump's `SelectableTextStore` are
+the shipped pieces. The cross-document index below is the intended
+shape when it lands.
 
 - SQLite full-text search index over: filename, document title metadata,
   user-assigned keywords, OCR-recognised text, PDF text content of opened
@@ -1129,10 +1251,14 @@ builds).
 
 ## 10. Implementation phases
 
-The agent should target these phases in order. Each phase ends with a
-shippable build.
+Phases are sequential; each ends with a shippable build. The
+original spec carried "Weeks N–M" estimates; those have been
+dropped as fiction (real-time elapsed has diverged enough that
+keeping them invites the wrong inferences). The live phase
+position is in [`AGENTS.md`](AGENTS.md) §*Phase status*; the per-
+phase status markers below summarise it inline.
 
-### Phase 0 — Foundations (Weeks 1–3)
+### Phase 0 — Foundations *(Shipped)*
 
 - Project scaffold, CMake build, CI on all three platforms.
 - Window / tab / sidebar shell.
@@ -1140,20 +1266,22 @@ shippable build.
 - File-open pipeline; open with command-line argument; recent files.
 - Stub `IDocument` interface and a stub adapter that displays "Unsupported".
 
-### Phase 1 — MVP viewer (Weeks 4–8)
+### Phase 1 — MVP viewer *(Shipped, with deltas)*
 
-- PDF rendering (Poppler-Qt6 or MuPDF).
-- Image rendering for PNG, JPEG, GIF (still), BMP, TIFF, WebP.
-- Thumbnails sidebar and Contact Sheet for PDFs.
+- PDF rendering: Qt PDF (`QPdfView` + `QPdfDocument`), not Poppler /
+  MuPDF as the spec originally suggested.
+- Image rendering for PNG, JPEG, GIF (still + animated), BMP,
+  TIFF, WebP, HEIC.
+- Thumbnails sidebar — shipped. Contact Sheet — Planned (§6.1.2).
 - View modes (Single, Two, Continuous).
 - Zoom, pan, fit, actual size, magnifier.
 - Find in PDF.
 - Print.
-- Save (read-only docs only output via Print-to-PDF).
+- Save (read-only docs output via Print-to-PDF).
 - Light/dark theme.
 - Animated GIF playback and frame inspection.
 
-### Phase 2 — PDF page operations (Weeks 9–12)
+### Phase 2 — PDF page operations *(Shipped)*
 
 - Combine PDFs (drag between sidebars).
 - Insert / delete / reorder / rotate pages.
@@ -1162,7 +1290,7 @@ shippable build.
 - Per-page operations apply to multi-selection.
 - Save / Save As / Duplicate.
 
-### Phase 3 — Image editing (Weeks 13–16)
+### Phase 3 — Image editing *(Shipped)*
 
 - Crop, resize, rotate, flip.
 - Adjust Colour panel.
@@ -1170,7 +1298,7 @@ shippable build.
 - Convert / export to other image formats.
 - Take screenshot (per-platform implementations).
 
-### Phase 4 — Annotation / Markup (Weeks 17–22)
+### Phase 4 — Annotation / Markup *(Shipped)*
 
 - Markup toolbar.
 - Sketch, Draw, Shapes (incl. Highlight and Zoom Lens annotations), Text,
@@ -1180,11 +1308,12 @@ shippable build.
 - Inspector pane (General, More Info, Annotations).
 - Highlights & Notes sidebar.
 
-### Phase 5 — Forms, signatures, security (Weeks 23–28)
+### Phase 5 — Forms, signatures, security *(Shipped, with deltas)*
 
 - PDF form filling.
 - AutoFill cards (My Card).
-- Signature capture (trackpad, camera, tablet, image import).
+- Signature capture: trackpad and image import shipped; tablet (HID
+  stylus) shipped; **Camera** (webcam capture) Planned (§6.4.3).
 - Sign tool.
 - Form Filling Toolbar.
 - Password-protect / edit permissions.
@@ -1192,44 +1321,76 @@ shippable build.
 - Quartz-equivalent filters.
 - Redaction (with warning copy).
 
-### Phase 6 — Advanced raster + OCR (Weeks 29–34)
+### Phase 6 — Advanced raster + OCR *(ML core shipped, format/colour half unstarted)*
 
-- Smart Lasso and Instant Alpha.
-- Background removal (ONNX Runtime + bundled or downloadable model).
-- HEIC, OpenEXR, RAW read support.
-- Live Text on images (Tesseract).
-- Embed Text on PDF export (Tesseract).
-- Image Description / alt text.
-- Colour management (Assign Profile, Soft Proof, lcms2).
+- Smart Lasso and Instant Alpha — shipped (ONNX Runtime + MobileSAM
+  downloaded on first use). PR #24 moved these from a modal dialog
+  to direct in-document tool modes on `AnnotationOverlay` (see
+  `src/ui/SamController.{h,cpp}`).
+- Background removal — shipped via U²-Net (ONNX Runtime). PR #24
+  routes it through `MlScheduler` with a sparkle "looks like a
+  candidate" badge driven by `BackgroundCandidateScorer`.
+- Live Text on images — shipped via **PP-OCRv3** (PaddleOCR), not
+  Tesseract as originally specced. PR #24 makes OCR results
+  selectable directly on the document via `SelectableTextLayer`
+  (backed by `SelectableTextStore`) instead of dumped to a dialog.
+- Embed Text on PDF export — Planned (the checkbox isn't in the
+  Export As dialog yet).
+- HEIC read support — shipped (loaded via the platform HEIC plugin).
+- **OpenEXR, HDR (Radiance), RAW read support** — Planned, not
+  implemented today (see §4.1).
+- Image Description / alt text — Planned.
+- Colour management (Assign Profile, Soft Proof, lcms2) — Planned.
 
-### Phase 7 — Stretch (Weeks 35–40)
+### Phase 7 — Stretch *(Partial — partially scoped, not started)*
 
 - 3D viewing (USD, Collada, OBJ, STL).
 - Scanner support (SANE / WIA / ImageCaptureCore).
 - Camera import (libgphoto2 / WIA / ImageCaptureCore).
 - Photo location / map view.
-- Local search index and command palette.
+- Local search index and command palette (see §9.4).
 
-### Phase 8 — Polish, accessibility, distribution
+### Phase 8 — Polish, accessibility, distribution *(Partial)*
 
-- Full keyboard shortcut audit.
-- Screen reader audit.
-- Localisation framework + at least English; community translations welcome.
-- Installers and signing for all three platforms.
-- User-facing documentation site.
+- Full keyboard shortcut audit (DESIGN.md §7 has been reconciled
+  against `MainWindow.cpp`; rebinding the *Planned* shortcuts is
+  the remaining piece — see TODO.md ## UI).
+- Screen reader audit — not started.
+- Localisation framework + at least English; community translations
+  welcome — not started (the OCR work shipped in PR #24 surfaces
+  multi-language selection, raising the priority somewhat).
+- Installers and signing — Linux DEB pipeline exists; macOS
+  notarised `.dmg` and Windows MSIX/NSIS Planned (see
+  [docs/cross-platform-sprint.md](docs/cross-platform-sprint.md)
+  and [TODO-packaging.md](TODO-packaging.md) for the gating
+  Apple Developer Program decision).
+- User-facing documentation site — not started.
 
 ---
 
 ## 11. Testing strategy
 
-### 11.1 Unit tests
+The live test architecture is documented in [`AGENTS.md`](AGENTS.md)
+§*Test* — unit tests under `tests/` (one file per `src/` class
+roughly, run on every PR via `ctest --label-exclude uat`), plus a
+QTest-driven offscreen UAT harness under `tests/uat/` (run on tag
+pushes or on-demand via `scripts/run-uat.sh`). UAT cases are paired
+1:1 with `docs/uat/*.md` spec entries — see
+[`docs/uat/README.md`](docs/uat/README.md) for the case format and
+[`docs/smoke-session.md`](docs/smoke-session.md) for the reference-
+user smoke session that complements automated coverage.
 
-- Every command in the command pattern has unit tests covering apply / undo /
-  re-apply.
-- Document model invariants tested under random edit sequences (property-based
-  testing).
+The subsections below capture the *intent* for areas not yet
+exercised. Treat them as planning notes; trust AGENTS.md + the
+test directories as the source of truth for what runs today.
 
-### 11.2 Format conformance
+### 11.1 Unit tests *(Shipped)*
+
+- One unit-test file per `src/` class, kept roughly 1:1 with the
+  source. Property-based testing under random edit sequences is
+  Planned; current tests are example-based.
+
+### 11.2 Format conformance *(Planned)*
 
 - A corpus of test files for each supported format (the public test corpora
   for PDF — e.g., the PDF Association's test files — plus a hand-curated
@@ -1237,20 +1398,24 @@ shippable build.
 - Round-trip tests: open → save → reopen → byte-compare metadata where
   appropriate.
 
-### 11.3 UI / integration tests
+### 11.3 UI / integration tests *(Shipped via the offscreen UAT harness)*
 
-- Cross-platform UI tests via Qt Test or Squish (or equivalent open-source
-  tooling).
-- Smoke test on each platform on every CI run: open ten reference files,
-  navigate, mark up, save, close.
+- QTest under `QT_QPA_PLATFORM=offscreen` constructs `Application`
+  + `MainWindow` in-process; no display server / Xvfb / GPU
+  required. See `tests/uat/test_uat_*.cpp` and the
+  `trailer_add_uat_test()` CMake helper.
+- The per-platform "open ten reference files end-to-end" smoke pass
+  the original spec envisioned is Planned — Linux runs the UAT
+  suite in CI on tag pushes; macOS / Windows host runs are still
+  manual.
 
-### 11.4 Performance benchmarks
+### 11.4 Performance benchmarks *(Planned)*
 
 - Tracked baselines for: cold-start time, PDF first-page render, 100 MP image
   load, continuous-scroll FPS over a 500-page PDF, OCR throughput.
 - Regression alerts when any metric worsens by more than 10%.
 
-### 11.5 Accessibility
+### 11.5 Accessibility *(Planned)*
 
 - Automated axe-style audits run in CI against every screen.
 - Manual screen reader walkthrough each release.
@@ -1259,43 +1424,72 @@ shippable build.
 
 ## 12. Distribution and release engineering
 
-- **Versioning:** SemVer. Breaking changes only at major bumps.
-- **Release cadence:** Roughly monthly point releases during the first year,
-  quarterly thereafter.
+The live state is documented in
+[`docs/cross-platform-sprint.md`](docs/cross-platform-sprint.md) (in
+scope work) and [`TODO-packaging.md`](TODO-packaging.md) (gated
+work, primarily Apple Developer Program decisions). Summary:
+
+- **Versioning:** SemVer. While Trailer is on 0.x, breaking changes
+  are allowed on minor bumps (see PHILOSOPHY *What 1.0 means*).
+- **Release cadence:** No fixed cadence yet — releases happen when
+  there's something to ship.
 - **Update mechanism:**
-  - macOS: Sparkle.
-  - Windows: built-in updater (MSIX takes care of this) or Squirrel.
-  - Linux: leave to the distribution; AppImage uses AppImageUpdate.
-- **Code signing:** Required on Mac and Windows. Build infrastructure must
-  support reproducible-from-source signed builds.
-- **Telemetry:** **None by default.** If a maintainer ever wants to add it,
-  it must be opt-in, transparent about exactly what is sent, and disable-able
-  in one click.
+  - macOS: Sparkle is the long-term target (see
+    [TODO-packaging.md](TODO-packaging.md)). The
+    `claude/friendly-haslett-8bdd21` branch explored a Sigstore-
+    keyless alternative that sidesteps the Apple Developer Program
+    dependency for update signing; both options are still on the
+    table.
+  - Windows: Planned. The native MSVC build (`build-windows-native.ps1`)
+    ships today; the installer + auto-updater path is open.
+  - Linux: DEB + RPM packages shipping today (`build-linux-deb.sh`,
+    `build-linux-rpm.sh`); leave updates to the distribution.
+- **Code signing:** macOS uses adhoc signing today —
+  Apple-Developer-Program-signed + notarised `.dmg` is gated on the
+  $99/yr program decision. Windows installer signing is similarly
+  gated on a code-signing certificate budget. See
+  [TODO-packaging.md](TODO-packaging.md).
+- **Reproducible-from-source signed builds:** Aspirational; not
+  in place yet.
+- **Telemetry:** **None.** Per PHILOSOPHY's *No telemetry* bullet,
+  this is a durability commitment, not a default that could flip.
+  Any future telemetry would require a new durability decision
+  and would be opt-in, transparent, and one-click disable.
 
 ---
 
 ## 13. Open questions for the implementing agent
 
-The following should be resolved early in Phase 0 and the resolutions should
-update this document.
+Originally a Phase-0 to-resolve list. The first three are resolved
+in code; questions 4–6 remain open against unbuilt subsystems.
 
-1. **Qt 6 with C++ vs. PySide6.** Pick one and commit. (Recommendation: C++
-   for performance; PySide6 if the team is small and time-constrained.)
-2. **Poppler vs. MuPDF for PDF rendering.** Both work. Poppler is GPL/LGPL;
-   MuPDF is AGPL/commercial. Licence implications drive the choice.
-3. **Background-removal model.** Bundle vs. on-demand download. Bundling
-   costs ~50–200 MB on disk; downloading requires explicit consent on first
-   use. The latter aligns better with our local-first principle.
-4. **Map tile provider.** OpenStreetMap public tiles have a usage policy that
-   may not suit a desktop app shipping at scale. Alternatives: bundle an
-   offline tile pack (large), or self-host a tile server (operational
-   burden), or punt and just open a URL in the browser.
-5. **3D viewer.** Building this in-app vs. embedding an existing viewer.
-   USD's reference Hydra renderer is an option; a simpler scenegraph using
-   Open3D may suffice.
-6. **Stylus / pressure on Linux.** `QTabletEvent` works on X11 with
-   xf86-input-wacom; Wayland support is improving but uneven. Plan for
-   graceful degradation.
+1. ~~**Qt 6 with C++ vs. PySide6.**~~ **Resolved: Qt 6 with C++20.**
+   See `CMakeLists.txt`, `AGENTS.md` §*What Trailer is*, and the
+   `trailer_stack` memory note.
+2. ~~**Poppler vs. MuPDF for PDF rendering.**~~ **Resolved: neither
+   — Qt PDF.** `QPdfView` + `QPdfDocument` ship with Qt 6 and avoid
+   both the GPL/LGPL and AGPL/commercial licence surfaces. See
+   `src/document/PdfAdapter.cpp` and the README *Requirements*
+   section (Qt 6 *Pdf* + *PdfWidgets* + *PrintSupport* components).
+3. ~~**Background-removal model.**~~ **Resolved: on-demand download
+   with explicit consent.** ONNX Runtime + U²-Net via
+   `ModelDownloader`; user is shown the URL before download and the
+   first-use dialog records consent in `[first_use]`. See
+   `src/ml/BackgroundRemover.cpp` and PHILOSOPHY's *No telemetry*
+   bullet.
+4. **Map tile provider** — *Still open*. Photo location / map view
+   is Phase 7 stretch (§10) and not started; the question reactivates
+   when that phase begins. OpenStreetMap public-tile usage policy
+   conflict remains; the offline-tile-pack and "punt to browser"
+   alternatives are still both on the table.
+5. **3D viewer** — *Still open*. Also Phase 7 stretch. USD's
+   reference Hydra renderer vs. a simpler scenegraph (Open3D) hasn't
+   been chosen; defer the decision to whoever opens Phase 7.
+6. **Stylus / pressure on Linux** — *Still open in practice*.
+   `QTabletEvent` is wired in the signature canvas and works on X11
+   with xf86-input-wacom; Wayland support is uneven and untested at
+   scale. Graceful degradation is the plan; a structured pass to
+   verify on a Wayland desktop hasn't happened yet.
 
 ---
 

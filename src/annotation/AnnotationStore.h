@@ -96,6 +96,12 @@ class AnnotationStore : public QObject {
     // still false, no mutations occurred and the undo stack is
     // untouched — the user gets no phantom "no-op" undo step.
     bool m_compoundSnapshotPushed = false;
+
+    // Cap on retained snapshots per direction. Each snapshot is one
+    // std::vector<Annotation> copy; 64 keeps a busy markup session's
+    // RSS well under a MB at typical annotation counts. Bump if a
+    // real workflow runs out of undo on a long session; lower if
+    // memory profiling points at AnnotationStore.
     static constexpr size_t kMaxUndo = 64;
 };
 

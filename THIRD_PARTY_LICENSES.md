@@ -109,6 +109,7 @@ download.
 | PP-OCRv3 Latin recognizer | `pp_ocr_rec_en.onnx` (≈ 9.0 MB) | Apache 2.0 | same | Recognize Text |
 | PP-OCR direction classifier | `pp_ocr_cls.onnx` (≈ 0.6 MB) | Apache 2.0 | same | *pinned but not yet loaded — reserved for a future rotation pre-pass* |
 | PP-OCRv4 CJK recognizer | `pp_ocr_rec_cjk.onnx` (≈ 10.9 MB) | Apache 2.0 | same | *pinned but not yet loaded — reserved for a future CJK language pack* |
+| BiRefNet Lite | `birefnet_lite.onnx` (size TBD) | MIT | <https://github.com/ZhengPeng7/BiRefNet> | *registered in `ModelRegistry` but download URL + SHA-256 not yet pinned — reserved for a future high-precision background-removal alternative* |
 
 ### Notices for Apache-2.0 weights
 

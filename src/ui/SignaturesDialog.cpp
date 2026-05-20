@@ -8,6 +8,7 @@
 #include <QImageReader>
 #include <QLabel>
 #include <QListWidget>
+#include <QLocale>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -63,7 +64,11 @@ void SignaturesDialog::reload() {
     for (const Signature &s : m_signatures) {
         auto *item = new QListWidgetItem(s.label, m_list);
         item->setData(Qt::UserRole, s.id);
-        item->setToolTip(s.createdAt.toString(Qt::ISODate));
+        // SignatureStore writes createdAt in UTC (see
+        // SignatureStore.cpp's QDateTime::currentDateTimeUtc);
+        // convert to local time before formatting so the tooltip
+        // shows the user's wall-clock time, not the UTC clock.
+        item->setToolTip(QLocale().toString(s.createdAt.toLocalTime(), QLocale::ShortFormat));
     }
     if (m_list->count() > 0) {
         m_list->setCurrentRow(0);

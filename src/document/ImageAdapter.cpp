@@ -40,9 +40,25 @@ constexpr const char *kExtensions[] = {
     "webp", "ppm", "pgm",  "pbm", "xbm", "xpm",  "ico",
 };
 
+// Step multiplier per zoom-in / zoom-out tap (~10% per step) —
+// matches the rate Preview / Acrobat use. Change if dogfooding
+// finds zoom feels jumpy (lower) or sluggish (higher).
 constexpr double kZoomStep = 1.1;
+
+// Hard zoom bounds. 0.05 (5%) preserves the user's place at a
+// thumbnail-overview scale without letting a typical document
+// collapse to invisibility. 32× (3200%) is pixel-inspection
+// territory; past it Qt's int-pixel coordinate math risks
+// overflowing on large images. Change if a real workflow hits
+// either edge — e.g. a multi-gigapixel scan can't fit in the
+// viewport, or zoomed-in pixel art needs more headroom.
 constexpr double kZoomMin = 0.05;
 constexpr double kZoomMax = 32.0;
+
+// Cap on retained image snapshots per direction. Each snapshot is
+// a full QImage copy, so the cap is lower than AnnotationStore's
+// (small-struct snapshots). 32 holds a few hundred MB at typical
+// photo sizes. Bump only if a real edit session runs out of undo.
 constexpr size_t kMaxUndoSteps = 32;
 
 Qt::PenStyle toPenStyle(DashStyle d) {

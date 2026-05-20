@@ -280,12 +280,39 @@ telemetry, no accounts, no premium tier, no cloud sync, local-first.
 [PHILOSOPHY.md](PHILOSOPHY.md) spells them out and explains how the
 project intends to stay that way.
 
+## Project docs
+
+| Doc | What it's for |
+|---|---|
+| [DESIGN.md](DESIGN.md) | Full product spec — phases, features, scope. |
+| [PHILOSOPHY.md](PHILOSOPHY.md) | Hard constraints — what stays in, what's off-limits, the friction-reduction rules. |
+| [ROADMAP.md](ROADMAP.md) | Tactical Now / Next / Later view of what's between releases. |
+| [CHANGELOG.md](CHANGELOG.md) | What shipped when, per release tag. Keep-a-Changelog format. |
+| [RELEASING.md](RELEASING.md) | Maintainer release runbook — VERSION bump, tag, draft release notes. |
+| [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Patterns the code already follows (document adapters, PdfCommand, AnnotationStore, UAT slot naming, vendored deps). Recipe-shaped — for adding new code that fits. |
+| [docs/smoke-session.md](docs/smoke-session.md) | Reference-user smoke-session protocol: a non-maintainer opens a fresh build and runs three tasks. Run before minor-version bumps. |
+| [docs/cross-platform-sprint.md](docs/cross-platform-sprint.md) | Planning artifact grouping current cross-platform packaging items into one sprint. |
+| [docs/in-flight-merge-plan.md](docs/in-flight-merge-plan.md) | Historical: the merge plan for PR #24 (the 4-wave HITL merge — landed 2026-05-20). The three CONVENTIONS sections it drafted are now applied as CONVENTIONS §§11-13; the doc is retained as the dependency / risk record. |
+| [docs/audit-2026-05-19.md](docs/audit-2026-05-19.md) | Multi-perspective audit (privacy / cross-platform / accessibility / failure-mode) with findings + an action register grouping what to do with each. |
+| [docs/packaging-macos.md](docs/packaging-macos.md) | macOS bundling/release reference. |
+| [docs/icon-guidelines.md](docs/icon-guidelines.md) | Icon-family design brief. |
+| [docs/uat/](docs/uat/) | UAT case specs by area (foundations, viewer, PDF pages, image editing, annotations, cross-cutting, security). Each pairs 1:1 with a slot in `tests/uat/`. |
+| [AGENTS.md](AGENTS.md) | Entry point for AI coding agents. `CLAUDE.md` symlinks here. |
+| [TODO.md](TODO.md) | Deferred-work tracker, including dated HITL pass and smoke-session entries. |
+| [TODO-packaging.md](TODO-packaging.md) | Packaging-specific deferred work. |
+| [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) | License attribution for shipped components. |
+
 ## License
 
-Trailer is MIT-licensed — see [LICENSE](LICENSE).
+Trailer's source is MIT-licensed — see [LICENSE](LICENSE).
 
-Third-party components that ship with the binary (Qt, ONNX Runtime,
-qpdf, toml++, the PaddleOCR English dictionary) and the ONNX model
+The *binary* Trailer ships dynamically links Qt 6, which is LGPL-3.0.
+Downstream packagers redistributing a Trailer build must therefore
+also ship Qt's unmodified shared libraries and a copy of the LGPL-3.0
+text alongside the executable, satisfying the LGPL's relinking
+allowance. The other third-party components — ONNX Runtime, qpdf,
+toml++, the PaddleOCR English dictionary — and the ONNX model
 weights Trailer downloads on first use (U²-Net, MobileSAM, PP-OCRv3)
-each carry their own license. They are enumerated in
+each carry their own license. All of them are enumerated, with
+attribution and notice requirements, in
 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md).

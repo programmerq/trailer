@@ -45,7 +45,13 @@ rejected, regardless of how cleanly it implements its stated feature.
 - **No ads, ever.** No promotional surface anywhere in the app.
 - **No telemetry.** No analytics, no crash phone-home, no "anonymous usage
   statistics." No new outbound network calls without an explicit, off-by-
-  default user toggle.
+  default user toggle. Operationally: `QNetworkAccessManager` /
+  `QHttpClient` / any other outbound-capable Qt class should not appear
+  outside `src/ml/ModelDownloader.cpp` and the test code that exercises it.
+  A PR that introduces one elsewhere is a stop-and-discuss change, not a
+  drive-by review-and-merge. The build does not lint for this — code
+  review is the entire enforcement mechanism. (Audit: `docs/audit-2026-05-19.md`
+  §1 P-WC-1.)
 - **No accounts.** Trailer never asks the user to sign in.
 - **No cloud sync.** Files stay on the user's device.
 - **No premium / pro tier.** All features ship to everyone.
@@ -73,8 +79,20 @@ PdfWidgets PrintSupport`, qpdf 11+, a C++20 compiler. `qtpdf` is a
 separate module in many Qt distributions — install it explicitly if
 `find_package(Qt6 COMPONENTS Pdf)` fails (see README).
 
-The build treats warnings as errors (`-Werror` / `/WX`). CI will fail on
-any new warning; fix them at the source rather than disabling the flag.
+CI builds with `-Werror` **off** by default — Qt / libstdc++ / qpdf
+system-header noise (false-positive `-Wnull-dereference`,
+`POINTERHOLDER_TRANSITION`, etc.) makes strict `-Werror` unworkable
+in CI. Trailer's own source is kept clean by review; the
+`claude/ci-harden-dev-phase` branch is converting the strict
+`-Werror` job into an advisory non-blocking comment. To opt into the
+strict build locally:
+
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRAILER_WERROR=ON
+```
+
+Run this when chasing a regression or before landing a refactor that
+touches a lot of templated code.
 
 **Windows native.** `scripts/install-windows-deps.ps1` then
 `scripts/build-windows-native.ps1` — full path documented in
@@ -121,26 +139,38 @@ template.
 
 ```
 src/
+  annotation/      # Annotation data classes + AnnotationStore snapshot undo
   app/             # Application lifecycle, QApplication subclass, file-open routing
+  cards/           # Trim My Card and related card-detection helpers
   document/        # IDocument, adapters (PdfAdapter, ImageAdapter, StubAdapter),
                    # PdfEditor + PdfCommand pattern, qpdf wrapper
-  ui/              # MainWindow, DocumentView, Sidebar, AnnotationOverlay,
-                   # Inspector, MarkupToolbar, SignatureCaptureDialog, etc.
+  filters/         # ImageFilter (sepia / B&W / brightness etc.)
   ml/              # OnnxSession, ModelRegistry, ModelDownloader,
                    # BackgroundRemover, SamSession, OcrEngine
-  settings/        # Persistence (QSettings + a toml++ store for richer state)
+  platform/        # OS-specific bits (screenshot pickers, power source, etc.)
   recent/          # RecentFiles model
+  settings/        # Persistence (QSettings + a toml++ store for richer state)
+  signatures/      # SignatureStore + signature-capture pipeline
+  ui/              # MainWindow, DocumentView, Sidebar, AnnotationOverlay,
+                   # Inspector, MarkupToolbar, SignatureCaptureDialog, etc.
+  util/            # Small cross-cutting helpers
 tests/             # Unit tests, one file per src/ class roughly
 tests/uat/         # UAT harness (offscreen, label=uat)
 docs/uat/          # UAT specs — source of truth for end-user behaviour
 icon/              # App icon pipeline (Python; see icon/README.md)
 docker/            # Cross-compile + UAT runner images
 packaging/         # Linux DEB scaffolding
-platform/          # OS-specific bits (e.g. screenshot pickers)
 scripts/           # build-linux-deb.sh, build-windows.sh, run-uat.sh
 ```
 
 ## Conventions
+
+> **Pattern catalogue.** This section covers process/workflow
+> conventions (branches, commits, undo stacks, networking). For the
+> code-level patterns the repo expects new contributions to follow —
+> document adapters, `PdfCommand` shape, `AnnotationStore` snapshot
+> undo, coordinate-callback overlay, `QPointer` use, UAT slot naming,
+> magic constants — see [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md).
 
 **Branches.** Agent branches follow `<tool>/<slug>` — `claude/<name>-<hash>`,
 `copilot/<feature>`, `cursor/<feature>`. The `worktree-agent-<hash>` prefix
@@ -199,6 +229,7 @@ other path without raising it in the PR first.
 |---|---|
 | Understand the product end-to-end | `DESIGN.md` |
 | Know what's off-limits | `PHILOSOPHY.md` |
+| Match an existing code pattern | `docs/CONVENTIONS.md` |
 | Pick up open work | `TODO.md` (HITL section is the live sprint) |
 | Write a UAT case | `docs/uat/README.md` + a sibling spec file |
 | Write a UAT harness slot | `tests/uat/test_uat_foundations.cpp` is the template |
@@ -206,6 +237,10 @@ other path without raising it in the PR first.
 | Add an annotation type | `src/ui/AnnotationOverlay.cpp`, `Annotation.h`, `AnnotationStore` |
 | Add a Qt-PDF rendering path | `src/document/PdfAdapter.cpp`, the QPdfView wiring |
 | Touch ML | `src/ml/` — keep all inference local, no remote calls |
+| Run a reference-user smoke session | `docs/smoke-session.md` |
+| Land cross-platform packaging fixes | `docs/cross-platform-sprint.md` |
+| Read the PR #24 (HITL waves 1-4) merge retrospective | `docs/in-flight-merge-plan.md` |
+| See what the eleven reviewer lenses turned up | `docs/audit-2026-05-19.md` |
 
 ## Slash commands & subagents
 
