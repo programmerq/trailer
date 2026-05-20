@@ -261,6 +261,16 @@ void TestUatBackgroundRemoval::init() {
     // to-be-removed signal but the worker thread still drains its
     // current task to completion).
     if (auto *app = qobject_cast<Application *>(qApp)) {
+        // Force the scheduler to ignore battery state. The badge tests
+        // exercise the Prefetch path; with the default
+        // `mlRunOnBattery=false` and a host on battery,
+        // `MlScheduler::submit` pre-cancels Prefetch tasks before the
+        // worker runs and the badge never appears. Production behaviour
+        // on the user's machine stays correct — they actively chose not
+        // to burn battery on speculative ML — but the test needs to be
+        // host-state independent so it passes on a laptop on battery the
+        // same way it passes in CI on AC.
+        app->settings().setMlRunOnBattery(true);
         app->mlScheduler().cancelAll();
         app->mlScheduler().waitForIdle(2000);
         QApplication::processEvents();
