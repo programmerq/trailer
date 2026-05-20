@@ -23,6 +23,175 @@ Three recurring sources feed this file:
   [`docs/audit-2026-05-19.md`](docs/audit-2026-05-19.md) for the
   current snapshot.
 
+## 2026-05-20 HITL pass (post-#25, on `main`)
+
+Captured from a live walkthrough after PR #25 (Post-0.1.0 docs +
+release tooling + PDF page-op undo) landed. Each item is described in
+terms of the user-visible behaviour and the proposed fix.
+
+> **Note on the "in flight" branch:** [ROADMAP.md](ROADMAP.md)'s
+> `## In flight (about to land)` section as of this date describes
+> the Wave 1-4 work as upcoming. That is **stale** — PR #24
+> (`4dba247 HITL waves 1-4`) merged the work onto `main` on
+> 2026-05-19, before this HITL pass. The roadmap was authored *after*
+> the merge but not updated to reflect it. Items below that look
+> like Wave 1 territory (thumbnail density, search-bar collapse,
+> markup-toolbar defaults) are scoped against what actually landed
+> in PR #24 and what's still rough about it. Reframing the roadmap
+> itself is a separate item.
+
+### Thumbnail sidebar still wastes vertical space (Workstream C partial)
+
+The 9beff07 / Workstream C work *did* land in PR #24: the logical
+thumbnail size dropped from `128×160` → `80×100`
+([src/ui/ThumbnailModel.h:47](src/ui/ThumbnailModel.h:47)), a custom
+`ThumbnailDelegate` paints the page number as an in-pixmap badge in
+the lower-right corner
+([src/ui/Sidebar.cpp:94-121](src/ui/Sidebar.cpp:94)), and its
+`sizeHint` returns `iconSize.height() + 2*kThumbVerticalPadding`
+(= 108 px) per item
+([src/ui/Sidebar.cpp:61-66](src/ui/Sidebar.cpp:61)). On paper this
+should make each row tight to the thumbnail.
+
+In live use the rows still render visibly taller than the thumbnail —
+the user observed wide vertical gaps between thumbnails on a typical
+sidebar width, with each row roughly the *pre*-9beff07 height despite
+the new sizing constants. Something between the delegate's `sizeHint`
+and the actual `QListView` layout is keeping rows tall.
+
+**Repro hints:** instrument `ThumbnailDelegate::sizeHint` to log what
+it returns vs what `m_view->visualRect(index).height()` reports back;
+check whether `Qt::SizeHintRole` is being shadowed by another role
+elsewhere; verify on both 1× and 2× displays in case DPR-rounding in
+`KeepAspectRatio` is leaving slack the delegate doesn't reclaim. If
+sizeHint *is* returning 108 and Qt is honouring it, the gap is visual
+noise (DPR rounding, scrollbar reservation) that needs a delegate-
+level fix.
+
+### Rectangle annotation rough edges
+
+A live session placing one rectangle surfaced three problems:
+
+- **Auto-switch to Select after placement.** After releasing the
+  mouse on a freshly-drawn shape, the toolbar stays on Rectangle,
+  so the user must manually pick Select before they can grab the
+  shape to move or resize it. The 2026-04-30 pass made Select the
+  *default* tool (item #5 there), but doesn't switch back after a
+  one-shot shape. Proposal: on the `mouseReleaseEvent` branch that
+  commits a new shape in `AnnotationOverlay`, set
+  `m_tool = AnnotationTool::Select` and synchronise the
+  `MarkupToolbar` checked-action so the chrome matches. Sticky-draw
+  mode could be an opt-in setting if anyone misses it.
+
+- **Existing shapes are not restyleable from the Inspector.** The
+  Inspector has a writeback path —
+  [src/ui/Inspector.cpp:125-138](src/ui/Inspector.cpp:125) wires
+  the Stroke button through `QColorDialog` into
+  `updated.style.stroke = c` — so the missing piece is either the
+  store mutation, the overlay repaint, or both. Reported behaviour:
+  picking a new colour on a selected rectangle leaves the rectangle
+  visually unchanged. **Needs repro:** confirm whether
+  `AnnotationStore::changed` fires after the Inspector write, and
+  whether `AnnotationOverlay::update()` is called on receipt.
+
+- **Rectangles disappear without explicit deletion.** The user
+  observed placed rectangles vanishing on some interaction; undo
+  brings them back, so *something* is mutating the
+  `AnnotationStore`. The existing focus-loss path
+  ([src/ui/AnnotationOverlay.cpp:51-66](src/ui/AnnotationOverlay.cpp:51),
+  `applicationStateChanged` → `abortInFlightDrag`) only clears
+  in-flight drag state — not committed annotations — so the cause
+  is elsewhere. **Needs repro:** sequence the interactions one at
+  a time (place → click empty area, place → focus-out via Cmd-Tab,
+  place → switch tool, place → press Esc, place → open Inspector
+  and change colour) and capture which triggers the delete. The
+  Inspector-colour case is a suspect given the writeback bug above
+  — a malformed `updated.style` write could plausibly clobber
+  geometry too.
+
+### Select All only selects annotations
+
+`Edit → Select All`
+([src/ui/MainWindow.cpp:640-644](src/ui/MainWindow.cpp:640)) routes
+to `AnnotationOverlay::selectAll()`, which multi-selects annotations
+on the current page. There's no path to "select the visible page
+raster so I can copy/paste it into a chat program." A common
+end-of-session flow is: mark up a page → select everything → copy →
+paste image into Slack / iMessage / etc.
+
+Proposal: keep `Cmd-A` as annotation-select when the overlay has
+focus *and* the page has annotations; otherwise (image documents,
+or a PDF page with no annotations and the page itself focused) treat
+`Cmd-A` as "select page for copy" and let `Cmd-C` push a rendered
+PNG of the page to the clipboard. A separate
+`Edit → Copy Page as Image` menu item may be clearer than overloading
+`Cmd-A`.
+
+### Content-aware initial UI defaults
+
+Wave 1 / Workstream I (per-file + per-type + per-window persistence)
+landed in PR #24 — that's the right floor. But on *first* open of a
+document, when there's no saved state for that file, we can do
+better than the global default by reading the document's contents:
+
+- **Lots of fillable AcroForm fields → start with form controls
+  shown.** The 2026-04-24 pass already auto-shows the form toolbar
+  on fillable PDFs, but the sidebar / Inspector / markup-toolbar
+  defaults still come from the global / per-type state. A document
+  with ≥ N AcroForm widgets (suggest ≥ 3) is unambiguously a form;
+  show the form toolbar, suppress the markup toolbar, and consider
+  defaulting the sidebar to hidden.
+
+- **Many pages → start with thumbnail sidebar open.** A document
+  with ≥ K pages (suggest ≥ 20) is one the user will want to
+  navigate by thumbnail; auto-popping
+  `Sidebar::Mode::Thumbnails` on first open saves a click. Once
+  the user changes it, three-tier persistence carries forward.
+
+Heuristics should run only when no per-file state is on record; any
+explicit user adjustment wins and sticks.
+
+### Navigation shortcuts
+
+- **No keyboard shortcut for page-mode (single / two / continuous).**
+  Cycling layout from the menu requires three menu trips
+  (`View → Single Page`, etc.). Proposal: bind `Cmd-1` / `Cmd-2` /
+  `Cmd-3` to single / two-page / continuous respectively. Two-page
+  is currently disabled per the `// TODO` at
+  [src/ui/MainWindow.cpp:639](src/ui/MainWindow.cpp:639), so
+  `Cmd-2` becomes live when that lands.
+
+- **Continuous-mode `↓` step is too small.** With pages laid out
+  vertically, `↓` advances by the default
+  `QAbstractScrollArea` line-step, so reaching the next page on a
+  long doc takes dozens to hundreds of presses. Proposal: in
+  continuous mode, `↑` / `↓` step by approximately viewport height
+  (matching Preview / Acrobat); `PageDown` / `PageUp` should also
+  work. Single-page mode already advances by full page on arrows
+  via the existing nav wiring.
+
+### Search "Close" button is non-functional
+
+The `SearchBar` close button is wired:
+[src/ui/SearchBar.cpp:43](src/ui/SearchBar.cpp:43) emits `dismissed`
+on click → [src/ui/MainWindow.cpp:145](src/ui/MainWindow.cpp:145)
+routes `dismissed` to `hideSearchBar` →
+[src/ui/MainWindow.cpp:702](src/ui/MainWindow.cpp:702) calls
+`m_searchBar->setVisible(false)`. Yet clicking close does not
+collapse the bar in the running app.
+
+Likely cause: the search bar is added to the main toolbar via
+`QToolBar::addWidget`
+([src/ui/MainWindow.cpp:606](src/ui/MainWindow.cpp:606)), which
+wraps the widget in an internally-owned `QWidgetAction`. Hiding
+the inner widget without also hiding the wrapping `QAction` leaves
+the toolbar slot occupied (visible empty space rather than
+collapsed). **Fix:** capture the `QAction *` returned by
+`m_mainToolbar->addWidget(m_searchBar)` and call `setVisible(false)`
+on the action in `hideSearchBar`, paired with `setVisible(true)`
+in the show path. Esc routes through the same `dismissed` signal,
+so this likely affects Esc-dismiss too.
+
 ## 2026-05-19 HITL pass (live use on Windows 11; applies cross-platform)
 
 Driven by the user opening a real document on Windows and walking through
@@ -100,44 +269,18 @@ or behaviours the four agents flagged but didn't fix.
   visibility; Inspector visibility isn't currently in that set. Adding
   it would round out the persistence story.
 
-### From the 2026-05-20 post-merge audit (see [`docs/audit-2026-05-19.md`](docs/audit-2026-05-19.md) §§12-15)
-
-- **`Settings::mlPreloadSegmentationOnToolActivation` has no
-  production caller.** The setting is a public Settings API
-  (getter/setter, persisted under `[ml.scheduler]`, tested) but
-  `SamController.cpp` never reads it. The eager-preload-on-tool-
-  activation path the name promises isn't wired. Either wire it
-  (the SAM encoder cache + preload submit is the obvious shape)
-  or mark the setter `[[deprecated]]` and drop the public-API
-  commitment. Audit ref: API-NEW-CRIT-1.
-
-- **UAT area-code legend in `docs/uat/README.md` is structurally
-  incomplete.** Spec enumerates 7 codes (FND, VWR, PDF, IMG, ANN,
-  XCT, SEC); the test harness uses 13 distinct slot prefixes
-  (af, ann, bgr, fnd, frm, hn, ocr, red, sam, sec, sig, toc,
-  vwr). The CONVENTIONS §7 "1:1 pairing" claim is right for the
-  codes that match (fnd, vwr, ann, sec) but doesn't account for
-  the mismatch on the rest. Resolution paths: (a) rename slots
-  to match spec codes; (b) document the category/file-grouping
-  convention separately; (c) update the spec to add the test-
-  suite codes. Audit ref: DOC-FOLLOWUP-1.
-
 ## 2026-04-30 HITL pass (live use on macOS)
 
 Captured from the user driving the actual app on a Mac. Each entry is
 a discrete change; we'll knock them out in priority order. Crossed-off
 items have landed; the commit hash is in the strikethrough line.
 
-> **2026-05-19 audit:** every item in this section has now landed.
-> Item-line strikethroughs carry the commit reference. The earlier
-> 2026-05-11 audit flagged #1 (Dock-drop), #16 (sidebar TOC /
-> Highlights & Notes), and #18 (search-match yellow) as remaining;
-> all three landed between May 11 and May 19: #1 via live-drag
-> confirmation on 2026-05-13 (the in-process path was already
-> green), #16 via the 2026-05-13 sidebar-modes pass, and #18 via
-> `1503c42 feat: highlighter-yellow search-match overlay`. The
-> section is retained as a historical record of the HITL pass, not
-> as a live work queue.
+> **2026-05-11 audit:** most of this section is already in the code.
+> Verified-done items are struck through with the reference; the only
+> remaining bullets are #1 (Dock-drop — needs runtime repro on
+> macOS), #16 (sidebar TOC / Highlights & Notes — placeholders,
+> blocked on underlying features), and #18 (search-match yellow —
+> needs a custom highlight overlay over `QPdfView`).
 
 ### Bugs (data loss / broken affordance)
 
@@ -264,22 +407,8 @@ items have landed; the commit hash is in the strikethrough line.
 
 - **Menu organisation review.** Some items currently under Tools may
   belong under File (Export As, Take Screenshot) or Edit (Flip, Rotate,
-  Adjust Size, Adjust Colour). The original gating ("revisit once
-  Phase 4 markup actions land") has been met — Phase 4 shipped — but
-  the review itself hasn't happened. Pick up as part of the next
-  reference-user smoke session ([`docs/smoke-session.md`](docs/smoke-session.md))
-  if a non-maintainer drives the menu hierarchy looking for an
-  action that isn't where they expect.
-
-- ~~**DESIGN.md §7 keyboard-shortcut table audit.**~~ Done — table
-  reconciled against `src/ui/MainWindow.cpp`'s `setShortcut` calls
-  in `d09e43b`. Four of the *Planned* rebindings landed
-  immediately (Export As `Ctrl+Shift+E`, Adjust Size `Ctrl+Alt+I`,
-  Adjust Colour `Ctrl+Alt+C`, Remove Background `Ctrl+Shift+K`);
-  the remaining *Planned* shortcuts in §7 (Full Screen, tab nav,
-  doc nav) wait on the underlying actions — Full Screen needs the
-  feature itself (§6.1.7); tab/doc nav across documents in a
-  window needs a navigation contract that doesn't exist yet.
+  Adjust Size, Adjust Colour). Revisit once Phase 4 markup actions land,
+  so we can organise them as a group.
 
 ## Cross-cutting
 
@@ -290,10 +419,11 @@ items have landed; the commit hash is in the strikethrough line.
   gaps were in custom-rendered raster content that asked the
   document for logical-pixel sized images and let Qt scale them up
   blurry on 2x displays.
-  - **Sidebar thumbnails** render at `m_size * devicePixelRatio`
-    native pixels and stamp `setDevicePixelRatio` on the result
-    (`src/ui/ThumbnailModel.cpp:159`) so Qt uses the high-DPI bitmap
-    at logical layout size. No more soft thumbnails on Retina.
+  - **Sidebar thumbnails** (commit pending) now render at
+    `m_size * devicePixelRatio` native pixels and stamp
+    `setDevicePixelRatio` on the result so Qt uses the high-DPI
+    bitmap at logical layout size. No more soft thumbnails on
+    Retina.
   - **Screenshot capture** (`screen->grabWindow(0)`) is already
     DPR-correct: the returned pixmap is native pixels and saving
     to PNG writes the high-resolution data.
@@ -584,15 +714,17 @@ and any future feature where input variety is the whole point.
 
 ### Cross-cutting polish items
 
-- **Designer / non-technical-user review.** Now codified as the
-  reference-user smoke session — see
-  [`docs/smoke-session.md`](docs/smoke-session.md) for the protocol
-  (fresh build, non-maintainer observer, three open-do-close cycles
-  on a text PDF + scanned PDF + photo, observations land in a dated
-  subsection of this file). The original bullets that lived here —
-  modal dialogs that interrupt, controls enabled-but-noop, hidden
-  entry points, lost direct manipulation, too-loud/too-quiet feedback
-  — are now covered as positive rules in PHILOSOPHY's *How Trailer
-  reduces friction* section. The trigger remains: schedule a smoke
-  session before any 1.0 polish milestone, and opportunistically
-  whenever a willing non-maintainer is in the room.
+- **Designer / non-technical-user review.** The items above came out of
+  one ~15-minute walkthrough. A focused pass that watches a real user
+  drive the app end-to-end (open a file → markup → sign → save) will
+  surface more of these subtle behaviours. Schedule this before any 1.0
+  polish milestone. Watch for:
+  - Any modal dialog that interrupts work on the document.
+  - Tools that appear enabled but do nothing (or the wrong thing) for
+    the active document type.
+  - Any action that requires the user to already know where to look
+    (hidden toolbars, menu-only entry points for common tasks).
+  - Loss of direct manipulation (things the user made but can't then
+    grab, move, or edit).
+  - Feedback that's too loud (popups) or too quiet (no visible change
+    after a successful action).
