@@ -290,6 +290,7 @@ project intends to stay that way.
 | [docs/smoke-session.md](docs/smoke-session.md) | Reference-user smoke-session protocol: a non-maintainer opens a fresh build and runs three tasks. Run before minor-version bumps. |
 | [docs/cross-platform-sprint.md](docs/cross-platform-sprint.md) | Planning artifact grouping current cross-platform packaging items into one sprint. |
 | [docs/in-flight-merge-plan.md](docs/in-flight-merge-plan.md) | Merge plan for the `claude/mystifying-proskuriakova-e07cb6` branch — workstream map, dependency order, risks, and draft CONVENTIONS sections to append once it lands. |
+| [docs/audit-2026-05-19.md](docs/audit-2026-05-19.md) | Multi-perspective audit (privacy / cross-platform / accessibility / failure-mode) with findings + an action register grouping what to do with each. |
 | [docs/packaging-macos.md](docs/packaging-macos.md) | macOS bundling/release reference. |
 | [docs/icon-guidelines.md](docs/icon-guidelines.md) | Icon-family design brief. |
 | [docs/uat/](docs/uat/) | UAT case specs by area (foundations, viewer, PDF pages, image editing, annotations, cross-cutting, security). Each pairs 1:1 with a slot in `tests/uat/`. |

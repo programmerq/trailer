@@ -45,7 +45,13 @@ rejected, regardless of how cleanly it implements its stated feature.
 - **No ads, ever.** No promotional surface anywhere in the app.
 - **No telemetry.** No analytics, no crash phone-home, no "anonymous usage
   statistics." No new outbound network calls without an explicit, off-by-
-  default user toggle.
+  default user toggle. Operationally: `QNetworkAccessManager` /
+  `QHttpClient` / any other outbound-capable Qt class should not appear
+  outside `src/ml/ModelDownloader.cpp` and the test code that exercises it.
+  A PR that introduces one elsewhere is a stop-and-discuss change, not a
+  drive-by review-and-merge. The build does not lint for this — code
+  review is the entire enforcement mechanism. (Audit: `docs/audit-2026-05-19.md`
+  §1 P-WC-1.)
 - **No accounts.** Trailer never asks the user to sign in.
 - **No cloud sync.** Files stay on the user's device.
 - **No premium / pro tier.** All features ship to everyone.
@@ -234,6 +240,7 @@ other path without raising it in the PR first.
 | Run a reference-user smoke session | `docs/smoke-session.md` |
 | Land cross-platform packaging fixes | `docs/cross-platform-sprint.md` |
 | Land the in-flight `mystifying-proskuriakova` branch | `docs/in-flight-merge-plan.md` |
+| See what the four reviewer lenses turned up | `docs/audit-2026-05-19.md` |
 
 ## Slash commands & subagents
 
