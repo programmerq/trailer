@@ -242,8 +242,12 @@ items have landed; the commit hash is in the strikethrough line.
 
 - **Menu organisation review.** Some items currently under Tools may
   belong under File (Export As, Take Screenshot) or Edit (Flip, Rotate,
-  Adjust Size, Adjust Colour). Revisit once Phase 4 markup actions land,
-  so we can organise them as a group.
+  Adjust Size, Adjust Colour). The original gating ("revisit once
+  Phase 4 markup actions land") has been met — Phase 4 shipped — but
+  the review itself hasn't happened. Pick up as part of the next
+  reference-user smoke session ([`docs/smoke-session.md`](docs/smoke-session.md))
+  if a non-maintainer drives the menu hierarchy looking for an
+  action that isn't where they expect.
 
 ## Cross-cutting
 
@@ -254,11 +258,10 @@ items have landed; the commit hash is in the strikethrough line.
   gaps were in custom-rendered raster content that asked the
   document for logical-pixel sized images and let Qt scale them up
   blurry on 2x displays.
-  - **Sidebar thumbnails** (commit pending) now render at
-    `m_size * devicePixelRatio` native pixels and stamp
-    `setDevicePixelRatio` on the result so Qt uses the high-DPI
-    bitmap at logical layout size. No more soft thumbnails on
-    Retina.
+  - **Sidebar thumbnails** render at `m_size * devicePixelRatio`
+    native pixels and stamp `setDevicePixelRatio` on the result
+    (`src/ui/ThumbnailModel.cpp:159`) so Qt uses the high-DPI bitmap
+    at logical layout size. No more soft thumbnails on Retina.
   - **Screenshot capture** (`screen->grabWindow(0)`) is already
     DPR-correct: the returned pixmap is native pixels and saving
     to PNG writes the high-resolution data.
