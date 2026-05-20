@@ -9,8 +9,22 @@
 namespace trailer {
 
 namespace {
+
+// Magnifier widget diameter in screen px. Big enough that magnified
+// pixels are inspectable but small enough that the overlay doesn't
+// dominate the desktop on a 13" laptop. Drop if dogfooding on a
+// small display shows the loupe blocking the area the user is
+// trying to read; raise if magnified text feels claustrophobic on
+// a 27"+ monitor.
 constexpr int kSize = 220;
+
+// Refresh interval. 33 ms ≈ 30 fps, fast enough to feel like the
+// loupe tracks the cursor smoothly and slow enough not to chew CPU
+// on a hot grab loop. Drop (toward 16 ms / 60 fps) only if motion
+// trails are visible; raise if magnifier CPU shows up in profiling
+// of an idle session.
 constexpr int kTickMs = 33;
+
 } // namespace
 
 Magnifier::Magnifier(QWidget *parent)
