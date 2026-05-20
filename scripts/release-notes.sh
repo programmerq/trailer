@@ -64,7 +64,12 @@ while IFS= read -r line; do
         changed+=("$line")
         continue
     fi
-    type_lower=$(printf '%s' "$type_part" | tr '[:upper:]' '[:lower:]' | sed 's/(.*)//')
+    # Strip the optional Conventional-Commit scope (`feat(ui)` → `feat`)
+    # via bash parameter expansion. The previous `sed 's/(.*)//'` was a
+    # basic-regex literal — it matched the four characters `(.*)`, not
+    # `( anything )`, so `feat(ui)` survived as `feat(ui)` and missed
+    # the case branches below.
+    type_lower=$(printf '%s' "${type_part%%(*}" | tr '[:upper:]' '[:lower:]')
     # Trim leading whitespace from rest.
     rest="${rest# }"
     case "$type_lower" in

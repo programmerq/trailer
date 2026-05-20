@@ -77,10 +77,15 @@ class DeletePagesCommand : public PdfCommand {
     std::vector<QPDFObjectHandle> m_captured;
 };
 
-// Move the page at `from` to position `to`. The inverse is just
-// movePage(currentPositionOfMovedPage, from); since movePage shifts
-// every other page by one, the inverse `to`,`from` reproduces the
-// pre-move ordering.
+// Move the page at `from` to position `to`. The revert is NOT
+// `movePage(to, from)` — PdfEditor::movePage's bounded-`to` semantic
+// (insert before what was originally at `to`, never append at end)
+// is asymmetric, so the inverse can't be expressed as another
+// bounded movePage call. Instead, the command captures the moved
+// page's QPDFObjectHandle on the first apply; revert removes it from
+// wherever it currently sits and re-inserts it at the original
+// `from` (appending at end when `from` was the last slot). Same
+// handle-capture trick DeletePagesCommand uses for the same reason.
 class MovePageCommand : public PdfCommand {
   public:
     MovePageCommand(int from, int to);
@@ -91,6 +96,8 @@ class MovePageCommand : public PdfCommand {
   private:
     int m_from;
     int m_to;
+    // Filled in on the first apply().
+    std::optional<QPDFObjectHandle> m_movedPage;
 };
 
 // Insert all pages from `sourcePath` at `insertAtIndex`. The

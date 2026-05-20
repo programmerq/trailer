@@ -16,6 +16,8 @@
 #include <QPageSize>
 #include <QPainter>
 #include <QDir>
+#include <QPdfDocument>
+#include <QPdfSelection>
 #include <QPdfWriter>
 #include <QRectF>
 #include <QTemporaryDir>
@@ -851,31 +853,56 @@ void TestPdfEditor::movePageCommandIsReversible() {
     QVERIFY(editor.load(src));
     QCOMPARE(editor.pageCount(), 4);
 
-    // We don't have a public "what's on page N" probe, so save the
-    // pre-move state and the post-revert state to disk and compare
-    // their content byte-for-byte. qpdf produces deterministic
-    // output when setStaticID isn't enabled, so the same logical
-    // tree serialises identically across runs.
-    auto saveSnapshot = [&editor](const QString &p) {
-        QVERIFY(editor.save(p));
+    // Page-order fingerprint via extracted text. writeSamplePdf
+    // stamps "Page N" centered on each page, so the per-position
+    // text after a save + QPdfDocument reload is a stable
+    // identifier that survives qpdf's object-number reshuffling on
+    // removePage/addPage. (Object IDs change across move; the
+    // *content* doesn't — and content is what undo/redo has to
+    // restore.)
+    auto pageTexts = [&editor]() -> QStringList {
+        ScopedTempFile tmp(QStringLiteral("move_check_XXXXXX.pdf"));
+        if (!tmp.isValid())
+            return {};
+        if (!editor.save(tmp.path()))
+            return {};
+        QPdfDocument doc;
+        if (doc.load(tmp.path()) != QPdfDocument::Error::None)
+            return {};
+        QStringList texts;
+        for (int i = 0; i < doc.pageCount(); ++i) {
+            texts << doc.getAllText(i).text().simplified();
+        }
+        return texts;
     };
-    const QString before = dir.filePath("before.pdf");
-    saveSnapshot(before);
+
+    const QStringList textsBefore = pageTexts();
+    QCOMPARE(textsBefore.size(), 4);
+    QCOMPARE(textsBefore.at(0), QStringLiteral("Page 1"));
+    QCOMPARE(textsBefore.at(3), QStringLiteral("Page 4"));
 
     MovePageCommand cmd(0, 3);
     QVERIFY(cmd.apply(editor));
     QCOMPARE(editor.pageCount(), 4);
+    const QStringList textsAfterApply = pageTexts();
+    // The page from index 0 ("Page 1") has moved AND the result is
+    // genuinely a reorder (not a no-op). PdfEditor::movePage's
+    // bounded-`to` semantic ("insert before original index `to`")
+    // puts the moved page at index `to-1` when from<to — so the
+    // landing position for move(0, 3) is 2, not 3. This test pins
+    // that observed semantic; the only relevant invariant for the
+    // command is that revert undoes whatever apply did.
+    QCOMPARE(textsAfterApply.at(2), QStringLiteral("Page 1"));
+    QVERIFY(textsAfterApply != textsBefore);
 
     QVERIFY(cmd.revert(editor));
     QCOMPARE(editor.pageCount(), 4);
+    const QStringList textsAfterRevert = pageTexts();
+    // Full revert: the ordered text list matches the pre-apply
+    // ordered list — the move's inverse really did restore the
+    // original ordering, not just the page count.
+    QCOMPARE(textsAfterRevert, textsBefore);
 
-    const QString after = dir.filePath("after.pdf");
-    saveSnapshot(after);
-
-    // QPdfWriter-generated PDFs include a /CreationDate so the two
-    // saves won't be byte-identical at the file level; instead
-    // compare page count + that the move command's description is
-    // the expected label.
     QCOMPARE(cmd.description(), QStringLiteral("Move Page"));
 }
 

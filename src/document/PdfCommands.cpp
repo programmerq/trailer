@@ -124,22 +124,68 @@ QString DeletePagesCommand::description() const {
 MovePageCommand::MovePageCommand(int from, int to) : m_from(from), m_to(to) {}
 
 bool MovePageCommand::apply(PdfEditor &editor) {
-    if (!editor.isValid())
+    QPDF *pdf = editor.qpdf();
+    if (!editor.isValid() || !pdf)
         return false;
     if (m_from == m_to)
         return false;
+    const int total = editor.pageCount();
+    if (m_from < 0 || m_from >= total || m_to < 0 || m_to >= total)
+        return false;
+
+    // Capture the moved page's handle on the FIRST apply only so
+    // revert can re-insert it at the original index by handle,
+    // independent of where movePage's internals leave it. (See the
+    // header comment for why we can't just call move(to, from).)
+    // A subsequent apply (redo after revert) re-uses the same handle
+    // — qpdf reference-counts page objects through QPDFObjectHandle,
+    // so the captured handle survives the remove+re-insert cycle.
+    if (!m_movedPage.has_value()) {
+        try {
+            auto pages = QPDFPageDocumentHelper(*pdf).getAllPages();
+            m_movedPage = pages[static_cast<size_t>(m_from)].getObjectHandle();
+        } catch (const std::exception &) {
+            return false;
+        }
+    }
+
     editor.movePage(m_from, m_to);
     return true;
 }
 
 bool MovePageCommand::revert(PdfEditor &editor) {
-    if (!editor.isValid())
+    QPDF *pdf = editor.qpdf();
+    if (!editor.isValid() || !pdf)
         return false;
-    // Inverse: move(to, from). After apply(from, to), the page is at
-    // `to`; moving from `to` back to `from` restores the prior order
-    // because every other page shifts symmetrically by one slot.
-    editor.movePage(m_to, m_from);
-    return true;
+    if (!m_movedPage.has_value())
+        return false;
+
+    try {
+        QPDFPageDocumentHelper helper(*pdf);
+        // Remove the moved page by handle (qpdf locates it in the
+        // page tree regardless of its current position).
+        QPDFPageObjectHelper page(*m_movedPage);
+        helper.removePage(page);
+
+        // Re-insert at the original `from`. Now that the page is
+        // gone, the remaining list has the OTHER pages in their
+        // pre-apply relative order. Insert before whatever's
+        // currently at index m_from (which is the page that was
+        // originally at m_from+1) — that puts the moved page back
+        // at index m_from. If m_from was the very last index pre-
+        // apply, the remaining list has m_from entries and we
+        // append at the end instead.
+        auto remaining = helper.getAllPages();
+        if (m_from < static_cast<int>(remaining.size())) {
+            helper.addPageAt(page, /*before=*/true,
+                             remaining[static_cast<size_t>(m_from)]);
+        } else {
+            helper.addPage(page, /*first=*/false);
+        }
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
 }
 
 QString MovePageCommand::description() const {
@@ -165,15 +211,38 @@ bool InsertPagesCommand::apply(PdfEditor &editor) {
         // pushed onto the undo stack with no work to revert.
         return false;
     }
-    // Stash actual position + count for revert. PdfEditor clamps the
-    // index into [0, pageCount] internally; reproduce that here so
-    // revert removes the correct contiguous range. We only set this
-    // on the first apply so a subsequent apply (after revert) reuses
-    // the original snapshot — keeps undo behaviour stable even if
-    // the source file changes between apply()s.
+    const int actualInserted = after - before;
+    const int clamped = std::clamp(m_insertAtIndex, 0, before);
     if (m_insertedCount == 0) {
-        m_insertedCount = after - before;
-        m_clampedIndex = std::clamp(m_insertAtIndex, 0, before);
+        // First apply — snapshot the actual position + count so
+        // revert removes the correct contiguous range.
+        m_insertedCount = actualInserted;
+        m_clampedIndex = clamped;
+        return true;
+    }
+    // Re-apply (redo after undo). If the source file's page count
+    // has changed since the first apply, the inserted range no
+    // longer matches the snapshot — revert would either leave
+    // extra pages behind or remove too many. Roll back the just-
+    // inserted range and refuse, so the undo stack stays consistent
+    // and the caller doesn't push the broken command.
+    if (actualInserted != m_insertedCount || clamped != m_clampedIndex) {
+        try {
+            QPDFPageDocumentHelper helper(*pdf);
+            auto pages = helper.getAllPages();
+            const int total = static_cast<int>(pages.size());
+            const int rollbackStart = clamped;
+            const int rollbackEnd =
+                std::min(rollbackStart + actualInserted, total);
+            for (int i = rollbackEnd - 1; i >= rollbackStart && i >= 0; --i) {
+                helper.removePage(pages[static_cast<size_t>(i)]);
+            }
+        } catch (const std::exception &) {
+            // Best effort. If the rollback throws, the editor is in
+            // an inconsistent state, but we still refuse the redo so
+            // the undo stack isn't lying about being able to revert.
+        }
+        return false;
     }
     return true;
 }
