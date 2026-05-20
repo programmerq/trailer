@@ -29,16 +29,17 @@ Captured from a live walkthrough after PR #25 (Post-0.1.0 docs +
 release tooling + PDF page-op undo) landed. Each item is described in
 terms of the user-visible behaviour and the proposed fix.
 
-> **Note on the "in flight" branch:** [ROADMAP.md](ROADMAP.md)'s
-> `## In flight (about to land)` section as of this date describes
-> the Wave 1-4 work as upcoming. That is **stale** — PR #24
-> (`4dba247 HITL waves 1-4`) merged the work onto `main` on
-> 2026-05-19, before this HITL pass. The roadmap was authored *after*
-> the merge but not updated to reflect it. Items below that look
-> like Wave 1 territory (thumbnail density, search-bar collapse,
-> markup-toolbar defaults) are scoped against what actually landed
-> in PR #24 and what's still rough about it. Reframing the roadmap
-> itself is a separate item.
+> **Note on the "in flight" branch:** at the start of this HITL pass,
+> [ROADMAP.md](ROADMAP.md)'s `## In flight (about to land)` section
+> still described the Wave 1-4 work as upcoming, even though PR #24
+> (`4dba247 HITL waves 1-4`) had already merged the work onto `main`
+> on 2026-05-19. The roadmap was authored *after* the merge but not
+> updated to reflect it. Items below that look like Wave 1 territory
+> (thumbnail density, search-bar collapse, markup-toolbar defaults)
+> are scoped against what actually landed in PR #24 and what's still
+> rough about it. The roadmap was reframed in the same PR as this
+> entry (`969d46f docs(roadmap): reframe after PR #24 landing +
+> post-#25 HITL`).
 
 ### Thumbnail sidebar still wastes vertical space (Workstream C partial)
 
@@ -415,11 +416,12 @@ items have landed; the commit hash is in the strikethrough line.
   gaps were in custom-rendered raster content that asked the
   document for logical-pixel sized images and let Qt scale them up
   blurry on 2x displays.
-  - **Sidebar thumbnails** (commit pending) now render at
-    `m_size * devicePixelRatio` native pixels and stamp
-    `setDevicePixelRatio` on the result so Qt uses the high-DPI
-    bitmap at logical layout size. No more soft thumbnails on
-    Retina.
+  - ~~**Sidebar thumbnails.**~~ Done in `af6621c`
+    ("Sidebar thumbnails render at native resolution on Retina").
+    `ThumbnailModel` renders at `m_size * devicePixelRatio` native
+    pixels and stamps `setDevicePixelRatio` on the result so Qt
+    uses the high-DPI bitmap at logical layout size. No more soft
+    thumbnails on Retina.
   - **Screenshot capture** (`screen->grabWindow(0)`) is already
     DPR-correct: the returned pixmap is native pixels and saving
     to PNG writes the high-resolution data.

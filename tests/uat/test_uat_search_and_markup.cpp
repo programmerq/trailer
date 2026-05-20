@@ -1933,8 +1933,12 @@ void TestUatSearchAndMarkup::uat_ann_130_strokeDialogSurvivesStoreMutation() {
     QVERIFY2(strokeBtn, "Inspector Stroke button not found by objectName");
 
     // Snapshot the original bounds — the bug had the rectangle's
-    // bounds going to zero/garbage after the modal closed.
-    const QRectF originalBounds = f.store->find(f.drawnId)->bounds;
+    // bounds going to zero/garbage after the modal closed. Guard the
+    // find()-deref so a fixture regression yields a readable QVERIFY
+    // failure rather than a segfault.
+    const Annotation *original = f.store->find(f.drawnId);
+    QVERIFY2(original != nullptr, "Fixture rectangle missing from store before colour pick");
+    const QRectF originalBounds = original->bounds;
     QVERIFY(!originalBounds.isEmpty());
 
     // Hook into the QColorDialog the moment it shows. The headless

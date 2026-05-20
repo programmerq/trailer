@@ -127,15 +127,16 @@ Pickable in this order.
    through toml today but no caller reads it yet; the scheduler,
    the cancellation token, and the setting are all present.
    Mechanical; completes the wave-2/3/4 ML governance arc.
-3. **2026-05-20 HITL pass items.** Captured in
+3. **Remaining 2026-05-20 HITL pass items.** Captured in
    [TODO.md](TODO.md)'s `## 2026-05-20 HITL pass` section. The
-   rectangle-disappears bug is the highest priority — annotations
-   silently vanishing on user interaction is data loss. Restyle-
-   from-Inspector and auto-Select-after-placement are the same
-   surface area and likely cheap once the underlying issue is
-   found. Thumbnail row-height, search-bar close, Cmd-A scope,
-   page-mode shortcuts, and content-aware first-open defaults are
-   each independent and pickable.
+   rectangle-disappears / Inspector-restyle / auto-Select-after-
+   placement trio was the highest-priority item (annotation data
+   loss); it shipped alongside this roadmap reframe — see
+   `a17051d fix(inspector): rectangle disappears after stroke/fill
+   colour pick` and UAT-ANN-130/131. Still live: thumbnail
+   row-height, search-bar close button, Cmd-A scope, page-mode
+   shortcuts, and content-aware first-open defaults — each
+   independent and pickable.
 4. **Unified `AnnotationStore` + `PdfCommand` undo log.** Wave 2
    shipped compound annotation undo (`beginCompound` /
    `endCompound`), which collapses a drag to one undo frame and
