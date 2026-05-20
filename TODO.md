@@ -249,18 +249,17 @@ items have landed; the commit hash is in the strikethrough line.
   if a non-maintainer drives the menu hierarchy looking for an
   action that isn't where they expect.
 
-- **DESIGN.md §7 keyboard-shortcut table audit.** The table in
-  `DESIGN.md` §7 currently carries a drift-warning callout because at
-  least three rows are unbound (Export, Adjust Size, Adjust Colour,
-  Remove background — no `setShortcut` calls), one row references a
-  feature that doesn't exist (Full screen — §6.1.7 is Planned), and
-  several rows have drifted from the live wiring in
-  `src/ui/MainWindow.cpp` (Next/previous page, Actual size, Fit).
-  Full follow-up: walk every row against `MainWindow.cpp`'s
-  `setShortcut` calls, either rebind the unbound rows or remove the
-  rows, and drop the drift-warning callout once the table matches
-  reality. Should pair naturally with the menu-organisation review
-  above.
+- ~~**DESIGN.md §7 keyboard-shortcut table audit.**~~ Done in
+  `d09e43b` — table is now reconciled against
+  `src/ui/MainWindow.cpp`'s `setShortcut` calls, grouped by menu
+  category, missing shortcuts added (Form toolbar, First/Last page,
+  Go to page, Rotate L/R, Fill forms, Screenshot, Minimize), and
+  unbound rows tagged *Planned* (Export As, Adjust Size, Adjust
+  Colour, Remove Background, Full Screen, tab nav, doc nav). The
+  drift-warning callout is gone. Rebinding the *Planned* shortcuts
+  themselves is its own small follow-up — one or two lines of
+  `setShortcut` per action — but the doc now tells the truth either
+  way.
 
 ## Cross-cutting
 
