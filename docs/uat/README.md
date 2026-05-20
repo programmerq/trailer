@@ -23,10 +23,26 @@ Each file covers a coherent slice of the product:
 ## Test case format
 
 Each case has a stable ID of the form `UAT-<area>-<NNN>` (area matches the
-file prefix — `FND` foundations, `VWR` viewer, `PDF` pdf pages, `IMG`
+spec file prefix — `FND` foundations, `VWR` viewer, `PDF` pdf pages, `IMG`
 images, `ANN` annotations, `XCT` cross-cutting, `SEC` security). IDs are
 append-only; when a case is removed, mark it obsolete rather than reusing
 the number.
+
+> **Spec ID vs. test slot name — not always 1:1 today.** The four
+> spec-area codes that *do* have matching test slot prefixes are
+> `FND`, `VWR`, `ANN`, `SEC` (so `UAT-FND-001` → `uat_fnd_001_*`).
+> The other three (`PDF`, `IMG`, `XCT`) are spec-only — their cases
+> live in those `.md` files but the test harness organises the
+> corresponding slots under topical-feature prefixes instead
+> (`uat_af_*` autofill, `uat_bgr_*` background removal, `uat_frm_*`
+> forms, `uat_hn_*` highlights & notes, `uat_ocr_*` recognize text,
+> `uat_red_*` redaction, `uat_sam_*` Smart Lasso + Instant Alpha,
+> `uat_sig_*` signatures, `uat_toc_*` table of contents). This
+> two-naming-axis shape works but isn't enforced; tracked as a
+> backfill item in `TODO.md ## 2026-05-19 HITL pass` (audit ref
+> DOC-FOLLOWUP-1). When adding a new spec case, name the test slot
+> after either the spec ID *or* its topical prefix; just don't
+> invent a third.
 
 ```
 ### UAT-XXX-NNN — Short title

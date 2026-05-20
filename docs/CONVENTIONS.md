@@ -221,19 +221,35 @@ have been written instead.
 
 ---
 
-## 7. UAT cases are paired 1:1 with test slot names
+## 7. UAT cases and test slot names — paired where possible, topical where not
 
-The UAT spec is canonical; tests are generated from it.
+The UAT spec is canonical for case definitions; the test harness
+mirrors them as `QTest` slots.
 
 **Anchor files:** `docs/uat/README.md`, the seven
 `docs/uat/0?-*.md` spec files, the matching
 `tests/uat/test_uat_*.cpp` files.
 
-**Pattern.** Every case in the spec has an ID of the form
-`UAT-FND-001`, `UAT-VWR-060`, etc. The matching test slot is named
-`uat_fnd_001_shortTitle()` — same ID, lowercase, underscored,
-followed by a snake_case summary. Failing tests therefore point
-straight back at the spec.
+**Pattern (the easy half).** Every case in the spec has an ID of
+the form `UAT-FND-001`, `UAT-VWR-060`, etc. For the four area
+codes whose tests are grouped by spec area — `FND`, `VWR`, `ANN`,
+`SEC` — the test slot is named `uat_fnd_001_shortTitle()`: same
+ID, lowercased, underscored, plus a snake_case summary. A failing
+slot points straight at the spec case.
+
+**Pattern (the other half).** Three spec areas (`PDF`, `IMG`,
+`XCT`) are grouped topically in the test harness instead. A spec
+case like `UAT-PDF-050` (a form-fill workflow) lives in the spec
+under PDF but is implemented as `uat_frm_010_*` in
+`test_uat_forms.cpp`. The topical prefixes are: `uat_af_*`
+(autofill), `uat_bgr_*` (background removal), `uat_frm_*` (forms),
+`uat_hn_*` (highlights & notes), `uat_ocr_*` (recognize text),
+`uat_red_*` (redaction), `uat_sam_*` (Smart Lasso + Instant
+Alpha), `uat_sig_*` (signatures), `uat_toc_*` (table of contents).
+This split is documented (not enforced) and tracked as a backfill
+item in `TODO.md ## 2026-05-19 HITL pass` (audit ref
+DOC-FOLLOWUP-1) — either renaming slots to spec IDs or extending
+the spec to cover the topical codes is a future call.
 
 Fixtures are generated inline (`QPdfWriter`, `QImage`) rather than
 checked-in files. All tests run under
@@ -242,14 +258,24 @@ checked-in files. All tests run under
 **Recipe.** A new behaviour gets:
 
 1. A new case in the right spec file with the next free ID.
-2. A new slot in the matching test file with the matching name.
+2. A new slot in either (a) the matching `test_uat_<area>.cpp` if
+   the spec area is `FND` / `VWR` / `ANN` / `SEC` and the slot
+   name mirrors the spec ID, or (b) the topical
+   `test_uat_<topic>.cpp` (forms, signatures, OCR, etc.) for spec
+   cases in `PDF` / `IMG` / `XCT`, with the slot named after the
+   topical prefix.
 3. Steps + assertions in the slot.
+
+Don't invent a third naming axis (a slot prefix that isn't a spec
+area code *and* isn't already a topical one).
 
 The uat-author agent owns this translation; if you're adding a UAT
 case end-to-end, route through it.
 
-**Broken if.** Test names drift from case IDs, fixtures appear as
-checked-in files, or a test starts requiring a real display server.
+**Broken if.** A slot name doesn't trace back to either a spec ID
+(area-matched case) or a documented topical prefix; fixtures
+appear as checked-in files; or a test starts requiring a real
+display server.
 
 ---
 

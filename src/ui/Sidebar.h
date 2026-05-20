@@ -26,12 +26,18 @@ class Sidebar : public QDockWidget {
     // HighlightsAndNotes requires text-aware highlights) are kept
     // as enum members so the picker can dim them rather than
     // hide them from the menu.
-    // API: append-only. Once persisted view-state lands (sweet-moser's
-    // wave-1 Workstream I), each value is serialised by ordinal in
-    // RecentEntry.sidebarMode + DocumentTypeDefault.sidebarMode.
-    // Renumbering at that point silently swaps modes for every recent
-    // file. New modes are appended; deferred modes (TableOfContents,
-    // HighlightsAndNotes) stay where they are.
+    // API: persistence is via the *string* keys in
+    // `sidebarModeKey()` / `sidebarModeFromKey()` (see
+    // `src/recent/RecentFiles.cpp` and
+    // `src/settings/DocumentTypeDefaults.cpp`), keyed off the sibling
+    // `SidebarMode` enum, so renumbering *this* `Sidebar::Mode` enum
+    // does NOT corrupt on-disk format. What it does break is the
+    // ordinal coupling between `Sidebar::Mode` and `SidebarMode`: the
+    // casts in `MainWindow.cpp` (~2558, 2581, 3069) plus the
+    // `static_assert` block in `Sidebar.cpp` (lines 34-44) assume the
+    // two enums share ordinals. Keep them in lockstep — the
+    // `static_assert`s catch a unilateral renumber at compile time.
+    // New modes are appended to both enums in the same order.
     enum class Mode {
         Hidden,
         Pages,             // page thumbnails for the active document
