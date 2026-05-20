@@ -8,6 +8,7 @@
 #include <QImageReader>
 #include <QLabel>
 #include <QListWidget>
+#include <QLocale>
 #include <QMessageBox>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -63,7 +64,7 @@ void SignaturesDialog::reload() {
     for (const Signature &s : m_signatures) {
         auto *item = new QListWidgetItem(s.label, m_list);
         item->setData(Qt::UserRole, s.id);
-        item->setToolTip(s.createdAt.toString(Qt::ISODate));
+        item->setToolTip(QLocale().toString(s.createdAt, QLocale::ShortFormat));
     }
     if (m_list->count() > 0) {
         m_list->setCurrentRow(0);

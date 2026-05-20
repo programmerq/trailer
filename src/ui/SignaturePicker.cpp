@@ -6,6 +6,7 @@
 
 #include <QAction>
 #include <QIcon>
+#include <QLocale>
 #include <QMenu>
 #include <QPixmap>
 #include <QSize>
@@ -59,7 +60,7 @@ QString SignaturePicker::show(QWidget* parent, const QPoint& globalPos) {
             // something we can map back to the signature without
             // a second store load.
             a->setData(static_cast<int>(i));
-            a->setToolTip(s.createdAt.toString(Qt::ISODate));
+            a->setToolTip(QLocale().toString(s.createdAt, QLocale::ShortFormat));
         }
         menu.addSeparator();
     }
