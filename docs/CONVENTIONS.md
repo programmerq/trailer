@@ -112,10 +112,24 @@ discrete objects, not as deltas.
 that calls `pushHistory()` first, mutates `m_annotations`, then emits
 `changed()`. Don't expose a way to mutate without `pushHistory`.
 
+**Compound gestures.** A drag-resize or drag-move emits dozens of
+intermediate `update()` calls; each would push its own snapshot
+without coordination, so a single Ctrl-Z would undo only the last
+frame. To collapse a gesture into one undo step, wrap it in
+`beginCompound()` / `endCompound()` (PR #24, `AnnotationStore.h`):
+`beginCompound()` increments `m_compoundDepth`; subsequent
+mutations skip `pushHistory()` so only the first call in the
+compound captures the pre-gesture state (lazily, via the
+`m_compoundSnapshotPushed` flag); `endCompound()` returns the
+depth to 0 and — if any mutation occurred inside — finalises the
+single history frame. Mismatched depths are diagnosable via the
+unit tests in `tests/test_annotation_store.cpp`. The
+`AnnotationOverlay` drag handlers are the canonical caller.
+
 **Broken if.** Memory grows unboundedly during a session (someone
 mutated without `pushHistory` — the cap doesn't help if it's never
 called) or undo "skips" mutations (someone batched several mutations
-under one `pushHistory` without explicit compound semantics).
+under one `pushHistory` without using `beginCompound` / `endCompound`).
 
 **Tuning.** `kMaxUndo` is a hand-tuned magic number. Per
 [PHILOSOPHY.md](../PHILOSOPHY.md) it stays hand-tuned; if you change
@@ -237,7 +251,7 @@ checked-in files, or a test starts requiring a real display server.
 
 ---
 
-## 8. Settings are flat keys + a `[first_use]` table
+## 8. Settings are flat keys plus a few topical tables
 
 `settings.toml` is meant to be hand-editable. The schema reflects
 that.
@@ -246,21 +260,31 @@ that.
 `src/settings/AppPaths.{h,cpp}`.
 
 **Pattern.** Top-level keys for real settings, with enum values
-where appropriate (`theme`, `open_files_in`). One nested table,
-`[first_use]`, holds boolean acknowledgements for one-time prompts
-(redaction warning, model-download dialogs). Settings load on
-`Application` startup; every mutator calls `save()`. There is no
-`[section][subsection]` nesting other than `[first_use]`.
+where appropriate (`theme`, `open_files_in`). A small set of
+topical tables collects related state under a shared prefix:
+
+- `[first_use]` — boolean acknowledgements for one-time prompts
+  (redaction warning, model-download dialogs).
+- `[session]` — window-list restore state captured at
+  `aboutToQuit` (`open_files`, `restore_previous_windows`).
+- `[ml.scheduler]` — ML governance knobs the scheduler reads
+  (`recognize_text_in_background`,
+  `preload_segmentation_on_tool_activation`, `run_on_battery`).
+
+Settings load on `Application` startup; every mutator calls
+`save()`. Don't introduce a nested table just to group an unrelated
+pair of keys — the tables above each have a clear topical scope
+and a single subsystem that owns them.
 
 **Recipe.** New setting = new top-level key (or new entry under
-`[first_use]` if it's a one-time-acknowledgement flag), backing
+the topical table that owns its concern, if one exists), backing
 field on `Settings`, getter + setter that calls `save()`. Grep the
 header to discover all keys; there's no other index.
 
-**Broken if.** A future setting feels like it needs a nested table
-to organise. That's the moment to split the doc into multiple files
-or rename keys with prefixes — not to introduce a hierarchy the
-user has to learn.
+**Broken if.** A future setting feels like it needs a *fourth*
+nested table that doesn't fit any of the three existing ones. That's
+the moment to ask whether the concern is well-named, not to add
+another `[section.something]` to learn.
 
 ---
 

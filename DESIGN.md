@@ -1178,7 +1178,9 @@ that the planned subsystems below will plug into.
 ```
 ${app_data}/
   trailer/
-    settings.toml            # User settings
+    settings.toml            # User settings — top-level keys plus
+                             # [first_use], [session], [ml.scheduler]
+                             # topical tables; see CONVENTIONS §8.
     recent.json              # Recent files (last 50)
     cards.toml               # AutoFill cards (My Card and others)
     signatures/
