@@ -1,15 +1,22 @@
 # In-Flight Merge Plan
 
+> **STATUS: LANDED on 2026-05-20 as PR #24** (`4dba247 HITL waves 1-4`).
+> The three CONVENTIONS sections drafted below have been applied
+> to [`docs/CONVENTIONS.md`](CONVENTIONS.md) as §§11-13. This doc is
+> retained as a historical record of the merge planning + the
+> dependency / risk analysis. The "Verification checklist" at the
+> bottom remains a useful post-merge walkthrough.
+
 ## Why this doc exists
 
-The `claude/mystifying-proskuriakova-e07cb6` branch (HEAD `dbc4302`,
-36 commits ahead of `main` at the time of writing) coordinates 9
-workstreams across 4 waves of substantial UX + ML governance work.
-It's about to land, and the merge is sizable enough that landing it
-cold is a recipe for a surprise. This doc captures the merge plan:
-branch shape, recommended order, known risks, the three convention
-sections that get appended to `docs/CONVENTIONS.md` once it lands,
-and the verification checklist the maintainer walks after the merge.
+The `claude/mystifying-proskuriakova-e07cb6` branch (HEAD `dbc4302`
+at the time of writing) coordinated 9 workstreams across 4 waves of
+substantial UX + ML governance work. The merge was sizable enough
+that landing it cold would have been a surprise. This doc captured
+the merge plan: branch shape, recommended order, known risks, the
+three convention sections that should be appended to
+`docs/CONVENTIONS.md` once it landed (now applied), and the
+verification checklist the maintainer walks after the merge.
 The roadmap commit `be4a0bf` on `claude/sweet-moser-66f739` did a
 full survey of the branch (the *In flight* section it added to
 `ROADMAP.md` is the long-form version); this doc is the operational

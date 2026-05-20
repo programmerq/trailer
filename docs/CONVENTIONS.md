@@ -5,11 +5,11 @@ compiler. New contributions are expected to match these; existing
 code that violates them is on the maintenance list, not the
 "intentional precedent" list.
 
-This doc covers what is stable on `main` today. Three larger
-patterns (three-tier persistence, the MlScheduler contract, the
-raw-`IDocument*` cache) come in with the
-`claude/mystifying-proskuriakova-e07cb6` branch; they get their own
-sections once that branch lands.
+This doc covers what is stable on `main` today. Patterns 11–13 came
+in with the PR #24 merge (`4dba247 HITL waves 1-4`) on 2026-05-20 —
+they cover three-tier view-state persistence, the `MlScheduler`
+contract, and the raw-`IDocument*` cache flush via
+`documentAboutToBeRemoved`.
 
 For each pattern: what it looks like, where to find the canonical
 example, the recipe for adding code that fits it, and the symptom
@@ -327,19 +327,152 @@ the same `IMPORTED` target.
 
 ---
 
-## Deferred — pending the in-flight branch
+## 11. Three-tier view-state persistence
 
-The `claude/mystifying-proskuriakova-e07cb6` branch establishes
-three patterns that should be added to this doc once it merges:
+When the user reopens a document, view state is restored in priority
+order: **per-file → per-type → hardcoded defaults**.
 
-- **Three-tier persistence model** (per-file + per-type + per-window
-  view state).
-- **`MlScheduler` contract** — priority bands (UserAction / VisiblePage
-  / Prefetch), `CancellationToken` propagation, `PowerSource` gating,
-  single-worker serialisation.
-- **Raw `IDocument*` cache pattern** — the way `MainWindow` retains a
-  raw pointer to the current document across change events without
-  outliving it, paired with `documentAboutToBeRemoved`.
+**Anchor files:** `src/recent/RecentFiles.{h,cpp}` (per-file +
+`RecentEntry::hasViewState`), `src/settings/DocumentTypeDefaults.{h,cpp}`
+(per-type, persisted under `QSettings`), `src/settings/Settings.h`
+(`[session]` block for window-list restore),
+`src/ui/MainWindow.cpp` (`onCurrentDocumentChanged` restore path,
+`closeEvent` capture path).
 
-These have anchor files on the in-flight branch, not on `main`.
-Don't write them down speculatively here; wait for the merge.
+**Pattern.** Each viewer-relevant field (zoom mode + factor, scroll
+Y, current page, sidebar mode, markup-toolbar visibility, window
+`saveGeometry` + `saveState` blobs) is captured on `closeEvent` to
+the user's `RecentEntry` keyed by canonical file path, and *also* to
+the `DocumentTypeDefault` slot for that file's `DocumentType`
+(last-closed-of-type wins). On reopen, `onCurrentDocumentChanged`
+runs once per document pointer (gated by `m_restoredViewStateDocs`):
+if the file's `RecentEntry::hasViewState()` is true, apply per-file;
+else if the doc's `DocumentType` is recognised and that type's
+default has state, apply per-type; else leave the constructor
+defaults alone. Window-list restore on launch reads
+`Settings::sessionOpenFiles()` (captured at `aboutToQuit`); explicit
+CLI args override the session list.
+
+**Recipe.** New view-state field gets:
+
+1. A field on `RecentEntry` with a sentinel default (`-1`, `0.0`,
+   empty `QByteArray`) and an entry in `hasViewState()`.
+2. A mirror field on `DocumentTypeDefault` with the same sentinel.
+3. Capture in `MainWindow::closeEvent` (write to both `RecentEntry`
+   and the `typeSnapshot`).
+4. Apply in the per-file *and* per-type restore branches of
+   `onCurrentDocumentChanged`.
+5. Round-trip test in `tests/test_recent.cpp` covering both legacy
+   load (sentinel default, no apply) and full-state load.
+
+**Broken if.** A user reports that closing a file and reopening it
+lost the page / zoom / sidebar mode — the close-time capture missed
+that field, or the restore branch did not apply it. Or: tab-
+switching between two docs in the same window bounces one of them
+back to a saved page (the `m_restoredViewStateDocs` one-shot guard
+got bypassed).
+
+---
+
+## 12. `MlScheduler` is the canonical ML runner
+
+Every ML invocation in the app goes through
+`Application::mlScheduler().submit(...)`. No worker is spawned
+directly; no modal `QProgressDialog` gates an ML call.
+
+**Anchor files:** `src/ml/MlScheduler.{h,cpp}`,
+`src/ml/CancellationToken.h`, `src/platform/PowerSource.{h,cpp}`.
+Canonical use-cases: `src/ui/OcrController.{h,cpp}`,
+`src/ui/SamController.{h,cpp}`, the background-removal path in
+`src/ui/MainWindow.cpp` (`onRemoveBackground`), and the scorer
+submit in `MainWindow::scheduleBackgroundCandidateScore`.
+
+**Pattern.** `submit(priority, label, work)` takes ownership of a
+`std::function<void(CancellationToken &)>` and returns a `Handle`
+(task id + shared cancellation token). Priority is one of
+`UserAction > VisiblePage > Prefetch > Idle`; higher priorities
+preempt lower-priority *queued* work (the running task drains to
+its next checkpoint — no thread-killing). On battery with
+`Settings::mlRunOnBattery() == false`, Prefetch and Idle
+submissions return a pre-cancelled token from `submit()` itself.
+Workers poll `CancellationToken::isCancelled()` between major
+stages (e.g. between OCR detect and per-box recognise) and bail
+early. The single worker thread serialises all ML work — by
+design, until a future change adds concurrency caps.
+
+A status-bar `QLabel` (`MainWindow::m_mlIndicator`) shows whenever
+the scheduler is non-idle; tooltip is the running task's label.
+This is the **only** affordance the user sees for background ML —
+modals are off the table per PHILOSOPHY.
+
+**Recipe.** A new ML feature looks like:
+
+1. Pick the priority: `UserAction` for an explicit click,
+   `VisiblePage` for "current page is the user's focus", `Prefetch`
+   for "likely useful soon", `Idle` for true best-effort.
+2. Translate the `label` (shown in the tooltip) at the call site.
+3. Capture by value into the lambda anything the worker needs;
+   never dereference an `IDocument*` from inside the lambda body
+   without a re-check against the active doc on the GUI thread
+   (`QMetaObject::invokeMethod` back to the UI for the apply step).
+4. Poll the `CancellationToken &` between heavy steps; return
+   early on `isCancelled()`.
+5. Store the `Handle::id` on whatever cache keys by `IDocument*`
+   so `documentAboutToBeRemoved` can `cancel(id)` cleanly.
+
+**Broken if.** A modal `QProgressDialog` appears for an ML
+operation, or closing a tab mid-OCR / mid-SAM / mid-removal causes
+a crash or stale-pointer dereference. Or: a Prefetch task survives
+unplugging the AC adapter and the laptop overheats — the
+`PowerSource` reactor didn't run, or `cancelMatching` missed the
+speculative tag.
+
+---
+
+## 13. Raw `IDocument*` caches flush via `documentAboutToBeRemoved`
+
+`IDocument` is not a `QObject`, so `QPointer<IDocument>` is not
+available. The pattern: hold raw pointers as cache keys *only* if
+you also subscribe to `DocumentView::documentAboutToBeRemoved` and
+flush on it.
+
+**Anchor files:** `src/ui/DocumentView.{h,cpp}` (the signal +
+`onTabCloseRequested` emission), `src/ui/MainWindow.cpp` (the
+ctor-time subscription that calls into every cache it owns +
+`SamController::purgeDocument` for the encoder LRU + the
+`OcrController::setDocument(nullptr)` path before destruction).
+
+**Pattern.** `DocumentView` emits `documentAboutToBeRemoved(doc)`
+*after* the tab is removed and *before* the `unique_ptr<IDocument>`
+is erased — so the pointer is still valid for cache-lookup, but no
+new work can be enqueued against it. Every cache that uses the raw
+pointer as a key (`MainWindow::m_backgroundCandidateDocs`,
+`m_pendingCandidateJobs`, `m_autoEnabledFormDocs`,
+`m_restoredViewStateDocs`, the SamController's encoder LRU, the
+OcrController's pending-keys map) subscribes to that signal and
+removes the entry / cancels the `MlTaskId` it holds. A recycled
+allocator address can therefore never inherit a stale cached
+verdict from a previous document at the same heap location.
+
+**Recipe.** A new cache or worker that keys by `IDocument*`:
+
+1. Hold the pointer as `IDocument *` (not `QPointer`, which would
+   not compile — `IDocument` is non-`QObject`).
+2. Subscribe to `DocumentView::documentAboutToBeRemoved` during
+   MainWindow construction (or, for controllers, accept a
+   `setDocument(nullptr)` call before destruction).
+3. On the signal: remove the entry from your map; if it carries
+   an `MlTaskId`, call `Application::mlScheduler().cancel(id)`.
+4. For lambdas posted to the GUI thread from a worker: re-check
+   `dvPtr->currentDocument() == expectedDoc` before touching
+   member state. The pointer is *not* QPointer-safe across the
+   `Qt::QueuedConnection` round-trip.
+
+**Broken if.** Closing a tab mid-ML-task leaves a stale entry in a
+cache that fires later against a recycled address, or against
+`nullptr`, and crashes; or: a verdict / badge / handler from a
+previous document at the same heap address fires against a fresh
+one (manifests as "wrong sparkle on Remove Background after a
+fast close-and-reopen"). A `DocumentLifecycle` service that
+generalises this is roadmap-tracked; until it lands, every
+new raw-pointer-keyed cache must hand-subscribe.

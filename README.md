@@ -289,7 +289,7 @@ project intends to stay that way.
 | [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Patterns the code already follows (document adapters, PdfCommand, AnnotationStore, UAT slot naming, vendored deps). Recipe-shaped — for adding new code that fits. |
 | [docs/smoke-session.md](docs/smoke-session.md) | Reference-user smoke-session protocol: a non-maintainer opens a fresh build and runs three tasks. Run before minor-version bumps. |
 | [docs/cross-platform-sprint.md](docs/cross-platform-sprint.md) | Planning artifact grouping current cross-platform packaging items into one sprint. |
-| [docs/in-flight-merge-plan.md](docs/in-flight-merge-plan.md) | Merge plan for the `claude/mystifying-proskuriakova-e07cb6` branch — workstream map, dependency order, risks, and draft CONVENTIONS sections to append once it lands. |
+| [docs/in-flight-merge-plan.md](docs/in-flight-merge-plan.md) | Historical: the merge plan for PR #24 (the 4-wave HITL merge — landed 2026-05-20). The three CONVENTIONS sections it drafted are now applied as CONVENTIONS §§11-13; the doc is retained as the dependency / risk record. |
 | [docs/audit-2026-05-19.md](docs/audit-2026-05-19.md) | Multi-perspective audit (privacy / cross-platform / accessibility / failure-mode) with findings + an action register grouping what to do with each. |
 | [docs/packaging-macos.md](docs/packaging-macos.md) | macOS bundling/release reference. |
 | [docs/icon-guidelines.md](docs/icon-guidelines.md) | Icon-family design brief. |

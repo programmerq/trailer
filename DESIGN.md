@@ -1155,9 +1155,10 @@ features, which are intentionally excluded:
   to add a new document type.)
 - Mutations split between two undo mechanisms by category:
   **`PdfCommand` subclasses** (`src/document/PdfCommands.h`) for
-  qpdf-level page operations — rotate today, delete / move / insert
-  / crop drafted on the in-flight branch — with symmetric
-  `apply` / `revert`; and **`AnnotationStore` snapshot undo**
+  qpdf-level page operations — rotate today, with delete / move /
+  insert / crop tracked as the next subclasses to add following the
+  same template — with symmetric `apply` / `revert`; and
+  **`AnnotationStore` snapshot undo**
   (`src/annotation/AnnotationStore.h`) for annotation create /
   modify / delete via whole-store snapshots. The two stacks share a
   cross-routing heuristic (`MainWindow::m_lastUndoSource`); a future
@@ -1190,9 +1191,9 @@ ${app_data}/
     versions/                # Reserved — per-document version blobs
                              # (Phase 7 auto-save / browse versions)
     ocr_cache/               # Reserved — disk-persisted OCR results
-                             # (the in-flight branch uses an in-memory
-                             # SelectableTextStore per doc; persistence
-                             # is the follow-up)
+                             # (today's in-memory SelectableTextStore
+                             # holds per-doc; disk persistence is a
+                             # tracked follow-up)
     icc/                     # Reserved — user-supplied ICC profiles
                              # (lcms2 colour-management Phase 6)
     filters/                 # Reserved — user-supplied colour filters
@@ -1318,19 +1319,19 @@ phase status markers below summarise it inline.
 - Quartz-equivalent filters.
 - Redaction (with warning copy).
 
-### Phase 6 — Advanced raster + OCR *(In flight — ML core shipped, format/colour half unstarted)*
+### Phase 6 — Advanced raster + OCR *(ML core shipped, format/colour half unstarted)*
 
 - Smart Lasso and Instant Alpha — shipped (ONNX Runtime + MobileSAM
-  downloaded on first use). The in-flight `mystifying-proskuriakova`
-  branch moves these from a modal dialog to direct in-document tool
-  modes on `AnnotationOverlay`.
-- Background removal — shipped via U²-Net (ONNX Runtime). In-flight
-  branch routes it through MlScheduler with a sparkle "looks like a
-  candidate" badge.
+  downloaded on first use). PR #24 moved these from a modal dialog
+  to direct in-document tool modes on `AnnotationOverlay` (see
+  `src/ui/SamController.{h,cpp}`).
+- Background removal — shipped via U²-Net (ONNX Runtime). PR #24
+  routes it through `MlScheduler` with a sparkle "looks like a
+  candidate" badge driven by `BackgroundCandidateScorer`.
 - Live Text on images — shipped via **PP-OCRv3** (PaddleOCR), not
-  Tesseract as originally specced. The in-flight branch makes OCR
-  results selectable directly on the document via SelectableTextLayer
-  instead of dumped to a dialog.
+  Tesseract as originally specced. PR #24 makes OCR results
+  selectable directly on the document via `SelectableTextLayer`
+  (backed by `SelectableTextStore`) instead of dumped to a dialog.
 - Embed Text on PDF export — Planned (the checkbox isn't in the
   Export As dialog yet).
 - HEIC read support — shipped (loaded via the platform HEIC plugin).
@@ -1354,8 +1355,8 @@ phase status markers below summarise it inline.
   the remaining piece — see TODO.md ## UI).
 - Screen reader audit — not started.
 - Localisation framework + at least English; community translations
-  welcome — not started (the in-flight OCR work surfaces multi-
-  language selection, raising the priority somewhat).
+  welcome — not started (the OCR work shipped in PR #24 surfaces
+  multi-language selection, raising the priority somewhat).
 - Installers and signing — Linux DEB pipeline exists; macOS
   notarised `.dmg` and Windows MSIX/NSIS Planned (see
   [docs/cross-platform-sprint.md](docs/cross-platform-sprint.md)

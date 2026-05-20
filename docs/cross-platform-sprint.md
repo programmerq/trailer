@@ -14,12 +14,13 @@ doc gets either deleted or rewritten as a retrospective note in
 
 Three signals point at the same problem at once:
 
-- Multiple in-flight branches on the maintainer's local clone exist
-  *only* to fix platform-specific friction: `claude/macos-adhoc-sign`
-  (Qt 6.8 needs adhoc signing to produce a proper .app),
+- Multiple branches on the maintainer's local clone exist *only* to
+  fix platform-specific friction: `claude/macos-adhoc-sign` (Qt 6.8
+  needs adhoc signing to produce a proper .app),
   `claude/release-flag-default` (CI Qt was on the wrong minor
   version), `claude/priceless-jang-50feec` (Retina icon-size checks),
-  `claude/ci-harden-dev-phase` (qpdf 11.0 compat + CI timeouts).
+  `claude/ci-harden-dev-phase` (qpdf 11.0 compat + CI timeouts). Each
+  is a small change; together they represent real cost.
 - Linux's `PowerSource` query is a stub that returns `Unknown`,
   which means battery-aware policy (e.g. throttling speculative ML
   on a laptop) silently doesn't honour itself on Linux.
@@ -119,21 +120,15 @@ out which existing branch (if any) is the starting point.
 ### Linux
 
 6. **Implement `PowerSource` for Linux.**
-   On Linux the stub returns `Unknown`, which the ML scheduler
-   policy treats as "no constraint." On a laptop this means
-   speculative ML runs at full tilt on battery. Implement using
-   `/sys/class/power_supply/*/type == Battery` and that battery's
-   `status` (Discharging / Charging / Full). Test with at least one
-   distro that exposes the sysfs path; fall back to `Unknown` if
-   the path is missing (which is the current behaviour, and is
-   fine).
-
-   The `PowerSource` interface itself lives elsewhere on the
-   in-flight `claude/mystifying-proskuriakova-e07cb6` branch (wave
-   2). This sprint item lands only after that branch merges; until
-   then, it stays as a `// TODO(cross-platform-sprint)` comment
-   next to the macOS implementation. Surfacing this dependency in
-   the plan is the point of the item.
+   The `PowerSource` interface landed in
+   `src/platform/PowerSource.{h,cpp}` with PR #24 (wave 2). On Linux
+   the implementation currently stubs to `PowerState::OnAC`, which
+   the ML scheduler policy treats as "no constraint." On a laptop
+   this means speculative ML runs at full tilt on battery. Implement
+   using `/sys/class/power_supply/*/online`, falling through to
+   `OnAC` when the path doesn't exist on a desktop. The test seam is
+   already in place. Now unblocked; tracked as a follow-up in
+   `TODO.md ## 2026-05-19 HITL pass` (ML scheduler section).
 
 7. **DEB + RPM staging-path sanity check.**
    `worktree-agent-ade3233dcaecec9c7` (May 6) noted that staged
@@ -182,7 +177,7 @@ The dependency graph is:
 
 4. Windows path decision ──► docs/packaging-windows.md
 5. Translucent-bg regression test (verify on main)
-6. Linux PowerSource (after mystifying-proskuriakova merges)
+6. Linux PowerSource (interface landed with PR #24; sysfs read pending)
 7. DEB/RPM staging check
 10. Advisory -Werror job (anywhere; independent)
 ```
@@ -192,9 +187,6 @@ easier to validate once CI is on the right Qt + the qpdf compat
 breakage is fixed. The macOS chain (1 → 2 → 3) sits on top. Windows
 (4, 5) and Linux (6, 7) are parallel tracks. The advisory `-Werror`
 re-add (10) is independent and can land at any point.
-
-Item 6 has an explicit dependency on the in-flight branch and
-should not be attempted before the merge.
 
 ## Exit criteria
 
@@ -230,7 +222,6 @@ The sprint is done when, on a freshly-cloned checkout:
 - **Don't skip writing `docs/packaging-windows.md`.** The mac doc
   exists because future-maintainer-coming-back-to-this thanked
   past-maintainer-for-writing-it-down. Windows deserves the same.
-- **`PowerSource` Linux is the one item the sprint cannot ship
-  alone.** If the in-flight branch slips, that item slips with it
-  — that's a feature, not a defect. Don't reimplement the
-  interface on this branch to avoid the dependency.
+- **`PowerSource` Linux is the smallest of the bunch.** The
+  interface landed with PR #24; the Linux sysfs read is a few
+  dozen lines.

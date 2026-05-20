@@ -239,8 +239,8 @@ other path without raising it in the PR first.
 | Touch ML | `src/ml/` — keep all inference local, no remote calls |
 | Run a reference-user smoke session | `docs/smoke-session.md` |
 | Land cross-platform packaging fixes | `docs/cross-platform-sprint.md` |
-| Land the in-flight `mystifying-proskuriakova` branch | `docs/in-flight-merge-plan.md` |
-| See what the four reviewer lenses turned up | `docs/audit-2026-05-19.md` |
+| Read the PR #24 (HITL waves 1-4) merge retrospective | `docs/in-flight-merge-plan.md` |
+| See what the eleven reviewer lenses turned up | `docs/audit-2026-05-19.md` |
 
 ## Slash commands & subagents
 
