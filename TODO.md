@@ -721,17 +721,15 @@ and any future feature where input variety is the whole point.
 
 ### Cross-cutting polish items
 
-- **Designer / non-technical-user review.** The items above came out of
-  one ~15-minute walkthrough. A focused pass that watches a real user
-  drive the app end-to-end (open a file → markup → sign → save) will
-  surface more of these subtle behaviours. Schedule this before any 1.0
-  polish milestone. Watch for:
-  - Any modal dialog that interrupts work on the document.
-  - Tools that appear enabled but do nothing (or the wrong thing) for
-    the active document type.
-  - Any action that requires the user to already know where to look
-    (hidden toolbars, menu-only entry points for common tasks).
-  - Loss of direct manipulation (things the user made but can't then
-    grab, move, or edit).
-  - Feedback that's too loud (popups) or too quiet (no visible change
-    after a successful action).
+- **Designer / non-technical-user review.** Now codified as the
+  reference-user smoke session — see
+  [`docs/smoke-session.md`](docs/smoke-session.md) for the protocol
+  (fresh build, non-maintainer observer, three open-do-close cycles
+  on a text PDF + scanned PDF + photo, observations land in a dated
+  subsection of this file). The original bullets that lived here —
+  modal dialogs that interrupt, controls enabled-but-noop, hidden
+  entry points, lost direct manipulation, too-loud/too-quiet feedback
+  — are now covered as positive rules in PHILOSOPHY's *How Trailer
+  reduces friction* section. The trigger remains: schedule a smoke
+  session before any 1.0 polish milestone, and opportunistically
+  whenever a willing non-maintainer is in the room.
