@@ -121,22 +121,27 @@ template.
 
 ```
 src/
+  annotation/      # Annotation data classes + AnnotationStore snapshot undo
   app/             # Application lifecycle, QApplication subclass, file-open routing
+  cards/           # Trim My Card and related card-detection helpers
   document/        # IDocument, adapters (PdfAdapter, ImageAdapter, StubAdapter),
                    # PdfEditor + PdfCommand pattern, qpdf wrapper
-  ui/              # MainWindow, DocumentView, Sidebar, AnnotationOverlay,
-                   # Inspector, MarkupToolbar, SignatureCaptureDialog, etc.
+  filters/         # ImageFilter (sepia / B&W / brightness etc.)
   ml/              # OnnxSession, ModelRegistry, ModelDownloader,
                    # BackgroundRemover, SamSession, OcrEngine
-  settings/        # Persistence (QSettings + a toml++ store for richer state)
+  platform/        # OS-specific bits (screenshot pickers, power source, etc.)
   recent/          # RecentFiles model
+  settings/        # Persistence (QSettings + a toml++ store for richer state)
+  signatures/      # SignatureStore + signature-capture pipeline
+  ui/              # MainWindow, DocumentView, Sidebar, AnnotationOverlay,
+                   # Inspector, MarkupToolbar, SignatureCaptureDialog, etc.
+  util/            # Small cross-cutting helpers
 tests/             # Unit tests, one file per src/ class roughly
 tests/uat/         # UAT harness (offscreen, label=uat)
 docs/uat/          # UAT specs — source of truth for end-user behaviour
 icon/              # App icon pipeline (Python; see icon/README.md)
 docker/            # Cross-compile + UAT runner images
 packaging/         # Linux DEB scaffolding
-platform/          # OS-specific bits (e.g. screenshot pickers)
 scripts/           # build-linux-deb.sh, build-windows.sh, run-uat.sh
 ```
 

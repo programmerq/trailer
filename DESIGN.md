@@ -4,9 +4,9 @@
 > up, sign it, export it. No accounts. No cloud. No telemetry. Just the file
 > in front of you.
 
-**Status:** Initial spec, ready for implementation
-**Target platforms:** Windows 10/11 (x64, ARM64), macOS 12+ (x64, Apple Silicon), Linux (x64, ARM64; X11 and Wayland)
-**License intent:** Permissive (MIT or Apache-2.0; pick one before first release)
+**Status:** Phases 0–5 shipped; Phase 6 in flight (ML core landed, format/colour-management half unstarted). See [AGENTS.md](AGENTS.md) §*Phase status* for the live state and [TODO.md](TODO.md) for the work queue.
+**Target platforms:** Windows 10/11 (x64, ARM64), macOS 12+ (Apple Silicon shipped, x86_64 deferred — see [docs/packaging-macos.md](docs/packaging-macos.md)), Linux (x64, ARM64; X11 and Wayland).
+**License:** MIT — see [LICENSE](LICENSE) and the constraints in [PHILOSOPHY.md](PHILOSOPHY.md).
 
 ---
 
