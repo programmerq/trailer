@@ -588,6 +588,24 @@ Acceptance criteria.**
   - **Border Color** / **Fill Color** — colour pickers with recents.
   - **Text Style** — font, size, weight, colour.
 
+- **What persists on save (PDF round-trip policy).** Trailer's
+  `PdfEditor` reads and writes ten PDF `/Subtype` kinds:
+  `/Square` (Rectangle), `/Circle` (Ellipse), `/Line`, `/Polyline`
+  (Arrow), `/Ink`, `/FreeText` (Text + SpeechBubble), `/Text`
+  (sticky Note), `/Highlight`, `/Underline`, `/StrikeOut`. Anything
+  else — `/PrinterMark`, `/TrapNet`, `/Watermark`, third-party
+  vendor-specific `/Subtype`s — is preserved as long as the document
+  is open in Trailer but **silently dropped** on save. Signatures
+  and Redactions are not persisted as `/Annot` objects either: they
+  are flattened into the page's content stream (Signature → image
+  stamp, Redaction → opaque black rasterised over the original
+  content). Once saved, a flattened signature or redaction cannot
+  be edited; this is by design (a redaction must be permanent, and
+  a signature represents intent-to-sign, not a draggable object).
+  This policy is locked in for 1.0 — see
+  [`docs/audit-2026-05-19.md`](docs/audit-2026-05-19.md) §9
+  (API surface stability).
+
 #### 6.3.2 Highlight, underline, strikethrough
 
 - **What:** As above but accessible without the full markup toolbar.
