@@ -1349,14 +1349,27 @@ phase status markers below summarise it inline.
 
 ## 11. Testing strategy
 
-### 11.1 Unit tests
+The live test architecture is documented in [`AGENTS.md`](AGENTS.md)
+§*Test* — unit tests under `tests/` (one file per `src/` class
+roughly, run on every PR via `ctest --label-exclude uat`), plus a
+QTest-driven offscreen UAT harness under `tests/uat/` (run on tag
+pushes or on-demand via `scripts/run-uat.sh`). UAT cases are paired
+1:1 with `docs/uat/*.md` spec entries — see
+[`docs/uat/README.md`](docs/uat/README.md) for the case format and
+[`docs/smoke-session.md`](docs/smoke-session.md) for the reference-
+user smoke session that complements automated coverage.
 
-- Every command in the command pattern has unit tests covering apply / undo /
-  re-apply.
-- Document model invariants tested under random edit sequences (property-based
-  testing).
+The subsections below capture the *intent* for areas not yet
+exercised. Treat them as planning notes; trust AGENTS.md + the
+test directories as the source of truth for what runs today.
 
-### 11.2 Format conformance
+### 11.1 Unit tests *(Shipped)*
+
+- One unit-test file per `src/` class, kept roughly 1:1 with the
+  source. Property-based testing under random edit sequences is
+  Planned; current tests are example-based.
+
+### 11.2 Format conformance *(Planned)*
 
 - A corpus of test files for each supported format (the public test corpora
   for PDF — e.g., the PDF Association's test files — plus a hand-curated
@@ -1364,20 +1377,24 @@ phase status markers below summarise it inline.
 - Round-trip tests: open → save → reopen → byte-compare metadata where
   appropriate.
 
-### 11.3 UI / integration tests
+### 11.3 UI / integration tests *(Shipped via the offscreen UAT harness)*
 
-- Cross-platform UI tests via Qt Test or Squish (or equivalent open-source
-  tooling).
-- Smoke test on each platform on every CI run: open ten reference files,
-  navigate, mark up, save, close.
+- QTest under `QT_QPA_PLATFORM=offscreen` constructs `Application`
+  + `MainWindow` in-process; no display server / Xvfb / GPU
+  required. See `tests/uat/test_uat_*.cpp` and the
+  `trailer_add_uat_test()` CMake helper.
+- The per-platform "open ten reference files end-to-end" smoke pass
+  the original spec envisioned is Planned — Linux runs the UAT
+  suite in CI on tag pushes; macOS / Windows host runs are still
+  manual.
 
-### 11.4 Performance benchmarks
+### 11.4 Performance benchmarks *(Planned)*
 
 - Tracked baselines for: cold-start time, PDF first-page render, 100 MP image
   load, continuous-scroll FPS over a 500-page PDF, OCR throughput.
 - Regression alerts when any metric worsens by more than 10%.
 
-### 11.5 Accessibility
+### 11.5 Accessibility *(Planned)*
 
 - Automated axe-style audits run in CI against every screen.
 - Manual screen reader walkthrough each release.
@@ -1386,18 +1403,37 @@ phase status markers below summarise it inline.
 
 ## 12. Distribution and release engineering
 
-- **Versioning:** SemVer. Breaking changes only at major bumps.
-- **Release cadence:** Roughly monthly point releases during the first year,
-  quarterly thereafter.
+The live state is documented in
+[`docs/cross-platform-sprint.md`](docs/cross-platform-sprint.md) (in
+scope work) and [`TODO-packaging.md`](TODO-packaging.md) (gated
+work, primarily Apple Developer Program decisions). Summary:
+
+- **Versioning:** SemVer. While Trailer is on 0.x, breaking changes
+  are allowed on minor bumps (see PHILOSOPHY *What 1.0 means*).
+- **Release cadence:** No fixed cadence yet — releases happen when
+  there's something to ship.
 - **Update mechanism:**
-  - macOS: Sparkle.
-  - Windows: built-in updater (MSIX takes care of this) or Squirrel.
-  - Linux: leave to the distribution; AppImage uses AppImageUpdate.
-- **Code signing:** Required on Mac and Windows. Build infrastructure must
-  support reproducible-from-source signed builds.
-- **Telemetry:** **None by default.** If a maintainer ever wants to add it,
-  it must be opt-in, transparent about exactly what is sent, and disable-able
-  in one click.
+  - macOS: Sparkle is the long-term target (see
+    [TODO-packaging.md](TODO-packaging.md)). The
+    `claude/friendly-haslett-8bdd21` branch explored a Sigstore-
+    keyless alternative that sidesteps the Apple Developer Program
+    dependency for update signing; both options are still on the
+    table.
+  - Windows: Planned. The native MSVC build (`build-windows-native.ps1`)
+    ships today; the installer + auto-updater path is open.
+  - Linux: DEB + RPM packages shipping today (`build-linux-deb.sh`,
+    `build-linux-rpm.sh`); leave updates to the distribution.
+- **Code signing:** macOS uses adhoc signing today —
+  Apple-Developer-Program-signed + notarised `.dmg` is gated on the
+  $99/yr program decision. Windows installer signing is similarly
+  gated on a code-signing certificate budget. See
+  [TODO-packaging.md](TODO-packaging.md).
+- **Reproducible-from-source signed builds:** Aspirational; not
+  in place yet.
+- **Telemetry:** **None.** Per PHILOSOPHY's *No telemetry* bullet,
+  this is a durability commitment, not a default that could flip.
+  Any future telemetry would require a new durability decision
+  and would be opt-in, transparent, and one-click disable.
 
 ---
 
