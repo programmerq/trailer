@@ -233,6 +233,7 @@ other path without raising it in the PR first.
 | Touch ML | `src/ml/` — keep all inference local, no remote calls |
 | Run a reference-user smoke session | `docs/smoke-session.md` |
 | Land cross-platform packaging fixes | `docs/cross-platform-sprint.md` |
+| Land the in-flight `mystifying-proskuriakova` branch | `docs/in-flight-merge-plan.md` |
 
 ## Slash commands & subagents
 
