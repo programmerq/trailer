@@ -17,6 +17,7 @@ AnimationBar::AnimationBar(QWidget *parent) : QWidget(parent) {
     m_playButton = new QToolButton(this);
     m_playButton->setIcon(style()->standardIcon(QStyle::SP_MediaPause));
     m_playButton->setToolTip(tr("Play / Pause"));
+    m_playButton->setAccessibleName(tr("Play / Pause"));
     connect(m_playButton, &QToolButton::clicked, this, &AnimationBar::onPlayToggled);
 
     m_slider = new QSlider(Qt::Horizontal, this);
