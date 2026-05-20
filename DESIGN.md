@@ -1230,10 +1230,14 @@ shape when it lands.
 
 ## 10. Implementation phases
 
-The agent should target these phases in order. Each phase ends with a
-shippable build.
+Phases are sequential; each ends with a shippable build. The
+original spec carried "Weeks N–M" estimates; those have been
+dropped as fiction (real-time elapsed has diverged enough that
+keeping them invites the wrong inferences). The live phase
+position is in [`AGENTS.md`](AGENTS.md) §*Phase status*; the per-
+phase status markers below summarise it inline.
 
-### Phase 0 — Foundations (Weeks 1–3)
+### Phase 0 — Foundations *(Shipped)*
 
 - Project scaffold, CMake build, CI on all three platforms.
 - Window / tab / sidebar shell.
@@ -1241,20 +1245,22 @@ shippable build.
 - File-open pipeline; open with command-line argument; recent files.
 - Stub `IDocument` interface and a stub adapter that displays "Unsupported".
 
-### Phase 1 — MVP viewer (Weeks 4–8)
+### Phase 1 — MVP viewer *(Shipped, with deltas)*
 
-- PDF rendering (Poppler-Qt6 or MuPDF).
-- Image rendering for PNG, JPEG, GIF (still), BMP, TIFF, WebP.
-- Thumbnails sidebar and Contact Sheet for PDFs.
+- PDF rendering: Qt PDF (`QPdfView` + `QPdfDocument`), not Poppler /
+  MuPDF as the spec originally suggested.
+- Image rendering for PNG, JPEG, GIF (still + animated), BMP,
+  TIFF, WebP, HEIC.
+- Thumbnails sidebar — shipped. Contact Sheet — Planned (§6.1.2).
 - View modes (Single, Two, Continuous).
 - Zoom, pan, fit, actual size, magnifier.
 - Find in PDF.
 - Print.
-- Save (read-only docs only output via Print-to-PDF).
+- Save (read-only docs output via Print-to-PDF).
 - Light/dark theme.
 - Animated GIF playback and frame inspection.
 
-### Phase 2 — PDF page operations (Weeks 9–12)
+### Phase 2 — PDF page operations *(Shipped)*
 
 - Combine PDFs (drag between sidebars).
 - Insert / delete / reorder / rotate pages.
@@ -1263,7 +1269,7 @@ shippable build.
 - Per-page operations apply to multi-selection.
 - Save / Save As / Duplicate.
 
-### Phase 3 — Image editing (Weeks 13–16)
+### Phase 3 — Image editing *(Shipped)*
 
 - Crop, resize, rotate, flip.
 - Adjust Colour panel.
@@ -1271,7 +1277,7 @@ shippable build.
 - Convert / export to other image formats.
 - Take screenshot (per-platform implementations).
 
-### Phase 4 — Annotation / Markup (Weeks 17–22)
+### Phase 4 — Annotation / Markup *(Shipped)*
 
 - Markup toolbar.
 - Sketch, Draw, Shapes (incl. Highlight and Zoom Lens annotations), Text,
@@ -1281,11 +1287,12 @@ shippable build.
 - Inspector pane (General, More Info, Annotations).
 - Highlights & Notes sidebar.
 
-### Phase 5 — Forms, signatures, security (Weeks 23–28)
+### Phase 5 — Forms, signatures, security *(Shipped, with deltas)*
 
 - PDF form filling.
 - AutoFill cards (My Card).
-- Signature capture (trackpad, camera, tablet, image import).
+- Signature capture: trackpad and image import shipped; tablet (HID
+  stylus) shipped; **Camera** (webcam capture) Planned (§6.4.3).
 - Sign tool.
 - Form Filling Toolbar.
 - Password-protect / edit permissions.
@@ -1293,31 +1300,50 @@ shippable build.
 - Quartz-equivalent filters.
 - Redaction (with warning copy).
 
-### Phase 6 — Advanced raster + OCR (Weeks 29–34)
+### Phase 6 — Advanced raster + OCR *(In flight — ML core shipped, format/colour half unstarted)*
 
-- Smart Lasso and Instant Alpha.
-- Background removal (ONNX Runtime + bundled or downloadable model).
-- HEIC, OpenEXR, RAW read support.
-- Live Text on images (Tesseract).
-- Embed Text on PDF export (Tesseract).
-- Image Description / alt text.
-- Colour management (Assign Profile, Soft Proof, lcms2).
+- Smart Lasso and Instant Alpha — shipped (ONNX Runtime + MobileSAM
+  downloaded on first use). The in-flight `mystifying-proskuriakova`
+  branch moves these from a modal dialog to direct in-document tool
+  modes on `AnnotationOverlay`.
+- Background removal — shipped via U²-Net (ONNX Runtime). In-flight
+  branch routes it through MlScheduler with a sparkle "looks like a
+  candidate" badge.
+- Live Text on images — shipped via **PP-OCRv3** (PaddleOCR), not
+  Tesseract as originally specced. The in-flight branch makes OCR
+  results selectable directly on the document via SelectableTextLayer
+  instead of dumped to a dialog.
+- Embed Text on PDF export — Planned (the checkbox isn't in the
+  Export As dialog yet).
+- HEIC read support — shipped (loaded via the platform HEIC plugin).
+- **OpenEXR, HDR (Radiance), RAW read support** — Planned, not
+  implemented today (see §4.1).
+- Image Description / alt text — Planned.
+- Colour management (Assign Profile, Soft Proof, lcms2) — Planned.
 
-### Phase 7 — Stretch (Weeks 35–40)
+### Phase 7 — Stretch *(Partial — partially scoped, not started)*
 
 - 3D viewing (USD, Collada, OBJ, STL).
 - Scanner support (SANE / WIA / ImageCaptureCore).
 - Camera import (libgphoto2 / WIA / ImageCaptureCore).
 - Photo location / map view.
-- Local search index and command palette.
+- Local search index and command palette (see §9.4).
 
-### Phase 8 — Polish, accessibility, distribution
+### Phase 8 — Polish, accessibility, distribution *(Partial)*
 
-- Full keyboard shortcut audit.
-- Screen reader audit.
-- Localisation framework + at least English; community translations welcome.
-- Installers and signing for all three platforms.
-- User-facing documentation site.
+- Full keyboard shortcut audit (DESIGN.md §7 has been reconciled
+  against `MainWindow.cpp`; rebinding the *Planned* shortcuts is
+  the remaining piece — see TODO.md ## UI).
+- Screen reader audit — not started.
+- Localisation framework + at least English; community translations
+  welcome — not started (the in-flight OCR work surfaces multi-
+  language selection, raising the priority somewhat).
+- Installers and signing — Linux DEB pipeline exists; macOS
+  notarised `.dmg` and Windows MSIX/NSIS Planned (see
+  [docs/cross-platform-sprint.md](docs/cross-platform-sprint.md)
+  and [TODO-packaging.md](TODO-packaging.md) for the gating
+  Apple Developer Program decision).
+- User-facing documentation site — not started.
 
 ---
 
