@@ -106,12 +106,16 @@ Captured from the user driving the actual app on a Mac. Each entry is
 a discrete change; we'll knock them out in priority order. Crossed-off
 items have landed; the commit hash is in the strikethrough line.
 
-> **2026-05-11 audit:** most of this section is already in the code.
-> Verified-done items are struck through with the reference; the only
-> remaining bullets are #1 (Dock-drop — needs runtime repro on
-> macOS), #16 (sidebar TOC / Highlights & Notes — placeholders,
-> blocked on underlying features), and #18 (search-match yellow —
-> needs a custom highlight overlay over `QPdfView`).
+> **2026-05-19 audit:** every item in this section has now landed.
+> Item-line strikethroughs carry the commit reference. The earlier
+> 2026-05-11 audit flagged #1 (Dock-drop), #16 (sidebar TOC /
+> Highlights & Notes), and #18 (search-match yellow) as remaining;
+> all three landed between May 11 and May 19: #1 via live-drag
+> confirmation on 2026-05-13 (the in-process path was already
+> green), #16 via the 2026-05-13 sidebar-modes pass, and #18 via
+> `1503c42 feat: highlighter-yellow search-match overlay`. The
+> section is retained as a historical record of the HITL pass, not
+> as a live work queue.
 
 ### Bugs (data loss / broken affordance)
 
