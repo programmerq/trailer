@@ -26,8 +26,12 @@ for the hard constraints (read both before making non-trivial changes).
 - **Phase 7 (stretch)** and **Phase 8 (distribution polish)** are partially
   scoped. Linux DEB / RPM, Windows MSI, macOS DMG pipelines all exist;
   macOS notarisation is **off the table by project policy** (Trailer is
-  not enrolled in the Apple Developer Program); auto-update (Sparkle /
-  WinSparkle) is the next planned distribution work.
+  not enrolled in the Apple Developer Program); an **ed25519-signed
+  auto-update channel** (Sparkle 2 + WinSparkle is the leading candidate
+  — the *requirement* is the signed channel, not the specific library;
+  see [`ROADMAP.md`](ROADMAP.md)) is the next planned distribution work.
+  Velopack does NOT qualify under the no-Apple-Dev policy because it
+  expects Developer ID / Authenticode trust.
 
 For the tactical Now / Next / Later view of what's between releases,
 read [`ROADMAP.md`](ROADMAP.md). For the live pickable punch list,

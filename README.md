@@ -253,9 +253,11 @@ The bundled `.app` ships **unsigned and un-notarized** by project
 policy — Trailer is not enrolled in the Apple Developer Program.
 The release body documents the one-time Gatekeeper quarantine
 bypass users need to run on first launch (`xattr -dr
-com.apple.quarantine /Applications/Trailer.app`). Sparkle-based
-auto-updates do not require Apple enrollment and are tracked
-separately.
+com.apple.quarantine /Applications/Trailer.app`). An ed25519-signed
+auto-update channel (Sparkle 2 is the leading candidate) is
+tracked separately in [ROADMAP.md](ROADMAP.md) — those signatures
+protect the update channel itself and don't require Apple
+enrollment.
 
 ### Recovering from a missing prior build
 

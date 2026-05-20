@@ -81,13 +81,22 @@ item in *Now* below.
 Pickable in this order. Anything that *requires* the in-flight
 branch to be merged is flagged.
 
-1. **Sparkle auto-update (macOS).** Same as last round — without
-   it, every patch release is invisible. Becomes more valuable as
-   bodies of work like the in-flight branch accumulate. Needs:
-   EdDSA keypair + safekeeping, appcast feed on GitHub Pages,
-   Sparkle linkage into the macOS bundle, "Check for Updates…"
-   menu item, RELEASING.md amendment. Independent of Apple
-   Developer enrollment (EdDSA-signed appcast).
+1. **Signed-update channel for macOS** (Sparkle 2 is the leading
+   candidate). The requirement, not the implementation: existing
+   installs can discover and pull new releases over a
+   cryptographically signed channel that does **not** require
+   Apple Developer Program enrollment. Sparkle 2's ed25519-signed
+   appcast fits cleanly and is mature. Alternatives that qualify:
+   a thin custom checker against GitHub's `/releases/latest` API
+   with our own ed25519 verification on the download. Velopack
+   does **not** qualify — its trust model leans on Apple Developer
+   ID / Microsoft Authenticode, which the no-Apple-Dev policy
+   rules out. Needs: ed25519 keypair + safekeeping, signed feed
+   hosted on GitHub Pages (or equivalent), library linkage into
+   the macOS bundle, "Check for Updates…" menu item, RELEASING.md
+   amendment. The point of all this is: when our release pipeline
+   is compromised, existing users don't get malware as an
+   "update."
 2. **Land + integrate the in-flight branch on main.** Includes a
    CHANGELOG `[Unreleased]` pass for every user-visible wave delta,
    an AGENTS.md update codifying the new conventions (MlScheduler
@@ -122,8 +131,13 @@ branch to be merged is flagged.
 
 Planned, not yet started.
 
-7. **WinSparkle auto-update (Windows).** Shares appcast XML +
-   EdDSA pubkey with macOS Sparkle — one signed feed serves both.
+7. **Signed-update channel for Windows.** Same requirement as
+   Now item 1. If we pick Sparkle 2 for macOS, **WinSparkle** is
+   the sibling library that shares the appcast XML format and
+   ed25519 pubkey — one signed feed serves both desktops. If we
+   pick a different macOS implementation, the Windows side
+   follows whatever shape that takes (e.g. a custom GitHub-
+   Releases checker would generalise across both OSes for free).
 8. **Preferences pane.** *(Tied to the in-flight branch.)* Three
    new `[ml.scheduler]` settings have no UI; Reset Trailer
    Settings, AutoFill, Manage ML Models live in scattered menu
@@ -271,13 +285,15 @@ Explicitly off the table so they stop eating planning oxygen.
   Interleaved gestures will now exhibit "Cmd-Z unwinds the wrong
   thing" symptoms more visibly. **Mitigation:** tracked as *Now*
   item 4.
-- **Sparkle appcast key management.** EdDSA private key needs to
+- **Update-signing key management.** Whichever ed25519
+  implementation we pick (Sparkle's appcast, WinSparkle's
+  matching feed, or a custom checker), the private key needs to
   be (a) safely stored — losing it strands every existing user
   on whatever version they have, and (b) reachable from CI to
-  sign each release's appcast entry. **Mitigation:** store in a
-  password manager *and* a GitHub Actions secret; document
-  recovery in RELEASING.md once Sparkle lands; consider a "new
-  pubkey" appcast entry signed by the old key for rotation.
+  sign each release. **Mitigation:** store in a password manager
+  *and* a GitHub Actions secret; document recovery in
+  RELEASING.md once the updater lands; consider a "new pubkey"
+  entry signed by the old key for rotation.
 - **Continuous-mode overlay drift may be Qt-PDF-blocked.** The
   view-geometry information needed for a correct fix may not be
   exposed by Qt PDF's current API. **Mitigation:** scope before

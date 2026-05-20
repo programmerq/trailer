@@ -245,9 +245,12 @@ build is failing and you keep pushing fixes:
 
 ## Things to keep an eye on
 
-- **Sparkle auto-update.** Once wired, the appcast feed needs to
-  be updated as part of the release process. Likely a new step
-  between (7) and (8) above; revisit this doc when Sparkle lands.
+- **Auto-updater integration.** Once wired (Sparkle 2 is the
+  leading candidate — see [ROADMAP.md](ROADMAP.md) Now item 1
+  for the requirement, which is "ed25519-signed update channel,"
+  not the specific library), each release will need to sign and
+  publish a feed entry. Likely a new step between (7) and (8)
+  above; revisit this doc when the implementation lands.
 - **Notarized macOS builds.** Off the table indefinitely — Trailer
   is not in the Apple Developer Program. If that ever changes, a
   signing + notarization step plugs in between `make release` and
