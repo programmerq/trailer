@@ -142,6 +142,13 @@ scripts/           # build-linux-deb.sh, build-windows.sh, run-uat.sh
 
 ## Conventions
 
+> **Pattern catalogue.** This section covers process/workflow
+> conventions (branches, commits, undo stacks, networking). For the
+> code-level patterns the repo expects new contributions to follow —
+> document adapters, `PdfCommand` shape, `AnnotationStore` snapshot
+> undo, coordinate-callback overlay, `QPointer` use, UAT slot naming,
+> magic constants — see [`docs/CONVENTIONS.md`](docs/CONVENTIONS.md).
+
 **Branches.** Agent branches follow `<tool>/<slug>` — `claude/<name>-<hash>`,
 `copilot/<feature>`, `cursor/<feature>`. The `worktree-agent-<hash>` prefix
 is reserved for the spawner that manages parallel agent sessions in
@@ -199,6 +206,7 @@ other path without raising it in the PR first.
 |---|---|
 | Understand the product end-to-end | `DESIGN.md` |
 | Know what's off-limits | `PHILOSOPHY.md` |
+| Match an existing code pattern | `docs/CONVENTIONS.md` |
 | Pick up open work | `TODO.md` (HITL section is the live sprint) |
 | Write a UAT case | `docs/uat/README.md` + a sibling spec file |
 | Write a UAT harness slot | `tests/uat/test_uat_foundations.cpp` is the template |
@@ -206,6 +214,8 @@ other path without raising it in the PR first.
 | Add an annotation type | `src/ui/AnnotationOverlay.cpp`, `Annotation.h`, `AnnotationStore` |
 | Add a Qt-PDF rendering path | `src/document/PdfAdapter.cpp`, the QPdfView wiring |
 | Touch ML | `src/ml/` — keep all inference local, no remote calls |
+| Run a reference-user smoke session | `docs/smoke-session.md` |
+| Land cross-platform packaging fixes | `docs/cross-platform-sprint.md` |
 
 ## Slash commands & subagents
 
