@@ -2327,6 +2327,19 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
         if (auto *overlay = findChild<AnnotationOverlay *>()) {
             connect(overlay, &AnnotationOverlay::selectionChanged, this,
                     &MainWindow::onAnnotationSelectionChanged, Qt::UniqueConnection);
+            // Auto-switch the toolbar back to Select after a one-shot
+            // shape commit. Without this the user must manually click
+            // Select on the markup toolbar before they can grab the
+            // shape they just drew to move or resize it — the 2026-05-20
+            // HITL pass flagged the friction. Sticky-draw mode (keep
+            // the active tool after commit) would be an opt-in setting.
+            // The toolbar's setActiveTool() flips the action's checked
+            // state, which fires activeToolChanged → setAnnotationTool
+            // on the doc → overlay->setActiveTool(Select), so the
+            // overlay and toolbar stay in sync without us touching the
+            // overlay's m_tool directly here.
+            connect(overlay, &AnnotationOverlay::annotationCommitted, this,
+                    &MainWindow::onAnnotationCommitted, Qt::UniqueConnection);
             // Wire SAM plumbing into the overlay so the InstantAlpha /
             // SmartLasso tool branches can fire decoder passes and
             // commit results without going through a modal dialog. The
@@ -2713,6 +2726,23 @@ void MainWindow::onAnnotationSelectionChanged(int id) {
     // is under the user's control — the auto-open was annoying for
     // the common select-and-delete / select-and-nudge flow.
     m_inspector->setAnnotation(doc->annotations(), id);
+}
+
+void MainWindow::onAnnotationCommitted(int /*id*/) {
+    // After a shape commit, flip the markup toolbar back to Select so
+    // the user can immediately grab the freshly-drawn shape to move /
+    // resize / restyle. The toolbar's setActiveTool() propagates
+    // through activeToolChanged → doc->setAnnotationTool(Select) →
+    // overlay->setActiveTool(Select), keeping all three (toolbar UI,
+    // doc tool state, overlay tool state) in sync.
+    //
+    // Guard against re-entry from this same handler: setActiveTool is
+    // a no-op when the requested tool already matches the current one.
+    if (!m_markupToolbar)
+        return;
+    if (m_markupToolbar->activeTool() == AnnotationTool::Select)
+        return;
+    m_markupToolbar->setActiveTool(AnnotationTool::Select);
 }
 
 void MainWindow::syncViewModeActions(IDocument *doc) {

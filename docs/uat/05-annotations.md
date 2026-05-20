@@ -700,6 +700,54 @@ drawing tool (e.g. Arrow, Rectangle) is active.
 - A subsequent click-drag on empty space still draws a new shape
   with the active drawing tool.
 
+### UAT-ANN-130 — Stroke colour picker survives concurrent store mutation
+
+**Preconditions:** A document with at least one rectangle annotation.
+The rectangle is selected (its selection ring is drawn).
+
+**Steps:**
+1. Open the Inspector if it is not already visible (`Cmd-I` on
+   macOS, `Ctrl-I` elsewhere).
+2. Click the **Stroke** colour swatch button. The
+   `QColorDialog` opens.
+3. While the picker is open, an event-loop-driven mutation hits
+   the `AnnotationStore` (auto-save flush, queued
+   `AnnotationStore::changed` slot, a parallel undo, etc.) and
+   reallocates its underlying `std::vector<Annotation>`.
+4. Pick a new colour and click **OK**.
+
+**Expected:**
+- The rectangle is still on the page (it did not vanish).
+- Its `bounds` are unchanged from before the dialog opened.
+- Its `style.stroke` is now the colour the user picked.
+- `Cmd/Ctrl+Z` reverts the colour change in one step.
+
+**Background:** `AnnotationStore::find(id)` returns a raw pointer
+into `m_annotations`, which is invalidated by any `add` / `remove`
+/ `undo` / `restore` that occurs while a modal dialog is spinning
+the Qt event loop. The Inspector must snapshot the initial colour
+before opening the dialog and re-fetch the annotation by id after
+the dialog returns, rather than holding the `find()` pointer
+across the modal.
+
+### UAT-ANN-131 — Toolbar auto-switches to Select after a one-shot shape
+
+**Preconditions:** Markup toolbar visible. Rectangle (or any other
+drawing tool — Ellipse, Line, Arrow, Freehand, etc.) is active.
+
+**Steps:**
+1. Drag on the page to draw a rectangle.
+2. Release the mouse.
+
+**Expected:**
+- The new rectangle is committed to the document.
+- The markup toolbar's checked tool flips back to **Select**.
+- A follow-up click on the just-drawn rectangle selects it (does
+  NOT create a second overlapping shape).
+
+**Note:** Sticky-draw mode (keep the active tool checked after
+each commit) would be an opt-in setting; it is not the default.
+
 ---
 
 ## Known gaps

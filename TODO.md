@@ -70,44 +70,40 @@ level fix.
 
 ### Rectangle annotation rough edges
 
-A live session placing one rectangle surfaced three problems:
+A live session placing one rectangle surfaced three problems. All
+three have landed.
 
-- **Auto-switch to Select after placement.** After releasing the
-  mouse on a freshly-drawn shape, the toolbar stays on Rectangle,
-  so the user must manually pick Select before they can grab the
-  shape to move or resize it. The 2026-04-30 pass made Select the
-  *default* tool (item #5 there), but doesn't switch back after a
-  one-shot shape. Proposal: on the `mouseReleaseEvent` branch that
-  commits a new shape in `AnnotationOverlay`, set
-  `m_tool = AnnotationTool::Select` and synchronise the
-  `MarkupToolbar` checked-action so the chrome matches. Sticky-draw
-  mode could be an opt-in setting if anyone misses it.
+- ~~**Auto-switch to Select after placement.**~~ Done. MainWindow
+  now connects `AnnotationOverlay::annotationCommitted` to a slot
+  that flips the markup toolbar back to Select; the toolbar's
+  `activeToolChanged` propagates back to the overlay so toolbar UI
+  and overlay state stay in sync. Pinned by UAT-ANN-131. Sticky-
+  draw mode (keep the active tool checked after each commit)
+  remains an open opt-in setting if anyone misses chained shape
+  drawing.
 
-- **Existing shapes are not restyleable from the Inspector.** The
-  Inspector has a writeback path —
-  [src/ui/Inspector.cpp:125-138](src/ui/Inspector.cpp:125) wires
-  the Stroke button through `QColorDialog` into
-  `updated.style.stroke = c` — so the missing piece is either the
-  store mutation, the overlay repaint, or both. Reported behaviour:
-  picking a new colour on a selected rectangle leaves the rectangle
-  visually unchanged. **Needs repro:** confirm whether
-  `AnnotationStore::changed` fires after the Inspector write, and
-  whether `AnnotationOverlay::update()` is called on receipt.
+- ~~**Existing shapes are not restyleable from the Inspector.**~~
+  Done — same root cause as the "rectangles disappear" item
+  below. Both symptoms (colour-doesn't-change AND
+  rectangle-vanishes) were the dangling-pointer corruption playing
+  out in one of two ways depending on what the freed memory
+  happened to contain when the modal returned.
 
-- **Rectangles disappear without explicit deletion.** The user
-  observed placed rectangles vanishing on some interaction; undo
-  brings them back, so *something* is mutating the
-  `AnnotationStore`. The existing focus-loss path
-  ([src/ui/AnnotationOverlay.cpp:51-66](src/ui/AnnotationOverlay.cpp:51),
-  `applicationStateChanged` → `abortInFlightDrag`) only clears
-  in-flight drag state — not committed annotations — so the cause
-  is elsewhere. **Needs repro:** sequence the interactions one at
-  a time (place → click empty area, place → focus-out via Cmd-Tab,
-  place → switch tool, place → press Esc, place → open Inspector
-  and change colour) and capture which triggers the delete. The
-  Inspector-colour case is a suspect given the writeback bug above
-  — a malformed `updated.style` write could plausibly clobber
-  geometry too.
+- ~~**Rectangles disappear without explicit deletion.**~~ Done.
+  Root cause: `Inspector::Inspector` (lines 125-138 / 144-158)
+  held a raw `const Annotation*` from `AnnotationStore::find(id)`
+  across `QColorDialog::getColor`, which is modal and spins the
+  Qt event loop. Any store mutation that fired during the dialog
+  (auto-save flush, queued `AnnotationStore::changed` slot, undo
+  coalescing, etc.) could reallocate the underlying
+  `std::vector<Annotation>` and dangle the pointer. After the
+  modal returned, the dereference read garbage geometry/style and
+  `m_store->update(*stale_ptr)` wrote that garbage back to the
+  same id — which is why the rectangle "vanished" (off-page or
+  zero-size bounds) AND the colour change appeared to be lost.
+  Fix: snapshot the initial colour before the modal and re-fetch
+  the annotation by id after the dialog returns; mirror the same
+  shape in the Fill handler. Pinned by UAT-ANN-130.
 
 ### Select All only selects annotations
 
