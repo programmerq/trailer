@@ -32,8 +32,9 @@ namespace trailer {
 //
 // The three sub-scores are normalised to [0,1] (via empirically chosen
 // soft saturation points) and averaged. A score >= kRecommendThreshold
-// (currently 0.60) is "good candidate"; below that the badge stays
-// off and the user just sees an unannotated menu entry.
+// (currently 0.50 — see the rationale block at the constant itself for
+// why) is "good candidate"; below that the badge stays off and the
+// user just sees an unannotated menu entry.
 //
 // This is a tasteful nudge, not a gate. The user can still invoke
 // Remove Background on any image — the heuristic only decides whether
