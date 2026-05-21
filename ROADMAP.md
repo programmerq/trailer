@@ -134,8 +134,9 @@ Pickable in this order.
    loss); it shipped alongside this roadmap reframe — see
    `a17051d fix(inspector): rectangle disappears after stroke/fill
    colour pick` and UAT-ANN-130/131. The search-bar close button and
-   Cmd-1/Cmd-3 page-mode shortcuts both shipped in the quick-wins
-   pass (`51e59e2`). Still live: thumbnail row-height, Cmd-A scope,
+   page-mode shortcuts (Cmd-1/2/3, with zoom moved to Cmd-0/9) both
+   shipped in the quick-wins pass. Still live: thumbnail row-height,
+   Cmd-A scope,
    content-aware first-open defaults, and the continuous-mode `↓`
    viewport-step — each independent and pickable.
 4. **Unified `AnnotationStore` + `PdfCommand` undo log.** Wave 2

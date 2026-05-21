@@ -252,7 +252,11 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
                 m_app->settings().mlPreloadSegmentationOnToolActivation()) {
                 if (auto *imgDoc = dynamic_cast<ImageDocument *>(doc)) {
                     const QImage image = imgDoc->image();
-                    if (!image.isNull() && !m_samController->isCachedForActive(image)) {
+                    if (!image.isNull()) {
+                        // prepareForActive() hashes the image once and
+                        // short-circuits synchronously on a cache hit, so we
+                        // call it unconditionally — an isCachedForActive()
+                        // pre-check would just hash the image a second time.
                         m_samController->prepareForActive(image, [](bool) {});
                     }
                 }
@@ -764,11 +768,13 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
 
     viewMenu->addSeparator();
 
+    // Page-layout shortcuts live on Cmd-1/2/3; the zoom commands below
+    // moved off the digit row (Cmd-0 Actual Size, Cmd-9 Fit Page) to
+    // make room. Cmd-1 → Continuous (Trailer's default mode), Cmd-2 →
+    // Single Page, Cmd-3 → Two Pages.
     m_singlePageAction = viewMenu->addAction(tr("Single Page"));
     m_singlePageAction->setCheckable(true);
-    // Cmd-1 / Cmd-2 / Cmd-3 cycle the page layout, matching Preview.
-    // Cmd-2 (Two Pages) is bound where that action is created below.
-    m_singlePageAction->setShortcut(QKeySequence(tr("Ctrl+1")));
+    m_singlePageAction->setShortcut(QKeySequence(tr("Ctrl+2")));
     connect(m_singlePageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
             doc->setViewMode(ViewMode::SinglePage);
@@ -777,18 +783,19 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
 
     m_twoPagesAction = viewMenu->addAction(tr("Two Pages"));
     m_twoPagesAction->setCheckable(true);
-    // Stays disabled: Qt's QPdfView::PageMode only exposes SinglePage and
-    // MultiPage — there is no facing/two-up layout, so ViewMode::TwoPages
-    // currently aliases Continuous (see PdfDocument::applyViewMode). A real
-    // side-by-side layout needs a custom view and is tracked as a larger
-    // follow-up, not part of the quick-wins sprint. Cmd-2 is intentionally
-    // left unbound until that lands.
+    // Cmd-3 is reserved here but the action stays disabled: Qt's
+    // QPdfView::PageMode only exposes SinglePage and MultiPage — there is
+    // no facing/two-up layout, so ViewMode::TwoPages currently aliases
+    // Continuous (see PdfDocument::applyViewMode). A real side-by-side
+    // layout needs a custom view (tracked as a larger follow-up); once it
+    // lands and the action is enabled, Cmd-3 starts working.
+    m_twoPagesAction->setShortcut(QKeySequence(tr("Ctrl+3")));
     m_twoPagesAction->setEnabled(false);
     m_twoPagesAction->setToolTip(tr("Two-page layout is not yet available."));
 
     m_continuousAction = viewMenu->addAction(tr("Continuous"));
     m_continuousAction->setCheckable(true);
-    m_continuousAction->setShortcut(QKeySequence(tr("Ctrl+3")));
+    m_continuousAction->setShortcut(QKeySequence(tr("Ctrl+1")));
     connect(m_continuousAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
             doc->setViewMode(ViewMode::Continuous);
@@ -841,18 +848,18 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
             doc->zoomOut();
     });
 
-    // Zoom shortcuts follow Adobe Acrobat's PDF-reader convention,
-    // which is the muscle memory most users bring to a PDF tool:
-    //   ⌘0 → Fit Page (whole page in viewport)
-    //   ⌘1 → Actual Size (100%)
-    //   ⌘2 → Fit Width
-    // This deliberately differs from Preview.app's ⌘0=Actual / ⌘9=Fit
-    // pattern — Acrobat's three-zoom mapping is what PDF-heavy users
-    // already have in their fingers.
+    // Zoom shortcuts keep the digit row clear for the page-layout
+    // commands above. The set is browser-like rather than Acrobat's
+    // ⌘0/1/2 triple:
+    //   ⌘0 → Actual Size (100%, the "reset zoom" key)
+    //   ⌘9 → Fit Page (whole page in viewport)
+    //   ⌘+ / ⌘- → Zoom In / Out
+    // Fit to Width stays in the menu but no longer carries a digit
+    // shortcut (⌘2 is now Single Page).
     m_zoomFitPageAction = viewMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/view-fit-page.svg"), this),
         tr("Fit &Page"));
-    m_zoomFitPageAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
+    m_zoomFitPageAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_9));
     connect(m_zoomFitPageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomFitPage();
@@ -861,7 +868,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     m_zoomActualAction = viewMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-actual.svg"), this),
         tr("&Actual Size"));
-    m_zoomActualAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
+    m_zoomActualAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
     connect(m_zoomActualAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomActual();
@@ -870,7 +877,6 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     m_zoomFitAction = viewMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/view-fit-width.svg"), this),
         tr("&Fit to Width"));
-    m_zoomFitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_2));
     connect(m_zoomFitAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomFitWidth();

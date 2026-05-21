@@ -99,25 +99,27 @@ PowerState detectFromOs() {
     }
     const QStringList supplies =
         psDir.entryList(QDir::NoDotAndDotDot | QDir::AllEntries | QDir::System);
-    bool sawMains = false;
+    bool sawOfflineMains = false;
     for (const QString &name : supplies) {
         const QString base = psDir.absoluteFilePath(name);
         const QString type = readSysfsLine(base + QStringLiteral("/type"));
         if (type.compare(QStringLiteral("Mains"), Qt::CaseInsensitive) != 0) {
             continue; // batteries, USB supplies, UPS, etc.
         }
-        sawMains = true;
         const QString online = readSysfsLine(base + QStringLiteral("/online"));
         if (online == QLatin1String("1")) {
             return PowerState::OnAC; // any online adapter wins.
         }
-        // online == 0 (or unreadable): keep scanning — a second adapter
-        // (e.g. a dock) might be the one that's plugged in.
+        if (online == QLatin1String("0")) {
+            sawOfflineMains = true;
+        }
+        // An unreadable/empty `online` is NOT treated as battery evidence;
+        // keep scanning — another adapter (e.g. a dock) might be online.
     }
-    // No online AC adapter found. If a Mains supply exists at all the
-    // machine is running unplugged → OnBattery; otherwise there is no AC
-    // line in sysfs (desktop, VM, container) so default to OnAC.
-    return sawMains ? PowerState::OnBattery : PowerState::OnAC;
+    // Only an explicitly-offline AC adapter means OnBattery. With no AC
+    // line in sysfs at all (desktop, VM, container), or only adapters whose
+    // state we couldn't read, default to OnAC so the queue keeps running.
+    return sawOfflineMains ? PowerState::OnBattery : PowerState::OnAC;
 #endif
 }
 
