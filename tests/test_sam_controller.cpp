@@ -97,8 +97,8 @@ void TestSamController::uat_sam_ctl_010_LruEvictsOldestAfterCapacity() {
     // Insert kLruCapacity distinct keys — cache fills exactly to
     // capacity.
     for (int i = 0; i < SamController::kLruCapacity; ++i) {
-        const int size =
-            ctl.insertSyntheticCacheEntryForTest(fakeDoc(1), i, 0x1000ULL + i);
+        const int size = ctl.insertSyntheticCacheEntryForTest(
+            fakeDoc(1), i, 0x1000ULL + static_cast<unsigned long long>(i));
         QCOMPARE(size, i + 1);
     }
     QCOMPARE(ctl.cacheSizeForTest(), SamController::kLruCapacity);
@@ -134,7 +134,7 @@ void TestSamController::uat_sam_ctl_020_BurstOfRequestsThrottlesDispatches() {
 
     // Spin the event loop until both dispatches complete. With no
     // model the decoder returns immediately; cap at 500 ms.
-    pumpUntil(500, [&ctl, &callbackInvocations]() {
+    pumpUntil(500, [&callbackInvocations]() {
         return callbackInvocations >= 2;
     });
 
