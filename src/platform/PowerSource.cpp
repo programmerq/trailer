@@ -14,6 +14,14 @@
 #include <windows.h>
 #endif
 
+#if !defined(Q_OS_MACOS) && !defined(Q_OS_WIN)
+#include <QDir>
+#include <QFile>
+#include <QIODevice>
+#include <QString>
+#include <QStringList>
+#endif
+
 namespace trailer {
 
 namespace {
@@ -69,14 +77,49 @@ PowerState detectFromOs() {
     }
     return PowerState::Unknown;
 #else
-    // Linux (and any future platforms). Reading
-    // /sys/class/power_supply/AC*/online (or /BAT*/status) gives a
-    // direct answer but requires walking the directory and
-    // tolerating absence — laptops, desktops, and containers all
-    // present differently. Punt: report OnAC so the speculative
-    // queue runs by default. A separate follow-up can wire the
-    // sysfs scan if a Linux user surfaces a battery-life complaint.
-    return PowerState::OnAC;
+    // Linux (and other Unixes exposing the sysfs power_supply class).
+    // Walk /sys/class/power_supply/* and find the "Mains"-type supply
+    // (the AC adapter). Its `online` file reads 1 when wall power is
+    // connected and 0 when not. Laptops, desktops, VMs and containers
+    // all present differently: many have no power_supply class at all,
+    // in which case we report OnAC so the speculative queue runs by
+    // default (a desktop is effectively always on mains). Only when we
+    // positively observe an offline AC adapter do we report OnBattery.
+    auto readSysfsLine = [](const QString &path) -> QString {
+        QFile f(path);
+        if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            return {};
+        }
+        return QString::fromLatin1(f.readLine()).trimmed();
+    };
+
+    QDir psDir(QStringLiteral("/sys/class/power_supply"));
+    if (!psDir.exists()) {
+        return PowerState::OnAC;
+    }
+    const QStringList supplies =
+        psDir.entryList(QDir::NoDotAndDotDot | QDir::AllEntries | QDir::System);
+    bool sawOfflineMains = false;
+    for (const QString &name : supplies) {
+        const QString base = psDir.absoluteFilePath(name);
+        const QString type = readSysfsLine(base + QStringLiteral("/type"));
+        if (type.compare(QStringLiteral("Mains"), Qt::CaseInsensitive) != 0) {
+            continue; // batteries, USB supplies, UPS, etc.
+        }
+        const QString online = readSysfsLine(base + QStringLiteral("/online"));
+        if (online == QLatin1String("1")) {
+            return PowerState::OnAC; // any online adapter wins.
+        }
+        if (online == QLatin1String("0")) {
+            sawOfflineMains = true;
+        }
+        // An unreadable/empty `online` is NOT treated as battery evidence;
+        // keep scanning — another adapter (e.g. a dock) might be online.
+    }
+    // Only an explicitly-offline AC adapter means OnBattery. With no AC
+    // line in sysfs at all (desktop, VM, container), or only adapters whose
+    // state we couldn't read, default to OnAC so the queue keeps running.
+    return sawOfflineMains ? PowerState::OnBattery : PowerState::OnAC;
 #endif
 }
 

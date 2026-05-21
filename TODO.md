@@ -150,13 +150,17 @@ explicit user adjustment wins and sticks.
 
 ### Navigation shortcuts
 
-- **No keyboard shortcut for page-mode (single / two / continuous).**
-  Cycling layout from the menu requires three menu trips
-  (`View → Single Page`, etc.). Proposal: bind `Cmd-1` / `Cmd-2` /
-  `Cmd-3` to single / two-page / continuous respectively. Two-page
-  is currently disabled per the `// TODO` at
-  [src/ui/MainWindow.cpp:639](src/ui/MainWindow.cpp:639), so
-  `Cmd-2` becomes live when that lands.
+- ~~**No keyboard shortcut for page-mode (single / two / continuous).**~~
+  Mostly done. `Cmd-1` → Continuous and `Cmd-2` → Single Page are live;
+  `Cmd-3` is only *reserved* for Two Pages — that action stays disabled
+  for now, so the shortcut does nothing yet. This required moving the
+  zoom commands off the digit row (they clashed with the original
+  `Cmd-1`/`Cmd-3` proposal): Actual Size is now `Cmd-0`, Fit Page
+  `Cmd-9`. **Finding:** Qt's `QPdfView::PageMode` exposes only
+  `SinglePage` / `MultiPage`, no facing/two-up layout, so
+  `ViewMode::TwoPages` currently aliases `Continuous`. A real
+  side-by-side view needs a custom widget; tracked as a larger
+  follow-up. `Cmd-3` becomes functional when that lands.
 
 - **Continuous-mode `↓` step is too small.** With pages laid out
   vertically, `↓` advances by the default
@@ -167,7 +171,12 @@ explicit user adjustment wins and sticks.
   work. Single-page mode already advances by full page on arrows
   via the existing nav wiring.
 
-### Search "Close" button is non-functional
+### ~~Search "Close" button is non-functional~~ Done (`51e59e2`)
+
+Fixed exactly as diagnosed below: `hideSearchBar` / `showSearchBar`
+now drive `setVisible()` on the captured `m_searchBarAction`
+(the `QWidgetAction` from `addWidget`), so the toolbar slot collapses
+instead of leaving an empty gap. Esc and the X button share the path.
 
 The `SearchBar` close button is wired:
 [src/ui/SearchBar.cpp:43](src/ui/SearchBar.cpp:43) emits `dismissed`
@@ -232,10 +241,10 @@ or behaviours the four agents flagged but didn't fix.
 
 ### ML scheduler (Workstream J follow-up)
 
-- **Linux power detection.** `src/platform/PowerSource.cpp` stubs to
-  `PowerState::OnAC` on Linux. Reading `/sys/class/power_supply/*/online`
-  (and falling through to `OnAC` when the path doesn't exist on a
-  desktop) is a small extension; the test seam is already in place.
+- ~~**Linux power detection.**~~ Done (`9b24eb4`).
+  `src/platform/PowerSource.cpp` now scans `/sys/class/power_supply/*`:
+  online "Mains" adapter → `OnAC`, offline → `OnBattery`, no AC supply
+  (desktop / VM / container) → `OnAC` fallback.
 
 ### SAM (Workstream G follow-up)
 

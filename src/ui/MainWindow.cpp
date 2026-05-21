@@ -240,6 +240,27 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         if (auto *doc = m_documentView->currentDocument()) {
             doc->setAnnotationTool(tool);
             doc->setAnnotationStyle(m_markupToolbar->style());
+            // Warm the MobileSAM encoder the moment the user picks a
+            // segmentation tool so the first stroke doesn't pay the
+            // encode latency. Opt-out via Settings; only fires for image
+            // documents (the only place SAM tools are offered) and only
+            // when the models are already on disk — we never kick a
+            // download from here. prepareForActive() is a no-op on a
+            // cache hit, so re-activating the tool stays cheap.
+            if ((tool == AnnotationTool::InstantAlpha || tool == AnnotationTool::SmartLasso) &&
+                m_samController && m_samController->isModelReady() &&
+                m_app->settings().mlPreloadSegmentationOnToolActivation()) {
+                if (auto *imgDoc = dynamic_cast<ImageDocument *>(doc)) {
+                    const QImage image = imgDoc->image();
+                    if (!image.isNull()) {
+                        // prepareForActive() hashes the image once and
+                        // short-circuits synchronously on a cache hit, so we
+                        // call it unconditionally — an isCachedForActive()
+                        // pre-check would just hash the image a second time.
+                        m_samController->prepareForActive(image, [](bool) {});
+                    }
+                }
+            }
         }
     });
     // When the toolbar is hidden, reset the active tool to Select so the
@@ -603,13 +624,17 @@ void MainWindow::buildMainToolbar() {
 
     m_searchBar->setParent(m_mainToolbar);
     m_searchBar->setMaximumWidth(360);
-    m_mainToolbar->addWidget(m_searchBar);
+    m_searchBarAction = m_mainToolbar->addWidget(m_searchBar);
     // hide() after addWidget so the explicit-hidden flag is set
     // against the just-reparented widget. QToolBar::addWidget wraps
     // the bar in a QWidgetAction that drives visibility from its
     // parent, so the hide() has to follow the addWidget call to
-    // win the race on first show.
+    // win the race on first show. The wrapping action also has to be
+    // hidden, otherwise its toolbar slot stays reserved (empty gap).
     m_searchBar->hide();
+    if (m_searchBarAction) {
+        m_searchBarAction->setVisible(false);
+    }
 }
 
 void MainWindow::buildEditMenu(QMenu *editMenu) {
@@ -679,6 +704,9 @@ void MainWindow::showSearchBar() {
     if (m_searchButton) {
         m_searchButton->setVisible(false);
     }
+    if (m_searchBarAction) {
+        m_searchBarAction->setVisible(true);
+    }
     m_searchBar->setVisible(true);
     m_searchBar->focusInput();
     // Open the sidebar in Search Results mode so the user sees
@@ -700,6 +728,9 @@ void MainWindow::hideSearchBar() {
     }
     m_searchBar->setMatchCounter(0, 0);
     m_searchBar->setVisible(false);
+    if (m_searchBarAction) {
+        m_searchBarAction->setVisible(false);
+    }
     if (m_searchButton) {
         m_searchButton->setVisible(true);
     }
@@ -737,8 +768,13 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
 
     viewMenu->addSeparator();
 
+    // Page-layout shortcuts live on Cmd-1/2/3; the zoom commands below
+    // moved off the digit row (Cmd-0 Actual Size, Cmd-9 Fit Page) to
+    // make room. Cmd-1 → Continuous (Trailer's default mode), Cmd-2 →
+    // Single Page, Cmd-3 → Two Pages.
     m_singlePageAction = viewMenu->addAction(tr("Single Page"));
     m_singlePageAction->setCheckable(true);
+    m_singlePageAction->setShortcut(QKeySequence(tr("Ctrl+2")));
     connect(m_singlePageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
             doc->setViewMode(ViewMode::SinglePage);
@@ -747,11 +783,19 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
 
     m_twoPagesAction = viewMenu->addAction(tr("Two Pages"));
     m_twoPagesAction->setCheckable(true);
-    m_twoPagesAction->setEnabled(false); // TODO: implement two-page layout
+    // Cmd-3 is reserved here but the action stays disabled: Qt's
+    // QPdfView::PageMode only exposes SinglePage and MultiPage — there is
+    // no facing/two-up layout, so ViewMode::TwoPages currently aliases
+    // Continuous (see PdfDocument::applyViewMode). A real side-by-side
+    // layout needs a custom view (tracked as a larger follow-up); once it
+    // lands and the action is enabled, Cmd-3 starts working.
+    m_twoPagesAction->setShortcut(QKeySequence(tr("Ctrl+3")));
+    m_twoPagesAction->setEnabled(false);
     m_twoPagesAction->setToolTip(tr("Two-page layout is not yet available."));
 
     m_continuousAction = viewMenu->addAction(tr("Continuous"));
     m_continuousAction->setCheckable(true);
+    m_continuousAction->setShortcut(QKeySequence(tr("Ctrl+1")));
     connect(m_continuousAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
             doc->setViewMode(ViewMode::Continuous);
@@ -804,18 +848,18 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
             doc->zoomOut();
     });
 
-    // Zoom shortcuts follow Adobe Acrobat's PDF-reader convention,
-    // which is the muscle memory most users bring to a PDF tool:
-    //   ⌘0 → Fit Page (whole page in viewport)
-    //   ⌘1 → Actual Size (100%)
-    //   ⌘2 → Fit Width
-    // This deliberately differs from Preview.app's ⌘0=Actual / ⌘9=Fit
-    // pattern — Acrobat's three-zoom mapping is what PDF-heavy users
-    // already have in their fingers.
+    // Zoom shortcuts keep the digit row clear for the page-layout
+    // commands above. The set is browser-like rather than Acrobat's
+    // ⌘0/1/2 triple:
+    //   ⌘0 → Actual Size (100%, the "reset zoom" key)
+    //   ⌘9 → Fit Page (whole page in viewport)
+    //   ⌘+ / ⌘- → Zoom In / Out
+    // Fit to Width stays in the menu but no longer carries a digit
+    // shortcut (⌘2 is now Single Page).
     m_zoomFitPageAction = viewMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/view-fit-page.svg"), this),
         tr("Fit &Page"));
-    m_zoomFitPageAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
+    m_zoomFitPageAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_9));
     connect(m_zoomFitPageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomFitPage();
@@ -824,7 +868,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     m_zoomActualAction = viewMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-actual.svg"), this),
         tr("&Actual Size"));
-    m_zoomActualAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_1));
+    m_zoomActualAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
     connect(m_zoomActualAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomActual();
@@ -833,7 +877,6 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     m_zoomFitAction = viewMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/view-fit-width.svg"), this),
         tr("&Fit to Width"));
-    m_zoomFitAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_2));
     connect(m_zoomFitAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomFitWidth();

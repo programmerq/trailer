@@ -21,10 +21,32 @@ entries terse and user-visible; CI / infrastructure churn lives in the
   existing `PdfCommand` stack. A single user gesture that affects
   N pages (e.g. cropping a multi-selection) produces ONE command,
   so one Ctrl-Z reverts the whole batch atomically.
+- **Page-mode keyboard shortcuts.** `Cmd-1` / `Cmd-2` (Ctrl on
+  Windows/Linux) switch to Continuous / Single Page view. `Cmd-3`
+  is reserved for Two Pages once a facing-page layout exists.
+- **Segmentation model preload.** Picking the Instant Alpha or
+  Smart Lasso tool now warms the MobileSAM encoder in the
+  background so the first stroke is responsive. Controlled by the
+  existing "preload on tool activation" setting; never triggers a
+  model download.
 
 ### Changed
 
+- **Zoom shortcuts moved off the digit row** to make space for the
+  page-mode shortcuts: Actual Size is now `Cmd-0` (was `Cmd-1`), Fit
+  Page is `Cmd-9` (was `Cmd-0`), and Fit to Width keeps its menu item
+  but no longer has a digit shortcut. Zoom In / Out remain `Cmd-+` /
+  `Cmd--`.
+- **Linux power awareness.** Battery vs. AC state is now read from
+  `/sys/class/power_supply`, so speculative ML work (OCR / SAM /
+  background-removal prefetch) pauses on battery the same way it
+  already does on macOS and Windows.
+
 ### Fixed
+
+- **Search bar "Close".** Clicking the X (or pressing Esc) now
+  fully collapses the search bar instead of leaving an empty gap in
+  the toolbar.
 
 ### Infrastructure
 

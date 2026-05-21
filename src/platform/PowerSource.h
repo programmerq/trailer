@@ -23,12 +23,10 @@ class PowerSource {
     // this on a 30 s cadence rather than per-submit, so the cost is
     // dominated by submit-time checks (which also call this).
     //
-    // Linux currently stubs to OnAC — most desktops are mains-powered
-    // and the scheduler's battery policy is permissive on OnAC, so
-    // this defaults to "run all priorities" until a real reader lands.
-    // A follow-up that reads /sys/class/power_supply/*/online (and
-    // falls back to OnAC when the path doesn't exist on a desktop) is
-    // tracked in TODO.md.
+    // Linux reads /sys/class/power_supply/*: an online "Mains"-type
+    // adapter means OnAC, an offline one means OnBattery, and the
+    // absence of any AC supply (desktop, VM, container) falls back to
+    // OnAC so all priorities run.
     static PowerState currentState();
 
     // Test seam: replace the production probe with a fixed value or
