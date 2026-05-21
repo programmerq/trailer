@@ -119,17 +119,32 @@ Inspector::Inspector(QWidget *parent) : QDockWidget(tr("Inspector"), parent) {
     layout->addRow(tr("Type:"), m_typeLabel);
 
     m_strokeButton = new QToolButton(form);
+    m_strokeButton->setObjectName(QStringLiteral("trailer.inspector.strokeButton"));
     m_strokeButton->setText(tr("Stroke"));
     m_strokeButton->setAutoRaise(true);
     layout->addRow(tr("Stroke:"), m_strokeButton);
     connect(m_strokeButton, &QToolButton::clicked, this, [this]() {
         if (!m_store || m_id == 0)
             return;
-        const Annotation *a = m_store->find(m_id);
-        if (!a)
+        // Snapshot the initial colour BEFORE the modal. `find()` returns a
+        // pointer into m_store's std::vector<Annotation>; QColorDialog::getColor
+        // spins the Qt event loop, and any store mutation that fires during
+        // the dialog (auto-save, queued changed-slot, undo coalescing, etc.)
+        // can reallocate the vector and dangle the pointer. Reading initial
+        // up front and re-fetching after the dialog closes is the safe
+        // pattern. UAT-ANN-130 pins this; the 2026-05-20 HITL pass surfaced
+        // the symptom (rectangle vanishes after a Stroke colour pick).
+        const int id = m_id;
+        QColor initial;
+        if (const Annotation *a = m_store->find(id))
+            initial = a->style.stroke;
+        else
             return;
-        const QColor c = QColorDialog::getColor(a->style.stroke, this, tr("Stroke Colour"));
+        const QColor c = QColorDialog::getColor(initial, this, tr("Stroke Colour"));
         if (!c.isValid())
+            return;
+        const Annotation *a = m_store->find(id);
+        if (!a)
             return;
         Annotation updated = *a;
         updated.style.stroke = c;
@@ -138,18 +153,27 @@ Inspector::Inspector(QWidget *parent) : QDockWidget(tr("Inspector"), parent) {
     });
 
     m_fillButton = new QToolButton(form);
+    m_fillButton->setObjectName(QStringLiteral("trailer.inspector.fillButton"));
     m_fillButton->setText(tr("Fill"));
     m_fillButton->setAutoRaise(true);
     layout->addRow(tr("Fill:"), m_fillButton);
     connect(m_fillButton, &QToolButton::clicked, this, [this]() {
         if (!m_store || m_id == 0)
             return;
-        const Annotation *a = m_store->find(m_id);
-        if (!a)
+        // Same pointer-across-modal hazard as the Stroke handler — see
+        // the comment above. Re-fetch after the dialog returns.
+        const int id = m_id;
+        QColor initial;
+        if (const Annotation *a = m_store->find(id))
+            initial = a->style.fill;
+        else
             return;
-        const QColor c = QColorDialog::getColor(a->style.fill, this, tr("Fill Colour"),
+        const QColor c = QColorDialog::getColor(initial, this, tr("Fill Colour"),
                                                 QColorDialog::ShowAlphaChannel);
         if (!c.isValid())
+            return;
+        const Annotation *a = m_store->find(id);
+        if (!a)
             return;
         Annotation updated = *a;
         updated.style.fill = c;

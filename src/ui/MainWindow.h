@@ -72,6 +72,12 @@ class MainWindow : public QMainWindow {
     // onCurrentDocumentChanged so the Inspector always tracks the
     // overlay belonging to the current document.
     void onAnnotationSelectionChanged(int id);
+    // Auto-switch the markup toolbar back to Select after a one-shot
+    // shape is drawn. Without this the toolbar stays on (say)
+    // Rectangle, so a follow-up click on the just-drawn shape would
+    // create a second overlapping rectangle instead of selecting the
+    // first. 2026-05-20 HITL pass.
+    void onAnnotationCommitted(int id);
 
   protected:
     void dragEnterEvent(QDragEnterEvent *event) override;

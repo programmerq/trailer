@@ -29,6 +29,7 @@
 #include "ui/Sidebar.h"
 
 #include <QAction>
+#include <QColorDialog>
 #include <QDockWidget>
 #include <QFont>
 #include <QLineEdit>
@@ -43,6 +44,7 @@
 #include <QPdfWriter>
 #include <QPlainTextEdit>
 #include <QTemporaryDir>
+#include <QTimer>
 #include <QToolBar>
 #include <QToolButton>
 #include <QTreeView>
@@ -51,6 +53,8 @@
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFObjectHandle.hh>
 #include <qpdf/QPDFWriter.hh>
+
+#include <memory>
 
 using namespace trailer;
 
@@ -307,6 +311,8 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_ann_126_selectAllThenDeleteRemovesAllInOneUndo();
     void uat_ann_127_dragGeneratesOneUndoStep();
     void uat_ann_128_clickOnAnnotationWithDrawingToolSelects();
+    void uat_ann_130_strokeDialogSurvivesStoreMutation();
+    void uat_ann_131_toolSwitchesToSelectAfterShapeCommit();
     void uat_toc_010_outlineDisabledOnPlainPdf();
     void uat_toc_011_outlineExposedForPdfWithBookmarks();
     void uat_toc_012_clickingOutlineEntryNavigatesToPage();
@@ -1876,6 +1882,180 @@ void TestUatSearchAndMarkup::uat_ann_128_clickOnAnnotationWithDrawingToolSelects
 
     QCOMPARE(f.store->count(), 1); // no new annotation created
     QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
+}
+
+// UAT-ANN-130 — Opening the Inspector's Stroke colour picker on a
+// selected annotation must NOT cause the annotation to vanish, even
+// when the AnnotationStore mutates while the modal is open.
+//
+// Background: AnnotationStore stores annotations in a std::vector
+// and AnnotationStore::find(id) returns a raw pointer into that
+// vector. The Inspector's stroke / fill button handlers used to:
+//
+//   const Annotation *a = m_store->find(m_id);  // pointer into vector
+//   const QColor c = QColorDialog::getColor(a->style.stroke, ...);
+//                                          // ^ modal — spins event loop
+//   Annotation updated = *a;                    // dereferences a stale ptr
+//   m_store->update(updated);                   // writes garbage back
+//
+// Any store mutation that fires during the modal (auto-save, queued
+// changed-slot, undo coalescing, redo from a parallel dialog, etc.)
+// can reallocate the vector. After the modal returns, `a` points at
+// freed memory. The dereference reads garbage geometry/style, and
+// update(garbage) corrupts the entry with the original id — the
+// rectangle appears to vanish (off-page / zero-size bounds) and the
+// colour change is "lost" (overwritten by the garbage style).
+//
+// 2026-05-20 HITL pass surfaced the bug live. Fix: snapshot the
+// pre-dialog colour, then re-fetch by id AFTER the modal. This UAT
+// drives the Stroke handler with a synthetic mid-modal store
+// mutation (simulating any of the racing paths above) and asserts
+// the original rectangle survives with the new colour applied.
+void TestUatSearchAndMarkup::uat_ann_130_strokeDialogSurvivesStoreMutation() {
+    AnnEditingFixture f = buildAnnEditingFixture(m_scratch, QStringLiteral("130"));
+    QVERIFY(f.overlay);
+    QVERIFY(f.store);
+    QVERIFY(f.drawnId != 0);
+    QCOMPARE(f.store->count(), 1);
+
+    // Select the rectangle so the Inspector binds to it.
+    sendMouse(f.overlay, QEvent::MouseButtonPress, QPoint(260, 295), Qt::LeftButton);
+    sendMouse(f.overlay, QEvent::MouseButtonRelease, QPoint(260, 295), Qt::LeftButton);
+    QApplication::processEvents();
+    QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
+
+    // Locate the Inspector's Stroke button by objectName. We don't
+    // need the Inspector dock to be visible — the button click slot
+    // runs regardless of dock visibility (the connect is in the
+    // ctor).
+    auto *strokeBtn = f.mw->findChild<QToolButton *>(
+        QStringLiteral("trailer.inspector.strokeButton"));
+    QVERIFY2(strokeBtn, "Inspector Stroke button not found by objectName");
+
+    // Snapshot the original bounds — the bug had the rectangle's
+    // bounds going to zero/garbage after the modal closed. Guard the
+    // find()-deref so a fixture regression yields a readable QVERIFY
+    // failure rather than a segfault.
+    const Annotation *original = f.store->find(f.drawnId);
+    QVERIFY2(original != nullptr, "Fixture rectangle missing from store before colour pick");
+    const QRectF originalBounds = original->bounds;
+    QVERIFY(!originalBounds.isEmpty());
+
+    // Hook into the QColorDialog the moment it shows. The headless
+    // (offscreen) Qt plugin always uses Qt's own widget dialog (not
+    // a native colour panel), so we can findChild it from
+    // top-level widgets. While the dialog is up we (a) mutate the
+    // store enough to force a std::vector reallocation, then (b)
+    // pick a colour and accept. The pre-fix code would write
+    // garbage back through a dangling pointer; the post-fix code
+    // re-fetches by id and stays consistent.
+    AnnotationStore *store = f.store;
+    const int targetId = f.drawnId;
+    bool dialogHandled = false;
+    // Cap polling attempts so a regression that stops the dialog
+    // from appearing fails loudly instead of hanging the suite.
+    // 100 ticks * 20 ms = 2 s budget for the modal to surface.
+    int attempts = 0;
+    constexpr int kMaxAttempts = 100;
+    auto poller = std::make_unique<QTimer>();
+    QObject::connect(poller.get(), &QTimer::timeout, store,
+                     [store, &dialogHandled, &attempts, p = poller.get()]() {
+                         ++attempts;
+                         QColorDialog *dlg = nullptr;
+                         for (auto *w : QApplication::topLevelWidgets()) {
+                             if (auto *d = qobject_cast<QColorDialog *>(w)) {
+                                 dlg = d;
+                                 break;
+                             }
+                         }
+                         if (!dlg) {
+                             if (attempts >= kMaxAttempts) {
+                                 p->stop();
+                             }
+                             return;
+                         }
+                         // Mutate the store while the modal is open.
+                         // Adding many annotations forces the vector
+                         // to reallocate at least once at typical
+                         // libstdc++ growth factors; the original
+                         // find(targetId) pointer would be invalid.
+                         for (int i = 0; i < 64; ++i) {
+                             Annotation throwaway;
+                             throwaway.type = AnnotationType::Rectangle;
+                             throwaway.page = 0;
+                             throwaway.bounds = QRectF(0, 0, 1, 1);
+                             store->add(std::move(throwaway));
+                         }
+                         dlg->setCurrentColor(QColor(255, 0, 0));
+                         dlg->accept();
+                         dialogHandled = true;
+                         p->stop();
+                     });
+    poller->start(20);
+
+    // Trigger the stroke-colour handler. This will invoke
+    // QColorDialog::getColor under the hood, which calls
+    // QDialog::exec → spins the event loop. The poller above runs
+    // INSIDE that spun loop and supplies the colour + mutates the
+    // store before exec returns.
+    strokeBtn->click();
+    QApplication::processEvents();
+
+    QVERIFY2(dialogHandled, "QColorDialog never reached the polling "
+                            "intercept — modal handling may have changed "
+                            "(or the dialog uses a non-widget native panel)");
+
+    // Post-conditions: the original rectangle still exists with its
+    // original bounds (no garbage geometry leaked in), AND its
+    // stroke colour is now red (the writeback worked through a
+    // freshly re-fetched pointer).
+    const Annotation *survivor = store->find(targetId);
+    QVERIFY2(survivor != nullptr, "Original rectangle was wiped from the "
+                                  "store — find() pointer was held across the modal");
+    QCOMPARE(survivor->bounds, originalBounds);
+    QCOMPARE(survivor->style.stroke, QColor(255, 0, 0));
+}
+
+// UAT-ANN-131 — After committing a freshly-drawn shape, the markup
+// toolbar auto-switches back to the Select tool so the user can grab
+// the just-drawn shape to move / resize / restyle without manually
+// flipping the toolbar back. 2026-05-20 HITL pass.
+void TestUatSearchAndMarkup::uat_ann_131_toolSwitchesToSelectAfterShapeCommit() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_131.pdf")), QStringLiteral("fixture"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto *markup = mw->findChild<MarkupToolbar *>();
+    QVERIFY(markup);
+    QAction *rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
+    QVERIFY(rectAction);
+    rectAction->setChecked(true);
+    QApplication::processEvents();
+    QCOMPARE(markup->activeTool(), AnnotationTool::Rectangle);
+
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
+    QVERIFY(overlay);
+    QCOMPARE(overlay->activeTool(), AnnotationTool::Rectangle);
+
+    dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
+    QApplication::processEvents();
+
+    // Post-drag: the rectangle was committed AND the toolbar / overlay
+    // both flipped back to Select. Without the auto-switch the user
+    // would have to click Select manually before they could grab the
+    // shape they just drew.
+    QCOMPARE(markup->activeTool(), AnnotationTool::Select);
+    QCOMPARE(overlay->activeTool(), AnnotationTool::Select);
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG
