@@ -603,13 +603,17 @@ void MainWindow::buildMainToolbar() {
 
     m_searchBar->setParent(m_mainToolbar);
     m_searchBar->setMaximumWidth(360);
-    m_mainToolbar->addWidget(m_searchBar);
+    m_searchBarAction = m_mainToolbar->addWidget(m_searchBar);
     // hide() after addWidget so the explicit-hidden flag is set
     // against the just-reparented widget. QToolBar::addWidget wraps
     // the bar in a QWidgetAction that drives visibility from its
     // parent, so the hide() has to follow the addWidget call to
-    // win the race on first show.
+    // win the race on first show. The wrapping action also has to be
+    // hidden, otherwise its toolbar slot stays reserved (empty gap).
     m_searchBar->hide();
+    if (m_searchBarAction) {
+        m_searchBarAction->setVisible(false);
+    }
 }
 
 void MainWindow::buildEditMenu(QMenu *editMenu) {
@@ -679,6 +683,9 @@ void MainWindow::showSearchBar() {
     if (m_searchButton) {
         m_searchButton->setVisible(false);
     }
+    if (m_searchBarAction) {
+        m_searchBarAction->setVisible(true);
+    }
     m_searchBar->setVisible(true);
     m_searchBar->focusInput();
     // Open the sidebar in Search Results mode so the user sees
@@ -700,6 +707,9 @@ void MainWindow::hideSearchBar() {
     }
     m_searchBar->setMatchCounter(0, 0);
     m_searchBar->setVisible(false);
+    if (m_searchBarAction) {
+        m_searchBarAction->setVisible(false);
+    }
     if (m_searchButton) {
         m_searchButton->setVisible(true);
     }
@@ -739,6 +749,9 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
 
     m_singlePageAction = viewMenu->addAction(tr("Single Page"));
     m_singlePageAction->setCheckable(true);
+    // Cmd-1 / Cmd-2 / Cmd-3 cycle the page layout, matching Preview.
+    // Cmd-2 (Two Pages) is bound where that action is created below.
+    m_singlePageAction->setShortcut(QKeySequence(tr("Ctrl+1")));
     connect(m_singlePageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
             doc->setViewMode(ViewMode::SinglePage);
@@ -747,11 +760,18 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
 
     m_twoPagesAction = viewMenu->addAction(tr("Two Pages"));
     m_twoPagesAction->setCheckable(true);
-    m_twoPagesAction->setEnabled(false); // TODO: implement two-page layout
+    // Stays disabled: Qt's QPdfView::PageMode only exposes SinglePage and
+    // MultiPage — there is no facing/two-up layout, so ViewMode::TwoPages
+    // currently aliases Continuous (see PdfDocument::applyViewMode). A real
+    // side-by-side layout needs a custom view and is tracked as a larger
+    // follow-up, not part of the quick-wins sprint. Cmd-2 is intentionally
+    // left unbound until that lands.
+    m_twoPagesAction->setEnabled(false);
     m_twoPagesAction->setToolTip(tr("Two-page layout is not yet available."));
 
     m_continuousAction = viewMenu->addAction(tr("Continuous"));
     m_continuousAction->setCheckable(true);
+    m_continuousAction->setShortcut(QKeySequence(tr("Ctrl+3")));
     connect(m_continuousAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
             doc->setViewMode(ViewMode::Continuous);

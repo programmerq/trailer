@@ -228,6 +228,10 @@ class MainWindow : public QMainWindow {
     // Clicking the button expands m_searchBar inline and hides the
     // button; dismissing the bar (Esc, empty query) does the reverse.
     QToolButton *m_searchButton = nullptr;
+    // The QWidgetAction that QToolBar::addWidget wraps around m_searchBar.
+    // Toggling the inner widget's visibility alone leaves this action's
+    // toolbar slot occupied, so hide/show paths must drive this too.
+    QAction *m_searchBarAction = nullptr;
     Sidebar *m_sidebar = nullptr;
     QMenu *m_recentMenu = nullptr;
 
