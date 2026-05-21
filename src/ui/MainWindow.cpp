@@ -240,6 +240,23 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         if (auto *doc = m_documentView->currentDocument()) {
             doc->setAnnotationTool(tool);
             doc->setAnnotationStyle(m_markupToolbar->style());
+            // Warm the MobileSAM encoder the moment the user picks a
+            // segmentation tool so the first stroke doesn't pay the
+            // encode latency. Opt-out via Settings; only fires for image
+            // documents (the only place SAM tools are offered) and only
+            // when the models are already on disk — we never kick a
+            // download from here. prepareForActive() is a no-op on a
+            // cache hit, so re-activating the tool stays cheap.
+            if ((tool == AnnotationTool::InstantAlpha || tool == AnnotationTool::SmartLasso) &&
+                m_samController && m_samController->isModelReady() &&
+                m_app->settings().mlPreloadSegmentationOnToolActivation()) {
+                if (auto *imgDoc = dynamic_cast<ImageDocument *>(doc)) {
+                    const QImage image = imgDoc->image();
+                    if (!image.isNull() && !m_samController->isCachedForActive(image)) {
+                        m_samController->prepareForActive(image, [](bool) {});
+                    }
+                }
+            }
         }
     });
     // When the toolbar is hidden, reset the active tool to Select so the
