@@ -151,15 +151,16 @@ explicit user adjustment wins and sticks.
 ### Navigation shortcuts
 
 - ~~**No keyboard shortcut for page-mode (single / two / continuous).**~~
-  Mostly done. `Cmd-1` → Continuous, `Cmd-2` → Single Page, `Cmd-3` →
-  Two Pages. This required moving the zoom commands off the digit row
-  (they clashed with the original `Cmd-1`/`Cmd-3` proposal): Actual
-  Size is now `Cmd-0`, Fit Page `Cmd-9`. `Cmd-3` is reserved on the
-  still-disabled Two Pages action — **finding:** Qt's
-  `QPdfView::PageMode` exposes only `SinglePage` / `MultiPage`, no
-  facing/two-up layout, so `ViewMode::TwoPages` currently aliases
-  `Continuous`. A real side-by-side view needs a custom widget;
-  tracked as a larger follow-up. `Cmd-3` goes live when that lands.
+  Mostly done. `Cmd-1` → Continuous and `Cmd-2` → Single Page are live;
+  `Cmd-3` is only *reserved* for Two Pages — that action stays disabled
+  for now, so the shortcut does nothing yet. This required moving the
+  zoom commands off the digit row (they clashed with the original
+  `Cmd-1`/`Cmd-3` proposal): Actual Size is now `Cmd-0`, Fit Page
+  `Cmd-9`. **Finding:** Qt's `QPdfView::PageMode` exposes only
+  `SinglePage` / `MultiPage`, no facing/two-up layout, so
+  `ViewMode::TwoPages` currently aliases `Continuous`. A real
+  side-by-side view needs a custom widget; tracked as a larger
+  follow-up. `Cmd-3` becomes functional when that lands.
 
 - **Continuous-mode `↓` step is too small.** With pages laid out
   vertically, `↓` advances by the default
