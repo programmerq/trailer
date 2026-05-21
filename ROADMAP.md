@@ -25,7 +25,9 @@ the bridge — what's happening between releases at a glance.
   signals unclear strategy, not responsiveness.
 
 Last meaningful update: post-0.1.0 ship + reframe after PR #24
-landed and the post-#25 HITL pass surfaced gaps (2026-05-20).
+landed and the post-#25 HITL pass surfaced gaps (2026-05-20);
+quick-wins pass cleared Now #2 (SAM preload), Next #10 (Linux power),
+and two HITL items (search-bar close, page-mode shortcuts).
 
 ---
 
@@ -119,24 +121,23 @@ Pickable in this order.
    amendment. The point of all this is: when our release pipeline
    is compromised, existing users don't get malware as an
    "update."
-2. **Workstream G — SAM preload via `MlScheduler`.** Wire Instant
-   Alpha / Smart Lasso tool activation to submit a
-   `Prefetch SamSession::prepare` for the current image when
-   `mlPreloadSegmentationOnToolActivation` is on. The
-   `mlPreloadSegmentationOnToolActivation` setting round-trips
-   through toml today but no caller reads it yet; the scheduler,
-   the cancellation token, and the setting are all present.
-   Mechanical; completes the wave-2/3/4 ML governance arc.
+2. ~~**Workstream G — SAM preload via `MlScheduler`.**~~ **Shipped
+   locally (`5bd27de`).** Instant Alpha / Smart Lasso activation now
+   submits `SamController::prepareForActive()` for the current image
+   when `mlPreloadSegmentationOnToolActivation` is on and the models
+   are on disk (no download triggered). Wires the previously-unread
+   setting; completes the wave-2/3/4 ML governance arc.
 3. **Remaining 2026-05-20 HITL pass items.** Captured in
    [TODO.md](TODO.md)'s `## 2026-05-20 HITL pass` section. The
    rectangle-disappears / Inspector-restyle / auto-Select-after-
    placement trio was the highest-priority item (annotation data
    loss); it shipped alongside this roadmap reframe — see
    `a17051d fix(inspector): rectangle disappears after stroke/fill
-   colour pick` and UAT-ANN-130/131. Still live: thumbnail
-   row-height, search-bar close button, Cmd-A scope, page-mode
-   shortcuts, and content-aware first-open defaults — each
-   independent and pickable.
+   colour pick` and UAT-ANN-130/131. The search-bar close button and
+   Cmd-1/Cmd-3 page-mode shortcuts both shipped in the quick-wins
+   pass (`51e59e2`). Still live: thumbnail row-height, Cmd-A scope,
+   content-aware first-open defaults, and the continuous-mode `↓`
+   viewport-step — each independent and pickable.
 4. **Unified `AnnotationStore` + `PdfCommand` undo log.** Wave 2
    shipped compound annotation undo (`beginCompound` /
    `endCompound`), which collapses a drag to one undo frame and
@@ -176,9 +177,10 @@ Planned, not yet started.
    download progress through `MlScheduler` would let auto-OCR
    transparently kick off the first download for new users.
    (TODO comment exists in `OcrController`.)
-10. **Linux `PowerSource` implementation.** Today returns
-    `Unknown`, so speculative ML runs at full tilt on a Linux
-    laptop on battery. Read `/sys/class/power_supply/*/online`.
+10. ~~**Linux `PowerSource` implementation.**~~ **Shipped locally
+    (`9b24eb4`).** Reads `/sys/class/power_supply/*`: online Mains →
+    `OnAC`, offline → `OnBattery`, no AC supply → `OnAC` fallback, so
+    the battery policy gates speculative ML on a Linux laptop.
 11. **Word-level OCR selection.** Block-level snap is the
     explicit phase-1 limitation of `SelectableTextLayer`.
     PP-OCRv3 doesn't emit word boxes; needs either per-block
