@@ -169,6 +169,17 @@ if (-not $env:QT_QPA_PLATFORM) {
     $env:QT_QPA_PLATFORM = 'offscreen'
 }
 
+# Ensure the full Qt plugin tree is on the search path. Without this,
+# a prior -Deploy run leaves a local platforms\ dir containing only
+# qwindows.dll; Qt then uses that dir as the plugin root and can't
+# find qoffscreen.dll, causing every test to abort with
+# "Could not find the Qt platform plugin 'offscreen'".
+# QT_PLUGIN_PATH adds directories *in addition to* Qt's built-in
+# search, so it's safe whether or not a local platforms\ exists.
+if (-not $env:QT_PLUGIN_PATH) {
+    $env:QT_PLUGIN_PATH = Join-Path $QtDir 'plugins'
+}
+
 Push-Location $BuildDir
 try {
     Write-Host "==> Unit tests (ctest -LE uat)" -ForegroundColor Green
