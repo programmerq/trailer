@@ -43,6 +43,7 @@ class TestAdapters : public QObject {
     void imageDocumentAdjustColourModifiesPixels();
     void imageDocumentSaveClearsDirty();
     void imageDocumentExportAsJpegWritesFile();
+    void imageDocumentExportsImageAsSinglePagePdf();
     void imageDocumentUndoRestoresPriorState();
     void imageDocumentSaveFlattensAnnotationsIntoPixels();
     void imageDocumentAnnotationUndoTakesPrecedenceOverImageUndo();
@@ -422,6 +423,29 @@ void TestAdapters::imageDocumentExportAsJpegWritesFile() {
     QVERIFY(QFileInfo(dst).size() > 0);
     QImage reloaded(dst);
     QVERIFY(!reloaded.isNull());
+}
+
+// Regression guard for the HITL ask "File > Export as PDF for image
+// documents." An image must export as a genuine, openable one-page
+// PDF (the "I have a photo of the form but my CPA wants a PDF" flow).
+void TestAdapters::imageDocumentExportsImageAsSinglePagePdf() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString src = writeTinyPng(dir.filePath("card.png"), 80, 60);
+    const QString dst = dir.filePath("card.pdf");
+
+    ImageDocument doc(src);
+    // exportAs returns false on a null image, so a true return also
+    // confirms the source PNG loaded.
+    QVERIFY2(doc.exportAs(dst, "pdf"),
+             "Image documents must export to PDF (the 'my CPA wants a PDF' flow)");
+    QVERIFY(QFileInfo(dst).size() > 0);
+
+    // Must be a real, openable single-page PDF — not just bytes on
+    // disk. Round-trip it through the PDF adapter to prove it.
+    PdfDocument reopened(dst);
+    QVERIFY2(reopened.isValid(), "Exported file must open as a valid PDF");
+    QCOMPARE(reopened.pageCount(), 1);
 }
 
 void TestAdapters::imageDocumentUndoRestoresPriorState() {
