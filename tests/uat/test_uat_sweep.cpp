@@ -1,7 +1,7 @@
 // UAT harness — Layer-1 config-matrix robustness sweep.
 //
 // The plan's Layer 1: instead of trusting the UI looks right, drive the
-// MainWindow across a small matrix of display "knobs" a human can't
+// app's surfaces across a small matrix of display "knobs" a human can't
 // exhaustively walk — application font size x layout direction (LTR /
 // RTL) — and assert a layout invariant on the live widget tree: no
 // visible interactive control collapses to zero size or is squeezed
@@ -10,9 +10,16 @@
 // paper-cut that otherwise only surfaces in someone's hands at 200%
 // system font or in an RTL locale.
 //
+// Surfaces swept:
+//   - The MainWindow shell with a document open, including the Inspector
+//     and Sidebar docks (shown explicitly; they are hidden by default).
+//   - MyCardDialog — the densest plain-form dialog (~14 fields); the
+//     HITL pass called it "huge with tons of options", so it is the most
+//     likely to clip under a large font or RTL.
+//
 // Deterministic, hard oracle, fast — so it lives in the `uat` suite
-// beside the regression guards (it is NOT the speculative persona /
-// vision tier, which is advisory and lives elsewhere).
+// beside the regression guards (NOT the speculative persona / vision
+// tier, which is advisory and lives elsewhere).
 //
 // Knobs covered today (in-process, offscreen-safe): font scale and
 // layout direction. Dark theme needs Settings::theme() wired to
@@ -22,11 +29,13 @@
 #include "app/Application.h"
 #include "document/IDocument.h"
 #include "ui/MainWindow.h"
+#include "ui/MyCardDialog.h"
 
 #include <QAbstractButton>
 #include <QApplication>
 #include <QComboBox>
 #include <QDir>
+#include <QDockWidget>
 #include <QFont>
 #include <QLineEdit>
 #include <QPageSize>
@@ -63,6 +72,50 @@ bool isInteractive(QWidget *w) {
            qobject_cast<QComboBox *>(w);
 }
 
+// Walk root's descendants and flag any visible interactive control that
+// is collapsed or rendered below its minimumSizeHint. Skips Qt-internal
+// sub-widgets (qt_*) whose compound parent sizes them intentionally
+// small (e.g. a QSpinBox's "qt_spinbox_lineedit"). `checked` accumulates
+// how many real controls were inspected so a vacuous pass is detectable.
+QStringList collectLayoutViolations(QWidget *root, int &checked) {
+    QStringList violations;
+    const auto widgets = root->findChildren<QWidget *>();
+    for (QWidget *w : widgets) {
+        if (!w->isVisible() || !isInteractive(w))
+            continue;
+        if (w->objectName().startsWith(QLatin1String("qt_")))
+            continue;
+        ++checked;
+        const QSize sz = w->size();
+        const QSize msh = w->minimumSizeHint();
+        const QString id =
+            QStringLiteral("%1{%2}").arg(QString::fromLatin1(w->metaObject()->className()),
+                                         w->objectName().isEmpty() ? QStringLiteral("?")
+                                                                   : w->objectName());
+        if (sz.width() <= 0 || sz.height() <= 0) {
+            violations << QStringLiteral("%1 collapsed to %2x%3").arg(id).arg(sz.width()).arg(
+                sz.height());
+        } else if (msh.isValid() && msh.width() > 0 && sz.width() < msh.width()) {
+            violations << QStringLiteral("%1 width %2 < min %3").arg(id).arg(sz.width()).arg(
+                msh.width());
+        } else if (msh.isValid() && msh.height() > 0 && sz.height() < msh.height()) {
+            violations << QStringLiteral("%1 height %2 < min %3").arg(id).arg(sz.height()).arg(
+                msh.height());
+        }
+    }
+    return violations;
+}
+
+void addFontDirectionRows() {
+    QTest::addColumn<int>("fontPt");    // 0 => baseline size
+    QTest::addColumn<int>("direction"); // Qt::LayoutDirection
+
+    QTest::newRow("baseline") << 0 << int(Qt::LeftToRight);
+    QTest::newRow("large-font") << 22 << int(Qt::LeftToRight);
+    QTest::newRow("rtl") << 0 << int(Qt::RightToLeft);
+    QTest::newRow("rtl-large-font") << 22 << int(Qt::RightToLeft);
+}
+
 } // namespace
 
 class TestUatSweep : public QObject {
@@ -74,8 +127,12 @@ class TestUatSweep : public QObject {
 
     void layoutSurvivesFontAndDirection_data();
     void layoutSurvivesFontAndDirection();
+    void cardDialogSurvivesFontAndDirection_data();
+    void cardDialogSurvivesFontAndDirection();
 
   private:
+    void applyCell(int fontPt, int direction);
+
     QTemporaryDir m_scratch;
     QFont m_baselineFont;
 };
@@ -104,21 +161,7 @@ void TestUatSweep::cleanup() {
     QApplication::processEvents();
 }
 
-void TestUatSweep::layoutSurvivesFontAndDirection_data() {
-    QTest::addColumn<int>("fontPt");    // 0 => baseline size
-    QTest::addColumn<int>("direction"); // Qt::LayoutDirection
-
-    QTest::newRow("baseline") << 0 << int(Qt::LeftToRight);
-    QTest::newRow("large-font") << 22 << int(Qt::LeftToRight);
-    QTest::newRow("rtl") << 0 << int(Qt::RightToLeft);
-    QTest::newRow("rtl-large-font") << 22 << int(Qt::RightToLeft);
-}
-
-void TestUatSweep::layoutSurvivesFontAndDirection() {
-    QFETCH(int, fontPt);
-    QFETCH(int, direction);
-    QVERIFY(m_scratch.isValid());
-
+void TestUatSweep::applyCell(int fontPt, int direction) {
     // Fully specify global display state for this row so the result
     // never depends on what a previous row left behind.
     QFont f = m_baselineFont;
@@ -126,6 +169,15 @@ void TestUatSweep::layoutSurvivesFontAndDirection() {
         f.setPointSize(fontPt);
     QApplication::setFont(f);
     QApplication::setLayoutDirection(Qt::LayoutDirection(direction));
+}
+
+void TestUatSweep::layoutSurvivesFontAndDirection_data() { addFontDirectionRows(); }
+
+void TestUatSweep::layoutSurvivesFontAndDirection() {
+    QFETCH(int, fontPt);
+    QFETCH(int, direction);
+    QVERIFY(m_scratch.isValid());
+    applyCell(fontPt, direction);
 
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
@@ -139,47 +191,53 @@ void TestUatSweep::layoutSurvivesFontAndDirection() {
     QVERIFY2(mw, "MainWindow must realize under every font/direction cell");
     mw->resize(1100, 750);
     mw->show();
+    // Realize the side panels too (hidden by default) so their controls
+    // are part of the sweep.
+    for (auto *dock : mw->findChildren<QDockWidget *>()) {
+        const QString t = dock->windowTitle();
+        if (t.contains(QLatin1String("Inspector"), Qt::CaseInsensitive) ||
+            t.contains(QLatin1String("Sidebar"), Qt::CaseInsensitive))
+            dock->show();
+    }
     QApplication::processEvents();
 
     int checked = 0;
-    QStringList violations;
-    const auto widgets = mw->findChildren<QWidget *>();
-    for (QWidget *w : widgets) {
-        if (!w->isVisible() || !isInteractive(w))
-            continue;
-        // Skip Qt-internal sub-widgets of compound controls (e.g. a
-        // QSpinBox's "qt_spinbox_lineedit"): the parent sizes them
-        // intentionally smaller than their own minimumSizeHint, so they
-        // are not meaningful standalone layout targets.
-        if (w->objectName().startsWith(QLatin1String("qt_")))
-            continue;
-        ++checked;
-        const QSize sz = w->size();
-        const QSize msh = w->minimumSizeHint();
-        const QString id =
-            QStringLiteral("%1{%2}").arg(QString::fromLatin1(w->metaObject()->className()),
-                                         w->objectName().isEmpty() ? QStringLiteral("?")
-                                                                   : w->objectName());
-        if (sz.width() <= 0 || sz.height() <= 0) {
-            violations << QStringLiteral("%1 collapsed to %2x%3").arg(id).arg(sz.width()).arg(
-                sz.height());
-        } else if (msh.isValid() && msh.width() > 0 && sz.width() < msh.width()) {
-            violations << QStringLiteral("%1 width %2 < min %3").arg(id).arg(sz.width()).arg(
-                msh.width());
-        } else if (msh.isValid() && msh.height() > 0 && sz.height() < msh.height()) {
-            violations << QStringLiteral("%1 height %2 < min %3").arg(id).arg(sz.height()).arg(
-                msh.height());
-        }
-    }
-
-    // A cell that realizes no visible interactive chrome would make the
-    // assertion vacuous — flag that rather than pass silently.
+    const QStringList violations = collectLayoutViolations(mw, checked);
     QVERIFY2(checked > 0, "Sweep found no visible interactive controls — chrome not realized?");
     QVERIFY2(violations.isEmpty(),
-             qPrintable(QStringLiteral("Layout violations in cell [%1] (%2 controls checked):\n  %3")
-                            .arg(tag)
-                            .arg(checked)
-                            .arg(violations.join(QStringLiteral("\n  ")))));
+             qPrintable(
+                 QStringLiteral("MainWindow layout violations in cell [%1] (%2 controls checked):\n  %3")
+                     .arg(tag)
+                     .arg(checked)
+                     .arg(violations.join(QStringLiteral("\n  ")))));
+}
+
+void TestUatSweep::cardDialogSurvivesFontAndDirection_data() { addFontDirectionRows(); }
+
+void TestUatSweep::cardDialogSurvivesFontAndDirection() {
+    QFETCH(int, fontPt);
+    QFETCH(int, direction);
+    applyCell(fontPt, direction);
+
+    // ~14 plain QLineEdits + an OK/Cancel button box. Shown at its own
+    // size hint so a violation means the dialog's layout genuinely fails
+    // to give a child its minimum under this font/direction.
+    MyCardDialog dlg;
+    dlg.resize(dlg.sizeHint());
+    dlg.show();
+    QApplication::processEvents();
+
+    int checked = 0;
+    const QStringList violations = collectLayoutViolations(&dlg, checked);
+    const QString tag = QString::fromLatin1(QTest::currentDataTag());
+    QVERIFY2(checked > 0, "MyCardDialog realized no interactive controls?");
+    QVERIFY2(violations.isEmpty(),
+             qPrintable(
+                 QStringLiteral("MyCardDialog layout violations in cell [%1] (%2 controls checked):\n  %3")
+                     .arg(tag)
+                     .arg(checked)
+                     .arg(violations.join(QStringLiteral("\n  ")))));
+    dlg.close();
 }
 
 // Custom main: set a sandbox HOME before constructing Application so
