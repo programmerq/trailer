@@ -68,3 +68,9 @@ trailer_add_uat_test(test_uat_recognize_text test_uat_recognize_text.cpp)
 
 trailer_add_uat_test(test_uat_pdf_pages test_uat_pdf_pages.cpp)
 target_link_libraries(test_uat_pdf_pages PRIVATE Qt6::Pdf Qt6::PdfWidgets)
+
+# Layer-1 config-matrix robustness sweep (font-scale x RTL). Drives the
+# MainWindow shell, so it needs Qt PDF for the document view. Hard
+# oracle + fast, so it carries the plain `uat` label like the rest.
+trailer_add_uat_test(test_uat_sweep test_uat_sweep.cpp)
+target_link_libraries(test_uat_sweep PRIVATE Qt6::Pdf Qt6::PdfWidgets)
