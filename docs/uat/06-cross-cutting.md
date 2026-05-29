@@ -274,6 +274,22 @@ with no warning. Cross-ref UAT-FND-092.
 
 ---
 
+## Layout robustness
+
+### UAT-XCT-060 — Layout survives font scaling and RTL
+
+**Preconditions:** A document is open.
+**Steps:**
+1. (Automated sweep) Realize the main window across a matrix of
+   application font sizes and layout directions (LTR / RTL).
+**Expected:**
+- No visible interactive control collapses to zero size or renders
+  narrower/shorter than the size it needs for its content — i.e.
+  nothing clips or gets squashed under large system fonts or
+  right-to-left mirroring. Driven by `tests/uat/test_uat_sweep.cpp`.
+
+---
+
 ## Process lifecycle
 
 ### UAT-XCT-050 — Second launch with an arg attaches to running instance (Platform: macOS)
