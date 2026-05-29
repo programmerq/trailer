@@ -135,6 +135,30 @@ must be labelled `uat` in `tests/uat/CMakeLists.txt` via the
 [`.claude/agents/uat-author.md`](.claude/agents/uat-author.md) for the
 template.
 
+### CI cadence — what runs where, and what may block
+
+Tests are tiered by cost and by how trustworthy their oracle is. The
+governing rule: **only deterministic checks with a hard oracle may block
+a merge or a release; speculative / advisory checks never gate.**
+
+| Tier | Trigger | Runs | Selector | May block? |
+|---|---|---|---|---|
+| **PR / push** | every PR (`ci.yml`, Linux + Windows) | unit tests (+ any non-`uat` deterministic checks) | `ctest --label-exclude uat` | **blocks merge** |
+| **Release-candidate** | `release-candidate` label (`release.yml`) | full UAT — regression guards **and** the Layer-1 layout sweep | `ctest -L uat` | **blocks the release** |
+| **Nightly / advisory** *(planned, not yet wired)* | scheduled workflow | persona Monte-Carlo + vision (Set-of-Mark) judge + HITL-recall backtest | a label with **no** `uat` in it | **never blocks** — emits a digest artifact |
+
+- The Layer-1 robustness sweep (`tests/uat/test_uat_sweep.cpp`) is
+  deterministic (no clipped/collapsed controls), so it carries the plain
+  `uat` label and gates at release like the rest of UAT — it is *not*
+  advisory.
+- **Label gotcha:** `ctest -L` / `-LE` match labels by regex, so a label
+  like `uat-sweep` is still matched by `-L uat` and would silently join
+  the release gate. Give advisory tests a label with no `uat` substring
+  (e.g. `advisory`) and exclude it from PR CI explicitly.
+- Every confirmed defect (HITL finding, bug report, or sweep result)
+  becomes a regression guard in the `uat` suite so it can't silently
+  return — the ratchet only tightens.
+
 ## Layout
 
 ```
