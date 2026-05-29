@@ -416,6 +416,16 @@ fit at 100% are shown at actual size rather than upscaling. Use
 - The search bar indicates "0 matches" or equivalent.
 - Find Next / Find Previous are no-ops.
 
+### UAT-VWR-067 — Search shows an "X of Y" match counter
+
+**Preconditions:** A PDF containing a keyword that occurs N times is open.
+**Steps:**
+1. `Edit > Find…` and type the keyword.
+**Expected:**
+- A counter appears in the search bar reading "<current> of <N>" once
+  matches are found, so the user knows how many hits there are and
+  where they are among them.
+
 ### UAT-VWR-066 — Search on image documents (Known gap)
 
 **Preconditions:** An image is open.

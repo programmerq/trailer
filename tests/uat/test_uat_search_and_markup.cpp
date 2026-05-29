@@ -33,6 +33,7 @@
 #include <QDockWidget>
 #include <QFont>
 #include <QKeyEvent>
+#include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
@@ -292,6 +293,7 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_vwr_064_searchHighlightsFillOverlay();
     void uat_vwr_065_searchWithNoMatches();
     void uat_vwr_066_searchOpensSidebarWithMatchPages();
+    void uat_vwr_067_searchShowsMatchCounter();
     void uat_vwr_083_magnifierEscapeDeactivates();
     void uat_ann_010_rectangleToolCreatesAnnotation();
     void uat_ann_012_lineToolCreatesAnnotation();
@@ -525,6 +527,53 @@ void TestUatSearchAndMarkup::uat_vwr_062_findNextPrevWrap() {
     emit bar->findPreviousRequested();
     QApplication::processEvents();
     QCOMPARE(view->currentSearchResultIndex(), copies - 1);
+}
+
+// UAT-VWR-067 — The search bar shows an "X of Y" match counter.
+//
+// Users need to know how many hits a query has and where they are in
+// them. After a multi-match search lands, the SearchBar's counter
+// label becomes visible and reads "<current> of <total>"
+// (currentSearchMatchIndex() is 1-based, per PdfDocument).
+void TestUatSearchAndMarkup::uat_vwr_067_searchShowsMatchCounter() {
+    QVERIFY(m_scratch.isValid());
+    const QString keyword = QStringLiteral("polaron");
+    const int copies = 3;
+    const QString pdfPath = writePdfWithKeywordTimes(
+        m_scratch.filePath(QStringLiteral("uat_vwr_067.pdf")), keyword, copies);
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+
+    QAction *findAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Find…"));
+    QVERIFY(findAction);
+    findAction->trigger();
+    QApplication::processEvents();
+
+    auto *searchBar = mw->findChild<SearchBar *>();
+    QVERIFY(searchBar);
+    searchBar->setQuery(keyword);
+
+    auto *view = mw->findChild<QPdfView *>();
+    QVERIFY(view);
+    // Let the search worker stream in all matches.
+    QTRY_VERIFY_WITH_TIMEOUT(view->searchModel() != nullptr &&
+                                 view->searchModel()->rowCount(QModelIndex()) >= copies,
+                             5000);
+
+    // The counter is the SearchBar's only QLabel; it stays hidden until
+    // the document reports matches, then shows "<n> of <total>".
+    auto *counter = searchBar->findChild<QLabel *>();
+    QVERIFY2(counter, "SearchBar match-counter label not found");
+    QTRY_VERIFY_WITH_TIMEOUT(counter->isVisible() &&
+                                 counter->text().endsWith(QStringLiteral("of %1").arg(copies)),
+                             5000);
 }
 
 // UAT-VWR-063 — Escape clears the active query and any match
