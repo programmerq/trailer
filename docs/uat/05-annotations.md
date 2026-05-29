@@ -182,6 +182,17 @@ active (the default). No annotation lies under the drag path.
   there is nothing to undo. Select is for selection and text-selection,
   never shape creation; a drag must not leave a stray rectangle.
 
+### UAT-ANN-018 — Ink captures pen pressure
+
+**Preconditions:** The Ink (freehand) tool is active and input is a
+pressure-sensitive stylus.
+**Steps:**
+1. Draw a stroke, varying pen pressure along the way.
+**Expected:**
+- The Ink annotation records a pressure value per point, so the
+  rendered stroke can taper with pressure. Mouse/trackpad input without
+  pressure falls back to a constant-width stroke.
+
 ---
 
 ## Creating annotations — text
@@ -295,6 +306,17 @@ Same but `Strikeout`. A line is drawn through each selected line.
 ---
 
 ## Inspector
+
+### UAT-ANN-036 — Highlight stores one quad per text run
+
+**Preconditions:** A PDF with selectable text is open; the Highlight
+tool is active.
+**Steps:**
+1. Drag the highlight across text that spans more than one line.
+**Expected:**
+- The resulting Highlight annotation stores one rectangle ("quad") per
+  covered text run, not a single bounding box — so a wrapped selection
+  hugs each line instead of painting the whole block.
 
 ### UAT-ANN-040 — Inspector Document tab
 

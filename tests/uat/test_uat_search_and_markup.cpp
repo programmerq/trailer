@@ -45,6 +45,8 @@
 #include <QPdfView>
 #include <QPdfWriter>
 #include <QPlainTextEdit>
+#include <QPointingDevice>
+#include <QTabletEvent>
 #include <QTemporaryDir>
 #include <QTimer>
 #include <QToolBar>
@@ -298,6 +300,8 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_ann_010_rectangleToolCreatesAnnotation();
     void uat_ann_012_lineToolCreatesAnnotation();
     void uat_ann_017_selectToolDragDoesNotCreateAnnotation();
+    void uat_ann_018_inkStrokeCapturesVaryingPressure();
+    void uat_ann_036_highlightStoresQuadPerTextRun();
     void uat_ann_060_undoAddRectangle();
     void uat_ann_063_redoAfterUndo();
     void uat_ann_070_hidingToolbarRestoresTextSelection();
@@ -936,6 +940,113 @@ void TestUatSearchAndMarkup::uat_ann_017_selectToolDragDoesNotCreateAnnotation()
     QCOMPARE(store->count(), before);
     QVERIFY2(!store->canUndo(),
              "A Select-tool drag must not push an undoable annotation onto the store");
+}
+
+// UAT-ANN-018 — Ink strokes capture per-sample pen pressure.
+//
+// Pressure-aware freehand: stylus input drives AnnotationOverlay::
+// tabletEvent, which records a pressure per point. The committed Ink
+// annotation must carry a `pressures` vector parallel to its points,
+// reflecting the varying pressure so the renderer can taper the
+// stroke. Driven with synthetic QTabletEvents (a plain mouse can't
+// carry varying pressure).
+void TestUatSearchAndMarkup::uat_ann_018_inkStrokeCapturesVaryingPressure() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_018.pdf")), QStringLiteral("fixture"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    AnnotationStore *store = doc->annotations();
+    QVERIFY(store);
+
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
+    QVERIFY(overlay);
+    overlay->setActiveTool(AnnotationTool::Ink);
+
+    const QPointingDevice *dev = QPointingDevice::primaryPointingDevice();
+    QVERIFY(dev);
+    auto sendTablet = [&](QEvent::Type type, QPoint pos, qreal pressure, Qt::MouseButton button,
+                          Qt::MouseButtons buttons) {
+        QTabletEvent ev(type, dev, QPointF(pos), QPointF(overlay->mapToGlobal(pos)), pressure, 0.0f,
+                        0.0f, 0.0f, 0.0, 0.0f, Qt::NoModifier, button, buttons);
+        QApplication::sendEvent(overlay, &ev);
+        QApplication::processEvents();
+    };
+
+    const int before = store->count();
+    sendTablet(QEvent::TabletPress, QPoint(180, 240), 0.2, Qt::LeftButton, Qt::LeftButton);
+    sendTablet(QEvent::TabletMove, QPoint(230, 270), 0.6, Qt::NoButton, Qt::LeftButton);
+    sendTablet(QEvent::TabletMove, QPoint(290, 320), 0.95, Qt::NoButton, Qt::LeftButton);
+    sendTablet(QEvent::TabletRelease, QPoint(290, 320), 0.0, Qt::LeftButton, Qt::NoButton);
+
+    QCOMPARE(store->count(), before + 1);
+    const Annotation &a = store->annotations().back();
+    QCOMPARE(a.type, AnnotationType::Ink);
+    QVERIFY2(!a.pressures.empty(), "Ink from a pressure device must carry a pressures vector");
+    QCOMPARE(a.pressures.size(), a.points.size());
+    QVERIFY2(a.pressures.front() != a.pressures.back(),
+             "Captured pressures must vary across the stroke, not be a constant");
+}
+
+// UAT-ANN-036 — A Highlight over multi-run text stores one quad per run.
+//
+// Text-aware markup: when the text-selection provider resolves a drag
+// to several runs (a selection that wraps across lines), the Highlight
+// annotation must keep each run as its own quad rather than collapsing
+// to a single bounding box. We inject a deterministic two-run provider
+// so the assertion doesn't depend on real glyph geometry.
+void TestUatSearchAndMarkup::uat_ann_036_highlightStoresQuadPerTextRun() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_036.pdf")), QStringLiteral("fixture"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    AnnotationStore *store = doc->annotations();
+    QVERIFY(store);
+
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
+    QVERIFY(overlay);
+    overlay->setActiveTool(AnnotationTool::Highlight);
+
+    // Two runs on two lines — what a wrapped selection produces.
+    overlay->setTextSelectionProvider([](QPointF, QPointF, int) {
+        return std::vector<QRectF>{QRectF(40, 60, 160, 14), QRectF(40, 80, 110, 14)};
+    });
+
+    const int before = store->count();
+    dragOnOverlay(overlay, QPoint(200, 250), QPoint(360, 320));
+
+    QCOMPARE(store->count(), before + 1);
+    const Annotation &a = store->annotations().back();
+    QCOMPARE(a.type, AnnotationType::Highlight);
+    QVERIFY2(a.quads.size() >= 2,
+             "A wrapped highlight must keep one quad per text run, not collapse to a bbox");
 }
 
 // UAT-ANN-060 — Undo removes the most recent rectangle add.
