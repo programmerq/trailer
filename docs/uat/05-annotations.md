@@ -171,6 +171,17 @@ content at the click location.
   (zoom factor 2× by default, configurable via Inspector — document
   if/where this is exposed).
 
+### UAT-ANN-017 — Select tool does not draw a shape
+
+**Preconditions:** An editable document is open with the Select tool
+active (the default). No annotation lies under the drag path.
+**Steps:**
+1. Click-drag across an empty region of the page.
+**Expected:**
+- No annotation is created — the annotation count is unchanged and
+  there is nothing to undo. Select is for selection and text-selection,
+  never shape creation; a drag must not leave a stray rectangle.
+
 ---
 
 ## Creating annotations — text

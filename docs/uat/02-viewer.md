@@ -498,6 +498,16 @@ GIF with no frames decoded.
 - Either disabled, or the magnifier toggles but shows nothing (empty
   viewport). Must not crash.
 
+### UAT-VWR-083 — Escape deactivates the Magnifier
+
+**Preconditions:** A document is open and the Magnifier is active.
+**Steps:**
+1. Press `Esc`.
+**Expected:**
+- The magnifier overlay disappears and the `View > Magnifier` menu
+  item's check mark clears. Esc is the escape hatch for the sticky
+  lens mode; Cmd-Tab / app-deactivate clears it the same way.
+
 ---
 
 ## Known gaps

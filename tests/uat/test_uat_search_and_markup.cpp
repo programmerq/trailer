@@ -32,6 +32,7 @@
 #include <QColorDialog>
 #include <QDockWidget>
 #include <QFont>
+#include <QKeyEvent>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
@@ -291,8 +292,10 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_vwr_064_searchHighlightsFillOverlay();
     void uat_vwr_065_searchWithNoMatches();
     void uat_vwr_066_searchOpensSidebarWithMatchPages();
+    void uat_vwr_083_magnifierEscapeDeactivates();
     void uat_ann_010_rectangleToolCreatesAnnotation();
     void uat_ann_012_lineToolCreatesAnnotation();
+    void uat_ann_017_selectToolDragDoesNotCreateAnnotation();
     void uat_ann_060_undoAddRectangle();
     void uat_ann_063_redoAfterUndo();
     void uat_ann_070_hidingToolbarRestoresTextSelection();
@@ -716,6 +719,44 @@ void TestUatSearchAndMarkup::uat_vwr_066_searchOpensSidebarWithMatchPages() {
     QVERIFY(!doc->pagesWithSearchMatches().empty());
 }
 
+// UAT-VWR-083 — Esc deactivates the Magnifier transient mode.
+//
+// The Magnifier is a sticky "mode" with no on-screen exit affordance,
+// so Esc must turn it off (MainWindow::keyPressEvent). The same
+// un-check happens on app-deactivate (Cmd-Tab); that path needs a real
+// platform state change and is covered manually for now.
+void TestUatSearchAndMarkup::uat_vwr_083_magnifierEscapeDeactivates() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_vwr_083.pdf")), QStringLiteral("fixture"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+
+    QAction *magnifier =
+        findMenuAction(mw->menuBar(), QStringLiteral("&View"), QStringLiteral("&Magnifier"));
+    QVERIFY2(magnifier, "View > Magnifier action not found");
+    QVERIFY2(magnifier->isEnabled(), "Magnifier must be enabled when a document is open");
+
+    magnifier->trigger(); // checkable → turns the lens on
+    QApplication::processEvents();
+    QVERIFY2(magnifier->isChecked(), "Triggering Magnifier should activate it");
+
+    // Esc routes through MainWindow::keyPressEvent. Send it directly so
+    // delivery doesn't depend on focus/show state under offscreen.
+    QKeyEvent escape(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(mw, &escape);
+    QApplication::processEvents();
+
+    QVERIFY2(!magnifier->isChecked(),
+             "Esc must deactivate the Magnifier so the user isn't stuck in the lens mode");
+}
+
 // UAT-ANN-010 — Rectangle tool creates an annotation on click-drag.
 void TestUatSearchAndMarkup::uat_ann_010_rectangleToolCreatesAnnotation() {
     QVERIFY(m_scratch.isValid());
@@ -798,6 +839,54 @@ void TestUatSearchAndMarkup::uat_ann_012_lineToolCreatesAnnotation() {
     QCOMPARE(added.type, AnnotationType::Line);
     QCOMPARE(added.points.size(), size_t{2});
     QVERIFY2(store->canUndo(), "Store should report canUndo() after adding a line");
+}
+
+// UAT-ANN-017 — The Select tool must not create a shape on click-drag.
+//
+// Regression guard for the HITL fix where a drag drew a stray rectangle
+// even with Select active. With Select active and nothing under the
+// drag, the store must be untouched and there must be nothing to undo.
+void TestUatSearchAndMarkup::uat_ann_017_selectToolDragDoesNotCreateAnnotation() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_017.pdf")), QStringLiteral("fixture"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    AnnotationStore *store = doc->annotations();
+    QVERIFY(store);
+
+    auto *markup = mw->findChild<MarkupToolbar *>();
+    QVERIFY(markup);
+    QAction *selectAction = findToolAction(markup, QStringLiteral("Select"));
+    QVERIFY2(selectAction, "Markup toolbar Select action not found");
+    selectAction->setChecked(true); // exclusive group → emits toggled(true)
+    QApplication::processEvents();
+
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
+    QVERIFY2(overlay, "AnnotationOverlay not found as child of MainWindow");
+    QCOMPARE(overlay->activeTool(), AnnotationTool::Select);
+
+    // The same drag that creates a Rectangle under the Rectangle tool
+    // (UAT-ANN-010) must create nothing under Select.
+    const int before = store->count();
+    dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
+
+    QCOMPARE(store->count(), before);
+    QVERIFY2(!store->canUndo(),
+             "A Select-tool drag must not push an undoable annotation onto the store");
 }
 
 // UAT-ANN-060 — Undo removes the most recent rectangle add.
