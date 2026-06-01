@@ -32,6 +32,7 @@
 #include "ui/MyCardDialog.h"
 
 #include <QAbstractButton>
+#include <QAbstractSpinBox>
 #include <QApplication>
 #include <QComboBox>
 #include <QDir>
@@ -69,7 +70,7 @@ QString writeTinyPdf(const QString &path) {
 
 bool isInteractive(QWidget *w) {
     return qobject_cast<QAbstractButton *>(w) || qobject_cast<QLineEdit *>(w) ||
-           qobject_cast<QComboBox *>(w);
+           qobject_cast<QComboBox *>(w) || qobject_cast<QAbstractSpinBox *>(w);
 }
 
 // Walk root's descendants and flag any visible interactive control that
@@ -191,14 +192,11 @@ void TestUatSweep::layoutSurvivesFontAndDirection() {
     QVERIFY2(mw, "MainWindow must realize under every font/direction cell");
     mw->resize(1100, 750);
     mw->show();
-    // Realize the side panels too (hidden by default) so their controls
-    // are part of the sweep.
-    for (auto *dock : mw->findChildren<QDockWidget *>()) {
-        const QString t = dock->windowTitle();
-        if (t.contains(QLatin1String("Inspector"), Qt::CaseInsensitive) ||
-            t.contains(QLatin1String("Sidebar"), Qt::CaseInsensitive))
-            dock->show();
-    }
+    // Realize every dock panel (all hidden by default) so their controls
+    // are part of the sweep. Show all QDockWidgets rather than matching on
+    // translatable window titles, which would break across locales/renames.
+    for (auto *dock : mw->findChildren<QDockWidget *>())
+        dock->show();
     QApplication::processEvents();
 
     int checked = 0;
