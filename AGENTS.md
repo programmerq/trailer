@@ -110,6 +110,28 @@ when touching PDF I/O or UAT code:
   the env var per-test on Windows; do the same for any new fixture
   helper that runs outside ctest.
 
+**Windows agent gotchas (git / gh / PowerShell).** Operating from an
+agent on a Windows host, two things bite when pushing branches and
+talking to GitHub:
+- **SSH to GitHub can hang non-interactively.** A first-connection
+  host-key prompt (or a key-passphrase prompt) has no TTY to answer, so
+  `git fetch` / `git push` over a `git@github.com:` remote hangs
+  silently with no output. Route network git through the `gh` HTTPS
+  credential helper instead:
+  ```powershell
+  $h = 'credential.helper=!gh auth git-credential'
+  git -c credential.helper= -c $h push https://github.com/<owner>/trailer.git <branch>:refs/heads/<branch>
+  ```
+  `gh` itself (`gh pr create`, `gh api`) talks to the API over HTTPS with
+  the stored token and is unaffected. One-time SSH fix: seed the host key
+  (`ssh-keyscan github.com >> ~/.ssh/known_hosts`) and load your key into
+  an agent.
+- **PowerShell 5.1 `Set-Content -Encoding utf8` writes a BOM**, which
+  makes `gh api --input body.json` fail with `Problems parsing JSON
+  (HTTP 400)`. Write JSON request bodies as plain UTF-8 *without* a BOM —
+  e.g. with a tool/editor that emits no BOM, or
+  `[IO.File]::WriteAllText($p, $s, [Text.UTF8Encoding]::new($false))`.
+
 ## Test
 
 Unit + UAT split. Unit tests run on every PR; UAT runs only on tag pushes
