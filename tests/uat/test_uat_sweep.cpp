@@ -33,6 +33,7 @@
 
 #include <QAbstractButton>
 #include <QAbstractSpinBox>
+#include <QAction>
 #include <QApplication>
 #include <QComboBox>
 #include <QDir>
@@ -44,6 +45,7 @@
 #include <QPdfWriter>
 #include <QStringList>
 #include <QTemporaryDir>
+#include <QToolButton>
 #include <QWidget>
 #include <QtTest/QtTest>
 
@@ -107,6 +109,42 @@ QStringList collectLayoutViolations(QWidget *root, int &checked) {
     return violations;
 }
 
+// The accessible name a screen reader announces for a button: its own
+// accessibleName, else its action's accessibleName / text, else its
+// visible text. Empty => the control reads as a bare "button".
+QString effectiveButtonName(QAbstractButton *b) {
+    if (!b->accessibleName().trimmed().isEmpty())
+        return b->accessibleName().trimmed();
+    if (auto *tb = qobject_cast<QToolButton *>(b)) {
+        if (QAction *a = tb->defaultAction()) {
+            // QAction has no accessibleName of its own; Qt derives a
+            // button's accessible name from the action's text.
+            if (!a->text().trimmed().isEmpty())
+                return a->text().trimmed();
+        }
+    }
+    return b->text().trimmed();
+}
+
+// Visible buttons that would read as a bare "button" — nothing a screen
+// reader can announce. Skips Qt-internal buttons (qt_*, e.g. the toolbar
+// overflow button) whose naming is Qt's responsibility, not ours.
+QStringList collectUnnamedButtons(QWidget *root) {
+    QStringList unnamed;
+    for (QWidget *w : root->findChildren<QWidget *>()) {
+        auto *b = qobject_cast<QAbstractButton *>(w);
+        if (!b || !b->isVisible())
+            continue;
+        if (b->objectName().startsWith(QLatin1String("qt_")))
+            continue;
+        if (effectiveButtonName(b).isEmpty())
+            unnamed << QStringLiteral("%1{%2}").arg(
+                QString::fromLatin1(b->metaObject()->className()),
+                b->objectName().isEmpty() ? QStringLiteral("?") : b->objectName());
+    }
+    return unnamed;
+}
+
 void addFontDirectionRows() {
     QTest::addColumn<int>("fontPt");    // 0 => baseline size
     QTest::addColumn<int>("direction"); // Qt::LayoutDirection
@@ -130,6 +168,7 @@ class TestUatSweep : public QObject {
     void layoutSurvivesFontAndDirection();
     void cardDialogSurvivesFontAndDirection_data();
     void cardDialogSurvivesFontAndDirection();
+    void interactiveControlsHaveAccessibleNames();
 
   private:
     void applyCell(int fontPt, int direction);
@@ -236,6 +275,36 @@ void TestUatSweep::cardDialogSurvivesFontAndDirection() {
                      .arg(checked)
                      .arg(violations.join(QStringLiteral("\n  ")))));
     dlg.close();
+}
+
+// A11y guard (audit A-CRIT-1): every visible interactive button must
+// have a name a screen reader can announce, or it reads as a bare
+// "button". Walks the realized MainWindow chrome (incl. the markup
+// toolbar and the side docks). Font/direction-independent, so it runs
+// once rather than across the matrix.
+void TestUatSweep::interactiveControlsHaveAccessibleNames() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdf = writeTinyPdf(m_scratch.filePath(QStringLiteral("a11y.pdf")));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdf});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY2(mw, "MainWindow must realize");
+    mw->resize(1100, 750);
+    mw->show();
+    for (auto *dock : mw->findChildren<QDockWidget *>())
+        dock->show();
+    QApplication::processEvents();
+
+    const QStringList unnamed = collectUnnamedButtons(mw);
+    QVERIFY2(unnamed.isEmpty(),
+             qPrintable(QStringLiteral(
+                            "Buttons a screen reader would read as just \"button\" (no accessible "
+                            "name):\n  %1")
+                            .arg(unnamed.join(QStringLiteral("\n  ")))));
 }
 
 // Custom main: set a sandbox HOME before constructing Application so
