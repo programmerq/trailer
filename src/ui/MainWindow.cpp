@@ -64,6 +64,8 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QApplication>
+#include <QClipboard>
 #include <QMimeData>
 #include <QPixmap>
 #include <QProcess>
@@ -669,6 +671,9 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
             overlay->selectAll();
         }
     });
+
+    m_copyPageAction = editMenu->addAction(tr("Copy Page as &Image"));
+    connect(m_copyPageAction, &QAction::triggered, this, &MainWindow::onCopyPageAsImage);
 
     editMenu->addSeparator();
 
@@ -2124,6 +2129,22 @@ void MainWindow::updateUndoRedoActions(IDocument *doc) {
     m_redoAction->setEnabled(doc && doc->canRedo());
 }
 
+void MainWindow::onCopyPageAsImage() {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsThumbnails())
+        return;
+    // Render the current page / image at a generous size — enough to
+    // paste a crisp copy into a chat app. renderThumbnail scales to fit
+    // (aspect-preserved) and composites PDF pages over opaque white.
+    const QImage image = doc->renderThumbnail(doc->currentPage(), QSize(2200, 2200));
+    if (image.isNull()) {
+        flashError(tr("Couldn't render this page to copy."));
+        return;
+    }
+    QApplication::clipboard()->setImage(image);
+    flashSuccess(tr("Page copied to the clipboard as an image."));
+}
+
 void MainWindow::updateTitleForDocument(IDocument *doc) {
     updateUndoRedoActions(doc);
     if (!doc) {
@@ -2492,6 +2513,10 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     m_nextPageAction->setEnabled(multiplePages);
 
     updateUndoRedoActions(doc);
+    // Copy Page as Image works for anything that can render a page raster
+    // (PDF pages + images), so it's gated on thumbnail support rather
+    // than editability — and greyed out for stub / unsupported docs.
+    m_copyPageAction->setEnabled(doc && doc->supportsThumbnails());
 
     const bool canEdit = doc && doc->supportsEditing();
     const bool isImage = dynamic_cast<ImageDocument *>(doc) != nullptr;
