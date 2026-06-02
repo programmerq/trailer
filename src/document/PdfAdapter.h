@@ -108,8 +108,9 @@ class PdfDocument : public IDocument {
     // AnnotationStore for in-memory shape edits, and a separate
     // PdfCommand stack for qpdf-level mutations (rotate today;
     // delete / move / insert / crop are scoped for follow-up).
-    // Undo prefers the most recently-touched stack; the
-    // last-touched stack is tracked via m_lastUndoSource.
+    // Undo/redo pop a single chronological log (m_undoLog) recording
+    // which stack each committed op went to, so the most recent action
+    // is always undone first regardless of which stack it came from.
     bool canUndo() const override;
     bool canRedo() const override;
     void undo() override;
@@ -227,12 +228,21 @@ class PdfDocument : public IDocument {
     // when the user undoes, then makes a different change.
     std::vector<std::unique_ptr<PdfCommand>> m_pdfUndoStack;
     std::vector<std::unique_ptr<PdfCommand>> m_pdfRedoStack;
-    // Tracks which undo log got the most recent push so the
-    // unified IDocument::undo prefers the right stack. Annotations
-    // and qpdf commands aren't merged into one chronological log
-    // yet (TODO).
+    // Append a PdfCommand entry to the chronological undo log and
+    // invalidate all redo (both qpdf + annotation redo, and m_redoLog).
+    // Called after a qpdf-level command applies.
+    void recordPdfCommandApplied();
+
+    // Unified chronological undo/redo log: one entry per committed op,
+    // recording which stack it went to, so undo()/redo() pop the truly
+    // most-recent op regardless of source. Replaces the old
+    // most-recently-touched-stack heuristic.
     enum class UndoSource { None, Annotation, PdfCommand };
-    UndoSource m_lastUndoSource = UndoSource::None;
+    std::vector<UndoSource> m_undoLog;
+    std::vector<UndoSource> m_redoLog;
+    // Guards the historyPushed handler during a post-save reload so the
+    // re-read annotations aren't logged as user undo steps.
+    bool m_suppressUndoLog = false;
 };
 
 class PdfAdapter : public IFormatAdapter {

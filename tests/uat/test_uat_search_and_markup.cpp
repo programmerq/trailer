@@ -322,6 +322,7 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_ann_128_clickOnAnnotationWithDrawingToolSelects();
     void uat_ann_130_strokeDialogSurvivesStoreMutation();
     void uat_ann_131_toolSwitchesToSelectAfterShapeCommit();
+    void uat_ann_140_interleavedUndoIsChronological();
     void uat_toc_010_outlineDisabledOnPlainPdf();
     void uat_toc_011_outlineExposedForPdfWithBookmarks();
     void uat_toc_012_clickingOutlineEntryNavigatesToPage();
@@ -2305,6 +2306,100 @@ void TestUatSearchAndMarkup::uat_ann_131_toolSwitchesToSelectAfterShapeCommit() 
     // shape they just drew.
     QCOMPARE(markup->activeTool(), AnnotationTool::Select);
     QCOMPARE(overlay->activeTool(), AnnotationTool::Select);
+}
+
+// UAT-ANN-140 — Interleaved page-op + annotation undo is chronological.
+//
+// Regression guard for the unified undo log (roadmap Now #4): a qpdf
+// page delete, then an annotation, then another page delete must undo
+// in strict reverse order (delete, annotation, delete) — the old
+// most-recently-touched-stack heuristic undid both deletes first, so
+// after two undos the document sat in a state the user never passed
+// through. Driven in the real app harness (document has a live view
+// attached) via the same IDocument::undo / redo the Edit > Undo / Redo
+// menu actions invoke.
+void TestUatSearchAndMarkup::uat_ann_140_interleavedUndoIsChronological() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = m_scratch.filePath(QStringLiteral("uat_ann_140.pdf"));
+    {
+        QPdfWriter writer(pdfPath);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter p(&writer);
+        p.drawText(100, 100, QStringLiteral("Page 1"));
+        writer.newPage();
+        p.drawText(100, 100, QStringLiteral("Page 2"));
+        writer.newPage();
+        p.drawText(100, 100, QStringLiteral("Page 3"));
+        p.end();
+    }
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    QCOMPARE(doc->pageCount(), 3);
+    AnnotationStore *store = doc->annotations();
+    QVERIFY(store);
+    QCOMPARE(store->count(), 0);
+
+    // The user-facing undo path exists.
+    QVERIFY2(findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Undo")),
+             "Edit > Undo action not found");
+    QVERIFY2(findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Redo")),
+             "Edit > Redo action not found");
+
+    // #1 delete (qpdf) -> #2 annotation -> #3 delete (qpdf)
+    doc->deletePages({2});
+    QCOMPARE(doc->pageCount(), 2);
+    Annotation note;
+    note.page = 0;
+    note.type = AnnotationType::Rectangle;
+    note.bounds = QRectF(10, 10, 40, 30);
+    store->add(note);
+    QCOMPARE(store->count(), 1);
+    doc->deletePages({1});
+    QCOMPARE(doc->pageCount(), 1);
+
+    QVERIFY(doc->canUndo());
+    QVERIFY(!doc->canRedo());
+
+    doc->undo(); // reverse #3 (page delete)
+    QApplication::processEvents();
+    QCOMPARE(doc->pageCount(), 2);
+    QCOMPARE(store->count(), 1);
+
+    doc->undo(); // reverse #2 (annotation) — NOT another page op
+    QApplication::processEvents();
+    QCOMPARE(doc->pageCount(), 2);
+    QCOMPARE(store->count(), 0);
+
+    doc->undo(); // reverse #1 (page delete)
+    QApplication::processEvents();
+    QCOMPARE(doc->pageCount(), 3);
+    QCOMPARE(store->count(), 0);
+
+    QVERIFY(!doc->canUndo());
+    QVERIFY(doc->canRedo());
+
+    doc->redo(); // #1
+    QApplication::processEvents();
+    QCOMPARE(doc->pageCount(), 2);
+    QCOMPARE(store->count(), 0);
+    doc->redo(); // #2
+    QApplication::processEvents();
+    QCOMPARE(doc->pageCount(), 2);
+    QCOMPARE(store->count(), 1);
+    doc->redo(); // #3
+    QApplication::processEvents();
+    QCOMPARE(doc->pageCount(), 1);
+    QCOMPARE(store->count(), 1);
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG

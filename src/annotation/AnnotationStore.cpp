@@ -97,6 +97,7 @@ void AnnotationStore::pushHistory() {
         m_undoStack.erase(m_undoStack.begin());
     }
     m_redoStack.clear();
+    emit historyPushed();
 }
 
 void AnnotationStore::undo() {
