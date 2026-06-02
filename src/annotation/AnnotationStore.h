@@ -37,6 +37,10 @@ class AnnotationStore : public QObject {
     bool canRedo() const { return !m_redoStack.empty(); }
     void undo();
     void redo();
+    // Drop the redo stack without touching undo. Used by an owner
+    // coordinating a cross-stack undo log: a new edit on the *other*
+    // stack must invalidate annotation redo too.
+    void clearRedo() { m_redoStack.clear(); }
     void clearHistory() {
         m_undoStack.clear();
         m_redoStack.clear();
@@ -70,6 +74,11 @@ class AnnotationStore : public QObject {
 
   signals:
     void changed();
+    // Emitted exactly when a real undo frame is pushed — one per
+    // gesture (compound-coalesced), and NOT by undo()/redo()/restore().
+    // Lets an owner mirror annotation edits into a unified cross-stack
+    // undo log without mistaking an undo for a new edit.
+    void historyPushed();
 
   private:
     void pushHistory();

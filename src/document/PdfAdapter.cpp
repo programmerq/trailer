@@ -134,9 +134,16 @@ PdfDocument::PdfDocument(QString path)
             m_annotations.add(std::move(a));
         }
         m_annotations.clearHistory();
-        QObject::connect(&m_annotations, &AnnotationStore::changed, m_doc.get(), [this]() {
-            m_annotationsModified = true;
-            m_lastUndoSource = UndoSource::Annotation;
+        QObject::connect(&m_annotations, &AnnotationStore::changed, m_doc.get(),
+                         [this]() { m_annotationsModified = true; });
+        QObject::connect(&m_annotations, &AnnotationStore::historyPushed, m_doc.get(), [this]() {
+            if (m_suppressUndoLog)
+                return;
+            // A new annotation edit (one frame, compound-coalesced):
+            // record it in the unified log and invalidate all redo.
+            m_undoLog.push_back(UndoSource::Annotation);
+            m_redoLog.clear();
+            m_pdfRedoStack.clear();
         });
     }
 }
@@ -172,9 +179,16 @@ bool PdfDocument::unlock(const QString &password) {
             m_annotations.add(std::move(a));
         }
         m_annotations.clearHistory();
-        QObject::connect(&m_annotations, &AnnotationStore::changed, m_doc.get(), [this]() {
-            m_annotationsModified = true;
-            m_lastUndoSource = UndoSource::Annotation;
+        QObject::connect(&m_annotations, &AnnotationStore::changed, m_doc.get(),
+                         [this]() { m_annotationsModified = true; });
+        QObject::connect(&m_annotations, &AnnotationStore::historyPushed, m_doc.get(), [this]() {
+            if (m_suppressUndoLog)
+                return;
+            // A new annotation edit (one frame, compound-coalesced):
+            // record it in the unified log and invalidate all redo.
+            m_undoLog.push_back(UndoSource::Annotation);
+            m_redoLog.clear();
+            m_pdfRedoStack.clear();
         });
     }
     return true;
@@ -999,87 +1013,66 @@ void PdfDocument::rotatePage(int pageIndex, int degreesClockwise) {
     if (!cmd->apply(*m_editor))
         return;
     m_pdfUndoStack.push_back(std::move(cmd));
-    m_pdfRedoStack.clear();
-    m_lastUndoSource = UndoSource::PdfCommand;
+    recordPdfCommandApplied();
     if (reloadViewerFromEditor()) {
         m_dirty = true;
     }
 }
 
-bool PdfDocument::canUndo() const {
-    return m_annotations.canUndo() || !m_pdfUndoStack.empty();
-}
+bool PdfDocument::canUndo() const { return !m_undoLog.empty(); }
 
-bool PdfDocument::canRedo() const {
-    return m_annotations.canRedo() || !m_pdfRedoStack.empty();
-}
+bool PdfDocument::canRedo() const { return !m_redoLog.empty(); }
 
 void PdfDocument::undo() {
-    // Two parallel stacks; prefer the last-touched one so a
-    // user's most recent action is undone first. A small
-    // approximation of chronological undo until we unify the
-    // logs (TODO: PdfCommand + AnnotationStore should share one
-    // chronological list so multi-action undo always pops the
-    // most recent thing the user did).
-    if (m_lastUndoSource == UndoSource::PdfCommand && !m_pdfUndoStack.empty()) {
-        auto cmd = std::move(m_pdfUndoStack.back());
-        m_pdfUndoStack.pop_back();
-        cmd->revert(*m_editor);
-        m_pdfRedoStack.push_back(std::move(cmd));
-        reloadViewerFromEditor();
-        m_lastUndoSource =
-            m_pdfUndoStack.empty()
-                ? (m_annotations.canUndo() ? UndoSource::Annotation : UndoSource::None)
-                : UndoSource::PdfCommand;
+    // Pop the single chronological log so the most recent op is undone
+    // first, regardless of which stack it came from.
+    if (m_undoLog.empty())
         return;
-    }
-    if (m_annotations.canUndo()) {
+    const UndoSource src = m_undoLog.back();
+    m_undoLog.pop_back();
+    if (src == UndoSource::Annotation) {
         m_annotations.undo();
-        m_lastUndoSource =
-            m_annotations.canUndo()
-                ? UndoSource::Annotation
-                : (m_pdfUndoStack.empty() ? UndoSource::None : UndoSource::PdfCommand);
-        return;
-    }
-    if (!m_pdfUndoStack.empty()) {
-        // Fall-through case: lastSource was Annotation but the
-        // annotation log is now exhausted.
+    } else {
+        Q_ASSERT(!m_pdfUndoStack.empty());
         auto cmd = std::move(m_pdfUndoStack.back());
         m_pdfUndoStack.pop_back();
         cmd->revert(*m_editor);
         m_pdfRedoStack.push_back(std::move(cmd));
         reloadViewerFromEditor();
-        m_lastUndoSource = m_pdfUndoStack.empty() ? UndoSource::None : UndoSource::PdfCommand;
+        m_dirty = true;
     }
+    m_redoLog.push_back(src);
 }
 
 void PdfDocument::redo() {
-    // Symmetric to undo. We don't track which stack got the most
-    // recent redo distinctly; if the user is redoing they almost
-    // always want the inverse of their most recent undo, and the
-    // last-source heuristic from undo() is the closest signal.
-    if (m_lastUndoSource == UndoSource::PdfCommand && !m_pdfRedoStack.empty()) {
-        auto cmd = std::move(m_pdfRedoStack.back());
-        m_pdfRedoStack.pop_back();
-        cmd->apply(*m_editor);
-        m_pdfUndoStack.push_back(std::move(cmd));
-        reloadViewerFromEditor();
-        m_lastUndoSource = UndoSource::PdfCommand;
+    // Inverse of undo(): pop the redo log and re-apply on the stack the
+    // entry came from, in the order the ops were originally undone.
+    if (m_redoLog.empty())
         return;
-    }
-    if (m_annotations.canRedo()) {
+    const UndoSource src = m_redoLog.back();
+    m_redoLog.pop_back();
+    if (src == UndoSource::Annotation) {
         m_annotations.redo();
-        m_lastUndoSource = UndoSource::Annotation;
-        return;
-    }
-    if (!m_pdfRedoStack.empty()) {
+    } else {
+        Q_ASSERT(!m_pdfRedoStack.empty());
         auto cmd = std::move(m_pdfRedoStack.back());
         m_pdfRedoStack.pop_back();
         cmd->apply(*m_editor);
         m_pdfUndoStack.push_back(std::move(cmd));
         reloadViewerFromEditor();
-        m_lastUndoSource = UndoSource::PdfCommand;
+        m_dirty = true;
     }
+    m_undoLog.push_back(src);
+}
+
+void PdfDocument::recordPdfCommandApplied() {
+    // A new qpdf-level edit invalidates all redo — the two redo stacks
+    // and the unified redo log — then appends to the chronological undo
+    // log.
+    m_pdfRedoStack.clear();
+    m_annotations.clearRedo();
+    m_redoLog.clear();
+    m_undoLog.push_back(UndoSource::PdfCommand);
 }
 
 void PdfDocument::deletePages(const std::vector<int> &pageIndices) {
@@ -1094,8 +1087,7 @@ void PdfDocument::deletePages(const std::vector<int> &pageIndices) {
     if (!cmd->apply(*m_editor))
         return;
     m_pdfUndoStack.push_back(std::move(cmd));
-    m_pdfRedoStack.clear();
-    m_lastUndoSource = UndoSource::PdfCommand;
+    recordPdfCommandApplied();
     if (reloadViewerFromEditor()) {
         m_dirty = true;
     }
@@ -1116,8 +1108,7 @@ bool PdfDocument::cropPage(int pageIndex, double leftPts, double topPts, double 
     if (!cmd->apply(*m_editor))
         return false;
     m_pdfUndoStack.push_back(std::move(cmd));
-    m_pdfRedoStack.clear();
-    m_lastUndoSource = UndoSource::PdfCommand;
+    recordPdfCommandApplied();
     if (reloadViewerFromEditor()) {
         m_dirty = true;
         return true;
@@ -1137,8 +1128,7 @@ bool PdfDocument::cropPages(const std::vector<int> &pageIndices, double leftPts,
     if (!cmd->apply(*m_editor))
         return false;
     m_pdfUndoStack.push_back(std::move(cmd));
-    m_pdfRedoStack.clear();
-    m_lastUndoSource = UndoSource::PdfCommand;
+    recordPdfCommandApplied();
     if (reloadViewerFromEditor()) {
         m_dirty = true;
         return true;
@@ -1158,8 +1148,7 @@ bool PdfDocument::insertPagesFrom(const QString &sourcePath, int insertAtIndex) 
         return false;
     }
     m_pdfUndoStack.push_back(std::move(cmd));
-    m_pdfRedoStack.clear();
-    m_lastUndoSource = UndoSource::PdfCommand;
+    recordPdfCommandApplied();
     if (reloadViewerFromEditor()) {
         m_dirty = true;
         return true;
@@ -1179,8 +1168,7 @@ void PdfDocument::movePage(int from, int to) {
     if (!cmd->apply(*m_editor))
         return;
     m_pdfUndoStack.push_back(std::move(cmd));
-    m_pdfRedoStack.clear();
-    m_lastUndoSource = UndoSource::PdfCommand;
+    recordPdfCommandApplied();
     if (reloadViewerFromEditor()) {
         m_dirty = true;
     }
@@ -1299,12 +1287,20 @@ bool PdfDocument::saveCommitOnUi(const SaveContext &ctx) {
         }
     }
     m_dirty = false;
+    // Reload annotations from the saved editor without disturbing the
+    // unified undo log — this churn is not user edits.
+    m_suppressUndoLog = true;
     m_annotations.clear();
     for (Annotation &a : m_editor->readAnnotations()) {
         m_annotations.add(std::move(a));
     }
     m_annotations.clearHistory();
+    m_suppressUndoLog = false;
     m_annotationsModified = false;
+    // Annotation history was just cleared; the qpdf page-command stacks
+    // are retained, so rebuild the unified log to match them.
+    m_undoLog.assign(m_pdfUndoStack.size(), UndoSource::PdfCommand);
+    m_redoLog.assign(m_pdfRedoStack.size(), UndoSource::PdfCommand);
     return true;
 }
 

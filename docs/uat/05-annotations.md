@@ -551,6 +551,18 @@ via the Inspector.
 - The earliest changes are not recoverable (bound is hit).
 - App remains responsive.
 
+### UAT-ANN-140 — Interleaved page-op + annotation undo is chronological
+
+**Preconditions:** A multi-page PDF is open.
+**Steps:**
+1. Delete a page, add an annotation, then delete another page.
+2. Undo three times, then redo three times.
+**Expected:**
+- Undo unwinds in strict reverse order — the second page delete, then
+  the annotation, then the first page delete — and redo replays them
+  forward. Undo never skips the annotation to unwind both page deletes
+  first.
+
 ---
 
 ## PDF annotation round-trip

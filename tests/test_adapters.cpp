@@ -36,6 +36,7 @@ class TestAdapters : public QObject {
     void pdfDocumentRotationMarksDirtyAndSaveClears();
     void pdfDocumentDeletePagesRemovesAndMarksDirty();
     void pdfDocumentMovePageReorders();
+    void pdfDocumentInterleavedUndoIsChronological();
     void imageDocumentRotateSwapsDimensionsAndMarksDirty();
     void imageDocumentFlipHorizontalMarksDirty();
     void imageDocumentResizeChangesPixelSize();
@@ -833,6 +834,85 @@ void TestAdapters::imageDocumentResizeEventTriggersRefit() {
     QVERIFY2(qFuzzyCompare(scaleAfter, 10.0),
              qPrintable(QStringLiteral("expected 10.0 after resize event, got %1")
                             .arg(scaleAfter)));
+}
+
+// Regression guard for the unified chronological undo log (roadmap
+// Now #4). Interleaving a qpdf page op, an annotation edit, then another
+// page op must undo in strict reverse-chronological order — the old
+// most-recently-touched-stack heuristic undid both page ops first and
+// the annotation last, so after two undos the document was in a state
+// the user never passed through.
+void TestAdapters::pdfDocumentInterleavedUndoIsChronological() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("interleaved.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, "Page 1");
+        writer.newPage();
+        painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, "Page 2");
+        writer.newPage();
+        painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, "Page 3");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    QCOMPARE(doc.pageCount(), 3);
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store != nullptr);
+    QCOMPARE(store->count(), 0);
+
+    // #1 delete a page (qpdf)  →  #2 add an annotation  →  #3 delete a page
+    doc.deletePages({2});
+    QCOMPARE(doc.pageCount(), 2);
+
+    Annotation note;
+    note.page = 0;
+    note.type = AnnotationType::Rectangle;
+    note.bounds = QRectF(10, 10, 40, 30);
+    store->add(note);
+    QCOMPARE(store->count(), 1);
+
+    doc.deletePages({1});
+    QCOMPARE(doc.pageCount(), 1);
+
+    QVERIFY(doc.canUndo());
+    QVERIFY(!doc.canRedo());
+
+    // Reverse-chronological: #3, then #2, then #1.
+    doc.undo(); // reverse #3 (page delete)
+    QCOMPARE(doc.pageCount(), 2);
+    QCOMPARE(store->count(), 1);
+
+    doc.undo(); // reverse #2 (annotation) — NOT another page op
+    QCOMPARE(doc.pageCount(), 2);
+    QCOMPARE(store->count(), 0);
+
+    doc.undo(); // reverse #1 (page delete)
+    QCOMPARE(doc.pageCount(), 3);
+    QCOMPARE(store->count(), 0);
+
+    QVERIFY(!doc.canUndo());
+    QVERIFY(doc.canRedo());
+
+    // Redo replays forward: #1, #2, #3.
+    doc.redo();
+    QCOMPARE(doc.pageCount(), 2);
+    QCOMPARE(store->count(), 0);
+
+    doc.redo();
+    QCOMPARE(doc.pageCount(), 2);
+    QCOMPARE(store->count(), 1);
+
+    doc.redo();
+    QCOMPARE(doc.pageCount(), 1);
+    QCOMPARE(store->count(), 1);
+
+    QVERIFY(doc.canUndo());
+    QVERIFY(!doc.canRedo());
 }
 
 QTEST_MAIN(TestAdapters)
