@@ -49,7 +49,10 @@
 #import <AVFoundation/AVFoundation.h>
 #import <CoreGraphics/CoreGraphics.h>
 #import <ImageIO/ImageIO.h>
-#include <IOKit/hid/IOHIDLib.h>
+// hidsystem/, not hid/ — the identically-named HID Manager header in
+// IOKit/hid/ does not declare IOHIDCheckAccess / IOHIDRequestAccess
+// or the kIOHIDRequestType* / kIOHIDAccessType* enums.
+#include <IOKit/hidsystem/IOHIDLib.h>
 
 #if __has_include(<ScreenCaptureKit/ScreenCaptureKit.h>)
 #import <ScreenCaptureKit/ScreenCaptureKit.h>
