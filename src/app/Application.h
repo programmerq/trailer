@@ -13,9 +13,12 @@
 #include <QPointer>
 #include <QStringList>
 
+#include <memory>
+
 namespace trailer {
 
 class MainWindow;
+class UxRecorder;
 
 class Application : public QApplication {
     Q_OBJECT
@@ -33,6 +36,14 @@ class Application : public QApplication {
     // Returns true if at least one file was restored — the caller then
     // skips spawning an empty MainWindow.
     bool restorePreviousSession();
+
+    // Begin a local UX recording session (--ux-record). Called from
+    // main.cpp before any window exists so the first window already
+    // carries the recording indicator. In builds configured without
+    // TRAILER_ENABLE_UX_RECORDER this only logs a warning — although
+    // it is unreachable there in practice, because the CLI parser
+    // rejects --ux-record as an unknown option.
+    void startUxRecording();
 
     Settings &settings() { return m_settings; }
     RecentFiles &recentFiles() { return m_recent; }
@@ -86,6 +97,12 @@ class Application : public QApplication {
     QList<QPointer<MainWindow>> m_windows;
 #ifdef Q_OS_MACOS
     QPointer<QMenuBar> m_noWindowMenuBar;
+#endif
+#ifdef TRAILER_UX_RECORDER
+    // Live for the rest of the process once --ux-record started it;
+    // stop() is driven by aboutToQuit (self-connected) and the
+    // destructor, so teardown is safe in either order.
+    std::unique_ptr<UxRecorder> m_uxRecorder;
 #endif
 };
 

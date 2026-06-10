@@ -63,4 +63,16 @@ trailer_add_test(test_cancellation_token test_cancellation_token.cpp)
 trailer_add_test(test_power_source test_power_source.cpp)
 trailer_add_test(test_ml_scheduler test_ml_scheduler.cpp)
 
+# The facade test runs in EVERY configuration — it is the guard that
+# the uxrecord:: no-ops stay safe when the recorder is compiled out
+# (and when it is compiled in but no --ux-record session is active).
+trailer_add_test(test_ux_record_facade test_ux_record_facade.cpp)
+# The platform-neutral recorder internals only exist in recorder-
+# enabled builds (they are not part of trailer_core otherwise).
+if(TRAILER_ENABLE_UX_RECORDER)
+    trailer_add_test(test_ux_event_stream test_ux_event_stream.cpp)
+    trailer_add_test(test_ux_recorder test_ux_recorder.cpp)
+    trailer_add_test(test_ux_qt_event_capture test_ux_qt_event_capture.cpp)
+endif()
+
 add_subdirectory(uat)

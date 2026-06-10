@@ -58,12 +58,21 @@ jobs:
         # -fuse-ld=mold: drops the link phase from minutes (ld.bfd) to
         #    seconds. Especially valuable here because each test_*
         #    binary links separately against trailer_core + Qt + ONNX.
+        # TRAILER_ENABLE_UX_RECORDER=ON: compiles the developer UX
+        #    recorder (platform-neutral core + the non-macOS stub
+        #    backend) and runs its unit tests so the dev-only feature
+        #    doesn't bit-rot — same reasoning as building the tools/
+        #    binaries everywhere. The option stays OFF by default and
+        #    in the release pipeline, so shipped artifacts never
+        #    include it; the Windows CI job and test_ux_record_facade
+        #    keep the disabled configuration covered.
         run: >-
           cmake -S . -B build -G Ninja
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
           -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=mold
           -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=mold
+          -DTRAILER_ENABLE_UX_RECORDER=ON
 
       - name: Build
         run: cmake --build build --parallel

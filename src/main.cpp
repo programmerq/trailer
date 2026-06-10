@@ -31,6 +31,13 @@ int main(int argc, char *argv[]) {
 
     const trailer::CommandLineResult cli = trailer::parseCommandLine(app.arguments());
 
+    // Start the local UX recording session (developer recorder builds
+    // only — see docs/ux-recorder.md) before the first window exists
+    // so every window carries the indicator and instrumentation.
+    if (cli.uxRecord) {
+        app.startUxRecording();
+    }
+
     if (cli.paths.isEmpty()) {
         // Workstream I: "quit and keep windows" across every platform.
         // If the user had files open at the last quit AND opted in to

@@ -4,6 +4,9 @@
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
 #include "ui/MainWindow.h"
+#ifdef TRAILER_UX_RECORDER
+#include "uxrecord/UxRecorder.h"
+#endif
 
 #include <QAction>
 #include <QClipboard>
@@ -51,6 +54,26 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
 }
 
 Application::~Application() = default;
+
+void Application::startUxRecording() {
+#ifdef TRAILER_UX_RECORDER
+    if (m_uxRecorder) {
+        return;
+    }
+    m_uxRecorder = std::make_unique<UxRecorder>();
+    if (!m_uxRecorder->start()) {
+        qWarning("Trailer: --ux-record was passed but the session could not be "
+                 "started (see warnings above); continuing without recording.");
+        m_uxRecorder.reset();
+        return;
+    }
+    qInfo("Trailer: UX recording session %s -> %s",
+          qPrintable(m_uxRecorder->sessionId()), qPrintable(m_uxRecorder->sessionDir()));
+#else
+    qWarning("Trailer: this build does not include the UX recorder "
+             "(configure with -DTRAILER_ENABLE_UX_RECORDER=ON).");
+#endif
+}
 
 MainWindow *Application::ensureWindow() {
     for (auto &ptr : m_windows) {
