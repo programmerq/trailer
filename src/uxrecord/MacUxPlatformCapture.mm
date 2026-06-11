@@ -385,14 +385,37 @@ void MacUxPlatformCapture::startScreenCapture() {
 #if TRAILER_HAS_SCREENCAPTUREKIT
     if (@available(macOS 12.3, *)) {
         if (!CGPreflightScreenCaptureAccess()) {
-            emitEvent(QStringLiteral("screen_recording_permission"),
-                      QJsonObject{{QStringLiteral("granted"), false},
-                                  {QStringLiteral("requesting"), true}});
-            // Pops the system prompt (first time only). The grant
-            // usually applies to *future* launches, so this session
-            // may produce no frames; the content fetch below reports
-            // that as screen_capture_failed.
-            CGRequestScreenCaptureAccess();
+            // First run on this machine: pop the system prompt.
+            // IMPORTANT macOS behaviour — the grant the user gives in
+            // that dialog applies only to *future* launches of this
+            // binary, never the running process. So even if they click
+            // Allow immediately, THIS session captures no screen
+            // frames; the next launch will. CGRequestScreenCaptureAccess
+            // returns the current (still-false) status, so we stop the
+            // screen path here with an explicit "approve, then quit and
+            // relaunch" message rather than letting the content fetch
+            // below fail with a confusing "no shareable displays".
+            //
+            // Because recorder builds now record every launch (the app
+            // can be the default file handler), the relaunch that fixes
+            // this is just "open another file" — the user does not need
+            // to remember any CLI flag.
+            const bool granted = CGRequestScreenCaptureAccess();
+            emitEvent(
+                QStringLiteral("screen_recording_permission_pending"),
+                QJsonObject{
+                    {QStringLiteral("granted"), granted},
+                    {QStringLiteral("user_message"),
+                     QStringLiteral(
+                         "Screen Recording isn't granted yet, so this session is capturing "
+                         "everything EXCEPT the screen. Approve Trailer under System Settings → "
+                         "Privacy & Security → Screen Recording, then quit and relaunch Trailer — "
+                         "macOS only applies the grant on the next launch.")}});
+            if (!granted) {
+                return;
+            }
+            // Extremely unlikely (granted flipped true synchronously),
+            // but if so fall through and start capturing this session.
         }
 
         MacUxPlatformCapture *capture = this;

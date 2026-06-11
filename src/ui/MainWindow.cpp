@@ -397,10 +397,11 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_autoSaveTimer->start();
 
     // Developer UX recorder (docs/ux-recorder.md). Inline no-op in
-    // default builds and in recorder builds launched without
-    // --ux-record; otherwise installs the recording indicator, the
-    // Recording menu, and the semantic instrumentation for this
-    // window. Last so every menu/toolbar action already exists.
+    // default builds and whenever no session is active (e.g. a
+    // recorder build launched with --no-ux-record); otherwise installs
+    // the recording indicator, the Recording menu, and the semantic
+    // instrumentation for this window. Last so every menu/toolbar
+    // action already exists.
     uxrecord::attachToMainWindow(this);
 }
 

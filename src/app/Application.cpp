@@ -62,8 +62,8 @@ void Application::startUxRecording() {
     }
     m_uxRecorder = std::make_unique<UxRecorder>();
     if (!m_uxRecorder->start()) {
-        qWarning("Trailer: --ux-record was passed but the session could not be "
-                 "started (see warnings above); continuing without recording.");
+        qWarning("Trailer: UX recording could not be started (see warnings "
+                 "above); continuing without recording.");
         m_uxRecorder.reset();
         return;
     }

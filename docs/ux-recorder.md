@@ -28,12 +28,12 @@ cmake --build build -j
 - do not compile any of `src/uxrecord/` except the no-op facade header,
 - do not link AVFoundation / ScreenCaptureKit / ImageIO,
 - do not declare `NSCameraUsageDescription` in Info.plist,
-- do not register the `--ux-record` CLI option (it is rejected as an
-  unknown option),
+- do not register the `--ux-record` / `--no-ux-record` CLI options (they
+  are rejected as unknown options),
 - never trigger any recording permission prompt.
 
-Recorder-enabled builds behave identically to default builds unless
-launched with `--ux-record`.
+Default builds never record. The whole feature is gated so the shipped
+app is byte-for-byte unaffected.
 
 Non-macOS recorder builds compile against a stub capture backend
 (`StubUxPlatformCapture.cpp`): the Qt event stream, semantic events,
@@ -44,10 +44,35 @@ backends can later replace the stub behind the same
 
 ## Starting a session
 
+**Recorder-enabled builds record every launch by default.** This is so
+the recorder build can be set as the default macOS handler for PDFs and
+images (Finder → Get Info → Open With → Change All…) and still capture
+sessions opened straight from Finder, which pass no CLI arguments. Just
+launch Trailer — or double-click a file it owns — and recording starts.
+
 ```sh
-# macOS (bundle build)
-./build/Trailer.app/Contents/MacOS/Trailer --ux-record [files...]
+# macOS (bundle build) — these are all equivalent to "just launch it":
+open build/Trailer.app
+./build/Trailer.app/Contents/MacOS/Trailer [files...]
+./build/Trailer.app/Contents/MacOS/Trailer --ux-record [files...]  # explicit, redundant
 ```
+
+To skip recording for a single launch (e.g. debugging unrelated app
+behaviour), pass `--no-ux-record`:
+
+```sh
+./build/Trailer.app/Contents/MacOS/Trailer --no-ux-record [files...]
+```
+
+> Rationale: the original design required an explicit `--ux-record` per
+> run. That was changed to record-by-default because this is a private,
+> sole-developer build whose entire purpose is to harvest sessions from
+> normal day-to-day use as the default file opener; an opt-out
+> (`--no-ux-record`) is the convenient inverse. `--ux-record` is still
+> accepted so old habits and the acceptance walkthrough below keep
+> working. If you ever want "build the feature but don't auto-record",
+> the place to reintroduce that split is `main.cpp` (the `cli.uxNoRecord`
+> check) — the recorder core does not care how it was started.
 
 While recording, every window shows a red **● REC** chip in the status
 bar and a **◉ Recording** menu in the menu bar:
@@ -90,20 +115,45 @@ Preview's page/zoom.
 
 ## macOS permissions
 
-Prompts appear only in recorder builds launched with `--ux-record`,
-the first time each capture starts. All are optional — denying one
-records a failure event and the rest of the session continues.
+Prompts appear only in recorder builds, the first time each capture
+starts. All are optional — denying one records an event and the rest of
+the session continues.
 
 | Permission | Used for | When missing |
 |---|---|---|
-| Screen Recording | ScreenCaptureKit display frames | `screen_capture_failed` event; no frames |
+| Screen Recording | ScreenCaptureKit display frames | `screen_recording_permission_pending` event; no frames this session |
 | Camera | AVFoundation face-cam movie | `camera_permission_denied`; no camera file |
 | Input Monitoring | global event tap (input while Preview is frontmost) | `input_tap_unavailable`; Trailer-local input still recorded via Qt |
 
-macOS grants Screen Recording / Input Monitoring for *future*
-launches, so the first recording run on a machine typically captures
-neither; grant in System Settings → Privacy & Security and relaunch.
-Capture problems also surface as a status-bar message in Trailer.
+### First-run Screen Recording is a two-launch dance (expected)
+
+This is the one rough edge worth internalising. macOS applies a Screen
+Recording grant **only to future launches of a binary, never the
+process that asked**. So the very first recorder launch on a machine
+goes like this:
+
+1. Trailer requests Screen Recording → the system dialog appears.
+2. **This session captures everything except the screen** — events,
+   input, and camera all record; `screen/` stays empty. Trailer records
+   a `screen_recording_permission_pending` event and shows the message
+   "Approve Trailer… then quit and relaunch" both as a status-bar flash
+   **and** pinned on the **● REC** chip's tooltip (the chip turns amber)
+   so it's still discoverable after the flash fades.
+3. You click Allow in the system dialog.
+4. **Quit and relaunch Trailer** (with record-by-default, "relaunch" is
+   just opening another file it owns). From now on every session
+   captures the screen — the grant persists, so you only do this once
+   per machine, ever.
+
+Because the recorder build runs as your default file opener, step 4
+happens naturally the next time you open a PDF, and you never see this
+again. If you'd rather front-load it, approve Screen Recording (and
+Camera / Input Monitoring) once in System Settings → Privacy & Security
+before your first real session.
+
+The same future-launch rule applies to **Input Monitoring** (the global
+event tap that records input while Preview is frontmost); Camera, by
+contrast, takes effect immediately on Allow.
 
 Screen capture additionally requires macOS 12.3+ (ScreenCaptureKit);
 older systems record `screen_capture_unsupported` and continue.
@@ -295,13 +345,20 @@ Deliberately **not** implemented yet:
 ## Manual test plan (macOS)
 
 The capture half cannot run headless; after touching it, verify the
-acceptance flow by hand: build with the option ON, launch with
-`--ux-record`, confirm the REC chip, open a PDF, scroll/zoom/annotate,
-⌘⇧M, Hand Off to Preview, interact there, ⌘⇧M again in Preview, return
-to Trailer, quit. Then check the session directory: manifest
-`complete`, `events.jsonl` parses (`ux-session-summary.py`), frames
-cover both apps but not e.g. a Finder interlude, `camera-000.mov`
-plays, and `rg -c "http" events.jsonl` finds nothing surprising.
+acceptance flow by hand: build with the option ON, launch Trailer (no
+flag needed — recorder builds record by default), confirm the REC chip,
+open a PDF, scroll/zoom/annotate, ⌘⇧M, Hand Off to Preview, interact
+there, ⌘⇧M again in Preview, return to Trailer, quit. Then check the
+session directory: manifest `complete`, `events.jsonl` parses
+(`ux-session-summary.py`), frames cover both apps but not e.g. a Finder
+interlude, `camera-000.mov` plays, and `rg -c "http" events.jsonl` finds
+nothing surprising.
+
+On the very first run on a fresh machine, expect `screen/` to be empty
+and the REC chip to be amber (Screen Recording not yet effective — see
+the two-launch dance above); approve it, relaunch, and re-verify that
+`screen/` fills. Pass `--no-ux-record` once to confirm a recorder build
+can still launch as plain Trailer with no session created.
 
 ## Architecture map
 
@@ -323,8 +380,9 @@ src/uxrecord/
   StubUxPlatformCapture.cpp non-macOS placeholder backend
 ```
 
-Application owns the recorder (`Application::startUxRecording()`,
-driven by `--ux-record` in `main.cpp`); MainWindow's only touches are
-facade calls (`uxrecord::recordEvent` in the flash/addDocument
-chokepoints and `uxrecord::attachToMainWindow(this)` at the end of the
-constructor), so default builds are bit-identical in behaviour.
+Application owns the recorder (`Application::startUxRecording()`, called
+from `main.cpp` on every recorder-build launch unless `--no-ux-record`);
+MainWindow's only touches are facade calls (`uxrecord::recordEvent` in
+the flash/addDocument chokepoints and `uxrecord::attachToMainWindow(this)`
+at the end of the constructor), so default builds are bit-identical in
+behaviour.

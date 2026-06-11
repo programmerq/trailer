@@ -52,15 +52,18 @@ entries terse and user-visible; CI / infrastructure churn lives in the
 
 - **Developer UX session recorder** (maintainer tooling, not a user
   feature). New compile-time option `TRAILER_ENABLE_UX_RECORDER`
-  (default **OFF** — release artifacts are unaffected) plus a
-  `--ux-record` runtime flag that records a usability session to a
-  strictly local directory under the app-data folder: structured
-  JSONL events (input, focus, dialogs, document state, manual
-  frustration markers), ~3 fps screen frames and a face-cam movie on
-  macOS (ScreenCaptureKit / AVFoundation), and an instrumented
-  "Hand Off to Preview" action that follows the fallback workflow
-  across the app switch. No network code anywhere in the feature;
-  nothing is ever transmitted. See `docs/ux-recorder.md`.
+  (default **OFF** — release artifacts are unaffected). Recorder-enabled
+  builds record every launch to a strictly local directory under the
+  app-data folder (so the build can be set as the default file handler
+  and capture Finder-launched sessions; `--no-ux-record` opts a single
+  launch out): structured JSONL events (input, focus, dialogs, document
+  state, manual frustration markers), ~3 fps screen frames and a
+  face-cam movie on macOS (ScreenCaptureKit / AVFoundation), and an
+  instrumented "Hand Off to Preview" action that follows the fallback
+  workflow across the app switch. macOS surfaces the first-run "approve
+  Screen Recording, then relaunch" step on the recording indicator. No
+  network code anywhere in the feature; nothing is ever transmitted. See
+  `docs/ux-recorder.md`.
 - **Release tooling.** New `scripts/bump-version.sh` (VERSION-file
   lifecycle), `scripts/release-notes.sh` (git-log → CHANGELOG
   draft), `scripts/extract-changelog.sh` (CHANGELOG section →

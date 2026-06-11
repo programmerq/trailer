@@ -31,12 +31,19 @@ int main(int argc, char *argv[]) {
 
     const trailer::CommandLineResult cli = trailer::parseCommandLine(app.arguments());
 
-    // Start the local UX recording session (developer recorder builds
-    // only — see docs/ux-recorder.md) before the first window exists
-    // so every window carries the indicator and instrumentation.
-    if (cli.uxRecord) {
+#ifdef TRAILER_UX_RECORDER
+    // Developer recorder builds (-DTRAILER_ENABLE_UX_RECORDER=ON) record
+    // EVERY launch by default, so the app can be set as the default
+    // handler for a file type and still capture sessions opened straight
+    // from Finder (which pass no CLI args). --no-ux-record opts a single
+    // launch out; --ux-record is accepted but redundant. Started before
+    // the first window exists so every window carries the indicator and
+    // instrumentation. This whole block is compiled out of default
+    // builds — they never record and the flags don't exist.
+    if (!cli.uxNoRecord) {
         app.startUxRecording();
     }
+#endif
 
     if (cli.paths.isEmpty()) {
         // Workstream I: "quit and keep windows" across every platform.

@@ -37,12 +37,13 @@ class Application : public QApplication {
     // skips spawning an empty MainWindow.
     bool restorePreviousSession();
 
-    // Begin a local UX recording session (--ux-record). Called from
-    // main.cpp before any window exists so the first window already
-    // carries the recording indicator. In builds configured without
-    // TRAILER_ENABLE_UX_RECORDER this only logs a warning — although
-    // it is unreachable there in practice, because the CLI parser
-    // rejects --ux-record as an unknown option.
+    // Begin a local UX recording session. Called from main.cpp before
+    // any window exists so the first window already carries the
+    // recording indicator. Recorder-enabled builds call this on every
+    // launch unless --no-ux-record is passed. In builds configured
+    // without TRAILER_ENABLE_UX_RECORDER this only logs a warning, and
+    // is unreachable in practice because main.cpp compiles the call
+    // out entirely.
     void startUxRecording();
 
     Settings &settings() { return m_settings; }

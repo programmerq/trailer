@@ -176,12 +176,27 @@ void attachToMainWindow(MainWindow *window) {
     auto *chip = new QLabel(QStringLiteral("● REC"), window);
     chip->setObjectName(QStringLiteral("uxRecorderIndicator"));
     chip->setStyleSheet(QStringLiteral("QLabel { color: #d22; font-weight: bold; }"));
-    chip->setToolTip(MainWindow::tr("UX recording in progress.\nSession: %1\nEverything stays "
-                                    "on this machine — nothing is uploaded.")
-                         .arg(rec->sessionDir()));
+    const QString chipBaseTip =
+        MainWindow::tr("UX recording in progress.\nSession: %1\nEverything stays on this "
+                       "machine — nothing is uploaded.")
+            .arg(rec->sessionDir());
+    chip->setToolTip(chipBaseTip);
     window->statusBar()->addPermanentWidget(chip);
 
-    QObject::connect(rec, &UxRecorder::captureIssue, window, &MainWindow::flashError);
+    // A capture issue (e.g. Screen Recording not yet granted) flashes
+    // in the status bar — but that fades after a few seconds and the
+    // most important one fires at first launch while the user is busy
+    // with the macOS permission dialog. So also pin the latest issue
+    // onto the always-visible REC chip's tooltip, and turn it amber,
+    // so hovering it later still explains what's missing and how to
+    // fix it (typically: approve + relaunch). See docs/ux-recorder.md.
+    QObject::connect(rec, &UxRecorder::captureIssue, window,
+                     [window, chip, chipBaseTip](const QString &message) {
+                         window->flashError(message);
+                         chip->setStyleSheet(
+                             QStringLiteral("QLabel { color: #c80; font-weight: bold; }"));
+                         chip->setToolTip(chipBaseTip + QStringLiteral("\n\n⚠ ") + message);
+                     });
     QObject::connect(rec, &UxRecorder::markerInserted, window, [window](const QString &kind) {
         window->flashStatus(MainWindow::tr("Marker recorded: %1").arg(kind));
     });

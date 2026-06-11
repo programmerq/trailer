@@ -208,15 +208,26 @@ bool UxRecorder::start() {
         context.emitEvent = [this](const QString &type, const QJsonObject &data) {
             recordEvent(QStringLiteral("macos"), type, data);
             // Surface capture problems in the UI without the platform
-            // layer knowing anything about widgets. Queued: the
-            // backend may call from its own threads.
-            if (type.contains(QLatin1String("denied")) ||
-                type.contains(QLatin1String("unavailable")) ||
-                type.contains(QLatin1String("failed"))) {
-                const QString message =
+            // layer knowing anything about widgets. Two routes:
+            //   - a "user_message" field lets the backend supply the
+            //     exact wording for important cases (e.g. the
+            //     "approve, then relaunch" Screen Recording guidance);
+            //   - otherwise any denied / unavailable / failed event
+            //     gets a generic one-liner.
+            // Queued because the backend may call from its own threads.
+            QString message;
+            if (data.contains(QLatin1String("user_message"))) {
+                message = data.value(QLatin1String("user_message")).toString();
+            } else if (type.contains(QLatin1String("denied")) ||
+                       type.contains(QLatin1String("unavailable")) ||
+                       type.contains(QLatin1String("failed"))) {
+                message =
                     QStringLiteral("UX recorder: %1 — session continues without it.").arg(type);
+            }
+            if (!message.isEmpty()) {
                 QMetaObject::invokeMethod(
-                    this, [this, message]() { emit captureIssue(message); }, Qt::QueuedConnection);
+                    this, [this, message]() { emit captureIssue(message); },
+                    Qt::QueuedConnection);
             }
         };
         context.frustrationHotkey = [this]() {
