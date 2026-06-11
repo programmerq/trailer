@@ -103,6 +103,10 @@ def main() -> None:
     for event_type, count in types.most_common(12):
         print(f"  {count:6d}  {event_type}")
 
+    degraded = manifest.get("degraded")
+    if degraded:
+        print(f"DEGRADED streams (capture failed): {', '.join(degraded)}")
+
     if manifest.get("status") == "recording":
         print("note: manifest still says 'recording' — crashed or in-flight session.")
 

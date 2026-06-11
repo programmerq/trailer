@@ -60,6 +60,8 @@ class TestUxRecorder : public QObject {
     void markersAndSemanticEvents();
     void cleanStopMarksManifestComplete();
     void staleRecordingSessionIsMarkedCrashed();
+    void degradedStreamEventMapping();
+    void degradedStreamsRecordedInManifest();
 };
 
 void TestUxRecorder::sessionDirectoryLayout() {
@@ -217,6 +219,67 @@ void TestUxRecorder::staleRecordingSessionIsMarkedCrashed() {
     QCOMPARE(updated.value(QStringLiteral("status")).toString(), QStringLiteral("crashed"));
     QVERIFY(updated.contains(QStringLiteral("crash_detected_utc")));
 #endif
+}
+
+void TestUxRecorder::degradedStreamEventMapping() {
+    // The pure classifier the start() chokepoint uses (UXR-002).
+    QCOMPARE(uxDegradedStreamForEventType(QStringLiteral("screen_capture_failed")),
+             QStringLiteral("screen"));
+    QCOMPARE(uxDegradedStreamForEventType(QStringLiteral("screen_recording_permission_pending")),
+             QStringLiteral("screen"));
+    QCOMPARE(uxDegradedStreamForEventType(QStringLiteral("camera_permission_denied")),
+             QStringLiteral("camera"));
+    QCOMPARE(uxDegradedStreamForEventType(QStringLiteral("input_tap_unavailable")),
+             QStringLiteral("input"));
+    // Healthy / advisory events do NOT degrade a stream — notably the
+    // input_monitoring_permission preflight (the tap often still
+    // delivers pointer events when it reports not-granted; UXR-003).
+    QVERIFY(uxDegradedStreamForEventType(QStringLiteral("screen_frame")).isEmpty());
+    QVERIFY(uxDegradedStreamForEventType(QStringLiteral("camera_started")).isEmpty());
+    QVERIFY(uxDegradedStreamForEventType(QStringLiteral("input_monitoring_permission")).isEmpty());
+}
+
+void TestUxRecorder::degradedStreamsRecordedInManifest() {
+    QTemporaryDir base;
+    QVERIFY(base.isValid());
+
+    UxRecorder recorder(base.path(), /*withPlatformCapture=*/false);
+    QVERIFY(recorder.start());
+    const QString sessionDir = recorder.sessionDir();
+
+    QSignalSpy spy(&recorder, &UxRecorder::degradedStreamsChanged);
+
+    // A live "recording" manifest reflects degradation immediately, so
+    // even a crashed session shows which streams failed.
+    recorder.reportStreamDegraded(QStringLiteral("screen"));
+    recorder.reportStreamDegraded(QStringLiteral("screen")); // idempotent
+    recorder.reportStreamDegraded(QStringLiteral("camera"));
+    QCOMPARE(spy.count(), 2); // one per distinct stream
+
+    const QJsonObject recordingManifest =
+        readJsonFile(QDir(sessionDir).filePath(QStringLiteral("manifest.json")));
+    QStringList recDegraded;
+    for (const QJsonValue &v : recordingManifest.value(QStringLiteral("degraded")).toArray()) {
+        recDegraded << v.toString();
+    }
+    QCOMPARE(recDegraded, (QStringList{QStringLiteral("camera"), QStringLiteral("screen")}));
+
+    recorder.stop();
+    const QJsonObject completeManifest =
+        readJsonFile(QDir(sessionDir).filePath(QStringLiteral("manifest.json")));
+    QCOMPARE(completeManifest.value(QStringLiteral("status")).toString(),
+             QStringLiteral("complete"));
+    QStringList doneDegraded;
+    for (const QJsonValue &v : completeManifest.value(QStringLiteral("degraded")).toArray()) {
+        doneDegraded << v.toString();
+    }
+    QCOMPARE(doneDegraded, (QStringList{QStringLiteral("camera"), QStringLiteral("screen")}));
+
+    // After stop, further reports are ignored (no resurrecting the
+    // manifest into "recording").
+    recorder.reportStreamDegraded(QStringLiteral("input"));
+    QCOMPARE(recorder.degradedStreams(),
+             (QStringList{QStringLiteral("camera"), QStringLiteral("screen")}));
 }
 
 QTEST_MAIN(TestUxRecorder)

@@ -10,6 +10,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QGuiApplication>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QMetaObject>
@@ -207,27 +208,32 @@ bool UxRecorder::start() {
         context.elapsedMs = [this]() { return m_stream.elapsedMs(); };
         context.emitEvent = [this](const QString &type, const QJsonObject &data) {
             recordEvent(QStringLiteral("macos"), type, data);
-            // Surface capture problems in the UI without the platform
-            // layer knowing anything about widgets. Two routes:
-            //   - a "user_message" field lets the backend supply the
-            //     exact wording for important cases (e.g. the
-            //     "approve, then relaunch" Screen Recording guidance);
-            //   - otherwise any denied / unavailable / failed event
-            //     gets a generic one-liner.
-            // Queued because the backend may call from its own threads.
+            // Classify capture failures so the UI and the manifest can
+            // reflect them, without the platform layer knowing anything
+            // about widgets. A failure event both:
+            //   - marks its stream degraded (manifest + persistent
+            //     indicator), via uxDegradedStreamForEventType;
+            //   - surfaces a transient status-bar message — the exact
+            //     wording from a "user_message" field when the backend
+            //     supplied one (e.g. the "approve, then relaunch"
+            //     Screen Recording guidance), else a generic one-liner.
+            // Both hops are queued to the GUI thread because the backend
+            // may call from its own dispatch queues / the tap thread.
+            const QString stream = uxDegradedStreamForEventType(type);
+            if (!stream.isEmpty()) {
+                QMetaObject::invokeMethod(
+                    this, [this, stream]() { reportStreamDegraded(stream); }, Qt::QueuedConnection);
+            }
             QString message;
             if (data.contains(QLatin1String("user_message"))) {
                 message = data.value(QLatin1String("user_message")).toString();
-            } else if (type.contains(QLatin1String("denied")) ||
-                       type.contains(QLatin1String("unavailable")) ||
-                       type.contains(QLatin1String("failed"))) {
+            } else if (!stream.isEmpty()) {
                 message =
                     QStringLiteral("UX recorder: %1 — session continues without it.").arg(type);
             }
             if (!message.isEmpty()) {
                 QMetaObject::invokeMethod(
-                    this, [this, message]() { emit captureIssue(message); },
-                    Qt::QueuedConnection);
+                    this, [this, message]() { emit captureIssue(message); }, Qt::QueuedConnection);
             }
         };
         context.frustrationHotkey = [this]() {
@@ -405,6 +411,37 @@ QJsonObject UxRecorder::captureConfigJson() const {
     };
 }
 
+QString uxDegradedStreamForEventType(const QString &type) {
+    // Only hard failures map to a degraded stream. Notably absent:
+    // input_monitoring_permission (granted:false) — that preflight is
+    // advisory and the tap often still delivers pointer events even
+    // when it reports not-granted (see UXR-003); only input_tap_unavailable
+    // means input capture truly didn't start.
+    static const QHash<QString, QString> kMap = {
+        {QStringLiteral("screen_capture_failed"), QStringLiteral("screen")},
+        {QStringLiteral("screen_capture_unsupported"), QStringLiteral("screen")},
+        {QStringLiteral("screen_recording_permission_pending"), QStringLiteral("screen")},
+        {QStringLiteral("camera_permission_denied"), QStringLiteral("camera")},
+        {QStringLiteral("camera_unavailable"), QStringLiteral("camera")},
+        {QStringLiteral("input_tap_unavailable"), QStringLiteral("input")},
+        {QStringLiteral("platform_capture_unavailable"), QStringLiteral("platform")},
+    };
+    return kMap.value(type);
+}
+
+void UxRecorder::reportStreamDegraded(const QString &stream) {
+    if (!m_recording || stream.isEmpty() || m_degradedStreams.contains(stream)) {
+        return;
+    }
+    m_degradedStreams.append(stream);
+    m_degradedStreams.sort();
+    // Rewrite the (still "recording") manifest now so even a crashed
+    // session records which streams were degraded; the "complete"
+    // rewrite at stop() repeats it. Cheap — degradations are rare.
+    writeManifest(QStringLiteral("recording"));
+    emit degradedStreamsChanged(m_degradedStreams);
+}
+
 void UxRecorder::writeMetadata() {
     QJsonArray screens;
     if (qobject_cast<QGuiApplication *>(QCoreApplication::instance())) {
@@ -452,6 +489,12 @@ void UxRecorder::writeManifest(const QString &status) {
         {QStringLiteral("dirs"), QJsonArray{QStringLiteral("screen"), QStringLiteral("camera"),
                                             QStringLiteral("screenshots")}},
     };
+    // Streams that failed this session (UXR-002). Present (and kept
+    // current) from the first failure on, so a consumer never mistakes
+    // an empty screen/ for a healthy session.
+    if (!m_degradedStreams.isEmpty()) {
+        manifest.insert(QStringLiteral("degraded"), QJsonArray::fromStringList(m_degradedStreams));
+    }
     if (status == QLatin1String("complete")) {
         manifest.insert(QStringLiteral("stopped_utc"), utcNowIso());
         manifest.insert(QStringLiteral("event_count"), static_cast<qint64>(m_stream.eventCount()));

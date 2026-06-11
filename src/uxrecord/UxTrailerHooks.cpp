@@ -186,17 +186,39 @@ void attachToMainWindow(MainWindow *window) {
     // A capture issue (e.g. Screen Recording not yet granted) flashes
     // in the status bar — but that fades after a few seconds and the
     // most important one fires at first launch while the user is busy
-    // with the macOS permission dialog. So also pin the latest issue
-    // onto the always-visible REC chip's tooltip, and turn it amber,
-    // so hovering it later still explains what's missing and how to
-    // fix it (typically: approve + relaunch). See docs/ux-recorder.md.
-    QObject::connect(rec, &UxRecorder::captureIssue, window,
-                     [window, chip, chipBaseTip](const QString &message) {
-                         window->flashError(message);
-                         chip->setStyleSheet(
-                             QStringLiteral("QLabel { color: #c80; font-weight: bold; }"));
-                         chip->setToolTip(chipBaseTip + QStringLiteral("\n\n⚠ ") + message);
-                     });
+    // with the macOS permission dialog. So it is also pinned to the
+    // always-visible REC chip below (degradedStreamsChanged), which
+    // persists for the whole session.
+    QObject::connect(rec, &UxRecorder::captureIssue, window, &MainWindow::flashError);
+
+    // Persistent degraded-stream state on the chip (UXR-002): once a
+    // stream fails, relabel to e.g. "● REC · no screen" in amber and
+    // list the streams in the tooltip, for the rest of the session —
+    // so an unattended degraded session is obvious at a glance, not
+    // just during the transient flash. Seeded from the recorder in
+    // case a stream already failed before this window attached.
+    const auto applyDegraded = [chip, chipBaseTip](const QStringList &streams) {
+        if (streams.isEmpty()) {
+            return;
+        }
+        static const QHash<QString, QString> kLabel = {
+            {QStringLiteral("screen"), MainWindow::tr("no screen")},
+            {QStringLiteral("camera"), MainWindow::tr("no camera")},
+            {QStringLiteral("input"), MainWindow::tr("no global input")},
+            {QStringLiteral("platform"), MainWindow::tr("no capture")},
+        };
+        QStringList labels;
+        for (const QString &s : streams) {
+            labels << kLabel.value(s, s);
+        }
+        chip->setText(QStringLiteral("● REC · ") + labels.join(QStringLiteral(", ")));
+        chip->setStyleSheet(QStringLiteral("QLabel { color: #c80; font-weight: bold; }"));
+        chip->setToolTip(chipBaseTip + QStringLiteral("\n\n⚠ Degraded: ") +
+                         streams.join(QStringLiteral(", ")));
+    };
+    applyDegraded(rec->degradedStreams());
+    QObject::connect(rec, &UxRecorder::degradedStreamsChanged, window, applyDegraded);
+
     QObject::connect(rec, &UxRecorder::markerInserted, window, [window](const QString &kind) {
         window->flashStatus(MainWindow::tr("Marker recorded: %1").arg(kind));
     });

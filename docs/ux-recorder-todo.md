@@ -19,7 +19,33 @@ is captured here.
 
 ---
 
-## UXR-001 — Gate the first session on relaunch-required permissions  ·  P1  ·  open
+## UXR-001 — Gate the first session on relaunch-required permissions  ·  P1  ·  done
+
+**Resolution (commit on `claude/exciting-archimedes-c0384k`).** Implemented as a
+blocking startup gate, `Application::preflightUxRecording()`
+([`Application.cpp`](../src/app/Application.cpp)), called from
+[`main.cpp`](../src/main.cpp) before the recorder starts. When
+`uxScreenRecordingGranted()` (a read-only `CGPreflightScreenCaptureAccess`, new in
+[`MacUxPlatformCapture.mm`](../src/uxrecord/MacUxPlatformCapture.mm) /
+[`StubUxPlatformCapture.cpp`](../src/uxrecord/StubUxPlatformCapture.cpp)) is false,
+a `QMessageBox` offers **Open Settings & Quit** (registers via
+`uxRequestScreenRecording()` + deep-links `…?Privacy_ScreenCapture`, then `return
+0` from `main`), **Record Without Screen** (proceeds; session marked degraded per
+UXR-002), and **Don't Record This Launch**. Granting once + relaunching yields
+screen frames thereafter.
+
+**Scoping decision.** The gate covers **Screen Recording only**, not Input
+Monitoring. A missing screen grant silently wastes the whole point of the
+recording (zero frames); a missing input grant only loses *Preview*-frontmost
+input (all Trailer input is captured Qt-side), so it is surfaced via the
+degraded-stream marking (UXR-002) rather than stacking a second blocking dialog
++ system prompt at startup. Revisit if Preview-side input proves important enough
+to gate on. Camera stays on its existing in-session prompt as the backlog
+specified.
+
+---
+
+## UXR-001 (original write-up) — Gate the first session on relaunch-required permissions
 
 **Problem.** macOS grants Screen Recording (ScreenCaptureKit) and Input
 Monitoring (IOKit HID tap) only to *future* launches of a process — granting
@@ -65,7 +91,24 @@ this gate.
 
 ---
 
-## UXR-002 — Make degraded-stream state persistent and machine-visible  ·  P2  ·  open
+## UXR-002 — Make degraded-stream state persistent and machine-visible  ·  P2  ·  done
+
+**Resolution (commit on `claude/exciting-archimedes-c0384k`).** A failure event is
+mapped to its stream by the pure, unit-tested `uxDegradedStreamForEventType()`
+and accumulated via `UxRecorder::reportStreamDegraded()`
+([`UxRecorder.cpp`](../src/uxrecord/UxRecorder.cpp)). Each newly-degraded stream
+(a) is written into a `degraded: [...]` array in `manifest.json` — rewritten on
+the live "recording" manifest too, so even a crashed session shows it — and
+(b) is broadcast via `degradedStreamsChanged`, which relabels the `● REC` chip to
+e.g. `● REC · no screen` (amber, reason in tooltip) for the whole session
+([`UxTrailerHooks.cpp`](../src/uxrecord/UxTrailerHooks.cpp)).
+`ux-session-summary.py` echoes the `degraded` list. Tests:
+`degradedStreamEventMapping` + `degradedStreamsRecordedInManifest` in
+[`test_ux_recorder.cpp`](../tests/test_ux_recorder.cpp).
+
+---
+
+## UXR-002 (original write-up) — Make degraded-stream state persistent and machine-visible
 
 **Problem.** When a stream fails, the only signal today is a single transient
 status-bar flash (`captureIssue` → "UX recorder: <type> — session continues
@@ -106,7 +149,23 @@ ambiguous — it can't distinguish "permission denied" from "never frontmost."
 
 ---
 
-## UXR-003 — Accurate input-permission reporting (mouse-but-no-keystrokes)  ·  P2  ·  open
+## UXR-003 — Accurate input-permission reporting (mouse-but-no-keystrokes)  ·  P2  ·  in-progress
+
+**Partial resolution (commit on `claude/exciting-archimedes-c0384k`).** The
+*documentation* half is done: the asymmetry is now spelled out in
+[ux-recorder.md](ux-recorder.md) ("Degraded sessions are marked") and encoded in
+behaviour — `uxDegradedStreamForEventType()` deliberately does **not** map the
+advisory `input_monitoring_permission {granted:false}` preflight to a degraded
+stream (only a tap that fails to start, `input_tap_unavailable`, does), so a run
+that captures pointer-but-not-keys is not reported as input-degraded and analysis
+won't read "0 macos key events" as "no input". **Still open:** emitting a positive
+*observed-capability* event (e.g. "tap delivered mouse but no keyDown over the
+first N s"). That needs stateful tracking in the tap thread and is left as
+follow-up.
+
+---
+
+## UXR-003 (original write-up) — Accurate input-permission reporting (mouse-but-no-keystrokes)
 
 **Problem.** `IOHIDCheckAccess()` at startup is not a reliable predictor of what
 the CGEventTap actually delivers, and the discrepancy is silently misreported.
@@ -139,7 +198,20 @@ doesn't mistake "0 macos key events" for "no input."
 
 ---
 
-## UXR-004 — Stop the global tap from duplicating input while Trailer is frontmost  ·  P3  ·  open
+## UXR-004 — Stop the global tap from duplicating input while Trailer is frontmost  ·  P3  ·  done
+
+**Resolution (commit on `claude/exciting-archimedes-c0384k`).** `handleTapEvent()`
+([`MacUxPlatformCapture.mm`](../src/uxrecord/MacUxPlatformCapture.mm)) now gates on
+`front != Preview` (was `front == Other`), so the global tap retains input only
+while Preview is frontmost; Trailer-frontmost input is owned by the Qt side
+(richer, with widget context). The frustration hotkey was already Preview-gated
+and is unaffected. The "two streams distinguished by source" note in
+[ux-recorder.md](ux-recorder.md) was updated to "qt ≈ Trailer, macos ≈ Preview,
+no overlap."
+
+---
+
+## UXR-004 (original write-up) — Stop the global tap from duplicating input while Trailer is frontmost
 
 **Problem.** The global input tap's purpose (per design) is to record input
 *while Preview is frontmost*. But `handleTapEvent` retains input whenever the

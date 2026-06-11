@@ -87,4 +87,20 @@ class UxPlatformCapture {
 // StubUxPlatformCapture.cpp — exactly one is compiled in).
 std::unique_ptr<UxPlatformCapture> createUxPlatformCapture(UxCaptureContext context);
 
+// Relaunch-required-permission preflight for the startup gate (UXR-001).
+//
+// macOS applies a Screen Recording grant only to FUTURE launches of a
+// binary — granting mid-session does not enable capture for the running
+// process — so a session started without it silently produces zero
+// screen frames. uxScreenRecordingGranted() is a read-only check (no
+// prompt) the app calls BEFORE recording to decide whether to warn.
+// uxRequestScreenRecording() triggers the system request so the app is
+// registered in the Screen Recording privacy list (making the Settings
+// deep-link useful); call it only when the user is about to head there.
+//
+// Both are no-ops-with-sane-defaults off macOS: granted() returns true
+// (so non-macOS recorder builds never gate), request() does nothing.
+bool uxScreenRecordingGranted();
+void uxRequestScreenRecording();
+
 } // namespace trailer

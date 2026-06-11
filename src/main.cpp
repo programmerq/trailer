@@ -41,7 +41,18 @@ int main(int argc, char *argv[]) {
     // instrumentation. This whole block is compiled out of default
     // builds — they never record and the flags don't exist.
     if (!cli.uxNoRecord) {
-        app.startUxRecording();
+        // Gate on relaunch-required permissions first (UXR-001), so a
+        // first run without Screen Recording doesn't silently record a
+        // screenless session. The user can still proceed degraded.
+        switch (app.preflightUxRecording()) {
+        case trailer::Application::UxRecordDecision::Start:
+            app.startUxRecording();
+            break;
+        case trailer::Application::UxRecordDecision::Skip:
+            break;
+        case trailer::Application::UxRecordDecision::Quit:
+            return 0;
+        }
     }
 #endif
 

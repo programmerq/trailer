@@ -217,8 +217,7 @@ class MacUxPlatformCapture : public UxPlatformCapture {
     void sampleTapMouse(CGEventRef event, bool dragging);
     QString writeJpegFrame(CVImageBufferRef pixelBuffer, quint64 sequence, qint64 elapsed);
 #if TRAILER_HAS_SCREENCAPTUREKIT
-    void onShareableContent(SCShareableContent *content, NSError *error)
-        API_AVAILABLE(macos(12.3));
+    void onShareableContent(SCShareableContent *content, NSError *error) API_AVAILABLE(macos(12.3));
 #endif
 
     bool retainNow() const {
@@ -287,12 +286,12 @@ void MacUxPlatformCapture::start() {
     m_cameraQueue = dispatch_queue_create("org.trailer.ux.camera", DISPATCH_QUEUE_SERIAL);
 
     NSString *bundleId = [[NSBundle mainBundle] bundleIdentifier];
-    emitEvent(QStringLiteral("platform_capture_started"),
-              QJsonObject{{QStringLiteral("trailer_bundle_id"),
-                           bundleId ? QString::fromNSString(bundleId)
-                                    : QStringLiteral("(unbundled)")},
-                          {QStringLiteral("trailer_pid"), static_cast<qint64>(getpid())},
-                          {QStringLiteral("preview_bundle_id"), m_ctx.previewBundleId}});
+    emitEvent(
+        QStringLiteral("platform_capture_started"),
+        QJsonObject{{QStringLiteral("trailer_bundle_id"),
+                     bundleId ? QString::fromNSString(bundleId) : QStringLiteral("(unbundled)")},
+                    {QStringLiteral("trailer_pid"), static_cast<qint64>(getpid())},
+                    {QStringLiteral("preview_bundle_id"), m_ctx.previewBundleId}});
 
     startForegroundWatcher();
     startScreenCapture();
@@ -318,7 +317,8 @@ void MacUxPlatformCapture::stop() {
     // stopCamera() reads them. Any body dispatched after this point
     // exits on the m_stopping flag.
     if (m_cameraQueue) {
-        dispatch_sync(m_cameraQueue, ^{});
+        dispatch_sync(m_cameraQueue, ^{
+                      });
     }
     stopCamera();
     emitEvent(QStringLiteral("platform_capture_stopped"));
@@ -349,15 +349,15 @@ void MacUxPlatformCapture::updateFrontmost(NSRunningApplication *app, bool initi
         flushTapBatches();
     }
     if (initial || previous != static_cast<int>(kind)) {
-        emitEvent(QStringLiteral("app_activated"),
-                  QJsonObject{{QStringLiteral("bundle_id"),
-                               app.bundleIdentifier ? QString::fromNSString(app.bundleIdentifier)
-                                                    : QString()},
-                              {QStringLiteral("name"),
-                               app.localizedName ? QString::fromNSString(app.localizedName)
-                                                 : QString()},
-                              {QStringLiteral("pid"), static_cast<qint64>(app.processIdentifier)},
-                              {QStringLiteral("kind"), frontKindName(static_cast<int>(kind))}});
+        emitEvent(
+            QStringLiteral("app_activated"),
+            QJsonObject{
+                {QStringLiteral("bundle_id"),
+                 app.bundleIdentifier ? QString::fromNSString(app.bundleIdentifier) : QString()},
+                {QStringLiteral("name"),
+                 app.localizedName ? QString::fromNSString(app.localizedName) : QString()},
+                {QStringLiteral("pid"), static_cast<qint64>(app.processIdentifier)},
+                {QStringLiteral("kind"), frontKindName(static_cast<int>(kind))}});
     }
 }
 
@@ -370,12 +370,12 @@ void MacUxPlatformCapture::startForegroundWatcher() {
                     object:nil
                      queue:[NSOperationQueue mainQueue]
                 usingBlock:^(NSNotification *note) {
-                    std::lock_guard<std::mutex> lock(guard->mutex);
-                    if (!guard->alive) {
-                        return;
-                    }
-                    NSRunningApplication *app = note.userInfo[NSWorkspaceApplicationKey];
-                    capture->updateFrontmost(app, /*initial=*/false);
+                  std::lock_guard<std::mutex> lock(guard->mutex);
+                  if (!guard->alive) {
+                      return;
+                  }
+                  NSRunningApplication *app = note.userInfo[NSWorkspaceApplicationKey];
+                  capture->updateFrontmost(app, /*initial=*/false);
                 }];
 }
 
@@ -420,13 +420,13 @@ void MacUxPlatformCapture::startScreenCapture() {
 
         MacUxPlatformCapture *capture = this;
         auto guard = m_guard;
-        [SCShareableContent getShareableContentWithCompletionHandler:^(
-                                SCShareableContent *content, NSError *error) {
-            std::lock_guard<std::mutex> lock(guard->mutex);
-            if (!guard->alive) {
-                return;
-            }
-            capture->onShareableContent(content, error);
+        [SCShareableContent getShareableContentWithCompletionHandler:^(SCShareableContent *content,
+                                                                       NSError *error) {
+          std::lock_guard<std::mutex> lock(guard->mutex);
+          if (!guard->alive) {
+              return;
+          }
+          capture->onShareableContent(content, error);
         }];
         return;
     }
@@ -468,8 +468,7 @@ void MacUxPlatformCapture::onShareableContent(SCShareableContent *content, NSErr
     for (NSScreen *screen in [NSScreen screens]) {
         NSNumber *screenNumber = screen.deviceDescription[@"NSScreenNumber"];
         if (screenNumber &&
-            static_cast<CGDirectDisplayID>(screenNumber.unsignedIntValue) ==
-                display.displayID) {
+            static_cast<CGDirectDisplayID>(screenNumber.unsignedIntValue) == display.displayID) {
             backingScale = screen.backingScaleFactor;
             break;
         }
@@ -518,24 +517,22 @@ void MacUxPlatformCapture::onShareableContent(SCShareableContent *content, NSErr
     const int outHeight = static_cast<int>(height);
     const qint64 displayId = display.displayID;
     [stream startCaptureWithCompletionHandler:^(NSError *startError) {
-        std::lock_guard<std::mutex> lock(guard->mutex);
-        if (!guard->alive) {
-            return;
-        }
-        if (startError) {
-            capture->emitEvent(
-                QStringLiteral("screen_capture_failed"),
-                QJsonObject{{QStringLiteral("error"),
-                             QString::fromNSString(startError.localizedDescription)}});
-            return;
-        }
-        capture->emitEvent(QStringLiteral("screen_capture_started"),
-                           QJsonObject{{QStringLiteral("display_id"), displayId},
-                                       {QStringLiteral("width"), outWidth},
-                                       {QStringLiteral("height"), outHeight},
-                                       {QStringLiteral("fps"), kScreenFps},
-                                       {QStringLiteral("format"),
-                                        QStringLiteral("jpeg_frames")}});
+      std::lock_guard<std::mutex> lock(guard->mutex);
+      if (!guard->alive) {
+          return;
+      }
+      if (startError) {
+          capture->emitEvent(QStringLiteral("screen_capture_failed"),
+                             QJsonObject{{QStringLiteral("error"),
+                                          QString::fromNSString(startError.localizedDescription)}});
+          return;
+      }
+      capture->emitEvent(QStringLiteral("screen_capture_started"),
+                         QJsonObject{{QStringLiteral("display_id"), displayId},
+                                     {QStringLiteral("width"), outWidth},
+                                     {QStringLiteral("height"), outHeight},
+                                     {QStringLiteral("fps"), kScreenFps},
+                                     {QStringLiteral("format"), QStringLiteral("jpeg_frames")}});
     }];
 }
 #endif
@@ -547,9 +544,10 @@ void MacUxPlatformCapture::stopScreenCapture() {
         if (stream) {
             dispatch_semaphore_t done = dispatch_semaphore_create(0);
             [stream stopCaptureWithCompletionHandler:^(NSError *) {
-                dispatch_semaphore_signal(done);
+              dispatch_semaphore_signal(done);
             }];
-            dispatch_semaphore_wait(done, dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(2 * NSEC_PER_SEC)));
+            dispatch_semaphore_wait(
+                done, dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(2 * NSEC_PER_SEC)));
         }
     }
 #endif
@@ -589,8 +587,8 @@ QString MacUxPlatformCapture::writeJpegFrame(CVImageBufferRef pixelBuffer, quint
                 (__bridge CFURLRef)url, CFSTR("public.jpeg"), 1, nullptr);
             if (destination) {
                 NSDictionary *properties = @{
-                    (__bridge NSString *)kCGImageDestinationLossyCompressionQuality :
-                        @(kScreenJpegQuality)
+                    (__bridge NSString *)
+                    kCGImageDestinationLossyCompressionQuality : @(kScreenJpegQuality)
                 };
                 CGImageDestinationAddImage(destination, image,
                                            (__bridge CFDictionaryRef)properties);
@@ -626,8 +624,7 @@ void MacUxPlatformCapture::handleScreenFrame(CMSampleBufferRef sampleBuffer) {
                 CFDictionaryGetValue(info, (__bridge CFStringRef)SCStreamFrameInfoStatus);
             if (statusValue) {
                 int status = 0;
-                CFNumberGetValue(static_cast<CFNumberRef>(statusValue), kCFNumberIntType,
-                                 &status);
+                CFNumberGetValue(static_cast<CFNumberRef>(statusValue), kCFNumberIntType, &status);
                 if (status != SCFrameStatusComplete) {
                     return;
                 }
@@ -662,19 +659,19 @@ void MacUxPlatformCapture::startCamera() {
         emitEvent(QStringLiteral("camera_permission_requested"));
         MacUxPlatformCapture *capture = this;
         auto guard = m_guard;
-        [AVCaptureDevice requestAccessForMediaType:AVMediaTypeVideo
-                                 completionHandler:^(BOOL granted) {
-                                     std::lock_guard<std::mutex> lock(guard->mutex);
-                                     if (!guard->alive) {
-                                         return;
-                                     }
-                                     if (granted) {
-                                         capture->startCameraSession();
-                                     } else {
-                                         capture->emitEvent(
-                                             QStringLiteral("camera_permission_denied"));
-                                     }
-                                 }];
+        [AVCaptureDevice
+            requestAccessForMediaType:AVMediaTypeVideo
+                    completionHandler:^(BOOL granted) {
+                      std::lock_guard<std::mutex> lock(guard->mutex);
+                      if (!guard->alive) {
+                          return;
+                      }
+                      if (granted) {
+                          capture->startCameraSession();
+                      } else {
+                          capture->emitEvent(QStringLiteral("camera_permission_denied"));
+                      }
+                    }];
         break;
     }
     default:
@@ -688,11 +685,11 @@ void MacUxPlatformCapture::startCameraSession() {
     MacUxPlatformCapture *capture = this;
     auto guard = m_guard;
     dispatch_async(m_cameraQueue, ^{
-        std::lock_guard<std::mutex> lock(guard->mutex);
-        if (!guard->alive) {
-            return;
-        }
-        capture->cameraSessionBody();
+      std::lock_guard<std::mutex> lock(guard->mutex);
+      if (!guard->alive) {
+          return;
+      }
+      capture->cameraSessionBody();
     });
 }
 
@@ -702,14 +699,13 @@ void MacUxPlatformCapture::cameraSessionBody() {
     }
     AVCaptureDevice *device = [AVCaptureDevice defaultDeviceWithMediaType:AVMediaTypeVideo];
     if (!device) {
-        emitEvent(QStringLiteral("camera_unavailable"),
-                  QJsonObject{{QStringLiteral("reason"),
-                               QStringLiteral("no default video device")}});
+        emitEvent(
+            QStringLiteral("camera_unavailable"),
+            QJsonObject{{QStringLiteral("reason"), QStringLiteral("no default video device")}});
         return;
     }
     NSError *error = nil;
-    AVCaptureDeviceInput *input = [AVCaptureDeviceInput deviceInputWithDevice:device
-                                                                        error:&error];
+    AVCaptureDeviceInput *input = [AVCaptureDeviceInput deviceInputWithDevice:device error:&error];
     AVCaptureSession *session = [[AVCaptureSession alloc] init];
     // Face-cam resolution: 640×480 keeps a full session in the tens
     // of megabytes and is plenty for reading reactions.
@@ -752,8 +748,9 @@ void MacUxPlatformCapture::stopCamera() {
         if (delegate && delegate.finishedSemaphore) {
             // Bounded wait for the moov atom so the .mov is playable;
             // 3 s is generous for a 480p stream.
-            dispatch_semaphore_wait(delegate.finishedSemaphore,
-                                    dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(3 * NSEC_PER_SEC)));
+            dispatch_semaphore_wait(
+                delegate.finishedSemaphore,
+                dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(3 * NSEC_PER_SEC)));
         }
     }
     if (session && session.isRunning) {
@@ -768,9 +765,9 @@ void MacUxPlatformCapture::stopCamera() {
 
 void MacUxPlatformCapture::startInputTap() {
     if (IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) != kIOHIDAccessTypeGranted) {
-        emitEvent(QStringLiteral("input_monitoring_permission"),
-                  QJsonObject{{QStringLiteral("granted"), false},
-                              {QStringLiteral("requesting"), true}});
+        emitEvent(
+            QStringLiteral("input_monitoring_permission"),
+            QJsonObject{{QStringLiteral("granted"), false}, {QStringLiteral("requesting"), true}});
         // Shows the Input Monitoring prompt; like Screen Recording,
         // the grant typically applies to future launches. The tap
         // attempt below still runs — it fails cleanly when denied.
@@ -781,49 +778,47 @@ void MacUxPlatformCapture::startInputTap() {
     // guard flips, so the block may capture `this` directly.
     MacUxPlatformCapture *capture = this;
     m_tapThread = [[NSThread alloc] initWithBlock:^{
-        const CGEventMask mask =
-            CGEventMaskBit(kCGEventMouseMoved) | CGEventMaskBit(kCGEventLeftMouseDragged) |
-            CGEventMaskBit(kCGEventRightMouseDragged) |
-            CGEventMaskBit(kCGEventOtherMouseDragged) | CGEventMaskBit(kCGEventLeftMouseDown) |
-            CGEventMaskBit(kCGEventLeftMouseUp) | CGEventMaskBit(kCGEventRightMouseDown) |
-            CGEventMaskBit(kCGEventRightMouseUp) | CGEventMaskBit(kCGEventOtherMouseDown) |
-            CGEventMaskBit(kCGEventOtherMouseUp) | CGEventMaskBit(kCGEventScrollWheel) |
-            CGEventMaskBit(kCGEventKeyDown) | CGEventMaskBit(kCGEventKeyUp) |
-            CGEventMaskBit(kCGEventFlagsChanged);
-        CFMachPortRef tap =
-            CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap,
-                             kCGEventTapOptionListenOnly, mask, tapCallback, capture);
-        if (!tap) {
-            capture->emitEvent(
-                QStringLiteral("input_tap_unavailable"),
-                QJsonObject{{QStringLiteral("hint"),
-                             QStringLiteral("grant Input Monitoring (or Accessibility) to "
-                                            "Trailer in System Settings → Privacy & Security "
-                                            "to record input while Preview is frontmost")}});
-            return;
-        }
-        capture->m_tap = tap;
-        CFRunLoopSourceRef source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0);
-        capture->m_tapRunLoop = CFRunLoopGetCurrent();
-        CFRunLoopAddSource(capture->m_tapRunLoop, source, kCFRunLoopCommonModes);
-        CGEventTapEnable(tap, true);
-        capture->emitEvent(QStringLiteral("input_tap_started"));
+      const CGEventMask mask =
+          CGEventMaskBit(kCGEventMouseMoved) | CGEventMaskBit(kCGEventLeftMouseDragged) |
+          CGEventMaskBit(kCGEventRightMouseDragged) | CGEventMaskBit(kCGEventOtherMouseDragged) |
+          CGEventMaskBit(kCGEventLeftMouseDown) | CGEventMaskBit(kCGEventLeftMouseUp) |
+          CGEventMaskBit(kCGEventRightMouseDown) | CGEventMaskBit(kCGEventRightMouseUp) |
+          CGEventMaskBit(kCGEventOtherMouseDown) | CGEventMaskBit(kCGEventOtherMouseUp) |
+          CGEventMaskBit(kCGEventScrollWheel) | CGEventMaskBit(kCGEventKeyDown) |
+          CGEventMaskBit(kCGEventKeyUp) | CGEventMaskBit(kCGEventFlagsChanged);
+      CFMachPortRef tap = CGEventTapCreate(kCGSessionEventTap, kCGHeadInsertEventTap,
+                                           kCGEventTapOptionListenOnly, mask, tapCallback, capture);
+      if (!tap) {
+          capture->emitEvent(
+              QStringLiteral("input_tap_unavailable"),
+              QJsonObject{{QStringLiteral("hint"),
+                           QStringLiteral("grant Input Monitoring (or Accessibility) to "
+                                          "Trailer in System Settings → Privacy & Security "
+                                          "to record input while Preview is frontmost")}});
+          return;
+      }
+      capture->m_tap = tap;
+      CFRunLoopSourceRef source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0);
+      capture->m_tapRunLoop = CFRunLoopGetCurrent();
+      CFRunLoopAddSource(capture->m_tapRunLoop, source, kCFRunLoopCommonModes);
+      CGEventTapEnable(tap, true);
+      capture->emitEvent(QStringLiteral("input_tap_started"));
 
-        // stop() can race a just-started thread: CFRunLoopStop on a
-        // loop that is not running yet is a no-op, which would leave
-        // CFRunLoopRun() blocked forever. Re-check the stop flag at
-        // the last possible moment instead.
-        if (!capture->m_stopping.load()) {
-            CFRunLoopRun(); // until stopInputTap() calls CFRunLoopStop
-        }
+      // stop() can race a just-started thread: CFRunLoopStop on a
+      // loop that is not running yet is a no-op, which would leave
+      // CFRunLoopRun() blocked forever. Re-check the stop flag at
+      // the last possible moment instead.
+      if (!capture->m_stopping.load()) {
+          CFRunLoopRun(); // until stopInputTap() calls CFRunLoopStop
+      }
 
-        CGEventTapEnable(tap, false);
-        CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes);
-        CFRelease(source);
-        CFMachPortInvalidate(tap);
-        capture->m_tap = nullptr;
-        CFRelease(tap);
-        capture->m_tapRunLoop = nullptr;
+      CGEventTapEnable(tap, false);
+      CFRunLoopRemoveSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes);
+      CFRelease(source);
+      CFMachPortInvalidate(tap);
+      capture->m_tap = nullptr;
+      CFRelease(tap);
+      capture->m_tapRunLoop = nullptr;
     }];
     m_tapThread.name = @"trailer-ux-input-tap";
     [m_tapThread start];
@@ -848,8 +843,7 @@ void MacUxPlatformCapture::sampleTapMouse(CGEventRef event, bool dragging) {
     bool flushDue = false;
     {
         std::lock_guard<std::mutex> lock(m_tapMutex);
-        if (!m_tapMouseSamples.isEmpty() &&
-            now - m_tapLastSampleMs < kTapMouseSampleIntervalMs) {
+        if (!m_tapMouseSamples.isEmpty() && now - m_tapLastSampleMs < kTapMouseSampleIntervalMs) {
             return;
         }
         m_tapLastSampleMs = now;
@@ -890,11 +884,10 @@ void MacUxPlatformCapture::flushTapBatches() {
                               {QStringLiteral("frontmost"), front}});
     }
     if (scrollEvents > 0) {
-        emitEvent(QStringLiteral("wheel"),
-                  QJsonObject{{QStringLiteral("events"), scrollEvents},
-                              {QStringLiteral("delta_x"), scrollX},
-                              {QStringLiteral("delta_y"), scrollY},
-                              {QStringLiteral("frontmost"), front}});
+        emitEvent(QStringLiteral("wheel"), QJsonObject{{QStringLiteral("events"), scrollEvents},
+                                                       {QStringLiteral("delta_x"), scrollX},
+                                                       {QStringLiteral("delta_y"), scrollY},
+                                                       {QStringLiteral("frontmost"), front}});
     }
 }
 
@@ -903,9 +896,14 @@ void MacUxPlatformCapture::handleTapEvent(CGEventType type, CGEventRef event) {
         return;
     }
     const int front = m_front.load();
-    if (m_paused.load() || front == static_cast<int>(FrontKind::Other)) {
-        // Never retain input while unrelated applications are
-        // frontmost.
+    // Only retain global-tap input while *Preview* is frontmost
+    // (UXR-004). While Trailer is frontmost the Qt-side capture already
+    // records the same input WITH widget context, so a tap copy here
+    // would be a redundant second source:"macos" pointer/key stream and
+    // a double-counting trap for analysis. While any unrelated app is
+    // frontmost we never record input at all. The frustration-marker
+    // hotkey below is itself Preview-gated, so it is unaffected.
+    if (m_paused.load() || front != static_cast<int>(FrontKind::Preview)) {
         return;
     }
 
@@ -928,15 +926,15 @@ void MacUxPlatformCapture::handleTapEvent(CGEventType type, CGEventRef event) {
         const bool down = (type == kCGEventLeftMouseDown || type == kCGEventRightMouseDown ||
                            type == kCGEventOtherMouseDown);
         const CGPoint location = CGEventGetLocation(event);
-        emitEvent(QStringLiteral("mouse_button"),
-                  QJsonObject{{QStringLiteral("action"),
-                               down ? QStringLiteral("press") : QStringLiteral("release")},
-                              {QStringLiteral("button"), tapButtonName(type, event)},
-                              {QStringLiteral("global"),
-                               QJsonArray{qRound(location.x), qRound(location.y)}},
-                              {QStringLiteral("modifiers"),
-                               tapModifierNames(CGEventGetFlags(event))},
-                              {QStringLiteral("frontmost"), frontKindName(front)}});
+        emitEvent(
+            QStringLiteral("mouse_button"),
+            QJsonObject{
+                {QStringLiteral("action"),
+                 down ? QStringLiteral("press") : QStringLiteral("release")},
+                {QStringLiteral("button"), tapButtonName(type, event)},
+                {QStringLiteral("global"), QJsonArray{qRound(location.x), qRound(location.y)}},
+                {QStringLiteral("modifiers"), tapModifierNames(CGEventGetFlags(event))},
+                {QStringLiteral("frontmost"), frontKindName(front)}});
         break;
     }
     case kCGEventScrollWheel: {
@@ -956,18 +954,18 @@ void MacUxPlatformCapture::handleTapEvent(CGEventType type, CGEventRef event) {
         // frontmost (inside Trailer the in-app QAction owns the
         // chord; gating on Preview avoids double markers).
         if (down && keyCode == kMarkerHotkeyKeyCode && (flags & kCGEventFlagMaskCommand) &&
-            (flags & kCGEventFlagMaskShift) &&
-            front == static_cast<int>(FrontKind::Preview) && m_ctx.frustrationHotkey) {
+            (flags & kCGEventFlagMaskShift) && front == static_cast<int>(FrontKind::Preview) &&
+            m_ctx.frustrationHotkey) {
             m_ctx.frustrationHotkey();
         }
 
-        QJsonObject data{{QStringLiteral("action"),
-                          down ? QStringLiteral("press") : QStringLiteral("release")},
-                         {QStringLiteral("key_code"), static_cast<qint64>(keyCode)},
-                         {QStringLiteral("modifiers"), tapModifierNames(flags)},
-                         {QStringLiteral("auto_repeat"),
-                          CGEventGetIntegerValueField(event, kCGKeyboardEventAutorepeat) != 0},
-                         {QStringLiteral("frontmost"), frontKindName(front)}};
+        QJsonObject data{
+            {QStringLiteral("action"), down ? QStringLiteral("press") : QStringLiteral("release")},
+            {QStringLiteral("key_code"), static_cast<qint64>(keyCode)},
+            {QStringLiteral("modifiers"), tapModifierNames(flags)},
+            {QStringLiteral("auto_repeat"),
+             CGEventGetIntegerValueField(event, kCGKeyboardEventAutorepeat) != 0},
+            {QStringLiteral("frontmost"), frontKindName(front)}};
         if (m_ctx.captureKeyText) {
             UniChar characters[8];
             UniCharCount length = 0;
@@ -984,10 +982,10 @@ void MacUxPlatformCapture::handleTapEvent(CGEventType type, CGEventRef event) {
         break;
     }
     case kCGEventFlagsChanged:
-        emitEvent(QStringLiteral("modifiers_changed"),
-                  QJsonObject{{QStringLiteral("modifiers"),
-                               tapModifierNames(CGEventGetFlags(event))},
-                              {QStringLiteral("frontmost"), frontKindName(front)}});
+        emitEvent(
+            QStringLiteral("modifiers_changed"),
+            QJsonObject{{QStringLiteral("modifiers"), tapModifierNames(CGEventGetFlags(event))},
+                        {QStringLiteral("frontmost"), frontKindName(front)}});
         break;
     default:
         break;
@@ -996,6 +994,32 @@ void MacUxPlatformCapture::handleTapEvent(CGEventType type, CGEventRef event) {
 
 std::unique_ptr<UxPlatformCapture> createUxPlatformCapture(UxCaptureContext context) {
     return std::make_unique<MacUxPlatformCapture>(std::move(context));
+}
+
+// UXR-001 startup gate helpers. Read-only check + (separately) the
+// system request, kept apart so the normal preflight never pops a
+// prompt; see UxPlatformCapture.h.
+bool uxScreenRecordingGranted() {
+#if TRAILER_HAS_SCREENCAPTUREKIT
+    if (@available(macOS 12.3, *)) {
+        return CGPreflightScreenCaptureAccess();
+    }
+#endif
+    // Pre-12.3 has no ScreenCaptureKit path to gate on; treat as
+    // "granted" so the gate never blocks (capture itself records
+    // screen_capture_unsupported instead).
+    return true;
+}
+
+void uxRequestScreenRecording() {
+#if TRAILER_HAS_SCREENCAPTUREKIT
+    if (@available(macOS 12.3, *)) {
+        // Registers Trailer in System Settings → Privacy & Security →
+        // Screen Recording (and shows the system prompt the first time),
+        // so the deep-link the gate opens lands on a togglable entry.
+        CGRequestScreenCaptureAccess();
+    }
+#endif
 }
 
 } // namespace trailer
@@ -1023,10 +1047,10 @@ std::unique_ptr<UxPlatformCapture> createUxPlatformCapture(UxCaptureContext cont
     if (!_guard->alive || !_owner) {
         return;
     }
-    _owner->emitEvent(QStringLiteral("screen_capture_stopped"),
-                      QJsonObject{{QStringLiteral("error"),
-                                   error ? QString::fromNSString(error.localizedDescription)
-                                         : QString()}});
+    _owner->emitEvent(
+        QStringLiteral("screen_capture_stopped"),
+        QJsonObject{{QStringLiteral("error"),
+                     error ? QString::fromNSString(error.localizedDescription) : QString()}});
 }
 
 @end
@@ -1041,9 +1065,9 @@ std::unique_ptr<UxPlatformCapture> createUxPlatformCapture(UxCaptureContext cont
     if (!_guard->alive || !_owner) {
         return;
     }
-    _owner->emitEvent(QStringLiteral("camera_started"),
-                      QJsonObject{{QStringLiteral("file"),
-                                   QStringLiteral("camera/camera-000.mov")}});
+    _owner->emitEvent(
+        QStringLiteral("camera_started"),
+        QJsonObject{{QStringLiteral("file"), QStringLiteral("camera/camera-000.mov")}});
 }
 
 - (void)captureOutput:(AVCaptureFileOutput *)output
@@ -1055,10 +1079,10 @@ std::unique_ptr<UxPlatformCapture> createUxPlatformCapture(UxCaptureContext cont
         if (_guard->alive && _owner) {
             _owner->emitEvent(
                 QStringLiteral("camera_stopped"),
-                QJsonObject{{QStringLiteral("file"), QStringLiteral("camera/camera-000.mov")},
-                            {QStringLiteral("error"),
-                             error ? QString::fromNSString(error.localizedDescription)
-                                   : QString()}});
+                QJsonObject{
+                    {QStringLiteral("file"), QStringLiteral("camera/camera-000.mov")},
+                    {QStringLiteral("error"),
+                     error ? QString::fromNSString(error.localizedDescription) : QString()}});
         }
     }
     if (self.finishedSemaphore) {

@@ -10,12 +10,13 @@ Preview.
 recording sessions) live in [ux-recorder-todo.md](ux-recorder-todo.md).
 
 **Philosophy compliance.** PHILOSOPHY.md bans telemetry. This feature
-is not telemetry: it is OFF at compile time by default, requires an
-explicit `--ux-record` flag at runtime even when compiled in, writes
-only to the local disk, and contains **no network code of any kind** —
-no HTTP clients, no upload paths, no analytics services. Code review
-should reject any change that introduces an outbound-capable class
-into `src/uxrecord/`.
+is not telemetry: it is OFF at compile time by default, records only in
+builds explicitly compiled with the recorder enabled (and even then a
+single launch can opt out with `--no-ux-record`), writes only to the
+local disk, and contains **no network code of any kind** — no HTTP
+clients, no upload paths, no analytics services. Code review should
+reject any change that introduces an outbound-capable class into
+`src/uxrecord/`.
 
 ---
 
@@ -124,39 +125,62 @@ the session continues.
 
 | Permission | Used for | When missing |
 |---|---|---|
-| Screen Recording | ScreenCaptureKit display frames | `screen_recording_permission_pending` event; no frames this session |
-| Camera | AVFoundation face-cam movie | `camera_permission_denied`; no camera file |
-| Input Monitoring | global event tap (input while Preview is frontmost) | `input_tap_unavailable`; Trailer-local input still recorded via Qt |
+| Screen Recording | ScreenCaptureKit display frames | startup gate (below); degraded `screen`; no frames this session |
+| Camera | AVFoundation face-cam movie | `camera_permission_denied`; degraded `camera`; no camera file |
+| Input Monitoring | global event tap (input while Preview is frontmost) | `input_tap_unavailable`; degraded `input`; Trailer-local input still recorded via Qt |
 
 ### First-run Screen Recording is a two-launch dance (expected)
 
 This is the one rough edge worth internalising. macOS applies a Screen
 Recording grant **only to future launches of a binary, never the
-process that asked**. So the very first recorder launch on a machine
-goes like this:
+process that asked**. So starting a session without it would capture
+everything *except* the screen. To stop that from silently wasting a
+recording, the first launch without the grant shows a **blocking gate**
+(`Application::preflightUxRecording`) before recording begins:
 
-1. Trailer requests Screen Recording → the system dialog appears.
-2. **This session captures everything except the screen** — events,
-   input, and camera all record; `screen/` stays empty. Trailer records
-   a `screen_recording_permission_pending` event and shows the message
-   "Approve Trailer… then quit and relaunch" both as a status-bar flash
-   **and** pinned on the **● REC** chip's tooltip (the chip turns amber)
-   so it's still discoverable after the flash fades.
-3. You click Allow in the system dialog.
-4. **Quit and relaunch Trailer** (with record-by-default, "relaunch" is
-   just opening another file it owns). From now on every session
-   captures the screen — the grant persists, so you only do this once
-   per machine, ever.
+- **Open Settings & Quit** *(default)* — registers Trailer in the
+  Screen Recording privacy list, deep-links you straight to the toggle,
+  and quits. Approve it there, then relaunch (with record-by-default,
+  "relaunch" is just opening another file Trailer owns). From then on
+  every session captures the screen — the grant persists, so you do
+  this **once per machine, ever**.
+- **Record Without Screen** — proceed now with a degraded session
+  (input + camera record; `screen/` stays empty). The session is marked
+  degraded (see below).
+- **Don't Record This Launch** — run Trailer normally with no session.
 
-Because the recorder build runs as your default file opener, step 4
-happens naturally the next time you open a PDF, and you never see this
-again. If you'd rather front-load it, approve Screen Recording (and
+If you'd rather front-load everything, approve Screen Recording (and
 Camera / Input Monitoring) once in System Settings → Privacy & Security
-before your first real session.
+before your first session and the gate never appears.
 
 The same future-launch rule applies to **Input Monitoring** (the global
-event tap that records input while Preview is frontmost); Camera, by
-contrast, takes effect immediately on Allow.
+event tap that records input while Preview is frontmost), but it is not
+gated — a missing input grant only loses *Preview*-frontmost input
+(Trailer's own input is fully captured Qt-side regardless), so it is
+handled by the degraded-stream marking rather than a blocking dialog.
+Camera, by contrast, takes effect immediately on Allow.
+
+### Degraded sessions are marked, not silent
+
+Whenever a stream fails (screen / camera / input), the recorder:
+
+- adds it to a `degraded` array in `manifest.json` — rewritten live, so
+  even a crashed session shows what was missing, and a downstream
+  consumer never mistakes an empty `screen/` for a healthy session;
+- turns the **● REC** chip amber and relabels it (e.g. `● REC · no
+  screen`) with the reason in its tooltip, for the whole session — not
+  just the transient status-bar flash;
+- records the underlying event (`screen_recording_permission_pending`,
+  `camera_permission_denied`, `input_tap_unavailable`, …) in
+  `events.jsonl`.
+
+`ux-session-summary.py` echoes the `degraded` list. Note that a missing
+**Input Monitoring** preflight does *not* by itself mark input degraded:
+the listen-only tap frequently still delivers pointer/scroll/modifier
+events even when the OS reports the permission as not-granted, withholding
+only key content — so `0` `source:"macos"` `key` events is not the same
+as "no input" (all Trailer keystrokes are captured Qt-side). Only a tap
+that fails to start at all (`input_tap_unavailable`) marks input degraded.
 
 Screen capture additionally requires macOS 12.3+ (ScreenCaptureKit);
 older systems record `screen_capture_unsupported` and continue.
@@ -282,9 +306,12 @@ All streams share one clock: the session's monotonic `elapsed_ms`.
 - **Camera keeps rolling** across app switches and pauses — it records
   the user's reactions, not the screen. One continuous
   `camera/camera-000.mov`; no audio (out of scope by design).
-- **Global input only while Trailer/Preview is frontmost**; while
-  Trailer is frontmost input is also recorded Qt-side with widget
-  context (the two streams are distinguished by `source`).
+- **Global input is recorded only while Preview is frontmost** (UXR-004).
+  While Trailer is frontmost its input is recorded Qt-side with widget
+  context, so the global tap deliberately drops Trailer-frontmost input
+  rather than emit a redundant second `source:"macos"` stream; while any
+  unrelated app is frontmost nothing is recorded. Net: `source:"qt"`
+  input ≈ Trailer, `source:"macos"` input ≈ Preview, no overlap.
 - **Qt-side action instrumentation** covers actions existing at window
   construction; dynamically rebuilt menus (Open Recent) report through
   `document_opened` rather than `action_triggered`.

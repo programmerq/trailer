@@ -46,6 +46,22 @@ class Application : public QApplication {
     // out entirely.
     void startUxRecording();
 
+#ifdef TRAILER_UX_RECORDER
+    // Outcome of the pre-recording permission gate (UXR-001).
+    enum class UxRecordDecision {
+        Start, // record this launch (permissions ok, or "Record Without Screen")
+        Skip,  // run Trailer normally, no session this launch
+        Quit,  // user chose to fix permissions; main.cpp should exit(0)
+    };
+    // macOS only applies a Screen Recording grant to the NEXT launch, so
+    // starting a session without it silently yields zero screen frames.
+    // Before recording, check that grant and — if missing — show one
+    // blocking dialog (open Settings & quit / record without screen /
+    // don't record). Returns Start immediately when the grant is present
+    // (or off macOS). Called from main.cpp; see docs/ux-recorder.md.
+    UxRecordDecision preflightUxRecording();
+#endif
+
     Settings &settings() { return m_settings; }
     RecentFiles &recentFiles() { return m_recent; }
     DocumentTypeDefaults &documentTypeDefaults() { return m_typeDefaults; }

@@ -5,7 +5,11 @@
 #include "document/PdfAdapter.h"
 #include "ui/MainWindow.h"
 #ifdef TRAILER_UX_RECORDER
+#include "uxrecord/UxPlatformCapture.h"
 #include "uxrecord/UxRecorder.h"
+#include <QDesktopServices>
+#include <QPushButton>
+#include <QUrl>
 #endif
 
 #include <QAction>
@@ -67,13 +71,59 @@ void Application::startUxRecording() {
         m_uxRecorder.reset();
         return;
     }
-    qInfo("Trailer: UX recording session %s -> %s",
-          qPrintable(m_uxRecorder->sessionId()), qPrintable(m_uxRecorder->sessionDir()));
+    qInfo("Trailer: UX recording session %s -> %s", qPrintable(m_uxRecorder->sessionId()),
+          qPrintable(m_uxRecorder->sessionDir()));
 #else
     qWarning("Trailer: this build does not include the UX recorder "
              "(configure with -DTRAILER_ENABLE_UX_RECORDER=ON).");
 #endif
 }
+
+#ifdef TRAILER_UX_RECORDER
+Application::UxRecordDecision Application::preflightUxRecording() {
+    // Screen Recording already granted (or no ScreenCaptureKit gate on
+    // this OS) → record straight away, no dialog. Once the user grants
+    // it once, they never see this again.
+    if (uxScreenRecordingGranted()) {
+        return UxRecordDecision::Start;
+    }
+
+    // Missing → don't silently start a session that records no screen
+    // frames (the failure mode that wasted a real 6-minute session,
+    // UXR-001). One blocking, actionable dialog instead.
+    QMessageBox box;
+    box.setIcon(QMessageBox::Warning);
+    box.setWindowTitle(tr("UX Recorder — Screen Recording not enabled"));
+    box.setText(tr("Trailer's UX recorder can't capture the screen yet."));
+    box.setInformativeText(
+        tr("macOS only applies a Screen Recording grant to the next launch of an "
+           "app, so recording now would capture your input and camera but no "
+           "screen.\n\nApprove Trailer under Screen Recording, then relaunch — "
+           "with record-by-default, that's just opening another file. Camera and "
+           "input recording are unaffected either way."));
+    auto *settingsButton = box.addButton(tr("Open Settings && Quit"), QMessageBox::AcceptRole);
+    auto *degradedButton = box.addButton(tr("Record Without Screen"), QMessageBox::DestructiveRole);
+    auto *skipButton = box.addButton(tr("Don't Record This Launch"), QMessageBox::RejectRole);
+    box.setDefaultButton(settingsButton);
+    box.exec();
+
+    QObject *clicked = box.clickedButton();
+    if (clicked == settingsButton) {
+        // Register Trailer in the privacy list (so the pane shows a
+        // toggle) and deep-link straight to it, then quit so the next
+        // launch picks up the grant.
+        uxRequestScreenRecording();
+        QDesktopServices::openUrl(QUrl(QStringLiteral(
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")));
+        return UxRecordDecision::Quit;
+    }
+    if (clicked == skipButton) {
+        return UxRecordDecision::Skip;
+    }
+    Q_UNUSED(degradedButton); // "Record Without Screen" — proceed degraded.
+    return UxRecordDecision::Start;
+}
+#endif
 
 MainWindow *Application::ensureWindow() {
     for (auto &ptr : m_windows) {
