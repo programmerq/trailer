@@ -27,7 +27,7 @@ concurrency:
 jobs:
   build-and-test:
     name: Linux build + unit tests
-    runs-on: ubuntu-24.04
+    runs-on: trailer-k8s
     # Short on purpose — prefer fast fail over patient hang. The
     # setup-linux-build action installs mold + ninja so the build
     # uses them by default (~3× faster linking, better parallel job
@@ -78,9 +78,11 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
 
+  # disabled 2026-07-09 to conserve Actions usage (2x multiplier); re-enable when needed
   build-and-test-windows:
     name: Windows build + unit tests (MSVC)
     runs-on: windows-2022
+    if: false
     # Native Windows build path. Mirrors what scripts/build-windows-native.ps1
     # does locally: aqtinstall Qt + qpdf MSVC prebuilt + MSVC 2022 +
     # ninja → ctest. This catches Windows-only regressions before
@@ -157,7 +159,7 @@ jobs:
 
   clang-format:
     name: clang-format (advisory)
-    runs-on: ubuntu-24.04
+    runs-on: trailer-k8s
     timeout-minutes: 3
     # Advisory only — output goes to the job summary so the diff is
     # visible without bouncing merges. Flip to required once the tree
