@@ -53,5 +53,6 @@ runs:
           libcups2-dev \
           pkg-config \
           libqpdf-dev \
+          cmake \
           mold \
           ninja-build
