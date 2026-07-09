@@ -181,6 +181,10 @@ class MainWindow : public QMainWindow {
     // thread for QPdfDocument reload); image saves run synchronously
     // because they are fast.
     void saveDocumentAsync(IDocument *doc, const QString &targetPath);
+    // Run the Save-As dialog for `doc` and return the chosen destination
+    // path, or an empty string if the user cancelled. Shared by onSaveAs()
+    // and the unsaved-changes close prompt so both offer the same dialog.
+    QString chooseSaveAsPath(IDocument *doc);
     void syncViewModeActions(IDocument *doc);
     void showSearchBar();
     void hideSearchBar();
