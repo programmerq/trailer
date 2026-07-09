@@ -17,6 +17,7 @@
 #include "ui/DocumentView.h"
 #include "ui/EmptyStateWidget.h"
 #include "ui/MainWindow.h"
+#include "ui/MarkupToolbar.h"
 
 #include <QAction>
 #include <QMenu>
@@ -85,6 +86,8 @@ class TestUatEmptyState : public QObject {
     void uat_empty_001_launchNoDocumentShowsEmptyState();
     void uat_empty_002_openingDocumentHidesEmptyState();
     void uat_empty_003_closingLastDocumentPersistsEmptyState();
+    void uat_empty_004_multiWindowClosesNonLastWindow();
+    void uat_empty_005_markupToolbarHiddenOverEmptyState();
 
   private:
     QTemporaryDir m_scratch;
@@ -182,6 +185,116 @@ void TestUatEmptyState::uat_empty_003_closingLastDocumentPersistsEmptyState() {
     QAction *open =
         findMenuAction(mw->menuBar(), QStringLiteral("&File"), QStringLiteral("&Open…"));
     QVERIFY2(open && open->isEnabled(), "File → Open… must remain enabled in the empty state");
+
+    // Gate 4 (no lying controls): document-dependent actions must be
+    // DISABLED over the empty state — there is no live document for
+    // Save / Save As / Print / Export to act on. Closing the last tab
+    // drives QTabWidget::currentChanged(-1) → onCurrentDocumentChanged(
+    // nullptr), which is what disables them; assert it actually did.
+    QAction *save =
+        findMenuAction(mw->menuBar(), QStringLiteral("&File"), QStringLiteral("&Save"));
+    QVERIFY2(save, "File → Save action not found");
+    QVERIFY2(!save->isEnabled(), "File → Save must be DISABLED over the empty state");
+    QAction *saveAs =
+        findMenuAction(mw->menuBar(), QStringLiteral("&File"), QStringLiteral("Save &As…"));
+    QVERIFY2(saveAs, "File → Save As action not found");
+    QVERIFY2(!saveAs->isEnabled(), "File → Save As must be DISABLED over the empty state");
+    QAction *print =
+        findMenuAction(mw->menuBar(), QStringLiteral("&File"), QStringLiteral("&Print…"));
+    QVERIFY2(print, "File → Print action not found");
+    QVERIFY2(!print->isEnabled(), "File → Print must be DISABLED over the empty state");
+#endif
+}
+
+// T3 — (Win/Linux) multi-window: closing the last document of a window
+// while OTHER windows exist closes that window (empty-window pile-up
+// avoidance) rather than persisting it as an empty state. The other
+// window is untouched. This is the windowCount() > 1 branch of
+// onAllTabsClosed that the single-window cases above never exercise.
+void TestUatEmptyState::uat_empty_004_multiWindowClosesNonLastWindow() {
+#ifdef Q_OS_MACOS
+    QSKIP("macOS closes the last window regardless of window count.");
+#else
+    QVERIFY(m_scratch.isValid());
+    const QString pdf1 = writeTinyPdf(m_scratch.filePath("uat_empty_004a.pdf"));
+    const QString pdf2 = writeTinyPdf(m_scratch.filePath("uat_empty_004b.pdf"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    // Default open mode is NewWindow, so each openFiles() call spawns a
+    // fresh window holding exactly one document.
+    app->openFiles({pdf1});
+    QApplication::processEvents();
+    app->openFiles({pdf2});
+    QApplication::processEvents();
+    QCOMPARE(app->windowCount(), 2);
+
+    const QList<MainWindow *> wins = app->windows();
+    QCOMPARE(wins.size(), 2);
+    MainWindow *victim = wins.first();
+    MainWindow *survivor = wins.last();
+    QVERIFY(victim && survivor && victim != survivor);
+    QCOMPARE(victim->documentCount(), 1);
+    QCOMPARE(survivor->documentCount(), 1);
+
+    QPointer<MainWindow> victimGuard(victim);
+    QPointer<MainWindow> survivorGuard(survivor);
+
+    auto *dv = victim->findChild<DocumentView *>();
+    QVERIFY(dv);
+    QVERIFY(QMetaObject::invokeMethod(dv, "onTabCloseRequested", Q_ARG(int, 0)));
+    QApplication::processEvents();
+
+    QVERIFY2(victimGuard.isNull(),
+             "A non-last window must be CLOSED (deleted) when its last document closes");
+    QVERIFY2(!survivorGuard.isNull(), "The other window must remain alive");
+    QCOMPARE(app->windowCount(), 1);
+    QCOMPARE(survivor->documentCount(), 1);
+#endif
+}
+
+// T4 — (Win/Linux) no lying controls: a markup toolbar the user
+// surfaced while a document was open must not linger, visible with its
+// annotation-tool buttons, over the empty state after the document is
+// closed. Previously closing the last document closed the window, so
+// this surface never existed; the empty-state window model must hide
+// the document-only toolbars when it swaps to the welcome surface.
+void TestUatEmptyState::uat_empty_005_markupToolbarHiddenOverEmptyState() {
+#ifdef Q_OS_MACOS
+    QSKIP("macOS closes the last window instead of persisting an empty-state window.");
+#else
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writeTinyPdf(m_scratch.filePath("uat_empty_005.pdf"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    QCOMPARE(mw->documentCount(), 1);
+
+    auto *markup = mw->findChild<MarkupToolbar *>();
+    QVERIFY(markup);
+    // Surface the markup toolbar the way the user would (View → Toggle
+    // Markup Toolbar / Ctrl+Shift+A drives the same toggleViewAction).
+    markup->toggleViewAction()->trigger();
+    QApplication::processEvents();
+    QVERIFY2(markup->toggleViewAction()->isChecked(),
+             "Markup toolbar should be shown after toggling it on with a document open");
+
+    // Close the last document → empty state.
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    QVERIFY(QMetaObject::invokeMethod(dv, "onTabCloseRequested", Q_ARG(int, 0)));
+    QApplication::processEvents();
+
+    QCOMPARE(mw->documentCount(), 0);
+    QVERIFY2(emptyStateIsCurrent(mw), "Empty state must be shown after closing the last document");
+    QVERIFY2(!markup->toggleViewAction()->isChecked(),
+             "Markup toolbar must be hidden over the empty state (no lying controls)");
 #endif
 }
 
