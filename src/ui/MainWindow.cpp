@@ -10,6 +10,7 @@
 #include "IconHelper.h"
 #include "MarkupToolbar.h"
 #include "MyCardDialog.h"
+#include "PreferencesDialog.h"
 #include "SignaturePicker.h"
 #include "SignaturesDialog.h"
 #include "cards/CardStore.h"
@@ -689,6 +690,13 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
         if (auto *doc = m_documentView->currentDocument())
             doc->findPrevious();
     });
+
+    editMenu->addSeparator();
+
+    auto *prefsAction = editMenu->addAction(tr("&Preferences…"));
+    prefsAction->setShortcut(QKeySequence::Preferences);
+    prefsAction->setMenuRole(QAction::PreferencesRole);
+    connect(prefsAction, &QAction::triggered, this, &MainWindow::onOpenPreferences);
 }
 
 void MainWindow::showSearchBar() {
@@ -3058,6 +3066,18 @@ void MainWindow::dropEvent(QDropEvent *event) {
         m_app->openFiles(paths);
         event->acceptProposedAction();
     }
+}
+
+void MainWindow::onOpenPreferences() {
+    PreferencesDialog dlg(m_app->settings(), this);
+    dlg.setManageModelsCallback([this]() { showModelManagerDialog(this, m_app); });
+    dlg.setResetAllCallback([this]() { onResetTrailerSettings(); });
+    // recent_max is consumed once at startup (not read live), so re-apply
+    // it to the live RecentFiles cap when the user saves preferences.
+    connect(&dlg, &PreferencesDialog::settingsApplied, this, [this]() {
+        m_app->recentFiles().setMaxEntries(m_app->settings().recentMax());
+    });
+    dlg.exec();
 }
 
 void MainWindow::onResetTrailerSettings() {
