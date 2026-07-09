@@ -38,5 +38,5 @@ belong in the Preferences window?
 a document action (it mutates the current form), a category error inside a
 settings window, and would be disabled whenever no form document is open. The
 *management* of AutoFill cards is a separate concern that could earn a Forms pane
-later (DESIGN §6.13); the *fill* verb does not. Not a stalemate; no owner
-escalation.
+later (DESIGN §6.13); the *fill* verb does not. All four personas agreed, so
+there was nothing to escalate.

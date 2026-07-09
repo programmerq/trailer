@@ -21,9 +21,9 @@ move it, or leave it only in Tools?
   I'll never find it under stress." — concrete problem: discoverability at the
   exact moment of need.
 - **Older, careful user.** "My worry is a second button labelled 'Reset' in a
-  window that *also* has little 'Reset' buttons on every row. I might click the
-  big one thinking it just resets one preference and nuke my saved signatures."
-  — concrete problem: label collision with the per-field reset affordances.
+  window that has other reset controls too. I might click the big one thinking
+  it just resets one preference and nuke my saved signatures." — concrete
+  problem: label collision if the per-field affordances also read "Reset".
 - **Power migrator.** "Moving it out of Tools would break my muscle memory and
   any docs/screenshots that say 'Tools → Reset'. Duplicating is fine; removing
   is a regression." — concrete problem: relocation breaks an existing path.
@@ -35,8 +35,12 @@ move it, or leave it only in Tools?
 
 **Duplicate** the action as a button in Preferences → Advanced; keep the Tools
 menu entry. This is purely additive, so no muscle memory breaks (power
-migrator). The older-careful confusion is resolved by (a) distinct labelling —
-the button reads "Reset all Trailer settings and data…" and is described as
-destructive, visually separated from the compact per-row "Reset to default"
-tool-buttons — and (b) the pre-existing confirmation dialog, which both
-non-technical personas rely on. Not a stalemate; no owner escalation.
+migrator). The older-careful label collision is resolved because the per-field
+affordance carries **no visible "Reset" text at all**: it is a small, flat,
+right-aligned revert icon (a ↺ glyph) with the accessible name and tooltip
+"Reset to default", enabled only when that control differs from its default —
+so it reads as an unobtrusive per-row revert, never a rival to the one big,
+explicitly destructive "Reset all Trailer settings and data…" button (which is
+further set apart by its explanatory warning label and its own confirmation
+dialog). The word "Reset" therefore appears once in the pane, on the
+destructive action. The decision was reached on the merits, without escalation.
