@@ -370,7 +370,12 @@ Today's version is 0.1. While we're in 0.x:
 One milestone precedes 1.0 and carries its own gate. The
 **dogfood-default milestone** is the point at which Trailer becomes the
 maintainer's own default application for these files, day to day, on
-their own machine. The accessibility surface (DESIGN §6.12) — keyboard-only
+their own machine. This milestone is **owner-declared and observable**: it
+is active once the owner records a `dogfood-default` marker — a dated entry
+in [`ROADMAP.md`](ROADMAP.md) / the changelog, or a git tag named
+`dogfood-default` — so an agent can tell objectively whether the gate is
+live; until that marker exists gate G8 is dormant (per-PR no-regress only).
+The accessibility surface (DESIGN §6.12) — keyboard-only
 operability of every command, screen-reader labels, configurable text
 size, high-contrast theme, and reduce-motion — is scheduled to be in
 place *by* this milestone, not deferred to 1.0. Enforced as gate G8 in

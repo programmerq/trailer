@@ -342,7 +342,8 @@ on Windows and macOS), Flutter (immature desktop story for document apps).
   PR.
 - **Installers:**
   - Windows: MSIX (preferred) and a fallback NSIS installer
-  - macOS: signed and notarized `.dmg` containing a `.app` bundle
+  - macOS: `.dmg` containing a `.app` bundle — notarisation is gated on the
+    Apple Developer Program decision (see §12; adhoc signing today)
   - Linux: AppImage as the universal binary; Flatpak as the modern preferred
     distribution; `.deb` and `.rpm` if maintainers volunteer
 

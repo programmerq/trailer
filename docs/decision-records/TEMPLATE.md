@@ -9,7 +9,7 @@ test, the arbiter, and the proposed → accepted → superseded lifecycle).
 -->
 
 - **Status:** proposed <!-- proposed | accepted | superseded-by NNNN -->
-- **Arbiter:** <name — the single person who issues the verdict>
+- **Arbiter:** the maintainer (default), or a delegate the maintainer names for this record.
 - **Date proposed:** <YYYY-MM-DD>
 - **Date accepted / superseded:** <YYYY-MM-DD, or —>
 
