@@ -1,7 +1,7 @@
 # 0004 — Never-worry saving: hard invariant, or default with opt-out?
 
 - **Status:** proposed
-- **Arbiter:** <maintainer or named delegate>
+- **Arbiter:** the maintainer (default), or a delegate the maintainer names for this record.
 - **Date proposed:** 2026-07-09
 - **Date accepted / superseded:** —
 
@@ -23,7 +23,11 @@ whether never-worry-save is a hard invariant or a default with an opt-out.
 **What ships today (so this record isn't misread as describing the target):**
 default-with-opt-out. The disable toggle exists, and continuous save is
 debounced at `kAutoSaveIntervalMs = 30000` (30s) at
-`src/ui/MainWindow.cpp:392`.
+`src/ui/MainWindow.cpp:392`. The "no silent data loss" floor does **not** hold
+today: `docs/uat/01-foundations.md:160-161` (UAT-FND-014, unchanged) documents
+that on Close-with-unsaved the window closes immediately with no prompt and
+unsaved edits are **silently discarded** — the concrete live gap this record's
+threshold must close, so the record is not read as if the floor already holds.
 
 External grounding: Apple's file-management guidance is autosave-by-default —
 "avoid making people take an explicit action to save" — while still defining

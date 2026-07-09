@@ -1,7 +1,7 @@
 # 0003 — Magic-number thresholds: scorer 0.50, "≥3 form widgets", "≥20 pages"
 
 - **Status:** proposed
-- **Arbiter:** <maintainer or named delegate>
+- **Arbiter:** the maintainer (default), or a delegate the maintainer names for this record.
 - **Date proposed:** 2026-07-09
 - **Date accepted / superseded:** —
 
@@ -24,7 +24,7 @@ stated plainly so this record can't be read as describing current behaviour.
 - **Where:** `src/ml/BackgroundCandidateScorer.h:72` —
   `static constexpr float kRecommendThreshold = 0.50f;` (predicate
   `isRecommended()` at :76–78). A rationale block already exists at
-  `src/ml/BackgroundCandidateScorer.h:64–71`.
+  `src/ml/BackgroundCandidateScorer.h:65–71`.
 - **Rationale (as written in code):** the badge misses real photos at 0.6+ and
   surfaces on busy scans below 0.4, so 0.50 is the balance point. Related pivots
   live at `src/ml/BackgroundCandidateScorer.cpp:38–40` (`kEdgePivot=12.0f`,
@@ -101,14 +101,20 @@ stated plainly so this record can't be read as describing current behaviour.
 ## Checkable threshold this record would establish
 
 - **(1)** Accept 0.50 as the ratified recommend threshold; the in-code rationale
-  at `BackgroundCandidateScorer.h:64–71` stands as the record of record.
+  at `BackgroundCandidateScorer.h:65–71` stands as the record of record.
 - **(2)** If accepted, a named constant (with an in-code rationale comment)
   gates form-*mode* at the chosen field count, *distinct from* the ≥1 live
-  fill-enable, verified by a UAT case that a document at the boundary does /
-  doesn't enter form mode.
+  fill-enable, verified by a boundary UAT case written against the proposed
+  count — e.g. at the proposed ≥3, a form with **2 vs 3 fillable widgets**
+  behaves as specified (2 stays in normal mode, 3 enters form mode). The
+  boundary number is still `proposed` (see the confound above); this states
+  the shape of the test the accepted N would make concrete.
 - **(3)** If accepted, a named constant (with rationale) gates the Thumbnails
   auto-open at the chosen page count, *distinct from* the 50-page OCR-skip
-  constant, verified by a boundary UAT case.
+  constant, verified by a boundary UAT case written against the proposed count
+  — e.g. at the proposed ≥20, a document with **19 vs 20 pages** behaves as
+  specified (19 does not auto-open the Thumbnails sidebar, 20 does). The
+  boundary number is still `proposed`.
 - Acceptance evidence for (2)/(3): the new constants with rationale comments,
   UAT boundary cases, and screenshots of the triggered/not-triggered states
   (gate G2). **These two values need explicit owner sign-off** because they

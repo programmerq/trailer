@@ -1,7 +1,7 @@
 # 0001 — Select All (⌘A / Ctrl+A) semantics in a document viewer
 
 - **Status:** proposed
-- **Arbiter:** <maintainer or named delegate>
+- **Arbiter:** the maintainer (default), or a delegate the maintainer names for this record.
 - **Date proposed:** 2026-07-09
 - **Date accepted / superseded:** —
 

@@ -91,28 +91,38 @@ value/default changes are backed by records in
   implementation starts. "Make scrolling smooth" is not a threshold;
   "scroll-step paints within the budget in `docs/performance-budgets.md`"
   is.
-- **Test:** The PR description (or the linked TODO/issue) contains a
-  measurable acceptance line written *before* the first code commit —
-  a number, a concrete behaviour, or a named budget/spec row.
-- **Evidence:** The threshold text, in the PR description, phrased so a
-  reviewer can independently declare pass or fail. See PHILOSOPHY →
-  *Every work item carries a checkable threshold*.
+- **Test:** The PR description, the linked TODO/issue, or a cited
+  **accepted** decision record records a measurable acceptance line — a
+  number, a behaviour phrased as an observable pass/fail (a state a
+  reviewer can reach and confirm), or a named budget/spec row.
+  **"Concrete"** means expressed as an observable pass/fail, not a quality
+  adjective: "the disabled control shows a tooltip" is concrete;
+  "scrolling feels responsive" is not.
+- **Evidence:** The threshold text, recorded in the PR description or the
+  linked work item, phrased so a reviewer can independently declare pass
+  or fail. See PHILOSOPHY → *Every work item carries a checkable
+  threshold*.
 
 ### G2 — UX-Done: screenshots of every affected state
 
 - **Rule:** No PR that adds, removes, or reshapes a user-visible state
   merges without screenshots of each affected state, compared against the
   threshold declared under G1.
-- **Test:** For each UI state the diff touches (empty state, document
-  open, the feature in use, each dialog/confirmation, each reachable
-  error state) there is a screenshot in the PR body, and a one-line
-  verdict tying it to the declared threshold or the relevant persona
-  lens.
+- **Test:** For each **affected state** there is a screenshot in the PR
+  body, and a one-line verdict tying it to the declared threshold or the
+  relevant persona lens. An **affected state** is each UI state whose
+  appearance or available controls changed as a result of the diff, plus
+  each empty / loading / error state reachable from those changed states.
+  (Pre-existing states the diff does not touch are out of scope. If a
+  state is arguably affected, capture it.)
 - **Evidence:** The screenshots themselves, in the PR body (drag-and-drop
   upload or `gh pr edit --body-file`; do not commit them to the repo).
-  This is the per-item roll-up of the milestone audit in DESIGN §2.5.3 —
-  satisfying G2 per PR satisfies that audit; there is not a second
-  screenshot regime.
+  Where a platform shows **no window** for an affected state — the macOS
+  empty state per DESIGN §2.4.2 — the required artifact is a screenshot of
+  the dock icon + menu bar plus the open panel on activation, in place of
+  a window capture (the G5-style note). This is the per-item roll-up of
+  the milestone audit in DESIGN §2.5.3 — satisfying G2 per PR satisfies
+  that audit; there is not a second screenshot regime.
 - **Open question (owner sign-off):** whether an offscreen
   `widget->grab()` capture (see *Screenshots for UI-visible changes*
   below) counts as "the running app," or whether UX-Done requires a
@@ -123,14 +133,16 @@ value/default changes are backed by records in
 ### G3 — No lying controls
 
 - **Rule:** A control that is present in the surface but can't act right
-  now is disabled with a `setToolTip(...)` that says why and where to go.
-  Substituting a *different* behaviour and presenting it as the one the
-  user asked for is forbidden — permanently.
-- **Test:** No code path silently swaps a requested action for a
-  nearest-equivalent. Every surfaced-but-inert control is
-  `setEnabled(false)` + tooltip. (Scope: this applies to controls that
-  *exist* in the surface. It is **not** a mandate to add disabled stubs
-  for roadmap features that have no UI yet.)
+  now is disabled with a `setToolTip(...)` that states **why** it is
+  disabled, and **where to go** when there is a next step (when the
+  format itself can't support the operation and there is nowhere to go,
+  "why" alone suffices). Substituting a *different* behaviour and
+  presenting it as the one the user asked for is forbidden — permanently.
+- **Test:** No code path *introduced or modified by this diff* silently
+  swaps a requested action for a nearest-equivalent. Every
+  surfaced-but-inert control is `setEnabled(false)` + tooltip. (Scope:
+  this applies to controls that *exist* in the surface. It is **not** a
+  mandate to add disabled stubs for roadmap features that have no UI yet.)
 - **Evidence:** For a PR that adds or gates such a control, a screenshot
   of the disabled state showing the tooltip (rolls into G2). The word
   "silently" is disambiguated in PHILOSOPHY → *No lying controls*:
@@ -147,9 +159,14 @@ value/default changes are backed by records in
   bar), that is expected and fine; a feature reachable on one OS and
   absent on another fails the gate. See DESIGN §2.1 goal 3 and
   PHILOSOPHY → *Platform-native per OS*.
-- **Evidence:** The PR states, per platform, where the feature lives.
-  Where only one host is available to the author, note which platforms
-  were verified and which are asserted from the shared code path.
+- **Evidence:** The PR states, per platform, **the shape the feature
+  takes** — which command surface it lives in (global menu bar / in-window
+  menu bar / header bar) — and screenshots it on each platform where it
+  has a visible UI state (rolls into G2). Where only one host is available
+  to the author, note which platforms were verified with a screenshot and
+  which are asserted from the shared code path, naming the shared
+  entry-point `file:line` that guarantees reachability. An assertion of
+  cross-platform parity alone, with no per-OS shape stated, does not pass.
 
 ### G5 — Empty state is platform-correct
 
@@ -166,16 +183,21 @@ value/default changes are backed by records in
 ### G6 — Behaviour/threshold changes carry a decision record
 
 - **Rule:** A change to a user-visible default, or to a threshold that
-  changes behaviour, references a record in `docs/decision-records/`.
-  Internal tuning with no user-visible effect needs only the in-code
+  changes behaviour, references an **accepted** record (status:
+  `accepted`) in `docs/decision-records/`. A change is to a **user-visible
+  default** if a user could observe different behaviour, output, or
+  appearance *without reading code or logs*; a **pure internal tuning**
+  changes nothing a user could observe and needs only the in-code
   rationale comment required by PHILOSOPHY → *Hand-tuned values stay
-  hand-tuned*.
+  hand-tuned*. Only the former triggers this gate.
 - **Test:** The magic constant still carries its in-code comment (what it
   represents, range tried, symptom to change); if the change is
-  user-visible, an ADR exists and cites the constant's `file:line`
-  rather than duplicating the comment.
-- **Evidence:** Link to the ADR in the PR, and the updated in-code
-  rationale in the diff.
+  user-visible, an ADR with status `accepted` exists and cites the
+  constant's `file:line` rather than duplicating the comment. A change
+  gated on a still-`proposed` record is **Not Done** until that record is
+  adjudicated to `accepted`.
+- **Evidence:** Link to the accepted ADR in the PR, and the updated
+  in-code rationale in the diff.
 
 ### G7 — Preferences pane is a 1.0 gate
 
@@ -183,21 +205,39 @@ value/default changes are backed by records in
   non-technical user can reach and operate is a hard requirement for 1.0.
 - **Test:** Before 1.0 is declared, the settings window in DESIGN §6.13
   exists and is reachable from the standard platform location (⌘, on
-  macOS; Edit/Tools → Preferences on Windows/Linux).
+  macOS; Edit/Tools → Preferences on Windows/Linux); **each pane
+  enumerated in §6.13 is present**, and **each control persists its value
+  across relaunch** (consistent with never-worry-save). "Operate" means a
+  control changes its setting and the setting survives a restart — not
+  merely that the window opens. Verified by launching, changing one
+  control per pane, and confirming the value round-trips after relaunch.
 - **Evidence:** At the 1.0 milestone, a screenshot of the running
-  Preferences window. Tracked as a release blocker, not a per-PR gate.
+  Preferences window showing the §6.13 panes present, plus the
+  persist-across-relaunch check. Tracked as a release blocker, not a
+  per-PR gate.
 
 ### G8 — Accessibility at the dogfood-default milestone
 
 - **Rule:** The accessibility surface (DESIGN §6.12) is scheduled to be
   in place by the dogfood-default milestone — the point at which Trailer
-  becomes the maintainer's own default app for these files.
-- **Test:** At that milestone, keyboard-only operability of every command,
-  screen-reader labels, configurable text size, high-contrast theme, and
-  reduce-motion are all present and verified.
-- **Evidence:** An accessibility checklist run against the running app,
-  attached at the milestone. Not a per-PR gate before then, but no PR may
-  *regress* an already-shipped accessibility affordance.
+  becomes the maintainer's own default app for these files. That milestone
+  is **owner-declared and observable**: it is active once the owner adds a
+  `dogfood-default` marker to the repo (a dated `dogfood-default` entry in
+  [`ROADMAP.md`](ROADMAP.md) / the changelog, or a git tag named
+  `dogfood-default`), so an agent reviewing a PR can objectively tell
+  whether the gate is live. Until that marker exists, **G8 is dormant** —
+  an agent treats it as the per-PR no-regress rule below and nothing more.
+- **Test:** Once the marker exists, run the checklist in
+  [`docs/accessibility-checklist.md`](docs/accessibility-checklist.md)
+  against the running app; every row (WCAG AA contrast, full keyboard
+  operability with visible focus, AT labels on every actionable control,
+  Reduce-Motion honoured, ≥200% text scaling, minimum control target size,
+  no colour-as-sole-signal) must pass.
+- **Evidence:** The completed
+  [`docs/accessibility-checklist.md`](docs/accessibility-checklist.md),
+  run against the running app, attached at the milestone. Not a per-PR
+  gate before the marker exists, but no PR may *regress* an
+  already-shipped accessibility affordance.
 
 ### G9 — Frugality budget (proposed)
 
