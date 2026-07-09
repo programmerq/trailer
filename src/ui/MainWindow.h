@@ -107,6 +107,8 @@ class MainWindow : public QMainWindow {
     // state from an older build?" diagnostic. Asks for explicit
     // confirmation because this is destructive.
     void onResetTrailerSettings();
+    // Open the unified Preferences dialog (Edit → Preferences…).
+    void onOpenPreferences();
     void onSave();
     void onSaveAs();
     void onRotateLeft();
