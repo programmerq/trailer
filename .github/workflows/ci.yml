@@ -28,13 +28,14 @@ jobs:
   build-and-test:
     name: Linux build + unit tests
     runs-on: trailer-k8s
-    # Short on purpose — prefer fast fail over patient hang. The
-    # setup-linux-build action installs mold + ninja so the build
-    # uses them by default (~3× faster linking, better parallel job
-    # scheduling than make). ccache hits bring warm runs well under
-    # 5 min; first cold runs land around 12-14 min. Bump if the
-    # post-Qt-bump cold time consistently overshoots.
-    timeout-minutes: 18
+    # Prefer fast fail over patient hang, but the first cold-cache build
+    # on the self-hosted trailer-k8s runners overran 18 min and got
+    # cancelled before ccache was populated. The setup-linux-build action
+    # installs mold + ninja so the build uses them by default (~3× faster
+    # linking, better parallel job scheduling than make). ccache hits
+    # bring warm runs well under 5 min; the first cold run needs headroom
+    # to finish and seed the cache.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v6
 
