@@ -34,10 +34,13 @@ nothing, (c) show it disabled with an honest explanation.
 
 ## Arbiter verdict
 
-**Show it disabled** with the tooltip "Theme selection isn't applied yet
-(planned for a future release)." and populate it to reflect the stored value.
+**Show it disabled**, populated to reflect the stored value, with a **visible
+muted helper label** beneath the combo reading "Not applied yet — planned for a
+future release." (a matching tooltip is kept, but because Qt suppresses tooltip
+events on disabled widgets the always-visible label is what actually carries the
+explanation — a bare disabled combo with only a tooltip would read as broken).
 Omitting hides a hand-editable TOML key (power migrator); a no-op working combo
 erodes trust (non-technical) and induces self-blame (older-careful); wiring live
 theming is out of scope for a surface-existing-settings release (occasional).
-The disabled-plus-tooltip option is the only one no persona objects to. Not a
-stalemate; no owner escalation.
+The disabled-plus-visible-note option is the only one no persona objects to —
+consensus on the merits, nothing to escalate.
