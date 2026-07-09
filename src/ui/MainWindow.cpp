@@ -3086,9 +3086,24 @@ void MainWindow::onAllTabsClosed() {
 void MainWindow::updateEmptyState() {
     if (!m_centerStack)
         return;
-    m_centerStack->setCurrentWidget(documentCount() == 0
-                                        ? static_cast<QWidget *>(m_emptyState)
-                                        : static_cast<QWidget *>(m_documentPage));
+    const bool empty = documentCount() == 0;
+    m_centerStack->setCurrentWidget(empty ? static_cast<QWidget *>(m_emptyState)
+                                          : static_cast<QWidget *>(m_documentPage));
+    if (empty) {
+        // No lying controls: the document-only toolbars must not linger
+        // over the empty state showing annotation / form-fill buttons
+        // that would act on the now-closed document. (Their tool
+        // handlers already no-op when there is no current document, but
+        // leaving them visible reads as an actionable control that does
+        // nothing.) Per-document visibility is restored from saved
+        // state when a document is reopened into this window
+        // (onCurrentDocumentChanged), so hiding here loses no user
+        // preference.
+        if (m_markupToolbar)
+            m_markupToolbar->hide();
+        if (m_formToolbar)
+            m_formToolbar->hide();
+    }
 }
 
 int MainWindow::documentCount() const {
