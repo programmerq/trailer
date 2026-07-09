@@ -71,6 +71,15 @@ QList<MainWindow *> Application::windows() const {
     return out;
 }
 
+int Application::windowCount() const {
+    int n = 0;
+    for (const auto &ptr : m_windows) {
+        if (ptr)
+            ++n;
+    }
+    return n;
+}
+
 MainWindow *Application::ensureFreshWindow() {
     auto *window = new MainWindow(this);
     window->setAttribute(Qt::WA_DeleteOnClose);
@@ -356,6 +365,23 @@ bool Application::event(QEvent *event) {
             return true;
         }
     }
+#ifdef Q_OS_MACOS
+    // macOS-only: on macOS there is no persistent empty window — closing
+    // the last window leaves just the dock icon + global menu bar.
+    // Re-activating the app with zero windows (clicking the dock icon,
+    // Cmd-Tab back in) should reopen the file-open panel, mirroring
+    // Preview's behaviour. This cannot be exercised on the Linux CI —
+    // ApplicationStateChange to Active is a native app-lifecycle event —
+    // so it is validated by code review only.
+    if (event->type() == QEvent::ApplicationStateChange) {
+        if (applicationState() == Qt::ApplicationActive && windowCount() == 0 &&
+            !m_openPanelActive) {
+            m_openPanelActive = true;
+            openFilesFromDialog();
+            m_openPanelActive = false;
+        }
+    }
+#endif
     return QApplication::event(event);
 }
 

@@ -3,6 +3,7 @@
 #include "TrailerVersion.h"
 #include "AnimationBar.h"
 #include "DocumentView.h"
+#include "EmptyStateWidget.h"
 #include "AnnotationOverlay.h"
 #include "Inspector.h"
 #include "Magnifier.h"
@@ -81,6 +82,7 @@
 #include <QTemporaryFile>
 #include <QTimer>
 #include <QtConcurrent>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -154,7 +156,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // behind. For the legacy tab mode this still fires correctly —
     // closing the final tab discards the now-empty window, which is
     // also what the user expects.
-    connect(m_documentView, &DocumentView::allTabsClosed, this, &MainWindow::close);
+    connect(m_documentView, &DocumentView::allTabsClosed, this, &MainWindow::onAllTabsClosed);
     // Flush per-document state keyed by raw IDocument pointer before
     // the document is destroyed. The MlScheduler owns the cancellation
     // tokens for in-flight work; cancelling here keeps the worker
@@ -183,10 +185,32 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_animationBar->hide();
 
     // The search bar moved into the main toolbar (built later) so
-    // it's always visible at the top right. The central column is
-    // now just the document view + the animation bar.
-    centerLayout->addWidget(m_documentView, 1);
-    centerLayout->addWidget(m_animationBar);
+    // it's always visible at the top right. The central column is a
+    // QStackedWidget that swaps between the document page (document
+    // view + animation bar) and the empty-state welcome surface shown
+    // when no document is open (empty-state window model). The
+    // addWidget calls below reparent m_documentView / m_animationBar
+    // into the document page.
+    m_centerStack = new QStackedWidget(center);
+
+    m_documentPage = new QWidget(m_centerStack);
+    auto *documentLayout = new QVBoxLayout(m_documentPage);
+    documentLayout->setContentsMargins(0, 0, 0, 0);
+    documentLayout->setSpacing(0);
+    documentLayout->addWidget(m_documentView, 1);
+    documentLayout->addWidget(m_animationBar);
+
+    m_emptyState = new EmptyStateWidget(m_centerStack);
+    connect(m_emptyState, &EmptyStateWidget::openRequested, this, &MainWindow::onOpen);
+    connect(m_emptyState, &EmptyStateWidget::filesDropped, this, [this](const QStringList &p) {
+        if (m_app)
+            m_app->openFiles(p);
+    });
+
+    m_centerStack->addWidget(m_documentPage);
+    m_centerStack->addWidget(m_emptyState);
+
+    centerLayout->addWidget(m_centerStack);
     setCentralWidget(center);
 
     m_sidebar = new Sidebar(this);
@@ -394,6 +418,10 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_autoSaveTimer->setInterval(kAutoSaveIntervalMs);
     connect(m_autoSaveTimer, &QTimer::timeout, this, &MainWindow::autoSaveDirtyDocs);
     m_autoSaveTimer->start();
+
+    // Initial central-stack state: a freshly-spawned window holds no
+    // document, so show the empty-state welcome surface.
+    updateEmptyState();
 }
 
 void MainWindow::autoSaveDirtyDocs() {
@@ -3031,6 +3059,36 @@ void MainWindow::addDocument(std::unique_ptr<IDocument> document) {
         return;
     }
     m_documentView->addDocument(std::move(document));
+    // A document is now open — swap the central stack back to the
+    // document page (away from the empty state).
+    updateEmptyState();
+}
+
+void MainWindow::onAllTabsClosed() {
+#ifdef Q_OS_MACOS
+    // macOS: there is no persistent empty window. Closing the last
+    // document closes the window; the global menu bar persists so the
+    // user can still open a file or quit.
+    close();
+#else
+    // Win/Linux: closing the last document of a NON-last window closes
+    // that window (avoid empty-window pile-up). The last remaining
+    // window persists as an empty-state window so the app is never
+    // left with zero windows / no way to open a file.
+    if (m_app && m_app->windowCount() > 1) {
+        close();
+    } else {
+        updateEmptyState();
+    }
+#endif
+}
+
+void MainWindow::updateEmptyState() {
+    if (!m_centerStack)
+        return;
+    m_centerStack->setCurrentWidget(documentCount() == 0
+                                        ? static_cast<QWidget *>(m_emptyState)
+                                        : static_cast<QWidget *>(m_documentPage));
 }
 
 int MainWindow::documentCount() const {
