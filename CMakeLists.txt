@@ -36,7 +36,7 @@ set(CMAKE_AUTOUIC ON)
 
 include(CompilerWarnings)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Concurrent Gui Widgets Network Svg Test Pdf PdfWidgets PrintSupport)
+find_package(Qt6 6.6 REQUIRED COMPONENTS Core Concurrent Gui Widgets Network Svg Test Pdf PdfWidgets PrintSupport)
 include(OnnxRuntime)
 # Prefer a CMake package config (e.g. vcpkg on Windows).  Fall back to
 # pkg-config so that Linux/macOS system packages (libqpdf-dev, brew qpdf)
