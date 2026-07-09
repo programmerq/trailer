@@ -419,6 +419,9 @@ void MainWindow::autoSaveDirtyDocs() {
 
 void MainWindow::buildMenus() {
     auto *fileMenu = menuBar()->addMenu(tr("&File"));
+    // The disabled Share… item carries an explanatory tooltip; Qt only
+    // renders action tooltips in a menu when tooltips are enabled on it.
+    fileMenu->setToolTipsVisible(true);
 
     auto *openAction = fileMenu->addAction(tr("&Open…"));
     openAction->setShortcut(QKeySequence::Open);
@@ -747,6 +750,9 @@ void MainWindow::hideSearchBar() {
 }
 
 void MainWindow::buildViewMenu(QMenu *viewMenu) {
+    // The disabled Two Pages item carries an explanatory tooltip; Qt only
+    // renders action tooltips in a menu when tooltips are enabled on it.
+    viewMenu->setToolTipsVisible(true);
     auto *toggleSidebar = m_sidebar->toggleViewAction();
     toggleSidebar->setText(tr("Toggle &Sidebar"));
     toggleSidebar->setShortcut(QKeySequence(tr("Ctrl+Shift+D")));
@@ -794,10 +800,11 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     m_twoPagesAction->setCheckable(true);
     // Cmd-3 is reserved here but the action stays disabled: Qt's
     // QPdfView::PageMode only exposes SinglePage and MultiPage — there is
-    // no facing/two-up layout, so ViewMode::TwoPages currently aliases
-    // Continuous (see PdfDocument::applyViewMode). A real side-by-side
-    // layout needs a custom view (tracked as a larger follow-up); once it
-    // lands and the action is enabled, Cmd-3 starts working.
+    // no facing/two-up layout. PdfDocument::applyViewMode warns and no-ops
+    // on ViewMode::TwoPages (it deliberately does not alias Continuous), so
+    // enabling this action would be a no-op. A real side-by-side layout
+    // needs a custom view (tracked as a larger follow-up); once it lands
+    // and the action is enabled, Cmd-3 starts working.
     m_twoPagesAction->setShortcut(QKeySequence(tr("Ctrl+3")));
     m_twoPagesAction->setEnabled(false);
     m_twoPagesAction->setToolTip(tr("Two-page layout is not yet available."));
@@ -980,6 +987,15 @@ void MainWindow::buildWindowMenu(QMenu *windowMenu) {
     connect(minimize, &QAction::triggered, this, &QWidget::showMinimized);
 
     auto *zoom = windowMenu->addAction(tr("&Zoom"));
+    // "Zoom" is the native macOS Window-menu term. On other platforms it
+    // collides with the app's content zoom (View → Zoom In/Out) and isn't a
+    // platform convention, so relabel to the honest term for what it does
+    // (maximize/restore toggle). Behavior is unchanged on all platforms.
+#ifdef Q_OS_MACOS
+    zoom->setText(tr("&Zoom"));
+#else
+    zoom->setText(tr("&Maximize"));
+#endif
     connect(zoom, &QAction::triggered, this, [this]() {
         // macOS "Zoom" toggles between user-sized and the OS's
         // ideal-for-content size. QWidget doesn't expose that

@@ -58,6 +58,18 @@ QAction *findMenuAction(QMenuBar *bar, const QString &topText, const QString &it
     return nullptr;
 }
 
+// Walk every QMenu under the menu bar and return the one that hosts the
+// given action. Used to assert the hosting menu has tooltips enabled —
+// a disabled action's tooltip is invisible in the menu unless the menu
+// itself has setToolTipsVisible(true).
+QMenu *menuContainingAction(QMenuBar *bar, QAction *action) {
+    for (QMenu *menu : bar->findChildren<QMenu *>()) {
+        if (menu->actions().contains(action))
+            return menu;
+    }
+    return nullptr;
+}
+
 QStringList topLevelMenuTexts(QMenuBar *bar) {
     QStringList texts;
     for (QAction *a : bar->actions()) {
@@ -539,6 +551,15 @@ void TestUatFoundations::uat_fnd_041_shareDisabledWithTooltipWhenUnavailable() {
     QVERIFY2(!shareAction->toolTip().isEmpty(),
              "Disabled Share must carry an explanatory tooltip pointing at the "
              "alternative");
+
+    // A tooltip is only actually shown in the menu if the hosting menu has
+    // tooltips enabled — otherwise the "disabled + explanation" policy is
+    // only half-delivered (invisible on hover).
+    QMenu *hostMenu = menuContainingAction(mw->menuBar(), shareAction);
+    QVERIFY2(hostMenu, "Could not locate the menu hosting the Share action");
+    QVERIFY2(hostMenu->toolTipsVisible(),
+             "The File menu must call setToolTipsVisible(true) so the disabled "
+             "Share tooltip is actually rendered on hover");
 }
 
 // UAT-FND-042 — View → Two Pages is an unbuilt capability: QPdfView
@@ -558,6 +579,14 @@ void TestUatFoundations::uat_fnd_042_twoPagesActionDisabledWithTooltip() {
              "Two Pages must be disabled while a real facing layout is unbuilt");
     QVERIFY2(!twoPages->toolTip().isEmpty(),
              "Disabled Two Pages must carry an explanatory tooltip");
+
+    // The tooltip is only visible on hover if the hosting menu enables
+    // tooltips — assert the View menu does so.
+    QMenu *hostMenu = menuContainingAction(mw->menuBar(), twoPages);
+    QVERIFY2(hostMenu, "Could not locate the menu hosting the Two Pages action");
+    QVERIFY2(hostMenu->toolTipsVisible(),
+             "The View menu must call setToolTipsVisible(true) so the disabled "
+             "Two Pages tooltip is actually rendered on hover");
 }
 
 // UAT-FND-050 — Synthesize the QFileOpenEvent macOS dispatches when
