@@ -74,7 +74,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-Requirements: CMake 3.24+, Qt 6.5+ with `Core Gui Widgets Test Pdf
+Requirements: CMake 3.24+, Qt 6.6+ with `Core Gui Widgets Test Pdf
 PdfWidgets PrintSupport`, qpdf 11+, a C++20 compiler. `qtpdf` is a
 separate module in many Qt distributions — install it explicitly if
 `find_package(Qt6 COMPONENTS Pdf)` fails (see README).

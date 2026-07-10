@@ -8,7 +8,7 @@
 #
 # Why aqtinstall (not apt's qt6-base-dev): Ubuntu 24.04 (noble)
 # ships Qt 6.4.2 in main, but Trailer's CMakeLists.txt requires
-# Qt 6.5+ for the qtpdf APIs and signal/slot patterns we rely on.
+# Qt 6.6+ for the qtpdf APIs and signal/slot patterns we rely on.
 # aqtinstall pulls Qt's prebuilt Linux binaries from the Qt CDN —
 # the same source GitHub Actions' install-qt-action uses on the
 # host runners, so PR CI and UAT CI link against identical Qt.
@@ -30,7 +30,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Keep this in lockstep with .github/actions/setup-linux-build's
 # Qt version so PR CI and UAT CI link against identical Qt.
-ARG QT_VERSION=6.8.0
+ARG QT_VERSION=6.11.0
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
