@@ -13,6 +13,7 @@ test-*.png
 test-*.jpg
 .claude/*
 !.claude/settings.json
+!.claude/skills/
 
 # Reviewer-supplied real-world PDFs land in tests/data/ as a
 # personal scratch dir for the developer. They are not committed

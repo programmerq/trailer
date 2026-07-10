@@ -74,7 +74,8 @@ PR must *carry with it* before it can be marked Done. They are pass/fail:
 each has a one-line rule, an objective test the reviewer (or you) can run,
 and the evidence artifact the PR must contain. A PR missing the required
 artifact is Not Done, regardless of how well the code works. These encode
-decisions the maintainer has ratified; the reasoning lives in
+decisions ratified through the decision-record process (arbiter role per
+record; the owner is the escalation-only override); the reasoning lives in
 [`PHILOSOPHY.md`](PHILOSOPHY.md) and [`DESIGN.md`](DESIGN.md), and
 value/default changes are backed by records in
 [`docs/decision-records/`](docs/decision-records/).
@@ -84,6 +85,14 @@ value/default changes are backed by records in
 > gates. Read each gate's test; if it doesn't apply, say so in the PR and
 > move on. Don't manufacture stub UI or screenshots to satisfy a gate that
 > isn't triggered.
+
+> **Before you push:** run the [`review-before-push`](.claude/skills/review-before-push/SKILL.md)
+> skill — 1-2 local reviewer passes with contrasting personas over the diff,
+> every finding dispositioned (fix / justify / defer-with-record) — before any
+> `git push` or PR. Before escalating open questions to the owner, run the
+> [`decision-brief`](.claude/skills/decision-brief/SKILL.md) skill: self-decide
+> everything the gates and records already derive, escalate only the genuine
+> forks.
 
 ### G1 — Threshold declared before work begins
 
@@ -123,12 +132,14 @@ value/default changes are backed by records in
   a window capture (the G5-style note). This is the per-item roll-up of
   the milestone audit in DESIGN §2.5.3 — satisfying G2 per PR satisfies
   that audit; there is not a second screenshot regime.
-- **Open question (owner sign-off):** whether an offscreen
-  `widget->grab()` capture (see *Screenshots for UI-visible changes*
-  below) counts as "the running app," or whether UX-Done requires a
-  real event-loop/window render, is not yet ruled. Until the maintainer
-  rules, offscreen grabs are accepted but the PR should say which method
-  it used.
+- **Capture method (ruled):** G2 evidence is captured by offscreen
+  `QWidget::grab()` / `QQuickWindow::grabWindow` in the test harness under
+  `QT_QPA_PLATFORM=offscreen` (the `widget->grab()` hybrid described in
+  *Screenshots for UI-visible changes* below) — **not** manual screenshots.
+  Offscreen grabs are the accepted, expected method; a manual screenshot is
+  a fallback only where the state cannot be reached offscreen, and the PR
+  says so. This resolves the former open question; a real event-loop/window
+  render is not required.
 
 ### G3 — No lying controls
 
