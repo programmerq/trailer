@@ -16,10 +16,11 @@ class PdfEditor;
 // owning unique_ptrs — a command moves between them as the user
 // undoes / redoes.
 //
-// This is the qpdf-level counterpart to AnnotationStore's existing
-// undo log. Annotations and qpdf mutations live in separate stacks
-// today; the unified chronological ordering is captured as a
-// follow-up in TODO.md.
+// This is the qpdf-level counterpart to AnnotationStore's snapshot
+// undo. These stacks own only the command payloads; cross-stack
+// ordering lives in PdfDocument's chronological undo log, which
+// records one typed entry per committed operation and dispatches
+// undo/redo to whichever stack holds the most recent op.
 class PdfCommand {
   public:
     virtual ~PdfCommand() = default;

@@ -255,14 +255,17 @@ Drop the PNGs into the PR body via GitHub's drag-and-drop upload (or
 attach via `gh pr edit --body-file`); do not commit screenshots into
 the repo unless they are reference/design artefacts.
 
-**Undo.** Two undo stacks coexist:
+**Undo.** One chronological log per document, two payload stacks:
 - `AnnotationStore` for annotation create/modify/delete.
 - `PdfCommand` (in `src/document/PdfCommands.h`) for page-level qpdf
-  mutations.
+  mutations (pixel snapshots play this role in `ImageDocument`).
 
-The unified `IDocument::undo` / `redo` routes to the most-recently-touched
-stack via an `m_lastUndoSource` heuristic. This is fragile — see TODO.md
-"PDF undo/redo — rotate done, others scoped."
+`IDocument::undo` / `redo` pop the document's chronological log, which
+records one typed entry per committed operation, so the most recent op
+is always reverted first regardless of stack. Bounded histories evict
+in lockstep with the log (`AnnotationStore::historyEvicted`); if you
+add a new undoable domain, wire its eviction the same way or the log
+will over-promise.
 
 **Networking.** Trailer makes exactly one kind of outbound call: ONNX
 model downloads via `ModelDownloader`, gated on explicit user consent

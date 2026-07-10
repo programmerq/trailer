@@ -106,8 +106,8 @@ class PdfDocument : public IDocument {
     bool isDirty() const override { return m_dirty || m_annotationsModified; }
     // PDF-level undo runs across two parallel stacks: the
     // AnnotationStore for in-memory shape edits, and a separate
-    // PdfCommand stack for qpdf-level mutations (rotate today;
-    // delete / move / insert / crop are scoped for follow-up).
+    // PdfCommand stack for qpdf-level mutations (rotate / delete /
+    // move / insert / crop).
     // Undo/redo pop a single chronological log (m_undoLog) recording
     // which stack each committed op went to, so the most recent action
     // is always undone first regardless of which stack it came from.
