@@ -192,18 +192,20 @@ users is to attack it before they do.
   statement that those two carry more authority than the others.
 
 - **The Arbiter.** Every non-trivial design decision has exactly one
-  arbiter: the person who reads the persona critiques and the objections,
+  arbiter: the role that reads the persona critiques and the objections,
   weighs them, and issues the verdict that goes into the decision record.
-  The arbiter is the maintainer, or a delegate the maintainer names for
-  that specific decision. The arbiter's job is not to have the best taste
-  in the room; it is to make the call *explicit and reviewable*, with the
-  rationale written down.
+  The arbiter is an **agent role, named per decision in that decision's
+  record** (the record's `Arbiter:` field), not a fixed person; the owner
+  may name a specific delegate for a specific decision. The arbiter's job is
+  not to have the best taste in the room; it is to make the call *explicit
+  and reviewable*, with the rationale written down.
 
 - **The owner is escalation-only.** Routine decisions do not wait on the
-  owner. The owner (the maintainer, in the ownership sense) is invoked to
+  owner. The owner (programmerq) is the escalation-only override, invoked to
   break a genuine deadlock, to overrule an arbiter, or to sign off on
-  reopening a settled decision. Designing so the owner is a bottleneck
-  for ordinary work is itself a design smell.
+  reopening a settled decision — never the routine arbiter of gates.
+  Designing so the owner is a bottleneck for ordinary work is itself a
+  design smell.
 
 - **The admissible-objection test.** An objection counts only if it
   articulates a concrete, checkable problem: it names a user or persona,

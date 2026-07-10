@@ -46,7 +46,12 @@ the downloaded weights.
 
 ## Invariants (not just budgets)
 
-These are pass/fail behaviours, not tunable numbers:
+These are pass/fail behaviours, not tunable numbers. They are
+**corpus-independent and structural** — first-page render before a full-file
+read, the UI never blocking during long work, no silently-inert shortcut — so
+they are the part of this file that CI can and does enforce (they hold on any
+machine and do not depend on wall-clock timing). The latency numbers below are
+**not** CI-enforced; see *How the latency budgets are verified*.
 
 - **First-page render must not block on a full-file read.** The first visible
   page renders from a partial/streamed read; the app must never wait for the
@@ -89,6 +94,25 @@ and are marked `[advisory until reference rig + corpus ratified]` in the table
 below. **B5 and B6 stay binding:** they are wall-clock user-perception numbers
 (time to first feedback, time to cancel) that hold on any machine and do not
 depend on the corpus.
+
+## How the latency budgets are verified
+
+The latency budgets (B1-B6) are verified by **agent-run local measurement on the
+reference corpus plus a reviewer check** — **never** a CI wall-clock assertion.
+CI on the self-hosted runners is deliberately *not* a timing gate: runner
+wall-time is too variable to yield a stable pass/fail oracle, and runner minutes
+are limited. So:
+
+- **Agent-measured locally.** When a PR plausibly moves a latency budget, the
+  agent measures the affected row on the reference corpus (once a rig + corpus
+  is ratified) and reports the number in the PR body.
+- **Review-checked.** A reviewer confirms the reported measurement and method;
+  this is the enforcement mechanism, in the same spirit as the review-only
+  enforcement of the no-telemetry constraint.
+- **CI enforces only the structural invariants** in *Invariants (not just
+  budgets)* — first-page render before full read, no UI block, no inert
+  shortcut — which are corpus-independent and need no wall-clock timing. CI
+  never asserts a latency number.
 
 ## Budget table
 

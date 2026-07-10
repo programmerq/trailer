@@ -9,7 +9,7 @@ test, the arbiter, and the proposed → accepted → superseded lifecycle).
 -->
 
 - **Status:** proposed <!-- proposed | accepted | superseded-by NNNN -->
-- **Arbiter:** the maintainer (default), or a delegate the maintainer names for this record.
+- **Arbiter:** <the agent role named for this decision; the owner (programmerq) is the escalation-only override>
 - **Date proposed:** <YYYY-MM-DD>
 - **Date accepted / superseded:** <YYYY-MM-DD, or —>
 

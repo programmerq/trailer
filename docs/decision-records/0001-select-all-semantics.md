@@ -1,7 +1,7 @@
 # 0001 — Select All (⌘A / Ctrl+A) semantics in a document viewer
 
 - **Status:** proposed
-- **Arbiter:** the maintainer (default), or a delegate the maintainer names for this record.
+- **Arbiter:** the agent role named for this record; the owner (programmerq) is the escalation-only override.
 - **Date proposed:** 2026-07-09
 - **Date accepted / superseded:** —
 

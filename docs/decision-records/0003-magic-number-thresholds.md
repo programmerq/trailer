@@ -1,7 +1,7 @@
 # 0003 — Magic-number thresholds: scorer 0.50, "≥3 form widgets", "≥20 pages"
 
 - **Status:** proposed
-- **Arbiter:** the maintainer (default), or a delegate the maintainer names for this record.
+- **Arbiter:** the agent role named for this record; the owner (programmerq) is the escalation-only override.
 - **Date proposed:** 2026-07-09
 - **Date accepted / superseded:** —
 

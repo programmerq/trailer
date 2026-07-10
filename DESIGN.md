@@ -271,11 +271,12 @@ milestone is declared complete):
 4. Attach the screenshots to the PR body (and, at milestones, as CI
    artifacts) so reviewers can inspect them without running the app.
 
-Capture method note: whether an offscreen `widget->grab()` capture satisfies
-"from the running app," or whether a real event-loop/window render is
-required, is an open question pending maintainer sign-off (see AGENTS.md
-gate G2). Until it is ruled, offscreen grabs are accepted; state which method
-the PR used.
+Capture method note (ruled): the audit's screenshots are captured by offscreen
+`QWidget::grab()` / `QQuickWindow::grabWindow` in the test harness under
+`QT_QPA_PLATFORM=offscreen` — the offscreen grab hybrid, not manual screenshots
+and not a required real event-loop/window render (see AGENTS.md gate G2). A
+manual screenshot is a fallback only where a state cannot be reached offscreen;
+name the method when the fallback is used.
 
 ### 2.5.4 Long-term: structured agent UX test suites
 

@@ -1,7 +1,7 @@
 # 0002 — ML background removal: progress, cancel, and the missing-model prompt
 
 - **Status:** proposed
-- **Arbiter:** the maintainer (default), or a delegate the maintainer names for this record.
+- **Arbiter:** the agent role named for this record; the owner (programmerq) is the escalation-only override.
 - **Date proposed:** 2026-07-09
 - **Date accepted / superseded:** —
 
