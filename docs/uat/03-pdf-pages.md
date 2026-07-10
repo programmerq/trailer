@@ -467,9 +467,10 @@ behaviour is deliberate.
 
 All five page-level qpdf mutations (rotate, delete, move, crop,
 insert) land on the PdfCommand undo stack, parallel to the
-AnnotationStore log. `Edit > Undo` prefers the most-recently-touched
-stack via an `m_lastUndoSource` heuristic (see
-`src/document/PdfAdapter.cpp`).
+AnnotationStore log. `Edit > Undo` pops the document's unified
+chronological log — one typed entry per committed op — so the most
+recent action is always undone first regardless of which stack it
+came from (see `src/document/PdfAdapter.cpp`).
 
 Individual case coverage:
 - Rotate — UAT-PDF-005 (the 360° spin) implicitly exercises this;
@@ -479,11 +480,10 @@ Individual case coverage:
 - Move — UAT-PDF-024.
 - Insert — UAT-PDF-035.
 - Crop — UAT-PDF-056.
-
-Known follow-up: merging the AnnotationStore log and the PdfCommand
-stack into one chronological undo list so multi-action undo always
-pops the most recent thing the user did, regardless of which
-subsystem produced it. See TODO.md.
+- Interleaved with annotations — UAT-ANN-140 (chronological order);
+  UAT-UND-150 (undo-all / redo-all past the annotation history cap —
+  shrunk to 5 via the store's test seam so eviction genuinely fires;
+  `tests/uat/test_uat_undo_interleaved_cap.cpp`).
 
 ### UAT-PDF-091 — PDF export to image (Known gap)
 

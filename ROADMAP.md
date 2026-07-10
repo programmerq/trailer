@@ -139,14 +139,14 @@ Pickable in this order.
    Cmd-A scope,
    content-aware first-open defaults, and the continuous-mode `↓`
    viewport-step — each independent and pickable.
-4. **Unified `AnnotationStore` + `PdfCommand` undo log.** Wave 2
-   shipped compound annotation undo (`beginCompound` /
-   `endCompound`), which collapses a drag to one undo frame and
-   makes the `m_lastUndoSource` heuristic between AnnotationStore
-   and PdfCommand stacks more visibly wrong on interleaved
-   gestures (rotate → drag → rotate now confuses Cmd-Z). Replace
-   the heuristic with a single chronological log of typed
-   entries.
+4. ~~**Unified `AnnotationStore` + `PdfCommand` undo log.**~~
+   **Shipped.** The last-touched-stack heuristic is gone: both
+   `PdfDocument` and `ImageDocument` dispatch undo/redo off a
+   single chronological log of typed entries, with bounded
+   histories evicting in lockstep with the log
+   (`AnnotationStore::historyEvicted`) and runtime guards instead
+   of release-inert asserts on desync. Interleaved gestures
+   (rotate → drag → rotate) now unwind in true reverse order.
 5. **Continuous-mode annotation drift fix.** Overlay uses
    `pageNavigator()->currentPage()`, so annotations only render
    correctly on the page Qt PDF reports as current. **Scope
@@ -235,7 +235,8 @@ not the *scope* or *timing*.
   user-facing "pause all ML" toggle become reasonable.
 - **Compound undo at the `PdfCommand` layer.** AnnotationStore now
   has it; rotating three pages still produces three undo frames.
-  Worth pairing with the unified-log work in *Now*.
+  The unified log (*Now* item 4) shipped without it; batching page
+  ops into one chronological-log entry is still open.
 - **Generalise `documentAboutToBeRemoved` into a `DocumentLifecycle`
   service** (or make `IDocument` a `QObject`). Today the signal is
   hand-subscribed by every cache that holds raw `IDocument*` keys
@@ -304,12 +305,12 @@ Explicitly off the table so they stop eating planning oxygen.
   keys. **Mitigation:** generalize into a service when the third
   cache lands, or make `IDocument` a `QObject` (tracked under
   *Later*).
-- **Compound undo + cross-stack `m_lastUndoSource`.** Compound
-  annotation undo collapses drags to one frame; the PdfAdapter
-  still chooses which stack to undo by last-touched source.
-  Interleaved gestures will now exhibit "Cmd-Z unwinds the wrong
-  thing" symptoms more visibly. **Mitigation:** tracked as *Now*
-  item 4.
+- **Compound undo + cross-stack ordering.** Compound annotation
+  undo collapses drags to one frame; the PdfAdapter used to choose
+  which stack to undo by last-touched source, so interleaved
+  gestures exhibited "Cmd-Z unwinds the wrong thing" symptoms.
+  **Resolved:** *Now* item 4 shipped the unified chronological log
+  (both adapters) and retired the heuristic.
 - **Update-signing key management.** Whichever ed25519
   implementation we pick (Sparkle's appcast, WinSparkle's
   matching feed, or a custom checker), the private key needs to

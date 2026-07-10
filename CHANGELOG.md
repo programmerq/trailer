@@ -44,6 +44,19 @@ entries terse and user-visible; CI / infrastructure churn lives in the
 
 ### Fixed
 
+- **Undo order across subsystems.** Undo / Redo now pop a single
+  chronological log per document, so interleaved gestures (rotate →
+  annotate → rotate) revert in true reverse order. Previously PDF
+  documents routed Ctrl-Z by a most-recently-touched-stack heuristic
+  and image documents drained all annotation undo before pixel
+  edits.
+- **Undo past the annotation history cap.** The bounded annotation
+  history now evicts in lockstep with the chronological log, so a
+  long markup session no longer produces "Undo does nothing"
+  presses, annotations stranded after undo-all, or Redo entries
+  that no-op. The annotation history cap was also raised from 64 to
+  128 gestures, and Undo / Redo degrade to a logged warning (never
+  a crash) if the history ever desynchronises.
 - **Search bar "Close".** Clicking the X (or pressing Esc) now
   fully collapses the search bar instead of leaving an empty gap in
   the toolbar.

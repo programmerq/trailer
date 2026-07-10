@@ -4,6 +4,7 @@
 
 #include <QObject>
 
+#include <algorithm>
 #include <vector>
 
 namespace trailer {
@@ -72,6 +73,18 @@ class AnnotationStore : public QObject {
     void endCompound();
     bool inCompound() const { return m_compoundDepth > 0; }
 
+    // Test seam only: shrink the undo depth cap so eviction (and the
+    // historyEvicted contract above) can be exercised without pushing
+    // hundreds of frames. A depth of 0 is clamped to 1 (a zero-frame
+    // cap would make every push evict itself). Lowering the cap below
+    // the current stack size trims the excess immediately, emitting
+    // historyEvicted() once per dropped frame (oldest first) so a
+    // mirroring owner stays in lockstep. Production code must not call
+    // this — the default depth is a deliberate memory/usability
+    // trade-off.
+    void setMaxUndoDepth(size_t depth);
+    size_t maxUndoDepth() const { return m_maxUndoDepth; }
+
   signals:
     void changed();
     // Emitted exactly when a real undo frame is pushed — one per
@@ -79,6 +92,13 @@ class AnnotationStore : public QObject {
     // Lets an owner mirror annotation edits into a unified cross-stack
     // undo log without mistaking an undo for a new edit.
     void historyPushed();
+    // Emitted (synchronously, before the matching historyPushed) when a
+    // push forces the oldest undo frame out to stay within the depth
+    // cap. An owner mirroring this store into a unified cross-stack
+    // undo log MUST drop its oldest annotation entry on this signal —
+    // otherwise the log claims more annotation undos than the store
+    // can perform and undo silently no-ops at the tail.
+    void historyEvicted();
 
   private:
     void pushHistory();
@@ -107,11 +127,15 @@ class AnnotationStore : public QObject {
     bool m_compoundSnapshotPushed = false;
 
     // Cap on retained snapshots per direction. Each snapshot is one
-    // std::vector<Annotation> copy; 64 keeps a busy markup session's
-    // RSS well under a MB at typical annotation counts. Bump if a
-    // real workflow runs out of undo on a long session; lower if
-    // memory profiling points at AnnotationStore.
-    static constexpr size_t kMaxUndo = 64;
+    // std::vector<Annotation> copy — Annotation is a small value
+    // struct, so 128 frames of a busy 50-annotation document stay in
+    // the low single-digit MB range. 128 (not 64) so a long markup
+    // session doesn't hit eviction mid-flow; owners that mirror this
+    // store into a unified log stay consistent past the cap via
+    // historyEvicted(). Bump if a real workflow runs out of undo;
+    // lower if memory profiling points at AnnotationStore.
+    static constexpr size_t kDefaultMaxUndoDepth = 128;
+    size_t m_maxUndoDepth = kDefaultMaxUndoDepth;
 };
 
 } // namespace trailer

@@ -1153,16 +1153,28 @@ features, which are intentionally excluded:
   …) gate UI on a per-format basis. (See
   [`docs/CONVENTIONS.md`](../docs/CONVENTIONS.md) §1 for the recipe
   to add a new document type.)
-- Mutations split between two undo mechanisms by category:
-  **`PdfCommand` subclasses** (`src/document/PdfCommands.h`) for
-  qpdf-level page operations — `RotatePageCommand`,
-  `DeletePagesCommand`, `MovePageCommand`, `InsertPagesCommand`,
-  `CropPageCommand` all shipped (PR #25) — with symmetric
-  `apply` / `revert`; and **`AnnotationStore` snapshot undo**
-  (`src/annotation/AnnotationStore.h`) for annotation create /
-  modify / delete via whole-store snapshots. The two stacks share a
-  cross-routing heuristic (`MainWindow::m_lastUndoSource`); a future
-  unified chronological log is roadmap-tracked.
+- Mutations feed a **unified chronological undo log** per document
+  (`PdfDocument` and `ImageDocument` alike): every committed
+  operation appends one typed entry recording which payload stack it
+  went to, and `IDocument::undo` / `redo` pop that log so the most
+  recent action is always reverted first regardless of subsystem.
+  (The pre-log most-recently-touched-stack heuristic is gone.)
+  Payloads stay in their owning stacks: **`PdfCommand` subclasses**
+  (`src/document/PdfCommands.h`) for qpdf-level page operations —
+  `RotatePageCommand`, `DeletePagesCommand`, `MovePageCommand`,
+  `InsertPagesCommand`, `CropPageCommand` all shipped (PR #25) —
+  with symmetric `apply` / `revert`; pixel snapshots for raster
+  mutations on `ImageDocument`; and **`AnnotationStore` snapshot
+  undo** (`src/annotation/AnnotationStore.h`) for annotation create /
+  modify / delete via whole-store snapshots. Bounded histories evict
+  in lockstep with the log: when `AnnotationStore` drops its oldest
+  frame at the depth cap it emits `historyEvicted()` and the owning
+  document removes its oldest matching log entry (the image pixel
+  cap syncs the same way inside `pushUndoSnapshot()`), so the log
+  never claims an undo the owning store cannot perform. Should they
+  ever desynchronise anyway, `undo()` / `redo()` warn, drop the
+  orphaned entry, and return `false` at runtime rather than touch an
+  empty stack.
 - Documents expose Qt signals (`IDocument::stateChanged` and
   format-specific signals on the concrete subclasses) for UI to
   observe.
