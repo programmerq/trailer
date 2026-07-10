@@ -16,6 +16,7 @@
 #include "document/IDocument.h"
 #include "ui/DocumentView.h"
 #include "ui/EmptyStateWidget.h"
+#include "ui/FormToolbar.h"
 #include "ui/MainWindow.h"
 #include "ui/MarkupToolbar.h"
 
@@ -278,6 +279,17 @@ void TestUatEmptyState::uat_empty_005_markupToolbarHiddenOverEmptyState() {
 
     auto *markup = mw->findChild<MarkupToolbar *>();
     QVERIFY(markup);
+    auto *form = mw->findChild<FormToolbar *>();
+    QVERIFY(form);
+
+    // With a document open, the toolbar toggle actions (and their
+    // View-menu entries / shortcuts) must be enabled — the user can
+    // summon the toolbars.
+    QVERIFY2(markup->toggleViewAction()->isEnabled(),
+             "Markup toolbar toggle must be enabled with a document open");
+    QVERIFY2(form->toggleViewAction()->isEnabled(),
+             "Form toolbar toggle must be enabled with a document open");
+
     // Surface the markup toolbar the way the user would (View → Toggle
     // Markup Toolbar / Ctrl+Shift+A drives the same toggleViewAction).
     markup->toggleViewAction()->trigger();
@@ -295,6 +307,46 @@ void TestUatEmptyState::uat_empty_005_markupToolbarHiddenOverEmptyState() {
     QVERIFY2(emptyStateIsCurrent(mw), "Empty state must be shown after closing the last document");
     QVERIFY2(!markup->toggleViewAction()->isChecked(),
              "Markup toolbar must be hidden over the empty state (no lying controls)");
+
+    // No lying controls, part 2: over the empty state the toggle actions
+    // themselves must be DISABLED, so the View-menu entries grey out and
+    // the Ctrl/Cmd+Shift+A shortcut cannot re-summon a toolbar whose
+    // tools would no-op on the now-closed document.
+    QVERIFY2(!markup->toggleViewAction()->isEnabled(),
+             "Markup toolbar toggle must be DISABLED over the empty state");
+    QVERIFY2(!form->toggleViewAction()->isEnabled(),
+             "Form toolbar toggle must be DISABLED over the empty state");
+    // Because the toggles are disabled, the View-menu entries grey out and
+    // the Ctrl/Cmd+Shift+A shortcut is inert — Qt does not deliver a
+    // disabled action's shortcut or accept its (greyed) menu item, so the
+    // user has no path to re-summon the empty-state toolbar. (We do not
+    // call trigger() here: it programmatically force-activates and bypasses
+    // the enabled check, so it does not model the real user path.)
+
+    // Reopening a document must re-enable the toggle actions (the gate is
+    // presence-of-document, not a one-way latch). openFiles() may route the
+    // document into the persisted empty window or spawn a fresh one
+    // depending on the OpenFilesIn preference, so re-resolve whichever
+    // window actually received the document and assert on ITS toggles.
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *docWindow = nullptr;
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (auto *cand = qobject_cast<MainWindow *>(w); cand && cand->documentCount() == 1) {
+            docWindow = cand;
+            break;
+        }
+    }
+    QVERIFY2(docWindow, "Reopening a document must yield a window holding it");
+    auto *reMarkup = docWindow->findChild<MarkupToolbar *>();
+    auto *reForm = docWindow->findChild<FormToolbar *>();
+    QVERIFY(reMarkup);
+    QVERIFY(reForm);
+    QVERIFY2(reMarkup->toggleViewAction()->isEnabled(),
+             "Markup toolbar toggle must be re-enabled once a document is open again");
+    QVERIFY2(reForm->toggleViewAction()->isEnabled(),
+             "Form toolbar toggle must be re-enabled once a document is open again");
 #endif
 }
 

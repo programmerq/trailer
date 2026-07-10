@@ -261,6 +261,11 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
         m_manageModelsButton = new QPushButton(tr("Manage models…"), page);
         m_manageModelsButton->setObjectName(QStringLiteral("manageModelsButton"));
         m_manageModelsButton->setEnabled(false); // enabled once a callback is set
+        // Defensive: in the shipped path a callback is always wired, but if
+        // one is never set the button stays disabled — explain why rather
+        // than presenting a dead control with no affordance (latent G3).
+        m_manageModelsButton->setToolTip(
+            tr("Model management is unavailable in this context."));
         connect(m_manageModelsButton, &QPushButton::clicked, this, [this]() {
             if (m_manageModelsCallback)
                 m_manageModelsCallback();
@@ -288,6 +293,11 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
         m_resetAllButton = new QPushButton(tr("Reset all Trailer settings and data…"), page);
         m_resetAllButton->setObjectName(QStringLiteral("resetAllButton"));
         m_resetAllButton->setEnabled(false); // enabled once a callback is set
+        // Defensive: in the shipped path a callback is always wired, but if
+        // one is never set the button stays disabled — explain why rather
+        // than presenting a dead control with no affordance (latent G3).
+        m_resetAllButton->setToolTip(
+            tr("Resetting all settings and data is unavailable in this context."));
         connect(m_resetAllButton, &QPushButton::clicked, this, [this]() {
             if (!m_resetAllCallback)
                 return;
@@ -323,14 +333,24 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
 
 void PreferencesDialog::setManageModelsCallback(std::function<void()> cb) {
     m_manageModelsCallback = std::move(cb);
-    if (m_manageModelsButton)
-        m_manageModelsButton->setEnabled(static_cast<bool>(m_manageModelsCallback));
+    if (m_manageModelsButton) {
+        const bool enabled = static_cast<bool>(m_manageModelsCallback);
+        m_manageModelsButton->setEnabled(enabled);
+        // Clear the disabled-state explanation once the control is live.
+        if (enabled)
+            m_manageModelsButton->setToolTip(QString());
+    }
 }
 
 void PreferencesDialog::setResetAllCallback(std::function<void()> cb) {
     m_resetAllCallback = std::move(cb);
-    if (m_resetAllButton)
-        m_resetAllButton->setEnabled(static_cast<bool>(m_resetAllCallback));
+    if (m_resetAllButton) {
+        const bool enabled = static_cast<bool>(m_resetAllCallback);
+        m_resetAllButton->setEnabled(enabled);
+        // Clear the disabled-state explanation once the control is live.
+        if (enabled)
+            m_resetAllButton->setToolTip(QString());
+    }
 }
 
 void PreferencesDialog::syncControlsFromSettings() {

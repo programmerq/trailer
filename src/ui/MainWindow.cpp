@@ -1040,9 +1040,9 @@ void MainWindow::buildWindowMenu(QMenu *windowMenu) {
     // collides with the app's content zoom (View → Zoom In/Out) and isn't a
     // platform convention, so relabel to the honest term for what it does
     // (maximize/restore toggle). Behavior is unchanged on all platforms.
-#ifdef Q_OS_MACOS
-    zoom->setText(tr("&Zoom"));
-#else
+    // On macOS the action keeps its creation text ("&Zoom"); only the
+    // non-mac relabel is meaningful.
+#ifndef Q_OS_MACOS
     zoom->setText(tr("&Maximize"));
 #endif
     connect(zoom, &QAction::triggered, this, [this]() {
@@ -3129,6 +3129,14 @@ void MainWindow::onAllTabsClosed() {
     // that window (avoid empty-window pile-up). The last remaining
     // window persists as an empty-state window so the app is never
     // left with zero windows / no way to open a file.
+    //
+    // windowCount() is only reliable here because we assume window
+    // teardowns do not overlap within a single event-loop turn: a
+    // closing window is tracked via a QPointer that nulls (dropping the
+    // count) only after its deleteLater() is processed on a later turn.
+    // If two windows were torn down in the same turn this comparison
+    // could momentarily see a stale count; the app's single-threaded,
+    // one-close-per-turn UI flow guarantees that does not happen.
     if (m_app && m_app->windowCount() > 1) {
         close();
     } else {
@@ -3143,6 +3151,21 @@ void MainWindow::updateEmptyState() {
     const bool empty = documentCount() == 0;
     m_centerStack->setCurrentWidget(empty ? static_cast<QWidget *>(m_emptyState)
                                           : static_cast<QWidget *>(m_documentPage));
+
+    // Gate the toolbar toggle actions on document presence, mirroring the
+    // other document-dependent actions (rotate/save/zoom) toggled in
+    // onCurrentDocumentChanged(). Over the empty state these toggles would
+    // re-summon a toolbar whose tools no-op — a "lying control" — so we
+    // disable the toggle actions themselves, which also greys their
+    // View-menu entries and inerts the Ctrl/Cmd+Shift+A shortcut. We only
+    // touch enabled state here, never visibility: the user's prior toolbar
+    // visibility preference is restored from saved state when a document is
+    // reopened (onCurrentDocumentChanged), so re-enabling must not force-show.
+    if (m_markupToolbarAction)
+        m_markupToolbarAction->setEnabled(!empty);
+    if (m_formToolbarAction)
+        m_formToolbarAction->setEnabled(!empty);
+
     if (empty) {
         // No lying controls: the document-only toolbars must not linger
         // over the empty state showing annotation / form-fill buttons

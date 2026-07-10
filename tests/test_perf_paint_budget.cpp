@@ -84,6 +84,12 @@ void TestPerfPaintBudget::singleZoomStepStaysWithinPaintBudget() {
     surface->installEventFilter(&counter);
     scroll->installEventFilter(&counter);
 
+    // Capture the zoom factor before the interaction so we can assert the
+    // interaction actually changed the surface (liveness). Without this,
+    // the upper-bound budget below would pass vacuously if zoomIn()
+    // regressed to a no-op or the filter were installed on the wrong widget.
+    const double scaleBefore = doc->zoomFactor();
+
     // ONE basic interaction: a single zoom-in step.
     doc->zoomIn();
 
@@ -103,6 +109,18 @@ void TestPerfPaintBudget::singleZoomStepStaysWithinPaintBudget() {
     // the ~1-2 paints a clean single re-scale produces, so the test is
     // robust on a slow, variable CI runner but still catches a
     // repaint-storm regression (dozens of paints from a feedback loop).
+    // Liveness / lower bound: the interaction must have done real work.
+    // The zoom step must have re-scaled the surface (factor strictly
+    // increased) AND produced at least one repaint. This catches a
+    // zoomIn()-became-a-no-op regression or a filter on the wrong widget,
+    // which the upper bound alone would silently pass. No wall-time here.
+    const double scaleAfter = doc->zoomFactor();
+    QVERIFY2(scaleAfter > scaleBefore,
+             qPrintable(QStringLiteral("zoomIn did not increase the zoom factor: %1 -> %2")
+                            .arg(scaleBefore)
+                            .arg(scaleAfter)));
+    QVERIFY2(counter.paints >= 1, "zoom step produced no repaint (surface did not update)");
+
     constexpr int kPaintBudget = 8;
     constexpr int kLayoutBudget = 8;
     QVERIFY2(counter.paints <= kPaintBudget,
