@@ -15,8 +15,17 @@ name: CI
 on:
   push:
     branches: [main]
+    # If build-and-test or clang-format ever become *required* checks,
+    # path-skipped PRs would hang on "Expected" — pair this with a
+    # same-name no-op workflow on the inverse paths, or drop paths-ignore.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
 
 # Cancel an in-progress run when a new commit lands on the same ref —
 # stops PR pushes from queueing up minutes of stale builds.
