@@ -152,6 +152,8 @@ set(TRAILER_SOURCES
     src/ui/MyCardDialog.h
     src/ui/OcrResultsDialog.cpp
     src/ui/OcrResultsDialog.h
+    src/ui/PreferencesDialog.cpp
+    src/ui/PreferencesDialog.h
     src/ui/SamController.cpp
     src/ui/SamController.h
     src/ui/SearchBar.cpp

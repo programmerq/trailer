@@ -63,5 +63,6 @@ trailer_add_test(test_cancellation_token test_cancellation_token.cpp)
 trailer_add_test(test_power_source test_power_source.cpp)
 trailer_add_test(test_ml_scheduler test_ml_scheduler.cpp)
 trailer_add_test(test_empty_state_widget test_empty_state_widget.cpp)
+trailer_add_test(test_preferences test_preferences.cpp)
 
 add_subdirectory(uat)
