@@ -465,6 +465,12 @@ specialised case).
 
 ### 5.4 Platform conventions
 
+The concrete, checkable per-OS command-surface reference (menu structure,
+the unified 1:1 shortcut mapping, command-surface placement, save-model
+conventions, with citations) lives in
+[`docs/platform-conventions.md`](docs/platform-conventions.md) — the target
+gate G4 checks against.
+
 | Concern | macOS | Windows | Linux |
 |---|---|---|---|
 | Menu bar | Top of screen | Inside window | Inside window (or top depending on DE) |

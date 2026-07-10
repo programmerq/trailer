@@ -157,8 +157,12 @@ value/default changes are backed by records in
 - **Test:** The feature is reachable on macOS, Windows, and Linux. If its
   surface differs per OS (global menu bar vs in-window menu bar vs header
   bar), that is expected and fine; a feature reachable on one OS and
-  absent on another fails the gate. See DESIGN §2.1 goal 3 and
-  PHILOSOPHY → *Platform-native per OS*.
+  absent on another fails the gate. The concrete, checkable per-OS
+  command-surface reference — menu structure, the unified 1:1 shortcut
+  mapping, command-surface placement, save-model conventions — is
+  [`docs/platform-conventions.md`](docs/platform-conventions.md). See
+  DESIGN §2.1 goal 3, DESIGN §5.4, and PHILOSOPHY → *Platform-native per
+  OS*.
 - **Evidence:** The PR states, per platform, **the shape the feature
   takes** — which command surface it lives in (global menu bar / in-window
   menu bar / header bar) — and screenshots it on each platform where it
