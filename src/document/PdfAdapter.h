@@ -113,8 +113,8 @@ class PdfDocument : public IDocument {
     // is always undone first regardless of which stack it came from.
     bool canUndo() const override;
     bool canRedo() const override;
-    void undo() override;
-    void redo() override;
+    bool undo() override;
+    bool redo() override;
     void rotatePage(int pageIndex, int degreesClockwise) override;
     void deletePages(const std::vector<int> &pageIndices) override;
     void movePage(int from, int to) override;
@@ -232,6 +232,15 @@ class PdfDocument : public IDocument {
     // invalidate all redo (both qpdf + annotation redo, and m_redoLog).
     // Called after a qpdf-level command applies.
     void recordPdfCommandApplied();
+
+    // AnnotationStore mirror hooks, connected to historyPushed /
+    // historyEvicted in both the constructor and unlock(). The store
+    // owns the annotation history depth; these keep the chronological
+    // log's Annotation entries in lockstep with the store's undo stack
+    // so the log never claims an undo the store cannot perform.
+    void onAnnotationHistoryPushed();
+    void onAnnotationHistoryEvicted();
+    void connectAnnotationHistory();
 
     // Unified chronological undo/redo log: one entry per committed op,
     // recording which stack it went to, so undo()/redo() pop the truly

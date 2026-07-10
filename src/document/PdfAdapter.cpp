@@ -35,6 +35,7 @@
 #include <QTimer>
 #include <QVBoxLayout>
 
+#include <algorithm>
 #include <cmath>
 
 namespace trailer {
@@ -136,15 +137,41 @@ PdfDocument::PdfDocument(QString path)
         m_annotations.clearHistory();
         QObject::connect(&m_annotations, &AnnotationStore::changed, m_doc.get(),
                          [this]() { m_annotationsModified = true; });
-        QObject::connect(&m_annotations, &AnnotationStore::historyPushed, m_doc.get(), [this]() {
-            if (m_suppressUndoLog)
-                return;
-            // A new annotation edit (one frame, compound-coalesced):
-            // record it in the unified log and invalidate all redo.
-            m_undoLog.push_back(UndoSource::Annotation);
-            m_redoLog.clear();
-            m_pdfRedoStack.clear();
-        });
+        connectAnnotationHistory();
+    }
+}
+
+void PdfDocument::connectAnnotationHistory() {
+    QObject::connect(&m_annotations, &AnnotationStore::historyPushed, m_doc.get(),
+                     [this]() { onAnnotationHistoryPushed(); });
+    QObject::connect(&m_annotations, &AnnotationStore::historyEvicted, m_doc.get(),
+                     [this]() { onAnnotationHistoryEvicted(); });
+}
+
+void PdfDocument::onAnnotationHistoryPushed() {
+    if (m_suppressUndoLog)
+        return;
+    // A new annotation edit (one frame, compound-coalesced):
+    // record it in the unified log and invalidate all redo.
+    m_undoLog.push_back(UndoSource::Annotation);
+    m_redoLog.clear();
+    m_pdfRedoStack.clear();
+}
+
+void PdfDocument::onAnnotationHistoryEvicted() {
+    if (m_suppressUndoLog)
+        return;
+    // The store dropped its oldest frame to stay within its depth cap.
+    // Drop the oldest Annotation entry from the chronological log so
+    // the log's annotation count matches what the store can actually
+    // undo — without this, undo-all past the cap dispatches to an
+    // empty store (silent no-op) and pushes phantom redo entries.
+    const auto it = std::find(m_undoLog.begin(), m_undoLog.end(), UndoSource::Annotation);
+    if (it != m_undoLog.end()) {
+        m_undoLog.erase(it);
+    } else {
+        qWarning("PdfDocument: AnnotationStore evicted an undo frame but the "
+                 "chronological log holds no Annotation entry — log/store desync");
     }
 }
 
@@ -181,15 +208,7 @@ bool PdfDocument::unlock(const QString &password) {
         m_annotations.clearHistory();
         QObject::connect(&m_annotations, &AnnotationStore::changed, m_doc.get(),
                          [this]() { m_annotationsModified = true; });
-        QObject::connect(&m_annotations, &AnnotationStore::historyPushed, m_doc.get(), [this]() {
-            if (m_suppressUndoLog)
-                return;
-            // A new annotation edit (one frame, compound-coalesced):
-            // record it in the unified log and invalidate all redo.
-            m_undoLog.push_back(UndoSource::Annotation);
-            m_redoLog.clear();
-            m_pdfRedoStack.clear();
-        });
+        connectAnnotationHistory();
     }
     return true;
 }
@@ -1023,17 +1042,29 @@ bool PdfDocument::canUndo() const { return !m_undoLog.empty(); }
 
 bool PdfDocument::canRedo() const { return !m_redoLog.empty(); }
 
-void PdfDocument::undo() {
+bool PdfDocument::undo() {
     // Pop the single chronological log so the most recent op is undone
     // first, regardless of which stack it came from.
     if (m_undoLog.empty())
-        return;
+        return false;
     const UndoSource src = m_undoLog.back();
-    m_undoLog.pop_back();
     if (src == UndoSource::Annotation) {
+        if (!m_annotations.canUndo()) {
+            // Should be unreachable: historyEvicted keeps the log's
+            // annotation count in lockstep with the store. Degrade to
+            // a warning + no-op rather than claim an undo happened;
+            // drop the orphaned entry so older (valid) log entries
+            // stay reachable.
+            qWarning("PdfDocument::undo: log expects an annotation frame but the "
+                     "AnnotationStore history is empty; dropping the orphaned entry");
+            m_undoLog.pop_back();
+            return false;
+        }
+        m_undoLog.pop_back();
         m_annotations.undo();
     } else {
         Q_ASSERT(!m_pdfUndoStack.empty());
+        m_undoLog.pop_back();
         auto cmd = std::move(m_pdfUndoStack.back());
         m_pdfUndoStack.pop_back();
         cmd->revert(*m_editor);
@@ -1042,19 +1073,27 @@ void PdfDocument::undo() {
         m_dirty = true;
     }
     m_redoLog.push_back(src);
+    return true;
 }
 
-void PdfDocument::redo() {
+bool PdfDocument::redo() {
     // Inverse of undo(): pop the redo log and re-apply on the stack the
     // entry came from, in the order the ops were originally undone.
     if (m_redoLog.empty())
-        return;
+        return false;
     const UndoSource src = m_redoLog.back();
-    m_redoLog.pop_back();
     if (src == UndoSource::Annotation) {
+        if (!m_annotations.canRedo()) {
+            qWarning("PdfDocument::redo: log expects an annotation frame but the "
+                     "AnnotationStore redo history is empty; dropping the orphaned entry");
+            m_redoLog.pop_back();
+            return false;
+        }
+        m_redoLog.pop_back();
         m_annotations.redo();
     } else {
         Q_ASSERT(!m_pdfRedoStack.empty());
+        m_redoLog.pop_back();
         auto cmd = std::move(m_pdfRedoStack.back());
         m_pdfRedoStack.pop_back();
         cmd->apply(*m_editor);
@@ -1063,6 +1102,7 @@ void PdfDocument::redo() {
         m_dirty = true;
     }
     m_undoLog.push_back(src);
+    return true;
 }
 
 void PdfDocument::recordPdfCommandApplied() {
