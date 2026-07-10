@@ -21,6 +21,7 @@
 // across documentation surfaces.
 
 #include "app/Application.h"
+#include "ui/EmptyStateWidget.h"
 #include "ui/MainWindow.h"
 
 #include <QDir>
@@ -133,6 +134,27 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // Empty-state window model shots. A freshly-spawned window with no
+    // document shows the EmptyStateWidget welcome surface.
+    if (!grabAndSave(mw, QDir(outDir).filePath(QStringLiteral("empty-state.png")))) {
+        return 1;
+    }
+
+    // Same window with the drag-highlight active, so the reference set
+    // captures the drop-target affordance the user sees mid-drag.
+    if (auto *empty = mw->findChild<trailer::EmptyStateWidget *>()) {
+        empty->setDragHighlighted(true);
+        app.processEvents();
+        if (!grabAndSave(mw, QDir(outDir).filePath(QStringLiteral("empty-state-drag.png")))) {
+            return 1;
+        }
+        empty->setDragHighlighted(false);
+        app.processEvents();
+    } else {
+        std::fprintf(stderr, "EmptyStateWidget not found — cannot grab empty-state-drag.png\n");
+        return 1;
+    }
+
     app.openFiles({fixturePath});
 
     // openFiles may spawn an additional window depending on the
@@ -165,6 +187,12 @@ int main(int argc, char **argv) {
     waitFor([] { return false; }, 500);
 
     if (!grabAndSave(target, QDir(outDir).filePath(QStringLiteral("02-pdf-loaded.png")))) {
+        return 1;
+    }
+
+    // Empty-state window model: a window with a document open shows the
+    // document view (empty state swapped out).
+    if (!grabAndSave(target, QDir(outDir).filePath(QStringLiteral("doc-loaded.png")))) {
         return 1;
     }
 

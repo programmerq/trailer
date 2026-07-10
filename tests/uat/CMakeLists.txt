@@ -81,3 +81,7 @@ target_link_libraries(test_uat_undo_interleaved_cap PRIVATE Qt6::Pdf Qt6::PdfWid
 # oracle + fast, so it carries the plain `uat` label like the rest.
 trailer_add_uat_test(test_uat_sweep test_uat_sweep.cpp)
 target_link_libraries(test_uat_sweep PRIVATE Qt6::Pdf Qt6::PdfWidgets)
+
+# Empty-state window model UAT. Drives Application + MainWindow; PDF
+# fixtures use QPdfWriter (QtGui), so no Qt6::Pdf link is needed.
+trailer_add_uat_test(test_uat_empty_state test_uat_empty_state.cpp)

@@ -62,5 +62,6 @@ trailer_add_test(test_selectable_text_layer test_selectable_text_layer.cpp)
 trailer_add_test(test_cancellation_token test_cancellation_token.cpp)
 trailer_add_test(test_power_source test_power_source.cpp)
 trailer_add_test(test_ml_scheduler test_ml_scheduler.cpp)
+trailer_add_test(test_empty_state_widget test_empty_state_widget.cpp)
 
 add_subdirectory(uat)
