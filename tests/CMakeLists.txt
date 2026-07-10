@@ -65,4 +65,18 @@ trailer_add_test(test_ml_scheduler test_ml_scheduler.cpp)
 trailer_add_test(test_empty_state_widget test_empty_state_widget.cpp)
 trailer_add_test(test_preferences test_preferences.cpp)
 
+# Structural, CI-safe performance tests. These assert ordering / counts /
+# thread facts (never wall-clock time) and read the checked-in reference
+# corpus at docs/perf/corpus/. TRAILER_PERF_CORPUS_DIR points each test
+# at that directory (CMAKE_CURRENT_SOURCE_DIR here is <repo>/tests).
+function(trailer_add_perf_test name source)
+    trailer_add_test(${name} ${source})
+    target_compile_definitions(${name} PRIVATE
+        "TRAILER_PERF_CORPUS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../docs/perf/corpus\"")
+endfunction()
+
+trailer_add_perf_test(test_perf_render_ordering test_perf_render_ordering.cpp)
+trailer_add_perf_test(test_perf_gui_thread_io   test_perf_gui_thread_io.cpp)
+trailer_add_perf_test(test_perf_paint_budget    test_perf_paint_budget.cpp)
+
 add_subdirectory(uat)
