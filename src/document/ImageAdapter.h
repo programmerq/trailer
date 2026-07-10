@@ -160,7 +160,7 @@ class ImageDocument : public IDocument {
     // eviction (kMaxUndoSteps) drops the oldest ImageOp entry in
     // pushUndoSnapshot(); annotation eviction drops the oldest
     // Annotation entry via AnnotationStore::historyEvicted().
-    enum class UndoSource { None, Annotation, ImageOp };
+    enum class UndoSource { Annotation, ImageOp };
     std::vector<UndoSource> m_undoLog;
     std::vector<UndoSource> m_redoLog;
     double m_scale = 1.0;

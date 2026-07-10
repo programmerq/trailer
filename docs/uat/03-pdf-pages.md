@@ -481,7 +481,8 @@ Individual case coverage:
 - Insert — UAT-PDF-035.
 - Crop — UAT-PDF-056.
 - Interleaved with annotations — UAT-ANN-140 (chronological order);
-  UAT-UND-150 (undo-all / redo-all past the annotation history cap,
+  UAT-UND-150 (undo-all / redo-all past the annotation history cap —
+  shrunk to 5 via the store's test seam so eviction genuinely fires;
   `tests/uat/test_uat_undo_interleaved_cap.cpp`).
 
 ### UAT-PDF-091 — PDF export to image (Known gap)

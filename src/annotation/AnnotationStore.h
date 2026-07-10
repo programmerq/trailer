@@ -75,9 +75,14 @@ class AnnotationStore : public QObject {
 
     // Test seam only: shrink the undo depth cap so eviction (and the
     // historyEvicted contract above) can be exercised without pushing
-    // hundreds of frames. Production code must not call this — the
-    // default depth is a deliberate memory/usability trade-off.
-    void setMaxUndoDepth(size_t depth) { m_maxUndoDepth = std::max<size_t>(1, depth); }
+    // hundreds of frames. A depth of 0 is clamped to 1 (a zero-frame
+    // cap would make every push evict itself). Lowering the cap below
+    // the current stack size trims the excess immediately, emitting
+    // historyEvicted() once per dropped frame (oldest first) so a
+    // mirroring owner stays in lockstep. Production code must not call
+    // this — the default depth is a deliberate memory/usability
+    // trade-off.
+    void setMaxUndoDepth(size_t depth);
     size_t maxUndoDepth() const { return m_maxUndoDepth; }
 
   signals:

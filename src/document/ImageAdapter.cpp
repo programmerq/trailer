@@ -251,6 +251,13 @@ void ImageDocument::connectAnnotationHistory() {
     // ImageDocument is not a QObject; the store doubles as the
     // connection context so the lambdas can never outlive `this`
     // (m_annotations is a member and dies with the document).
+    //
+    // Unlike PdfDocument there is no m_suppressUndoLog counterpart:
+    // images have no bulk annotation-load path (no sidecar reload, no
+    // post-save re-read), so every historyPushed really is a user
+    // edit. If session-restore for image annotations ever lands, it
+    // will need the same suppress-and-rebuild bracket PdfDocument uses
+    // in saveCommitOnUi().
     QObject::connect(&m_annotations, &AnnotationStore::historyPushed, &m_annotations,
                      [this]() { onAnnotationHistoryPushed(); });
     QObject::connect(&m_annotations, &AnnotationStore::historyEvicted, &m_annotations,

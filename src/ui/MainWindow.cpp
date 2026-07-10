@@ -642,7 +642,16 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
     m_undoAction->setShortcut(QKeySequence::Undo);
     connect(m_undoAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
-            doc->undo();
+            // A false return while canUndo() promised an entry means a
+            // log/stack desync guard refused and dropped the orphaned
+            // entry (see IDocument::undo()). Without this flash the
+            // only trace is a qWarning and the keypress is silently
+            // dead; onCurrentDocumentChanged below re-syncs the action
+            // enabled state either way.
+            const bool promised = doc->canUndo();
+            if (!doc->undo() && promised) {
+                flashError(tr("Undo history was out of sync; nothing was undone."));
+            }
             m_sidebar->refreshThumbnails();
             updateTitleForDocument(doc);
             onCurrentDocumentChanged(doc);
@@ -653,7 +662,11 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
     m_redoAction->setShortcut(QKeySequence::Redo);
     connect(m_redoAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
-            doc->redo();
+            // Mirror of the undo handler's desync flash above.
+            const bool promised = doc->canRedo();
+            if (!doc->redo() && promised) {
+                flashError(tr("Redo history was out of sync; nothing was redone."));
+            }
             m_sidebar->refreshThumbnails();
             updateTitleForDocument(doc);
             onCurrentDocumentChanged(doc);

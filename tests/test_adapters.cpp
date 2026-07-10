@@ -40,6 +40,7 @@ class TestAdapters : public QObject {
     void pdfDocumentUndoAllPastOldCapRegimeIsExact();
     void pdfDocumentSmallCapEvictionKeepsLogAndStoreInLockstep();
     void pdfDocumentUndoRedoSurviveForcedLogDesync();
+    void pdfDocumentSaveReloadRebuildsUndoLogFromRetainedStacks();
     void imageDocumentRotateSwapsDimensionsAndMarksDirty();
     void imageDocumentFlipHorizontalMarksDirty();
     void imageDocumentResizeChangesPixelSize();
@@ -50,8 +51,9 @@ class TestAdapters : public QObject {
     void imageDocumentExportsImageAsSinglePagePdf();
     void imageDocumentUndoRestoresPriorState();
     void imageDocumentSaveFlattensAnnotationsIntoPixels();
-    void imageDocumentAnnotationUndoTakesPrecedenceOverImageUndo();
+    void imageDocumentUndoPopsMostRecentAcrossDomains();
     void imageDocumentInterleavedUndoIsChronological();
+    void imageDocumentUndoRedoSurviveForcedLogDesync();
     void imageDocumentUndoAllPastOldCapRegimeIsExact();
     void imageDocumentPixelCapEvictionKeepsLogInLockstep();
     void imageDocumentSmallCapAnnotationEvictionKeepsLogInLockstep();
@@ -515,7 +517,11 @@ void TestAdapters::imageDocumentSaveFlattensAnnotationsIntoPixels() {
              "expected unstroked interior to remain the original blue");
 }
 
-void TestAdapters::imageDocumentAnnotationUndoTakesPrecedenceOverImageUndo() {
+// rotate → annotate → undo×2 pops in reverse-chronological order: the
+// annotation (most recent) first, then the rotate. There is no
+// domain-precedence rule — the unified log simply pops the newest
+// entry regardless of which stack it lives on.
+void TestAdapters::imageDocumentUndoPopsMostRecentAcrossDomains() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = writeTinyPng(dir.filePath("p.png"), 40, 20);
@@ -604,6 +610,59 @@ void TestAdapters::imageDocumentInterleavedUndoIsChronological() {
 
     QVERIFY(doc.canUndo());
     QVERIFY(!doc.canRedo());
+}
+
+// Image mirror of pdfDocumentUndoRedoSurviveForcedLogDesync's
+// annotation branches: ImageDocument::undo()/redo() carry the same
+// warn + drop-orphan + return-false guards, forced the same cheap way
+// (AnnotationStore::clearHistory() empties the store's stacks but
+// deliberately not the document's log). The pixel branches have no
+// seam; the annotation branches pin the pattern.
+void TestAdapters::imageDocumentUndoRedoSurviveForcedLogDesync() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("desync.png"), 40, 20);
+
+    // Undo branch: log holds an Annotation entry, store history empty.
+    {
+        ImageDocument doc(path);
+        Annotation a;
+        a.page = 0;
+        a.type = AnnotationType::Rectangle;
+        a.bounds = QRectF(5, 5, 20, 10);
+        doc.annotations()->add(a);
+        QVERIFY(doc.canUndo());
+        doc.annotations()->clearHistory();
+        QTest::ignoreMessage(QtWarningMsg,
+                             "ImageDocument::undo: log expects an annotation frame but the "
+                             "AnnotationStore history is empty; dropping the orphaned entry");
+        QVERIFY2(!doc.undo(), "undo() must refuse when the store cannot deliver the frame");
+        // The orphaned entry was dropped — the log no longer over-promises.
+        QVERIFY(!doc.canUndo());
+        // The annotation itself is untouched — the guard is a no-op,
+        // not a partial mutation.
+        QCOMPARE(doc.annotations()->count(), 1);
+    }
+
+    // Redo branch: undo a real annotation first so the redo log is
+    // populated, then clear the store's stacks underneath it.
+    {
+        ImageDocument doc(path);
+        Annotation a;
+        a.page = 0;
+        a.type = AnnotationType::Rectangle;
+        a.bounds = QRectF(5, 5, 20, 10);
+        doc.annotations()->add(a);
+        QVERIFY(doc.undo());
+        QVERIFY(doc.canRedo());
+        doc.annotations()->clearHistory();
+        QTest::ignoreMessage(QtWarningMsg,
+                             "ImageDocument::redo: log expects an annotation frame but the "
+                             "AnnotationStore redo history is empty; dropping the orphaned entry");
+        QVERIFY2(!doc.redo(), "redo() must refuse on a log/store desync");
+        QVERIFY(!doc.canRedo());
+        QCOMPARE(doc.annotations()->count(), 0);
+    }
 }
 
 // Mirror of pdfDocumentUndoAllPastOldCapRegimeIsExact for images: 70
@@ -1343,6 +1402,80 @@ void TestAdapters::pdfDocumentUndoRedoSurviveForcedLogDesync() {
         // not a partial mutation.
         QCOMPARE(doc.annotations()->count(), 1);
     }
+}
+
+// Pins the one hand-maintained sync point of the 1:1 log/stack
+// invariant: PdfDocument::saveCommitOnUi() reloads annotations from
+// the saved file under m_suppressUndoLog (the re-read must not mint
+// user undo steps), clears the store's history, and rebuilds the
+// unified log from the RETAINED qpdf command stacks
+// (m_undoLog.assign(m_pdfUndoStack.size(), PdfCommand)). After
+// save + reload, undo must offer exactly the surviving page commands
+// — every press real, no orphaned annotation entries — and redo must
+// replay them.
+void TestAdapters::pdfDocumentSaveReloadRebuildsUndoLogFromRetainedStacks() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("savereload.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, "save-reload");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store != nullptr);
+    const QSize portrait = doc.contentSizeHint();
+    QVERIFY2(portrait.height() > portrait.width(), "A4 fixture should start portrait");
+
+    // One qpdf command + one annotation edit before saving.
+    doc.rotatePage(0, 90);
+    const QSize landscape = doc.contentSizeHint();
+    QVERIFY(landscape.width() > landscape.height());
+    Annotation a;
+    a.page = 0;
+    a.type = AnnotationType::Rectangle;
+    a.bounds = QRectF(10, 10, 40, 30);
+    store->add(a);
+    QCOMPARE(store->count(), 1);
+
+    QVERIFY(doc.save());
+    QVERIFY(!doc.isDirty());
+    // The reload re-read the annotation from the saved file...
+    QCOMPARE(store->count(), 1);
+    // ...but under suppression: the store's history is cleared, the
+    // qpdf command stack is retained, so the rebuilt log offers
+    // exactly ONE undo (the rotate) — no orphaned annotation entry
+    // that undo() would have to warn about and refuse.
+    int undos = 0;
+    while (doc.canUndo()) {
+        QVERIFY2(doc.undo(), "undo() returned false while canUndo() was true — the "
+                             "rebuilt log does not match the rebuilt stacks");
+        ++undos;
+        QVERIFY2(undos <= 1, "rebuilt log offered more undos than retained pdf commands");
+    }
+    QCOMPARE(undos, 1);
+    QCOMPARE(doc.contentSizeHint(), portrait);
+    // The reloaded annotation is not an undo step; it survives.
+    QCOMPARE(store->count(), 1);
+    QVERIFY2(!doc.undo(), "undo() must refuse once canUndo() is false");
+
+    // Redo replays the undone page command through the same rebuilt
+    // bookkeeping.
+    int redos = 0;
+    while (doc.canRedo()) {
+        QVERIFY2(doc.redo(), "redo() returned false while canRedo() was true");
+        ++redos;
+        QVERIFY2(redos <= undos, "phantom redo entries beyond the number of undos");
+    }
+    QCOMPARE(redos, 1);
+    QCOMPARE(doc.contentSizeHint(), landscape);
+    QCOMPARE(store->count(), 1);
+    QVERIFY(!doc.canRedo());
 }
 
 QTEST_MAIN(TestAdapters)
