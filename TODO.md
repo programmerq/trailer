@@ -452,16 +452,21 @@ items have landed; the commit hash is in the strikethrough line.
   `MovePageCommand`, `InsertPagesCommand`, and `CropPageCommand`
   (the last one batches an N-page crop into a single undoable
   action). `PdfDocument` keeps undo / redo stacks of `PdfCommand`s
-  parallel to the existing AnnotationStore undo log; the unified
-  `IDocument::undo` / `redo` route to the most-recently-touched
-  stack via an `m_lastUndoSource` heuristic.
+  parallel to the AnnotationStore undo log.
 
-  Better-but-bigger follow-up: merge the AnnotationStore log
-  and the PdfCommand stack into one chronological undo list so
+  ~~Better-but-bigger follow-up: merge the AnnotationStore log
+  and the PdfCommand stack into one chronological undo list.~~
+  Done — `IDocument::undo` / `redo` now pop a per-document
+  chronological log of typed entries (one per committed op), so
   multi-action undo always pops the most recent thing the user
-  did, regardless of which subsystem produced it. The
-  `m_lastUndoSource` heuristic gets it right for the common
-  one-action-back case but not for interleaved sequences.
+  did, regardless of which subsystem produced it. `ImageDocument`
+  uses the same structure for its pixel-snapshot stack. Bounded
+  histories evict in lockstep with the log
+  (`AnnotationStore::historyEvicted` for annotations; local sync
+  in `ImageDocument::pushUndoSnapshot` for pixels), and the
+  dispatch guards log/stack desync at runtime (warn + no-op, not
+  a release-inert assert). The interim last-touched-stack
+  heuristic this replaced is gone.
 
   Other small follow-ups in the same area:
   - Annotation re-indexing on delete/move/insert. The undo
