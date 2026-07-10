@@ -51,6 +51,10 @@ class TestAdapters : public QObject {
     void imageDocumentUndoRestoresPriorState();
     void imageDocumentSaveFlattensAnnotationsIntoPixels();
     void imageDocumentAnnotationUndoTakesPrecedenceOverImageUndo();
+    void imageDocumentInterleavedUndoIsChronological();
+    void imageDocumentUndoAllPastOldCapRegimeIsExact();
+    void imageDocumentPixelCapEvictionKeepsLogInLockstep();
+    void imageDocumentSmallCapAnnotationEvictionKeepsLogInLockstep();
     void imageDocumentFitModeStartsCustom();
     void imageDocumentZoomFitPageEntersFitInViewMode();
     void imageDocumentZoomFitWidthEntersFitToWidthMode();
@@ -537,6 +541,221 @@ void TestAdapters::imageDocumentAnnotationUndoTakesPrecedenceOverImageUndo() {
     QVERIFY(doc.canUndo());
     doc.undo();
     QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+}
+
+// ImageDocument now shares PdfDocument's unified chronological log:
+// interleaved annotation + pixel ops must undo in strict reverse
+// order. The old dispatch drained ALL annotation undo first, so
+// annotate → rotate → annotate undid both annotations before the
+// rotate — a state the user never passed through.
+void TestAdapters::imageDocumentInterleavedUndoIsChronological() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("chrono.png"), 40, 20);
+
+    ImageDocument doc(path);
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store != nullptr);
+
+    // #1 annotation → #2 rotate (pixel op) → #3 annotation
+    Annotation a1;
+    a1.page = 0;
+    a1.type = AnnotationType::Rectangle;
+    a1.bounds = QRectF(2, 2, 10, 8);
+    store->add(a1);
+    doc.rotatePage(0, 90);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+    Annotation a2;
+    a2.page = 0;
+    a2.type = AnnotationType::Ellipse;
+    a2.bounds = QRectF(4, 4, 8, 6);
+    store->add(a2);
+    QCOMPARE(store->count(), 2);
+
+    QVERIFY(doc.canUndo());
+    QVERIFY(!doc.canRedo());
+
+    // Reverse-chronological: #3, then #2, then #1.
+    QVERIFY(doc.undo()); // reverse #3 (annotation)
+    QCOMPARE(store->count(), 1);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+
+    QVERIFY(doc.undo()); // reverse #2 (rotate) — NOT another annotation
+    QCOMPARE(store->count(), 1);
+    QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+
+    QVERIFY(doc.undo()); // reverse #1 (annotation)
+    QCOMPARE(store->count(), 0);
+    QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+
+    QVERIFY(!doc.canUndo());
+    QVERIFY(doc.canRedo());
+
+    // Redo replays forward: #1, #2, #3.
+    QVERIFY(doc.redo());
+    QCOMPARE(store->count(), 1);
+    QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+    QVERIFY(doc.redo());
+    QCOMPARE(store->count(), 1);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+    QVERIFY(doc.redo());
+    QCOMPARE(store->count(), 2);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+
+    QVERIFY(doc.canUndo());
+    QVERIFY(!doc.canRedo());
+}
+
+// Mirror of pdfDocumentUndoAllPastOldCapRegimeIsExact for images: 70
+// annotation edits + 1 rotate, undo-all must be exactly 71 real
+// presses (no silent no-ops), redo-all exactly 71 (no phantoms).
+void TestAdapters::imageDocumentUndoAllPastOldCapRegimeIsExact() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("overcap.png"), 40, 20);
+
+    ImageDocument doc(path);
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store != nullptr);
+
+    for (int i = 0; i < 70; ++i) {
+        Annotation a;
+        a.page = 0;
+        a.type = AnnotationType::Rectangle;
+        a.bounds = QRectF(i % 30, i % 10, 6, 4);
+        store->add(a);
+    }
+    QCOMPARE(store->count(), 70);
+    doc.rotatePage(0, 90);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+
+    int undos = 0;
+    while (doc.canUndo()) {
+        QVERIFY2(doc.undo(), "undo() returned false while canUndo() was true");
+        ++undos;
+        QVERIFY2(undos <= 71, "undo log offered more entries than operations performed");
+    }
+    QCOMPARE(undos, 71);
+    QCOMPARE(store->count(), 0);
+    QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+    QVERIFY(!doc.canUndo());
+    QVERIFY2(!doc.undo(), "undo() must refuse once canUndo() is false");
+
+    int redos = 0;
+    while (doc.canRedo()) {
+        QVERIFY2(doc.redo(), "redo() returned false while canRedo() was true");
+        ++redos;
+        QVERIFY2(redos <= undos, "phantom redo entries beyond the number of undos");
+    }
+    QCOMPARE(redos, 71);
+    QCOMPARE(store->count(), 70);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+    QVERIFY(!doc.canRedo());
+}
+
+// The pixel snapshot stack has its own cap (kMaxUndoSteps = 32 in
+// ImageAdapter.cpp — full QImage copies are much heavier than
+// annotation frames). Past it, eviction must stay in lockstep with
+// the chronological log exactly like the annotation domain: 35 crops
+// after 1 annotation leaves 32 + 1 = 33 real undos, no more offered,
+// none a silent no-op.
+void TestAdapters::imageDocumentPixelCapEvictionKeepsLogInLockstep() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("pixcap.png"), 300, 100);
+
+    ImageDocument doc(path);
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store != nullptr);
+
+    Annotation a;
+    a.page = 0;
+    a.type = AnnotationType::Rectangle;
+    a.bounds = QRectF(5, 5, 20, 10);
+    store->add(a);
+
+    // Each crop narrows the image by one pixel so every step (and the
+    // exact undo depth) is observable in the width.
+    for (int i = 0; i < 35; ++i) {
+        const int w = doc.imagePixelSize().width();
+        QVERIFY(doc.cropToRect(0, 0, w - 1, 100));
+    }
+    QCOMPARE(doc.imagePixelSize(), QSize(265, 100));
+
+    // Undoable: 32 retained crop snapshots + the annotation = 33.
+    int undos = 0;
+    while (doc.canUndo()) {
+        QVERIFY2(doc.undo(), "undo() returned false while canUndo() was true");
+        ++undos;
+        QVERIFY2(undos <= 33, "log offered more undos than the snapshot stack retains");
+    }
+    QCOMPARE(undos, 33);
+    // The 3 oldest crops fell off the capped stack — deliberately
+    // unreachable, so the width lands at 300 - 3, not 300.
+    QCOMPARE(doc.imagePixelSize(), QSize(297, 100));
+    QCOMPARE(store->count(), 0);
+    QVERIFY(!doc.canUndo());
+    QVERIFY2(!doc.undo(), "undo() must refuse once canUndo() is false");
+
+    int redos = 0;
+    while (doc.canRedo()) {
+        QVERIFY2(doc.redo(), "redo() returned false while canRedo() was true");
+        ++redos;
+        QVERIFY2(redos <= undos, "phantom redo entries beyond the number of undos");
+    }
+    QCOMPARE(redos, 33);
+    QCOMPARE(doc.imagePixelSize(), QSize(265, 100));
+    QCOMPARE(store->count(), 1);
+    QVERIFY(!doc.canRedo());
+}
+
+// Annotation-domain eviction sync on an image document, at a small
+// injected cap (mirror of the PdfDocument small-cap test): the oldest
+// pixel op must stay reachable while excess annotation frames evict
+// from both the store and the log.
+void TestAdapters::imageDocumentSmallCapAnnotationEvictionKeepsLogInLockstep() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("smallcap.png"), 40, 20);
+
+    ImageDocument doc(path);
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store != nullptr);
+    store->setMaxUndoDepth(5);
+
+    doc.rotatePage(0, 90);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+    for (int i = 0; i < 10; ++i) {
+        Annotation a;
+        a.page = 0;
+        a.type = AnnotationType::Rectangle;
+        a.bounds = QRectF(i, i, 6, 4);
+        store->add(a);
+    }
+    QCOMPARE(store->count(), 10);
+
+    // Undoable: 5 retained annotation frames + the rotate = 6.
+    int undos = 0;
+    while (doc.canUndo()) {
+        QVERIFY2(doc.undo(), "undo() returned false while canUndo() was true");
+        ++undos;
+        QVERIFY2(undos <= 6, "log offered more undos than the store retains");
+    }
+    QCOMPARE(undos, 6);
+    QCOMPARE(store->count(), 5);
+    QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+    QVERIFY(!doc.canUndo());
+
+    int redos = 0;
+    while (doc.canRedo()) {
+        QVERIFY2(doc.redo(), "redo() returned false while canRedo() was true");
+        ++redos;
+        QVERIFY2(redos <= undos, "phantom redo entries beyond the number of undos");
+    }
+    QCOMPARE(redos, 6);
+    QCOMPARE(store->count(), 10);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+    QVERIFY(!doc.canRedo());
 }
 
 void TestAdapters::imageDocumentFitModeStartsCustom() {
