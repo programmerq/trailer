@@ -69,8 +69,10 @@ trailer_add_uat_test(test_uat_recognize_text test_uat_recognize_text.cpp)
 trailer_add_uat_test(test_uat_pdf_pages test_uat_pdf_pages.cpp)
 target_link_libraries(test_uat_pdf_pages PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 
-# Unified undo log past the annotation history cap (UAT-UND-150).
-# Needs Qt PDF for the page-rotation observable (pagePointSize).
+# Unified undo log past the annotation history cap (UAT-UND-150) —
+# the cap is shrunk to 5 via the store's test seam so the 70 edits
+# genuinely cross it and eviction fires. Needs Qt PDF for the
+# page-rotation observable (pagePointSize).
 trailer_add_uat_test(test_uat_undo_interleaved_cap test_uat_undo_interleaved_cap.cpp)
 target_link_libraries(test_uat_undo_interleaved_cap PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 

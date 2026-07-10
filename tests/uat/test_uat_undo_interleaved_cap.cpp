@@ -7,17 +7,19 @@
 //   uat_und_150_overCapInterleavedUndoRedo → regression guard for the
 //   cap-desync bug: AnnotationStore bounds its snapshot history while
 //   the document's chronological undo log used to grow without bound.
-//   After more annotation edits than the (old, 64-frame) cap, undo-all
-//   silently no-opped the excess — annotations the user "undid" were
-//   stranded — and pushed phantom redo entries. The fix keeps the log
-//   and the store in lockstep via AnnotationStore::historyEvicted().
+//   After more annotation edits than the cap, undo-all silently
+//   no-opped the excess — annotations the user "undid" were stranded —
+//   and pushed phantom redo entries. The fix keeps the log and the
+//   store in lockstep via AnnotationStore::historyEvicted().
 //
-// The scenario: 70 annotation edits + 1 page rotate on a live
-// MainWindow, undo-all (every offered press must be real), redo-all
-// (exactly as many presses as undos — no phantoms). When
-// TRAILER_UAT_EVIDENCE_DIR is set, the test saves QWidget::grab()
-// screenshots of the mid-sequence and end states there as PNG
-// evidence for review.
+// The scenario: the store's depth cap is shrunk to 5 via its test seam
+// (setMaxUndoDepth) so the 70 annotation edits genuinely cross it — 65
+// evictions fire through the same signal path a >128-edit session
+// would hit — then 1 page rotate on a live MainWindow, undo-all (every
+// offered press must be real), redo-all (exactly as many presses as
+// undos — no phantoms). When TRAILER_UAT_EVIDENCE_DIR is set, the test
+// saves QWidget::grab() screenshots of the mid-sequence and end states
+// there as PNG evidence for review.
 
 #include "annotation/Annotation.h"
 #include "annotation/AnnotationStore.h"
@@ -130,6 +132,10 @@ void TestUatUndoInterleavedCap::uat_und_150_overCapInterleavedUndoRedo() {
     QVERIFY(store);
     QCOMPARE(store->count(), 0);
     QVERIFY(!doc->canUndo());
+    // Shrink the history cap (test seam) so the 70 edits below cross
+    // it and eviction actually fires — the default cap (128) would
+    // otherwise make this a no-eviction ordering test.
+    store->setMaxUndoDepth(5);
 
     // The user-facing undo path exists — the loop below drives the
     // same IDocument::undo / redo those actions invoke.
@@ -146,7 +152,9 @@ void TestUatUndoInterleavedCap::uat_und_150_overCapInterleavedUndoRedo() {
     const QSizeF portrait = qpdf->pagePointSize(0);
     QVERIFY(portrait.height() > portrait.width());
 
-    // 70 annotation edits (past the old 64-frame cap), then a rotate.
+    // 70 annotation edits — 65 past the injected 5-frame cap, so the
+    // store evicts 65 frames and the log must shed 65 entries in
+    // lockstep — then a rotate.
     for (int i = 0; i < 70; ++i) {
         Annotation a;
         a.page = 0;
@@ -163,22 +171,24 @@ void TestUatUndoInterleavedCap::uat_und_150_overCapInterleavedUndoRedo() {
     saveEvidence(mw, QStringLiteral("uat-undo-cap-evidence-mid.png"));
 
     // Undo-all: every press offered by canUndo() must actually revert
-    // something. 71 total (70 annotations + 1 rotate); a silent no-op
-    // press or an extra offered entry is the cap-desync bug.
+    // something. 6 total (5 retained annotation frames + 1 rotate) —
+    // the 65 evicted frames are deliberately unreachable, not silently
+    // skipped. A silent no-op press or an extra offered entry is the
+    // cap-desync bug.
     int undos = 0;
     while (doc->canUndo()) {
         QVERIFY2(doc->undo(), "undo() returned false while canUndo() was true");
         ++undos;
-        QVERIFY2(undos <= 71, "undo log offered more entries than operations performed");
+        QVERIFY2(undos <= 6, "undo log offered more entries than the store retains");
     }
     QApplication::processEvents();
-    QCOMPARE(undos, 71);
-    QCOMPARE(store->count(), 0);
+    QCOMPARE(undos, 6);
+    QCOMPARE(store->count(), 65);
     const QSizeF afterUndo = qpdf->pagePointSize(0);
     QVERIFY2(afterUndo.height() > afterUndo.width(), "page must be back to portrait");
     QVERIFY(!doc->canUndo());
     QVERIFY2(!doc->undo(), "undo() must refuse (return false) once canUndo() is false");
-    QCOMPARE(store->count(), 0);
+    QCOMPARE(store->count(), 65);
 
     // Redo-all: exactly as many presses as undos — no phantom entries.
     int redos = 0;
@@ -188,7 +198,7 @@ void TestUatUndoInterleavedCap::uat_und_150_overCapInterleavedUndoRedo() {
         QVERIFY2(redos <= undos, "phantom redo entries beyond the number of undos");
     }
     QApplication::processEvents();
-    QCOMPARE(redos, 71);
+    QCOMPARE(redos, 6);
     QCOMPARE(store->count(), 70);
     const QSizeF afterRedo = qpdf->pagePointSize(0);
     QVERIFY2(afterRedo.width() > afterRedo.height(), "redo-all must restore the rotation");

@@ -93,19 +93,36 @@ void AnnotationStore::pushHistory() {
         // pre-state is the right thing to revert to.
     }
     m_undoStack.push_back({m_annotations, m_nextId});
-    bool evicted = false;
-    if (m_undoStack.size() > m_maxUndoDepth) {
+    // `while`, not `if`: setMaxUndoDepth() trims eagerly, but keeping
+    // the loop here makes the cap invariant hold regardless of when a
+    // cap change lands relative to pushes — a push can never leave the
+    // stack above m_maxUndoDepth.
+    size_t evicted = 0;
+    while (m_undoStack.size() > m_maxUndoDepth) {
         m_undoStack.erase(m_undoStack.begin());
-        evicted = true;
+        ++evicted;
     }
     m_redoStack.clear();
-    // Eviction is announced BEFORE the push so an owner mirroring the
-    // store into a chronological log first drops its oldest annotation
-    // entry, then appends the new one — the log's annotation count
-    // equals m_undoStack.size() again once both signals return.
-    if (evicted)
+    // Eviction is announced BEFORE the push — once per dropped frame,
+    // oldest first — so an owner mirroring the store into a
+    // chronological log first drops its oldest annotation entries,
+    // then appends the new one: the log's annotation count equals
+    // m_undoStack.size() again once both signals return.
+    while (evicted-- > 0)
         emit historyEvicted();
     emit historyPushed();
+}
+
+void AnnotationStore::setMaxUndoDepth(size_t depth) {
+    m_maxUndoDepth = std::max<size_t>(1, depth);
+    // Enforce the new cap immediately: a cap lowered below the current
+    // stack size trims the oldest frames now, announcing each drop so
+    // an owner mirroring this store into a chronological log stays in
+    // lockstep (same contract as eviction during pushHistory()).
+    while (m_undoStack.size() > m_maxUndoDepth) {
+        m_undoStack.erase(m_undoStack.begin());
+        emit historyEvicted();
+    }
 }
 
 void AnnotationStore::undo() {

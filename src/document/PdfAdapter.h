@@ -20,6 +20,9 @@ class QPdfSearchModel;
 class QPdfBookmarkModel;
 class QIdentityProxyModel;
 class QPdfView;
+// tests/test_adapters.cpp — befriended so the desync test seam below
+// stays private instead of shipping as callable production API.
+class TestAdapters;
 
 namespace trailer {
 
@@ -171,17 +174,18 @@ class PdfDocument : public IDocument {
     bool needsPassword() const { return m_needsPassword; }
     bool unlock(const QString &password);
 
-    // Test seam only: drop the qpdf command stacks while leaving the
+  private:
+    // Test seam only, private + friend-fenced so no production caller
+    // can reach it: drop the qpdf command stacks while leaving the
     // chronological log untouched, simulating the log/stack desync the
     // runtime guards in undo()/redo() defend against. There is no
-    // production path that produces this state; production code must
-    // never call this.
+    // production path that produces this state.
+    friend class ::TestAdapters;
     void corruptPdfCommandStacksForTesting() {
         m_pdfUndoStack.clear();
         m_pdfRedoStack.clear();
     }
 
-  private:
     void applyViewMode();
     void applyZoomFactor(double factor);
     // Fit the freshly-opened doc into the viewport on first show.
