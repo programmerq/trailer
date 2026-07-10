@@ -188,7 +188,10 @@ making them hunt. Its *shape* follows the platform's native convention:
 - **Windows / Linux: an empty window.** On Windows and Linux the app
   opens an **empty window** carrying **Open** and **Recent** affordances
   and a **centered drop-target** — an unambiguous "*Open a file*" prompt
-  with a visible drag zone and a file-picker button. Nothing more.
+  with a visible drag zone and a file-picker button. Nothing more. ("Nothing
+  more" governs the central surface; the window keeps its standard,
+  fully-disabled application frame — see
+  `docs/decision-records/0005-persistent-disabled-toolbar-over-empty-state.md`.)
 
 On every platform, all preferences, settings, and advanced features stay
 one deliberate navigation away, never in the way.
