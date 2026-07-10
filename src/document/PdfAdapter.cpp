@@ -501,6 +501,17 @@ void PdfDocument::applyViewMode() {
         m_view->setPageMode(QPdfView::PageMode::SinglePage);
         break;
     case ViewMode::TwoPages:
+        // Two-page (facing) layout is not supported: QPdfView::PageMode only
+        // offers SinglePage and MultiPage, neither of which is a real two-up
+        // layout. Deliberately do NOT alias Continuous here — silently showing
+        // a different layout than the label promises is forbidden by policy.
+        // The View > Two Pages action (m_twoPagesAction) is kept disabled with
+        // an explanatory tooltip so this case is unreachable from the UI; this
+        // guard prevents any future code path from regressing into a silent
+        // alias. Leave the current page mode untouched.
+        qWarning("PdfDocument::applyViewMode: ViewMode::TwoPages is unsupported "
+                 "(no facing layout in QPdfView); leaving page mode unchanged");
+        return;
     case ViewMode::Continuous:
         m_view->setPageMode(QPdfView::PageMode::MultiPage);
         break;

@@ -447,6 +447,9 @@ void MainWindow::autoSaveDirtyDocs() {
 
 void MainWindow::buildMenus() {
     auto *fileMenu = menuBar()->addMenu(tr("&File"));
+    // The disabled Share… item carries an explanatory tooltip; Qt only
+    // renders action tooltips in a menu when tooltips are enabled on it.
+    fileMenu->setToolTipsVisible(true);
 
     auto *openAction = fileMenu->addAction(tr("&Open…"));
     openAction->setShortcut(QKeySequence::Open);
@@ -480,13 +483,17 @@ void MainWindow::buildMenus() {
     });
 
     // File → Share routes through the OS share-sheet (macOS native
-    // NSSharingServicePicker). Only shown on platforms that have a
-    // working implementation; the Linux/Windows stub returns
+    // NSSharingServicePicker). The Linux/Windows stub returns
     // isAvailable() == false until xdg-email / WinShare are wired
-    // up. The action is gated on a saved file because the share
-    // picker needs a real file path on disk.
+    // up. When available, the action is gated on a saved file because
+    // the share picker needs a real file path on disk.
+    // The action is always created so the capability is visible. On
+    // platforms without a working share implementation it is shown
+    // disabled with a tooltip pointing at the real alternative, rather
+    // than silently hidden (owner policy: unavailable capabilities are
+    // disabled + explained, never dropped from the menu).
+    m_shareAction = fileMenu->addAction(tr("&Share…"));
     if (ShareService::isAvailable()) {
-        m_shareAction = fileMenu->addAction(tr("&Share…"));
         connect(m_shareAction, &QAction::triggered, this, [this]() {
             auto *doc = m_documentView->currentDocument();
             if (!doc)
@@ -498,6 +505,11 @@ void MainWindow::buildMenus() {
             }
             ShareService::shareFile(path, this);
         });
+    } else {
+        m_shareAction->setEnabled(false);
+        m_shareAction->setToolTip(
+            tr("Sharing isn't available on this platform yet — use File → "
+               "Save As… to save a copy you can share."));
     }
 
     fileMenu->addSeparator();
@@ -779,6 +791,9 @@ void MainWindow::hideSearchBar() {
 }
 
 void MainWindow::buildViewMenu(QMenu *viewMenu) {
+    // The disabled Two Pages item carries an explanatory tooltip; Qt only
+    // renders action tooltips in a menu when tooltips are enabled on it.
+    viewMenu->setToolTipsVisible(true);
     auto *toggleSidebar = m_sidebar->toggleViewAction();
     toggleSidebar->setText(tr("Toggle &Sidebar"));
     toggleSidebar->setShortcut(QKeySequence(tr("Ctrl+Shift+D")));
@@ -826,10 +841,11 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     m_twoPagesAction->setCheckable(true);
     // Cmd-3 is reserved here but the action stays disabled: Qt's
     // QPdfView::PageMode only exposes SinglePage and MultiPage — there is
-    // no facing/two-up layout, so ViewMode::TwoPages currently aliases
-    // Continuous (see PdfDocument::applyViewMode). A real side-by-side
-    // layout needs a custom view (tracked as a larger follow-up); once it
-    // lands and the action is enabled, Cmd-3 starts working.
+    // no facing/two-up layout. PdfDocument::applyViewMode warns and no-ops
+    // on ViewMode::TwoPages (it deliberately does not alias Continuous), so
+    // enabling this action would be a no-op. A real side-by-side layout
+    // needs a custom view (tracked as a larger follow-up); once it lands
+    // and the action is enabled, Cmd-3 starts working.
     m_twoPagesAction->setShortcut(QKeySequence(tr("Ctrl+3")));
     m_twoPagesAction->setEnabled(false);
     m_twoPagesAction->setToolTip(tr("Two-page layout is not yet available."));
@@ -1012,6 +1028,15 @@ void MainWindow::buildWindowMenu(QMenu *windowMenu) {
     connect(minimize, &QAction::triggered, this, &QWidget::showMinimized);
 
     auto *zoom = windowMenu->addAction(tr("&Zoom"));
+    // "Zoom" is the native macOS Window-menu term. On other platforms it
+    // collides with the app's content zoom (View → Zoom In/Out) and isn't a
+    // platform convention, so relabel to the honest term for what it does
+    // (maximize/restore toggle). Behavior is unchanged on all platforms.
+#ifdef Q_OS_MACOS
+    zoom->setText(tr("&Zoom"));
+#else
+    zoom->setText(tr("&Maximize"));
+#endif
     connect(zoom, &QAction::triggered, this, [this]() {
         // macOS "Zoom" toggles between user-sized and the OS's
         // ideal-for-content size. QWidget doesn't expose that
@@ -2003,6 +2028,18 @@ void MainWindow::onSaveAs() {
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsEditing())
         return;
+    const QString path = chooseSaveAsPath(doc);
+    if (path.isEmpty())
+        return;
+    // saveDocumentAsync handles the success path: status bar, title
+    // refresh, lastSaveDir bookkeeping. PDFs go through the two-
+    // phase worker; images stay synchronous (fast).
+    saveDocumentAsync(doc, path);
+}
+
+QString MainWindow::chooseSaveAsPath(IDocument *doc) {
+    if (!doc)
+        return {};
     const bool isImage = dynamic_cast<ImageDocument *>(doc) != nullptr;
 
     // Suggest a filename that hints at what's been done to the
@@ -2054,13 +2091,7 @@ void MainWindow::onSaveAs() {
 
     const QString filter = isImage ? tr("Images (*.png *.jpg *.jpeg *.bmp *.tiff *.tif *.webp)")
                                    : tr("PDF documents (*.pdf)");
-    const QString path = QFileDialog::getSaveFileName(this, tr("Save As"), suggested, filter);
-    if (path.isEmpty())
-        return;
-    // saveDocumentAsync handles the success path: status bar, title
-    // refresh, lastSaveDir bookkeeping. PDFs go through the two-
-    // phase worker; images stay synchronous (fast).
-    saveDocumentAsync(doc, path);
+    return QFileDialog::getSaveFileName(this, tr("Save As"), suggested, filter);
 }
 
 void MainWindow::onExportPasswordProtected() {
@@ -2486,10 +2517,12 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
 
     const bool hasPrint = doc && doc->supportsPrint();
     m_printAction->setEnabled(hasPrint);
-    if (m_shareAction) {
+    if (m_shareAction && ShareService::isAvailable()) {
         // Share needs a file on disk; disabled for unsaved /
         // untitled docs. The user is told to save first via
         // flashStatus when they pick the action with no path.
+        // When ShareService is unavailable the action stays disabled
+        // with its explanatory tooltip (set at creation) — don't touch it.
         m_shareAction->setEnabled(doc && !doc->filePath().isEmpty());
     }
 
@@ -3312,14 +3345,26 @@ void MainWindow::closeEvent(QCloseEvent *event) {
             return;
         }
         if (answer == QMessageBox::Save) {
-            // If the document has no path yet, route through the
-            // Save-As dialog so the user picks one. The current-tab
-            // assumption matches onSave's behaviour.
-            const bool hasPath = !doc->filePath().isEmpty();
-            const bool ok = hasPath ? doc->save() : doc->save();
+            bool ok = false;
+            if (doc->filePath().isEmpty()) {
+                // Untitled document: route through the Save-As dialog so
+                // the user picks a destination, then save synchronously
+                // (like the has-path branch below) so the dirty check
+                // reflects the real outcome rather than a still-pending
+                // async save.
+                const QString path = chooseSaveAsPath(doc);
+                if (path.isEmpty()) {
+                    // The user cancelled Save-As. Honour the cancel: abort
+                    // the close and keep the unsaved work intact.
+                    event->ignore();
+                    return;
+                }
+                ok = doc->save(path);
+            } else {
+                ok = doc->save();
+            }
             if (!ok || doc->isDirty()) {
-                // Save failed or user cancelled the Save-As dialog.
-                // Do not lose the user's work; abort the close.
+                // Save failed. Do not lose the user's work; abort the close.
                 flashError(tr("Could not save %1; close cancelled.").arg(doc->displayName()));
                 event->ignore();
                 return;
