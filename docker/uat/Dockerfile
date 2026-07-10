@@ -1,6 +1,6 @@
 # Trailer UAT sandbox
 #
-# Ubuntu 24.04 + Qt 6.8 (aqtinstall) + qpdf (apt). Runs the UAT
+# Ubuntu 24.04 + Qt 6.11 (aqtinstall) + qpdf (apt). Runs the UAT
 # label of our CTest suite under QT_QPA_PLATFORM=offscreen, so no
 # X server, Xvfb, or GPU is needed. The image bakes in build-deps
 # only; source is mounted at /work at run time so iteration doesn't

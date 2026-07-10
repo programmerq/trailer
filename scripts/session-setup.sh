@@ -150,6 +150,17 @@ for n in z.namelist():
             shutil.copyfileobj(src, dst)
 print("extracted onnxruntime", ver)
 PYEOF
+    # Fail fast if the nupkg layout ever changes: the extraction loop
+    # above matches paths by prefix and silently extracts nothing on a
+    # miss, which would otherwise surface much later as a compile or
+    # link error instead of here.
+    for expected in "${ORT_DIR}/include/onnxruntime_cxx_api.h" \
+                    "${ORT_DIR}/lib/libonnxruntime.so.${ORT_VERSION}"; do
+        if [ ! -s "${expected}" ]; then
+            echo "[trailer-setup] error: '${expected}' missing/empty after extracting the ${ORT_VERSION} nupkg — did its internal layout change? (${ORT_NUPKG_URL})" >&2
+            exit 1
+        fi
+    done
     $SUDO chmod 755 "${ORT_DIR}/lib/libonnxruntime.so.${ORT_VERSION}"
     # SONAME of the MS build is libonnxruntime.so.1; provide the usual
     # symlink chain so both link-time (-lonnxruntime) and runtime work.
@@ -198,15 +209,35 @@ export PATH="${QT_DIR}/bin:\$PATH"
 PROFEOF
 # Claude Code sessions don't source profile.d for tool shells; persist
 # the same env for this session via the hook-provided env file. The
-# hook fires on startup/resume/clear/compact, so grep-guard the block
-# to keep the file from growing (append-only file, marker written once).
-TRAILER_ENV_MARKER="# trailer-setup: build env"
-if [ -n "${CLAUDE_ENV_FILE:-}" ] && ! grep -qsF "${TRAILER_ENV_MARKER}" "${CLAUDE_ENV_FILE}"; then
+# hook fires on startup/resume/clear/compact, so guard on a versioned
+# begin-marker: an unchanged version is a no-op (file never grows),
+# while a Qt/ORT version bump drops the stale block and writes a fresh
+# one instead of leaving old paths in CMAKE_PREFIX_PATH.
+TRAILER_ENV_BEGIN="# trailer-setup: build env begin (qt ${QT_VERSION}, ort ${ORT_VERSION})"
+TRAILER_ENV_END="# trailer-setup: build env end"
+if [ -n "${CLAUDE_ENV_FILE:-}" ] && ! grep -qsxF "${TRAILER_ENV_BEGIN}" "${CLAUDE_ENV_FILE}"; then
+    if [ -f "${CLAUDE_ENV_FILE}" ]; then
+        # Strip any previous trailer-setup block: the begin/end form
+        # (other versions) and the legacy single-marker form (marker
+        # line + its export lines) written by earlier revisions.
+        TMP_ENV="$(mktemp)"
+        awk '
+            /^# trailer-setup: build env begin / { skip = 1; next }
+            skip && /^# trailer-setup: build env end$/ { skip = 0; next }
+            skip { next }
+            /^# trailer-setup: build env$/ { legacy = 3; next }
+            legacy > 0 && /^export (CMAKE_PREFIX_PATH|PATH|QT_QPA_PLATFORM)=/ { legacy--; next }
+            { legacy = 0; print }
+        ' "${CLAUDE_ENV_FILE}" > "${TMP_ENV}"
+        cat "${TMP_ENV}" > "${CLAUDE_ENV_FILE}"
+        rm -f "${TMP_ENV}"
+    fi
     {
-        echo "${TRAILER_ENV_MARKER}"
+        echo "${TRAILER_ENV_BEGIN}"
         echo "export CMAKE_PREFIX_PATH=\"${TRAILER_PREFIX_PATH}\${CMAKE_PREFIX_PATH:+:\$CMAKE_PREFIX_PATH}\""
         echo "export PATH=\"${QT_DIR}/bin:\$PATH\""
         echo "export QT_QPA_PLATFORM=offscreen"
+        echo "${TRAILER_ENV_END}"
     } >> "${CLAUDE_ENV_FILE}"
 fi
 
