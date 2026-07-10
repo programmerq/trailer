@@ -163,11 +163,35 @@ format. Try exporting it from its original application first." is actionable.
 **Empty states must be welcoming and actionable.**
 No recent files, no search results, failed-to-open — each of these states must
 contain a clear, friendly suggestion. An icon and silence is not sufficient.
+(On macOS, where the no-document *first-run* state shows no window at all —
+see below — this rule governs the *content* empty states that appear once a
+window exists, e.g. an empty search or a failed open.)
 
-**First-run experience has exactly one job.**
-The app should open with an unambiguous prompt: *Open a file* with a visible
-drag-target and a file-picker button. Nothing more. All preferences, settings,
-and advanced features are one deliberate navigation away, never in the way.
+**First-run experience has exactly one job — shaped per platform.**
+> Changed (supersedes the earlier universal "the app should open with a
+> drag-target and picker" wording): the empty state is now
+> platform-conditional. Adapting the shape to each OS's native
+> no-document behaviour is required; the one job — get the user to a file
+> with zero hunting — is unchanged. Enforced as gate G5 in
+> [`AGENTS.md`](AGENTS.md).
+
+The no-document state has exactly one job: get the user to a file without
+making them hunt. Its *shape* follows the platform's native convention:
+
+- **macOS: no window.** A Mac app with no document open shows **no
+  window** — just the dock icon and the menu bar. Launching with no file,
+  or closing the last window, returns to this state (it does not quit).
+  Activating the app (dock click, `⌘O`, or File → Open) presents the
+  standard **Open panel**. This matches how Preview and other
+  document-based Mac apps behave; a Mac user reads an empty window on
+  launch as the app being confused, not welcoming.
+- **Windows / Linux: an empty window.** On Windows and Linux the app
+  opens an **empty window** carrying **Open** and **Recent** affordances
+  and a **centered drop-target** — an unambiguous "*Open a file*" prompt
+  with a visible drag zone and a file-picker button. Nothing more.
+
+On every platform, all preferences, settings, and advanced features stay
+one deliberate navigation away, never in the way.
 
 **Every preference that can be mis-set should have a visible reset.**
 If a non-technical user can accidentally place a setting in a bad state, a
@@ -212,20 +236,46 @@ feedback with zero additional tooling investment.
 | **The power migrator** | Moving from macOS Preview or Adobe Acrobat Reader; has strong muscle memory; frustrated by missing keyboard shortcuts or changed terminology. | "Where is the equivalent of [feature]?" "Why is this in a different menu?" |
 | **The occasional user** | Opens the app once every few weeks to do one specific thing (sign a form, crop a screenshot). Has forgotten everything from last time. | "What does this button do again?" "I don't remember how I did this last time." |
 
-### 2.5.3 Process: screenshot audit at each milestone
+**These personas are unranked adversarial lenses, not a priority order.**
+None outranks another. A design has to survive critique through all four;
+it does not get to satisfy one and dismiss the rest. Where §2.5.3 names two
+personas as a minimum critique set, that is a *coverage floor* — critique
+through at least those two — never a claim that those two carry more
+authority. See [`PHILOSOPHY.md`](PHILOSOPHY.md) →
+*How design decisions get adjudicated* for the full adjudication process
+(arbiter, admissible-objection test, decision-record lifecycle).
 
-Before any phase milestone is declared complete:
+### 2.5.3 Process: screenshot audit — a required merge artifact
+
+The screenshot audit is a **hard gate**, not a checklist item. No PR that
+adds, removes, or reshapes a user-visible state merges without the audit
+attached; a UX-affecting change without screenshots of the affected states,
+compared against the change's declared threshold, is **Not Done**. This is
+gate G2 in [`AGENTS.md`](AGENTS.md); the per-PR evidence is the per-item
+roll-up of this milestone audit — there is one screenshot regime, not two.
+
+Before any UX-affecting PR merges (and, cumulatively, before any phase
+milestone is declared complete):
 
 1. Take a screenshot (or short screen recording) of every distinct UI state
-   introduced by that phase: the default empty state, a document open, the
-   new feature in use, any dialog or confirmation prompt, and any error state
-   reachable through normal use.
-2. Run each screenshot through at least the *office non-technical user* and
-   *older careful user* persona critique prompts.
-3. File issues for any friction point that would cause a user in that persona
-   to hesitate, mis-navigate, or abandon the flow.
-4. Attach the screenshots as CI artifacts so reviewers can inspect them without
-   running the app.
+   the change introduces or reshapes: the default empty state, a document
+   open, the new feature in use, any dialog or confirmation prompt, and any
+   error state reachable through normal use.
+2. Compare each screenshot against the pass/fail threshold declared for the
+   work item (gate G1) and run it through at least the *office non-technical
+   user* and *older careful user* persona critique prompts — a coverage
+   floor, not a ranking.
+3. File issues for (or fix, in the same PR) any friction point that would
+   cause a user in any persona to hesitate, mis-navigate, or abandon the
+   flow.
+4. Attach the screenshots to the PR body (and, at milestones, as CI
+   artifacts) so reviewers can inspect them without running the app.
+
+Capture method note: whether an offscreen `widget->grab()` capture satisfies
+"from the running app," or whether a real event-loop/window render is
+required, is an open question pending maintainer sign-off (see AGENTS.md
+gate G2). Until it is ruled, offscreen grabs are accepted; state which method
+the PR used.
 
 ### 2.5.4 Long-term: structured agent UX test suites
 
@@ -292,7 +342,8 @@ on Windows and macOS), Flutter (immature desktop story for document apps).
   PR.
 - **Installers:**
   - Windows: MSIX (preferred) and a fallback NSIS installer
-  - macOS: signed and notarized `.dmg` containing a `.app` bundle
+  - macOS: `.dmg` containing a `.app` bundle — notarisation is gated on the
+    Apple Developer Program decision (see §12; adhoc signing today)
   - Linux: AppImage as the universal binary; Flatpak as the modern preferred
     distribution; `.deb` and `.rpm` if maintainers volunteer
 
@@ -413,6 +464,12 @@ specialised case).
   the rendering of light-coloured PDFs for night reading.
 
 ### 5.4 Platform conventions
+
+The concrete, checkable per-OS command-surface reference (menu structure,
+the unified 1:1 shortcut mapping, command-surface placement, save-model
+conventions, with citations) lives in
+[`docs/platform-conventions.md`](docs/platform-conventions.md) — the target
+gate G4 checks against.
 
 | Concern | macOS | Windows | Linux |
 |---|---|---|---|
@@ -906,6 +963,15 @@ Acceptance criteria.**
   behaves like a traditional "you must press Save" app. (This is the right
   default for a chunk of users; we should not impose Apple's choice on
   everyone.)
+  > **Open decision (needs owner).** PHILOSOPHY's *Never worry about
+  > saving* states continuous-persistence-plus-honoured-Save as the model.
+  > Whether that is a **hard invariant** (this disable toggle would then
+  > have to go) or a **default with this toggle as the legitimate opt-out**
+  > is unresolved. Today's behaviour is default-with-opt-out: the toggle
+  > exists and the debounce is `kAutoSaveIntervalMs = 30000` at
+  > `src/ui/MainWindow.cpp:392`. Tracked, unresolved, as decision record
+  > [`0004-never-worry-save-invariant`](docs/decision-records/0004-never-worry-save-invariant.md)
+  > (status: proposed). This section is updated once the owner rules.
 
 #### 6.10.2 Versions
 
