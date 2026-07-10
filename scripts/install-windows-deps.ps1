@@ -34,7 +34,7 @@ param(
     # aqtinstall 3.3.0 doesn't understand the new directory layout Qt
     # 6.11+ uses on download.qt.io (toolchain-suffixed instead of
     # nested), so we default to 6.10.3. Move this up when aqtinstall
-    # gains 6.11+ support. CMake requires >=6.5.
+    # gains 6.11+ support. CMake requires >=6.6.
     [string]$QtVersion = '6.10.3',
     [string]$QtArch = 'win64_msvc2022_64',
     [string]$QtModules = 'qtpdf',
