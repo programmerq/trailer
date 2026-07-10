@@ -39,6 +39,7 @@ class TestAdapters : public QObject {
     void pdfDocumentInterleavedUndoIsChronological();
     void pdfDocumentUndoAllPastOldCapRegimeIsExact();
     void pdfDocumentSmallCapEvictionKeepsLogAndStoreInLockstep();
+    void pdfDocumentUndoRedoSurviveForcedLogDesync();
     void imageDocumentRotateSwapsDimensionsAndMarksDirty();
     void imageDocumentFlipHorizontalMarksDirty();
     void imageDocumentResizeChangesPixelSize();
@@ -1047,6 +1048,82 @@ void TestAdapters::pdfDocumentSmallCapEvictionKeepsLogAndStoreInLockstep() {
     QCOMPARE(redos, 6);
     QCOMPARE(store->count(), 10);
     QVERIFY(!doc.canRedo());
+}
+
+// The undo dispatch used to guard the "log names a PdfCommand but the
+// command stack is empty" desync with Q_ASSERT only — compiled out
+// under NDEBUG (RelWithDebInfo and Release both define it), leaving
+// .back() on an empty vector: UB. The guards are now runtime checks:
+// warn, drop the orphaned log entry, return false, never crash. There
+// is no production path to this state, so it is forced through test
+// seams: corruptPdfCommandStacksForTesting() for the command branch
+// and AnnotationStore::clearHistory() for the annotation branch.
+void TestAdapters::pdfDocumentUndoRedoSurviveForcedLogDesync() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("desync.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, "desync");
+        painter.end();
+    }
+
+    // Undo branch: log holds a PdfCommand entry, command stack empty.
+    {
+        PdfDocument doc(path);
+        QVERIFY(doc.isValid());
+        doc.rotatePage(0, 90);
+        QVERIFY(doc.canUndo());
+        doc.corruptPdfCommandStacksForTesting();
+        QTest::ignoreMessage(QtWarningMsg,
+                             "PdfDocument::undo: log expects a PdfCommand but the command "
+                             "stack is empty; dropping the orphaned entry");
+        QVERIFY2(!doc.undo(), "undo() must refuse on a log/stack desync");
+        // The orphaned entry was dropped — the log no longer over-promises.
+        QVERIFY(!doc.canUndo());
+        QVERIFY(!doc.canRedo());
+    }
+
+    // Redo branch: undo a real rotate first so the redo log is
+    // populated, then drop the command stacks underneath it.
+    {
+        PdfDocument doc(path);
+        QVERIFY(doc.isValid());
+        doc.rotatePage(0, 90);
+        QVERIFY(doc.undo());
+        QVERIFY(doc.canRedo());
+        doc.corruptPdfCommandStacksForTesting();
+        QTest::ignoreMessage(QtWarningMsg,
+                             "PdfDocument::redo: log expects a PdfCommand but the command "
+                             "stack is empty; dropping the orphaned entry");
+        QVERIFY2(!doc.redo(), "redo() must refuse on a log/stack desync");
+        QVERIFY(!doc.canRedo());
+    }
+
+    // Annotation branch: clearHistory() empties the store's stacks but
+    // deliberately not the document's log — a corrupted sequence the
+    // guard must absorb the same way.
+    {
+        PdfDocument doc(path);
+        QVERIFY(doc.isValid());
+        Annotation a;
+        a.page = 0;
+        a.type = AnnotationType::Rectangle;
+        a.bounds = QRectF(5, 5, 20, 10);
+        doc.annotations()->add(a);
+        QVERIFY(doc.canUndo());
+        doc.annotations()->clearHistory();
+        QTest::ignoreMessage(QtWarningMsg,
+                             "PdfDocument::undo: log expects an annotation frame but the "
+                             "AnnotationStore history is empty; dropping the orphaned entry");
+        QVERIFY2(!doc.undo(), "undo() must refuse when the store cannot deliver the frame");
+        QVERIFY(!doc.canUndo());
+        // The annotation itself is untouched — the guard is a no-op,
+        // not a partial mutation.
+        QCOMPARE(doc.annotations()->count(), 1);
+    }
 }
 
 QTEST_MAIN(TestAdapters)

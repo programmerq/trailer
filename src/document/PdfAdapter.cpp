@@ -1063,7 +1063,16 @@ bool PdfDocument::undo() {
         m_undoLog.pop_back();
         m_annotations.undo();
     } else {
-        Q_ASSERT(!m_pdfUndoStack.empty());
+        if (m_pdfUndoStack.empty()) {
+            // Runtime guard, not an assert: a log/stack desync here
+            // would otherwise call .back() on an empty vector — UB in
+            // release builds where Q_ASSERT compiles out. Warn, drop
+            // the orphaned entry, and refuse.
+            qWarning("PdfDocument::undo: log expects a PdfCommand but the command "
+                     "stack is empty; dropping the orphaned entry");
+            m_undoLog.pop_back();
+            return false;
+        }
         m_undoLog.pop_back();
         auto cmd = std::move(m_pdfUndoStack.back());
         m_pdfUndoStack.pop_back();
@@ -1092,7 +1101,12 @@ bool PdfDocument::redo() {
         m_redoLog.pop_back();
         m_annotations.redo();
     } else {
-        Q_ASSERT(!m_pdfRedoStack.empty());
+        if (m_pdfRedoStack.empty()) {
+            qWarning("PdfDocument::redo: log expects a PdfCommand but the command "
+                     "stack is empty; dropping the orphaned entry");
+            m_redoLog.pop_back();
+            return false;
+        }
         m_redoLog.pop_back();
         auto cmd = std::move(m_pdfRedoStack.back());
         m_pdfRedoStack.pop_back();
