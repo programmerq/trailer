@@ -573,13 +573,13 @@ void ImageDocument::pushUndoSnapshot() {
     m_selectableText.invalidate(0);
 }
 
-void ImageDocument::undo() {
+bool ImageDocument::undo() {
     if (m_annotations.canUndo()) {
         m_annotations.undo();
-        return;
+        return true;
     }
     if (m_undoStack.empty())
-        return;
+        return false;
     m_redoStack.push_back(m_image);
     m_image = m_undoStack.back();
     m_undoStack.pop_back();
@@ -587,21 +587,23 @@ void ImageDocument::undo() {
     // The page contents changed — clear any cached OCR.
     m_selectableText.invalidate(0);
     refreshView();
+    return true;
 }
 
-void ImageDocument::redo() {
+bool ImageDocument::redo() {
     if (m_annotations.canRedo()) {
         m_annotations.redo();
-        return;
+        return true;
     }
     if (m_redoStack.empty())
-        return;
+        return false;
     m_undoStack.push_back(m_image);
     m_image = m_redoStack.back();
     m_redoStack.pop_back();
     m_dirty = true;
     m_selectableText.invalidate(0);
     refreshView();
+    return true;
 }
 
 void ImageDocument::rotatePage(int /*pageIndex*/, int degreesClockwise) {

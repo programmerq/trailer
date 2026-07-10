@@ -37,6 +37,8 @@ class TestAdapters : public QObject {
     void pdfDocumentDeletePagesRemovesAndMarksDirty();
     void pdfDocumentMovePageReorders();
     void pdfDocumentInterleavedUndoIsChronological();
+    void pdfDocumentUndoAllPastOldCapRegimeIsExact();
+    void pdfDocumentSmallCapEvictionKeepsLogAndStoreInLockstep();
     void imageDocumentRotateSwapsDimensionsAndMarksDirty();
     void imageDocumentFlipHorizontalMarksDirty();
     void imageDocumentResizeChangesPixelSize();
@@ -912,6 +914,138 @@ void TestAdapters::pdfDocumentInterleavedUndoIsChronological() {
     QCOMPARE(store->count(), 1);
 
     QVERIFY(doc.canUndo());
+    QVERIFY(!doc.canRedo());
+}
+
+// Regression guard for the cap-desync bug: AnnotationStore bounds its
+// history while the unified chronological log used to grow without
+// bound, so after more annotation edits than the (old, 64-frame) cap
+// an undo-all silently no-opped the excess and pushed phantom redo
+// entries. 70 edits + 1 rotate exercises the old >64 regime; every
+// offered undo/redo must be real and the counts must balance exactly.
+void TestAdapters::pdfDocumentUndoAllPastOldCapRegimeIsExact() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("overcap.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, "over-cap");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store != nullptr);
+    const QSize portrait = doc.contentSizeHint();
+    QVERIFY2(portrait.height() > portrait.width(), "A4 fixture should start portrait");
+
+    // 70 annotation edits, then one page rotate (the most recent op).
+    for (int i = 0; i < 70; ++i) {
+        Annotation a;
+        a.page = 0;
+        a.type = AnnotationType::Rectangle;
+        a.bounds = QRectF(i, i, 20, 10);
+        store->add(a);
+    }
+    QCOMPARE(store->count(), 70);
+    doc.rotatePage(0, 90);
+    const QSize landscape = doc.contentSizeHint();
+    QVERIFY2(landscape.width() > landscape.height(),
+             "rotate 90 should present the page landscape");
+
+    // Undo-all: while canUndo() reports true every press must actually
+    // revert something — a false return here is the silent-no-op bug.
+    int undos = 0;
+    while (doc.canUndo()) {
+        QVERIFY2(doc.undo(), "undo() returned false while canUndo() was true");
+        ++undos;
+        QVERIFY2(undos <= 71, "undo log offered more entries than operations performed");
+    }
+    QCOMPARE(undos, 71);
+    QCOMPARE(store->count(), 0);
+    QCOMPARE(doc.contentSizeHint(), portrait);
+    QVERIFY(!doc.canUndo());
+    QVERIFY2(!doc.undo(), "undo() must refuse (return false) once canUndo() is false");
+    QCOMPARE(store->count(), 0);
+
+    // Redo-all: exactly as many redos as undos performed — any extra
+    // claimed entry is a phantom.
+    int redos = 0;
+    while (doc.canRedo()) {
+        QVERIFY2(doc.redo(), "redo() returned false while canRedo() was true");
+        ++redos;
+        QVERIFY2(redos <= undos, "phantom redo entries beyond the number of undos");
+    }
+    QCOMPARE(redos, 71);
+    QCOMPARE(store->count(), 70);
+    QCOMPARE(doc.contentSizeHint(), landscape);
+    QVERIFY(!doc.canRedo());
+    QVERIFY2(!doc.redo(), "redo() must refuse (return false) once canRedo() is false");
+}
+
+// Proves the eviction-sync mechanism at an arbitrary cap: with the
+// store's depth cap shrunk to 5 (test seam), edits past the cap must
+// evict from BOTH the store and the document's chronological log, so
+// canUndo() never over-promises. The oldest page op must stay
+// reachable — eviction removes the oldest entry of the matching
+// domain, not the oldest entry overall.
+void TestAdapters::pdfDocumentSmallCapEvictionKeepsLogAndStoreInLockstep() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("smallcap.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, "small-cap");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store != nullptr);
+    store->setMaxUndoDepth(5);
+    const QSize portrait = doc.contentSizeHint();
+
+    // Chronologically first: a rotate. Then 10 annotation edits — 5
+    // more than the store can retain, forcing 5 evictions.
+    doc.rotatePage(0, 90);
+    for (int i = 0; i < 10; ++i) {
+        Annotation a;
+        a.page = 0;
+        a.type = AnnotationType::Rectangle;
+        a.bounds = QRectF(i, i, 20, 10);
+        store->add(a);
+    }
+    QCOMPARE(store->count(), 10);
+
+    // Undoable: 5 retained annotation frames + the rotate = 6.
+    int undos = 0;
+    while (doc.canUndo()) {
+        QVERIFY2(doc.undo(), "undo() returned false while canUndo() was true");
+        ++undos;
+        QVERIFY2(undos <= 6, "log offered more undos than the store retains");
+    }
+    QCOMPARE(undos, 6);
+    // The 5 oldest annotations fell off the capped history — they are
+    // deliberately unreachable, not silently skipped.
+    QCOMPARE(store->count(), 5);
+    QCOMPARE(doc.contentSizeHint(), portrait);
+    QVERIFY(!doc.canUndo());
+    QVERIFY2(!doc.undo(), "undo() must refuse once canUndo() is false");
+
+    int redos = 0;
+    while (doc.canRedo()) {
+        QVERIFY2(doc.redo(), "redo() returned false while canRedo() was true");
+        ++redos;
+        QVERIFY2(redos <= undos, "phantom redo entries beyond the number of undos");
+    }
+    QCOMPARE(redos, 6);
+    QCOMPARE(store->count(), 10);
     QVERIFY(!doc.canRedo());
 }
 

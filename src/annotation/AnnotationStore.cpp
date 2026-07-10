@@ -93,10 +93,18 @@ void AnnotationStore::pushHistory() {
         // pre-state is the right thing to revert to.
     }
     m_undoStack.push_back({m_annotations, m_nextId});
-    if (m_undoStack.size() > kMaxUndo) {
+    bool evicted = false;
+    if (m_undoStack.size() > m_maxUndoDepth) {
         m_undoStack.erase(m_undoStack.begin());
+        evicted = true;
     }
     m_redoStack.clear();
+    // Eviction is announced BEFORE the push so an owner mirroring the
+    // store into a chronological log first drops its oldest annotation
+    // entry, then appends the new one — the log's annotation count
+    // equals m_undoStack.size() again once both signals return.
+    if (evicted)
+        emit historyEvicted();
     emit historyPushed();
 }
 
