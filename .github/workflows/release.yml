@@ -274,9 +274,12 @@ jobs:
 
       - name: Wine unit tests
         # Cheap Windows-behaviour insurance before shipping a release:
-        # same `--label-exclude uat` selector CI's windows-cross-build
-        # job runs (26/26 green locally). The UAT tier needs a windowed
-        # platform plugin Wine's offscreen doesn't provide. Every test
+        # same `--label-exclude 'uat|perf'` selector CI's windows-cross-
+        # build job runs (26/26 green locally). The UAT tier needs a
+        # windowed platform plugin Wine's offscreen doesn't provide, and
+        # wall-time perf budgets are noise under the Wine emulator — they
+        # run natively on Linux (the project's no-CI-wall-time-gate
+        # ruling). Every test
         # .exe lands in build-win/ root, so the DLLs it loads must sit
         # beside it — copy the Bundle step's import-walked DLLs back next
         # to the exes, then add the two test-only extras the import walk
@@ -301,7 +304,7 @@ jobs:
              "$QT_WIN_DIR"/plugins/platforms/qwindows.dll build-win/platforms/
           cp "$QT_WIN_DIR"/plugins/imageformats/*.dll build-win/imageformats/
           cd build-win
-          ctest -C Release --label-exclude uat --output-on-failure
+          ctest -C Release --label-exclude 'uat|perf' --output-on-failure
 
       - name: Stage Windows artifact
         # Zip the bundled directory into the exact filename
