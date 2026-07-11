@@ -10,7 +10,7 @@
 # ghcr.io/actions/actions-runner image (they just apt every run there).
 #
 # What is baked in here: toolchain packages ONLY — cmake/ninja/mold,
-# gcc/g++, the mesa/OpenGL + xcb dev libs, libqpdf-dev + qpdf, the
+# gcc/g++, ccache, the mesa/OpenGL + xcb dev libs, libqpdf-dev + qpdf, the
 # mingw-w64 (-posix) cross toolchain, Wine + i386 multiarch, and the
 # python/pip needed for aqtinstall. NOT baked in: the Qt, ONNX and
 # cross-built qpdf/libjpeg prefixes — those stay cache-keyed by the
@@ -56,7 +56,9 @@ ARG DEBIAN_FRONTEND=noninteractive
 
 # Everything the two setup composite actions apt-install, in one layer:
 #   * Native build toolchain: build-essential (gcc/g++, C++20-capable),
-#     cmake, ninja-build, mold, pkg-config.
+#     cmake, ninja-build, mold, pkg-config, plus ccache (the compiler
+#     launcher CMAKE_CXX_COMPILER_LAUNCHER points at; the CI ccache
+#     action detects it on PATH and skips its own apt install).
 #   * Qt's Linux runtime/dev deps: mesa/OpenGL dev libs, the xcb libs
 #     Qt's xcb platform plugin loads, xkbcommon, cups.
 #   * PDF backend: libqpdf-dev (Trailer links the libqpdf C++ API) +
@@ -73,6 +75,7 @@ RUN dpkg --add-architecture i386 \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         build-essential \
+        ccache \
         cmake \
         ninja-build \
         mold \
