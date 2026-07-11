@@ -116,6 +116,13 @@ runs:
         # toolchain file (cmake/toolchain-mingw-w64.cmake) uses.
         sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
         sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+        # Echo the selected cross-compiler up front for diagnosability
+        # (a runner-image toolchain bump shows here), and export its
+        # version so the qpdf/libjpeg deps cache key below busts when
+        # the mingw compiler changes — those prefixes are ABI-tied to
+        # the compiler that built them.
+        x86_64-w64-mingw32-g++ --version
+        echo "MINGW_GXX_VERSION=$(x86_64-w64-mingw32-g++ -dumpversion)" >> "$GITHUB_ENV"
         if [ "${{ inputs.install-wine }}" = "true" ]; then
           sudo dpkg --add-architecture i386
           sudo apt-get update
@@ -183,17 +190,40 @@ runs:
         cp "$work"/ortwin/runtimes/win-x64/native/onnxruntime.lib "$ORT_WIN_DIR/lib/"
         rm -rf "$work"
 
+        # Verify the NuGet-sourced onnxruntime.dll before it's ever
+        # linked into trailer.exe and executed under Wine. The canonical
+        # cmake/OnnxRuntime.cmake pins a SHA256 on the GitHub release
+        # zip, but -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_PREBUILT (which
+        # the k8s egress policy forces, since that release asset 403s)
+        # bypasses that download and its hash. Pin the DLL's own SHA256
+        # here so a future NuGet drift for this pinned version fails
+        # loudly. Keep in lockstep with TRAILER_ORT_VERSION in
+        # cmake/OnnxRuntime.cmake; update the constant when bumping.
+        case "${{ inputs.onnxruntime-version }}" in
+          1.25.0)
+            expected_sha256="581b3c87f7944a3cdeeaa3dd048e3f4261aa4dc777a57ea154674ece1d04c575" ;;
+          *)
+            expected_sha256="" ;;
+        esac
+        if [ -n "$expected_sha256" ]; then
+          echo "${expected_sha256}  $ORT_WIN_DIR/lib/onnxruntime.dll" | sha256sum -c -
+        else
+          echo "::warning::No pinned onnxruntime.dll SHA256 for version ${{ inputs.onnxruntime-version }}; skipping verification. Add the hash to .github/actions/setup-windows-cross/action.yml."
+        fi
+
     - name: Cache qpdf + libjpeg-turbo (mingw cross-build)
       id: deps-cache
       uses: actions/cache@v4
       with:
         # The from-source cross-build costs ~1-2 min; cache the two
-        # install prefixes. Keyed on both versions plus a hash of this
-        # action so recipe changes rebuild.
+        # install prefixes. Keyed on both versions, the mingw compiler
+        # version (the prefixes are ABI-tied to it, so a runner-image
+        # toolchain bump must rebuild them), plus a hash of this action
+        # so recipe changes rebuild.
         path: |
           ~/trailer-winx/qpdf
           ~/trailer-winx/mingw-prefix
-        key: windows-cross-deps-qpdf${{ inputs.qpdf-version }}-jpeg${{ inputs.libjpeg-version }}-${{ hashFiles('.github/actions/setup-windows-cross/action.yml') }}
+        key: windows-cross-deps-qpdf${{ inputs.qpdf-version }}-jpeg${{ inputs.libjpeg-version }}-mingw${{ env.MINGW_GXX_VERSION }}-${{ hashFiles('.github/actions/setup-windows-cross/action.yml') }}
 
     - name: Cross-build qpdf + libjpeg-turbo (mingw)
       if: steps.deps-cache.outputs.cache-hit != 'true'

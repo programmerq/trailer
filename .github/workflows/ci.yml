@@ -12,6 +12,12 @@
 
 name: CI
 
+# Least privilege: every job here only checks out the repo and uploads
+# artifacts (which needs no extra token scope), so the workflow's
+# GITHUB_TOKEN gets read-only repository access and nothing else.
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
@@ -196,6 +202,11 @@ jobs:
           WINEDEBUG: -all
           DISPLAY: ''
           QT_QPA_PLATFORM: offscreen
+          # Same mingw-sysroot pin as the Configure step: this
+          # incremental reconfigure re-runs qpdf's pkg_check_modules, so
+          # keep host -dev packages from leaking -isystem /usr/include
+          # into the mingw compile here too.
+          PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
         run: |
           set -euo pipefail
           # One-time headless prefix init in a writable location.
