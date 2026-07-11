@@ -54,7 +54,7 @@ jobs:
       # the GitHub Release object and upload assets.
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Resolve target tag + SHA
         id: target
