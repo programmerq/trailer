@@ -36,7 +36,7 @@ set(CMAKE_AUTOUIC ON)
 
 include(CompilerWarnings)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Concurrent Gui Widgets Network Svg Test Pdf PdfWidgets PrintSupport)
+find_package(Qt6 6.6 REQUIRED COMPONENTS Core Concurrent Gui Widgets Network Svg Test Pdf PdfWidgets PrintSupport)
 include(OnnxRuntime)
 # Prefer a CMake package config (e.g. vcpkg on Windows).  Fall back to
 # pkg-config so that Linux/macOS system packages (libqpdf-dev, brew qpdf)
@@ -124,6 +124,8 @@ set(TRAILER_SOURCES
     src/signatures/SignatureStore.h
     src/ui/DocumentView.cpp
     src/ui/DocumentView.h
+    src/ui/EmptyStateWidget.cpp
+    src/ui/EmptyStateWidget.h
     src/ui/MainWindow.cpp
     src/ui/MainWindow.h
     src/ui/ModelManagerDialog.cpp
@@ -150,6 +152,8 @@ set(TRAILER_SOURCES
     src/ui/MyCardDialog.h
     src/ui/OcrResultsDialog.cpp
     src/ui/OcrResultsDialog.h
+    src/ui/PreferencesDialog.cpp
+    src/ui/PreferencesDialog.h
     src/ui/SamController.cpp
     src/ui/SamController.h
     src/ui/SearchBar.cpp

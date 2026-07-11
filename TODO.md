@@ -452,16 +452,21 @@ items have landed; the commit hash is in the strikethrough line.
   `MovePageCommand`, `InsertPagesCommand`, and `CropPageCommand`
   (the last one batches an N-page crop into a single undoable
   action). `PdfDocument` keeps undo / redo stacks of `PdfCommand`s
-  parallel to the existing AnnotationStore undo log; the unified
-  `IDocument::undo` / `redo` route to the most-recently-touched
-  stack via an `m_lastUndoSource` heuristic.
+  parallel to the AnnotationStore undo log.
 
-  Better-but-bigger follow-up: merge the AnnotationStore log
-  and the PdfCommand stack into one chronological undo list so
+  ~~Better-but-bigger follow-up: merge the AnnotationStore log
+  and the PdfCommand stack into one chronological undo list.~~
+  Done — `IDocument::undo` / `redo` now pop a per-document
+  chronological log of typed entries (one per committed op), so
   multi-action undo always pops the most recent thing the user
-  did, regardless of which subsystem produced it. The
-  `m_lastUndoSource` heuristic gets it right for the common
-  one-action-back case but not for interleaved sequences.
+  did, regardless of which subsystem produced it. `ImageDocument`
+  uses the same structure for its pixel-snapshot stack. Bounded
+  histories evict in lockstep with the log
+  (`AnnotationStore::historyEvicted` for annotations; local sync
+  in `ImageDocument::pushUndoSnapshot` for pixels), and the
+  dispatch guards log/stack desync at runtime (warn + no-op, not
+  a release-inert assert). The interim last-touched-stack
+  heuristic this replaced is gone.
 
   Other small follow-ups in the same area:
   - Annotation re-indexing on delete/move/insert. The undo
@@ -721,17 +726,15 @@ and any future feature where input variety is the whole point.
 
 ### Cross-cutting polish items
 
-- **Designer / non-technical-user review.** The items above came out of
-  one ~15-minute walkthrough. A focused pass that watches a real user
-  drive the app end-to-end (open a file → markup → sign → save) will
-  surface more of these subtle behaviours. Schedule this before any 1.0
-  polish milestone. Watch for:
-  - Any modal dialog that interrupts work on the document.
-  - Tools that appear enabled but do nothing (or the wrong thing) for
-    the active document type.
-  - Any action that requires the user to already know where to look
-    (hidden toolbars, menu-only entry points for common tasks).
-  - Loss of direct manipulation (things the user made but can't then
-    grab, move, or edit).
-  - Feedback that's too loud (popups) or too quiet (no visible change
-    after a successful action).
+- **Designer / non-technical-user review.** Now codified as the
+  reference-user smoke session — see
+  [`docs/smoke-session.md`](docs/smoke-session.md) for the protocol
+  (fresh build, non-maintainer observer, three open-do-close cycles
+  on a text PDF + scanned PDF + photo, observations land in a dated
+  subsection of this file). The original bullets that lived here —
+  modal dialogs that interrupt, controls enabled-but-noop, hidden
+  entry points, lost direct manipulation, too-loud/too-quiet feedback
+  — are now covered as positive rules in PHILOSOPHY's *How Trailer
+  reduces friction* section. The trigger remains: schedule a smoke
+  session before any 1.0 polish milestone, and opportunistically
+  whenever a willing non-maintainer is in the room.

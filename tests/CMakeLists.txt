@@ -62,5 +62,25 @@ trailer_add_test(test_selectable_text_layer test_selectable_text_layer.cpp)
 trailer_add_test(test_cancellation_token test_cancellation_token.cpp)
 trailer_add_test(test_power_source test_power_source.cpp)
 trailer_add_test(test_ml_scheduler test_ml_scheduler.cpp)
+trailer_add_test(test_empty_state_widget test_empty_state_widget.cpp)
+trailer_add_test(test_preferences test_preferences.cpp)
+
+# Structural, CI-safe performance tests. These assert ordering / counts /
+# thread facts (never wall-clock time) and read the checked-in reference
+# corpus at docs/perf/corpus/. TRAILER_PERF_CORPUS_DIR points each test
+# at that directory (CMAKE_CURRENT_SOURCE_DIR here is <repo>/tests).
+function(trailer_add_perf_test name source)
+    trailer_add_test(${name} ${source})
+    target_compile_definitions(${name} PRIVATE
+        "TRAILER_PERF_CORPUS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../docs/perf/corpus\"")
+    # Tag the structural perf tier with a ctest label so CI can target it
+    # (e.g. `ctest --label-exclude perf` on the Wine runner, which can't
+    # meet the threading/paint assumptions these tests make).
+    set_tests_properties(${name} PROPERTIES LABELS "perf")
+endfunction()
+
+trailer_add_perf_test(test_perf_render_ordering test_perf_render_ordering.cpp)
+trailer_add_perf_test(test_perf_gui_thread_io   test_perf_gui_thread_io.cpp)
+trailer_add_perf_test(test_perf_paint_budget    test_perf_paint_budget.cpp)
 
 add_subdirectory(uat)

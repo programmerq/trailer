@@ -244,6 +244,46 @@ ImageDocument::ImageDocument(QString path) : m_path(std::move(path)) {
     } else {
         m_image = reader.read();
     }
+    connectAnnotationHistory();
+}
+
+void ImageDocument::connectAnnotationHistory() {
+    // ImageDocument is not a QObject; the store doubles as the
+    // connection context so the lambdas can never outlive `this`
+    // (m_annotations is a member and dies with the document).
+    //
+    // Unlike PdfDocument there is no m_suppressUndoLog counterpart:
+    // images have no bulk annotation-load path (no sidecar reload, no
+    // post-save re-read), so every historyPushed really is a user
+    // edit. If session-restore for image annotations ever lands, it
+    // will need the same suppress-and-rebuild bracket PdfDocument uses
+    // in saveCommitOnUi().
+    QObject::connect(&m_annotations, &AnnotationStore::historyPushed, &m_annotations,
+                     [this]() { onAnnotationHistoryPushed(); });
+    QObject::connect(&m_annotations, &AnnotationStore::historyEvicted, &m_annotations,
+                     [this]() { onAnnotationHistoryEvicted(); });
+}
+
+void ImageDocument::onAnnotationHistoryPushed() {
+    // A new annotation edit (one frame, compound-coalesced):
+    // record it in the unified log and invalidate all redo.
+    m_undoLog.push_back(UndoSource::Annotation);
+    m_redoLog.clear();
+    m_redoStack.clear();
+}
+
+void ImageDocument::onAnnotationHistoryEvicted() {
+    // The store dropped its oldest frame to stay within its depth cap.
+    // Drop the oldest Annotation entry from the chronological log so
+    // the log's annotation count matches what the store can actually
+    // undo.
+    const auto it = std::find(m_undoLog.begin(), m_undoLog.end(), UndoSource::Annotation);
+    if (it != m_undoLog.end()) {
+        m_undoLog.erase(it);
+    } else {
+        qWarning("ImageDocument: AnnotationStore evicted an undo frame but the "
+                 "chronological log holds no Annotation entry — log/store desync");
+    }
 }
 
 QString ImageDocument::displayName() const {
@@ -564,8 +604,24 @@ void ImageDocument::pushUndoSnapshot() {
     m_undoStack.push_back(m_image);
     if (m_undoStack.size() > kMaxUndoSteps) {
         m_undoStack.erase(m_undoStack.begin());
+        // Evict from the chronological log in the same breath — the
+        // oldest ImageOp entry, matching the snapshot just dropped —
+        // so the log never claims a pixel undo the stack cannot
+        // perform.
+        const auto it = std::find(m_undoLog.begin(), m_undoLog.end(), UndoSource::ImageOp);
+        if (it != m_undoLog.end()) {
+            m_undoLog.erase(it);
+        } else {
+            qWarning("ImageDocument: pixel snapshot evicted but the chronological "
+                     "log holds no ImageOp entry — log/stack desync");
+        }
     }
+    // A new pixel edit invalidates all redo — both stacks and the
+    // unified redo log — then appends to the chronological undo log.
     m_redoStack.clear();
+    m_annotations.clearRedo();
+    m_redoLog.clear();
+    m_undoLog.push_back(UndoSource::ImageOp);
     // Any pixel-level mutation invalidates the OCR cache for the
     // single page. The next auto-OCR pump will re-enqueue work for
     // the now-stale page; until then, the SelectableTextLayer paints
@@ -573,35 +629,74 @@ void ImageDocument::pushUndoSnapshot() {
     m_selectableText.invalidate(0);
 }
 
-void ImageDocument::undo() {
-    if (m_annotations.canUndo()) {
+bool ImageDocument::undo() {
+    // Pop the single chronological log so the most recent op is undone
+    // first, regardless of which stack it came from. Mirrors
+    // PdfDocument::undo().
+    if (m_undoLog.empty())
+        return false;
+    const UndoSource src = m_undoLog.back();
+    if (src == UndoSource::Annotation) {
+        if (!m_annotations.canUndo()) {
+            qWarning("ImageDocument::undo: log expects an annotation frame but the "
+                     "AnnotationStore history is empty; dropping the orphaned entry");
+            m_undoLog.pop_back();
+            return false;
+        }
+        m_undoLog.pop_back();
         m_annotations.undo();
-        return;
+    } else {
+        if (m_undoStack.empty()) {
+            qWarning("ImageDocument::undo: log expects a pixel snapshot but the "
+                     "snapshot stack is empty; dropping the orphaned entry");
+            m_undoLog.pop_back();
+            return false;
+        }
+        m_undoLog.pop_back();
+        m_redoStack.push_back(m_image);
+        m_image = m_undoStack.back();
+        m_undoStack.pop_back();
+        m_dirty = !m_undoStack.empty() || m_dirty;
+        // The page contents changed — clear any cached OCR.
+        m_selectableText.invalidate(0);
+        refreshView();
     }
-    if (m_undoStack.empty())
-        return;
-    m_redoStack.push_back(m_image);
-    m_image = m_undoStack.back();
-    m_undoStack.pop_back();
-    m_dirty = !m_undoStack.empty() || m_dirty;
-    // The page contents changed — clear any cached OCR.
-    m_selectableText.invalidate(0);
-    refreshView();
+    m_redoLog.push_back(src);
+    return true;
 }
 
-void ImageDocument::redo() {
-    if (m_annotations.canRedo()) {
+bool ImageDocument::redo() {
+    // Inverse of undo(): pop the redo log and re-apply on the stack the
+    // entry came from, in the order the ops were originally undone.
+    if (m_redoLog.empty())
+        return false;
+    const UndoSource src = m_redoLog.back();
+    if (src == UndoSource::Annotation) {
+        if (!m_annotations.canRedo()) {
+            qWarning("ImageDocument::redo: log expects an annotation frame but the "
+                     "AnnotationStore redo history is empty; dropping the orphaned entry");
+            m_redoLog.pop_back();
+            return false;
+        }
+        m_redoLog.pop_back();
         m_annotations.redo();
-        return;
+    } else {
+        if (m_redoStack.empty()) {
+            qWarning("ImageDocument::redo: log expects a pixel snapshot but the "
+                     "snapshot stack is empty; dropping the orphaned entry");
+            m_redoLog.pop_back();
+            return false;
+        }
+        m_redoLog.pop_back();
+        m_undoStack.push_back(m_image);
+        m_image = m_redoStack.back();
+        m_redoStack.pop_back();
+        m_dirty = true;
+        m_selectableText.invalidate(0);
+        refreshView();
     }
-    if (m_redoStack.empty())
-        return;
-    m_undoStack.push_back(m_image);
-    m_image = m_redoStack.back();
-    m_redoStack.pop_back();
-    m_dirty = true;
-    m_selectableText.invalidate(0);
-    refreshView();
+    m_undoLog.push_back(src);
+    return true;
 }
 
 void ImageDocument::rotatePage(int /*pageIndex*/, int degreesClockwise) {

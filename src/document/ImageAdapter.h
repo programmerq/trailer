@@ -68,10 +68,17 @@ class ImageDocument : public IDocument {
 
     bool supportsEditing() const override { return !m_image.isNull() && !m_animated; }
     bool isDirty() const override { return m_dirty || !m_annotations.annotations().empty(); }
-    bool canUndo() const override { return !m_undoStack.empty() || m_annotations.canUndo(); }
-    bool canRedo() const override { return !m_redoStack.empty() || m_annotations.canRedo(); }
-    void undo() override;
-    void redo() override;
+    // Image-level undo runs across two parallel stacks: the
+    // AnnotationStore for in-memory shape edits, and the pixel
+    // snapshot stack for raster mutations (rotate / flip / resize /
+    // crop / colour / replaceImage). Undo/redo pop a single
+    // chronological log (m_undoLog) recording which stack each
+    // committed op went to — same structure as PdfDocument — so the
+    // most recent action is always undone first regardless of domain.
+    bool canUndo() const override { return !m_undoLog.empty(); }
+    bool canRedo() const override { return !m_redoLog.empty(); }
+    bool undo() override;
+    bool redo() override;
     void rotatePage(int pageIndex, int degreesClockwise) override;
     void flipHorizontal() override;
     void flipVertical() override;
@@ -110,6 +117,14 @@ class ImageDocument : public IDocument {
     void applyScale(double factor);
     void refreshView();
     void pushUndoSnapshot();
+    // AnnotationStore mirror hooks, connected to historyPushed /
+    // historyEvicted in the constructor. The store owns the annotation
+    // history depth; these keep the chronological log's Annotation
+    // entries in lockstep with the store's undo stack so the log never
+    // claims an undo the store cannot perform. Mirrors PdfDocument.
+    void onAnnotationHistoryPushed();
+    void onAnnotationHistoryEvicted();
+    void connectAnnotationHistory();
     // Installed as an event filter on the QScrollArea's viewport so
     // we get notified when the user resizes the window. The viewport
     // is a child of the scroll area; QResizeEvents on it correspond
@@ -137,6 +152,17 @@ class ImageDocument : public IDocument {
     SelectableTextStore m_selectableText;
     std::vector<QImage> m_undoStack;
     std::vector<QImage> m_redoStack;
+    // Unified chronological undo/redo log: one entry per committed op,
+    // recording which stack it went to, so undo()/redo() pop the truly
+    // most-recent op regardless of source. Same shape as PdfDocument's
+    // log (whose second domain is PdfCommand instead of ImageOp).
+    // Entries stay in lockstep with the owning stacks: pixel-snapshot
+    // eviction (kMaxUndoSteps) drops the oldest ImageOp entry in
+    // pushUndoSnapshot(); annotation eviction drops the oldest
+    // Annotation entry via AnnotationStore::historyEvicted().
+    enum class UndoSource { Annotation, ImageOp };
+    std::vector<UndoSource> m_undoLog;
+    std::vector<UndoSource> m_redoLog;
     double m_scale = 1.0;
     // Tracks the user's intent (Fit-page, Fit-width, Actual, custom
     // factor) so the persistence layer can round-trip the mode and
