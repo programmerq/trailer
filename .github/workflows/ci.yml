@@ -88,6 +88,133 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
 
+  windows-cross-build:
+    name: Windows cross-build + Wine unit tests
+    # Runs directly on the self-hosted trailer-k8s pods — NO Docker
+    # (the pods have no Docker daemon, so release.yml's Docker-based
+    # windows-cross job can't run here). The setup-windows-cross
+    # composite installs the mingw-w64 + Wine + Qt(win64_mingw) + qpdf
+    # toolchain on the runner instead. Proven end-to-end locally:
+    # trailer.exe cross-links and 26/26 unit tests pass under Wine.
+    runs-on: trailer-k8s
+    # Wine is slow on the low-power trailer-k8s Xeons (~2.5-3 s startup
+    # per test binary; the unit suite runs ~80 s vs ~38 s native). The
+    # first cold run also cross-builds qpdf/libjpeg and downloads Qt
+    # (~2.6 GB) before the cache warms, so give it release-job headroom.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/setup-windows-cross
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          # SEPARATE key from the Linux build-and-test job: this is a
+          # different compiler (mingw-w64 g++) targeting Windows, so its
+          # object cache must not collide with the native gcc one.
+          key: ci-windows-cross-mingw
+          max-size: 500M
+
+      - name: Configure
+        # Same invocation as scripts/build-windows.sh (reusing the
+        # repo's cmake/toolchain-mingw-w64.cmake) plus two additions the
+        # k8s egress policy forces:
+        #   * -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_PREBUILT overrides
+        #     the ONNX release-asset download (403s through the proxy)
+        #     with the NuGet binaries the composite assembled.
+        #   * ccache launcher, matching the Linux job.
+        # TRAILER_WERROR stays OFF (see workflow header).
+        run: >-
+          cmake -S . -B build-win -G Ninja
+          -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/toolchain-mingw-w64.cmake"
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_PREFIX_PATH="$QT_WIN_DIR;$QPDF_DIR"
+          -DQT_HOST_PATH="$QT_HOST_DIR"
+          -Dqpdf_DIR="$QPDF_DIR/lib/cmake/qpdf"
+          -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_PREBUILT="$ORT_WIN_DIR"
+        env:
+          # Pin pkg-config to the mingw sysroot so nothing picks up host
+          # -dev packages and injects -isystem /usr/include (glibc
+          # headers into a mingw compile). Harmless if host libs absent.
+          PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
+
+      - name: Build
+        run: cmake --build build-win --parallel
+
+      - name: Bundle self-contained trailer.exe
+        # Reuse scripts/build-windows.sh's collect_dlls import-table
+        # walk (BFS over the PE import table via objdump) rather than
+        # reinventing DLL discovery. Pre-configured/built build-win/
+        # already exists, so --in-container skips its configure branch,
+        # runs a no-op incremental build, then copies trailer.exe +
+        # every transitively-loaded DLL + platforms/qwindows.dll into
+        # OUT_DIR. imageformats/ is added on top (trailer's JPEG export
+        # loads qjpeg.dll at runtime; the import-table walk can't see
+        # runtime-loaded plugins).
+        run: |
+          set -euo pipefail
+          BUILD_DIR="$PWD/build-win" \
+          OUT_DIR="$PWD/dist/trailer-windows-x86_64" \
+          QT_DIR="$QT_WIN_DIR" \
+          QT_HOST_DIR="$QT_HOST_DIR" \
+          QPDF_DIR="$QPDF_DIR" \
+            bash scripts/build-windows.sh --in-container
+          mkdir -p dist/trailer-windows-x86_64/imageformats
+          cp "$QT_WIN_DIR"/plugins/imageformats/*.dll dist/trailer-windows-x86_64/imageformats/
+          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+             dist/trailer-windows-x86_64/
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: trailer-windows-x86_64
+          path: dist/trailer-windows-x86_64
+          retention-days: 30
+
+      - name: Wine unit tests
+        # Same selector as the Linux job (`--label-exclude uat`) so this
+        # is a real Windows-behaviour gate, not a toy: the UAT tier needs
+        # a windowed platform plugin Wine's offscreen doesn't provide.
+        # CMAKE_CROSSCOMPILING_EMULATOR is applied via an incremental
+        # reconfigure (it's baked into CTestTestfile.cmake at generate
+        # time) so ctest launches each .exe under wine.
+        #
+        # Every test .exe lands in build-win/ root, so the DLLs it loads
+        # must sit right beside it — Wine's application-dir search is the
+        # reliable path (WINEPATH proved flaky on the runner). The Bundle
+        # step already walked trailer.exe's import table into the artifact
+        # dir; copy those DLLs back next to the exes, then add the two
+        # test-only extras the import walk can't see: Qt6Test.dll (only
+        # the test binaries link it) and the runtime-loaded plugin dirs
+        # platforms/ + imageformats/ (test_adapters' JPEG-export assertion
+        # needs qjpeg.dll).
+        timeout-minutes: 30
+        env:
+          WINEPREFIX: ${{ runner.temp }}/wineprefix
+          WINEDEBUG: -all
+          DISPLAY: ''
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          set -euo pipefail
+          # One-time headless prefix init in a writable location.
+          wine wineboot --init
+          # Bake the wine emulator into the test commands.
+          cmake -S . -B build-win -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/wine
+          # Runtime DLLs (Qt6*, onnxruntime, qpdf30, mingw runtime, …)
+          # collected next to trailer.exe by the Bundle step.
+          cp dist/trailer-windows-x86_64/*.dll build-win/
+          # Test-only additions the import-table walk misses.
+          cp "$QT_WIN_DIR/bin/Qt6Test.dll" build-win/
+          mkdir -p build-win/platforms build-win/imageformats
+          cp "$QT_WIN_DIR"/plugins/platforms/qoffscreen.dll \
+             "$QT_WIN_DIR"/plugins/platforms/qminimal.dll \
+             "$QT_WIN_DIR"/plugins/platforms/qwindows.dll build-win/platforms/
+          cp "$QT_WIN_DIR"/plugins/imageformats/*.dll build-win/imageformats/
+          cd build-win
+          ctest -C Release --label-exclude uat --output-on-failure
+
   # disabled 2026-07-09 to conserve Actions usage (2x multiplier); re-enable when needed
   build-and-test-windows:
     name: Windows build + unit tests (MSVC)

@@ -1,0 +1,266 @@
+name: Windows cross-build environment (mingw-w64 + Wine)
+description: >-
+  Install the toolchain that cross-compiles trailer.exe from Linux and
+  runs its unit tests under Wine, WITHOUT Docker (the trailer-k8s pods
+  have no Docker daemon). Mirrors the Dockerfile
+  (docker/windows/Dockerfile) recipe but installs directly on the
+  runner: Ubuntu's mingw-w64 13 (-posix), Wine, Qt's win64_mingw
+  prebuilt + a Linux host Qt (for moc/rcc/uic) via aqtinstall, ONNX
+  Runtime's Windows binaries from NuGet, and qpdf + libjpeg-turbo
+  cross-built from git-cloned tags.
+
+  Two egress facts from the local de-risking drive the choices here:
+  GitHub *release-asset* downloads (objects.githubusercontent.com) 403
+  through the org proxy, so ONNX comes from NuGet and qpdf/libjpeg from
+  `git clone` of the tag instead of the Dockerfile's `wget` of the
+  release tarballs; and the heavy bits (Qt ~2.6 GB, the qpdf/libjpeg
+  cross-build) are cache-keyed so warm runs skip them.
+
+  Exports QT_WIN_DIR, QT_HOST_DIR, QPDF_DIR, ORT_WIN_DIR and
+  MINGW_PREFIX to $GITHUB_ENV for the calling job's configure + wine
+  steps.
+
+inputs:
+  qt-version:
+    description: >-
+      Qt version for BOTH the win64_mingw target and the linux_gcc_64
+      host tools. Pinned to 6.10.3 (NOT the Linux job's 6.11.0):
+      aqtinstall can't yet handle Qt 6.11's toolchain-suffixed Windows
+      layout, and Qt 6.10.x's win64_mingw is built with MinGW 13.1 —
+      an ABI match for Ubuntu noble's mingw 13.2. Keep in lockstep with
+      docker/windows/Dockerfile's QT_VERSION.
+    required: false
+    default: '6.10.3'
+  qt-target-arch:
+    description: aqt arch string for the Windows target Qt (mingw, not msvc).
+    required: false
+    default: 'win64_mingw'
+  qt-host-arch:
+    description: >-
+      aqt arch string for the Linux host Qt. CMake runs its
+      moc/rcc/uic from here via QT_HOST_PATH — the target Qt's are
+      .exe files we can't execute on Linux.
+    required: false
+    default: 'linux_gcc_64'
+  qpdf-version:
+    description: qpdf tag to cross-build (matches Dockerfile's QPDF_VERSION).
+    required: false
+    default: '12.3.2'
+  libjpeg-version:
+    description: libjpeg-turbo tag to cross-build static (qpdf's JPEG backend).
+    required: false
+    default: '3.0.3'
+  onnxruntime-version:
+    description: >-
+      ONNX Runtime version. Must match cmake/OnnxRuntime.cmake's
+      TRAILER_ORT_VERSION; the assembled dir is fed to CMake via
+      -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_PREBUILT so the SHA256'd
+      release-asset download (which 403s through the proxy) is skipped.
+    required: false
+    default: '1.25.0'
+  install-wine:
+    description: >-
+      Install Wine + i386 multiarch for the test tier. Set false if the
+      runner image already bakes Wine in (recommended long-term — see
+      the action's README notes on preinstall candidates).
+    required: false
+    default: 'true'
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve dependency-tree paths
+      # Everything installs under a single runner-writable root (no
+      # /opt, which needs sudo and breaks actions/cache restore). The
+      # aqt layout nests <root>/qt/<version>/{mingw_64,gcc_64}.
+      shell: bash
+      run: |
+        set -euo pipefail
+        WINX_ROOT="$HOME/trailer-winx"
+        {
+          echo "WINX_ROOT=$WINX_ROOT"
+          echo "QT_WIN_DIR=$WINX_ROOT/qt/${{ inputs.qt-version }}/mingw_64"
+          echo "QT_HOST_DIR=$WINX_ROOT/qt/${{ inputs.qt-version }}/gcc_64"
+          echo "QPDF_DIR=$WINX_ROOT/qpdf"
+          echo "MINGW_PREFIX=$WINX_ROOT/mingw-prefix"
+          echo "ORT_WIN_DIR=$WINX_ROOT/onnxruntime-win-${{ inputs.onnxruntime-version }}"
+        } >> "$GITHUB_ENV"
+
+    - name: Install mingw-w64 toolchain (+ Wine)
+      # mingw GCC 13.2 (-posix threading, required for the std::thread
+      # Qt uses) is a fast apt install — cheap enough to do every run.
+      # Wine + i386 multiarch is the heavy part; gate it behind
+      # install-wine so a runner image that bakes Wine in can skip it.
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          gcc-mingw-w64-x86-64-posix \
+          g++-mingw-w64-x86-64-posix \
+          binutils-mingw-w64-x86-64 \
+          libz-mingw-w64-dev \
+          libz-mingw-w64 \
+          cmake \
+          ninja-build \
+          pkg-config \
+          p7zip-full \
+          unzip \
+          wget \
+          git \
+          ca-certificates \
+          python3 \
+          python3-venv
+        # Ubuntu ships -posix and -win32 variants and defaults to
+        # -win32; select -posix for the unversioned triplet names the
+        # toolchain file (cmake/toolchain-mingw-w64.cmake) uses.
+        sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
+        sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+        if [ "${{ inputs.install-wine }}" = "true" ]; then
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends wine64 wine
+        fi
+
+    - name: Cache Qt (win64_mingw target + linux host)
+      id: qt-cache
+      uses: actions/cache@v4
+      with:
+        # ~2.6 GB across both arches — the biggest single line item;
+        # always cache it. Keyed on version + both arch strings so a
+        # Qt bump busts it.
+        path: ~/trailer-winx/qt
+        key: windows-cross-qt-${{ inputs.qt-version }}-${{ inputs.qt-target-arch }}-${{ inputs.qt-host-arch }}
+
+    - name: Install Qt via aqtinstall
+      if: steps.qt-cache.outputs.cache-hit != 'true'
+      # aqt CLI rather than jurplel/install-qt-action: this job needs
+      # BOTH a Windows-target Qt and a Linux-host Qt installed into one
+      # predictable tree (the layout scripts/build-windows.sh and the
+      # de-risking findings both assume). The two-install cross layout
+      # is exactly what the local validation proved verbatim; driving
+      # install-qt-action twice with host/arch overrides would pollute
+      # QT_ROOT_DIR/PATH between the target and host installs.
+      shell: bash
+      run: |
+        set -euo pipefail
+        python3 -m venv "$WINX_ROOT/aqt-venv"
+        "$WINX_ROOT/aqt-venv/bin/pip" install --no-cache-dir aqtinstall
+        AQT="$WINX_ROOT/aqt-venv/bin/aqt"
+        # Windows target Qt (what trailer.exe links against) + qtpdf.
+        "$AQT" install-qt windows desktop "${{ inputs.qt-version }}" "${{ inputs.qt-target-arch }}" \
+          -m qtpdf -O "$WINX_ROOT/qt"
+        # Linux host Qt for moc/rcc/uic (target's are unrunnable .exe).
+        "$AQT" install-qt linux desktop "${{ inputs.qt-version }}" "${{ inputs.qt-host-arch }}" \
+          -O "$WINX_ROOT/qt"
+
+    - name: Cache ONNX Runtime (Windows, assembled)
+      id: ort-cache
+      uses: actions/cache@v4
+      with:
+        # Only the assembled ~15 MB (include/ + lib/onnxruntime.{lib,dll}),
+        # not the ~130 MB NuGet package.
+        path: ~/trailer-winx/onnxruntime-win-${{ inputs.onnxruntime-version }}
+        key: windows-cross-ort-${{ inputs.onnxruntime-version }}
+
+    - name: Assemble ONNX Runtime from NuGet
+      if: steps.ort-cache.outputs.cache-hit != 'true'
+      # Microsoft's GitHub release-asset zip 403s through the org proxy;
+      # the NuGet package carries the same win-x64 native binaries. The
+      # MSVC-generated onnxruntime.lib links cleanly with mingw ld. The
+      # resulting lib/onnxruntime.{lib,dll} + include/ layout is what
+      # cmake/OnnxRuntime.cmake's Windows branch expects.
+      shell: bash
+      run: |
+        set -euo pipefail
+        work="$(mktemp -d)"
+        curl -sSL -o "$work/ort-win.nupkg" \
+          "https://www.nuget.org/api/v2/package/Microsoft.ML.OnnxRuntime/${{ inputs.onnxruntime-version }}"
+        ( cd "$work" && unzip -oq ort-win.nupkg -d ortwin )
+        mkdir -p "$ORT_WIN_DIR/include" "$ORT_WIN_DIR/lib"
+        cp "$work"/ortwin/build/native/include/*.h "$ORT_WIN_DIR/include/"
+        cp "$work"/ortwin/runtimes/win-x64/native/onnxruntime.dll "$ORT_WIN_DIR/lib/"
+        cp "$work"/ortwin/runtimes/win-x64/native/onnxruntime.lib "$ORT_WIN_DIR/lib/"
+        rm -rf "$work"
+
+    - name: Cache qpdf + libjpeg-turbo (mingw cross-build)
+      id: deps-cache
+      uses: actions/cache@v4
+      with:
+        # The from-source cross-build costs ~1-2 min; cache the two
+        # install prefixes. Keyed on both versions plus a hash of this
+        # action so recipe changes rebuild.
+        path: |
+          ~/trailer-winx/qpdf
+          ~/trailer-winx/mingw-prefix
+        key: windows-cross-deps-qpdf${{ inputs.qpdf-version }}-jpeg${{ inputs.libjpeg-version }}-${{ hashFiles('.github/actions/setup-windows-cross/action.yml') }}
+
+    - name: Cross-build qpdf + libjpeg-turbo (mingw)
+      if: steps.deps-cache.outputs.cache-hit != 'true'
+      # git clone the tags rather than wget the release tarballs the
+      # Dockerfile uses (objects.githubusercontent.com 403s through the
+      # proxy). Everything else mirrors the Dockerfile: libjpeg static
+      # (folded into qpdf30.dll), qpdf shared with implicit crypto, the
+      # CRT_glob.o copy, and the if(MINGW) pwsh-block skip.
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p "$MINGW_PREFIX"
+        work="$(mktemp -d)"
+
+        # Dedicated toolchain file for the dep cross-builds: adds
+        # MINGW_PREFIX to CMAKE_FIND_ROOT_PATH so qpdf finds the
+        # just-installed static libjpeg. (The repo's
+        # cmake/toolchain-mingw-w64.cmake is used for the trailer build
+        # itself; this mirrors the Dockerfile's inline
+        # /opt/mingw-toolchain.cmake.)
+        cat > "$work/mingw-dep-toolchain.cmake" <<EOF
+        set(CMAKE_SYSTEM_NAME Windows)
+        set(CMAKE_SYSTEM_PROCESSOR x86_64)
+        set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc)
+        set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++)
+        set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)
+        set(CMAKE_FIND_ROOT_PATH /usr/x86_64-w64-mingw32 $MINGW_PREFIX)
+        set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+        set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY BOTH)
+        set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE BOTH)
+        set(CMAKE_FIND_ROOT_PATH_MODE_PACKAGE BOTH)
+        EOF
+
+        # libjpeg-turbo (static; no mingw apt package exists).
+        git clone --depth 1 --branch "${{ inputs.libjpeg-version }}" \
+          https://github.com/libjpeg-turbo/libjpeg-turbo.git "$work/ljt"
+        cmake -S "$work/ljt" -B "$work/jpeg-build" -G Ninja \
+          -DCMAKE_TOOLCHAIN_FILE="$work/mingw-dep-toolchain.cmake" \
+          -DCMAKE_INSTALL_PREFIX="$MINGW_PREFIX" \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DENABLE_SHARED=OFF -DENABLE_STATIC=ON -DWITH_TURBOJPEG=OFF
+        cmake --build "$work/jpeg-build" -j
+        cmake --install "$work/jpeg-build"
+
+        # qpdf (shared; implicit crypto). Pin PKG_CONFIG_LIBDIR to the
+        # mingw sysroot so qpdf's pkg_check_modules can't pick up host
+        # zlib/openssl -dev and inject -isystem /usr/include (which
+        # pulls glibc headers into the mingw compile -> fatal).
+        export PKG_CONFIG_LIBDIR="/usr/x86_64-w64-mingw32/lib/pkgconfig:$MINGW_PREFIX/lib/pkgconfig"
+        export PKG_CONFIG_PATH=""
+        git clone --depth 1 --branch "v${{ inputs.qpdf-version }}" \
+          https://github.com/qpdf/qpdf.git "$work/qpdf-src"
+        # Skip the if(MINGW) pwsh-based extra-dlls packaging block (no
+        # pwsh here; we bundle DLLs via the import-table walk instead).
+        sed -i 's/^if(MINGW)$/if(FALSE AND MINGW)/' "$work/qpdf-src/qpdf/CMakeLists.txt"
+        cmake -S "$work/qpdf-src" -B "$work/qpdf-build" -G Ninja \
+          -DCMAKE_TOOLCHAIN_FILE="$work/mingw-dep-toolchain.cmake" \
+          -DCMAKE_INSTALL_PREFIX="$QPDF_DIR" \
+          -DCMAKE_PREFIX_PATH="$MINGW_PREFIX" \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_STATIC_LIBS=OFF \
+          -DREQUIRE_CRYPTO_GNUTLS=0 -DREQUIRE_CRYPTO_OPENSSL=0 \
+          -DUSE_IMPLICIT_CRYPTO=1 -DBUILD_DOC=0
+        # qpdf's CMakeLists references CRT_glob.o as a bare filename to
+        # enable POSIX argv globbing in qpdf.exe; the .o lives in the
+        # mingw sysroot, not the build dir. Copy it in post-configure.
+        cp /usr/x86_64-w64-mingw32/lib/CRT_glob.o "$work/qpdf-build/CRT_glob.o"
+        cmake --build "$work/qpdf-build" -j
+        cmake --install "$work/qpdf-build"
+        rm -rf "$work"
