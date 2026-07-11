@@ -60,11 +60,17 @@ inputs:
     default: '1.25.0'
   install-wine:
     description: >-
-      Install Wine + i386 multiarch for the test tier. Set false if the
-      runner image already bakes Wine in (recommended long-term — see
-      the action's README notes on preinstall candidates).
+      Whether to install Wine + i386 multiarch for the test tier.
+        auto  (default) — install only if neither `wine64` nor `wine`
+                is already on PATH (so a runner image that bakes Wine
+                in, e.g. docker/runner/Dockerfile, skips it; a stock
+                runner installs it).
+        true  — always run the Wine apt install (backward-compatible
+                with the previous default; idempotent if already there).
+        false — never install Wine (test tier will fail if it isn't
+                already present).
     required: false
-    default: 'true'
+    default: 'auto'
 
 runs:
   using: composite
@@ -87,35 +93,80 @@ runs:
         } >> "$GITHUB_ENV"
 
     - name: Install mingw-w64 toolchain (+ Wine)
+      # Auto-detect every dependency before installing so this action
+      # works unchanged on both the stock GitHub/ARC runner image (apt
+      # every run) and a custom image that bakes the toolchain in
+      # (docker/runner/Dockerfile) where everything is already present
+      # and apt is skipped. Each dep is probed with `command -v` (tools,
+      # incl. cmake/ninja that may live outside apt) or `dpkg -s`
+      # (library/data packages); only the missing ones are installed,
+      # and `apt-get update` runs only when there's work to do.
+      #
       # mingw GCC 13.2 (-posix threading, required for the std::thread
-      # Qt uses) is a fast apt install — cheap enough to do every run.
-      # Wine + i386 multiarch is the heavy part; gate it behind
-      # install-wine so a runner image that bakes Wine in can skip it.
+      # Qt uses) is a fast apt install. Wine + i386 multiarch is the
+      # heavy part; it's gated by the `install-wine` input (default
+      # `auto` — installed only when neither wine64 nor wine is present).
       shell: bash
       run: |
         set -euo pipefail
-        sudo apt-get update
-        sudo apt-get install -y --no-install-recommends \
-          gcc-mingw-w64-x86-64-posix \
-          g++-mingw-w64-x86-64-posix \
-          binutils-mingw-w64-x86-64 \
-          libz-mingw-w64-dev \
-          libz-mingw-w64 \
-          cmake \
-          ninja-build \
-          pkg-config \
-          p7zip-full \
-          unzip \
-          wget \
-          git \
-          ca-certificates \
-          python3 \
-          python3-venv
+        # "pkg" or "pkg:command" — when a command is given the dep is
+        # accepted as satisfied if `command -v` finds it (covers tools
+        # baked into a custom image or installed outside apt).
+        deps=(
+          "gcc-mingw-w64-x86-64-posix:x86_64-w64-mingw32-gcc"
+          "g++-mingw-w64-x86-64-posix:x86_64-w64-mingw32-g++"
+          "binutils-mingw-w64-x86-64:x86_64-w64-mingw32-ar"
+          libz-mingw-w64-dev
+          libz-mingw-w64
+          "cmake:cmake"
+          "ninja-build:ninja"
+          "pkg-config:pkg-config"
+          "p7zip-full:7z"
+          "unzip:unzip"
+          "wget:wget"
+          "git:git"
+          ca-certificates
+          "python3:python3"
+        )
+        missing=()
+        for entry in "${deps[@]}"; do
+          pkg="${entry%%:*}"
+          cmd=""
+          [ "$entry" != "$pkg" ] && cmd="${entry#*:}"
+          if { [ -n "$cmd" ] && command -v "$cmd" >/dev/null 2>&1; } \
+             || dpkg -s "$pkg" >/dev/null 2>&1; then
+            echo "  preinstalled (skipped): $pkg"
+          else
+            echo "  will install via apt:   $pkg"
+            missing+=("$pkg")
+          fi
+        done
+        # python3-venv has no standalone command; probe the venv module.
+        if python3 -c 'import venv' >/dev/null 2>&1; then
+          echo "  preinstalled (skipped): python3-venv"
+        else
+          echo "  will install via apt:   python3-venv"
+          missing+=(python3-venv)
+        fi
+        if [ "${#missing[@]}" -eq 0 ]; then
+          echo "All mingw toolchain deps preinstalled — skipping apt-get."
+        else
+          echo "Installing ${#missing[@]} missing dep(s) via apt..."
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends "${missing[@]}"
+        fi
         # Ubuntu ships -posix and -win32 variants and defaults to
         # -win32; select -posix for the unversioned triplet names the
-        # toolchain file (cmake/toolchain-mingw-w64.cmake) uses.
-        sudo update-alternatives --set x86_64-w64-mingw32-gcc /usr/bin/x86_64-w64-mingw32-gcc-posix
-        sudo update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix
+        # toolchain file (cmake/toolchain-mingw-w64.cmake) uses. Guard
+        # the --set so a baked image whose mingw came from a source that
+        # doesn't register these alternatives (or already points at
+        # -posix) doesn't error the step.
+        for tool in gcc g++; do
+          alt="x86_64-w64-mingw32-$tool"
+          if [ -e "/usr/bin/$alt-posix" ]; then
+            sudo update-alternatives --set "$alt" "/usr/bin/$alt-posix"
+          fi
+        done
         # Echo the selected cross-compiler up front for diagnosability
         # (a runner-image toolchain bump shows here), and export its
         # version so the qpdf/libjpeg deps cache key below busts when
@@ -123,11 +174,30 @@ runs:
         # the compiler that built them.
         x86_64-w64-mingw32-g++ --version
         echo "MINGW_GXX_VERSION=$(x86_64-w64-mingw32-g++ -dumpversion)" >> "$GITHUB_ENV"
-        if [ "${{ inputs.install-wine }}" = "true" ]; then
-          sudo dpkg --add-architecture i386
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends wine64 wine
-        fi
+        # Wine + i386 multiarch for the test tier.
+        case "${{ inputs.install-wine }}" in
+          auto)
+            if command -v wine64 >/dev/null 2>&1 || command -v wine >/dev/null 2>&1; then
+              echo "wine: preinstalled (skipped) [auto]"
+            else
+              echo "wine: not found — installing [auto]"
+              sudo dpkg --add-architecture i386
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends wine64 wine
+            fi ;;
+          true)
+            # Backward-compatible with the previous default: always run
+            # the install (apt is idempotent if Wine is already there).
+            echo "wine: installing [explicit true]"
+            sudo dpkg --add-architecture i386
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends wine64 wine ;;
+          false)
+            echo "wine: install disabled [explicit false]" ;;
+          *)
+            echo "::error::install-wine must be one of auto|true|false (got '${{ inputs.install-wine }}')"
+            exit 1 ;;
+        esac
 
     - name: Cache Qt (win64_mingw target + linux host)
       id: qt-cache

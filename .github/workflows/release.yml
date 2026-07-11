@@ -191,38 +191,121 @@ jobs:
     needs: [precheck]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: Windows cross-build (mingw-w64)
+    # Runs directly on the self-hosted trailer-k8s pods — NO Docker.
+    # The pods have no Docker daemon, so the previous `docker build …
+    # docker/windows/Dockerfile` approach can't run here; it's folded
+    # onto the same dockerless path CI's `windows-cross-build` job
+    # proved green (setup-windows-cross composite installs the mingw-w64
+    # + Wine + Qt(win64_mingw) + qpdf toolchain on the runner). The only
+    # release-specific difference from CI is the artifact shape: this job
+    # zips the bundled directory into trailer-windows-x86_64.zip because
+    # release-publish.yml's rename step looks for dist/trailer-windows-
+    # x86_64.zip when promoting a build to a GitHub Release.
     runs-on: trailer-k8s
+    # Wine is slow on the low-power trailer-k8s Xeons and the first cold
+    # run cross-builds qpdf/libjpeg and downloads Qt (~2.6 GB) before the
+    # cache warms — keep the release-job headroom.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
 
-      - name: Build Windows image
-        # The Dockerfile pins Qt + qpdf + mingw versions so the
-        # produced trailer.exe matches what scripts/build-windows.sh
-        # produces locally on a developer's Linux box.
-        run: docker build -t trailer-windows -f docker/windows/Dockerfile .
+      - uses: ./.github/actions/setup-windows-cross
 
-      - name: Cross-compile trailer.exe
-        # --in-container skips the docker-build branch since we just
-        # built the image; the script then runs the cmake +
-        # collect_dlls passes that produce build-windows/trailer.exe
-        # alongside every transitively-loaded DLL. The result is a
-        # fully self-contained directory — no separate Qt/qpdf install
-        # needed on the user's Windows machine.
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          # Separate key from the native-gcc linux-build job: this is a
+          # different compiler (mingw-w64 g++) targeting Windows.
+          key: release-windows-cross-mingw
+          max-size: 500M
+
+      - name: Configure
+        # Same invocation as scripts/build-windows.sh (reusing the
+        # repo's cmake/toolchain-mingw-w64.cmake) plus the two additions
+        # the k8s egress policy forces — the ONNX FetchContent-source
+        # override (the release-asset download 403s through the proxy)
+        # and the ccache launcher. Mirrors CI's windows-cross-build.
+        # TRAILER_WERROR stays OFF (see workflow header).
+        run: >-
+          cmake -S . -B build-win -G Ninja
+          -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/toolchain-mingw-w64.cmake"
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_PREFIX_PATH="$QT_WIN_DIR;$QPDF_DIR"
+          -DQT_HOST_PATH="$QT_HOST_DIR"
+          -Dqpdf_DIR="$QPDF_DIR/lib/cmake/qpdf"
+          -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_PREBUILT="$ORT_WIN_DIR"
+        env:
+          # Pin pkg-config to the mingw sysroot so nothing picks up host
+          # -dev packages and injects -isystem /usr/include into the
+          # mingw compile. Harmless if host libs absent.
+          PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
+
+      - name: Build
+        run: cmake --build build-win --parallel
+
+      - name: Bundle self-contained trailer.exe
+        # Reuse scripts/build-windows.sh's collect_dlls import-table walk
+        # (BFS over the PE import table via objdump). The pre-built
+        # build-win/ already exists, so --in-container skips its
+        # configure branch, runs a no-op incremental build, then copies
+        # trailer.exe + every transitively-loaded DLL + platforms/
+        # qwindows.dll into OUT_DIR. imageformats/ is added on top
+        # (trailer's JPEG export loads qjpeg.dll at runtime; the
+        # import-table walk can't see runtime-loaded plugins).
         run: |
-          docker run --rm -v "$PWD":/work -w /work trailer-windows \
+          set -euo pipefail
+          BUILD_DIR="$PWD/build-win" \
+          OUT_DIR="$PWD/dist/trailer-windows-x86_64" \
+          QT_DIR="$QT_WIN_DIR" \
+          QT_HOST_DIR="$QT_HOST_DIR" \
+          QPDF_DIR="$QPDF_DIR" \
             bash scripts/build-windows.sh --in-container
+          mkdir -p dist/trailer-windows-x86_64/imageformats
+          cp "$QT_WIN_DIR"/plugins/imageformats/*.dll dist/trailer-windows-x86_64/imageformats/
+          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+             dist/trailer-windows-x86_64/
+
+      - name: Wine unit tests
+        # Cheap Windows-behaviour insurance before shipping a release:
+        # same `--label-exclude uat` selector CI's windows-cross-build
+        # job runs (26/26 green locally). The UAT tier needs a windowed
+        # platform plugin Wine's offscreen doesn't provide. Every test
+        # .exe lands in build-win/ root, so the DLLs it loads must sit
+        # beside it — copy the Bundle step's import-walked DLLs back next
+        # to the exes, then add the two test-only extras the import walk
+        # can't see: Qt6Test.dll (only test binaries link it) and the
+        # runtime-loaded plugin dirs platforms/ + imageformats/.
+        timeout-minutes: 30
+        env:
+          WINEPREFIX: ${{ runner.temp }}/wineprefix
+          WINEDEBUG: -all
+          DISPLAY: ''
+          QT_QPA_PLATFORM: offscreen
+          PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
+        run: |
+          set -euo pipefail
+          wine wineboot --init
+          cmake -S . -B build-win -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/wine
+          cp dist/trailer-windows-x86_64/*.dll build-win/
+          cp "$QT_WIN_DIR/bin/Qt6Test.dll" build-win/
+          mkdir -p build-win/platforms build-win/imageformats
+          cp "$QT_WIN_DIR"/plugins/platforms/qoffscreen.dll \
+             "$QT_WIN_DIR"/plugins/platforms/qminimal.dll \
+             "$QT_WIN_DIR"/plugins/platforms/qwindows.dll build-win/platforms/
+          cp "$QT_WIN_DIR"/plugins/imageformats/*.dll build-win/imageformats/
+          cd build-win
+          ctest -C Release --label-exclude uat --output-on-failure
 
       - name: Stage Windows artifact
+        # Zip the bundled directory into the exact filename
+        # release-publish.yml's rename step expects (dist/trailer-
+        # windows-x86_64.zip). trailer.exe sits at the zip root so
+        # extracting anywhere and running it Just Works, matching the
+        # release notes' Windows instructions.
         run: |
-          # docker writes build-windows/ as root; reclaim ownership
-          # before the host-side cp can write into it.
-          sudo chown -R "$(id -u):$(id -g)" build-windows
-          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
-             build-windows/
-          (cd build-windows && zip -r ../trailer-windows-x86_64.zip .)
-          mkdir -p dist
-          mv trailer-windows-x86_64.zip dist/
+          set -euo pipefail
+          (cd dist/trailer-windows-x86_64 && zip -r ../trailer-windows-x86_64.zip .)
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v7

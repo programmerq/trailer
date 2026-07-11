@@ -32,27 +32,61 @@ runs:
         cache: true
 
     - name: Install Linux build deps
+      # Auto-detect each dependency before installing so this action
+      # works unchanged on both the stock GitHub/ARC runner image (apt
+      # every run) and a custom image that bakes the toolchain in
+      # (docker/runner/Dockerfile) where every package is already
+      # present and apt is skipped entirely. Each dep is probed with
+      # `dpkg -s` (packages) or `command -v` (tools that may live
+      # outside apt, e.g. cmake in /usr/local); only the missing ones
+      # are installed, and `apt-get update` runs only when there's
+      # something to install.
       shell: bash
       run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          libgl1-mesa-dev \
-          libglu1-mesa-dev \
-          libxkbcommon-dev \
-          libxcb-icccm4 \
-          libxcb-image0 \
-          libxcb-keysyms1 \
-          libxcb-randr0 \
-          libxcb-render-util0 \
-          libxcb-shape0 \
-          libxcb-sync1 \
-          libxcb-xfixes0 \
-          libxcb-xinerama0 \
-          libxcb-xkb1 \
-          libxkbcommon-x11-0 \
-          libcups2-dev \
-          pkg-config \
-          libqpdf-dev \
-          cmake \
-          mold \
-          ninja-build
+        set -euo pipefail
+        # Packages Trailer's Linux build needs. Each entry is
+        # "pkg" or "pkg:command" — when a command is given it is
+        # accepted as already-satisfied if `command -v` finds it
+        # (covers tools installed outside apt).
+        deps=(
+          libgl1-mesa-dev
+          libglu1-mesa-dev
+          libxkbcommon-dev
+          libxcb-icccm4
+          libxcb-image0
+          libxcb-keysyms1
+          libxcb-randr0
+          libxcb-render-util0
+          libxcb-shape0
+          libxcb-sync1
+          libxcb-xfixes0
+          libxcb-xinerama0
+          libxcb-xkb1
+          libxkbcommon-x11-0
+          libcups2-dev
+          "pkg-config:pkg-config"
+          libqpdf-dev
+          "cmake:cmake"
+          "mold:mold"
+          "ninja-build:ninja"
+        )
+        missing=()
+        for entry in "${deps[@]}"; do
+          pkg="${entry%%:*}"
+          cmd=""
+          [ "$entry" != "$pkg" ] && cmd="${entry#*:}"
+          if { [ -n "$cmd" ] && command -v "$cmd" >/dev/null 2>&1; } \
+             || dpkg -s "$pkg" >/dev/null 2>&1; then
+            echo "  preinstalled (skipped): $pkg"
+          else
+            echo "  will install via apt:   $pkg"
+            missing+=("$pkg")
+          fi
+        done
+        if [ "${#missing[@]}" -eq 0 ]; then
+          echo "All Linux build deps preinstalled — skipping apt-get."
+        else
+          echo "Installing ${#missing[@]} missing dep(s) via apt..."
+          sudo apt-get update
+          sudo apt-get install -y "${missing[@]}"
+        fi
