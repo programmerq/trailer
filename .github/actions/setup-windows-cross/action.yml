@@ -202,7 +202,7 @@ runs:
 
     - name: Cache Qt (win64_mingw target + linux host)
       id: qt-cache
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         # ~2.6 GB across both arches — the biggest single line item;
         # always cache it. Keyed on version + both arch strings so a
@@ -234,7 +234,7 @@ runs:
 
     - name: Cache ONNX Runtime (Windows, assembled)
       id: ort-cache
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         # Only the assembled ~15 MB (include/ + lib/onnxruntime.{lib,dll}),
         # not the ~130 MB NuGet package.
@@ -284,7 +284,7 @@ runs:
 
     - name: Cache qpdf + libjpeg-turbo (mingw cross-build)
       id: deps-cache
-      uses: actions/cache@v4
+      uses: actions/cache@v5
       with:
         # The from-source cross-build costs ~1-2 min; cache the two
         # install prefixes. Keyed on both versions, the mingw compiler

@@ -57,7 +57,7 @@ jobs:
       - uses: ./.github/actions/setup-linux-build
 
       - name: ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@v1.2.23
         with:
           key: ci-${{ runner.os }}-gcc
           # Cache lives across branches; the action keys by commit and
@@ -114,7 +114,7 @@ jobs:
       - uses: ./.github/actions/setup-windows-cross
 
       - name: ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@v1.2.23
         with:
           # SEPARATE key from the Linux build-and-test job: this is a
           # different compiler (mingw-w64 g++) targeting Windows, so its
