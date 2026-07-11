@@ -73,6 +73,10 @@ function(trailer_add_perf_test name source)
     trailer_add_test(${name} ${source})
     target_compile_definitions(${name} PRIVATE
         "TRAILER_PERF_CORPUS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../docs/perf/corpus\"")
+    # Tag the structural perf tier with a ctest label so CI can target it
+    # (e.g. `ctest --label-exclude perf` on the Wine runner, which can't
+    # meet the threading/paint assumptions these tests make).
+    set_tests_properties(${name} PROPERTIES LABELS "perf")
 endfunction()
 
 trailer_add_perf_test(test_perf_render_ordering test_perf_render_ordering.cpp)
