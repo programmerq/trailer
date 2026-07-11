@@ -123,7 +123,7 @@ collect_dlls() {
         while read -r dll; do
             if [[ -n "${seen[$dll]:-}" ]]; then continue; fi
             local candidate=""
-            for src in "${MINGW_DIRS[@]}" "$QT_BIN" "$QPDF_BIN" "$ORT_BIN" "$EXE_DIR"; do
+            for src in "${MINGW_DIRS[@]}" "$QT_BIN" "$QPDF_BIN" ${ORT_BIN:+"$ORT_BIN"} ${EXE_DIR:+"$EXE_DIR"}; do
                 if [[ -f "$src/$dll" ]]; then
                     candidate="$src/$dll"
                     break
