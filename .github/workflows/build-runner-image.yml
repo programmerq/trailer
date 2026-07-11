@@ -1,0 +1,69 @@
+# Build + publish the custom ARC runner image.
+#
+# Builds docker/runner/Dockerfile (the trailer-k8s runner image with the
+# full Linux + Windows-cross toolchain baked in) and pushes it to
+# ghcr.io/programmerq/trailer-runner. Switching the ARC runner-set onto
+# this image is a one-line change documented in
+# docs/ci/custom-runner-image.md.
+#
+# IMPORTANT: this job runs on ubuntu-latest (a GitHub-HOSTED runner),
+# NOT trailer-k8s. Building a Docker image needs a Docker daemon, which
+# the k8s pods deliberately lack (that's the whole reason the build/test
+# jobs run dockerless). A GitHub-hosted runner has Docker available.
+
+name: Build runner image
+
+on:
+  # Rebuild when the image recipe or this workflow changes on main.
+  push:
+    branches: [main]
+    paths:
+      - 'docker/runner/Dockerfile'
+      - '.github/workflows/build-runner-image.yml'
+  # Manual rebuilds (e.g. to pull fresh apt package versions).
+  workflow_dispatch:
+  # Weekly rebuild so the baked toolchain + base image pick up security
+  # updates without waiting for a recipe change. Mondays 06:00 UTC.
+  schedule:
+    - cron: '0 6 * * 1'
+
+# Least privilege: read the repo to get the Dockerfile, write packages
+# to push the image to GHCR. Nothing else.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build + push trailer-runner image
+    # GitHub-hosted (has Docker); the trailer-k8s pods can't build images.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Compute date tag
+        # Scripts can't embed the current date, so derive it at build
+        # time and expose it as a step output the tags list references.
+        id: meta
+        run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Build + push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/runner/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/programmerq/trailer-runner:latest
+            ghcr.io/programmerq/trailer-runner:${{ steps.meta.outputs.date }}
