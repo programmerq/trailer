@@ -64,6 +64,9 @@ jobs:
           # falls back to the closest ancestor, so warm runs skip
           # recompiling unchanged files.
           max-size: 500M
+          # Custom trailer-runner image ships an empty apt index, so the
+          # action must run `apt-get update` before `apt-get install ccache`.
+          update-package-index: true
 
       - name: Configure
         # Warnings-only: TRAILER_WERROR defaults OFF (see workflow
@@ -121,6 +124,9 @@ jobs:
           # object cache must not collide with the native gcc one.
           key: ci-windows-cross-mingw
           max-size: 500M
+          # Custom trailer-runner image ships an empty apt index, so the
+          # action must run `apt-get update` before `apt-get install ccache`.
+          update-package-index: true
 
       - name: Configure
         # Same invocation as scripts/build-windows.sh (reusing the

@@ -147,6 +147,9 @@ jobs:
         with:
           key: release-${{ runner.os }}-gcc-linux
           max-size: 500M
+          # Custom trailer-runner image ships an empty apt index, so the
+          # action must run `apt-get update` before `apt-get install ccache`.
+          update-package-index: true
 
       - name: Configure
         # TRAILER_WERROR stays OFF: GCC's -Wnull-dereference and -Wcpp
@@ -218,6 +221,9 @@ jobs:
           # different compiler (mingw-w64 g++) targeting Windows.
           key: release-windows-cross-mingw
           max-size: 500M
+          # Custom trailer-runner image ships an empty apt index, so the
+          # action must run `apt-get update` before `apt-get install ccache`.
+          update-package-index: true
 
       - name: Configure
         # Same invocation as scripts/build-windows.sh (reusing the
