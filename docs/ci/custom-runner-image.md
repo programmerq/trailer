@@ -13,7 +13,10 @@ installs the **toolchain packages** both the Linux and the Windows-cross
 jobs apt-install every run:
 
 - Native build: `build-essential` (gcc/g++, C++20), `cmake`,
-  `ninja-build`, `mold`, `pkg-config`.
+  `ninja-build`, `mold`, `pkg-config`, `ccache` (the compiler launcher
+  `CMAKE_CXX_COMPILER_LAUNCHER` points at; the `hendrikmuhs/ccache-action`
+  CI step detects a preinstalled ccache on `PATH` and skips its own apt
+  install).
 - Qt's Linux runtime/dev deps: the mesa/OpenGL dev libs
   (`libgl1-mesa-dev`, `libglu1-mesa-dev`, `libegl1-mesa-dev`,
   `libxkbcommon-dev`, `libx11-xcb-dev`), the xcb libraries Qt's xcb
