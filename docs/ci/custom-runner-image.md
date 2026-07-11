@@ -34,7 +34,8 @@ Qt/ONNX version bump doesn't force an image rebuild.
 `.github/actions/setup-linux-build` and
 `.github/actions/setup-windows-cross` probe each dependency
 (`command -v cmake`, `command -v x86_64-w64-mingw32-g++`,
-`dpkg -s libqpdf-dev`, `command -v wine`, …) **before** installing it,
+`dpkg -s libqpdf-dev` — version-aware, must be >= 11 —,
+`command -v wine`, …) **before** installing it,
 and skip the apt step when it's already present. The action log prints
 `preinstalled (skipped)` or `will install via apt` for each dep.
 
@@ -83,9 +84,15 @@ setup actions needs to change.
 
 > **qpdf version note:** Trailer's Linux link needs qpdf >= 11 (Ubuntu
 > jammy's qpdf 10.x fails with `undefined reference to
-> QPDFFormFieldObjectHelper::isChecked()`). If a future
-> `actions-runner:latest` base tag ships qpdf < 11, move the Dockerfile's
-> base to a noble (24.04)-based runner image or add the qpdf PPA before
-> `libqpdf-dev`. Verify with `docker run --rm <image> qpdf --version`.
+> QPDFFormFieldObjectHelper::isChecked()`). Verified 2026-07-11: the
+> `actions-runner` base (release `v2.335.1`, which `:latest` points at)
+> is `FROM mcr.microsoft.com/dotnet/runtime-deps:8.0-noble` (Ubuntu
+> 24.04, `ImageOS=ubuntu24`), and noble ships qpdf 11.9 — so the base is
+> fine. To keep it that way the Dockerfile PINS a specific released tag +
+> digest instead of the moving `:latest`; when bumping, confirm the new
+> tag's `images/Dockerfile` still uses an `*-noble` (or newer) base. As a
+> second line of defence `setup-linux-build` is version-aware: it refuses
+> to skip a libqpdf-dev < 11 install and warns loudly. Verify a built
+> image with `docker run --rm <image> qpdf --version`.
 
 [arc]: https://github.com/actions/actions-runner-controller

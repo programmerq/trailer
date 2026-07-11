@@ -302,10 +302,13 @@ jobs:
         # release-publish.yml's rename step expects (dist/trailer-
         # windows-x86_64.zip). trailer.exe sits at the zip root so
         # extracting anywhere and running it Just Works, matching the
-        # release notes' Windows instructions.
+        # release notes' Windows instructions. Uses 7z (p7zip-full,
+        # already installed by setup-windows-cross) rather than `zip`,
+        # which isn't in the dep set; `7z a -tzip` from inside the dir
+        # produces the same flat, root-level zip layout.
         run: |
           set -euo pipefail
-          (cd dist/trailer-windows-x86_64 && zip -r ../trailer-windows-x86_64.zip .)
+          (cd dist/trailer-windows-x86_64 && 7z a -tzip ../trailer-windows-x86_64.zip .)
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v7

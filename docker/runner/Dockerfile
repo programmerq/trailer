@@ -27,12 +27,24 @@
 # NOTE on qpdf version: Trailer's Linux link needs qpdf >= 11 (jammy's
 # qpdf 10.x breaks with `undefined reference to
 # QPDFFormFieldObjectHelper::isChecked()` — see
-# .github/actions/setup-linux-build/action.yml). The stock
-# actions-runner base is Ubuntu-based; if a future base tag ships
-# qpdf < 11, either move the base to a noble (24.04)-based runner image
-# or add the qpdf PPA before `libqpdf-dev` here. Verify after a build
-# with `docker run --rm <image> qpdf --version`.
-FROM ghcr.io/actions/actions-runner:latest
+# .github/actions/setup-linux-build/action.yml). Verified 2026-07-11:
+# the actions-runner image (release v2.335.1, which `:latest` currently
+# points at) is built FROM mcr.microsoft.com/dotnet/runtime-deps:8.0-noble
+# (Ubuntu 24.04, ImageOS=ubuntu24) per images/Dockerfile at that tag
+# (github.com/actions/runner). Noble main ships qpdf 11.9.x, so the
+# Linux link is satisfied by the base — no PPA needed.
+#
+# The base is PINNED to a specific released tag + digest below (rather
+# than the moving `:latest`) so a future actions-runner base regression
+# — e.g. a hypothetical move back to an older Ubuntu with qpdf < 11 —
+# can't ship silently via the weekly build-runner-image rebuild. To bump:
+# pick a newer released tag from github.com/actions/runner/releases,
+# confirm its images/Dockerfile still FROMs an *-noble (or newer) base,
+# re-resolve the digest (`docker buildx imagetools inspect
+# ghcr.io/actions/actions-runner:<tag>`), and update both here. Belt-and-
+# suspenders, setup-linux-build.action.yml version-guards libqpdf-dev at
+# runtime and refuses to skip a < 11 install.
+FROM ghcr.io/actions/actions-runner:2.335.1@sha256:08c30b0a7105f64bddfc485d2487a22aa03932a791402393352fdf674bda2c29
 
 # The actions-runner base runs as the non-root `runner` user; switch to
 # root for the system installs and restore `runner` (+ its workdir) at
@@ -47,7 +59,10 @@ ARG DEBIAN_FRONTEND=noninteractive
 #     cmake, ninja-build, mold, pkg-config.
 #   * Qt's Linux runtime/dev deps: mesa/OpenGL dev libs, the xcb libs
 #     Qt's xcb platform plugin loads, xkbcommon, cups.
-#   * PDF backend: libqpdf-dev (link) + qpdf (CLI, used by tests).
+#   * PDF backend: libqpdf-dev (Trailer links the libqpdf C++ API) +
+#     the qpdf CLI (kept as a small convenience for manual PDF
+#     inspection/debugging on the runner; the test suite drives the
+#     libqpdf C++ API directly, not the CLI).
 #   * Windows cross toolchain: mingw-w64 (-posix threading) g++/gcc +
 #     binutils + mingw zlib; Wine + i386 multiarch for the test tier.
 #   * aqtinstall needs python3 + venv + pip; git/curl/wget/unzip/

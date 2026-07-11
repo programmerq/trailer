@@ -124,6 +124,7 @@ runs:
           "p7zip-full:7z"
           "unzip:unzip"
           "wget:wget"
+          "curl:curl"
           "git:git"
           ca-certificates
           "python3:python3"
