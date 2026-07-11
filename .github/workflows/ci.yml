@@ -121,6 +121,7 @@ jobs:
           # object cache must not collide with the native gcc one.
           key: ci-windows-cross-mingw
           max-size: 500M
+          update-package-index: true
 
       - name: Configure
         # Same invocation as scripts/build-windows.sh (reusing the

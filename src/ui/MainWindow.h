@@ -16,6 +16,7 @@ class QTimer;
 class QAction;
 class QLabel;
 class QMenu;
+class QStackedWidget;
 class QToolButton;
 
 namespace trailer {
@@ -23,6 +24,7 @@ namespace trailer {
 class AnimationBar;
 class Application;
 class DocumentView;
+class EmptyStateWidget;
 class Inspector;
 class FormToolbar;
 class Magnifier;
@@ -102,11 +104,20 @@ class MainWindow : public QMainWindow {
 
   private slots:
     void onOpen();
+    // Handle DocumentView::allTabsClosed under the empty-state window
+    // model: close this window if other windows exist (avoid empty-
+    // window pile-up), otherwise persist it and show the empty state.
+    void onAllTabsClosed();
+    // Swap the central stack between the document page and the empty
+    // state based on whether any document is open.
+    void updateEmptyState();
     // Wipe every Trailer-managed file under AppPaths::*. Used by
     // Tools → Reset Trailer Settings…  for the "is this stale
     // state from an older build?" diagnostic. Asks for explicit
     // confirmation because this is destructive.
     void onResetTrailerSettings();
+    // Open the unified Preferences dialog (Edit → Preferences…).
+    void onOpenPreferences();
     void onSave();
     void onSaveAs();
     void onRotateLeft();
@@ -181,6 +192,10 @@ class MainWindow : public QMainWindow {
     // thread for QPdfDocument reload); image saves run synchronously
     // because they are fast.
     void saveDocumentAsync(IDocument *doc, const QString &targetPath);
+    // Run the Save-As dialog for `doc` and return the chosen destination
+    // path, or an empty string if the user cancelled. Shared by onSaveAs()
+    // and the unsaved-changes close prompt so both offer the same dialog.
+    QString chooseSaveAsPath(IDocument *doc);
     void syncViewModeActions(IDocument *doc);
     void showSearchBar();
     void hideSearchBar();
@@ -218,6 +233,13 @@ class MainWindow : public QMainWindow {
 
     Application *m_app;
     DocumentView *m_documentView = nullptr;
+    // Empty-state window model: the central column is a QStackedWidget
+    // with two pages — the document page (document view + animation bar)
+    // and the empty-state welcome surface. updateEmptyState() swaps
+    // between them based on documentCount().
+    EmptyStateWidget *m_emptyState = nullptr;
+    QStackedWidget *m_centerStack = nullptr;
+    QWidget *m_documentPage = nullptr;
     AnimationBar *m_animationBar = nullptr;
     Inspector *m_inspector = nullptr;
     Magnifier *m_magnifier = nullptr;

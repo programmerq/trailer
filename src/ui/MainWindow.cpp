@@ -3,6 +3,7 @@
 #include "TrailerVersion.h"
 #include "AnimationBar.h"
 #include "DocumentView.h"
+#include "EmptyStateWidget.h"
 #include "AnnotationOverlay.h"
 #include "Inspector.h"
 #include "Magnifier.h"
@@ -10,6 +11,7 @@
 #include "IconHelper.h"
 #include "MarkupToolbar.h"
 #include "MyCardDialog.h"
+#include "PreferencesDialog.h"
 #include "SignaturePicker.h"
 #include "SignaturesDialog.h"
 #include "cards/CardStore.h"
@@ -81,6 +83,7 @@
 #include <QTemporaryFile>
 #include <QTimer>
 #include <QtConcurrent>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QWidget>
 
@@ -154,7 +157,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // behind. For the legacy tab mode this still fires correctly —
     // closing the final tab discards the now-empty window, which is
     // also what the user expects.
-    connect(m_documentView, &DocumentView::allTabsClosed, this, &MainWindow::close);
+    connect(m_documentView, &DocumentView::allTabsClosed, this, &MainWindow::onAllTabsClosed);
     // Flush per-document state keyed by raw IDocument pointer before
     // the document is destroyed. The MlScheduler owns the cancellation
     // tokens for in-flight work; cancelling here keeps the worker
@@ -183,10 +186,32 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_animationBar->hide();
 
     // The search bar moved into the main toolbar (built later) so
-    // it's always visible at the top right. The central column is
-    // now just the document view + the animation bar.
-    centerLayout->addWidget(m_documentView, 1);
-    centerLayout->addWidget(m_animationBar);
+    // it's always visible at the top right. The central column is a
+    // QStackedWidget that swaps between the document page (document
+    // view + animation bar) and the empty-state welcome surface shown
+    // when no document is open (empty-state window model). The
+    // addWidget calls below reparent m_documentView / m_animationBar
+    // into the document page.
+    m_centerStack = new QStackedWidget(center);
+
+    m_documentPage = new QWidget(m_centerStack);
+    auto *documentLayout = new QVBoxLayout(m_documentPage);
+    documentLayout->setContentsMargins(0, 0, 0, 0);
+    documentLayout->setSpacing(0);
+    documentLayout->addWidget(m_documentView, 1);
+    documentLayout->addWidget(m_animationBar);
+
+    m_emptyState = new EmptyStateWidget(m_centerStack);
+    connect(m_emptyState, &EmptyStateWidget::openRequested, this, &MainWindow::onOpen);
+    connect(m_emptyState, &EmptyStateWidget::filesDropped, this, [this](const QStringList &p) {
+        if (m_app)
+            m_app->openFiles(p);
+    });
+
+    m_centerStack->addWidget(m_documentPage);
+    m_centerStack->addWidget(m_emptyState);
+
+    centerLayout->addWidget(m_centerStack);
     setCentralWidget(center);
 
     m_sidebar = new Sidebar(this);
@@ -394,6 +419,10 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_autoSaveTimer->setInterval(kAutoSaveIntervalMs);
     connect(m_autoSaveTimer, &QTimer::timeout, this, &MainWindow::autoSaveDirtyDocs);
     m_autoSaveTimer->start();
+
+    // Initial central-stack state: a freshly-spawned window holds no
+    // document, so show the empty-state welcome surface.
+    updateEmptyState();
 }
 
 void MainWindow::autoSaveDirtyDocs() {
@@ -419,6 +448,9 @@ void MainWindow::autoSaveDirtyDocs() {
 
 void MainWindow::buildMenus() {
     auto *fileMenu = menuBar()->addMenu(tr("&File"));
+    // The disabled Share… item carries an explanatory tooltip; Qt only
+    // renders action tooltips in a menu when tooltips are enabled on it.
+    fileMenu->setToolTipsVisible(true);
 
     auto *openAction = fileMenu->addAction(tr("&Open…"));
     openAction->setShortcut(QKeySequence::Open);
@@ -452,13 +484,17 @@ void MainWindow::buildMenus() {
     });
 
     // File → Share routes through the OS share-sheet (macOS native
-    // NSSharingServicePicker). Only shown on platforms that have a
-    // working implementation; the Linux/Windows stub returns
+    // NSSharingServicePicker). The Linux/Windows stub returns
     // isAvailable() == false until xdg-email / WinShare are wired
-    // up. The action is gated on a saved file because the share
-    // picker needs a real file path on disk.
+    // up. When available, the action is gated on a saved file because
+    // the share picker needs a real file path on disk.
+    // The action is always created so the capability is visible. On
+    // platforms without a working share implementation it is shown
+    // disabled with a tooltip pointing at the real alternative, rather
+    // than silently hidden (owner policy: unavailable capabilities are
+    // disabled + explained, never dropped from the menu).
+    m_shareAction = fileMenu->addAction(tr("&Share…"));
     if (ShareService::isAvailable()) {
-        m_shareAction = fileMenu->addAction(tr("&Share…"));
         connect(m_shareAction, &QAction::triggered, this, [this]() {
             auto *doc = m_documentView->currentDocument();
             if (!doc)
@@ -470,6 +506,11 @@ void MainWindow::buildMenus() {
             }
             ShareService::shareFile(path, this);
         });
+    } else {
+        m_shareAction->setEnabled(false);
+        m_shareAction->setToolTip(
+            tr("Sharing isn't available on this platform yet — use File → "
+               "Save As… to save a copy you can share."));
     }
 
     fileMenu->addSeparator();
@@ -642,7 +683,16 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
     m_undoAction->setShortcut(QKeySequence::Undo);
     connect(m_undoAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
-            doc->undo();
+            // A false return while canUndo() promised an entry means a
+            // log/stack desync guard refused and dropped the orphaned
+            // entry (see IDocument::undo()). Without this flash the
+            // only trace is a qWarning and the keypress is silently
+            // dead; onCurrentDocumentChanged below re-syncs the action
+            // enabled state either way.
+            const bool promised = doc->canUndo();
+            if (!doc->undo() && promised) {
+                flashError(tr("Undo history was out of sync; nothing was undone."));
+            }
             m_sidebar->refreshThumbnails();
             updateTitleForDocument(doc);
             onCurrentDocumentChanged(doc);
@@ -653,7 +703,11 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
     m_redoAction->setShortcut(QKeySequence::Redo);
     connect(m_redoAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
-            doc->redo();
+            // Mirror of the undo handler's desync flash above.
+            const bool promised = doc->canRedo();
+            if (!doc->redo() && promised) {
+                flashError(tr("Redo history was out of sync; nothing was redone."));
+            }
             m_sidebar->refreshThumbnails();
             updateTitleForDocument(doc);
             onCurrentDocumentChanged(doc);
@@ -689,6 +743,13 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
         if (auto *doc = m_documentView->currentDocument())
             doc->findPrevious();
     });
+
+    editMenu->addSeparator();
+
+    auto *prefsAction = editMenu->addAction(tr("&Preferences…"));
+    prefsAction->setShortcut(QKeySequence::Preferences);
+    prefsAction->setMenuRole(QAction::PreferencesRole);
+    connect(prefsAction, &QAction::triggered, this, &MainWindow::onOpenPreferences);
 }
 
 void MainWindow::showSearchBar() {
@@ -738,6 +799,9 @@ void MainWindow::hideSearchBar() {
 }
 
 void MainWindow::buildViewMenu(QMenu *viewMenu) {
+    // The disabled Two Pages item carries an explanatory tooltip; Qt only
+    // renders action tooltips in a menu when tooltips are enabled on it.
+    viewMenu->setToolTipsVisible(true);
     auto *toggleSidebar = m_sidebar->toggleViewAction();
     toggleSidebar->setText(tr("Toggle &Sidebar"));
     toggleSidebar->setShortcut(QKeySequence(tr("Ctrl+Shift+D")));
@@ -785,10 +849,11 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     m_twoPagesAction->setCheckable(true);
     // Cmd-3 is reserved here but the action stays disabled: Qt's
     // QPdfView::PageMode only exposes SinglePage and MultiPage — there is
-    // no facing/two-up layout, so ViewMode::TwoPages currently aliases
-    // Continuous (see PdfDocument::applyViewMode). A real side-by-side
-    // layout needs a custom view (tracked as a larger follow-up); once it
-    // lands and the action is enabled, Cmd-3 starts working.
+    // no facing/two-up layout. PdfDocument::applyViewMode warns and no-ops
+    // on ViewMode::TwoPages (it deliberately does not alias Continuous), so
+    // enabling this action would be a no-op. A real side-by-side layout
+    // needs a custom view (tracked as a larger follow-up); once it lands
+    // and the action is enabled, Cmd-3 starts working.
     m_twoPagesAction->setShortcut(QKeySequence(tr("Ctrl+3")));
     m_twoPagesAction->setEnabled(false);
     m_twoPagesAction->setToolTip(tr("Two-page layout is not yet available."));
@@ -971,6 +1036,15 @@ void MainWindow::buildWindowMenu(QMenu *windowMenu) {
     connect(minimize, &QAction::triggered, this, &QWidget::showMinimized);
 
     auto *zoom = windowMenu->addAction(tr("&Zoom"));
+    // "Zoom" is the native macOS Window-menu term. On other platforms it
+    // collides with the app's content zoom (View → Zoom In/Out) and isn't a
+    // platform convention, so relabel to the honest term for what it does
+    // (maximize/restore toggle). Behavior is unchanged on all platforms.
+    // On macOS the action keeps its creation text ("&Zoom"); only the
+    // non-mac relabel is meaningful.
+#ifndef Q_OS_MACOS
+    zoom->setText(tr("&Maximize"));
+#endif
     connect(zoom, &QAction::triggered, this, [this]() {
         // macOS "Zoom" toggles between user-sized and the OS's
         // ideal-for-content size. QWidget doesn't expose that
@@ -1962,6 +2036,18 @@ void MainWindow::onSaveAs() {
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsEditing())
         return;
+    const QString path = chooseSaveAsPath(doc);
+    if (path.isEmpty())
+        return;
+    // saveDocumentAsync handles the success path: status bar, title
+    // refresh, lastSaveDir bookkeeping. PDFs go through the two-
+    // phase worker; images stay synchronous (fast).
+    saveDocumentAsync(doc, path);
+}
+
+QString MainWindow::chooseSaveAsPath(IDocument *doc) {
+    if (!doc)
+        return {};
     const bool isImage = dynamic_cast<ImageDocument *>(doc) != nullptr;
 
     // Suggest a filename that hints at what's been done to the
@@ -2013,13 +2099,7 @@ void MainWindow::onSaveAs() {
 
     const QString filter = isImage ? tr("Images (*.png *.jpg *.jpeg *.bmp *.tiff *.tif *.webp)")
                                    : tr("PDF documents (*.pdf)");
-    const QString path = QFileDialog::getSaveFileName(this, tr("Save As"), suggested, filter);
-    if (path.isEmpty())
-        return;
-    // saveDocumentAsync handles the success path: status bar, title
-    // refresh, lastSaveDir bookkeeping. PDFs go through the two-
-    // phase worker; images stay synchronous (fast).
-    saveDocumentAsync(doc, path);
+    return QFileDialog::getSaveFileName(this, tr("Save As"), suggested, filter);
 }
 
 void MainWindow::onExportPasswordProtected() {
@@ -2445,10 +2525,12 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
 
     const bool hasPrint = doc && doc->supportsPrint();
     m_printAction->setEnabled(hasPrint);
-    if (m_shareAction) {
+    if (m_shareAction && ShareService::isAvailable()) {
         // Share needs a file on disk; disabled for unsaved /
         // untitled docs. The user is told to save first via
         // flashStatus when they pick the action with no path.
+        // When ShareService is unavailable the action stays disabled
+        // with its explanatory tooltip (set at creation) — don't touch it.
         m_shareAction->setEnabled(doc && !doc->filePath().isEmpty());
     }
 
@@ -3031,6 +3113,74 @@ void MainWindow::addDocument(std::unique_ptr<IDocument> document) {
         return;
     }
     m_documentView->addDocument(std::move(document));
+    // A document is now open — swap the central stack back to the
+    // document page (away from the empty state).
+    updateEmptyState();
+}
+
+void MainWindow::onAllTabsClosed() {
+#ifdef Q_OS_MACOS
+    // macOS: there is no persistent empty window. Closing the last
+    // document closes the window; the global menu bar persists so the
+    // user can still open a file or quit.
+    close();
+#else
+    // Win/Linux: closing the last document of a NON-last window closes
+    // that window (avoid empty-window pile-up). The last remaining
+    // window persists as an empty-state window so the app is never
+    // left with zero windows / no way to open a file.
+    //
+    // windowCount() is only reliable here because we assume window
+    // teardowns do not overlap within a single event-loop turn: a
+    // closing window is tracked via a QPointer that nulls (dropping the
+    // count) only after its deleteLater() is processed on a later turn.
+    // If two windows were torn down in the same turn this comparison
+    // could momentarily see a stale count; the app's single-threaded,
+    // one-close-per-turn UI flow guarantees that does not happen.
+    if (m_app && m_app->windowCount() > 1) {
+        close();
+    } else {
+        updateEmptyState();
+    }
+#endif
+}
+
+void MainWindow::updateEmptyState() {
+    if (!m_centerStack)
+        return;
+    const bool empty = documentCount() == 0;
+    m_centerStack->setCurrentWidget(empty ? static_cast<QWidget *>(m_emptyState)
+                                          : static_cast<QWidget *>(m_documentPage));
+
+    // Gate the toolbar toggle actions on document presence, mirroring the
+    // other document-dependent actions (rotate/save/zoom) toggled in
+    // onCurrentDocumentChanged(). Over the empty state these toggles would
+    // re-summon a toolbar whose tools no-op — a "lying control" — so we
+    // disable the toggle actions themselves, which also greys their
+    // View-menu entries and inerts the Ctrl/Cmd+Shift+A shortcut. We only
+    // touch enabled state here, never visibility: the user's prior toolbar
+    // visibility preference is restored from saved state when a document is
+    // reopened (onCurrentDocumentChanged), so re-enabling must not force-show.
+    if (m_markupToolbarAction)
+        m_markupToolbarAction->setEnabled(!empty);
+    if (m_formToolbarAction)
+        m_formToolbarAction->setEnabled(!empty);
+
+    if (empty) {
+        // No lying controls: the document-only toolbars must not linger
+        // over the empty state showing annotation / form-fill buttons
+        // that would act on the now-closed document. (Their tool
+        // handlers already no-op when there is no current document, but
+        // leaving them visible reads as an actionable control that does
+        // nothing.) Per-document visibility is restored from saved
+        // state when a document is reopened into this window
+        // (onCurrentDocumentChanged), so hiding here loses no user
+        // preference.
+        if (m_markupToolbar)
+            m_markupToolbar->hide();
+        if (m_formToolbar)
+            m_formToolbar->hide();
+    }
 }
 
 int MainWindow::documentCount() const {
@@ -3058,6 +3208,18 @@ void MainWindow::dropEvent(QDropEvent *event) {
         m_app->openFiles(paths);
         event->acceptProposedAction();
     }
+}
+
+void MainWindow::onOpenPreferences() {
+    PreferencesDialog dlg(m_app->settings(), this);
+    dlg.setManageModelsCallback([this]() { showModelManagerDialog(this, m_app); });
+    dlg.setResetAllCallback([this]() { onResetTrailerSettings(); });
+    // recent_max is consumed once at startup (not read live), so re-apply
+    // it to the live RecentFiles cap when the user saves preferences.
+    connect(&dlg, &PreferencesDialog::settingsApplied, this, [this]() {
+        m_app->recentFiles().setMaxEntries(m_app->settings().recentMax());
+    });
+    dlg.exec();
 }
 
 void MainWindow::onResetTrailerSettings() {
@@ -3226,14 +3388,26 @@ void MainWindow::closeEvent(QCloseEvent *event) {
             return;
         }
         if (answer == QMessageBox::Save) {
-            // If the document has no path yet, route through the
-            // Save-As dialog so the user picks one. The current-tab
-            // assumption matches onSave's behaviour.
-            const bool hasPath = !doc->filePath().isEmpty();
-            const bool ok = hasPath ? doc->save() : doc->save();
+            bool ok = false;
+            if (doc->filePath().isEmpty()) {
+                // Untitled document: route through the Save-As dialog so
+                // the user picks a destination, then save synchronously
+                // (like the has-path branch below) so the dirty check
+                // reflects the real outcome rather than a still-pending
+                // async save.
+                const QString path = chooseSaveAsPath(doc);
+                if (path.isEmpty()) {
+                    // The user cancelled Save-As. Honour the cancel: abort
+                    // the close and keep the unsaved work intact.
+                    event->ignore();
+                    return;
+                }
+                ok = doc->save(path);
+            } else {
+                ok = doc->save();
+            }
             if (!ok || doc->isDirty()) {
-                // Save failed or user cancelled the Save-As dialog.
-                // Do not lose the user's work; abort the close.
+                // Save failed. Do not lose the user's work; abort the close.
                 flashError(tr("Could not save %1; close cancelled.").arg(doc->displayName()));
                 event->ignore();
                 return;

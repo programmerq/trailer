@@ -19,7 +19,7 @@ what shipped when, [ROADMAP.md](ROADMAP.md) for what's coming, and
 ## Requirements
 
 - CMake 3.24+
-- Qt 6.5+ (Core, Gui, Widgets, Test, **Pdf**, **PdfWidgets**, **PrintSupport**)
+- Qt 6.6+ (Core, Gui, Widgets, Test, **Pdf**, **PdfWidgets**, **PrintSupport**)
 - [qpdf](https://qpdf.sourceforge.io/) 11+ (lossless PDF page editing)
 - A C++20 compiler (MSVC 2022, GCC 11+, or Clang 14+)
 
@@ -105,7 +105,7 @@ make test-uat       # build + unit + UAT
    Qt 6.10.3 (not 6.11.x) because aqtinstall 3.3.0 doesn't yet
    handle the toolchain-suffixed directory layout Qt 6.11+ uses on
    `download.qt.io`. Linux/macOS CI is on 6.11.0; Windows is on
-   6.10.3 until aqt gains 6.11 support. The CMake floor is 6.5.
+   6.10.3 until aqt gains 6.11 support. The CMake floor is 6.6.
 
 3. Build + test:
 

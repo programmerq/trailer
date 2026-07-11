@@ -10,6 +10,7 @@
 
 #include "app/Application.h"
 #include "document/IDocument.h"
+#include "platform/Share.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
 
@@ -57,6 +58,18 @@ QAction *findMenuAction(QMenuBar *bar, const QString &topText, const QString &it
     return nullptr;
 }
 
+// Walk every QMenu under the menu bar and return the one that hosts the
+// given action. Used to assert the hosting menu has tooltips enabled —
+// a disabled action's tooltip is invisible in the menu unless the menu
+// itself has setToolTipsVisible(true).
+QMenu *menuContainingAction(QMenuBar *bar, QAction *action) {
+    for (QMenu *menu : bar->findChildren<QMenu *>()) {
+        if (menu->actions().contains(action))
+            return menu;
+    }
+    return nullptr;
+}
+
 QStringList topLevelMenuTexts(QMenuBar *bar) {
     QStringList texts;
     for (QAction *a : bar->actions()) {
@@ -95,6 +108,8 @@ class TestUatFoundations : public QObject {
     void uat_fnd_030_autoSaveWritesDirtyDocsWithPath();
     void uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs();
     void uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms();
+    void uat_fnd_041_shareDisabledWithTooltipWhenUnavailable();
+    void uat_fnd_042_twoPagesActionDisabledWithTooltip();
     void uat_fnd_050_fileOpenEventOpensWindow();
 
   private:
@@ -493,11 +508,13 @@ void TestUatFoundations::uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs() {
              "When autoSave setting is off, no save should happen");
 }
 
-// UAT-FND-040 — File → Share is wired up on platforms that have a
-// native share-sheet (macOS via NSSharingServicePicker). Other
-// platforms hide the menu item until xdg-email / WinShare are
-// implemented. This test only checks the action presence; actually
-// firing the picker is platform-modal and not UAT-friendly.
+// UAT-FND-040 — File → Share is ALWAYS present in the File menu. On
+// platforms that have a native share-sheet (macOS via
+// NSSharingServicePicker) it is enabled and wired; elsewhere it is
+// present-but-disabled with an explanatory tooltip (owner policy:
+// unavailable capabilities are disabled + explained, never hidden).
+// This test only checks presence; firing the picker is platform-
+// modal and not UAT-friendly.
 void TestUatFoundations::uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms() {
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
@@ -506,13 +523,70 @@ void TestUatFoundations::uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms() 
 
     QAction *shareAction =
         findMenuAction(mw->menuBar(), QStringLiteral("&File"), QStringLiteral("&Share…"));
-#ifdef Q_OS_MACOS
-    QVERIFY2(shareAction, "File → Share… should be present on macOS where the "
-                          "NSSharingServicePicker implementation lives");
-#else
-    QVERIFY2(!shareAction, "File → Share… is hidden on platforms whose ShareService "
-                           "stub returns isAvailable() == false");
-#endif
+    QVERIFY2(shareAction, "File → Share… must always be present in the File menu "
+                          "(disabled + tooltip when unavailable, never hidden)");
+}
+
+// UAT-FND-041 — When ShareService::isAvailable() is false (Linux /
+// Windows stub), the always-present Share action must be shown
+// disabled with a non-empty tooltip that points the user at the real
+// alternative, rather than silently vanishing.
+void TestUatFoundations::uat_fnd_041_shareDisabledWithTooltipWhenUnavailable() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+
+    QAction *shareAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&File"), QStringLiteral("&Share…"));
+    QVERIFY2(shareAction, "File → Share… must always exist");
+
+    if (ShareService::isAvailable()) {
+        QSKIP("ShareService is available on this platform; disabled-state case "
+              "does not apply.");
+    }
+
+    QVERIFY2(!shareAction->isEnabled(),
+             "Share must be disabled when ShareService is unavailable");
+    QVERIFY2(!shareAction->toolTip().isEmpty(),
+             "Disabled Share must carry an explanatory tooltip pointing at the "
+             "alternative");
+
+    // A tooltip is only actually shown in the menu if the hosting menu has
+    // tooltips enabled — otherwise the "disabled + explanation" policy is
+    // only half-delivered (invisible on hover).
+    QMenu *hostMenu = menuContainingAction(mw->menuBar(), shareAction);
+    QVERIFY2(hostMenu, "Could not locate the menu hosting the Share action");
+    QVERIFY2(hostMenu->toolTipsVisible(),
+             "The File menu must call setToolTipsVisible(true) so the disabled "
+             "Share tooltip is actually rendered on hover");
+}
+
+// UAT-FND-042 — View → Two Pages is an unbuilt capability: QPdfView
+// has no facing/two-up layout. Per owner policy the action must be
+// present but disabled with an explanatory tooltip, never silently
+// aliasing another layout.
+void TestUatFoundations::uat_fnd_042_twoPagesActionDisabledWithTooltip() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+
+    QAction *twoPages =
+        findMenuAction(mw->menuBar(), QStringLiteral("&View"), QStringLiteral("Two Pages"));
+    QVERIFY2(twoPages, "View → Two Pages action must be present");
+    QVERIFY2(!twoPages->isEnabled(),
+             "Two Pages must be disabled while a real facing layout is unbuilt");
+    QVERIFY2(!twoPages->toolTip().isEmpty(),
+             "Disabled Two Pages must carry an explanatory tooltip");
+
+    // The tooltip is only visible on hover if the hosting menu enables
+    // tooltips — assert the View menu does so.
+    QMenu *hostMenu = menuContainingAction(mw->menuBar(), twoPages);
+    QVERIFY2(hostMenu, "Could not locate the menu hosting the Two Pages action");
+    QVERIFY2(hostMenu->toolTipsVisible(),
+             "The View menu must call setToolTipsVisible(true) so the disabled "
+             "Two Pages tooltip is actually rendered on hover");
 }
 
 // UAT-FND-050 — Synthesize the QFileOpenEvent macOS dispatches when

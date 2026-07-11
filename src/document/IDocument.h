@@ -149,8 +149,12 @@ class IDocument {
     virtual bool isDirty() const { return false; }
     virtual bool canUndo() const { return false; }
     virtual bool canRedo() const { return false; }
-    virtual void undo() {}
-    virtual void redo() {}
+    // Return true iff an operation was actually reverted / reapplied.
+    // A false return with canUndo()/canRedo() still true indicates an
+    // internal history desync — adapters must degrade to a warning +
+    // no-op rather than mutate state they cannot account for.
+    virtual bool undo() { return false; }
+    virtual bool redo() { return false; }
     virtual void rotatePage(int /*pageIndex*/, int /*degreesClockwise*/) {}
     virtual void deletePages(const std::vector<int> & /*pageIndices*/) {}
     virtual void movePage(int /*from*/, int /*to*/) {}

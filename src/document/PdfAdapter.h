@@ -20,6 +20,9 @@ class QPdfSearchModel;
 class QPdfBookmarkModel;
 class QIdentityProxyModel;
 class QPdfView;
+// tests/test_adapters.cpp — befriended so the desync test seam below
+// stays private instead of shipping as callable production API.
+class TestAdapters;
 
 namespace trailer {
 
@@ -106,15 +109,15 @@ class PdfDocument : public IDocument {
     bool isDirty() const override { return m_dirty || m_annotationsModified; }
     // PDF-level undo runs across two parallel stacks: the
     // AnnotationStore for in-memory shape edits, and a separate
-    // PdfCommand stack for qpdf-level mutations (rotate today;
-    // delete / move / insert / crop are scoped for follow-up).
+    // PdfCommand stack for qpdf-level mutations (rotate / delete /
+    // move / insert / crop).
     // Undo/redo pop a single chronological log (m_undoLog) recording
     // which stack each committed op went to, so the most recent action
     // is always undone first regardless of which stack it came from.
     bool canUndo() const override;
     bool canRedo() const override;
-    void undo() override;
-    void redo() override;
+    bool undo() override;
+    bool redo() override;
     void rotatePage(int pageIndex, int degreesClockwise) override;
     void deletePages(const std::vector<int> &pageIndices) override;
     void movePage(int from, int to) override;
@@ -172,6 +175,17 @@ class PdfDocument : public IDocument {
     bool unlock(const QString &password);
 
   private:
+    // Test seam only, private + friend-fenced so no production caller
+    // can reach it: drop the qpdf command stacks while leaving the
+    // chronological log untouched, simulating the log/stack desync the
+    // runtime guards in undo()/redo() defend against. There is no
+    // production path that produces this state.
+    friend class ::TestAdapters;
+    void corruptPdfCommandStacksForTesting() {
+        m_pdfUndoStack.clear();
+        m_pdfRedoStack.clear();
+    }
+
     void applyViewMode();
     void applyZoomFactor(double factor);
     // Fit the freshly-opened doc into the viewport on first show.
@@ -232,6 +246,15 @@ class PdfDocument : public IDocument {
     // invalidate all redo (both qpdf + annotation redo, and m_redoLog).
     // Called after a qpdf-level command applies.
     void recordPdfCommandApplied();
+
+    // AnnotationStore mirror hooks, connected to historyPushed /
+    // historyEvicted in both the constructor and unlock(). The store
+    // owns the annotation history depth; these keep the chronological
+    // log's Annotation entries in lockstep with the store's undo stack
+    // so the log never claims an undo the store cannot perform.
+    void onAnnotationHistoryPushed();
+    void onAnnotationHistoryEvicted();
+    void connectAnnotationHistory();
 
     // Unified chronological undo/redo log: one entry per committed op,
     // recording which stack it went to, so undo()/redo() pop the truly
