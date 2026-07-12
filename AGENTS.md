@@ -479,7 +479,8 @@ other path without raising it in the PR first.
 | Understand the product end-to-end | `DESIGN.md` |
 | Know what's off-limits | `PHILOSOPHY.md` |
 | Match an existing code pattern | `docs/CONVENTIONS.md` |
-| Pick up open work | `TODO.md` (HITL section is the live sprint) |
+| Read what a session surfaced (HITL / smoke / audit) or a running deferred-work note | `TODO.md` — the dated, append-mostly session log; the HITL section is the live sprint. Narrative notes, not one-per-item tracking. |
+| Track one concrete, closeable follow-up to done | `docs/backlog/` — one open item per file (`YYYY-MM-DD-<slug>.md`), each with a checkable threshold; see its [`README.md`](docs/backlog/README.md). Close an item by deleting its file in the implementing PR and citing the item id. (For the TODO.md ↔ backlog boundary, see that README's *Relationship to TODO.md*.) |
 | Write a UAT case | `docs/uat/README.md` + a sibling spec file |
 | Write a UAT harness slot | `tests/uat/test_uat_foundations.cpp` is the template |
 | Add a PDF command | `src/document/PdfCommands.h` + `RotatePageCommand` impl |
