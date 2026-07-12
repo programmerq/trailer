@@ -119,6 +119,35 @@ RUN dpkg --add-architecture i386 \
     && update-alternatives --set x86_64-w64-mingw32-g++ /usr/bin/x86_64-w64-mingw32-g++-posix \
     && rm -rf /var/lib/apt/lists/*
 
+# General GitHub-Actions tooling, in a layer of its own so adding to it
+# doesn't invalidate the (large, slow) toolchain layer above. Kept
+# deliberately frugal — image size is a running cost, so this is only
+# what the repo's own workflows drive plus the two near-universal Actions
+# shell utilities:
+#   * gh — the GitHub CLI. The release automation calls it directly:
+#     `gh run list` / `gh workflow run` / `gh release view`
+#     (.github/workflows/release.yml, release-publish.yml,
+#     release-autotag.yml). Installed from GitHub's OFFICIAL apt repo per
+#     https://cli.github.com, using the pinned-keyring method (fetch the
+#     archive keyring to /usr/share/keyrings, add a signed-by deb line).
+#     wget + ca-certificates come from the toolchain layer above.
+#   * jq — command-line JSON; the standard way to slice API / `gh` output
+#     in shell steps. Tiny, and effectively expected on any CI runner.
+#   * zip — the release job builds a Windows .zip and today hand-rolls it
+#     with `7z a -tzip` (release.yml) only because `zip` wasn't present;
+#     ship the conventional tool so those steps can use it.
+RUN out=/usr/share/keyrings/githubcli-archive-keyring.gpg \
+    && wget -nv -O "$out" https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+    && chmod go+r "$out" \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=$out] https://cli.github.com/packages stable main" \
+        > /etc/apt/sources.list.d/github-cli.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
+        gh \
+        jq \
+        zip \
+    && rm -rf /var/lib/apt/lists/*
+
 # Restore the base image's non-root runner identity and home so the
 # ARC-launched runner process behaves identically to the stock image.
 USER runner
