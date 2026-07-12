@@ -111,6 +111,7 @@ class TestUatFoundations : public QObject {
     void uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms();
     void uat_fnd_041_shareDisabledWithTooltipWhenUnavailable();
     void uat_fnd_042_twoPagesActionDisabledWithTooltip();
+    void uat_fnd_043_everyMenuWithDisabledTooltipActionRendersTooltips();
     void uat_fnd_050_fileOpenEventOpensWindow();
     void uat_fnd_070_copyPageAsImageToClipboard();
 
@@ -589,6 +590,76 @@ void TestUatFoundations::uat_fnd_042_twoPagesActionDisabledWithTooltip() {
     QVERIFY2(hostMenu->toolTipsVisible(),
              "The View menu must call setToolTipsVisible(true) so the disabled "
              "Two Pages tooltip is actually rendered on hover");
+}
+
+// UAT-FND-043 — Generalized "no lying controls" guard (Gate G3).
+//
+// uat_fnd_041 (Share) and uat_fnd_042 (Two Pages) each pin one specific
+// action: disabled + explanatory tooltip + host menu has toolTipsVisible.
+// The regression they guard against is structural, though — ANY new menu,
+// or an action moved to a menu that forgot setToolTipsVisible(true), would
+// silently swallow its "here's why this is greyed out / where to go
+// instead" tooltip. This test generalizes the pair: it sweeps EVERY menu
+// reachable under the menu bar (top-level menus and their submenus) and,
+// for every disabled action that carries an explanatory tooltip, asserts
+// the hosting menu actually renders tooltips. It is the general invariant;
+// 041/042 remain as named traceability anchors.
+void TestUatFoundations::
+    uat_fnd_043_everyMenuWithDisabledTooltipActionRendersTooltips() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    // A window with no open document maximises the number of disabled
+    // capability actions (Share on unsupported platforms, Two Pages, Copy
+    // Page as Image, Recognize Text, …), so the sweep has real work to do.
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    QApplication::processEvents();
+
+    // QAction::toolTip() falls back to a synthesised label when no tooltip
+    // is set explicitly — Qt strips the mnemonic '&' AND a trailing ellipsis
+    // ("Save &As…" -> "Save As"), so a hand-rolled '&'-strip would mis-flag
+    // ellipsis items. To match Qt's fallback exactly (and stay version-proof)
+    // we ask Qt itself: a throwaway action with the same text and no explicit
+    // tooltip yields precisely that fallback. An action carries a real
+    // *explanation* only when its tooltip differs from that fallback — that is
+    // the G3-relevant set.
+    auto carriesExplanation = [](const QAction *action) {
+        const QString tip = action->toolTip();
+        if (tip.isEmpty())
+            return false;
+        const QAction fallbackProbe(action->text(), nullptr);
+        return tip != fallbackProbe.toolTip();
+    };
+
+    // findChildren<QMenu*> is recursive, so this reaches submenus (Open
+    // Recent, Forms, …) as well as the top-level menus.
+    const QList<QMenu *> menus = mw->menuBar()->findChildren<QMenu *>();
+    QVERIFY2(!menus.isEmpty(), "Expected the menu bar to contain menus");
+
+    int disabledExplainedActions = 0;
+    for (QMenu *menu : menus) {
+        for (QAction *action : menu->actions()) {
+            if (action->isSeparator() || action->menu() != nullptr)
+                continue;
+            if (action->isEnabled() || !carriesExplanation(action))
+                continue;
+            ++disabledExplainedActions;
+            const QString msg =
+                QStringLiteral(
+                    "G3 violation: menu \"%1\" hosts disabled action \"%2\" "
+                    "with explanatory tooltip \"%3\" but does NOT call "
+                    "setToolTipsVisible(true) — the explanation is invisible "
+                    "on hover.")
+                    .arg(menu->title(), action->text(), action->toolTip());
+            QVERIFY2(menu->toolTipsVisible(), qPrintable(msg));
+        }
+    }
+
+    // Guard against the sweep silently passing because it found nothing to
+    // check (e.g. a fixture change that stops surfacing disabled actions).
+    QVERIFY2(disabledExplainedActions > 0,
+             "Expected at least one disabled+explained action to sweep; the "
+             "test would be vacuous otherwise");
 }
 
 // UAT-FND-050 — Synthesize the QFileOpenEvent macOS dispatches when
