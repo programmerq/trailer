@@ -528,3 +528,59 @@ one (manifests as "wrong sparkle on Remove Background after a
 fast close-and-reopen"). A `DocumentLifecycle` service that
 generalises this is roadmap-tracked; until it lands, every
 new raw-pointer-keyed cache must hand-subscribe.
+
+---
+
+## 14. Enum switches: no catch-all `default` for domain/mode enums
+
+A `switch` over one of our domain enums (`ViewMode`, `ZoomMode`,
+`DocumentType`, and any future mode/state enum defined in our code)
+MUST enumerate every enumerator explicitly and MUST NOT carry a
+`default:` catch-all. Adding a new enumerator is then a compile
+error at every switch that forgot to handle it — the compiler, not
+code review, keeps the switches exhaustive.
+
+**Anchor files:** `cmake/CompilerWarnings.cmake` (the
+`trailer_set_warnings` function that promotes `-Wswitch` to an
+error), `src/document/IDocument.h` (the `ViewMode` / `ZoomMode` /
+`DocumentType` definitions), `src/document/PdfAdapter.cpp`
+(`applyViewMode`, `applyZoomState`), `src/ui/MainWindow.cpp`
+(`syncViewModeActions`), `src/settings/DocumentTypeDefaults.cpp` and
+`src/recent/RecentFiles.cpp` (`zoomModeKey`),
+`src/document/ImageAdapter.cpp` (`applyZoomState`).
+
+**Pattern.** `trailer_set_warnings` appends `-Werror=switch`
+unconditionally (GCC/Clang; `/we4062` for MSVC) — *not* gated behind
+`TRAILER_WERROR`, so it binds even in the default/CI build where full
+`-Werror` is off. `-Wswitch` (part of `-Wall`) fires only when a
+switch over an enum both omits an enumerator AND has no `default:`.
+Promoting just this one warning to an error makes exhaustive,
+default-less mode switches compiler-enforced without turning on full
+`-Werror`, which stays off because Qt and other third-party headers
+are warning-noisy. A `default:` (or `default: break;`) silences
+`-Wswitch` entirely — which is exactly why it is forbidden for our
+domain enums: it re-opens the silent-swallow hole. Reserve `default:`
+for switches over a genuinely open or non-enum value (a raw `int`, a
+third-party enum you don't own, a bitmask), where a fallback branch
+is legitimate.
+
+**Recipe.** A new switch over one of our enums:
+
+1. Write one `case` per enumerator; no `default:`.
+2. If some cases share behavior, group them
+   (`case A: case B: ...`) rather than reaching for `default:`.
+3. If you need a post-switch fallback (e.g. an unreachable
+   sentinel `return`), put it *after* the closing brace of the
+   switch, not in a `default:` label — the trailing statement does
+   not suppress `-Wswitch`.
+4. Adding an enumerator to the enum: rebuild; the compiler lists
+   every switch that now needs a case.
+
+**Broken if.** A `default:` on a mode/domain-enum switch lets a
+newly added enumerator fall through silently — this is exactly the
+Two-Pages regression that motivated the rule: `applyViewMode` once
+had a catch-all that aliased `ViewMode::TwoPages` onto
+`Continuous`, so the view silently showed a different layout than
+the label promised. With `-Werror=switch` and no `default:`, that
+class of bug is unrepresentable — the build fails until every
+enumerator is handled on purpose.
