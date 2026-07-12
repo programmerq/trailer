@@ -60,13 +60,27 @@ void DocumentView::onTabCloseRequested(int index) {
     if (index < 0 || index >= static_cast<int>(m_documents.size())) {
         return;
     }
+    // Read the doc pointer BEFORE any teardown so the veto listener can
+    // inspect it (dirty check, save prompt) while the tab and document
+    // are still fully intact. If the listener vetoes, we bail without
+    // touching the tab bar or the unique_ptr — the unsaved work stays.
+    IDocument *doc = m_documents[static_cast<size_t>(index)].get();
+    bool veto = false;
+    emit documentCloseRequested(doc, &veto);
+    if (veto) {
+        return;
+    }
+    // index is reused below after the synchronous emit above. The emit
+    // may run a nested modal loop (MainWindow's Save/Discard/Cancel
+    // prompt), but QMessageBox::exec is app-modal and doc-adds only
+    // append to m_documents, so no re-entrant close can shift or
+    // invalidate this index while the modal is up — index stays valid.
     QWidget *view = widget(index);
     removeTab(index);
     // Emit the about-to-be-removed signal before erasing the
     // unique_ptr so listeners can flush state keyed by the doc
     // pointer (cancel any pending MlScheduler tasks, drop cache
     // entries) while the pointer is still valid to compare against.
-    IDocument *doc = m_documents[static_cast<size_t>(index)].get();
     emit documentAboutToBeRemoved(doc);
     if (view) {
         view->deleteLater();

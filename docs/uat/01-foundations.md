@@ -145,20 +145,34 @@ Format described in [README.md](README.md).
 - The window closes.
 - The process exits cleanly (if it was the last window).
 
-### UAT-FND-014 — Close Window with unsaved changes (Known gap)
+### UAT-FND-014 — Close with unsaved changes (Save / Discard / Cancel)
 
 **Preconditions:** A document is open with unsaved modifications (the
 tab title starts with `• `).
 **Steps:**
-1. `File > Close Window`.
-**Expected (future):**
+1. Trigger a close — either close the tab (tab close button, last tab →
+   empty state on Win/Linux, or a non-last/middle tab) **or**
+   `File > Close Window`.
+**Expected:**
 - A prompt asks whether to save, discard, or cancel.
-- `Save` writes the document and closes the window.
-- `Discard` closes without writing.
-- `Cancel` leaves the window open and the document untouched.
+- `Save` writes the document (untitled docs route through Save-As to
+  pick a destination) and closes; the document reports clean afterwards.
+- `Discard` closes without writing; the original file on disk is
+  unchanged.
+- `Cancel` leaves the window/tab open and the document untouched — the
+  unsaved edits (dirty state) survive and nothing is written to disk.
+- Closing a **clean** document never prompts.
+- Closing a non-last tab prompts only for that tab; the other open
+  documents are unaffected.
 
-**Current:** the window closes immediately with no prompt; unsaved
-edits are silently discarded. Cross-ref UAT-FND-092 and TODO.md.
+**Automated coverage:** `test_uat_foundations` cases
+`uat_fnd_014_closeDirtyTabCancelKeepsDocAndEdits`,
+`uat_fnd_014_closeDirtyTabDiscardDropsDoc`,
+`uat_fnd_014_closeDirtyTabSaveTitledWritesFile`,
+`uat_fnd_014_closeDirtyTabSaveUntitledRoutesThroughSaveAs`,
+`uat_fnd_014_closeDirtyNonLastTabCancelThenDiscard`, and
+`uat_fnd_014_closeCleanTabNeverPrompts` drive the full matrix through the
+`setCloseResponseForTesting` seam. Cross-ref UAT-FND-092 and TODO.md.
 
 ### UAT-FND-015 — Quit via menu
 
