@@ -16,10 +16,13 @@
 
 #include <QAction>
 #include <QClipboard>
+#include <QDir>
 #include <QDockWidget>
+#include <QFile>
 #include <QFileOpenEvent>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QPdfWriter>
 #include <QPageSize>
 #include <QImage>
@@ -31,6 +34,8 @@
 #include <QTemporaryFile>
 #include <QToolBar>
 #include <QtTest/QtTest>
+
+#include <memory>
 
 using namespace trailer;
 
@@ -80,6 +85,88 @@ QStringList topLevelMenuTexts(QMenuBar *bar) {
     return texts;
 }
 
+// Minimal editable IDocument used by the UAT-FND-014 close-prompt
+// cases. It reports a controllable dirty flag and, on save(), writes a
+// marker payload to its target path and clears dirty — exactly the
+// contract MainWindow's close prompt depends on (save() success +
+// isDirty() flipping to false). Kept in the test so the matrix can be
+// driven deterministically without a real PDF/qpdf round-trip.
+class FakeDoc : public trailer::IDocument {
+  public:
+    FakeDoc(QString path, QString name, QString payload)
+        : m_path(std::move(path)), m_name(std::move(name)), m_payload(std::move(payload)) {}
+
+    QString displayName() const override { return m_name; }
+    QString filePath() const override { return m_path; }
+    QWidget *createView(QWidget *parent) override { return new QWidget(parent); }
+
+    bool supportsEditing() const override { return true; }
+    bool isDirty() const override { return m_dirty; }
+    void setDirty(bool dirty) { m_dirty = dirty; }
+
+    bool save(const QString &newPath = {}) override {
+        const QString target = newPath.isEmpty() ? m_path : newPath;
+        if (target.isEmpty())
+            return false;
+        QFile f(target);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            return false;
+        f.write(m_payload.toUtf8());
+        f.close();
+        m_path = target;
+        m_dirty = false;
+        ++m_saveCount;
+        return true;
+    }
+
+    int saveCount() const { return m_saveCount; }
+
+  private:
+    QString m_path;
+    QString m_name;
+    QString m_payload;
+    bool m_dirty = false;
+    int m_saveCount = 0;
+};
+
+// Add a FakeDoc to a MainWindow's DocumentView (the same view the close-
+// prompt veto is wired to) and return the raw pointer so the caller can
+// inspect dirty/save state after driving a close.
+FakeDoc *addFakeDoc(MainWindow *mw, const QString &path, const QString &name,
+                    const QString &payload, bool dirty) {
+    auto *dv = mw->findChild<DocumentView *>();
+    auto doc = std::make_unique<FakeDoc>(path, name, payload);
+    doc->setDirty(dirty);
+    FakeDoc *raw = doc.get();
+    dv->addDocument(std::move(doc));
+    QApplication::processEvents();
+    return raw;
+}
+
+// Fire DocumentView's private tab-close slot the same way the tab-bar's
+// close button does (tabCloseRequested → onTabCloseRequested), so the
+// documentCloseRequested veto runs.
+void requestCloseTab(DocumentView *dv, int index) {
+    QMetaObject::invokeMethod(dv, "onTabCloseRequested", Qt::DirectConnection,
+                              Q_ARG(int, index));
+    QApplication::processEvents();
+}
+
+// Directory that persists past the test run (unlike QTemporaryDir) so
+// the G2 evidence PNGs can be collected. Lives under the CTest working
+// directory (the build tree).
+QString screenshotDir() {
+    QDir dir(QDir::current());
+    dir.mkpath(QStringLiteral("uat-screenshots"));
+    return dir.absoluteFilePath(QStringLiteral("uat-screenshots"));
+}
+
+void grabTo(QWidget *w, const QString &name) {
+    const QString path = QDir(screenshotDir()).absoluteFilePath(name);
+    w->grab().save(path, "PNG");
+    qInfo().noquote() << "G2-SCREENSHOT" << path;
+}
+
 QString writeTinyPdf(const QString &path) {
     QPdfWriter writer(path);
     writer.setPageSize(QPageSize(QPageSize::A4));
@@ -108,6 +195,15 @@ class TestUatFoundations : public QObject {
     void uat_fnd_020_flashErrorRoutesToStatusBarNotModal();
     void uat_fnd_030_autoSaveWritesDirtyDocsWithPath();
     void uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs();
+    // UAT-FND-014 — closing a dirty tab prompts Save/Discard/Cancel
+    // instead of silently discarding unsaved edits. One slot per row of
+    // the threshold matrix.
+    void uat_fnd_014_closeDirtyTabCancelKeepsDocAndEdits();
+    void uat_fnd_014_closeDirtyTabDiscardDropsDoc();
+    void uat_fnd_014_closeDirtyTabSaveTitledWritesFile();
+    void uat_fnd_014_closeDirtyTabSaveUntitledRoutesThroughSaveAs();
+    void uat_fnd_014_closeDirtyNonLastTabCancelThenDiscard();
+    void uat_fnd_014_closeCleanTabNeverPrompts();
     void uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms();
     void uat_fnd_041_shareDisabledWithTooltipWhenUnavailable();
     void uat_fnd_042_twoPagesActionDisabledWithTooltip();
@@ -508,6 +604,249 @@ void TestUatFoundations::uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs() {
     QApplication::processEvents();
     QVERIFY2(!mw->statusBar()->currentMessage().contains(QStringLiteral("Auto-saved")),
              "When autoSave setting is off, no save should happen");
+}
+
+// UAT-FND-014 — Cancel on the close prompt keeps the dirty document: the
+// tab stays, the doc count is unchanged, and the unsaved edits (dirty
+// flag) survive. No file is written. This is the data-loss guard: the
+// pre-fix code erased the unique_ptr with no prompt.
+void TestUatFoundations::uat_fnd_014_closeDirtyTabCancelKeepsDocAndEdits() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    const QString file = m_scratch.filePath(QStringLiteral("uat_fnd_014_cancel.txt"));
+    QFile seed(file);
+    QVERIFY(seed.open(QIODevice::WriteOnly));
+    seed.write("ORIGINAL");
+    seed.close();
+
+    FakeDoc *doc = addFakeDoc(mw, file, QStringLiteral("cancel-doc"),
+                              QStringLiteral("REWRITTEN"), /*dirty=*/true);
+    QCOMPARE(dv->documentCount(), 1);
+
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+    // Evidence: doc-open-with-dirty-tab state before the close attempt.
+    grabTo(mw, QStringLiteral("fnd014_dirty_tab_open.png"));
+
+    // Evidence: render the Save/Discard/Cancel prompt itself. Offscreen
+    // shows no live modal (the forced-response seam drives the choice),
+    // so we build the identical QMessageBox purely to grab its visual.
+    {
+        QMessageBox box(mw);
+        box.setIcon(QMessageBox::Warning);
+        box.setWindowTitle(QStringLiteral("Unsaved changes"));
+        box.setText(QStringLiteral("Save changes to %1?").arg(doc->displayName()));
+        box.setStandardButtons(QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+        box.setDefaultButton(QMessageBox::Save);
+        box.ensurePolished();
+        box.adjustSize();
+        grabTo(&box, QStringLiteral("fnd014_prompt_save_discard_cancel.png"));
+    }
+
+    requestCloseTab(dv, 0);
+
+    // Cancel must abort the close: doc still present, still dirty.
+    QCOMPARE(dv->documentCount(), 1);
+    QCOMPARE(mw->documentCount(), 1);
+    QCOMPARE(dv->currentDocument(), static_cast<IDocument *>(doc));
+    QVERIFY2(doc->isDirty(), "Cancelling the close must leave edits intact (still dirty)");
+    QCOMPARE(doc->saveCount(), 0);
+
+    // Evidence: the document is still open after Cancel.
+    grabTo(mw, QStringLiteral("fnd014_doc_still_open_after_cancel.png"));
+
+    // On-disk file must be untouched by a Cancel.
+    QFile check(file);
+    QVERIFY(check.open(QIODevice::ReadOnly));
+    QCOMPARE(check.readAll(), QByteArray("ORIGINAL"));
+
+    // Reset the forced-response seam so it can't leak into later slots.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+}
+
+// UAT-FND-014 — Discard drops the dirty document without saving. The tab
+// closes (count 0 → empty state), and the original file on disk is left
+// unchanged.
+void TestUatFoundations::uat_fnd_014_closeDirtyTabDiscardDropsDoc() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    const QString file = m_scratch.filePath(QStringLiteral("uat_fnd_014_discard.txt"));
+    QFile seed(file);
+    QVERIFY(seed.open(QIODevice::WriteOnly));
+    seed.write("ORIGINAL");
+    seed.close();
+
+    FakeDoc *doc = addFakeDoc(mw, file, QStringLiteral("discard-doc"),
+                              QStringLiteral("REWRITTEN"), /*dirty=*/true);
+    QCOMPARE(dv->documentCount(), 1);
+
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
+    requestCloseTab(dv, 0);
+
+    // Discard: the doc is gone.
+    QCOMPARE(dv->documentCount(), 0);
+    QCOMPARE(mw->documentCount(), 0);
+    QCOMPARE(doc->saveCount(), 0);
+
+    // Evidence: empty-state after Discard.
+    grabTo(mw, QStringLiteral("fnd014_empty_state_after_discard.png"));
+
+    // Original file must NOT have been rewritten by a discard.
+    QFile check(file);
+    QVERIFY(check.open(QIODevice::ReadOnly));
+    QCOMPARE(check.readAll(), QByteArray("ORIGINAL"));
+
+    // Reset the forced-response seam so it can't leak into later slots.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+}
+
+// UAT-FND-014 — Save on a titled dirty doc writes the file and closes.
+// The doc reports clean afterwards; the file on disk carries the new
+// payload.
+void TestUatFoundations::uat_fnd_014_closeDirtyTabSaveTitledWritesFile() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    const QString file = m_scratch.filePath(QStringLiteral("uat_fnd_014_save.txt"));
+    QFile seed(file);
+    QVERIFY(seed.open(QIODevice::WriteOnly));
+    seed.write("ORIGINAL");
+    seed.close();
+
+    FakeDoc *doc = addFakeDoc(mw, file, QStringLiteral("save-doc"),
+                              QStringLiteral("REWRITTEN"), /*dirty=*/true);
+    QCOMPARE(dv->documentCount(), 1);
+
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Save);
+    requestCloseTab(dv, 0);
+
+    // Save succeeded → the tab closed.
+    QCOMPARE(dv->documentCount(), 0);
+    QCOMPARE(doc->saveCount(), 1);
+
+    // File on disk carries the new payload.
+    QFile check(file);
+    QVERIFY(check.open(QIODevice::ReadOnly));
+    QCOMPARE(check.readAll(), QByteArray("REWRITTEN"));
+
+    // Reset the forced-response seam so it can't leak into later slots.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+}
+
+// UAT-FND-014 — Save on an UNTITLED dirty doc routes through the Save-As
+// path (chooseSaveAsPath). The harness seeds the destination via
+// setSaveAsPathForTesting; the file is written and the tab closes.
+void TestUatFoundations::uat_fnd_014_closeDirtyTabSaveUntitledRoutesThroughSaveAs() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    const QString target = m_scratch.filePath(QStringLiteral("uat_fnd_014_untitled.txt"));
+    QFile::remove(target);
+
+    // Untitled: empty filePath. Save must route through Save-As.
+    FakeDoc *doc = addFakeDoc(mw, QString(), QStringLiteral("Untitled"),
+                              QStringLiteral("UNTITLED-PAYLOAD"), /*dirty=*/true);
+    QCOMPARE(dv->documentCount(), 1);
+
+    mw->setSaveAsPathForTesting(target);
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Save);
+    requestCloseTab(dv, 0);
+
+    // Save-As routed and wrote → the tab closed.
+    QCOMPARE(dv->documentCount(), 0);
+    QCOMPARE(doc->saveCount(), 1);
+    QVERIFY2(QFileInfo::exists(target),
+             "Untitled Save must route through Save-As and write the chosen path");
+    QFile check(target);
+    QVERIFY(check.open(QIODevice::ReadOnly));
+    QCOMPARE(check.readAll(), QByteArray("UNTITLED-PAYLOAD"));
+
+    mw->setSaveAsPathForTesting(QString());
+    // Reset the forced-response seam so it can't leak into later slots.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+}
+
+// UAT-FND-014 (path c) — closing a NON-last (middle) tab respects the
+// prompt: Cancel keeps both docs; Discard drops only the targeted one
+// and leaves the OTHER intact.
+void TestUatFoundations::uat_fnd_014_closeDirtyNonLastTabCancelThenDiscard() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    const QString fileA = m_scratch.filePath(QStringLiteral("uat_fnd_014_nonlast_a.txt"));
+    const QString fileB = m_scratch.filePath(QStringLiteral("uat_fnd_014_nonlast_b.txt"));
+    FakeDoc *docA = addFakeDoc(mw, fileA, QStringLiteral("doc-A"),
+                               QStringLiteral("A"), /*dirty=*/true);
+    FakeDoc *docB = addFakeDoc(mw, fileB, QStringLiteral("doc-B"),
+                               QStringLiteral("B"), /*dirty=*/false);
+    QCOMPARE(dv->documentCount(), 2);
+
+    // Cancel closing the dirty non-last tab (index 0) → both survive.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+    requestCloseTab(dv, 0);
+    QCOMPARE(dv->documentCount(), 2);
+    QVERIFY(docA->isDirty());
+
+    // Discard closing the same dirty non-last tab → only doc-B remains.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
+    requestCloseTab(dv, 0);
+    QCOMPARE(dv->documentCount(), 1);
+    IDocument *survivor = nullptr;
+    QVERIFY(dv->documentAt(0, &survivor));
+    QCOMPARE(survivor, static_cast<IDocument *>(docB));
+    QCOMPARE(survivor->displayName(), QStringLiteral("doc-B"));
+
+    // Reset the forced-response seam so it can't leak into later slots.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+}
+
+// UAT-FND-014 — a CLEAN document closes with NO prompt. Proven by forcing
+// the response to Cancel: if the prompt were consulted the doc would be
+// vetoed and stay, but because the isDirty() guard short-circuits before
+// confirmCloseDirtyDoc, the clean doc closes regardless.
+void TestUatFoundations::uat_fnd_014_closeCleanTabNeverPrompts() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    const QString file = m_scratch.filePath(QStringLiteral("uat_fnd_014_clean.txt"));
+    FakeDoc *doc = addFakeDoc(mw, file, QStringLiteral("clean-doc"),
+                              QStringLiteral("X"), /*dirty=*/false);
+    QCOMPARE(dv->documentCount(), 1);
+
+    // Force Cancel: a clean doc must ignore it (never prompts) and close.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+    requestCloseTab(dv, 0);
+
+    QCOMPARE(dv->documentCount(), 0);
+    QCOMPARE(doc->saveCount(), 0);
+
+    // Reset the forced-response seam so it can't leak into later slots.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
 }
 
 // UAT-FND-040 — File → Share is ALWAYS present in the File menu. On

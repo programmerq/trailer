@@ -61,6 +61,18 @@ class MainWindow : public QMainWindow {
     void flashSuccess(const QString &message);
     void flashStatus(const QString &message);
 
+    // Test-only seam for the unsaved-changes close prompt. The offscreen
+    // UAT harness cannot click a real modal, so it forces the outcome of
+    // confirmCloseDirtyDoc() to Save / Discard / Cancel; Prompt (the
+    // default) shows the real QMessageBox in a headed session. See
+    // confirmCloseDirtyDoc().
+    enum class CloseResponse { Prompt, Save, Discard, Cancel };
+    void setCloseResponseForTesting(CloseResponse r) { m_closeResponseForTesting = r; }
+    // Test-only seam for the Save-As destination. When non-empty,
+    // chooseSaveAsPath() returns this instead of showing the native file
+    // dialog, letting the harness drive the untitled-document Save flow.
+    void setSaveAsPathForTesting(const QString &path) { m_saveAsPathForTesting = path; }
+
   public slots:
     void rebuildRecentMenu();
     // Save every dirty document with an established file path. Wired
@@ -197,6 +209,14 @@ class MainWindow : public QMainWindow {
     // path, or an empty string if the user cancelled. Shared by onSaveAs()
     // and the unsaved-changes close prompt so both offer the same dialog.
     QString chooseSaveAsPath(IDocument *doc);
+    // Prompt (or, under a forced test response, decide) whether to close
+    // a dirty document. Returns true to proceed with closing this doc,
+    // false to abort (Cancel, or a Save that failed / was cancelled).
+    // Reuses chooseSaveAsPath for untitled docs exactly as closeEvent
+    // does. Shared by closeEvent's window-close walk and the
+    // DocumentView::documentCloseRequested tab-close veto so both paths
+    // behave identically.
+    bool confirmCloseDirtyDoc(IDocument *doc);
     void syncViewModeActions(IDocument *doc);
     void showSearchBar();
     void hideSearchBar();
@@ -234,6 +254,14 @@ class MainWindow : public QMainWindow {
 
     Application *m_app;
     DocumentView *m_documentView = nullptr;
+    // Forced outcome for the unsaved-changes close prompt. Prompt (the
+    // default) shows the real modal; the UAT harness overrides it to
+    // drive Save / Discard / Cancel deterministically. See
+    // setCloseResponseForTesting / confirmCloseDirtyDoc.
+    CloseResponse m_closeResponseForTesting = CloseResponse::Prompt;
+    // Forced Save-As destination for tests; empty means "show the real
+    // file dialog". See setSaveAsPathForTesting / chooseSaveAsPath.
+    QString m_saveAsPathForTesting;
     // Empty-state window model: the central column is a QStackedWidget
     // with two pages — the document page (document view + animation bar)
     // and the empty-state welcome surface. updateEmptyState() swaps

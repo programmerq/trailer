@@ -30,6 +30,17 @@ class DocumentView : public QTabWidget {
   signals:
     void allTabsClosed();
     void currentDocumentChanged(IDocument *document);
+    // Synchronous close veto. Emitted from onTabCloseRequested BEFORE
+    // the tab / document is torn down, giving a listener (MainWindow's
+    // unsaved-changes prompt) the chance to abort the close. The
+    // listener sets *veto = true to keep the tab and document fully
+    // intact. DocumentView deliberately owns no QMessageBox: the
+    // policy of whether to prompt lives in MainWindow, which reuses
+    // the same Save/Discard/Cancel flow as the window-close path.
+    // Single-listener assumption: the bool* veto is only ever SET to
+    // true (never cleared), so if multiple slots connect it is
+    // last-writer-wins — the current design wires exactly one listener.
+    void documentCloseRequested(IDocument *document, bool *veto);
     // Emitted just before a document is destroyed (after its tab is
     // removed). Listeners that hold raw IDocument* keys (e.g.
     // MainWindow's background-candidate score cache, MlScheduler-

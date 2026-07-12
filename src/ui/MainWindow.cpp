@@ -161,6 +161,17 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // closing the final tab discards the now-empty window, which is
     // also what the user expects.
     connect(m_documentView, &DocumentView::allTabsClosed, this, &MainWindow::onAllTabsClosed);
+    // Unsaved-changes veto for tab closes. onTabCloseRequested emits this
+    // synchronously before tearing the tab down; we prompt (reusing the
+    // same Save/Discard/Cancel flow as closeEvent) only for dirty docs
+    // and set *veto when the user aborts. A CLEAN doc is never prompted
+    // — the isDirty() guard keeps never-worry-save and auto-saved docs
+    // (which report isDirty()==false) from nagging when nothing is lost.
+    connect(m_documentView, &DocumentView::documentCloseRequested, this,
+            [this](IDocument *doc, bool *veto) {
+                if (doc && doc->isDirty())
+                    *veto = !confirmCloseDirtyDoc(doc);
+            });
     // Flush per-document state keyed by raw IDocument pointer before
     // the document is destroyed. The MlScheduler owns the cancellation
     // tokens for in-flight work; cancelling here keeps the worker
@@ -2064,6 +2075,10 @@ void MainWindow::onSaveAs() {
 QString MainWindow::chooseSaveAsPath(IDocument *doc) {
     if (!doc)
         return {};
+    // Test seam: the offscreen UAT harness cannot drive the native file
+    // dialog, so it pre-seeds the destination via setSaveAsPathForTesting.
+    if (!m_saveAsPathForTesting.isEmpty())
+        return m_saveAsPathForTesting;
     const bool isImage = dynamic_cast<ImageDocument *>(doc) != nullptr;
 
     // Suggest a filename that hints at what's been done to the
@@ -3430,47 +3445,88 @@ void MainWindow::closeEvent(QCloseEvent *event) {
             dirty.push_back(doc);
         }
     }
+    // NOTE (macOS path (a) — last-tab close): on macOS, closing the last
+    // tab routes through DocumentView::onTabCloseRequested → the
+    // documentCloseRequested veto (which runs confirmCloseDirtyDoc) →
+    // allTabsClosed → close() → here. By the time closeEvent runs the
+    // document has already been erased, so this walk finds no dirty docs
+    // and does not prompt a second time. The prompt is shown exactly once.
     for (IDocument *doc : dirty) {
+        if (!confirmCloseDirtyDoc(doc)) {
+            event->ignore();
+            return;
+        }
+        // confirmCloseDirtyDoc returned true: Save succeeded or the user
+        // chose Discard. Drop through and let the close proceed.
+    }
+    event->accept();
+}
+
+bool MainWindow::confirmCloseDirtyDoc(IDocument *doc) {
+    if (!doc)
+        return true;
+
+    // Resolve the outcome. A forced test response bypasses the modal so
+    // the offscreen UAT harness can drive Save / Discard / Cancel. With
+    // the default (Prompt) response under offscreen / minimal there is no
+    // human to click the dialog and no forced choice, so we take the
+    // data-loss-first posture: veto (keep the doc) rather than silently
+    // discard unsaved edits. The UAT slots always force a response, so
+    // they never reach this branch.
+    int answer = QMessageBox::Cancel;
+    switch (m_closeResponseForTesting) {
+    case CloseResponse::Save:
+        answer = QMessageBox::Save;
+        break;
+    case CloseResponse::Discard:
+        answer = QMessageBox::Discard;
+        break;
+    case CloseResponse::Cancel:
+        answer = QMessageBox::Cancel;
+        break;
+    case CloseResponse::Prompt: {
+        const QString platform = QGuiApplication::platformName();
+        if (platform == QLatin1String("offscreen") || platform == QLatin1String("minimal")) {
+            return false;
+        }
         QMessageBox box(this);
         box.setIcon(QMessageBox::Warning);
         box.setWindowTitle(tr("Unsaved changes"));
         box.setText(tr("Save changes to %1?").arg(doc->displayName()));
         box.setStandardButtons(QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
         box.setDefaultButton(QMessageBox::Save);
-        const int answer = box.exec();
-        if (answer == QMessageBox::Cancel) {
-            event->ignore();
-            return;
-        }
-        if (answer == QMessageBox::Save) {
-            bool ok = false;
-            if (doc->filePath().isEmpty()) {
-                // Untitled document: route through the Save-As dialog so
-                // the user picks a destination, then save synchronously
-                // (like the has-path branch below) so the dirty check
-                // reflects the real outcome rather than a still-pending
-                // async save.
-                const QString path = chooseSaveAsPath(doc);
-                if (path.isEmpty()) {
-                    // The user cancelled Save-As. Honour the cancel: abort
-                    // the close and keep the unsaved work intact.
-                    event->ignore();
-                    return;
-                }
-                ok = doc->save(path);
-            } else {
-                ok = doc->save();
-            }
-            if (!ok || doc->isDirty()) {
-                // Save failed. Do not lose the user's work; abort the close.
-                flashError(tr("Could not save %1; close cancelled.").arg(doc->displayName()));
-                event->ignore();
-                return;
-            }
-        }
-        // Discard: drop through and let the close proceed.
+        answer = box.exec();
+        break;
     }
-    event->accept();
+    }
+
+    if (answer == QMessageBox::Cancel)
+        return false;
+    if (answer == QMessageBox::Save) {
+        bool ok = false;
+        if (doc->filePath().isEmpty()) {
+            // Untitled document: route through the Save-As dialog so the
+            // user picks a destination, then save synchronously (like the
+            // has-path branch below) so the dirty check reflects the real
+            // outcome rather than a still-pending async save.
+            const QString path = chooseSaveAsPath(doc);
+            if (path.isEmpty()) {
+                // The user cancelled Save-As. Honour the cancel: abort the
+                // close and keep the unsaved work intact.
+                return false;
+            }
+            ok = doc->save(path);
+        } else {
+            ok = doc->save();
+        }
+        if (!ok || doc->isDirty()) {
+            // Save failed. Do not lose the user's work; abort the close.
+            flashError(tr("Could not save %1; close cancelled.").arg(doc->displayName()));
+            return false;
+        }
+    }
+    // Discard, or a successful Save: proceed with closing this doc.
+    return true;
 }
 
 } // namespace trailer
