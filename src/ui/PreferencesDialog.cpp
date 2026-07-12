@@ -44,6 +44,28 @@ void selectComboByData(QComboBox *combo, int value) {
 
 } // namespace
 
+QLabel *PreferencesDialog::makeRestartHint(QAnyStringView key, QWidget *parent) {
+    // Live (or unregistered) keys get no hint. std::optional's comparison
+    // with the enum value is false for std::nullopt, so an unknown key
+    // renders nothing rather than a spurious hint.
+    if (Settings::volatilityOf(key) != Settings::Volatility::RestartRequired)
+        return nullptr;
+
+    auto *hint = new QLabel(tr("Requires restart to take effect"), parent);
+    hint->setObjectName(QStringLiteral("restartHint"));
+    hint->setWordWrap(true);
+    // Match the muted helper-label style used elsewhere in this dialog
+    // (see the Theme helper): slightly smaller, disabled-text colour.
+    QFont hintFont = hint->font();
+    hintFont.setPointSizeF(hintFont.pointSizeF() * 0.9);
+    hint->setFont(hintFont);
+    QPalette hintPalette = hint->palette();
+    hintPalette.setColor(QPalette::WindowText,
+                         hintPalette.color(QPalette::Disabled, QPalette::WindowText));
+    hint->setPalette(hintPalette);
+    return hint;
+}
+
 QToolButton *PreferencesDialog::makeResetButton(QWidget *parent, const QString &objectName,
                                                 std::function<void()> onReset,
                                                 std::function<bool()> atDefault) {
@@ -77,11 +99,15 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
     const auto addFieldRow = [this](QFormLayout *form, const QString &label,
                                     QWidget *control, const QString &resetName,
                                     std::function<void()> onReset,
-                                    std::function<bool()> atDefault) {
+                                    std::function<bool()> atDefault, QAnyStringView settingsKey) {
         auto *rowWidget = new QWidget(form->parentWidget());
         auto *rowLayout = new QHBoxLayout(rowWidget);
         rowLayout->setContentsMargins(0, 0, 0, 0);
         rowLayout->addWidget(control, 1);
+        // A RestartRequired key appends a muted hint between the control
+        // and its revert icon. Live keys (all of them today) add nothing.
+        if (QLabel *hint = makeRestartHint(settingsKey, rowWidget))
+            rowLayout->addWidget(hint, 0);
         rowLayout->addWidget(makeResetButton(rowWidget, resetName, std::move(onReset),
                                              std::move(atDefault)),
                              0);
@@ -93,11 +119,15 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
     // indicator never floats mid-row.
     const auto addCheckRow = [this](QFormLayout *form, QCheckBox *check,
                                     const QString &resetName, std::function<void()> onReset,
-                                    std::function<bool()> atDefault) {
+                                    std::function<bool()> atDefault, QAnyStringView settingsKey) {
         auto *rowWidget = new QWidget(form->parentWidget());
         auto *rowLayout = new QHBoxLayout(rowWidget);
         rowLayout->setContentsMargins(0, 0, 0, 0);
         rowLayout->addWidget(check, 1);
+        // A RestartRequired key appends a muted hint next to the checkbox.
+        // Live keys (all of them today) add nothing.
+        if (QLabel *hint = makeRestartHint(settingsKey, rowWidget))
+            rowLayout->addWidget(hint, 0);
         rowLayout->addStretch(0);
         rowLayout->addWidget(makeResetButton(rowWidget, resetName, std::move(onReset),
                                              std::move(atDefault)),
@@ -169,7 +199,8 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
             [this]() {
                 return m_openFilesInCombo->currentData().toInt() ==
                        static_cast<int>(m_defaults.openFilesIn());
-            });
+            },
+            SettingsKeys::OpenFilesIn);
 
         m_restoreWindowsCheck = new QCheckBox(tr("Restore previous windows on launch"), page);
         m_restoreWindowsCheck->setObjectName(QStringLiteral("restoreWindowsCheck"));
@@ -180,7 +211,8 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
             [this]() { m_restoreWindowsCheck->setChecked(m_defaults.restorePreviousWindows()); },
             [this]() {
                 return m_restoreWindowsCheck->isChecked() == m_defaults.restorePreviousWindows();
-            });
+            },
+            SettingsKeys::RestorePreviousWindows);
 
         tabs->addTab(page, tr("General"));
     }
@@ -197,7 +229,8 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
         addCheckRow(
             form, m_autoSaveCheck, QStringLiteral("reset_autoSave"),
             [this]() { m_autoSaveCheck->setChecked(m_defaults.autoSave()); },
-            [this]() { return m_autoSaveCheck->isChecked() == m_defaults.autoSave(); });
+            [this]() { return m_autoSaveCheck->isChecked() == m_defaults.autoSave(); },
+            SettingsKeys::AutoSave);
 
         m_recentMaxSpin = new QSpinBox(page);
         m_recentMaxSpin->setObjectName(QStringLiteral("recentMaxSpin"));
@@ -208,7 +241,8 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
             form, tr("Recent files to remember"), m_recentMaxSpin,
             QStringLiteral("reset_recentMax"),
             [this]() { m_recentMaxSpin->setValue(m_defaults.recentMax()); },
-            [this]() { return m_recentMaxSpin->value() == m_defaults.recentMax(); });
+            [this]() { return m_recentMaxSpin->value() == m_defaults.recentMax(); },
+            SettingsKeys::RecentMax);
 
         tabs->addTab(page, tr("Files"));
     }
@@ -230,7 +264,8 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
             [this]() {
                 return m_mlRecognizeTextCheck->isChecked() ==
                        m_defaults.mlRecognizeTextInBackground();
-            });
+            },
+            SettingsKeys::MlRecognizeTextInBackground);
 
         m_mlPreloadSegCheck = new QCheckBox(tr("Preload segmentation on tool activation"), page);
         m_mlPreloadSegCheck->setObjectName(QStringLiteral("mlPreloadSegCheck"));
@@ -245,7 +280,8 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
             [this]() {
                 return m_mlPreloadSegCheck->isChecked() ==
                        m_defaults.mlPreloadSegmentationOnToolActivation();
-            });
+            },
+            SettingsKeys::MlPreloadSegmentationOnToolActivation);
 
         m_mlRunOnBatteryCheck = new QCheckBox(tr("Run ML on battery power"), page);
         m_mlRunOnBatteryCheck->setObjectName(QStringLiteral("mlRunOnBatteryCheck"));
@@ -256,7 +292,8 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
             [this]() { m_mlRunOnBatteryCheck->setChecked(m_defaults.mlRunOnBattery()); },
             [this]() {
                 return m_mlRunOnBatteryCheck->isChecked() == m_defaults.mlRunOnBattery();
-            });
+            },
+            SettingsKeys::MlRunOnBattery);
 
         m_manageModelsButton = new QPushButton(tr("Manage models…"), page);
         m_manageModelsButton->setObjectName(QStringLiteral("manageModelsButton"));

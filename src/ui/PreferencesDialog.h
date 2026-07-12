@@ -9,6 +9,7 @@
 class QCheckBox;
 class QComboBox;
 class QDialogButtonBox;
+class QLabel;
 class QPushButton;
 class QSpinBox;
 class QToolButton;
@@ -53,6 +54,16 @@ class PreferencesDialog : public QDialog {
     // disabled. Safe to call before or after construction.
     void setManageModelsCallback(std::function<void()> cb);
     void setResetAllCallback(std::function<void()> cb);
+
+    // Restart-hint factory (and test seam). Returns a muted, word-wrapped
+    // "Requires restart to take effect" QLabel (objectName "restartHint")
+    // when `key` is classified Settings::Volatility::RestartRequired, or
+    // nullptr when the key is Live (or unregistered). Every editable row
+    // is built through this, so reclassifying a key in the volatility
+    // registry makes its hint appear automatically. Static — no dialog
+    // instance required — so tests can drive it with a probe key. Because
+    // every current key is Live, no hint renders today.
+    static QLabel *makeRestartHint(QAnyStringView key, QWidget *parent = nullptr);
 
   signals:
     // Emitted after accept() has written and saved the settings, so the

@@ -462,9 +462,9 @@ void MainWindow::autoSaveDirtyDocs() {
 
 void MainWindow::buildMenus() {
     auto *fileMenu = menuBar()->addMenu(tr("&File"));
-    // The disabled Share… item carries an explanatory tooltip; Qt only
-    // renders action tooltips in a menu when tooltips are enabled on it.
-    fileMenu->setToolTipsVisible(true);
+    // The disabled Share… item's tooltip is made visible by
+    // makeDisabledAction() at its creation below (it calls
+    // fileMenu->setToolTipsVisible(true)), so no explicit call is needed here.
 
     auto *openAction = fileMenu->addAction(tr("&Open…"));
     openAction->setShortcut(QKeySequence::Open);
@@ -507,8 +507,17 @@ void MainWindow::buildMenus() {
     // disabled with a tooltip pointing at the real alternative, rather
     // than silently hidden (owner policy: unavailable capabilities are
     // disabled + explained, never dropped from the menu).
-    m_shareAction = fileMenu->addAction(tr("&Share…"));
+    // Created via makeDisabledAction so the File menu is guaranteed to
+    // render this disabled-state tooltip (G3). On platforms where sharing
+    // works we clear the explanation and re-enable; updateActionStates()
+    // then gates it on whether the document has a file path.
+    m_shareAction = makeDisabledAction(
+        fileMenu, tr("&Share…"),
+        tr("Sharing isn't available on this platform yet — use File → "
+           "Save As… to save a copy you can share."));
     if (ShareService::isAvailable()) {
+        m_shareAction->setToolTip(QString());
+        m_shareAction->setEnabled(true);
         connect(m_shareAction, &QAction::triggered, this, [this]() {
             auto *doc = m_documentView->currentDocument();
             if (!doc)
@@ -520,11 +529,6 @@ void MainWindow::buildMenus() {
             }
             ShareService::shareFile(path, this);
         });
-    } else {
-        m_shareAction->setEnabled(false);
-        m_shareAction->setToolTip(
-            tr("Sharing isn't available on this platform yet — use File → "
-               "Save As… to save a copy you can share."));
     }
 
     fileMenu->addSeparator();
@@ -696,9 +700,9 @@ void MainWindow::buildMainToolbar() {
 }
 
 void MainWindow::buildEditMenu(QMenu *editMenu) {
-    // Show tooltips on disabled entries (e.g. Copy Page as Image) so the
-    // greyed-out reason is discoverable on hover — mirrors the File/View menus.
-    editMenu->setToolTipsVisible(true);
+    // Tooltips on disabled entries (e.g. Copy Page as Image) are enabled by
+    // makeDisabledAction() when that action is created below, so the greyed-
+    // out reason stays discoverable on hover without an explicit call here.
 
     m_undoAction = editMenu->addAction(tr("&Undo"));
     m_undoAction->setShortcut(QKeySequence::Undo);
@@ -745,8 +749,11 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
         }
     });
 
-    m_copyPageAction = editMenu->addAction(tr("Copy Page as &Image"));
-    m_copyPageAction->setToolTip(
+    // Starts disabled with an explanatory tooltip via makeDisabledAction
+    // (which also enables tooltips on the Edit menu); updateActionStates()
+    // enables it whenever the document can render a page raster.
+    m_copyPageAction = makeDisabledAction(
+        editMenu, tr("Copy Page as &Image"),
         tr("Copy the current page to the clipboard as an image — available "
            "when the document can render a page raster."));
     connect(m_copyPageAction, &QAction::triggered, this, &MainWindow::onCopyPageAsImage);
@@ -826,9 +833,9 @@ void MainWindow::hideSearchBar() {
 }
 
 void MainWindow::buildViewMenu(QMenu *viewMenu) {
-    // The disabled Two Pages item carries an explanatory tooltip; Qt only
-    // renders action tooltips in a menu when tooltips are enabled on it.
-    viewMenu->setToolTipsVisible(true);
+    // The disabled Two Pages item carries an explanatory tooltip; its
+    // creation via makeDisabledAction() below enables tooltips on this
+    // menu, so no explicit setToolTipsVisible() call is needed here.
     auto *toggleSidebar = m_sidebar->toggleViewAction();
     toggleSidebar->setText(tr("Toggle &Sidebar"));
     toggleSidebar->setShortcut(QKeySequence(tr("Ctrl+Shift+D")));
@@ -872,8 +879,6 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
         }
     });
 
-    m_twoPagesAction = viewMenu->addAction(tr("Two Pages"));
-    m_twoPagesAction->setCheckable(true);
     // Cmd-3 is reserved here but the action stays disabled: Qt's
     // QPdfView::PageMode only exposes SinglePage and MultiPage — there is
     // no facing/two-up layout. PdfDocument::applyViewMode warns and no-ops
@@ -881,9 +886,13 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     // enabling this action would be a no-op. A real side-by-side layout
     // needs a custom view (tracked as a larger follow-up); once it lands
     // and the action is enabled, Cmd-3 starts working.
+    // makeDisabledAction starts it disabled with the explanatory tooltip and
+    // enables tooltips on the View menu.
+    m_twoPagesAction = makeDisabledAction(
+        viewMenu, tr("Two Pages"),
+        tr("Two-page layout is not yet available."));
+    m_twoPagesAction->setCheckable(true);
     m_twoPagesAction->setShortcut(QKeySequence(tr("Ctrl+3")));
-    m_twoPagesAction->setEnabled(false);
-    m_twoPagesAction->setToolTip(tr("Two-page layout is not yet available."));
 
     m_continuousAction = viewMenu->addAction(tr("Continuous"));
     m_continuousAction->setCheckable(true);
@@ -1138,9 +1147,10 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     // QAction::toolTip() on a menu item is only rendered as a hover
     // tooltip when the parent QMenu opts in. ML actions use this to
     // explain a policy block ("Set to Never Download in Manage ML
-    // Models…") — without this call, hovering a disabled item shows
-    // nothing.
-    toolsMenu->setToolTipsVisible(true);
+    // Models…"). The opt-in is guaranteed here because Recognize Text is
+    // created below via makeDisabledAction(), which calls
+    // toolsMenu->setToolTipsVisible(true) at attach time — so no separate
+    // explicit call is needed.
 
     m_rotateLeftAction = toolsMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/page-rotate-left.svg"), this),
@@ -1186,7 +1196,13 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     m_smartLassoAction = toolsMenu->addAction(tr("Smart &Lasso…"));
     connect(m_smartLassoAction, &QAction::triggered, this, &MainWindow::onSmartLasso);
 
-    m_recognizeTextAction = toolsMenu->addAction(tr("Reco&gnize Text…"));
+    // Starts disabled (no document can be OCR'd yet) with an explanatory
+    // tooltip; makeDisabledAction also enables tooltips on the Tools menu so
+    // the ML-policy explanations set in updateActionStates() render on hover.
+    // updateActionStates() re-evaluates the enabled state and tooltip live.
+    m_recognizeTextAction = makeDisabledAction(
+        toolsMenu, tr("Reco&gnize Text…"),
+        tr("Open a document to recognize text."));
     connect(m_recognizeTextAction, &QAction::triggered, this, &MainWindow::onRecognizeText);
 
     auto *modelsAction = toolsMenu->addAction(tr("Manage &ML Models…"));

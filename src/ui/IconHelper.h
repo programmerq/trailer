@@ -5,6 +5,8 @@
 #include <QString>
 
 class QWidget;
+class QAction;
+class QMenu;
 
 namespace trailer {
 
@@ -29,5 +31,23 @@ namespace trailer {
 // state pairs.
 QIcon themedActionIcon(const QString& resource, const QColor& color);
 QIcon themedActionIcon(const QString& resource, const QWidget* widget = nullptr);
+
+// Create a menu action for a surfaced-but-inert control and GUARANTEE its
+// explanation can actually be seen. The action is added to `menu`, given
+// `whyTooltip` as its tooltip, and started disabled; the caller wires
+// triggers and may later re-enable it (e.g. from updateActionStates).
+//
+// The load-bearing part is the coupling: setting the tooltip and calling
+// menu->setToolTipsVisible(true) happen together, in one place, so it is
+// impossible to attach a "here's why this is greyed out / where to go
+// instead" tooltip to a menu that would silently never render it. This is
+// Gate G3 (no lying controls): a disabled control's explanation is either
+// visible on hover or the control shouldn't claim to have one.
+//
+// Deliberately does NOT set a statusTip — the existing disabled+tooltip
+// call sites don't, and adding one would newly surface the text in the
+// status bar. Returns the QAction* so callers keep full control.
+QAction* makeDisabledAction(QMenu* menu, const QString& text,
+                            const QString& whyTooltip);
 
 }  // namespace trailer

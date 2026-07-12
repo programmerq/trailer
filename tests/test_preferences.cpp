@@ -1,3 +1,4 @@
+#include "recent/RecentFiles.h"
 #include "settings/Settings.h"
 #include "ui/PreferencesDialog.h"
 
@@ -6,8 +7,10 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
+#include <QLabel>
 #include <QObject>
 #include <QPushButton>
+#include <QScopedPointer>
 #include <QSpinBox>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -29,6 +32,8 @@ class TestPreferences : public QObject {
     void untouchedRecentMaxNotClamped();
     void themePreservedThroughOk();
     void openFilesInEachValueRoundTrips();
+    void liveApplyRecentMaxThroughSignal();
+    void restartHintRendersForRestartRequiredKey();
     void captureScreenshots();
 };
 
@@ -287,6 +292,55 @@ void TestPreferences::openFilesInEachValueRoundTrips() {
         s2.load();
         QCOMPARE(s2.openFilesIn(), value);
     }
+}
+
+// Live-apply proof for a "live via apply-signal" key. recent_max is
+// cached at startup, so it only takes effect without a restart because
+// accept() emits settingsApplied and the host RE-READS the getter in the
+// slot (mirrors MainWindow.cpp:3272). This drives the real signal end to
+// end: change the spinbox, accept, and the connected consumer's cap
+// updates live — no reconstruction. If accept() stops emitting the
+// signal (or the slot caches the value at connect time instead of
+// re-reading), the consumer keeps the stale cap and this fails.
+void TestPreferences::liveApplyRecentMaxThroughSignal() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    Settings s(dir.filePath("settings.toml"));
+    s.setRecentMax(50);
+
+    RecentFiles recent(dir.filePath("recent.json"));
+    recent.setMaxEntries(s.recentMax()); // startup snapshot: 50
+    QCOMPARE(recent.maxEntries(), 50);
+
+    PreferencesDialog dlg(s);
+    QObject ctx; // connection context so the lambda is torn down safely
+    QObject::connect(&dlg, &PreferencesDialog::settingsApplied, &ctx,
+                     [&recent, &s]() { recent.setMaxEntries(s.recentMax()); });
+
+    dlg.findChild<QSpinBox *>("recentMaxSpin")->setValue(7);
+    dlg.accept(); // applyToSettings -> save -> emit settingsApplied
+
+    // Re-applied live, without rebuilding `recent`.
+    QCOMPARE(s.recentMax(), 7);
+    QCOMPARE(recent.maxEntries(), 7);
+}
+
+// Hint-render proof. The restart-hint factory is dormant for every Live
+// key (all of them today) and only produces a label for a RestartRequired
+// key. Drive it with the RestartRequired probe key and with a real Live
+// key to prove both branches. If makeRestartHint stopped honouring the
+// classification (e.g. always returned nullptr), the RestartRequired arm
+// fails here.
+void TestPreferences::restartHintRendersForRestartRequiredKey() {
+    QScopedPointer<QLabel> hint(PreferencesDialog::makeRestartHint(SettingsKeys::RestartProbe));
+    QVERIFY(!hint.isNull());
+    QCOMPARE(hint->objectName(), QStringLiteral("restartHint"));
+    QVERIFY(!hint->text().isEmpty());
+
+    // A Live key renders nothing — no visible change in today's dialog.
+    QScopedPointer<QLabel> none(PreferencesDialog::makeRestartHint(SettingsKeys::RecentMax));
+    QVERIFY(none.isNull());
 }
 
 // Evidence capture — runs only when PREF_SHOT_DIR is set; grabs one PNG

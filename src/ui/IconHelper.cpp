@@ -1,7 +1,9 @@
 #include "IconHelper.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QFile>
+#include <QMenu>
 #include <QPainter>
 #include <QPalette>
 #include <QPixmap>
@@ -72,6 +74,19 @@ QIcon themedActionIcon(const QString& resource, const QColor& color) {
 QIcon themedActionIcon(const QString& resource, const QWidget* widget) {
     const QPalette pal = widget ? widget->palette() : QApplication::palette();
     return themedActionIcon(resource, pal.color(QPalette::WindowText));
+}
+
+QAction* makeDisabledAction(QMenu* menu, const QString& text,
+                            const QString& whyTooltip) {
+    QAction* action = menu->addAction(text);
+    action->setToolTip(whyTooltip);
+    action->setEnabled(false);
+    // Couple the tooltip to the one thing that makes it visible. Setting
+    // this per-menu is idempotent, so calling it once per disabled action
+    // is harmless — but it means no disabled+explained action can ever be
+    // attached to a menu that would swallow its tooltip.
+    menu->setToolTipsVisible(true);
+    return action;
 }
 
 }  // namespace trailer
