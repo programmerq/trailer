@@ -189,6 +189,35 @@ active view mode.
 Selecting it is impossible; the Continuous/Single actions remain
 functional.
 
+### UAT-VWR-025 — Continuous-mode keyboard scroll steps by a screenful
+
+**Preconditions:** A multi-page PDF is open with `View > Continuous`
+active, and the document is tall enough to need scrolling.
+**Steps:**
+1. Click into the page view to give it keyboard focus.
+2. Press `Down` (`↓`). Then `Space`. Then `Up` (`↑`).
+3. Press `Page Down`, then `Page Up`.
+**Expected:**
+- Each `↓` scrolls down by roughly one viewport height — a screenful,
+  matching Preview / Acrobat — not the tiny line-step
+  `QAbstractScrollArea` uses by default (which would take dozens to
+  hundreds of presses to cross a single page). `Space` does the same
+  as `↓`.
+- `↑` scrolls back up by the same screenful.
+- `Page Down` / `Page Up` are unchanged: they jump to the next /
+  previous page (the Next Page / Previous Page shortcuts), not a
+  screenful scroll.
+- Scrolling stops cleanly at the top and bottom of the document (no
+  wrap, no overscroll). Single-page mode is unaffected — it still
+  advances a whole page per arrow press (UAT-VWR-023).
+
+The automated harness slot `uat_vwr_025_continuousArrowStepsByViewport`
+in `tests/uat/test_uat_viewer.cpp` pins only the `Down` / `Space` / `Up`
+screenful stepping. `Page Down` / `Page Up` remaining the Next /
+Previous Page shortcuts is verified at the MainWindow / manual level: a
+view-only harness can't distinguish the arrow keys falling through from
+the base class applying its own screenful handling.
+
 ---
 
 ## Image view

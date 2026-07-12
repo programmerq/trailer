@@ -76,6 +76,11 @@ target_link_libraries(test_uat_pdf_pages PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 trailer_add_uat_test(test_uat_undo_interleaved_cap test_uat_undo_interleaved_cap.cpp)
 target_link_libraries(test_uat_undo_interleaved_cap PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 
+# Viewer navigation (continuous-mode keyboard scroll, future nav pins).
+# Drives the QPdfView in MainWindow, so it links Qt PDF directly.
+trailer_add_uat_test(test_uat_viewer test_uat_viewer.cpp)
+target_link_libraries(test_uat_viewer PRIVATE Qt6::Pdf Qt6::PdfWidgets)
+
 # Layer-1 config-matrix robustness sweep (font-scale x RTL). Drives the
 # MainWindow shell, so it needs Qt PDF for the document view. Hard
 # oracle + fast, so it carries the plain `uat` label like the rest.
