@@ -115,6 +115,9 @@ changes are consolidated into this section.
 - **Search bar "Close".** Clicking the X (or pressing Esc) now
   fully collapses the search bar instead of leaving an empty gap in
   the toolbar.
+- **Inspector tab scroll arrows.** The Inspector tab bar's overflow
+  scroll arrows now meet the minimum touch-target size under large
+  application fonts.
 
 ### Infrastructure
 

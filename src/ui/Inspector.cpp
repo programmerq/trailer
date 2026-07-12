@@ -18,6 +18,7 @@
 #include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStackedWidget>
+#include <QTabBar>
 #include <QTabWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -83,6 +84,13 @@ Inspector::Inspector(QWidget *parent) : QDockWidget(tr("Inspector"), parent) {
     setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
 
     m_tabs = new QTabWidget(this);
+
+    // Qt's built-in QTabBar overflow scroller arrows (ScrollLeft/RightButton)
+    // take a fixed style pixel-metric width that ignores the application font,
+    // so under a large font they render below their own minimumSizeHint
+    // (UAT sweep flagged "width 16 < min 24"). Pin a >=24px touch target.
+    m_tabs->tabBar()->setStyleSheet(
+        QStringLiteral("QToolButton { min-width: 24px; min-height: 24px; }"));
 
     auto *docTab = new QWidget(m_tabs);
     auto *docLayout = new QFormLayout(docTab);
