@@ -299,15 +299,21 @@ topical tables collects related state under a shared prefix:
   (`recognize_text_in_background`,
   `preload_segmentation_on_tool_activation`, `run_on_battery`).
 
-Settings load on `Application` startup; every mutator calls
-`save()`. Don't introduce a nested table just to group an unrelated
-pair of keys — the tables above each have a clear topical scope
-and a single subsystem that owns them.
+Settings load on `Application` startup. `Settings` is a plain value
+type: setters mutate cached `m_` members and do **not** auto-`save()`.
+Persistence is the caller's job — `PreferencesDialog::accept()` batches
+every changed control and issues a single `save()`, and one-off writers
+(`aboutToQuit` session capture, last-save-dir) call `save()` explicitly.
+Don't introduce a nested table just to group an unrelated pair of keys —
+the tables above each have a clear topical scope and a single subsystem
+that owns them.
 
 **Recipe.** New setting = new top-level key (or new entry under
 the topical table that owns its concern, if one exists), backing
-field on `Settings`, getter + setter that calls `save()`. Grep the
-header to discover all keys; there's no other index.
+field on `Settings`, getter + setter (the setter does not `save()`;
+a caller batches the write). Register the key's volatility (see §15).
+Grep the header to discover all keys; the volatility registry in
+`Settings::volatilityOf` is the one place that must list every key.
 
 **Broken if.** A future setting feels like it needs a *fourth*
 nested table that doesn't fit any of the three existing ones. That's
@@ -584,3 +590,52 @@ had a catch-all that aliased `ViewMode::TwoPages` onto
 the label promised. With `-Werror=switch` and no `default:`, that
 class of bug is unrepresentable — the build fails until every
 enumerator is handled on purpose.
+
+---
+
+## 15. Every persisted setting is registered live-vs-restart
+
+`Settings` is a plain value type with no signals (§8). A setting
+applies live only because its consumers re-read the getter at use
+time (`Application::openFiles` re-reads `openFilesIn`; auto-save
+re-reads `autoSave`) or because `PreferencesDialog::settingsApplied`
+re-applies it on OK (`recent_max`). A *future* key whose consumer
+reads it once at startup would silently become restart-only, with
+nothing telling the user a restart is needed. This is the
+restart-surprise trap the registry closes.
+
+**Anchor files:** `src/settings/Settings.{h,cpp}`
+(`SettingsKeys`, `Settings::Volatility`, `Settings::volatilityOf`),
+`src/ui/PreferencesDialog.{h,cpp}` (`makeRestartHint`),
+`tests/test_settings_volatility.cpp`.
+
+**Pattern.** Every persisted key has a canonical dotted-path constant
+in the `SettingsKeys` namespace (e.g. `files.recent_max`) and a
+`Volatility` classification (`Live` or `RestartRequired`) in the
+registry backing `Settings::volatilityOf`. Dynamic key groups
+(`first_use.*`) are classified by prefix. `volatilityOf` returns
+`std::nullopt` — and logs — for a key nobody registered. Preferences
+builds every editable row through `PreferencesDialog::makeRestartHint`,
+which appends a muted "Requires restart to take effect" label iff the
+key is `RestartRequired`. Today **every** key is `Live`, so the hint
+never renders and behaviour is unchanged; the machinery is dormant
+until the first `RestartRequired` key.
+
+**Recipe.** Adding a persisted key:
+
+1. Add a `SettingsKeys` constant for its dotted path; use it in
+   `load()`/`save()`'s access so the persisted name and the registry
+   name are the same string.
+2. Add a registry entry classifying it `Live` (the default — the
+   consumer re-reads the getter, or OK re-applies it) or
+   `RestartRequired` (the consumer caches it at startup and cannot be
+   re-applied cheaply).
+3. If `RestartRequired`, wire the control's row through
+   `makeRestartHint` (all rows already are) so the hint appears.
+
+**Broken if.** A persisted key is not in the registry.
+`tests/test_settings_volatility.cpp` saves a fully-populated
+`settings.toml`, walks every leaf key it contains, and asserts each
+resolves in `volatilityOf` — so an unregistered key fails the build's
+test stage loudly rather than shipping a silently restart-only
+setting.
