@@ -131,11 +131,16 @@ RUN dpkg --add-architecture i386 \
 #     https://cli.github.com, using the pinned-keyring method (fetch the
 #     archive keyring to /usr/share/keyrings, add a signed-by deb line).
 #     wget + ca-certificates come from the toolchain layer above.
-#   * jq — command-line JSON; the standard way to slice API / `gh` output
-#     in shell steps. Tiny, and effectively expected on any CI runner.
+#   * jq — command-line JSON. Not invoked by the current workflows (they
+#     rely on gh's built-in `--jq` flag), but a common, forward-looking CI
+#     utility for slicing JSON in shell steps. Tiny, and effectively
+#     expected on any CI runner.
 #   * zip — the release job builds a Windows .zip and today hand-rolls it
 #     with `7z a -tzip` (release.yml) only because `zip` wasn't present;
 #     ship the conventional tool so those steps can use it.
+#   * shellcheck — the repo's release automation is heavily shell-driven,
+#     and shellcheck is the common lint tool for shell in projects like
+#     this. Small Ubuntu-main package.
 RUN out=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && wget -nv -O "$out" https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     && chmod go+r "$out" \
@@ -146,6 +151,7 @@ RUN out=/usr/share/keyrings/githubcli-archive-keyring.gpg \
         gh \
         jq \
         zip \
+        shellcheck \
     && rm -rf /var/lib/apt/lists/*
 
 # Restore the base image's non-root runner identity and home so the
