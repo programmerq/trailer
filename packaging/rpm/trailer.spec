@@ -1,5 +1,5 @@
 Name:           trailer
-Version:        0.1.0
+Version:        0.3.0
 Release:        1%{?dist}
 Summary:        Cross-platform PDF and image workbench
 License:        MIT
@@ -87,5 +87,7 @@ fi
 %{_datadir}/icons/hicolor/512x512/apps/trailer.png
 
 %changelog
+* Sun Jul 12 2026 Trailer Contributors <TODO@trailer.example.com> - 0.3.0-1
+- Release 0.3.0
 * Sun Apr 27 2026 Trailer Contributors <TODO@trailer.example.com> - 0.1.0-1
 - Initial package
