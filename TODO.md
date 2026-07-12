@@ -41,7 +41,7 @@ terms of the user-visible behaviour and the proposed fix.
 > entry (`969d46f docs(roadmap): reframe after PR #24 landing +
 > post-#25 HITL`).
 
-### Thumbnail sidebar still wastes vertical space (Workstream C partial)
+### Thumbnail sidebar row height — fixed rows gap under non-portrait pages (diagnosed 2026-06-03)
 
 The 9beff07 / Workstream C work *did* land in PR #24: the logical
 thumbnail size dropped from `128×160` → `80×100`
@@ -51,23 +51,59 @@ the lower-right corner
 ([src/ui/Sidebar.cpp:94-121](src/ui/Sidebar.cpp:94)), and its
 `sizeHint` returns `iconSize.height() + 2*kThumbVerticalPadding`
 (= 108 px) per item
-([src/ui/Sidebar.cpp:61-66](src/ui/Sidebar.cpp:61)). On paper this
-should make each row tight to the thumbnail.
+([src/ui/Sidebar.cpp:61-66](src/ui/Sidebar.cpp:61)).
 
-In live use the rows still render visibly taller than the thumbnail —
-the user observed wide vertical gaps between thumbnails on a typical
-sidebar width, with each row roughly the *pre*-9beff07 height despite
-the new sizing constants. Something between the delegate's `sizeHint`
-and the actual `QListView` layout is keeping rows tall.
+**Diagnosis (corrects the earlier "rows render taller" theory).** A
+throwaway probe logged the delegate's `sizeHint` against the live
+`QListView::visualRect` for a mixed portrait/landscape deck, at both
+1× and 2× device-pixel ratios. Every row, every time:
+`visualRect.height() == sizeHint.height() == 108`. **Qt honours the
+delegate exactly — rows are never taller than the delegate asks for,
+and DPR is not the cause** (the native-render + `setDevicePixelRatio`
+path keeps the logical thumbnail at 80×100 regardless of DPR; only the
+backing pixels scale 80×100 → 160×200 at 2×). The earlier "something keeps
+rows tall / `SizeHintRole` shadowing / DPR rounding" theory is wrong.
 
-**Repro hints:** instrument `ThumbnailDelegate::sizeHint` to log what
-it returns vs what `m_view->visualRect(index).height()` reports back;
-check whether `Qt::SizeHintRole` is being shadowed by another role
-elsewhere; verify on both 1× and 2× displays in case DPR-rounding in
-`KeepAspectRatio` is leaving slack the delegate doesn't reclaim. If
-sizeHint *is* returning 108 and Qt is honouring it, the gap is visual
-noise (DPR rounding, scrollbar reservation) that needs a delegate-
-level fix.
+The real cause of the visible gaps is **a fixed row height meeting a
+variable page aspect.** `sizeHint` always returns
+`iconSize.height() + 8` (= 108) — sized for a *full-height portrait*
+page. Measured painted-thumbnail heights inside that fixed 108 px row:
+
+| page          | thumb height | gap in row    |
+|---------------|--------------|---------------|
+| A4 portrait   | ~100 px      | 8 px (tight)  |
+| A4 landscape  | ~56 px       | **52 px**     |
+
+A typical **portrait** deck is therefore already tight (8 px is just
+the padding); the wasted space only shows up under **landscape / wide /
+mixed-orientation** pages, whose `KeepAspectRatio` fit is width-limited
+and leaves the bottom of the fixed-tall row empty. The original "wide
+gaps on a typical doc" report was either a mixed/landscape deck or
+predates the current `iconHeight+8` `sizeHint`.
+
+Before / after the proposed fix (mixed deck — blue = portrait, orange
+= landscape):
+
+| Before (current) | After (proposed) |
+|------------------|------------------|
+| ![before](docs/uat/images/thumbnail-rowheight-before.png) | ![after](docs/uat/images/thumbnail-rowheight-after-proposed.png) |
+
+**Recommended fix.** Make `ThumbnailDelegate::sizeHint` per-row:
+return `fittedThumbnailHeight(index) + 2*kThumbVerticalPadding`, where
+the fitted height is the page's aspect scaled into the icon box.
+`uniformItemSizes` is already `false`, so variable row heights are
+supported. To get the aspect *without* rendering every page inside
+`sizeHint`, expose a cheap page size / aspect via a model role
+(PDF: `QPdfDocument::pagePointSize`; image: pixel dimensions) and read
+it in the delegate. Portrait rows are unchanged; landscape rows
+collapse to hug the thumbnail — the "after" image above is exactly
+that, prototyped behind a throwaway env toggle.
+
+**Verdict:** the lowest-value Now #3 paper-cut — effectively a
+non-issue for portrait decks, worth doing for mixed-orientation decks.
+Pair the fix with a UAT that pins `visualRect.height()` ≈ the fitted
+thumbnail height for a landscape page (the 52 px gap is the regression
+oracle).
 
 ### Rectangle annotation rough edges
 
