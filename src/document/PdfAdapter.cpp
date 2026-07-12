@@ -113,6 +113,30 @@ class NavigablePdfView : public QPdfView {
                 e->accept();
                 return;
             }
+        } else {
+            // Continuous (MultiPage) mode: QPdfView hands arrow keys to
+            // QAbstractScrollArea, whose Up/Down move by a small
+            // line-step — so reaching the next page on a long document
+            // by keyboard takes dozens to hundreds of presses. Step by
+            // roughly a screenful instead (matching Preview / Acrobat).
+            // Space follows Down for a consistent "advance" key.
+            // PageDown/PageUp are deliberately NOT handled here: they
+            // stay bound to MainWindow's Next/Previous Page shortcuts, so
+            // we let them fall through to QPdfView. QScrollBar::setValue
+            // clamps to [minimum, maximum], so no manual bounds check.
+            const int key = e->key();
+            QScrollBar *vbar = verticalScrollBar();
+            const int step = vbar->pageStep(); // ~ one viewport height
+            if (key == Qt::Key_Down || key == Qt::Key_Space) {
+                vbar->setValue(vbar->value() + step);
+                e->accept();
+                return;
+            }
+            if (key == Qt::Key_Up) {
+                vbar->setValue(vbar->value() - step);
+                e->accept();
+                return;
+            }
         }
         QPdfView::keyPressEvent(e);
     }
