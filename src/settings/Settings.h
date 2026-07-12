@@ -12,10 +12,15 @@ namespace trailer {
 
 // Canonical dotted key paths for every persisted setting. Both the
 // live-vs-restart registry (Settings::volatilityOf) and the Preferences
-// UI reference these constants, so a control's classification and the
-// name it persists under cannot drift apart. Nested TOML tables are
-// flattened with '.' (e.g. [ml.scheduler].run_on_battery ->
-// "ml.scheduler.run_on_battery"), matching how the completeness test
+// UI reference these constants to classify a control. load()/save()
+// themselves build nested TOML tables from raw literals rather than
+// these constants; the anti-drift guarantee is instead
+// test_settings_volatility's registryCoversEveryPersistedKey completeness
+// test, which saves a fully-populated file and asserts every persisted
+// key resolves in the registry — so a key's persisted name and its
+// classification cannot drift apart. Nested TOML tables are flattened
+// with '.' (e.g. [ml.scheduler].run_on_battery ->
+// "ml.scheduler.run_on_battery"), matching how that completeness test
 // walks the saved file. See docs/CONVENTIONS.md §15.
 namespace SettingsKeys {
 inline constexpr QLatin1StringView Theme{"general.theme"};

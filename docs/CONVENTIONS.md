@@ -623,9 +623,12 @@ until the first `RestartRequired` key.
 
 **Recipe.** Adding a persisted key:
 
-1. Add a `SettingsKeys` constant for its dotted path; use it in
-   `load()`/`save()`'s access so the persisted name and the registry
-   name are the same string.
+1. Add a `SettingsKeys` constant for its dotted path. Add the section
+   and leaf under its owning TOML table in `load()`/`save()` (these
+   build nested tables from raw literals section-by-section, not from a
+   flat dotted constant), and keep the `SettingsKeys` dotted-path
+   constant byte-identical to that persisted path — `registryCoversEveryPersistedKey`
+   in `tests/test_settings_volatility.cpp` fails if they diverge.
 2. Add a registry entry classifying it `Live` (the default — the
    consumer re-reads the getter, or OK re-applies it) or
    `RestartRequired` (the consumer caches it at startup and cannot be
@@ -639,3 +642,8 @@ until the first `RestartRequired` key.
 resolves in `volatilityOf` — so an unregistered key fails the build's
 test stage loudly rather than shipping a silently restart-only
 setting.
+
+One intentional exception: `Settings::load()` still reads the legacy
+`redaction.warning_acknowledged` key, which is deliberately *not* in the
+registry — it is a read-only migration key rewritten under `first_use.`
+on the next `save()` and never queried via `volatilityOf` in production.

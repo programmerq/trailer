@@ -608,9 +608,14 @@ void TestUatFoundations::
     uat_fnd_043_everyMenuWithDisabledTooltipActionRendersTooltips() {
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
-    // A window with no open document maximises the number of disabled
-    // capability actions (Share on unsupported platforms, Two Pages, Copy
-    // Page as Image, Recognize Text, …), so the sweep has real work to do.
+    // Scope: this sweep runs against the no-document window state, which
+    // maximises the number of disabled capability actions (Share on
+    // unsupported platforms, Two Pages, Copy Page as Image, Recognize
+    // Text, …), so the sweep has real work to do. Disabled+explained
+    // actions that surface only with a document open are covered
+    // transitively: their host menus already contain a helper-created
+    // action here, so the per-menu tooltip-rendering invariant this test
+    // asserts already holds for those menus.
     MainWindow *mw = app->ensureWindow();
     QVERIFY(mw);
     QApplication::processEvents();
