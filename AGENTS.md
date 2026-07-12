@@ -12,8 +12,10 @@ specifics below save you from rediscovering them every session.
 
 Trailer is a cross-platform Qt 6 / C++20 desktop app for opening, viewing,
 marking up, signing, redacting, and exporting PDFs and images. See
-[`DESIGN.md`](DESIGN.md) for the full spec and [`PHILOSOPHY.md`](PHILOSOPHY.md)
-for the hard constraints (read both before making non-trivial changes).
+[`DESIGN.md`](DESIGN.md) for the full spec, [`PHILOSOPHY.md`](PHILOSOPHY.md)
+for the hard constraints, and [`CRITERIA.md`](CRITERIA.md) for what "done,"
+"priority," and "1.0" mean — the ranking function that orders `TODO.md`
+(read all three before making non-trivial changes).
 
 ## Phase status (2026-05)
 
@@ -478,8 +480,9 @@ other path without raising it in the PR first.
 |---|---|
 | Understand the product end-to-end | `DESIGN.md` |
 | Know what's off-limits | `PHILOSOPHY.md` |
+| Know what "done" / priority / 1.0 mean | `CRITERIA.md` |
 | Match an existing code pattern | `docs/CONVENTIONS.md` |
-| Pick up open work | `TODO.md` (HITL section is the live sprint) |
+| Pick up open work | `TODO.md` (the *Next action* line is the live head) |
 | Write a UAT case | `docs/uat/README.md` + a sibling spec file |
 | Write a UAT harness slot | `tests/uat/test_uat_foundations.cpp` is the template |
 | Add a PDF command | `src/document/PdfCommands.h` + `RotatePageCommand` impl |

@@ -2,8 +2,10 @@
 
 The tactical Now / Next / Later view of where Trailer is going.
 
-**Companion docs.** [DESIGN.md](DESIGN.md) has the long-form phase
-spec (Phases 0–8) and is the *strategic* roadmap.
+**Companion docs.** [CRITERIA.md](CRITERIA.md) defines what "done,"
+"priority," and "1.0" mean — this file's ordering is *computed* from
+it, not chosen fresh each session. [DESIGN.md](DESIGN.md) has the
+long-form phase spec (Phases 0–8) and is the *strategic* roadmap.
 [TODO.md](TODO.md) is the live HITL punch list of pickable items.
 [CHANGELOG.md](CHANGELOG.md) is what already shipped. This file is
 the bridge — what's happening between releases at a glance.
@@ -76,8 +78,8 @@ What actually shipped, with what's still rough flagged inline:
   144 DPI on white. Rebuilt `RecognizeTextDialog` as a parameter
   UI. Large-doc (>50 pages) hint chip. Smart Lasso / Instant Alpha
   in-place via `AnnotationOverlay` tool modes (Workstream G's
-  merge — preload-on-tool-activation caller is the open follow-up;
-  see Now item 2 below).
+  merge — preload-on-tool-activation shipped locally in `5bd27de`,
+  completing the wave-2/3/4 ML governance arc).
 - **Wave 4 — Background-removal polish (H).**
   `BackgroundCandidateScorer` (Sobel edges / HSV saturation /
   luminance bimodality, threshold 0.50). Sparkle badge on the
@@ -103,112 +105,77 @@ file.
 
 ## Now (next release window)
 
-Pickable in this order.
+CRITERIA.md §4's ranking function (job degraded × how badly × how
+often) computes **one head**, not a pickable list —
+[TODO.md](TODO.md) carries the full ranked queue, sources, and line
+numbers; this is the at-a-glance summary. Read the head and go.
 
-1. **Signed-update channel for macOS** (Sparkle 2 is the leading
-   candidate). The requirement, not the implementation: existing
-   installs can discover and pull new releases over a
-   cryptographically signed channel that does **not** require
-   Apple Developer Program enrollment. Sparkle 2's ed25519-signed
-   appcast fits cleanly and is mature. Alternatives that qualify:
-   a thin custom checker against GitHub's `/releases/latest` API
-   with our own ed25519 verification on the download. Velopack
-   does **not** qualify — its trust model leans on Apple Developer
-   ID / Microsoft Authenticode, which the no-Apple-Dev policy
-   rules out. Needs: ed25519 keypair + safekeeping, signed feed
-   hosted on GitHub Pages (or equivalent), library linkage into
-   the macOS bundle, "Check for Updates…" menu item, RELEASING.md
-   amendment. The point of all this is: when our release pipeline
-   is compromised, existing users don't get malware as an
-   "update."
-2. ~~**Workstream G — SAM preload via `MlScheduler`.**~~ **Shipped
-   locally (`5bd27de`).** Instant Alpha / Smart Lasso activation now
-   submits `SamController::prepareForActive()` for the current image
-   when `mlPreloadSegmentationOnToolActivation` is on and the models
-   are on disk (no download triggered). Wires the previously-unread
-   setting; completes the wave-2/3/4 ML governance arc.
-3. **Remaining 2026-05-20 HITL pass items.** Captured in
-   [TODO.md](TODO.md)'s `## 2026-05-20 HITL pass` section. The
-   rectangle-disappears / Inspector-restyle / auto-Select-after-
-   placement trio was the highest-priority item (annotation data
-   loss); it shipped alongside this roadmap reframe — see
-   `a17051d fix(inspector): rectangle disappears after stroke/fill
-   colour pick` and UAT-ANN-130/131. The search-bar close button and
-   page-mode shortcuts (Cmd-1/2/3, with zoom moved to Cmd-0/9) both
-   shipped in the quick-wins pass. Still live: thumbnail row-height,
-   Cmd-A scope,
-   content-aware first-open defaults, and the continuous-mode `↓`
-   viewport-step — each independent and pickable.
-4. ~~**Unified `AnnotationStore` + `PdfCommand` undo log.**~~
-   **Shipped.** The last-touched-stack heuristic is gone: both
-   `PdfDocument` and `ImageDocument` dispatch undo/redo off a
-   single chronological log of typed entries, with bounded
-   histories evicting in lockstep with the log
-   (`AnnotationStore::historyEvicted`) and runtime guards instead
-   of release-inert asserts on desync. Interleaved gestures
-   (rotate → drag → rotate) now unwind in true reverse order.
-5. **Continuous-mode annotation drift fix.** Overlay uses
-   `pageNavigator()->currentPage()`, so annotations only render
-   correctly on the page Qt PDF reports as current. **Scope
-   first** — fix may need per-page overlay widgets or a
-   view-geometry query Qt PDF doesn't yet expose.
-6. **House rule: every fix lands with a paired UAT slot.** Still
-   live. PR #24 demonstrated the bar — every wave shipped UAT
-   slots alongside; the post-#25 HITL items should follow the
-   same template.
+**Now.** Add endpoint drag handles to Line/Arrow annotations — *J3 ·
+Blocks · frequent*. The resize path only ever writes `bounds`, never
+`points`, so dragging a Line/Arrow's own endpoint handle has no
+visual effect (`AnnotationOverlay.{h,cpp}`).
+
+**Then**, in ranked order:
+
+2. First-run auto-OCR is a silent no-op when the OCR model isn't on
+   disk yet — *J5 · Blocks · frequent*.
+3. Copy Page as Image copies the un-annotated raster — every mark is
+   dropped — *J3 · Blocks · frequent*.
+4. Annotations save to the wrong page after a delete/move, stale page
+   indices — *J7 · Blocks · occasional*.
+5. No "changed on disk" detection — external edits silently
+   reload/overwrite or desync undo — *J1/J3/J4 · Workaround ·
+   frequent*.
+
+Full ranked queue (15 open items), the someday pool, and the
+ambiguity ledger behind the provisional tie-break rule live in
+[TODO.md](TODO.md).
 
 ## Next
 
-Planned, not yet started.
+Planned, not yet started — strategic items **beyond** the tactical
+ranked queue. The queue itself and the someday pool live in
+[TODO.md](TODO.md); this section deliberately does **not** re-list them,
+so a queue item (like the current *Now* head) never also shows up here as
+a "deferred" future item. What remains is release infrastructure and
+forward features the ranked queue doesn't carry:
 
-7. **Signed-update channel for Windows.** Same requirement as
-   Now item 1. If we pick Sparkle 2 for macOS, **WinSparkle** is
-   the sibling library that shares the appcast XML format and
-   ed25519 pubkey — one signed feed serves both desktops. If we
-   pick a different macOS implementation, the Windows side
-   follows whatever shape that takes (e.g. a custom GitHub-
-   Releases checker would generalise across both OSes for free).
-8. **Preferences pane.** Three new `[ml.scheduler]` settings landed
-   in PR #24 but have no UI; Reset Trailer Settings, AutoFill,
-   Manage ML Models live in scattered menu locations. A unified
-   Preferences dialog organised by section (View / Markup / Forms /
-   ML / Behaviour) is timely.
-9. **First-time OCR download via the background pump.** Today
-   `OcrController` no-ops when the model isn't ready. Routing
-   download progress through `MlScheduler` would let auto-OCR
-   transparently kick off the first download for new users.
-   (TODO comment exists in `OcrController`.)
-10. ~~**Linux `PowerSource` implementation.**~~ **Shipped locally
-    (`9b24eb4`).** Reads `/sys/class/power_supply/*`: online Mains →
-    `OnAC`, offline → `OnBattery`, no AC supply → `OnAC` fallback, so
-    the battery policy gates speculative ML on a Linux laptop.
-11. **Word-level OCR selection.** Block-level snap is the
-    explicit phase-1 limitation of `SelectableTextLayer`.
-    PP-OCRv3 doesn't emit word boxes; needs either per-block
-    re-tokenisation against the recognised text or a different
-    model.
-12. **Disk persistence for `SelectableTextStore`.** Today
-    in-memory; re-OCR on reopen. Hash-based invalidation already
-    in place — wiring a per-file cache file is mechanical.
-13. **Shape-aware Line / Arrow handles.** Wave-2 D2's universal
-    6×6 handles were a compromise; endpoint-only handles for thin
-    annotations were deferred per scope call.
-14. **Sidebar TOC / Highlights & Notes — edit + jump-to.** Today
-    read-only. Click-to-jump on a TOC entry and click-to-scroll on
-    a highlight would close the loop.
-15. **FreeText `/AP` appearance streams.** Text / SpeechBubble
-    still rely on the property-based fallback. Needs a font
-    resource and a `BT` block in `/Resources`.
-16. **Image batch — multi-doc `ThumbnailModel`.** Single-window
-    image batches share the tab strip; the original ask was "use
-    the thumbnail bar to flip between the 5 photos."
-    `ThumbnailModel` is still 1:1 with one `IDocument`.
-17. **Linux + Windows screenshot region pickers.** macOS uses
-    `screencapture -i`; Linux falls back to `gnome-screenshot`;
-    Windows is full-screen only. Cross-platform parity is a
-    stated goal.
-18. **Two-page view layout.** `m_twoPagesAction->setEnabled(false)`
-    with a `// TODO` at `src/ui/MainWindow.cpp:639`.
+- **Signed-update channel (macOS + Windows).** The requirement, not the
+  implementation: existing installs on both desktops can discover and
+  pull new releases over a cryptographically signed channel that does
+  **not** require Apple Developer Program enrollment. Sparkle 2's
+  ed25519-signed appcast is the leading macOS candidate, with
+  **WinSparkle** as its Windows sibling — same appcast XML format and
+  ed25519 pubkey, one signed feed serves both. A thin custom checker
+  against GitHub's `/releases/latest` API with our own ed25519
+  verification also qualifies, on either OS. Velopack does **not**
+  qualify — its trust model leans on Apple Developer ID / Microsoft
+  Authenticode, which the no-Apple-Dev policy rules out. Needs: ed25519
+  keypair + safekeeping, signed feed hosted on GitHub Pages (or
+  equivalent), library linkage into each bundle, "Check for Updates…"
+  menu item, RELEASING.md amendment. The point: when our release
+  pipeline is compromised, existing users don't get malware as an
+  "update." Non-job infra — CRITERIA.md §4 parks it in someday since it
+  degrades no listed job, but it's real and well-scoped; tracked in
+  detail in [TODO-packaging.md](TODO-packaging.md) and carried in
+  [TODO.md](TODO.md)'s someday pool.
+- **Sidebar TOC / Highlights & Notes — edit + jump-to.** Today
+  read-only. Click-to-jump on a TOC entry and click-to-scroll on a
+  highlight would close the loop.
+
+Everything else this section used to enumerate has moved. In
+[TODO.md](TODO.md)'s ranked queue: the first-time OCR download pump,
+word-level OCR selection, `SelectableTextStore` disk persistence,
+shape-aware Line / Arrow handles (the current *Now* head), FreeText
+`/AP` appearance streams, and the multi-doc image-batch `ThumbnailModel`.
+In its someday pool: the Linux/Windows screenshot region pickers and the
+two-page view layout. Two items shipped in the 2026-07 burst and are no
+longer planned work: the unified **Preferences pane** now exists
+(`src/ui/PreferencesDialog.cpp`, tabs General / Files / Machine Learning
+/ Advanced, under four accepted decision records in
+[`docs/decisions/`](docs/decisions/) `0001`–`0004`) and bears on gate
+**G7** rather than this list; the Linux `PowerSource` implementation
+landed in `9b24eb4`.
 
 ## Later
 
@@ -235,8 +202,9 @@ not the *scope* or *timing*.
   user-facing "pause all ML" toggle become reasonable.
 - **Compound undo at the `PdfCommand` layer.** AnnotationStore now
   has it; rotating three pages still produces three undo frames.
-  The unified log (*Now* item 4) shipped without it; batching page
-  ops into one chronological-log entry is still open.
+  The unified chronological log shipped without it (see Risks
+  below); batching page ops into one chronological-log entry is
+  still open.
 - **Generalise `documentAboutToBeRemoved` into a `DocumentLifecycle`
   service** (or make `IDocument` a `QObject`). Today the signal is
   hand-subscribed by every cache that holds raw `IDocument*` keys
@@ -256,13 +224,16 @@ not the *scope* or *timing*.
   (worth bumping up — Trailer's strings are already `tr(…)`-wrapped,
   and OCR now exposes multi-language selection in the dialog);
   user-facing documentation site.
-- **Path to 1.0 — closer than it looked.** PR #24 pushed Trailer
-  through most of the "open it, do one thing, move on" feature
-  mandate. The remaining bar from PHILOSOPHY.md is now primarily a
-  *stability* test: on-disk format thrash needs to settle, the
-  UX-defaults debate needs to quiet down for a minor cycle or two.
-  1.0 is not a calendar event but it is no longer a scope
-  question — it's a quality question.
+- **Path to 1.0.** What "1.0" means — every job's bar (J1–J8) met on
+  both Windows and Linux, plus an N-week dwell of real document work
+  with no fallback to Preview — is defined in
+  [CRITERIA.md](CRITERIA.md) §7, not restated here. PHILOSOPHY.md's
+  stability gates (on-disk format thrash settled, UX defaults quiet
+  for a minor cycle, gates G7/G8) still apply on top. Feature-complete
+  (PR #24 covered most of the "open it, do one thing, move on"
+  mandate) is necessary but not sufficient — CRITERIA.md's dwell
+  clock is the real gate, and it resets on any regression that sends
+  the owner back to Preview.
 
 ## Won't have
 
@@ -309,8 +280,9 @@ Explicitly off the table so they stop eating planning oxygen.
   undo collapses drags to one frame; the PdfAdapter used to choose
   which stack to undo by last-touched source, so interleaved
   gestures exhibited "Cmd-Z unwinds the wrong thing" symptoms.
-  **Resolved:** *Now* item 4 shipped the unified chronological log
-  (both adapters) and retired the heuristic.
+  **Resolved:** the unified chronological log shipped (both
+  adapters, `AnnotationStore` + `PdfCommand`) and retired the
+  heuristic.
 - **Update-signing key management.** Whichever ed25519
   implementation we pick (Sparkle's appcast, WinSparkle's
   matching feed, or a custom checker), the private key needs to
@@ -358,3 +330,21 @@ Explicitly off the table so they stop eating planning oxygen.
   **Mitigation:** the rule is now a stated house rule in
   [AGENTS.md](AGENTS.md); review checklist should ask "is there
   a UAT slot?" for every user-visible change.
+- **Status claims go stale between bursts.** This project moves in
+  concentrated bursts — the maintainer's own sessions plus parallel
+  AI-agent branches — with quiet stretches between. The
+  2026-07-09–12 burst alone shipped the empty-state window model, a
+  unified Preferences dialog, an undo-stabilization batch, and the
+  full ADR/Arbiter adjudication machinery in roughly 50 commits, and
+  the working docs — written at the pace of the *previous* burst —
+  silently drift out of sync with what the code now does. Caught and
+  corrected while drafting CRITERIA.md: the *Next* list had carried a
+  unified Preferences dialog as a planned, "timely" item long after it
+  shipped with four accepted decision records behind it — that entry has
+  since been retired from *Next* (the dialog now bears on gate G7).
+  **Mitigation:** treat a status claim in ROADMAP.md or TODO.md as a
+  hypothesis to verify against current source, not a fact —
+  especially right after a burst. CRITERIA.md §3's cold-open
+  self-test ("name the single next action without reading history")
+  is the standing check; run it whenever a burst lands, not on a
+  fixed cadence.

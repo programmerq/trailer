@@ -43,7 +43,10 @@ account system, no cloud).
    not enough to replace dedicated tools.
 3. **Cross-platform parity.** A Linux user and a Windows user should see the
    same feature set. Platform-native conventions (menu placement, file dialogs,
-   keyboard modifiers) are respected, but no feature is gated by OS.
+   keyboard modifiers) are respected, but no feature is gated by OS. Per
+   [`CRITERIA.md`](CRITERIA.md) §1's parity rule, a job counts as met only when
+   it passes on **both** Windows and Linux — macOS is the reference/fallback
+   habitat and is not scored.
 4. **Local-first and offline-capable.** Every core feature works with the
    network unplugged.
 5. **Keyboard-driven.** Every common action has a discoverable, learnable
@@ -247,6 +250,12 @@ through at least those two — never a claim that those two carry more
 authority. See [`PHILOSOPHY.md`](PHILOSOPHY.md) →
 *How design decisions get adjudicated* for the full adjudication process
 (arbiter, admissible-objection test, decision-record lifecycle).
+
+None of the four is the acceptance gate, either: they sharpen a design
+through critique, but they don't certify a job *done*. [`CRITERIA.md`](CRITERIA.md)
+§2 names the owner — a power user who does these jobs for real, on Windows
+or Linux — as the one whose finished workflow decides that; the personas
+keep their lens role unchanged.
 
 ### 2.5.3 Process: screenshot audit — a required merge artifact
 
@@ -490,7 +499,14 @@ gate G4 checks against.
 ## 6. Feature specifications
 
 Each feature lists: **What it does · UI surface · Implementation notes ·
-Acceptance criteria.**
+Acceptance criteria.** The end-to-end job bars ("does this job substitute for
+Preview") live in [`CRITERIA.md`](CRITERIA.md) §5, not here — an **Acceptance**
+line below is a feature-level check, and where it names a latency, frame-rate,
+or size number it is a feature-level performance budget. The general
+performance-budget methodology (the response-time limits, the reference rig
+and corpus, ratification status, and gate G9) is [`docs/performance-budgets.md`](docs/performance-budgets.md),
+now the canonical home for that; an Acceptance line quoting a number should
+agree with it rather than restate it from scratch.
 
 ### 6.1 Opening, viewing, navigating
 

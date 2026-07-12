@@ -72,6 +72,26 @@ entries terse and user-visible; CI / infrastructure churn lives in the
 - **README** refreshed: dropped the stale "Phase 0" framing,
   reframed macOS unsigned-ness as project policy rather than a
   follow-up, marked Intel-Mac support as in-scope future work.
+- **CRITERIA.md keystone added.** New third keystone doc alongside
+  `DESIGN.md` and `PHILOSOPHY.md`: defines what "done," "priority,"
+  and "1.0" mean — the ranking function (which job it degrades × how
+  badly × how often that job is done) that orders `TODO.md`'s queue.
+- **TODO.md restructured into a ranked queue + ambiguity ledger.**
+  The dated-HITL-pass prose is replaced by a single ranked queue read
+  off CRITERIA.md's ranking function, a Someday pool for findings
+  that degrade no listed job, and an Owner questions ledger for the
+  judgment calls the ranking function can't resolve on its own.
+- **Recording-findings protocol added.** New
+  `docs/recording-findings.md` documents how the owner's webcam+screen
+  self-recorder's footage becomes structured findings (timestamp, repro,
+  job, degree, platform) that feed the same `TODO.md` queue as HITL
+  passes and smoke sessions.
+- **PHILOSOPHY.md / DESIGN.md / ROADMAP.md acceptance-gate
+  recentering.** "Done" for a listed job is now certified by the
+  owner's own sustained use rather than the reference-user lens;
+  PHILOSOPHY.md and DESIGN.md point to CRITERIA.md §2 as the
+  canonical statement, and ROADMAP.md's *Now* section is read off
+  the ranking function instead of a hand-picked list.
 
 ## [0.1.0] - 2026-05-16
 

@@ -31,6 +31,17 @@ If a feature serves that user, it's in scope. If it serves a
 developer, an enterprise compliance officer, or a real-time
 collaboration scenario, it probably isn't.
 
+That is the *scope* test — and for it the reference user, together
+with the four [`DESIGN.md`](DESIGN.md) §2.5.2 personas, is a critique
+lens. Whether a job is actually **done**, though, is certified by the
+**owner**: a power user who lives on Windows or Linux and does these
+jobs for real, where *done* means finishing without reaching for
+Preview or another tool. That is an acceptance judgment on finished
+work — distinct from the routine design adjudication below, where the
+owner stays escalation-only. [`CRITERIA.md`](CRITERIA.md) §2 is the
+canonical statement of this acceptance gate; the reference user and
+the personas keep their lens role there too.
+
 ## What Trailer will not do
 
 These boundaries are decided. Saying no quickly to off-axis requests
@@ -343,7 +354,7 @@ goal is the workflow, not the project's name on a binary.
 
 ## What 1.0 means
 
-Today's version is 0.1. While we're in 0.x:
+Today's version is 0.2. While we're in 0.x:
 
 - Breaking changes are allowed on minor bumps. The settings.toml
   format, the on-disk signature layout, even the IPC and the
@@ -354,9 +365,15 @@ Today's version is 0.1. While we're in 0.x:
 
 1.0 will be declared when:
 
-- A non-trivial number of users have lived with the app long enough
-  to surface durability bugs (state corruption, weird file types,
-  edge cases).
+- The durability proof is the **owner's** own sustained use, not a
+  user count: every document job Trailer promises
+  ([`CRITERIA.md`](CRITERIA.md) §5) meets its bar on **both Windows
+  and Linux**, and the owner has gone **N consecutive weeks**
+  (**PROVISIONAL N = 4**, owner-tunable) of real document work on
+  those OSes with Trailer as the *only* document tool for any listed
+  job — no fallback to Preview or anything else. A format thrash or
+  UX regression that forces a fallback resets the clock; see
+  CRITERIA.md §7 for the full 1.0 gate.
 - The on-disk formats and the public APIs feel right enough to
   commit to backward-compatibility on minor bumps for the
   foreseeable future.
