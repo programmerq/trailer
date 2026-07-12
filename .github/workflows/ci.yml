@@ -52,7 +52,7 @@ jobs:
     # to finish and seed the cache.
     timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup-linux-build
 
@@ -112,7 +112,7 @@ jobs:
     # (~2.6 GB) before the cache warms, so give it release-job headroom.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup-windows-cross
 
@@ -248,7 +248,7 @@ jobs:
     # like the QTemporaryFile-vs-qpdf write conflict).
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Qt
         # Pinned to 6.10.3 because aqtinstall 3.3.0 / install-qt-action
@@ -323,7 +323,7 @@ jobs:
     # is reliably formatted (post-1.0 / when a pre-commit hook lands).
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install clang-format
         # Pinned to v14 to match scripts/run-uat.sh and the maintainer's

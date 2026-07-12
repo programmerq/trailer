@@ -42,7 +42,7 @@ jobs:
     runs-on: trailer-k8s
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Check out the PR HEAD specifically — that's the SHA the
           # Release workflow built artifacts against, and the SHA we
