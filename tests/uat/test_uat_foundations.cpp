@@ -15,6 +15,7 @@
 #include "ui/MainWindow.h"
 
 #include <QAction>
+#include <QClipboard>
 #include <QDockWidget>
 #include <QFileOpenEvent>
 #include <QMenu>
@@ -111,6 +112,7 @@ class TestUatFoundations : public QObject {
     void uat_fnd_041_shareDisabledWithTooltipWhenUnavailable();
     void uat_fnd_042_twoPagesActionDisabledWithTooltip();
     void uat_fnd_050_fileOpenEventOpensWindow();
+    void uat_fnd_070_copyPageAsImageToClipboard();
 
   private:
     QTemporaryDir m_scratch;
@@ -622,6 +624,41 @@ void TestUatFoundations::uat_fnd_050_fileOpenEventOpensWindow() {
     MainWindow* mw = currentMainWindow();
     QVERIFY(mw);
     QCOMPARE(mw->documentCount(), 1);
+}
+
+// UAT-FND-070 — Copy Page as Image puts a rendered page on the clipboard.
+//
+// The end-of-session flow: mark up a page, then copy it to paste into a
+// chat app. Edit > Copy Page as Image renders the current page / image
+// and pushes it to the system clipboard.
+void TestUatFoundations::uat_fnd_070_copyPageAsImageToClipboard() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writeTinyPdf(m_scratch.filePath("uat_fnd_070.pdf"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+
+    QClipboard *clip = QApplication::clipboard();
+    QVERIFY(clip);
+    clip->clear();
+    QVERIFY(clip->image().isNull());
+
+    QAction *copyPage = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
+                                       QStringLiteral("Copy Page as &Image"));
+    QVERIFY2(copyPage, "Edit > Copy Page as Image action not found");
+    QVERIFY2(copyPage->isEnabled(), "Copy Page as Image should be enabled for a PDF");
+
+    copyPage->trigger();
+    QApplication::processEvents();
+
+    const QImage copied = clip->image();
+    QVERIFY2(!copied.isNull(), "Copy Page as Image must place an image on the clipboard");
+    QVERIFY(copied.width() > 0 && copied.height() > 0);
 }
 
 // Custom main: we need to set HOME (and XDG vars) before constructing

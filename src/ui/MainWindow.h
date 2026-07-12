@@ -131,6 +131,7 @@ class MainWindow : public QMainWindow {
     void onSmartLasso();
     void onRecognizeText();
     void onExportAs();
+    void onCopyPageAsImage();
     void onExportPasswordProtected();
     void onReduceFileSize();
     void onTakeScreenshot();
@@ -312,6 +313,7 @@ class MainWindow : public QMainWindow {
     QAction *m_findNextAction = nullptr;
     QAction *m_findPreviousAction = nullptr;
     QAction *m_selectAllAction = nullptr;
+    QAction *m_copyPageAction = nullptr;
     QAction *m_undoAction = nullptr;
     QAction *m_redoAction = nullptr;
 

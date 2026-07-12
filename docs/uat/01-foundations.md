@@ -440,6 +440,21 @@ with one window and one open document.
 
 ---
 
+## Clipboard
+
+### UAT-FND-070 — Copy Page as Image
+
+**Preconditions:** A document (a PDF page or an image) is open.
+**Steps:**
+1. `Edit > Copy Page as Image`.
+**Expected:**
+- The current page (or image) is rendered and placed on the system
+  clipboard as an image, ready to paste into another app (chat, email).
+- The action is disabled for documents that can't render a page raster
+  (e.g. the stub adapter).
+
+---
+
 ## macOS Finder integration (Platform: macOS)
 
 ### UAT-FND-060 — Open With → Trailer from Finder
