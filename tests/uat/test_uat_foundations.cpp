@@ -659,6 +659,35 @@ void TestUatFoundations::uat_fnd_070_copyPageAsImageToClipboard() {
     const QImage copied = clip->image();
     QVERIFY2(!copied.isNull(), "Copy Page as Image must place an image on the clipboard");
     QVERIFY(copied.width() > 0 && copied.height() > 0);
+
+    // G3: when the action is unavailable it must be disabled and carry an
+    // explanatory tooltip that is actually visible in the menu — the same
+    // pattern uat_fnd_041 (Share) and uat_fnd_042 (Two Pages) enforce. An
+    // empty-state window (no rasterisable document) is the disabled case.
+    MainWindow *empty = app->ensureFreshWindow();
+    QVERIFY(empty);
+    QApplication::processEvents();
+
+    QAction *disabledCopy = findMenuAction(empty->menuBar(), QStringLiteral("&Edit"),
+                                           QStringLiteral("Copy Page as &Image"));
+    QVERIFY2(disabledCopy, "Edit > Copy Page as Image action not found in empty window");
+    QVERIFY2(!disabledCopy->isEnabled(),
+             "Copy Page as Image must be disabled when no page raster is available");
+    QVERIFY2(!disabledCopy->toolTip().isEmpty(),
+             "Disabled Copy Page as Image must carry an explanatory tooltip");
+    // Qt synthesises a default tooltip equal to the action text with the
+    // mnemonic '&' stripped; the explanatory tooltip must differ from that.
+    QString plainLabel = disabledCopy->text();
+    plainLabel.remove(QLatin1Char('&'));
+    QVERIFY2(disabledCopy->toolTip() != plainLabel,
+             "Disabled Copy Page as Image tooltip must be an explanatory string, "
+             "not Qt's default fallback to the action text");
+
+    QMenu *hostMenu = menuContainingAction(empty->menuBar(), disabledCopy);
+    QVERIFY2(hostMenu, "Could not locate the menu hosting the Copy Page as Image action");
+    QVERIFY2(hostMenu->toolTipsVisible(),
+             "The Edit menu must call setToolTipsVisible(true) so the disabled "
+             "Copy Page as Image tooltip is actually rendered on hover");
 }
 
 // Custom main: we need to set HOME (and XDG vars) before constructing

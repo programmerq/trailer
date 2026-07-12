@@ -685,6 +685,10 @@ void MainWindow::buildMainToolbar() {
 }
 
 void MainWindow::buildEditMenu(QMenu *editMenu) {
+    // Show tooltips on disabled entries (e.g. Copy Page as Image) so the
+    // greyed-out reason is discoverable on hover — mirrors the File/View menus.
+    editMenu->setToolTipsVisible(true);
+
     m_undoAction = editMenu->addAction(tr("&Undo"));
     m_undoAction->setShortcut(QKeySequence::Undo);
     connect(m_undoAction, &QAction::triggered, this, [this]() {
@@ -731,6 +735,9 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
     });
 
     m_copyPageAction = editMenu->addAction(tr("Copy Page as &Image"));
+    m_copyPageAction->setToolTip(
+        tr("Copy the current page to the clipboard as an image — available "
+           "when the document can render a page raster."));
     connect(m_copyPageAction, &QAction::triggered, this, &MainWindow::onCopyPageAsImage);
 
     editMenu->addSeparator();
