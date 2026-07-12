@@ -66,6 +66,12 @@ trailer_add_uat_test(test_uat_instant_alpha_and_smart_lasso
 
 trailer_add_uat_test(test_uat_recognize_text test_uat_recognize_text.cpp)
 
+# ML status-bar affordances (ADR 0002): progress widget, scoped cancel,
+# missing-model in-context hint. Builds a multi-page PDF via QPdfWriter
+# (QtGui) for the OCR batch gates; the OCR itself runs through a test
+# recogniser seam, so no Qt6::Pdf link nor real models are needed.
+trailer_add_uat_test(test_uat_ml_affordances test_uat_ml_affordances.cpp)
+
 trailer_add_uat_test(test_uat_pdf_pages test_uat_pdf_pages.cpp)
 target_link_libraries(test_uat_pdf_pages PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 

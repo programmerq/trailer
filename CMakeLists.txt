@@ -128,6 +128,8 @@ set(TRAILER_SOURCES
     src/ui/EmptyStateWidget.h
     src/ui/MainWindow.cpp
     src/ui/MainWindow.h
+    src/ui/MlProgressWidget.cpp
+    src/ui/MlProgressWidget.h
     src/ui/ModelManagerDialog.cpp
     src/ui/ModelManagerDialog.h
     src/ui/OcrController.cpp

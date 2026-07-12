@@ -8,6 +8,7 @@
 #include <QSet>
 #include <QStringList>
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 class QCloseEvent;
@@ -32,6 +33,7 @@ class MarkupToolbar;
 class SearchBar;
 class Sidebar;
 
+class MlProgressWidget;
 class OcrController;
 class SamController;
 
@@ -72,6 +74,15 @@ class MainWindow : public QMainWindow {
     // chooseSaveAsPath() returns this instead of showing the native file
     // dialog, letting the harness drive the untitled-document Save flow.
     void setSaveAsPathForTesting(const QString &path) { m_saveAsPathForTesting = path; }
+
+    // Test seam (ADR 0002 review item 13; no-op in production). When set,
+    // replaces the ensureOcrModelsReady() call made when the user activates
+    // the missing-model in-context hint link, so a test can prove the
+    // click→download-consent routing without spawning a real modal or a
+    // network download. Returns whether the model is (now) ready.
+    void setOcrModelDownloadHookForTesting(std::function<bool()> hook) {
+        m_ocrModelDownloadHook = std::move(hook);
+    }
 
   public slots:
     void rebuildRecentMenu();
@@ -379,6 +390,36 @@ class MainWindow : public QMainWindow {
     // no modal — this is the canonical "background ML work is
     // happening" affordance for the user.
     QLabel *m_mlIndicator = nullptr;
+
+    // ADR 0002 status-bar affordances. m_mlProgress is the richer
+    // progress+cancel widget for foreground ML ops (OCR batches;
+    // background removal can adopt it later). m_cancelMlAction is the
+    // ⌘. keyboard cancel, enabled only while a foreground cancellable op
+    // is running. m_ocrModelMissingHint is the non-modal in-context
+    // "install language pack" prompt shown when auto-OCR can't run
+    // because the language model is absent. The m_ocr* scalars coordinate
+    // the reveal delay: progress is buffered until the widget reveals so
+    // sub-threshold batches never flicker it.
+    MlProgressWidget *m_mlProgress = nullptr;
+    QAction *m_cancelMlAction = nullptr;
+    QLabel *m_ocrModelMissingHint = nullptr;
+    int m_ocrPendingTotal = 0;
+    int m_ocrPendingCompleted = 0;
+    bool m_ocrRevealed = false;
+    // ADR 0002 §1 elapsed-time reassurance. While an INDETERMINATE reveal
+    // is showing, this 1s timer ticks and feeds setElapsedSeconds() so a
+    // slow single-page op appends "· Ns" past 10s. Stopped on finish/idle.
+    QTimer *m_ocrElapsedTimer = nullptr;
+    int m_ocrElapsedSecs = 0;
+    // ADR 0002 §3 page-change re-derivation. IDocument exposes no page-
+    // changed signal, so — mirroring Sidebar's m_pageSyncTimer — poll the
+    // current page and notify the controller only when it changes, so the
+    // missing-model hint re-derives when scrolling between text and scanned
+    // pages. m_lastOcrPage is the last page pushed to the controller.
+    QTimer *m_ocrPagePoll = nullptr;
+    int m_lastOcrPage = -1;
+    // Test seam for the missing-model hint's download-consent routing.
+    std::function<bool()> m_ocrModelDownloadHook;
 
     // Auto-OCR pump. Owns an OcrEngine and tracks the in-flight
     // submissions for the current document; signals from the document

@@ -34,6 +34,7 @@
 #include "settings/AppPaths.h"
 #include "ml/SamSession.h"
 #include "recent/RecentFiles.h"
+#include "MlProgressWidget.h"
 #include "ModelManagerDialog.h"
 #include "OcrController.h"
 #include "OcrResultsDialog.h"
@@ -91,6 +92,13 @@
 #include <QWidget>
 
 namespace trailer {
+
+// Defined in the anonymous namespace further down; forward-declared so the
+// missing-model hint's Install link (wired in the constructor) can reach the
+// shared one-time-consent download flow (ADR 0002 §3).
+namespace {
+bool ensureOcrModelsReady(MainWindow *parent, OcrEngine &engine);
+}
 
 MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent), m_app(app) {
     setAcceptDrops(true);
@@ -422,6 +430,140 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     statusBar()->addPermanentWidget(hint);
     m_largeDocOcrHint = hint;
     refreshMlIndicator();
+
+    // ADR 0002: richer progress+cancel widget for foreground ML ops.
+    // Sits next to the ambient m_mlIndicator dot (which stays untouched).
+    // OcrController's batch signals drive it; the reveal is delayed so
+    // sub-threshold batches never flicker it. See wiring below.
+    m_mlProgress = new MlProgressWidget(this);
+    statusBar()->addPermanentWidget(m_mlProgress);
+    // ADR 0002 §1: elapsed-time reassurance for INDETERMINATE reveals.
+    // Ticks once a second while a single-page / unknown-length op is
+    // revealed and appends "· Ns" past 10s. Started in the indeterminate
+    // branch below; stopped on finish/abort so it never runs while idle.
+    m_ocrElapsedTimer = new QTimer(this);
+    m_ocrElapsedTimer->setInterval(1000);
+    connect(m_ocrElapsedTimer, &QTimer::timeout, this, [this]() {
+        ++m_ocrElapsedSecs;
+        m_mlProgress->setElapsedSeconds(m_ocrElapsedSecs);
+    });
+    connect(m_ocrController, &OcrController::ocrBatchStarted, this, [this](int total) {
+        m_ocrPendingTotal = total;
+        m_ocrPendingCompleted = 0;
+        m_ocrRevealed = false;
+        if (m_cancelMlAction)
+            m_cancelMlAction->setEnabled(true);
+    });
+    connect(m_ocrController, &OcrController::ocrBatchProgress, this,
+            [this](int completed, int total) {
+                m_ocrPendingTotal = total;
+                m_ocrPendingCompleted = completed;
+                if (m_ocrRevealed)
+                    m_mlProgress->setProgress(completed);
+            });
+    connect(m_ocrController, &OcrController::ocrBatchShouldReveal, this, [this]() {
+        m_ocrRevealed = true;
+        if (m_ocrPendingTotal >= 2) {
+            m_ocrElapsedTimer->stop();
+            m_mlProgress->beginDeterminate(tr("Recognising text"), m_ocrPendingTotal);
+            m_mlProgress->setProgress(m_ocrPendingCompleted);
+        } else {
+            m_mlProgress->beginIndeterminate(tr("Recognising text"));
+            m_ocrElapsedSecs = 0;
+            m_ocrElapsedTimer->start();
+        }
+    });
+    connect(m_ocrController, &OcrController::ocrBatchFinished, this, [this](bool cancelled) {
+        m_ocrElapsedTimer->stop();
+        if (m_cancelMlAction)
+            m_cancelMlAction->setEnabled(false);
+        if (m_ocrRevealed) {
+            m_mlProgress->finishWithMessage(cancelled
+                                                ? tr("Text recognition cancelled — no changes saved")
+                                                : tr("Text recognition complete"));
+        }
+        m_ocrRevealed = false;
+    });
+    // Silent teardown (supersede / document switch or close): drive the
+    // widget straight back to idle with NO terminal message and disable the
+    // scoped cancel action so ⌘. never points at a dead batch (ADR 0002
+    // review items 2/7).
+    connect(m_ocrController, &OcrController::ocrBatchAborted, this, [this]() {
+        m_ocrElapsedTimer->stop();
+        m_ocrRevealed = false;
+        m_mlProgress->goIdle();
+        if (m_cancelMlAction)
+            m_cancelMlAction->setEnabled(false);
+    });
+    connect(m_mlProgress, &MlProgressWidget::cancelRequested, m_ocrController,
+            &OcrController::cancelActiveBatch);
+
+    // ADR 0002: Esc is intentionally NOT globally bound to cancel — it is
+    // overloaded (find bar, popovers) and a bare-Esc global cancel is the
+    // accidental-loss trap flagged in the persona review. The ✕ button and
+    // ⌘. (Ctrl+.) cover the cancel gesture (B6); ⌘. is scoped to a running
+    // foreground op via setEnabled() above.
+    m_cancelMlAction = new QAction(tr("Cancel ML Operation"), this);
+    m_cancelMlAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Period));
+    m_cancelMlAction->setEnabled(false);
+    connect(m_cancelMlAction, &QAction::triggered, m_ocrController,
+            &OcrController::cancelActiveBatch);
+    addAction(m_cancelMlAction);
+
+    // ADR 0002 §3: non-modal in-context hint shown when auto-OCR would run
+    // but the language model is absent. Benefit-first wording, no jargon;
+    // the link enters the sanctioned one-time-consent download flow (the
+    // only popup allowed here). State-driven via autoOcrModelMissing().
+    m_ocrModelMissingHint = new QLabel(
+        tr("This document's text isn't searchable — "
+           "<a href=\"#install\">install language pack</a> to recognise it."),
+        this);
+    m_ocrModelMissingHint->setObjectName(QStringLiteral("ocrModelMissingHint"));
+    m_ocrModelMissingHint->setTextFormat(Qt::RichText);
+    m_ocrModelMissingHint->setOpenExternalLinks(false);
+    m_ocrModelMissingHint->setVisible(false);
+    connect(m_ocrModelMissingHint, &QLabel::linkActivated, this, [this](const QString &) {
+        // The hint link routes into the sanctioned one-time download-consent
+        // flow (ensureOcrModelsReady → requestModelDownload). A test seam may
+        // intercept it so the routing can be verified without a real modal.
+        bool ready;
+        if (m_ocrModelDownloadHook) {
+            ready = m_ocrModelDownloadHook();
+        } else {
+            OcrEngine gateEngine(&m_app->modelRegistry());
+            ready = ensureOcrModelsReady(this, gateEngine);
+        }
+        if (ready) {
+            // Model now present — re-derive so the hint hides and auto-OCR
+            // resumes for the visible page.
+            auto *doc = m_documentView->currentDocument();
+            if (doc && doc->supportsSelectableText())
+                m_ocrController->onVisiblePageChanged(doc->currentPage());
+        }
+    });
+    statusBar()->addPermanentWidget(m_ocrModelMissingHint);
+    connect(m_ocrController, &OcrController::autoOcrModelMissing, this,
+            [this](bool missing) { m_ocrModelMissingHint->setVisible(missing); });
+
+    // ADR 0002 §3: re-derive auto-OCR / the missing-model hint on PAGE
+    // change, not just document change. IDocument is not a QObject and
+    // exposes no page-changed signal, so — mirroring Sidebar's
+    // m_pageSyncTimer — poll the current page at a light cadence and notify
+    // the controller only when it actually changes (scrolling from a text
+    // page to a scanned page must surface the hint).
+    m_ocrPagePoll = new QTimer(this);
+    m_ocrPagePoll->setInterval(150);
+    connect(m_ocrPagePoll, &QTimer::timeout, this, [this]() {
+        auto *doc = m_documentView->currentDocument();
+        if (!doc || !m_ocrController)
+            return;
+        const int page = doc->currentPage();
+        if (page == m_lastOcrPage)
+            return;
+        m_lastOcrPage = page;
+        m_ocrController->onVisiblePageChanged(page);
+    });
+    m_ocrPagePoll->start();
 
     // Auto-save loop. Tick every 30 s; each tick saves any document
     // that is dirty AND has been saved at least once (filePath() is
@@ -2485,8 +2627,16 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // tracking timer below once the doc has settled.
     if (m_ocrController) {
         m_ocrController->setDocument(doc);
+        // Sync the page-poll baseline so the poll doesn't re-fire the same
+        // page we push here.
+        m_lastOcrPage = doc ? doc->currentPage() : -1;
         if (doc && doc->supportsSelectableText()) {
             m_ocrController->onVisiblePageChanged(doc->currentPage());
+        } else {
+            // Null / non-OCR document: re-derive so a missing-model hint
+            // left over from the previous document hides (ADR 0002 review
+            // item 2). onVisiblePageChanged wouldn't run for these.
+            m_ocrController->refreshModelHint();
         }
     }
 
@@ -2701,6 +2851,15 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     const bool canOcr = doc != nullptr && doc->supportsSelectableText();
     applyMlPolicy(m_recognizeTextAction, canOcr,
                   {ModelId::PpOcrDetector, ModelId::PpOcrRecognizerLatin});
+    if (canOcr && m_recognizeTextAction && !m_recognizeTextAction->isEnabled()) {
+        // ADR 0002 §3 / G6: the base doc type supports OCR but policy is
+        // blocking the one-time download — override the shared tooltip
+        // with benefit-first wording that names the download path and
+        // avoids the "model"/"OCR" jargon token.
+        m_recognizeTextAction->setToolTip(
+            tr("Text recognition needs a one-time language download "
+               "(Tools → Manage ML Models…)."));
+    }
     if (!canOcr && m_recognizeTextAction) {
         m_recognizeTextAction->setToolTip(
             doc ? tr("Recognize Text needs a document with selectable raster "
