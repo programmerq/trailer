@@ -82,11 +82,20 @@ class OcrController : public QObject {
     void submitUserPages(IDocument *doc, std::vector<int> pages, bool forceRerun);
 
     // Cancel the active UserAction batch (ADR 0002 §2). Flips every
-    // outstanding token so in-flight pages discard their partial result
-    // and not-yet-started pages never run, stops the completion count,
-    // and emits ocrBatchFinished(true). Idempotent — a no-op when no
-    // batch is active. Ambient auto-OCR is deliberately NOT affected.
+    // outstanding BATCH-TRACKED token so in-flight pages discard their
+    // partial result and not-yet-started pages never run, stops the
+    // completion count, and emits ocrBatchFinished(true). Idempotent — a
+    // no-op when no batch is active. Ambient auto-OCR (visible-page ±1)
+    // is deliberately NOT affected — only batch-tracked handles are
+    // cancelled.
     void cancelActiveBatch();
+
+    // Re-derive the missing-model in-context hint for the current
+    // document/page, including the doc==null and non-OCR-document cases
+    // (which emit autoOcrModelMissing(false) so a stale hint hides on a
+    // document switch or close). ADR 0002 §3. Cheap; MainWindow calls it
+    // on every current-document change.
+    void refreshModelHint();
 
     // Reveal-delay threshold (ADR 0002 G2). A batch that finishes before
     // this elapses never reveals the progress widget. Settable so tests
@@ -129,6 +138,13 @@ class OcrController : public QObject {
     // Emitted once the batch ends: cancelled=false on natural
     // completion, cancelled=true after cancelActiveBatch().
     void ocrBatchFinished(bool cancelled);
+    // Emitted when an active batch is torn down SILENTLY — superseded by
+    // a fresh batch, or the document was switched/closed. MainWindow
+    // drives the widget straight back to idle (no "cancelled — no changes
+    // saved" terminal message) and disables the scoped cancel action.
+    // Distinct from ocrBatchFinished so a supersede/teardown never flashes
+    // the misleading cancel message (ADR 0002 review items 2/7).
+    void ocrBatchAborted();
     // Emitted after the reveal delay iff the batch is still running
     // (ADR 0002 G2). MainWindow reveals the progress widget here, not on
     // ocrBatchStarted, so sub-threshold batches never flicker it.
@@ -149,6 +165,14 @@ class OcrController : public QObject {
         bool operator==(const PendingKey &o) const noexcept {
             return doc == o.doc && page == o.page;
         }
+    };
+    // Value stored per pending key: the scheduler task id plus whether the
+    // submission is part of a user-action batch. batchTracked lets
+    // cancelActiveBatch() cancel ONLY batch handles and leave ambient
+    // (visible-page ±1) submissions running (ADR 0002 review item 3).
+    struct PendingEntry {
+        MlTaskId id = 0;
+        bool batchTracked = false;
     };
     struct PendingKeyHash {
         size_t operator()(const PendingKey &k) const noexcept {
@@ -171,8 +195,21 @@ class OcrController : public QObject {
     bool modelReady() const;
 
     // GUI-thread callback invoked when a batch page resolves (stored or
-    // discarded). Advances the completion count and finishes the batch.
-    void onBatchPageResolved();
+    // discarded). `epoch` identifies the batch that scheduled the page;
+    // stragglers from a superseded/torn-down batch carry a stale epoch and
+    // are ignored so they can't inflate the CURRENT batch's counter (ADR
+    // 0002 review item 1).
+    void onBatchPageResolved(int epoch);
+
+    // Silent teardown of the active-batch bookkeeping: deactivate, stop
+    // the reveal timer, flip the apply guard, and bump the batch epoch so
+    // in-flight stragglers are orphaned. Emits nothing and does not touch
+    // ambient handles — callers decide what signal (if any) to emit.
+    void deactivateBatch();
+
+    // Cancel and forget every batch-tracked pending handle, leaving
+    // ambient submissions in m_pending untouched.
+    void cancelBatchTrackedHandles();
 
     // Recompute and emit autoOcrModelMissing() for the visible page.
     void evaluateAutoOcrModel(IDocument *doc, int page);
@@ -190,19 +227,42 @@ class OcrController : public QObject {
     // when the controller frees; the shared_ptr defers OcrEngine
     // destruction until the lambda exits.
     std::shared_ptr<OcrEngine> m_engine;
-    std::unordered_map<PendingKey, MlTaskId, PendingKeyHash> m_pending;
+    std::unordered_map<PendingKey, PendingEntry, PendingKeyHash> m_pending;
 
     // --- UserAction batch tracking (ADR 0002) ---
     bool m_batchActive = false;
     int m_batchTotal = 0;
     int m_batchCompleted = 0;
+    // Monotonic per-batch identity. Bumped when a batch starts; a page's
+    // apply lambda captures the value current at submit time and hands it
+    // back to onBatchPageResolved(), which ignores any that don't match
+    // the live batch. Guards against a superseded batch's late workers
+    // inflating the new batch's completion count (ADR 0002 review item 1).
+    int m_batchEpoch = 0;
     // Shared with each page's GUI-thread apply step. Flipped by
     // cancelActiveBatch(); the apply step checks it (both run on the GUI
     // thread, so no locking) and discards the interrupted page's blocks
     // rather than persisting a half-recognised page.
     std::shared_ptr<std::atomic<bool>> m_batchCancelled;
     QTimer *m_revealTimer = nullptr;
-    int m_revealDelayMs = 800;
+    // PHILOSOPHY: hand-tuned values stay hand-tuned. Reveal delay is the
+    // grace period before an in-flight batch surfaces the progress widget
+    // (ADR 0002 §1 "~1s"; B5's floor is "<1s: no looped animation"). The
+    // range considered was 600–1200ms: below ~800ms fast batches flicker
+    // the widget for work that's already done; above ~1200ms a genuinely
+    // slow batch feels unacknowledged. 1000ms sits in the middle and
+    // matches the ADR. Bump it only if users report the widget flashing on
+    // trivially fast batches (raise) or feeling unresponsive on slow ones
+    // (lower); it is settable per-run for tests.
+    int m_revealDelayMs = 1000;
+    // Set true at the very top of the destructor so cancelAll() knows not
+    // to emit ocrBatchAborted() into a half-destroyed MainWindow (its
+    // status-bar children may already be gone).
+    bool m_destroying = false;
+    // Last value emitted through autoOcrModelMissing(). Cached so the
+    // signal fires only on a real state change, not on every page/document
+    // re-derivation (ADR 0002 review item 9).
+    std::optional<bool> m_lastModelMissing;
 
     // Test seams (see setters above).
     RecognizeFn m_recognizer;

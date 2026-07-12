@@ -8,6 +8,7 @@
 #include <QSet>
 #include <QStringList>
 #include <cstdint>
+#include <functional>
 #include <memory>
 
 class QCloseEvent;
@@ -73,6 +74,15 @@ class MainWindow : public QMainWindow {
     // chooseSaveAsPath() returns this instead of showing the native file
     // dialog, letting the harness drive the untitled-document Save flow.
     void setSaveAsPathForTesting(const QString &path) { m_saveAsPathForTesting = path; }
+
+    // Test seam (ADR 0002 review item 13; no-op in production). When set,
+    // replaces the ensureOcrModelsReady() call made when the user activates
+    // the missing-model in-context hint link, so a test can prove the
+    // click→download-consent routing without spawning a real modal or a
+    // network download. Returns whether the model is (now) ready.
+    void setOcrModelDownloadHookForTesting(std::function<bool()> hook) {
+        m_ocrModelDownloadHook = std::move(hook);
+    }
 
   public slots:
     void rebuildRecentMenu();
@@ -396,6 +406,20 @@ class MainWindow : public QMainWindow {
     int m_ocrPendingTotal = 0;
     int m_ocrPendingCompleted = 0;
     bool m_ocrRevealed = false;
+    // ADR 0002 §1 elapsed-time reassurance. While an INDETERMINATE reveal
+    // is showing, this 1s timer ticks and feeds setElapsedSeconds() so a
+    // slow single-page op appends "· Ns" past 10s. Stopped on finish/idle.
+    QTimer *m_ocrElapsedTimer = nullptr;
+    int m_ocrElapsedSecs = 0;
+    // ADR 0002 §3 page-change re-derivation. IDocument exposes no page-
+    // changed signal, so — mirroring Sidebar's m_pageSyncTimer — poll the
+    // current page and notify the controller only when it changes, so the
+    // missing-model hint re-derives when scrolling between text and scanned
+    // pages. m_lastOcrPage is the last page pushed to the controller.
+    QTimer *m_ocrPagePoll = nullptr;
+    int m_lastOcrPage = -1;
+    // Test seam for the missing-model hint's download-consent routing.
+    std::function<bool()> m_ocrModelDownloadHook;
 
     // Auto-OCR pump. Owns an OcrEngine and tracks the in-flight
     // submissions for the current document; signals from the document

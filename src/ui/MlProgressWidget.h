@@ -86,6 +86,14 @@ class MlProgressWidget : public QWidget {
     int m_done = 0;
     int m_elapsed = 0;
     QString m_baseLabel;
+    // PHILOSOPHY: hand-tuned values stay hand-tuned. How long the terminal
+    // "complete / cancelled — no changes saved" message lingers before the
+    // widget hides itself. The range considered was 2000–4000ms: below ~2s
+    // the outcome message is gone before a glancing user reads it; above
+    // ~4s a dead status-bar message overstays and reads as stuck. 3000ms
+    // reads as an acknowledgement without lingering. Change it only if the
+    // terminal message is reported as missed (raise) or as stale/stuck
+    // (lower); tests set it to 0/10ms to observe return-to-idle instantly.
     int m_terminalHoldMs = 3000;
 };
 

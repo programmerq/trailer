@@ -31,6 +31,10 @@ OcrController::OcrController(Application *app, QObject *parent)
 }
 
 OcrController::~OcrController() {
+    // Flag the teardown so cancelAll() suppresses ocrBatchAborted(): our
+    // signal targets (MainWindow's status-bar widgets) are children of the
+    // same parent and may already be destroyed.
+    m_destroying = true;
     cancelAll();
 }
 
@@ -116,9 +120,16 @@ void OcrController::submitUserPages(IDocument *doc, std::vector<int> pages, bool
     if (m_doc != doc)
         setDocument(doc);
 
-    // A fresh explicit batch supersedes any still-active one.
-    if (m_batchActive)
-        cancelActiveBatch();
+    // A fresh explicit batch supersedes any still-active one. Tear the old
+    // batch down SILENTLY — cancelActiveBatch() would surface a misleading
+    // "cancelled — no changes saved" terminal message that the new reveal
+    // would immediately overwrite (ADR 0002 review item 7). ocrBatchAborted
+    // drives the widget straight to idle; the new batch's reveal takes over.
+    if (m_batchActive) {
+        deactivateBatch();
+        cancelBatchTrackedHandles();
+        emit ocrBatchAborted();
+    }
 
     // Count the in-range pages up front — that's the batch total the
     // progress widget reports (ADR 0002 G1). Out-of-range indices are
@@ -131,6 +142,10 @@ void OcrController::submitUserPages(IDocument *doc, std::vector<int> pages, bool
     if (valid.empty())
         return;
 
+    // New batch identity: workers scheduled below capture this epoch and
+    // hand it back on completion so a superseded batch's stragglers are
+    // ignored (ADR 0002 review item 1).
+    ++m_batchEpoch;
     m_batchActive = true;
     m_batchTotal = static_cast<int>(valid.size());
     m_batchCompleted = 0;
@@ -148,12 +163,16 @@ void OcrController::submitUserPages(IDocument *doc, std::vector<int> pages, bool
         // will never produce a worker completion callback — count it as
         // resolved now so the batch total is always reachable.
         if (r != SubmitResult::Submitted)
-            onBatchPageResolved();
+            onBatchPageResolved(m_batchEpoch);
     }
 }
 
-void OcrController::onBatchPageResolved() {
-    if (!m_batchActive)
+void OcrController::onBatchPageResolved(int epoch) {
+    // Ignore stragglers from a batch that has since been superseded or
+    // torn down: their epoch no longer matches the live batch, so counting
+    // them would inflate the current batch's progress (ADR 0002 review
+    // item 1).
+    if (!m_batchActive || epoch != m_batchEpoch)
         return;
     ++m_batchCompleted;
     emit ocrBatchProgress(m_batchCompleted, m_batchTotal);
@@ -164,25 +183,42 @@ void OcrController::onBatchPageResolved() {
     }
 }
 
-void OcrController::cancelActiveBatch() {
-    if (!m_batchActive)
-        return;
+void OcrController::deactivateBatch() {
     m_batchActive = false;
-    m_revealTimer->stop();
+    // Orphan any in-flight stragglers scheduled under the old epoch so a
+    // late resolve can't touch a subsequent batch's counter.
+    ++m_batchEpoch;
+    if (m_revealTimer)
+        m_revealTimer->stop();
     // Flip the shared apply guard so any GUI-thread apply steps still to
     // come discard their (possibly partial) page rather than persisting a
     // half-recognised page (ADR 0002 §2, per-page granularity).
     if (m_batchCancelled)
         m_batchCancelled->store(true);
-    // Cancel every outstanding scheduler task for this document so
-    // not-yet-started pages never run and in-flight recognition bails at
-    // its next checkpoint.
-    if (m_app) {
-        MlScheduler &sched = m_app->mlScheduler();
-        for (const auto &kv : m_pending)
-            sched.cancel(kv.second);
+}
+
+void OcrController::cancelBatchTrackedHandles() {
+    // Cancel and forget only batch-tracked scheduler tasks so not-yet-
+    // started batch pages never run and in-flight recognition bails at its
+    // next checkpoint. Ambient (visible-page ±1) submissions are left
+    // running (ADR 0002 review item 3).
+    MlScheduler *sched = m_app ? &m_app->mlScheduler() : nullptr;
+    for (auto it = m_pending.begin(); it != m_pending.end();) {
+        if (it->second.batchTracked) {
+            if (sched)
+                sched->cancel(it->second.id);
+            it = m_pending.erase(it);
+        } else {
+            ++it;
+        }
     }
-    m_pending.clear();
+}
+
+void OcrController::cancelActiveBatch() {
+    if (!m_batchActive)
+        return;
+    deactivateBatch();
+    cancelBatchTrackedHandles();
     emit ocrBatchFinished(/*cancelled=*/true);
 }
 
@@ -203,28 +239,41 @@ void OcrController::evaluateAutoOcrModel(IDocument *doc, int page) {
                               !doc->hasTextLayer() && page >= 0 && page < doc->pageCount() &&
                               !isLargeDoc();
     const bool missing = wouldAutoOcr && !modelReady();
+    // Emit only on a real change so a stale hint clears exactly once and
+    // steady-state page scrolling doesn't re-fire the signal (ADR 0002
+    // review item 9).
+    if (m_lastModelMissing.has_value() && *m_lastModelMissing == missing)
+        return;
+    m_lastModelMissing = missing;
     emit autoOcrModelMissing(missing);
 }
 
+void OcrController::refreshModelHint() {
+    // Handles doc==null / non-OCR docs: evaluateAutoOcrModel() derives
+    // wouldAutoOcr=false for them and emits autoOcrModelMissing(false),
+    // hiding any hint left over from the previous document.
+    const int page = m_doc ? m_doc->currentPage() : -1;
+    evaluateAutoOcrModel(m_doc, page);
+}
+
 void OcrController::cancelAll() {
-    // Quietly tear down any active batch (doc replace / window close):
-    // flip the apply guard and deactivate so late GUI-thread applies are
-    // discarded and no stale completion fires. No ocrBatchFinished signal
-    // here — this path is driven by document teardown, not a user cancel.
-    if (m_batchActive) {
-        m_batchActive = false;
-        if (m_revealTimer)
-            m_revealTimer->stop();
-        if (m_batchCancelled)
-            m_batchCancelled->store(true);
-    }
-    if (!m_app)
-        return;
-    MlScheduler &sched = m_app->mlScheduler();
-    for (const auto &kv : m_pending) {
-        sched.cancel(kv.second);
+    // Tear down any active batch (doc replace / window close): deactivate,
+    // flip the apply guard, and orphan stragglers. Unlike cancelActiveBatch
+    // there is no user "cancelled" message; instead we emit ocrBatchAborted
+    // so a REVEALED progress widget returns to idle and the scoped cancel
+    // action disables (ADR 0002 review item 2). Suppressed during
+    // destruction, when the signal targets may already be gone.
+    const bool hadBatch = m_batchActive;
+    if (m_batchActive)
+        deactivateBatch();
+    if (m_app) {
+        MlScheduler &sched = m_app->mlScheduler();
+        for (const auto &kv : m_pending)
+            sched.cancel(kv.second.id);
     }
     m_pending.clear();
+    if (hadBatch && !m_destroying)
+        emit ocrBatchAborted();
 }
 
 void OcrController::cancelKey(const PendingKey &key) {
@@ -232,7 +281,7 @@ void OcrController::cancelKey(const PendingKey &key) {
     if (it == m_pending.end())
         return;
     if (m_app) {
-        m_app->mlScheduler().cancel(it->second);
+        m_app->mlScheduler().cancel(it->second.id);
     }
     m_pending.erase(it);
 }
@@ -243,12 +292,12 @@ void OcrController::cancelPagesNotMatching(IDocument *doc, const std::vector<int
     MlScheduler &sched = m_app->mlScheduler();
     for (auto it = m_pending.begin(); it != m_pending.end();) {
         if (it->first.doc != doc) {
-            sched.cancel(it->second);
+            sched.cancel(it->second.id);
             it = m_pending.erase(it);
             continue;
         }
         if (std::find(keep.begin(), keep.end(), it->first.page) == keep.end()) {
-            sched.cancel(it->second);
+            sched.cancel(it->second.id);
             it = m_pending.erase(it);
             continue;
         }
@@ -281,7 +330,7 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
     // at the right priority, skip.
     auto existing = m_pending.find(key);
     if (existing != m_pending.end()) {
-        m_app->mlScheduler().cancel(existing->second);
+        m_app->mlScheduler().cancel(existing->second.id);
         m_pending.erase(existing);
     }
 
@@ -325,9 +374,13 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
     // carry neither — they never touch the progress widget.
     QPointer<OcrController> self(batchTracked ? this : nullptr);
     std::shared_ptr<std::atomic<bool>> cancelGuard = batchTracked ? m_batchCancelled : nullptr;
+    // Identity of the batch this page belongs to (batch-tracked only).
+    // Handed back to onBatchPageResolved() so a straggler from a
+    // superseded batch can't advance the current batch's counter.
+    const int epoch = batchTracked ? m_batchEpoch : -1;
 
     auto handle = m_app->mlScheduler().submit(priority, label,
-        [engine, recognizer, source, page, storePtr, self, cancelGuard](CancellationToken &token) {
+        [engine, recognizer, source, page, storePtr, self, cancelGuard, epoch](CancellationToken &token) {
             if (token.isCancelled())
                 return;
             // OcrEngine::recognize cooperates with the same token
@@ -338,9 +391,13 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
             // bypasses this defensive gate.
             if (!recognizer && !engine->isModelReady()) {
                 // Still resolve the batch page so the count can complete.
-                if (self || cancelGuard) {
+                // Use `self` (the GUI-thread controller) as the invoke
+                // context, not storePtr — storePtr may be null here, which
+                // would silently drop the queued call and stall the batch
+                // count (ADR 0002 review item 8).
+                if (self) {
                     QMetaObject::invokeMethod(
-                        storePtr, [self]() { if (self) self->onBatchPageResolved(); },
+                        self, [self, epoch]() { if (self) self->onBatchPageResolved(epoch); },
                         Qt::QueuedConnection);
                 }
                 return;
@@ -355,7 +412,7 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
             std::vector<OcrEngine::TextBlock> out(blocks.constBegin(), blocks.constEnd());
             QMetaObject::invokeMethod(
                 storePtr,
-                [storePtr, self, cancelGuard, page, contentHash, cancelled,
+                [storePtr, self, cancelGuard, page, contentHash, cancelled, epoch,
                  out = std::move(out)]() mutable {
                     // No-partial-write guard (ADR 0002 §2): if the batch
                     // was cancelled (or this page's token flipped mid-
@@ -373,12 +430,12 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
                     // deactivated the batch, so onBatchPageResolved() is a
                     // no-op in the cancelled case.)
                     if (self)
-                        self->onBatchPageResolved();
+                        self->onBatchPageResolved(epoch);
                 },
                 Qt::QueuedConnection);
         });
 
-    m_pending[key] = handle.id;
+    m_pending[key] = PendingEntry{handle.id, batchTracked};
     return SubmitResult::Submitted;
 }
 
