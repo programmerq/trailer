@@ -32,6 +32,7 @@ class MarkupToolbar;
 class SearchBar;
 class Sidebar;
 
+class MlProgressWidget;
 class OcrController;
 class SamController;
 
@@ -379,6 +380,22 @@ class MainWindow : public QMainWindow {
     // no modal — this is the canonical "background ML work is
     // happening" affordance for the user.
     QLabel *m_mlIndicator = nullptr;
+
+    // ADR 0002 status-bar affordances. m_mlProgress is the richer
+    // progress+cancel widget for foreground ML ops (OCR batches;
+    // background removal can adopt it later). m_cancelMlAction is the
+    // ⌘. keyboard cancel, enabled only while a foreground cancellable op
+    // is running. m_ocrModelMissingHint is the non-modal in-context
+    // "install language pack" prompt shown when auto-OCR can't run
+    // because the language model is absent. The m_ocr* scalars coordinate
+    // the reveal delay: progress is buffered until the widget reveals so
+    // sub-threshold batches never flicker it.
+    MlProgressWidget *m_mlProgress = nullptr;
+    QAction *m_cancelMlAction = nullptr;
+    QLabel *m_ocrModelMissingHint = nullptr;
+    int m_ocrPendingTotal = 0;
+    int m_ocrPendingCompleted = 0;
+    bool m_ocrRevealed = false;
 
     // Auto-OCR pump. Owns an OcrEngine and tracks the in-flight
     // submissions for the current document; signals from the document

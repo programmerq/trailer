@@ -1,18 +1,26 @@
 #pragma once
 
 #include "ml/MlScheduler.h"
+#include "ml/OcrEngine.h"
 
+#include <QImage>
 #include <QObject>
+#include <QVector>
 
+#include <atomic>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
+
+class QTimer;
 
 namespace trailer {
 
 class Application;
+class CancellationToken;
 class IDocument;
-class OcrEngine;
 class SelectableTextStore;
 
 // Coordinates OCR submissions for the active document of a single
@@ -67,7 +75,36 @@ class OcrController : public QObject {
     // cache is invalidated for those pages before submission so a doc
     // that "has a text layer in a watermark only" can be re-OCR'd
     // even though hasTextLayer() returns true.
+    //
+    // This is the batch that drives the status-bar progress widget
+    // (ADR 0002): it emits ocrBatchStarted / ocrBatchProgress /
+    // ocrBatchFinished and, after the reveal delay, ocrBatchShouldReveal.
     void submitUserPages(IDocument *doc, std::vector<int> pages, bool forceRerun);
+
+    // Cancel the active UserAction batch (ADR 0002 §2). Flips every
+    // outstanding token so in-flight pages discard their partial result
+    // and not-yet-started pages never run, stops the completion count,
+    // and emits ocrBatchFinished(true). Idempotent — a no-op when no
+    // batch is active. Ambient auto-OCR is deliberately NOT affected.
+    void cancelActiveBatch();
+
+    // Reveal-delay threshold (ADR 0002 G2). A batch that finishes before
+    // this elapses never reveals the progress widget. Settable so tests
+    // can drive it to 0 (reveal immediately) or a large value (never)
+    // without wall-clock waiting.
+    void setProgressRevealDelayMs(int ms) { m_revealDelayMs = ms; }
+    int progressRevealDelayMs() const { return m_revealDelayMs; }
+
+    // Test seams (no-ops in production). setRecognizerForTesting swaps
+    // the per-page recognition step so tests can drive deterministic
+    // results and hold pages mid-flight without real ONNX models; when
+    // set, the worker's isModelReady() gate is bypassed. setModelReady-
+    // ForTesting forces the GUI-thread readiness check used by the
+    // auto-OCR missing-model affordance.
+    using RecognizeFn =
+        std::function<QVector<OcrEngine::TextBlock>(const QImage &, const CancellationToken *)>;
+    void setRecognizerForTesting(RecognizeFn fn) { m_recognizer = std::move(fn); }
+    void setModelReadyForTesting(std::optional<bool> ready) { m_modelReadyOverride = ready; }
 
     // Cancel everything we have in flight. Used on window close /
     // doc replace.
@@ -82,6 +119,26 @@ class OcrController : public QObject {
     // threshold. The MainWindow uses this to decide whether to show
     // the in-status-bar hint chip ("Text isn't selectable here").
     bool isLargeDoc() const;
+
+  signals:
+    // Emitted at the start of a submitUserPages batch with the number
+    // of pages that will be OCR'd (ADR 0002 G1).
+    void ocrBatchStarted(int total);
+    // Emitted each time a page's result is resolved on the GUI thread.
+    void ocrBatchProgress(int completed, int total);
+    // Emitted once the batch ends: cancelled=false on natural
+    // completion, cancelled=true after cancelActiveBatch().
+    void ocrBatchFinished(bool cancelled);
+    // Emitted after the reveal delay iff the batch is still running
+    // (ADR 0002 G2). MainWindow reveals the progress widget here, not on
+    // ocrBatchStarted, so sub-threshold batches never flicker it.
+    void ocrBatchShouldReveal();
+
+    // State-driven auto-OCR readiness signal (ADR 0002 §3). true when
+    // the visible document would auto-OCR but the language model is not
+    // installed; false otherwise. Re-derived on every document/page
+    // change so the in-context hint is persistent, not fire-once.
+    void autoOcrModelMissing(bool missing);
 
   private:
     // Submission state tracked per (doc, page) so duplicate enqueues
@@ -99,9 +156,26 @@ class OcrController : public QObject {
         }
     };
 
-    void submitPage(IDocument *doc, int page, MlPriority priority, bool forceRerun);
+    // Outcome of a single submitPage() call. Used by the batch driver to
+    // decide whether a completion callback is still coming (Submitted)
+    // or the page must be counted done immediately (Cached / Skipped).
+    enum class SubmitResult { Submitted, Cached, Skipped };
+
+    SubmitResult submitPage(IDocument *doc, int page, MlPriority priority, bool forceRerun,
+                            bool batchTracked);
     void cancelKey(const PendingKey &key);
     void cancelPagesNotMatching(IDocument *doc, const std::vector<int> &keep);
+
+    // GUI-thread readiness check backing the auto-OCR missing-model
+    // affordance. Honours the test override when set.
+    bool modelReady() const;
+
+    // GUI-thread callback invoked when a batch page resolves (stored or
+    // discarded). Advances the completion count and finishes the batch.
+    void onBatchPageResolved();
+
+    // Recompute and emit autoOcrModelMissing() for the visible page.
+    void evaluateAutoOcrModel(IDocument *doc, int page);
 
     Application *m_app;
     // IDocument isn't a QObject, so we can't use QPointer here. The
@@ -117,6 +191,22 @@ class OcrController : public QObject {
     // destruction until the lambda exits.
     std::shared_ptr<OcrEngine> m_engine;
     std::unordered_map<PendingKey, MlTaskId, PendingKeyHash> m_pending;
+
+    // --- UserAction batch tracking (ADR 0002) ---
+    bool m_batchActive = false;
+    int m_batchTotal = 0;
+    int m_batchCompleted = 0;
+    // Shared with each page's GUI-thread apply step. Flipped by
+    // cancelActiveBatch(); the apply step checks it (both run on the GUI
+    // thread, so no locking) and discards the interrupted page's blocks
+    // rather than persisting a half-recognised page.
+    std::shared_ptr<std::atomic<bool>> m_batchCancelled;
+    QTimer *m_revealTimer = nullptr;
+    int m_revealDelayMs = 800;
+
+    // Test seams (see setters above).
+    RecognizeFn m_recognizer;
+    std::optional<bool> m_modelReadyOverride;
 };
 
 } // namespace trailer
