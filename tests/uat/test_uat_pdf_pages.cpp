@@ -21,6 +21,7 @@
 #include "document/IDocument.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
+#include "ui/Sidebar.h"
 
 #include <QDir>
 #include <QPageSize>
@@ -78,6 +79,7 @@ class TestUatPdfPages : public QObject {
     void uat_pdf_024_moveUndoRedo();
     void uat_pdf_035_insertUndoRedo();
     void uat_pdf_056_cropUndoRedo();
+    void uat_pdf_080_longDocOpensThumbnailSidebar();
 
   private:
     QTemporaryDir m_scratch;
@@ -283,6 +285,37 @@ void TestUatPdfPages::uat_pdf_056_cropUndoRedo() {
     const QSizeF afterRedo = qpdf->pagePointSize(0);
     QVERIFY2(afterRedo.width() < originalSize.width() - 30.0,
              "Redo must re-apply the crop");
+}
+
+// UAT-VWR-055 (content-aware first-open defaults, long-document branch).
+//
+// A long PDF (>= 20 pages) with no saved per-file state auto-opens the
+// thumbnail sidebar for navigation. Pages is NOT the global default
+// (Hidden), so a green assertion also proves the heuristic is wired into
+// the open path and actually moves the live sidebar. The decision matrix
+// (thresholds, the long-form conflict, the leave-default cases) is pinned
+// separately by tests/test_content_aware_defaults.cpp.
+void TestUatPdfPages::uat_pdf_080_longDocOpensThumbnailSidebar() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath =
+        writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_pdf_080.pdf")), 22);
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    QCOMPARE(doc->pageCount(), 22);
+
+    auto *sidebar = mw->findChild<Sidebar *>();
+    QVERIFY2(sidebar, "MainWindow should host a Sidebar");
+    QCOMPARE(static_cast<int>(sidebar->mode()), static_cast<int>(Sidebar::Mode::Pages));
 }
 
 int main(int argc, char **argv) {

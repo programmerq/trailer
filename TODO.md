@@ -142,7 +142,7 @@ better than the global default by reading the document's contents:
 - **Many pages → start with thumbnail sidebar open.** A document
   with ≥ K pages (suggest ≥ 20) is one the user will want to
   navigate by thumbnail; auto-popping
-  `Sidebar::Mode::Thumbnails` on first open saves a click. Once
+  `Sidebar::Mode::Pages` on first open saves a click. Once
   the user changes it, three-tier persistence carries forward.
 
 Heuristics should run only when no per-file state is on record; any

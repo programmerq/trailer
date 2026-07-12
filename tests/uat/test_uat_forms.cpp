@@ -22,6 +22,9 @@
 #include "document/PdfEditor.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
+#include "ui/Sidebar.h"
+#include "settings/DocumentTypeDefaults.h"
+#include "recent/RecentFiles.h"
 
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFWriter.hh>
@@ -31,6 +34,7 @@
 #include <QFileInfo>
 #include <QMenu>
 #include <QMenuBar>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -160,6 +164,7 @@ class TestUatForms : public QObject {
     void uat_frm_040_fillFormsAutoEnabledOnFillablePdf();
     void uat_frm_041_fillFormsRespectsExplicitToggleOff();
     void uat_frm_050_tabMovesBetweenFieldsInReadingOrder();
+    void uat_frm_060_formForcesSidebarHiddenOverridingTypeDefault();
 
   private:
     QTemporaryDir m_scratch;
@@ -454,6 +459,58 @@ void TestUatForms::uat_frm_050_tabMovesBetweenFieldsInReadingOrder() {
             break;
     }
     QVERIFY2(visited.size() >= 3, "Tab focus chain did not visit all form-field widgets");
+}
+
+// UAT-VWR-055 (content-aware first-open defaults, forms branch).
+//
+// A form PDF (>= 3 fillable fields, < 20 pages) with no saved per-file
+// state forces the sidebar hidden for a clean filling view. To prove the
+// heuristic actively *overrides* state (rather than passing only because
+// the global default already hides the sidebar), we first seed a per-type
+// PDF default that opens the thumbnail sidebar — content-aware must still
+// win and leave it hidden. The form-filling toolbar surfaces separately
+// and is unaffected.
+void TestUatForms::uat_frm_060_formForcesSidebarHiddenOverridingTypeDefault() {
+    QVERIFY(m_scratch.isValid());
+    const QString path = writeFormPdf(m_scratch.filePath(QStringLiteral("frm060.pdf")));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    // Per-type default that would otherwise open the page-thumbnail
+    // sidebar for any PDF with no per-file state. This mutates the
+    // process-wide per-type defaults, which are shared across every test
+    // slot (they run against one Application), so capture the prior value
+    // and restore it on scope exit — including any early QVERIFY return —
+    // to keep later slots order-independent.
+    const DocumentTypeDefault priorPdfDefault =
+        app->documentTypeDefaults().forType(DocumentType::Pdf);
+    const auto restorePdfDefault = qScopeGuard([&] {
+        app->documentTypeDefaults().setForType(DocumentType::Pdf, priorPdfDefault);
+    });
+
+    DocumentTypeDefault def;
+    def.sidebarMode = SidebarMode::Pages;
+    QVERIFY2(def.hasState(), "seeded per-type default must report state");
+    app->documentTypeDefaults().setForType(DocumentType::Pdf, def);
+
+    app->openFiles({path});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    // Precondition: the fixture is recognised as a 3-field form.
+    QVERIFY2(doc->supportsFormFilling(), "fixture must be a fillable form");
+    QCOMPARE(static_cast<int>(doc->formFields().size()), 3);
+
+    // The form heuristic wins over the seeded per-type "show thumbnails".
+    auto *sidebar = mw->findChild<Sidebar *>();
+    QVERIFY2(sidebar, "MainWindow should host a Sidebar");
+    QCOMPARE(static_cast<int>(sidebar->mode()), static_cast<int>(Sidebar::Mode::Hidden));
 }
 
 // Custom main: create Application (not just QApplication) so

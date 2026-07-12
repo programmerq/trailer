@@ -5,6 +5,7 @@
 #include "DocumentView.h"
 #include "EmptyStateWidget.h"
 #include "AnnotationOverlay.h"
+#include "ContentAwareDefaults.h"
 #include "Inspector.h"
 #include "Magnifier.h"
 #include "FormToolbar.h"
@@ -2713,7 +2714,9 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     if (doc && !doc->filePath().isEmpty() && !m_restoredViewStateDocs.contains(doc)) {
         m_restoredViewStateDocs.insert(doc);
         const RecentEntry entry = m_app->recentFiles().findByPath(doc->filePath());
+        bool restoredPerFileState = false;
         if (!entry.path.isEmpty() && entry.hasViewState()) {
+            restoredPerFileState = true;
             if (entry.currentPage >= 0 && doc->pageCount() > entry.currentPage) {
                 doc->goToPage(entry.currentPage);
             }
@@ -2756,6 +2759,23 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
                 } else {
                     m_markupToolbar->hide();
                 }
+            }
+        }
+
+        // Content-aware first-open defaults (roadmap Now #3): when the
+        // user has no saved per-file state, let the document's own
+        // contents pick the sidebar — long docs open to page thumbnails
+        // for navigation; shorter forms force the sidebar hidden for a
+        // clean filling view (the form toolbar surfaces separately).
+        // This overrides the per-type / global sidebar choice applied
+        // above, but never an explicit per-file choice (which set
+        // restoredPerFileState and is honoured exactly as saved).
+        if (!restoredPerFileState) {
+            const int formFieldCount =
+                doc->supportsFormFilling() ? static_cast<int>(doc->formFields().size()) : 0;
+            if (const auto mode = contentAwareSidebarMode(
+                    doc->pageCount(), doc->supportsFormFilling(), formFieldCount)) {
+                m_sidebar->setMode(*mode);
             }
         }
     }

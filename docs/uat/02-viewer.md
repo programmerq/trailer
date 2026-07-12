@@ -352,6 +352,33 @@ fit at 100% are shown at actual size rather than upscaling. Use
   a known gap).
 - The app does not crash.
 
+### UAT-VWR-055 — Content-aware first-open sidebar default
+
+**Preconditions:** A document the app has never seen before, with no
+saved per-file view state on record.
+**Steps:**
+1. Open a long PDF (≥ 20 pages).
+2. Separately, open a form PDF (≥ 3 fillable AcroForm fields) of fewer
+   than 20 pages.
+**Expected:**
+- The long document opens with the `Pages` (thumbnail) sidebar showing,
+  ready to navigate — even if the per-type "last PDF" default had the
+  sidebar hidden.
+- The form opens with the sidebar **hidden** for a clean filling view
+  (the form-filling toolbar surfaces separately), even if the per-type
+  default had the sidebar open.
+- A long form (both ≥ 20 pages and ≥ 3 fields) is treated as long:
+  thumbnails win, because paging through it is the priority.
+- These heuristics run only on first open with no saved per-file state;
+  any explicit choice the user has made for this exact file is restored
+  as-is and always wins. Thresholds: ≥ 20 pages, ≥ 3 fields.
+
+Pinned by `tests/test_content_aware_defaults.cpp` (the decision matrix),
+plus integration slots `uat_pdf_080_longDocOpensThumbnailSidebar`
+(`tests/uat/test_uat_pdf_pages.cpp`) and
+`uat_frm_060_formForcesSidebarHiddenOverridingTypeDefault`
+(`tests/uat/test_uat_forms.cpp`).
+
 ---
 
 ## Search (Edit > Find)
