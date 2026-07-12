@@ -660,6 +660,9 @@ void MainWindow::buildMainToolbar() {
     m_searchButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_searchButton->setToolTip(
         tr("Search (%1)").arg(QKeySequence(QKeySequence::Find).toString(QKeySequence::NativeText)));
+    // Icon-only with no text would read as a bare "button" to a screen
+    // reader; give it an explicit accessible name (audit A-CRIT-1).
+    m_searchButton->setAccessibleName(tr("Search"));
     connect(m_searchButton, &QToolButton::clicked, this, &MainWindow::showSearchBar);
     m_mainToolbar->addWidget(m_searchButton);
 

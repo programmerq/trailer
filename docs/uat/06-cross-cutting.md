@@ -288,6 +288,17 @@ with no warning. Cross-ref UAT-FND-092.
   nothing clips or gets squashed under large system fonts or
   right-to-left mirroring. Driven by `tests/uat/test_uat_sweep.cpp`.
 
+### UAT-XCT-061 — Icon buttons carry accessible names
+
+**Preconditions:** A document is open.
+**Steps:**
+1. (Automated sweep) Walk every visible interactive button in the main
+   window chrome (markup toolbar, main toolbar, side docks).
+**Expected:**
+- Each has a non-empty accessible name (its own, its action's text, or
+  its visible text) — none reads as a bare "button" to a screen reader.
+  Driven by `tests/uat/test_uat_sweep.cpp` (audit A-CRIT-1).
+
 ---
 
 ## Process lifecycle
