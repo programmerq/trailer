@@ -39,6 +39,15 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Cap build/test parallelism on the self-hosted trailer-k8s pods: the
+# bare `cmake --build … --parallel` steps honor CMAKE_BUILD_PARALLEL_LEVEL
+# when no explicit job count is given, and unbounded parallelism OOMKilled
+# the release linux-build pod. Conservative caps for a green first retry;
+# raise once pod memory headroom is known.
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+  CTEST_PARALLEL_LEVEL: 2
+
 jobs:
   build-and-test:
     name: Linux build + unit tests
