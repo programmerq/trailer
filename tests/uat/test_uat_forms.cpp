@@ -34,6 +34,7 @@
 #include <QFileInfo>
 #include <QMenu>
 #include <QMenuBar>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -477,7 +478,17 @@ void TestUatForms::uat_frm_060_formForcesSidebarHiddenOverridingTypeDefault() {
     QVERIFY(app);
 
     // Per-type default that would otherwise open the page-thumbnail
-    // sidebar for any PDF with no per-file state.
+    // sidebar for any PDF with no per-file state. This mutates the
+    // process-wide per-type defaults, which are shared across every test
+    // slot (they run against one Application), so capture the prior value
+    // and restore it on scope exit — including any early QVERIFY return —
+    // to keep later slots order-independent.
+    const DocumentTypeDefault priorPdfDefault =
+        app->documentTypeDefaults().forType(DocumentType::Pdf);
+    const auto restorePdfDefault = qScopeGuard([&] {
+        app->documentTypeDefaults().setForType(DocumentType::Pdf, priorPdfDefault);
+    });
+
     DocumentTypeDefault def;
     def.sidebarMode = SidebarMode::Pages;
     QVERIFY2(def.hasState(), "seeded per-type default must report state");

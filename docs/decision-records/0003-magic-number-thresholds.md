@@ -1,9 +1,9 @@
 # 0003 — Magic-number thresholds: scorer 0.50, "≥3 form widgets", "≥20 pages"
 
-- **Status:** proposed
+- **Status:** accepted
 - **Arbiter:** the agent role named for this record; the owner (programmerq) is the escalation-only override.
 - **Date proposed:** 2026-07-09
-- **Date accepted / superseded:** —
+- **Date accepted / superseded:** 2026-07-12 (accepted)
 
 ## Context
 
@@ -34,12 +34,15 @@ stated plainly so this record can't be read as describing current behaviour.
   UX-Done evidence bar. This record simply *ratifies* 0.50 as the accepted
   value and points at the existing rationale; no confound.
 
-### (2) "≥3 AcroForm widgets ⇒ treat as a form" — NOT in code; proposed only
+### (2) "≥3 AcroForm widgets ⇒ treat as a form" — now LIVE, accepted
 
-- **Where:** appears only in `TODO.md:138` as a tentative "a document with **≥ N
-  AcroForm widgets (suggest ≥ 3)** is unambiguously a form" — for an *unbuilt*
-  first-open heuristic (show the form toolbar, suppress the markup toolbar,
-  consider hiding the sidebar). **There is no such constant in code.**
+- **Where:** now committed as `src/ui/ContentAwareDefaults.h:51` —
+  `inline constexpr int kFormFieldThreshold = 3;` (consumed by
+  `contentAwareSidebarMode()` at `src/ui/ContentAwareDefaults.h:54+`), cited per
+  gate G6. It originated in `TODO.md:138` as a tentative "a document with **≥ N
+  AcroForm widgets (suggest ≥ 3)** is unambiguously a form" for the first-open
+  heuristic (force the sidebar hidden for a clean fill view; the form-filling
+  toolbar surfaces separately).
 - **Confound (state plainly):** the *shipped* form behaviour auto-enables
   Fill-Forms at **≥1** fillable field (any `doc->supportsFormFilling()`) —
   `src/ui/MainWindow.cpp:2567` (`hasForms`) and :2581–2583 (one-shot
@@ -51,12 +54,15 @@ stated plainly so this record can't be read as describing current behaviour.
   an otherwise-normal PDF; ≥3 is meant as "unambiguously a form, worth
   rearranging the toolbar for." The value is a guess pending real documents.
 
-### (3) "≥20 pages ⇒ auto-open the Thumbnails sidebar" — NOT in code; proposed only
+### (3) "≥20 pages ⇒ auto-open the Thumbnails sidebar" — now LIVE, accepted
 
-- **Where:** appears only in `TODO.md:143` as "a document with **≥ K pages
-  (suggest ≥ 20)** … auto-popping `Sidebar::Mode::Thumbnails`." **No constant in
-  code.** (An unrelated "≥20 pages" at `docs/uat/02-viewer.md:329` is a *test
-  precondition*, not a threshold.)
+- **Where:** now committed as `src/ui/ContentAwareDefaults.h:50` —
+  `inline constexpr int kLongDocumentPages = 20;` (consumed by
+  `contentAwareSidebarMode()` at `src/ui/ContentAwareDefaults.h:54+`, which
+  returns `Sidebar::Mode::Pages`), cited per gate G6. It originated in
+  `TODO.md:143` as "a document with **≥ K pages (suggest ≥ 20)** …
+  auto-popping `Sidebar::Mode::Pages`." (An unrelated "≥20 pages" at
+  `docs/uat/02-viewer.md:329` is a *test precondition*, not a threshold.)
 - **Confound (state plainly):** there **is** a live page-count threshold, but it
   is **50, for a different purpose** — the auto-OCR skip:
   `src/ui/OcrController.h:79` `static constexpr int kLargeDocPageThreshold = 50;`
@@ -98,33 +104,46 @@ stated plainly so this record can't be read as describing current behaviour.
   step, or failure; the values are explicitly guesses pending real documents,
   which is a data question, not a preference.
 
-## Checkable threshold this record would establish
+## Checkable threshold this record establishes
 
 - **(1)** Accept 0.50 as the ratified recommend threshold; the in-code rationale
   at `BackgroundCandidateScorer.h:65–71` stands as the record of record.
-- **(2)** If accepted, a named constant (with an in-code rationale comment)
-  gates form-*mode* at the chosen field count, *distinct from* the ≥1 live
-  fill-enable, verified by a boundary UAT case written against the proposed
-  count — e.g. at the proposed ≥3, a form with **2 vs 3 fillable widgets**
-  behaves as specified (2 stays in normal mode, 3 enters form mode). The
-  boundary number is still `proposed` (see the confound above); this states
-  the shape of the test the accepted N would make concrete.
-- **(3)** If accepted, a named constant (with rationale) gates the Thumbnails
-  auto-open at the chosen page count, *distinct from* the 50-page OCR-skip
-  constant, verified by a boundary UAT case written against the proposed count
-  — e.g. at the proposed ≥20, a document with **19 vs 20 pages** behaves as
-  specified (19 does not auto-open the Thumbnails sidebar, 20 does). The
-  boundary number is still `proposed`.
-- Acceptance evidence for (2)/(3): the new constants with rationale comments,
-  UAT boundary cases, and screenshots of the triggered/not-triggered states
-  (gate G2). **These two values need explicit owner sign-off** because they
-  promote TODO "suggest" numbers into committed behaviour.
+- **(2)** A named constant with an in-code rationale comment
+  (`src/ui/ContentAwareDefaults.h:51`, `kFormFieldThreshold = 3`) gates the
+  short-form sidebar-hidden behaviour at the committed field count, *distinct
+  from* the ≥1 live fill-enable, pinned by the `exactBoundaries` unit test — a
+  form with **2 vs 3 fillable widgets** behaves as specified (2 stays untouched,
+  3 forces the sidebar hidden).
+- **(3)** A named constant with an in-code rationale comment
+  (`src/ui/ContentAwareDefaults.h:50`, `kLongDocumentPages = 20`) gates the
+  page-thumbnail auto-open at the committed page count, *distinct from* the
+  50-page OCR-skip constant, pinned by the `exactBoundaries` unit test — a
+  document with **19 vs 20 pages** behaves as specified (19 does not auto-open
+  the Pages sidebar, 20 does).
+- Acceptance evidence for (2)/(3): the committed constants with rationale
+  comments and the `exactBoundaries` unit test asserting the inclusive
+  boundaries (19≠20, 2≠3). The magnitudes were promoted from TODO "suggest"
+  numbers into committed behaviour under the owner's escalation-only veto and
+  sign-off on the values (see verdict above).
 
 ## Arbiter verdict + rationale
 
-<Open — status is proposed. (1) is ready to accept as-is; (2) and (3) need
-owner sign-off on the specific numbers and are the reason this record stays
-proposed as a set.>
+Accepted. The two content-aware first-open thresholds — kLongDocumentPages = 20
+and kFormFieldThreshold = 3 — are ratified as the committed values, gating an
+orthogonal pair of behaviors (auto-open the page-thumbnail sidebar for long
+documents; force the sidebar hidden for short forms) that are provably distinct
+from the live ≥1 fill-enable and the 50-page OCR-skip constants. Both boundaries
+are inclusive as specified and pinned by unit tests (exactBoundaries: 19≠20,
+2≠3). The long-form tie is resolved deterministically in favour of navigation
+because the page-count check is evaluated first. The values are deliberately
+conservative so the heuristic fires only when a document is unambiguously long
+or unambiguously a form; ≥3 avoids the single-field false-positive that ≥1 would
+reintroduce, and 20 (vs 50) keeps a 30-page document from being denied its
+thumbnail strip. These remain hand-tuned values subject to the reopen clause;
+the owner retains escalation-only veto and sign-off on the magnitudes.
+
+Threshold (1), scorer 0.50, was already live and is ratified here against its
+existing in-code rationale.
 
 ## Evidence required to reopen
 

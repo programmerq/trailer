@@ -447,7 +447,11 @@ specialised case).
 └──────────┴────────────────────────────────┘
 ```
 
-- Sidebar is collapsible — **Hidden** is the default.
+- Sidebar is collapsible — **Hidden** is the default, with one content-aware
+  first-open exception: on the first open of a document that has no saved
+  per-file state, a document of **≥ 20 pages** auto-opens the **Pages**
+  (thumbnail) sidebar for navigation (see ADR 0003). Explicit or saved per-file
+  state always overrides this — a remembered choice wins and sticks.
 - Sidebar mode is selectable: **Hidden / Thumbnails / Search Results /
   Table of Contents / Highlights & Notes**. Earlier drafts of this doc
   named a *Contact Sheet*, *Bookmarks*, and standalone *Annotations*
