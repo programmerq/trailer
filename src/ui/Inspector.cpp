@@ -86,11 +86,12 @@ Inspector::Inspector(QWidget *parent) : QDockWidget(tr("Inspector"), parent) {
     m_tabs = new QTabWidget(this);
 
     // Qt's built-in QTabBar overflow scroller arrows (ScrollLeft/RightButton)
-    // take a fixed style pixel-metric width that ignores the application font,
-    // so under a large font they render below their own minimumSizeHint
-    // (UAT sweep flagged "width 16 < min 24"). Pin a >=24px touch target.
+    // take a fixed style pixel-metric width that ignores the application font.
+    // Pin a 32px min touch target so the arrows are a genuinely usable size
+    // (the UAT sweep exempts this Qt-owned chrome from the size>=hint check,
+    // since a fixed metric can't track the font-scaled minimumSizeHint).
     m_tabs->tabBar()->setStyleSheet(
-        QStringLiteral("QToolButton { min-width: 24px; min-height: 24px; }"));
+        QStringLiteral("QToolButton { min-width: 32px; min-height: 32px; }"));
 
     auto *docTab = new QWidget(m_tabs);
     auto *docLayout = new QFormLayout(docTab);

@@ -336,7 +336,14 @@ jobs:
           retention-days: 30
 
   macos-build:
-    needs: [precheck]
+    # Gate the expensive GitHub-hosted macOS build behind the two
+    # self-hosted targets (linux-build + windows-cross) so a flaky-runner
+    # rerun doesn't burn macOS action minutes until the cheap self-hosted
+    # platforms pass. precheck stays in `needs:` because the `if:` below
+    # references needs.precheck.outputs.*; a plain (non-always()) `if:`
+    # still requires every listed need to succeed, so adding the two
+    # build jobs is sufficient to order macos-build after them.
+    needs: [precheck, linux-build, windows-cross]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: macOS .app build (Apple Silicon)
     # macos-14 is Apple Silicon. The artifact is arm64-only because
