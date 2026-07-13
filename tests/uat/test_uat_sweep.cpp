@@ -88,6 +88,13 @@ QStringList collectLayoutViolations(QWidget *root, int &checked) {
             continue;
         if (w->objectName().startsWith(QLatin1String("qt_")))
             continue;
+        // Qt's built-in QTabBar overflow scroller arrows are chrome Qt
+        // sizes itself via a fixed style pixel-metric that ignores font
+        // scaling; they are not app controls, so exempt them from the
+        // size>=minimumSizeHint invariant (same rationale as the qt_* skip).
+        if (w->objectName() == QLatin1String("ScrollLeftButton") ||
+            w->objectName() == QLatin1String("ScrollRightButton"))
+            continue;
         ++checked;
         const QSize sz = w->size();
         const QSize msh = w->minimumSizeHint();

@@ -16,6 +16,51 @@ entries terse and user-visible; CI / infrastructure churn lives in the
 
 ### Added
 
+### Changed
+
+### Fixed
+
+### Infrastructure
+
+## [0.3.0] - 2026-07-12
+
+Trailer's second minor release since the first public tag. Headline
+work: a never-worry save invariant on dirty close, a rebuilt
+chronological undo engine, a first-run / empty-state window model, a
+unified Preferences dialog, live progress + cancel for on-device ML,
+and a batch of honest-affordance and accessibility fixes — backed by a
+new design-criteria gate system, decision records, and a self-hosted
+CI pipeline that cross-builds and tests all three platforms. Version
+0.2.0 was tagged but never published with release notes, so its
+changes are consolidated into this section.
+
+### Added
+
+- **Preferences dialog.** A unified Preferences dialog (Edit →
+  Preferences…, `Cmd-,`) collects previously scattered settings. A
+  live-vs-restart volatility registry flags any setting that only
+  takes effect after a restart, so changing one no longer silently
+  no-ops until relaunch.
+- **First-run / empty-state window model.** A window with no open
+  document now presents a purposeful empty state, and document-only
+  toolbars stay hidden until a document is loaded rather than showing
+  a row of dead controls.
+- **ML operation feedback.** Long-running on-device ML work (OCR and
+  the segmentation / background-removal stack) now reports progress in
+  the status bar with a scoped Cancel, and surfaces an in-context
+  prompt when the operation needs a model that isn't installed yet
+  instead of failing silently.
+- **Copy Page as Image.** New `Edit → Copy Page as Image` renders the
+  current page to the clipboard as a raster image.
+- **Continuous-mode screenful navigation.** In Continuous view,
+  `Down` / `Up` / `Space` now step by a full viewport (a screenful)
+  instead of a single line.
+- **Content-aware first-open sidebar defaults.** The sidebar's
+  first-open mode is now chosen from the document's own content (e.g.
+  whether it carries a table of contents) via tuned thresholds.
+- **Accessibility naming.** Icon-only buttons (starting with the
+  Search button) now carry accessible names, with a guard test against
+  shipping unnamed icon buttons.
 - **PDF page-op undo.** `Delete Pages`, `Move Page`, `Insert
   Pages from File…`, and `Crop Pages…` are now undoable via the
   existing `PdfCommand` stack. A single user gesture that affects
@@ -41,9 +86,19 @@ entries terse and user-visible; CI / infrastructure churn lives in the
   `/sys/class/power_supply`, so speculative ML work (OCR / SAM /
   background-removal prefetch) pauses on battery the same way it
   already does on macOS and Windows.
+- **Honest disabled controls.** Controls that can't act in the current
+  context are now disabled with an explanatory tooltip (the
+  disable-plus-tooltip affordance policy, gate G3) instead of
+  appearing live and doing nothing — including `Copy Page as Image`
+  and the empty-state toolbar toggles. Settings that need a restart
+  now say so up front rather than surprising the user later.
 
 ### Fixed
 
+- **Never-worry save.** Closing a document or tab with unsaved changes
+  now always prompts Save / Discard / Cancel; the previous path could
+  silently drop edits when a dirty tab was closed. Codified as the
+  never-worry-save invariant (decision record 0004).
 - **Undo order across subsystems.** Undo / Redo now pop a single
   chronological log per document, so interleaved gestures (rotate →
   annotate → rotate) revert in true reverse order. Previously PDF
@@ -60,9 +115,40 @@ entries terse and user-visible; CI / infrastructure churn lives in the
 - **Search bar "Close".** Clicking the X (or pressing Esc) now
   fully collapses the search bar instead of leaving an empty gap in
   the toolbar.
+- **Inspector tab scroll arrows.** The Inspector tab bar's overflow
+  scroll arrows now meet the minimum touch-target size under large
+  application fonts.
 
 ### Infrastructure
 
+- **Design-criteria hard gates + decision records.** `AGENTS.md`
+  gains nine hard gates (G1–G9) with a companion `DESIGN.md` and
+  `docs/performance-budgets.md`; recurring design calls are now
+  captured as numbered decision records under
+  `docs/decision-records/` (ADR 0002 ML progress/cancel, ADR 0003
+  content-aware thresholds, and ADR 0004 never-worry-save all
+  accepted this cycle).
+- **Review-before-push + decision-brief skills.** New agent skills
+  wire a mandatory pre-push review pass and a decision-brief
+  triage step into the hard-gate workflow.
+- **Structural performance tests + corpus.** Added structural perf
+  assertions (render-before-read ordering, GUI-thread I/O guards,
+  paint-budget checks) over a dedicated perf corpus, labelled `perf`
+  so slower CI tiers can exclude them.
+- **Self-hosted CI on trailer-k8s.** Linux build/test jobs moved to
+  self-hosted `trailer-k8s` runners, with cmake / ninja / mold
+  provisioned by the setup action and cold-cache-friendly timeouts.
+- **Dockerless Windows cross-build + Wine tests.** The Windows
+  release artifact is now cross-compiled with mingw-w64 directly on
+  the self-hosted runners (no Docker daemon) and smoke-tested under
+  Wine, with `onnxruntime.dll` bundled and its hash pinned.
+- **Custom runner image.** A purpose-built runner image bakes in
+  `ccache`, `gh`, `jq`, `zip`, and `shellcheck` (plus a PR build
+  validation step), removing per-run apt installs.
+- **Action runtime bumps.** node20-runtime actions bumped to
+  node24-compatible releases and `actions/checkout` bumped 6 → 7.
+- **Session-start setup hook.** A session-start setup script + hook
+  bootstraps the build environment; the Qt minimum is raised to 6.6.
 - **Release tooling.** New `scripts/bump-version.sh` (VERSION-file
   lifecycle), `scripts/release-notes.sh` (git-log → CHANGELOG
   draft), `scripts/extract-changelog.sh` (CHANGELOG section →
@@ -172,5 +258,6 @@ OCR).
 - UAT harness: ~70 offscreen slots wired via `tests/uat/`, runnable
   via `scripts/run-uat.sh` (host or Docker).
 
-[Unreleased]: https://github.com/programmerq/trailer/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/programmerq/trailer/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/programmerq/trailer/compare/v0.1.0...v0.3.0
 [0.1.0]: https://github.com/programmerq/trailer/releases/tag/v0.1.0

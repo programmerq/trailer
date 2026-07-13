@@ -15,7 +15,7 @@
   <Product Id="*"
            Name="Trailer"
            Language="1033"
-           Version="0.1.0"
+           Version="0.3.0"
            Manufacturer="Trailer Contributors"
            UpgradeCode="{3FA7A361-D9B2-4F88-B8DC-1F2E9C4A5B30}">
 

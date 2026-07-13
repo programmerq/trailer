@@ -21,6 +21,9 @@
     <mediatype>image/webp</mediatype>
   </provides>
   <releases>
+    <release version="0.3.0" date="2026-07-12">
+      <description><p>Never-worry save on dirty close, unified undo, first-run window model, a Preferences dialog, and live ML progress with cancel.</p></description>
+    </release>
     <release version="0.1.0" date="2026-04-26">
       <description><p>Initial release.</p></description>
     </release>
