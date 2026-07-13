@@ -201,10 +201,8 @@ jobs:
 
           The \`.zip\` contains \`trailer.exe\` alongside every DLL it
           transitively loads (Qt, qpdf, MinGW runtime) plus the Qt
-          Windows platform plugin. Extract anywhere and run.
-
-          The \`.msi\` is a signed-by-no-one installer that places
-          Trailer under \`Program Files\`. Smart Screen may warn on
+          Windows platform plugin. Extract anywhere and run. The
+          binary is signed-by-no-one, so Smart Screen may warn on
           first run; click "More info" → "Run anyway".
 
           ### Linux
@@ -215,10 +213,8 @@ jobs:
               sudo apt install libqt6core6 libqt6gui6 libqt6widgets6 \\
                                libqt6pdf6 libqt6pdfwidgets6 libqpdf28
 
-          A Debian \`.deb\` and a Fedora 40 \`.rpm\` are also
-          attached; install with \`sudo dpkg -i\` or \`sudo dnf
-          install ./<file>.rpm\`. AppImage / Flatpak distribution is
-          tracked as a separate effort.
+          Native \`.deb\` / \`.rpm\` packages and AppImage / Flatpak
+          distribution are tracked as a separate effort.
           EOF
 
           echo "body-file=$BODY_FILE" >> "$GITHUB_OUTPUT"
