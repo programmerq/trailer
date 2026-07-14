@@ -1,7 +1,7 @@
 ---
 id: 2026-07-13-disabled-action-tooltip-visibility
 title: Disabled menu-action tooltips never show without setToolTipsVisible(true) — the G3 affordance is silently inert in menus
-priority: P2
+priority: TBD
 status: open
 source: recurring nit (history mine, 2026-07-13)
 created: 2026-07-13
@@ -49,4 +49,5 @@ Cross-links: AGENTS.md G3 ("no lying controls"); PR #45, PR #48, PR #19.
 ## Provenance
 
 Recurring nit from the PR history mine, 2026-07-13. Not owner-ranked at source;
-priority P2 assigned here — re-triage when picked up.
+priority recorded as `TBD` per the "don't invent a priority" rule — re-triage
+when picked up.

@@ -1,7 +1,7 @@
 ---
 id: 2026-07-13-thumbnail-sidebar-sizing
 title: Sidebar thumbnails use ~1/8 of the sidebar width and leave vertical slack; must scale to sidebar width
-priority: high
+priority: P1
 status: open
 source: v0.3.0 real-Mac dogfood report (2026-07-13)
 created: 2026-07-13
@@ -40,7 +40,10 @@ viewport width.
 - `src/ui/Sidebar.cpp:217` — `setIconSize(m_model->thumbnailSize())` is set
   **once** to that fixed box and never updated on resize.
 - `src/ui/Sidebar.cpp:61-66` — `ThumbnailDelegate::sizeHint` returns a full-width
-  column but pins row height to the fixed 80 px icon (= 108 px row).
+  column but pins row height to the fixed icon box. The 108 px row derives from
+  the **100 px icon height** (the height dimension of `QSize m_size{80, 100}`,
+  `ThumbnailModel.h:47`) via `icon.height() + 2*kThumbVerticalPadding`
+  (`Sidebar.cpp:64`) — not from the 80 px width.
 - `src/ui/Sidebar.cpp:77-91` — `paint()` scales the pixmap to the fixed 80 px
   width and **centers** it in the full-width column (line 89), so a wide sidebar
   floats a small image in the middle. The page number is an in-pixmap badge
@@ -79,4 +82,6 @@ not read as "handled" merely because a diagnosis was written down.
 ## Provenance
 
 v0.3.0 real-Mac dogfood report, 2026-07-13. Recurrence trail: original May HITL
-passes, `TODO.md:44-105`, PR #37 (diagnosis-only, no code fix).
+passes, `TODO.md:44-105`, PR #37 (diagnosis-only, no code fix). The `P1` rank is
+justified by owner re-confirmation in the v0.3.0 dogfood + multi-cycle recurrence
+(May HITL, PR #37), not a rank invented here.

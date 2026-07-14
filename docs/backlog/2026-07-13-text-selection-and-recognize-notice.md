@@ -76,7 +76,7 @@ The misfiring notice is the `m_largeDocOcrHint` widget (not the ADR-0002 hint):
 ### Contradicts ADR-0002 §3 "Missing model" on four points
 
 `docs/decision-records/0002-ml-background-removal-progress-cancel.md` §3
-(lines 126-129) and gates G5/G6 (`:144-145`) govern this affordance. The
+(lines 127-129) and gates G5/G6 (`:144-145`) govern this affordance. The
 `m_largeDocOcrHint` widget violates it:
 
 | ADR-0002 §3 requirement | `m_largeDocOcrHint` actual | Location |

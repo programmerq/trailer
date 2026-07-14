@@ -51,8 +51,12 @@ release PR — it just isn't wired into the release pipeline:
 Do **not** delete this packaging metadata — this item is the plan to wire it
 up. Scope: add build steps to the release workflow, glob the resulting
 `.msi` / `.deb` / `.rpm` into `action-gh-release`'s `files:`, and restore the
-per-platform install prose once the artifacts are actually attached. AppImage
-/ Flatpak distribution remains separate future work.
+per-platform install prose once the artifacts are actually attached. This item
+also absorbs the recurring CMake `install()`-rules / binary-path-mismatch nit
+raised repeatedly on PRs #4/#5 (no `install()` targets → packagers pick up the
+binary from the wrong path), so that fix lands here rather than falling between
+this and the license-shipping item. AppImage / Flatpak distribution remains
+separate future work.
 
 Priority: none stated by the source — recorded as `TBD` per the "don't invent
 a priority" rule.
