@@ -1,9 +1,9 @@
 # 0007 — Toolbar anchoring & overflow: fixed primary row + trailing contextual bar with a pinned chevron
 
-- **Status:** proposed
+- **Status:** accepted
 - **Arbiter:** the agent role named for this record; the owner (programmerq) is the escalation-only override.
 - **Date proposed:** 2026-07-15
-- **Date accepted / superseded:** —
+- **Date accepted / superseded:** 2026-07-15
 
 ## Context
 
@@ -160,41 +160,164 @@ Expert's second-bar and overflow behaviour is likewise **(needs-live-verificatio
 
 ## Checkable threshold this record would establish
 
-Adopting **Option A** commits these four pixel invariants, each declared per
-AGENTS.md G1 and proven by G2 offscreen `QWidget::grab()` under
-`QT_QPA_PLATFORM=offscreen` (both toolbar states; `[real-Mac]` confirmation is a
-bonus, not required, per the ux-evidence ruling for non-native-chrome layout):
+Adopting **Option A** commits these four invariants, each declared per AGENTS.md
+G1 and proven under `QT_QPA_PLATFORM=offscreen` by **widget-geometry
+introspection** (invariants #2/#3/#4, where pixel diffing does not discriminate)
+and by `QWidget::grab()` where pixel-identity is meaningful (invariant #1). This
+stays within AGENTS.md G2 (offscreen harness introspection) — geometry rather
+than pixel diffing where the pixels are identical across the states under test.
+`[real-Mac]` confirmation is a bonus, not required, per the ux-evidence ruling
+for non-native-chrome layout. The corrected implementation and the invariants:
 
-1. **Main-toolbar origin pixel-stable across the form toggle.** `grab()` of the
-   form-hidden state and the form-shown state show the main toolbar's top-left
-   origin pixel at an *identical* coordinate. Toggling the form (or markup) bar
-   must not translate the main toolbar.
-2. **Form buttons right-aligned near search.** In the form-shown `grab()`, the
-   form toolbar's buttons are right-aligned — their bounding rects sit against
-   the trailing edge, adjacent to the search field — via a leading expanding
-   spacer mirroring `MainWindow.cpp:806-809`, not left-packed.
-3. **Narrow-window overflow into the chevron.** A `grab()` at a deliberately
-   narrow window width shows contextual buttons collapsed into the
-   `qt_toolbar_ext_button` extension chevron (Qt's documented "too small to show
-   all items" path), while the primary row's trailing search stays visible.
-4. **Chevron bounding rect invariant under toggle.** The
-   `qt_toolbar_ext_button`'s bounding rect is byte-identical in `grab()`s taken
-   before and after the chevron's popup is toggled, and adjacent widgets do not
-   move — the pin (`setFixedSize` / fixed min-max width) holds on all three
-   toolbars.
+**Wiring (R1, corrected fix mechanism).** A break "before each of markup and
+form" alone does **not** lift `main` to the top row: the top-area append order is
+`markup, form, main` (`main` is added **last** at `MainWindow.cpp:732`), so a
+break before `main` would create a **third row below**, and `main` gets shoved
+**down** when a contextual bar appears — re-breaking invariant #1 rotated 90°.
+The correct fix is to move `main` to the **front** of the top-area order:
+replace `addToolBar(Qt::TopToolBarArea, m_mainToolbar)` at
+`MainWindow.cpp:732` with `insertToolBar(m_markupToolbar, m_mainToolbar)` (or
+construct `main` first). Keep the break before markup (`:733`) and before form
+(`:341`); place **no** break before `main` (first in area → row 1
+automatically). Resulting rows: `main` = **row 1 always**; markup **or** form =
+row 2 (mutually exclusive, both hidden by default).
+
+**Chevron pin (R2, corrected mechanism).** In Qt6 the `qt_toolbar_ext_button`
+extension is created **eagerly** in the `QToolBar`/`QToolBarLayout` ctor (hidden
+until overflow), so `findChild` is non-null at construction — but `setFixedSize`
+on the instance is re-imposed by `QToolBarLayout`'s per-relayout `setGeometry`
+from `PM_ToolBarExtensionExtent`. Pin the chevron via a **class-targeted
+stylesheet** on each toolbar instead:
+`QToolBarExtension#qt_toolbar_ext_button { min-width: Npx; max-width: Npx; }`.
+This pin is **defensive**: under the default style the chevron width is already
+constant across popup open/close (the checked state does not change its rect),
+and the real reflow risk exists only if `toolButtonStyle`/`iconSize` changed at
+runtime, which the app does not do.
+
+**Window minimum width (R3, new requirement).** There is **no** window minimum
+width today (`MainWindow.cpp:106` only resizes; the `:1630` `setMinimumWidth` is
+the sidebar). Qt overflows the **trailing-most** items first, and search is the
+last widget on the main row — so on a narrow-enough window the **primary search**
+would collapse into `main`'s own chevron, violating "trailing items remain
+visible at all sizes." Add `setMinimumWidth(...)` on the **main window** ≥ the
+primary row's `sizeHint().width()` (or the main toolbar's minimum-content width)
+so the primary row never overflows and search is never hidden.
+
+The four invariants in corrected form:
+
+1. **Main-toolbar origin stable + on the top row.** With the **window size held
+   constant** while the form (or markup) bar is toggled, the main toolbar's
+   top-left origin is unchanged — `grab()`-provable here because the pixels are
+   meaningfully identical (resizing between grabs would invalidate the
+   comparison, so the size is fixed). Additionally assert `main` sits on the
+   **top row** (minimal `y`). Toggling a contextual bar must not translate `main`
+   horizontally or vertically.
+2. **Form buttons right-aligned near search (geometry).** Assert
+   `formToolbar->widgetForAction(firstRealAction)->geometry()` sits against the
+   trailing edge, adjacent to the search field — via a leading expanding spacer
+   mirroring `MainWindow.cpp:806-809`, not left-packed. Proven by widget
+   geometry, not pixel grab.
+3. **Widest contextual bar overflows at the window minimum width (geometry;
+   R4 reframe).** The form bar (~6 buttons) is **narrower** than the main row, so
+   no width overflows form before it overflows main — the old "form buttons
+   collapse while search stays visible" invariant is **unsatisfiable** and is
+   dropped. Reframed: at the **window's minimum width**, the **widest contextual
+   bar** (markup, ~18 widgets) overflows into its `qt_toolbar_ext_button` (assert
+   `extension->isVisible()` and a trailing markup action's widget hidden) while
+   the primary row's trailing **search stays fully visible** (not in overflow).
+4. **Chevron geometry pinned + neighbours stable across the overflow transition
+   (geometry; R5 reframe).** The old popup-toggle grab tested a non-risk (opening
+   the extension menu only makes the button `checked` with no rect change, and
+   the popup is a separate top-level `QMenu` not captured by a window `grab()`).
+   Reframed: assert `extension->geometry().size()` equals the **pinned constant**,
+   **and** assert neighbour widget rects (the last visible toolbar button and the
+   primary search rect) are **unchanged across the overflow appear/disappear
+   transition** — resize just below vs just above the overflow threshold.
 
 These ratify the backlog item's declared pass/fail lines
 (`docs/backlog/2026-07-13-toolbar-anchoring.md` → *Threshold*) as G2-provable
-invariants; the record does not fork or loosen them. Options B and C would each
-establish a *weaker* threshold (no fixed-origin guarantee, primary items
-overflow-eligible), which is why they are laid out but not the direction this
-record carries into adjudication.
+invariants — via geometry introspection where pixels do not discriminate (R6),
+with the added window-minimum-width requirement (R3), the front-insert wiring
+(R1), and the stylesheet chevron pin (R2); the record does not fork or loosen
+them, and no owner threshold is weakened. Options B and C would each establish a
+*weaker* threshold (no fixed-origin guarantee, primary items overflow-eligible),
+which is why they are laid out but not the direction this record carries.
 
 ## Arbiter verdict + rationale
 
-Empty while status is `proposed` — the implementing session runs the
-persona/arbiter cycle.
+**Accepted: Option A** (fixed primary top row + own-row contextual bar +
+right-aligned form buttons + pinned overflow chevron), **with revisions.**
+
+Option A's *shape* is correct and neither alternative survives the same
+objections. Option B (a single reflowing row) drifts the primary controls on
+every contextual toggle — the "I clicked Markup and my zoom buttons jumped"
+failure — and lets a narrow window push primary search into overflow; Option C
+(contextual tools in the trailing overflow) buries markup that the app already
+ships as its own bar and still overflows the primary row. Both establish strictly
+weaker thresholds (no fixed-origin guarantee, primary items overflow-eligible),
+so A is the only direction that satisfies the admissible objections.
+
+But the fix **mechanism** as originally worded is materially wrong, and two of
+the four invariants are not provable as conceived. Acceptance is therefore
+conditioned on the following revisions, which correct the mechanism and the proof
+medium without weakening any owner threshold:
+
+- **R1 (decisive — break wiring is wrong).** Placing a break "before each of
+  markup and form" does **not** lift `main` to the top row. The top-area append
+  order is `markup, form, main` — `main` is added **last** at
+  `MainWindow.cpp:732` — so a break before `main` creates a **third row below**
+  and `main` is shoved **down** when a contextual bar appears, re-breaking
+  invariant #1 rotated 90°. The correct fix is to move `main` to the **front** of
+  the top-area order: replace `addToolBar(Qt::TopToolBarArea, m_mainToolbar)` at
+  `:732` with `insertToolBar(m_markupToolbar, m_mainToolbar)` (or construct
+  `main` first), keep the breaks before markup (`:733`) and form (`:341`), and
+  place **no** break before `main` (first in area → row 1). Any implication that
+  breaks-before-markup-and-form suffice is struck.
+- **R2 (chevron pin mechanism).** In Qt6 the `qt_toolbar_ext_button` is created
+  **eagerly** in the toolbar-layout ctor, but `setFixedSize` on the instance is
+  re-imposed by `QToolBarLayout`'s per-relayout `setGeometry` from
+  `PM_ToolBarExtensionExtent`. Pin instead via a **class-targeted stylesheet** on
+  each toolbar (`QToolBarExtension#qt_toolbar_ext_button { min-width: Npx;
+  max-width: Npx; }`). The pin is **defensive** — under the default style the
+  chevron width is already constant across popup open/close; the real reflow risk
+  only exists if `toolButtonStyle`/`iconSize` changed at runtime, which the app
+  does not do.
+- **R3 (trailing-search protection).** There is **no** window minimum width
+  today, and Qt overflows the trailing-most items first, so a narrow-enough
+  window would collapse the **primary** search into `main`'s own chevron —
+  violating "trailing items remain visible at all sizes." Add `setMinimumWidth`
+  on the **main window** ≥ the primary row's `sizeHint().width()` so the primary
+  row never overflows.
+- **R4 (invariant #3 reframe).** The form bar (~6 buttons) is **narrower** than
+  the main row, so nothing overflows form before main — the "form buttons
+  collapse while search stays visible" invariant is **unsatisfiable**. Reframed:
+  at the window's minimum width, the **widest** contextual bar (markup, ~18
+  widgets) overflows into its `qt_toolbar_ext_button` while the primary row's
+  trailing search stays fully visible. The "form buttons" specificity is dropped.
+- **R5 (invariant #4 reframe).** The popup-toggle grab tests a non-risk: opening
+  the menu only makes the button `checked` (no rect change), and the popup is a
+  separate top-level `QMenu` not captured by a window `grab()` — the before/after
+  grab is trivially identical and constrains nothing. Replaced by: assert
+  `extension->geometry().size()` equals the pinned constant, **and** neighbour
+  rects (last visible button + primary search) are unchanged across the overflow
+  **appear/disappear** transition (resize just below vs just above the threshold).
+- **R6 (proof medium).** Invariants #2/#3/#4 are **geometry-provable** via widget
+  introspection (`widgetForAction(...)->geometry()` for right-alignment;
+  `extension->isVisible()` + a trailing action's widget hidden for overflow;
+  `extension->geometry()` for the pin), **not** reliably pixel-grab-provable (an
+  icon-only chevron renders identically across widths; offscreen font jitter
+  perturbs pixel hashes). Invariant #1 (main origin) stays grab-provable — but
+  only with the **window size held constant** while toggling — and additionally
+  asserts `main` is on the top row (minimal `y`). This remains within AGENTS.md
+  G2 (offscreen harness introspection), just geometry rather than pixel diffing
+  where the pixels do not discriminate.
 
 ## Evidence required to reopen
 
-N/A until accepted.
+A reproducible case where the **fixed primary row + own-row contextual bar**
+harms a real user at a real step — e.g. the vertical space cost of the dedicated
+contextual row demonstrably regresses a documented workflow — together with owner
+sign-off; or a superseding decision record. A bare taste for "one cleaner row" is
+not such evidence; it is already rejected above as a naked preference, its
+admissible cost (drifting primary controls, primary items hidden on narrow
+windows) captured by the objections Option A answers.

@@ -214,6 +214,12 @@ class PdfDocument : public IDocument {
     // and scrolled into view — this is where the "Find found nothing"
     // bug on OCR'd PDFs used to live.
     void onSearchResultsPopulated();
+    // Position-aware seed (ADR 0006): the smallest populated result-row
+    // index whose page is >= `page`. Returns 0 (wrap to the first match)
+    // when nothing sits at/after the page, or the model is empty. Results
+    // arrive in page order, so the first such row is also the first
+    // reading-order match on the at/after page.
+    int firstResultIndexAtOrAfter(int page) const;
     // Walk the search model and push every match rectangle into the
     // annotation overlay's search-highlight pass, flagging the
     // current-index match as `isCurrent`. Re-run whenever the model
@@ -240,6 +246,22 @@ class PdfDocument : public IDocument {
     SelectableTextStore m_selectableText;
     ViewMode m_viewMode = ViewMode::Continuous;
     int m_currentResult = -1;
+    // Async-populate seed guard (ADR 0006 R1). The search model streams
+    // rowsInserted incrementally in page order, so each populate re-seeds
+    // against the growing model until the current-page rows arrive.
+    // m_seedPending is set true when a non-empty query is issued and is
+    // cleared only on a reset event: a new/empty query (search() or
+    // clearSearch()) or genuine user navigation freezing the seed. It is
+    // deliberately NOT cleared when the async seed simply settles — a
+    // fully-populated model keeps re-running onSearchResultsPopulated, which
+    // recomputes the same converged seed each time, so leaving the flag set
+    // is harmless. m_seedFromPage is the viewport page captured at query
+    // time; m_provisionalSeedIndex is the last seed index WE pushed, so a
+    // differing view index reads as genuine user navigation and freezes the
+    // seed.
+    bool m_seedPending = false;
+    int m_seedFromPage = 0;
+    int m_provisionalSeedIndex = -1;
     bool m_valid = false;
     bool m_dirty = false;
     bool m_annotationsModified = false;

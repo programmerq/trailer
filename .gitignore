@@ -33,3 +33,6 @@ tests/data/
 # (or scripts/build-windows-native.ps1 + grab_screenshots) when you
 # want fresh references to drop into a PR body.
 docs/screenshots/
+
+# G2 UAT evidence screenshots (never committed; live in PR body)
+uat-screenshots/

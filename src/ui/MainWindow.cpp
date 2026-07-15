@@ -99,6 +99,15 @@ namespace trailer {
 // shared one-time-consent download flow (ADR 0002 §3).
 namespace {
 bool ensureOcrModelsReady(MainWindow *parent, OcrEngine &engine);
+
+// Class-targeted stylesheet that pins the built-in QToolBar overflow
+// chevron (objectName qt_toolbar_ext_button) to a fixed width so
+// toggling the "show more" popup never reflows adjacent widgets
+// (ADR 0007, Option A, R2). 20px matches the toolbars' 18px iconSize.
+QString kToolbarExtensionPinStyle() {
+    return QStringLiteral(
+        "QToolBarExtension#qt_toolbar_ext_button { min-width: 20px; max-width: 20px; }");
+}
 }
 
 MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent), m_app(app) {
@@ -285,6 +294,13 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_magnifier = new Magnifier(this);
 
     m_markupToolbar = new MarkupToolbar(this);
+    // Pin the overflow chevron to a fixed width (ADR 0007, Option A,
+    // R2). A class-targeted stylesheet is creation-timing-independent
+    // and, unlike setFixedSize on the instance, survives
+    // QToolBarLayout's per-relayout setGeometry — so toggling the
+    // "show more" popup never reflows the chevron's neighbours. 20px
+    // matches the toolbars' 18px iconSize.
+    m_markupToolbar->setStyleSheet(kToolbarExtensionPinStyle());
     addToolBar(Qt::TopToolBarArea, m_markupToolbar);
     m_markupToolbar->hide();
     connect(m_markupToolbar, &MarkupToolbar::activeToolChanged, this, [this](AnnotationTool tool) {
@@ -345,6 +361,8 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
             });
 
     m_formToolbar = new FormToolbar(this);
+    // Pin the form toolbar's overflow chevron too (ADR 0007, R2).
+    m_formToolbar->setStyleSheet(kToolbarExtensionPinStyle());
     addToolBar(Qt::TopToolBarArea, m_formToolbar);
     // Force the form toolbar onto its own row so it never shares a
     // line with the markup bar (mutual exclusion below should keep
@@ -782,7 +800,18 @@ void MainWindow::buildMainToolbar() {
     // behaviour); they just don't render next to the glyph. The menu
     // bar remains the discoverable surface for unfamiliar users.
     m_mainToolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    addToolBar(Qt::TopToolBarArea, m_mainToolbar);
+    // Pin the main toolbar's overflow chevron too (ADR 0007, R2).
+    m_mainToolbar->setStyleSheet(kToolbarExtensionPinStyle());
+    // Anchor the main toolbar top-left on its own row (ADR 0007,
+    // Option A, R1). The top area was appended markup, form, main —
+    // so main, added last, ended up as a tenant on the form toolbar's
+    // row and got shoved right whenever the form bar was shown.
+    // insertToolBar puts main at the FRONT of the top-area order
+    // (main, markup, form); with a break before markup (below) and
+    // before form (insertToolBarBreak(m_formToolbar), ~:359) and NO
+    // break before main, main owns row 1
+    // permanently while markup or form take row 2.
+    insertToolBar(m_markupToolbar, m_mainToolbar);
     insertToolBarBreak(m_markupToolbar);
 
     // Sidebar mode picker. Each entry calls Sidebar::setMode; the
@@ -891,6 +920,44 @@ void MainWindow::buildMainToolbar() {
     m_searchBar->hide();
     if (m_searchBarAction) {
         m_searchBarAction->setVisible(false);
+    }
+
+    // Guarantee the primary row never overflows its trailing search
+    // into its own chevron (ADR 0007, Option A, R3). Qt overflows the
+    // trailing-most items first, and search is the last widget on the
+    // main row, so without a floor a narrow-enough window would hide
+    // search behind the main toolbar's own "show more" menu — breaking
+    // the HIG rule that trailing items stay visible at every window
+    // size. Measuring sizeHint() with the search collapsed to its icon
+    // button (its action is hidden above) UNDER-counts the footprint the
+    // row needs once the user OPENS Find: showSearchBar() hides the
+    // ~icon-sized button and expands the far wider SearchBar (maxWidth
+    // 360). To pin the floor to the OPENED-search footprint, temporarily
+    // reveal the search-bar action (and hide the button) exactly as
+    // showSearchBar() does, re-measure the toolbar's sizeHint(), then
+    // restore the collapsed state. Using the opened sizeHint (not the
+    // SearchBar's bare minimumSizeHint) accounts for the toolbar's own
+    // layout margins/spacing, so the primary row fits the opened search
+    // at the minimum width with no off-by-margin overflow. This stays
+    // well under the launch resize(1100, 750) so it never fights it, and
+    // above the sidebar's 240px minimum.
+    m_mainToolbar->ensurePolished();
+    m_searchBar->ensurePolished();
+    const int primaryRowWidth = m_mainToolbar->sizeHint().width();
+    if (primaryRowWidth > 0) {
+        m_searchButton->setVisible(false);
+        if (m_searchBarAction)
+            m_searchBarAction->setVisible(true);
+        m_searchBar->setVisible(true);
+        m_mainToolbar->layout()->activate();
+        const int openedSearchFloor = m_mainToolbar->sizeHint().width();
+        // Restore the collapsed default (button shown, bar hidden).
+        m_searchBar->hide();
+        if (m_searchBarAction)
+            m_searchBarAction->setVisible(false);
+        m_searchButton->setVisible(true);
+        m_mainToolbar->layout()->activate();
+        setMinimumWidth(qMax(primaryRowWidth, openedSearchFloor));
     }
 }
 
