@@ -88,6 +88,7 @@ RUN dnf install -y \
         glib2-devel \
         rpm-build \
         rpmdevtools \
+        patchelf \
     && dnf clean all
 
 # Install aqtinstall to fetch Qt 6.8.0 (not available in Fedora repos at this version)

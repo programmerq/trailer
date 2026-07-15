@@ -58,7 +58,11 @@ mkdir -p "$OUTPUT_DIR"
 # from the repo root (build-windows/…, resources/…, LICENSE, licenses/… all
 # resolve from there).
 cd "$SRC"
+# -D Version reconciles the MSI's ProductVersion with the VERSION file (single
+# source of truth); trailer.wxs references it as $(var.Version). Without this the
+# wxs would carry a stale literal version independent of VERSION.
 wixl \
+    -D Version="$PROJECT_VERSION" \
     -o "$MSI_OUT" \
     "$SRC/platform/windows/trailer.wxs" \
     "$SRC/platform/windows/DllComponents.wxs"

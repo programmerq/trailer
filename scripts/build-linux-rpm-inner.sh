@@ -67,6 +67,25 @@ cmake --build "$BUILD_DIR" -j"$(nproc)"
 
 cp "$SOURCE_DIR/packaging/rpm/trailer.spec" "$RPMBUILD_TOP/SPECS/trailer.spec"
 
+# Reconcile the spec's Version with the VERSION file (single source of truth).
+# The tracked spec keeps a literal 0.3.0 as a sane default; patch the copy in the
+# rpmbuild tree so a future VERSION bump can't leave stale internal metadata.
+sed -i "s/^Version:.*/Version:        ${PROJECT_VERSION}/" \
+    "$RPMBUILD_TOP/SPECS/trailer.spec"
+
+# Qt lives outside the standard lib dirs; onnxruntime lives under its own prefix.
+# The bundler (invoked from %install) needs the Qt prefix for the xcb plugin and
+# both lib dirs on LD_LIBRARY_PATH so ldd can resolve the dependency graph.
+LIB_SEARCH_PATH="$QT_PREFIX/lib"
+if [[ -n "$ORT_PREFIX" ]]; then
+    LIB_SEARCH_PATH="${LIB_SEARCH_PATH}:${ORT_PREFIX}/lib"
+fi
+
+# The bundled binary carries an RPATH of /opt/trailer/lib. Fedora's
+# check-rpaths brp script treats non-standard absolute rpaths as build-fatal;
+# QA_RPATHS downgrades that to a warning (self-contained /opt bundle is intended).
+export QA_RPATHS=$(( 0x0001 | 0x0002 | 0x0004 | 0x0008 | 0x0010 ))
+
 # --define _builddir so the spec's %install can reference the pre-built artifacts.
 # --nodeps: the cmake configure+build already ran above, so %build is a no-op and
 # the spec's Fedora-named BuildRequires (cmake, gcc-c++, qpdf-devel, …) are only
@@ -77,6 +96,8 @@ rpmbuild -bb \
     --nodeps \
     --define "_topdir $RPMBUILD_TOP" \
     --define "_builddir $RPMBUILD_TOP/BUILD" \
+    --define "qt_prefix $QT_PREFIX" \
+    --define "lib_search_path $LIB_SEARCH_PATH" \
     "$RPMBUILD_TOP/SPECS/trailer.spec"
 
 RPM_FILE=$(find "$RPMBUILD_TOP/RPMS" -name 'trailer-*.rpm' | head -1)

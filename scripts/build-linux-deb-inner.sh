@@ -50,6 +50,7 @@ echo "==> Configuring CMake (prefix: $CMAKE_PREFIX)"
 cmake -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX" \
+    -DCMAKE_INSTALL_PREFIX=/usr \
     -DCMAKE_INSTALL_DOCDIR=share/doc/trailer \
     -S "$SRC"
 
@@ -72,63 +73,22 @@ cp "$SRC/packaging/deb/DEBIAN/postinst"  "$STAGING/DEBIAN/"
 cp "$SRC/packaging/deb/DEBIAN/prerm"     "$STAGING/DEBIAN/"
 chmod 755 "$STAGING/DEBIAN/postinst" "$STAGING/DEBIAN/prerm"
 
-echo "==> Bundling Qt libs into /opt/trailer/lib/"
-# Qt at this version is not in Ubuntu 22.04's repos; bundle the shared
-# libs so the package is self-contained.
-
-TRAILER_BIN="$STAGING/usr/bin/trailer"
-BUNDLE_LIB="$STAGING/opt/trailer/lib"
-mkdir -p "$BUNDLE_LIB"
-
-# Copy non-system shared libraries (those not under /lib or /usr/lib)
-# that a given binary transitively needs. Uses iterative BFS over the
-# ldd dependency graph; $BUNDLE_LIB acts as the seen-set via -f checks.
-bundle_libs() {
-    local -a queue=("$1")
-    while (( ${#queue[@]} )); do
-        local current="${queue[0]}"
-        queue=("${queue[@]:1}")
-        local lib
-        while IFS= read -r lib; do
-            [[ -f "$lib" ]] || continue
-            local name
-            name="$(basename "$lib")"
-            [[ -f "$BUNDLE_LIB/$name" ]] && continue
-            cp "$lib" "$BUNDLE_LIB/$name"
-            queue+=("$lib")
-        done < <(ldd "$current" 2>/dev/null \
-            | awk '/=>/ { print $3 }' \
-            | grep -Ev '^(/lib|/usr/lib|not$)')
-    done
-}
-
-bundle_libs "$TRAILER_BIN"
-
-# libqxcb.so is loaded at runtime via QT_PLUGIN_PATH, not linked directly,
-# so ldd on the main binary won't find it; add it explicitly.
-QT_PLATFORM_PLUGIN="$QT_PREFIX/plugins/platforms/libqxcb.so"
-if [[ -f "$QT_PLATFORM_PLUGIN" ]]; then
-    mkdir -p "$STAGING/opt/trailer/plugins/platforms"
-    cp "$QT_PLATFORM_PLUGIN" "$STAGING/opt/trailer/plugins/platforms/"
-    bundle_libs "$QT_PLATFORM_PLUGIN"
+# Qt 6.11 (with qtpdf) is not in Ubuntu 22.04's repos; bundle the shared libs
+# so the package is self-contained. Shared with the .rpm packager — see
+# scripts/bundle-qt-runtime.sh. The onnxruntime libs live outside the Qt prefix,
+# so pass both lib dirs as the ldd search path.
+ORT_LIB_PATH="$QT_PREFIX/lib"
+if [[ -n "$ORT_PREFIX" ]]; then
+    ORT_LIB_PATH="${ORT_LIB_PATH}:${ORT_PREFIX}/lib"
 fi
+bash "$SRC/scripts/bundle-qt-runtime.sh" "$STAGING" "$QT_PREFIX" "$ORT_LIB_PATH"
 
-# Patch RPATH before moving the binary so the installed binary resolves
-# bundled libs without requiring LD_LIBRARY_PATH.
-patchelf --set-rpath '/opt/trailer/lib' "$TRAILER_BIN" 2>/dev/null || \
-    echo "  (patchelf not available or failed — skipping RPATH patch)"
-
-# Replace the installed binary with a thin wrapper that sets QT_PLUGIN_PATH
-# so Qt discovers the bundled platform plugin at runtime.
-REAL_BIN="$STAGING/opt/trailer/bin/trailer"
-mkdir -p "$STAGING/opt/trailer/bin"
-mv "$TRAILER_BIN" "$REAL_BIN"
-cat > "$TRAILER_BIN" <<'WRAP'
-#!/bin/sh
-export QT_PLUGIN_PATH=/opt/trailer/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}
-exec /opt/trailer/bin/trailer "$@"
-WRAP
-chmod 755 "$TRAILER_BIN"
+echo "==> Copying license/copyright alongside the binary (Debian Policy §12.5)"
+# DEBIAN/copyright (above) is the control-area copy; Policy also wants a
+# machine-readable copyright at /usr/share/doc/<pkg>/copyright. cmake --install
+# already staged LICENSE + third-party texts under usr/share/doc/trailer/.
+install -Dm644 "$SRC/packaging/deb/DEBIAN/copyright" \
+    "$STAGING/usr/share/doc/trailer/copyright"
 
 echo "==> Fixing permissions"
 find "$STAGING" -type d -exec chmod 755 {} +
