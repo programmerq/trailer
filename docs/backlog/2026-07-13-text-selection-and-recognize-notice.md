@@ -103,7 +103,9 @@ change, reword benefit-first. The text-layer-selection-vs-OCR research theme in
 `docs/research/2026-07-13-ux-research-agenda.md` feeds the affordance-convention
 decision.
 
-Cross-links: `docs/decision-records/0002-ml-background-removal-progress-cancel.md`
+Cross-links: `docs/decision-records/0011-recognize-text-affordance-reconciliation.md`
+(ratifies this reconciliation — the notice-guard fix satisfies its G1.1–G1.4);
+`docs/decision-records/0002-ml-background-removal-progress-cancel.md`
 (§3, G5/G6); `2026-07-12-bg-removal-progress-cancel-widget` and
 `2026-07-12-page-changed-signal-no-poll` (adjacent ML-feedback / page-signal
 items).

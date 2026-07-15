@@ -56,3 +56,6 @@ v0.3.0 real-Mac dogfood report, 2026-07-13. Root-cause file:line refs from the
 grounded investigation pass against `a4abbcf`. Note: the owner's current build
 would not even contain `trailer-dark.icns` (per CMake) — confirm on real hardware
 whether the bundle shipped it.
+
+The Asset-Catalog vs Icon-Composer mechanism debate is captured in
+`docs/decision-records/0009-macos-adaptive-app-icon-mechanism.md` (proposed).

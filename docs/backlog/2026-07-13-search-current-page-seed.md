@@ -25,6 +25,8 @@ Verified: from a middle page, the first highlight and the "X of Y" counter land
 on the nearest match at/after the current page; Enter advances forward from
 there; past the last match, it wraps.
 
+Grounded by `docs/decision-records/0006-search-result-position-aware-seeding.md`.
+
 ## Context
 
 Owner example: on a document where page 12 has matches, opening Find should
