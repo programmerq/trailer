@@ -95,6 +95,7 @@ mv "$TRAILER_BIN" "$REAL_BIN"
 cat > "$TRAILER_BIN" <<'WRAP'
 #!/bin/sh
 export QT_PLUGIN_PATH=/opt/trailer/plugins${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}
+export LD_LIBRARY_PATH="/opt/trailer/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 exec /opt/trailer/bin/trailer "$@"
 WRAP
 chmod 755 "$TRAILER_BIN" "$REAL_BIN"
