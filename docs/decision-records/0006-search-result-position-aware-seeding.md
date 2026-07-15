@@ -1,9 +1,9 @@
 # 0006 — Search-result seeding: document-order (always match 1), or position-aware (first match at/after the current page)?
 
-- **Status:** proposed
+- **Status:** accepted
 - **Arbiter:** the agent role named for this record; the owner (programmerq) is the escalation-only override.
 - **Date proposed:** 2026-07-15
-- **Date accepted / superseded:** —
+- **Date accepted / superseded:** 2026-07-15
 
 ## Context
 
@@ -184,37 +184,135 @@ The two contrasting lenses this record turns on:
 ## Checkable threshold this record would establish
 
 **If Option B is adopted (the owner's declared pass/fail, mirroring
-`docs/backlog/2026-07-13-search-current-page-seed.md`):** the initially-seeded
-match is position-aware while coverage stays whole-document. Encoded as a
-deterministic UAT assertion (extend
-`tests/uat/test_uat_search_and_markup.cpp`):
+`docs/backlog/2026-07-13-search-current-page-seed.md`), as accepted with the
+revisions below:** the initially-seeded match is position-aware while coverage
+stays whole-document, **and the seed lands correctly on the async large-doc
+path, not merely the synchronous one.** Encoded as a deterministic UAT assertion
+in a **new multi-page test** (extend `tests/uat/test_uat_search_and_markup.cpp`;
+do **not** mutate the existing wrap test — see the keep-062 note):
 
 1. **Seed at/after current page, first such.** Open a multi-page fixture whose
-   query term appears on several pages; `goToPage(k)` for a middle page `k`; run
-   the search. Assert `currentSearchMatchIndex()` maps to a match whose page is
-   **≥ `currentPage()`** and is the **first** such match in document order — not
-   page 0's match. (Owner's example: reading pages 9–11 on a doc with matches on
-   page 12 seeds page 12's match, e.g. 6 of 9.)
-2. **Wrap past the last match.** With the viewport positioned **past the last
+   query term appears on **distinct, known pages**; `goToPage(k)` for a middle
+   page `k`; run the search. Assert `currentSearchMatchIndex()` maps to a match
+   whose page is **≥ `currentPage()`** and is the **first** such match in
+   document order — not page 0's match. (Owner's example: reading pages 9–11 on a
+   doc with matches on page 12 seeds page 12's match, e.g. 6 of 9. Both compared
+   page values are **0-based**, so the owner's "page 12" is page **index 11**.)
+2. **On-current-page equality (`≥`, not `>`).** With the query term sitting **on
+   the current page `k` itself** (`goToPage(k)` where page `k` carries a match),
+   the seed must be **that page-`k` match** — pinning the comparison at `≥
+   currentPage()`, not `> currentPage()`.
+3. **Tie-break — first in reading order on the seed page.** The seed is the
+   **smallest model index whose page ≥ `currentPage()`** — i.e. the first match
+   in reading order on the at/after page. Where the seed page carries several
+   matches, the earliest-indexed one wins.
+4. **Wrap past the last match.** With the viewport positioned **past the last
    match's page**, the seed **wraps to index 0**.
-3. **Coverage unchanged (guardian invariant).** The total match count `Y` still
+5. **Streaming-order guard (async-populate; decisive, R1).** With a fixture
+   whose model populates **incrementally in page order** so that an
+   **earlier-page** match is inserted **before** the current-page match, the
+   **final** seed after population settles must still be the **at/after-page**
+   match — never a provisional earlier-page seed frozen by the "don't stomp user
+   nav" guard. The seeding assertion must
+   `QTRY_VERIFY_WITH_TIMEOUT` that the model is **fully populated**
+   (`rowCount == knownTotal`) **before** reading `currentSearchMatchIndex()`,
+   mirroring the existing wrap test's population wait — reading the seed before
+   population settles is both flaky and can ship the R1 bug green.
+6. **Coverage unchanged (guardian invariant).** The total match count `Y` still
    spans the whole document (matches before page `k` are still present and
    reachable): `findPrevious` from the seed reaches the earlier-page matches, and
    the counter's denominator equals the whole-document match total, not a
    page-filtered subset.
 
-Pass = all three hold; fail = the seed lands on page 0's match from a middle
-page, or wrap does not occur past the last match, or coverage shrinks to
-pages ≥ current. **Option A** establishes the opposite (seed is always index 0);
-**Option C** would additionally require the seed to honour a caret/selection
-position, which the current page-based seam and a page-driven fixture cannot
-assert deterministically — so C does not get a stable threshold here.
+**Keep-062 (non-change, R6).** The existing wrap test's `QCOMPARE(startIdx, 0)`
+(uat_vwr_062, `tests/uat/test_uat_search_and_markup.cpp` ~:516) **stays as-is**:
+its fixture opens at page 0, where the position-aware seed is *legitimately* 0,
+and it guards the page-0-open + `findNext`/`findPrevious` wrap path.
+Position-aware seeding goes in the **separate new multi-page test above**, not by
+mutating 062.
+
+Pass = all of the above hold **including the async streaming-order guard** — the
+seed must land correctly on the async path (R1's guard fix in place), not just
+the synchronous one; fail = the seed lands on page 0's (or an earlier-page)
+match from a middle page, or an on-current-page match is skipped by a `>` test,
+or wrap does not occur past the last match, or a provisional earlier-page seed is
+frozen on the async path, or coverage shrinks to pages ≥ current. **Option A**
+establishes the opposite (seed is always index 0); **Option C** would
+additionally require the seed to honour a caret/selection position, which the
+current page-based seam and a page-driven fixture cannot assert deterministically
+— so C does not get a stable threshold here.
 
 ## Arbiter verdict + rationale
 
-Empty while status is `proposed` — the implementing session runs the
-persona/arbiter cycle.
+**Accepted: Option B** (position-aware seed — first match at/after the current
+page, wrap to index 0, whole-document coverage unchanged), **with revisions.**
+
+Option B is the sole admissible *target*. Option A is not a candidate: it is only
+the shipped state, and it is the dogfood failure itself ("I opened Find on page
+12 and it threw me to page 1's match"). Option C does not survive its own
+objection — a caret-anchored seed needs a text-position cursor the page-based
+search seam does not carry, and it is non-deterministic in a page-driven UAT
+(the seed would depend on invisible selection state), so it establishes no stable
+threshold and cannot be the behaviour this record ratifies. With A inadmissible
+as a target and C untestable on this seam, B is what remains — and it is exactly
+the synthesis the cited find-next convention and the owner's backlog item ask
+for. No admissible objection carries the decision to an alternative; the
+whole-document-coverage guardian is fully answered by B's seed-only shape (only
+`m_currentResult`'s initial value moves; coverage, `findPrevious`, and wrap still
+span the whole document).
+
+The proposed three-assertion threshold, however, is **green-but-hollow on the
+async large-doc path** — the owner's own page-12 example runs through
+`onSearchResultsPopulated`, not the synchronous branch — so acceptance is
+conditioned on the following revisions, which only *add* precision and correct
+the fix mechanism; no existing owner threshold is weakened.
+
+- **R1 (decisive — async-populate guard).** `onSearchResultsPopulated` fires on
+  every `rowsInserted`, and the model populates incrementally in page order.
+  Computing `firstResultIndexAtOrAfter(currentPage())` against a
+  **partially-populated** model can find nothing ≥ the current page yet, wrap to
+  index 0, and push it; the existing "don't stomp user nav" guard at
+  `PdfAdapter.cpp:825` (`if currentSearchResultIndex() >= 0 return`) then
+  **freezes that provisional seed** on every later populate, parking the user on
+  an earlier-page match. The raw `>= 0` test at `:825` **must not be relied on**.
+  The implementation must distinguish a **provisional seed we pushed** from
+  genuine user navigation: track the last provisionally-pushed seed index; on each
+  populate, if the view's current index still equals our provisional push,
+  **recompute** `firstResultIndexAtOrAfter(currentPage())` against the now-larger
+  model and overwrite; only a value **differing** from our provisional push counts
+  as user nav and freezes. (Equivalently: defer seeding until population settles.)
+- **R2 (decisive — UAT population wait).** The seeding assertion must
+  `QTRY_VERIFY_WITH_TIMEOUT` that the model is fully populated
+  (`rowCount == knownTotal`) **before** reading `currentSearchMatchIndex()`,
+  mirroring the existing wrap test's wait. Reading the seed before population
+  settles is both flaky and can ship R1's bug green.
+- **R3 (on-current-page equality).** The threshold pins `≥`, not `>`: an
+  assertion where the query term sits **on** the current page `k` must seed
+  **that** match. Both compared page values are 0-based (the owner's "page 12" is
+  page index 11).
+- **R4 (tie-break).** The seed is the smallest model index whose page ≥
+  `currentPage()` — the first match in reading order on that page.
+- **R5 (fixture prerequisite).** The current `writePdfWithKeywordTimes` helper
+  stamps every copy on a **single** page and cannot express the threshold;
+  acceptance requires a **new multi-page fixture helper** (query term on distinct
+  known pages), plus the streaming-order regression from R1 (a current-page match
+  arriving *after* an earlier-page match; the final seed is the at/after-page
+  match).
+- **R6 (non-change).** The existing wrap test's `QCOMPARE(startIdx, 0)`
+  (uat_vwr_062, ~`:516`) **stays as-is** — its fixture opens at page 0 where the
+  position-aware seed is legitimately 0, guarding the page-0-open +
+  `findNext`/`findPrevious` wrap path. Position-aware seeding goes in the separate
+  new multi-page test, not by mutating 062.
+
+Pass now **requires the async guard fix (R1)**: the seed must land correctly on
+the async path, not just the synchronous one.
 
 ## Evidence required to reopen
 
-N/A until accepted.
+A reproducible case where a **correctly-seeded** position-aware first match
+harms a real user at a real step — e.g. whole-document coverage demonstrably
+shrinks under the seed-only implementation, or the R1 async-guard fix regresses
+user-navigation preservation (a genuine user nav is overwritten as if it were a
+provisional seed) — together with owner sign-off; or a superseding decision
+record. A bare preference to "always start at the top" is not such evidence; it
+is already rejected above as a naked preference.
