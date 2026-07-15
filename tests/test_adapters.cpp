@@ -113,6 +113,8 @@ class TestAdapters : public QObject {
     void imageDocumentEmptyStoreSearchNoMatches();
     // Item B — single-page Recognize skips the page-range dialog.
     void recognizeTextSkipsDialogForSinglePage();
+    // Item C — honest completion feedback.
+    void ocrBatchWithZeroBlocksReportsNoTextFound();
 };
 
 namespace {
@@ -2024,6 +2026,18 @@ void TestAdapters::recognizeTextSkipsDialogForSinglePage() {
     QCOMPARE(pdf.pageCount(), 2);
     QVERIFY2(!resolveRecognizePages(pdf).has_value(),
              "multi-page doc must defer to the dialog");
+}
+
+// Item C — the Recognize terminal message is honest: a zero-block run
+// reports "No text found", never a false "complete". Cancelled stays the
+// no-changes-saved message.
+void TestAdapters::ocrBatchWithZeroBlocksReportsNoTextFound() {
+    QCOMPARE(MainWindow::recognizeCompletionMessage(/*cancelled=*/false, /*blockCount=*/0),
+             QStringLiteral("No text found"));
+    QCOMPARE(MainWindow::recognizeCompletionMessage(/*cancelled=*/false, /*blockCount=*/3),
+             QStringLiteral("Text recognition complete"));
+    QCOMPARE(MainWindow::recognizeCompletionMessage(/*cancelled=*/true, /*blockCount=*/0),
+             QStringLiteral("Text recognition cancelled — no changes saved"));
 }
 
 QTEST_MAIN(TestAdapters)

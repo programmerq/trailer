@@ -545,14 +545,16 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
             m_ocrElapsedTimer->start();
         }
     });
-    connect(m_ocrController, &OcrController::ocrBatchFinished, this, [this](bool cancelled) {
+    connect(m_ocrController, &OcrController::ocrBatchFinished, this,
+            [this](bool cancelled, int blockCount) {
         m_ocrElapsedTimer->stop();
         if (m_cancelMlAction)
             m_cancelMlAction->setEnabled(false);
         if (m_ocrRevealed) {
-            m_mlProgress->finishWithMessage(cancelled
-                                                ? tr("Text recognition cancelled — no changes saved")
-                                                : tr("Text recognition complete"));
+            // Honest completion: a zero-block run must not claim success — it
+            // says "No text found" (Item C). blockCount is the store's block
+            // total across the batch's pages, reported by the controller.
+            m_mlProgress->finishWithMessage(recognizeCompletionMessage(cancelled, blockCount));
         }
         m_ocrRevealed = false;
     });
@@ -2039,6 +2041,12 @@ void MainWindow::onSmartLasso() {
     activateSamTool(this, m_markupToolbar, AnnotationTool::SmartLasso);
 }
 
+QString MainWindow::recognizeCompletionMessage(bool cancelled, int blockCount) {
+    if (cancelled)
+        return tr("Text recognition cancelled — no changes saved");
+    return blockCount > 0 ? tr("Text recognition complete") : tr("No text found");
+}
+
 std::optional<std::vector<int>> resolveRecognizePages(const IDocument &doc) {
     // A one-page document offers no page-range choice, so the dialog would
     // only add a click. Resolve straight to the current (only) page —
@@ -2114,8 +2122,9 @@ void MainWindow::onRecognizeText() {
     if (!ensureOcrModelsReady(this, gateEngine))
         return;
 
-    m_ocrController->submitUserPages(doc, pages, forceRerun);
-    flashStatus(tr("Recognizing text for %1 page(s)…").arg(pages.size()));
+    const auto pageCount = pages.size();
+    m_ocrController->submitUserPages(doc, std::move(pages), forceRerun);
+    flashStatus(tr("Recognizing text for %1 page(s)…").arg(pageCount));
 }
 
 void MainWindow::onExportAs() {

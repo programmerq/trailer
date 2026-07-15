@@ -106,6 +106,13 @@ class MainWindow : public QMainWindow {
         return m_pageHasTextCacheDoc == doc;
     }
 
+    // Honest terminal message for a finished Recognize Text batch. Cancelled
+    // batches report the no-changes-saved message; otherwise the message is
+    // truthful about whether any text was actually recognized — a zero-block
+    // run says "No text found" rather than falsely claiming completion.
+    // Static + public so it is unit-testable without a MainWindow instance.
+    static QString recognizeCompletionMessage(bool cancelled, int blockCount);
+
   public slots:
     void rebuildRecentMenu();
     // Save every dirty document with an established file path. Wired

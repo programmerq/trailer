@@ -60,6 +60,7 @@
 #include <QPolygon>
 #include <QScopeGuard>
 #include <QSemaphore>
+#include <QSignalSpy>
 
 #include <atomic>
 #include <QTemporaryDir>
@@ -192,6 +193,7 @@ class TestUatRecognizeText : public QObject {
     void uat_ocr_080_ocrOnPdfBlocksLandInPointSpace();
     void uat_ocr_090_noticeLinkRevealsProgressNoModal();
     void uat_ocr_100_imageSearchEnabledAndHighlightsMatch();
+    void uat_ocr_110_emptyResultDoesNotClaimTextLayer();
 
   private:
     QTemporaryDir m_scratch;
@@ -834,6 +836,45 @@ void TestUatRecognizeText::uat_ocr_100_imageSearchEnabledAndHighlightsMatch() {
     imgDoc->clearSearch();
     QCOMPARE(imgDoc->searchMatchCount(), 0);
     QCOMPARE(overlay->searchHighlightCountForTest(), 0);
+}
+
+// uat_ocr_110 — Item C: a page that OCRs to zero blocks must NOT leave a
+// hasResults() entry claiming a (non-existent) text layer. The recognizer
+// returns an empty vector; after the batch completes the store still
+// reports no results for the page.
+void TestUatRecognizeText::uat_ocr_110_emptyResultDoesNotClaimTextLayer() {
+    QVERIFY(m_scratch.isValid());
+    const QString imgPath = writeTextImage(m_scratch.filePath(QStringLiteral("ocr110.png")));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    IDocument *doc = mw->findChild<DocumentView *>()->currentDocument();
+    QVERIFY(doc);
+    auto *store = doc->selectableText();
+    QVERIFY(store);
+    QVERIFY2(!store->hasResults(0), "store starts empty");
+
+    OcrController controller(app);
+    controller.setDocument(doc);
+    controller.setProgressRevealDelayMs(0);
+    std::atomic<int> calls{0};
+    controller.setRecognizerForTesting(
+        [&calls](const QImage &, const CancellationToken *) -> QVector<OcrEngine::TextBlock> {
+            ++calls;
+            return {}; // zero blocks recognized
+        });
+
+    QSignalSpy finished(&controller, &OcrController::ocrBatchFinished);
+    controller.submitUserPages(doc, {0}, /*forceRerun=*/true);
+    QTRY_VERIFY(finished.count() >= 1);
+    QVERIFY2(calls.load() >= 1, "recognizer must have run");
+    QVERIFY2(!store->hasResults(0),
+             "a zero-block OCR result must not create a hasResults text-layer entry");
+    QVERIFY(store->blocks(0).empty());
 }
 
 int main(int argc, char **argv) {

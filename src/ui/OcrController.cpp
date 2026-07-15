@@ -149,6 +149,7 @@ void OcrController::submitUserPages(IDocument *doc, std::vector<int> pages, bool
     m_batchActive = true;
     m_batchTotal = static_cast<int>(valid.size());
     m_batchCompleted = 0;
+    m_batchPages = valid;
     m_batchCancelled = std::make_shared<std::atomic<bool>>(false);
     emit ocrBatchStarted(m_batchTotal);
 
@@ -179,7 +180,17 @@ void OcrController::onBatchPageResolved(int epoch) {
     if (m_batchCompleted >= m_batchTotal) {
         m_batchActive = false;
         m_revealTimer->stop();
-        emit ocrBatchFinished(/*cancelled=*/false);
+        // Honest completion count: total OCR blocks the batch's pages hold
+        // in the store now (Item C). Zero → the caller reports "No text
+        // found" rather than a false "complete".
+        int blockCount = 0;
+        if (m_doc) {
+            if (auto *store = m_doc->selectableText()) {
+                for (int page : m_batchPages)
+                    blockCount += static_cast<int>(store->blocks(page).size());
+            }
+        }
+        emit ocrBatchFinished(/*cancelled=*/false, blockCount);
     }
 }
 
@@ -219,7 +230,7 @@ void OcrController::cancelActiveBatch() {
         return;
     deactivateBatch();
     cancelBatchTrackedHandles();
-    emit ocrBatchFinished(/*cancelled=*/true);
+    emit ocrBatchFinished(/*cancelled=*/true, /*blockCount=*/0);
 }
 
 bool OcrController::modelReady() const {
@@ -444,7 +455,14 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
                     // free.
                     const bool discard =
                         cancelled || (cancelGuard && cancelGuard->load());
-                    if (!discard && storePtr)
+                    // Silent-discard of an empty layer (Item C): a page that
+                    // OCR'd to zero blocks must not leave a "hasResults" entry
+                    // claiming a text layer that has no text. Skip the put()
+                    // so hasResults(page) stays false and the honest "No text
+                    // found" status is truthful. (The models-not-ready path
+                    // above already avoids caching empties for a different
+                    // reason — retry once the model lands.)
+                    if (!discard && storePtr && !out.empty())
                         storePtr->put(page, contentHash, std::move(out));
                     // Count the page against the batch regardless of
                     // whether we stored it — a discarded page still

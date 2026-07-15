@@ -136,8 +136,11 @@ class OcrController : public QObject {
     // Emitted each time a page's result is resolved on the GUI thread.
     void ocrBatchProgress(int completed, int total);
     // Emitted once the batch ends: cancelled=false on natural
-    // completion, cancelled=true after cancelActiveBatch().
-    void ocrBatchFinished(bool cancelled);
+    // completion, cancelled=true after cancelActiveBatch(). blockCount is
+    // the total number of OCR blocks the batch's pages hold in the store at
+    // completion (0 when cancelled) so callers can report an honest
+    // "No text found" vs "complete" without re-deriving the page list.
+    void ocrBatchFinished(bool cancelled, int blockCount);
     // Emitted when an active batch is torn down SILENTLY — superseded by
     // a fresh batch, or the document was switched/closed. MainWindow
     // drives the widget straight back to idle (no "cancelled — no changes
@@ -233,6 +236,12 @@ class OcrController : public QObject {
     bool m_batchActive = false;
     int m_batchTotal = 0;
     int m_batchCompleted = 0;
+    // The batch's in-range pages, captured at start so completion can sum
+    // the store's block count across them for the honest-completion signal
+    // (Item C). Counts cached AND freshly-OCR'd blocks — the honest answer
+    // is "does the recognized page set hold text now", not "how many were
+    // newly stored".
+    std::vector<int> m_batchPages;
     // Monotonic per-batch identity. Bumped when a batch starts; a page's
     // apply lambda captures the value current at submit time and hands it
     // back to onBatchPageResolved(), which ignores any that don't match
