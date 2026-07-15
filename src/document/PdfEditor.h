@@ -5,6 +5,7 @@
 #include <QRectF>
 #include <QString>
 #include <QStringList>
+#include <atomic>
 #include <memory>
 #include <vector>
 
@@ -152,7 +153,31 @@ class PdfEditor {
 
     QPDF *qpdf() { return m_qpdf.get(); }
 
+    // --- Test instrumentation (always compiled, negligible cost) ---
+    // These counters exist purely so the structural perf tests
+    // (tests/test_perf_lazy_open.cpp) can assert the P0 startup-hang
+    // deferrals without touching wall-clock time:
+    //   * s_parseCount     — bumped once per qpdf processFile parse in
+    //                        load(); proves the second full-file parse is
+    //                        deferred off the synchronous open path.
+    //   * s_annotationPageVisits — bumped once per page walked inside
+    //                        readAnnotations(); proves the all-pages
+    //                        annotation sweep does not run at open.
+    // Not part of the production contract; safe to ignore outside tests.
+    static int parseCount() { return s_parseCount.load(std::memory_order_relaxed); }
+    static int annotationPageVisits() {
+        return s_annotationPageVisits.load(std::memory_order_relaxed);
+    }
+    static void resetInstrumentation() {
+        s_parseCount.store(0, std::memory_order_relaxed);
+        s_annotationPageVisits.store(0, std::memory_order_relaxed);
+    }
+
   private:
+    // Test instrumentation counters (see the accessors above).
+    static std::atomic<int> s_parseCount;
+    static std::atomic<int> s_annotationPageVisits;
+
     bool saveImpl(const QString &path, const EncryptionOptions *enc);
 
     std::unique_ptr<QPDF> m_qpdf;

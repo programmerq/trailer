@@ -79,18 +79,32 @@ class PdfDocument : public IDocument {
     void print(QWidget *dialogParent) override;
 
     bool supportsEditing() const override { return m_valid; }
-    bool supportsPasswordExport() const override {
-        return m_valid && m_editor && m_editor->isValid();
-    }
+    // Any valid PDF can be re-encrypted / re-linearized on export; the
+    // qpdf editor is loaded lazily by the actual export action, so these
+    // capability probes must NOT force the parse (P0 startup-hang fix,
+    // docs/backlog/2026-07-13-startup-hang-large-pdf.md).
+    bool supportsPasswordExport() const override { return m_valid; }
     bool exportWithPassword(const QString &destPath, const QString &password) override;
 
-    bool supportsFileSizeReduction() const override {
-        return m_valid && m_editor && m_editor->isValid();
-    }
+    bool supportsFileSizeReduction() const override { return m_valid; }
     bool reduceFileSize(const QString &destPath) override;
 
+    // Form-field detection genuinely needs the qpdf editor (there is no
+    // cheaper way to know a PDF carries an AcroForm). MainWindow queries
+    // this synchronously when a document becomes current, so it is the
+    // one capability probe that triggers the lazy editor load — the
+    // bounded qpdf processFile parse, NOT the whole-document annotation
+    // sweep (which stays deferred). The result is cached so repeated
+    // toolbar refreshes don't re-scan.
     bool supportsFormFilling() const override {
-        return m_valid && m_editor && m_editor->isValid() && m_editor->hasFormFields();
+        if (!m_valid)
+            return false;
+        ensureEditorLoaded();
+        if (!m_editor->isValid())
+            return false;
+        if (!m_hasFormFieldsCache)
+            m_hasFormFieldsCache = m_editor->hasFormFields();
+        return *m_hasFormFieldsCache;
     }
     // PDFs always carry a text layer (even scan-only PDFs typically
     // expose an empty layer). Text-aware markup tools are offered.
@@ -162,7 +176,13 @@ class PdfDocument : public IDocument {
     // true on success.
     bool saveCommitOnUi(const SaveContext &ctx);
 
-    AnnotationStore *annotations() override { return &m_annotations; }
+    AnnotationStore *annotations() override {
+        // First genuine annotation access: this is the seam that runs the
+        // deferred all-pages sweep (the overlay/view/inspector all reach
+        // the store through here). Idempotent after the first call.
+        ensureAnnotationsLoaded();
+        return &m_annotations;
+    }
     SelectableTextStore *selectableText() override { return &m_selectableText; }
     bool supportsSelectableText() const override { return m_valid; }
     QImage renderPageForOcr(int pageIndex) const override;
@@ -199,6 +219,25 @@ class PdfDocument : public IDocument {
         m_pdfUndoStack.clear();
         m_pdfRedoStack.clear();
     }
+
+    // --- Lazy open gates (P0 startup-hang fix) ---
+    // The two heavy whole-document passes that used to run in the ctor
+    // are deferred to first genuine access:
+    //   ensureEditorLoaded()      — runs the qpdf processFile parse once
+    //                               (and re-applies a remembered unlock
+    //                               password on an encrypted doc). const
+    //                               because capability probes / const
+    //                               accessors gate on it; it only mutates
+    //                               the mutable load-state members below.
+    //   ensureAnnotationsLoaded() — runs the all-pages annotation sweep
+    //                               once, then wires the annotation
+    //                               history hooks in the SAME order the
+    //                               ctor used to (populate + clearHistory
+    //                               BEFORE connecting) so the initial
+    //                               populate is never logged as edits.
+    // Both are idempotent and no-op while the document is locked/invalid.
+    void ensureEditorLoaded() const;
+    void ensureAnnotationsLoaded();
 
     void applyViewMode();
     void applyZoomFactor(double factor);
@@ -266,6 +305,16 @@ class PdfDocument : public IDocument {
     bool m_dirty = false;
     bool m_annotationsModified = false;
     bool m_needsPassword = false;
+    // Lazy-open state (see ensureEditorLoaded/ensureAnnotationsLoaded).
+    // m_editorLoaded is mutable so const capability probes can trigger
+    // the parse. m_password is remembered from unlock() so the deferred
+    // editor load can re-unlock the qpdf side. m_hasFormFieldsCache
+    // memoises the one form-detection scan; invalidated on any edit that
+    // rebuilds the editor's page graph.
+    mutable bool m_editorLoaded = false;
+    bool m_annotationsLoaded = false;
+    QString m_password;
+    mutable std::optional<bool> m_hasFormFieldsCache;
     // One-shot guard for applyInitialFitZoom — fit-to-content is
     // applied the first time the viewport has a real size, then never
     // again so the user's zoom choices stick.

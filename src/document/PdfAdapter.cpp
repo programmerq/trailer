@@ -160,16 +160,48 @@ PdfDocument::PdfDocument(QString path)
     // password and calling unlock(). Everything else (corrupt,
     // missing, unsupported scheme) stays permanently invalid.
     m_needsPassword = (error == QPdfDocument::Error::IncorrectPassword);
-    if (m_valid) {
-        m_editor->load(m_path);
-        for (Annotation &a : m_editor->readAnnotations()) {
-            m_annotations.add(std::move(a));
-        }
-        m_annotations.clearHistory();
-        QObject::connect(&m_annotations, &AnnotationStore::changed, m_doc.get(),
-                         [this]() { m_annotationsModified = true; });
-        connectAnnotationHistory();
+    // Deliberately NOT done here (P0 startup-hang fix,
+    // docs/backlog/2026-07-13-startup-hang-large-pdf.md): the qpdf
+    // processFile parse (m_editor->load) and the all-pages annotation
+    // sweep (readAnnotations) both used to run synchronously in this
+    // ctor, freezing the GUI thread for minutes on large PDFs. They are
+    // now deferred to first genuine access — see ensureEditorLoaded() and
+    // ensureAnnotationsLoaded(). The kept QPdfDocument::load above is the
+    // bounded progressive read that already yields pageCount + page-0.
+}
+
+void PdfDocument::ensureEditorLoaded() const {
+    if (m_editorLoaded || !m_valid)
+        return;
+    // Mark loaded up front so a failed/again call doesn't re-run the
+    // expensive parse; a locked doc (handled by the !m_valid guard above)
+    // stays un-flagged so a later unlock() can still load it.
+    m_editorLoaded = true;
+    m_editor->load(m_path);
+    // Re-apply the unlock the user already performed on the viewer side
+    // so editing / annotation round-tripping work on encrypted docs.
+    if (m_editor->isEncrypted() && !m_password.isEmpty()) {
+        m_editor->unlock(m_password);
     }
+}
+
+void PdfDocument::ensureAnnotationsLoaded() {
+    if (m_annotationsLoaded || !m_valid)
+        return;
+    m_annotationsLoaded = true;
+    ensureEditorLoaded();
+    // readAnnotations() returns empty if the editor failed to load, so
+    // this is safe regardless of editor validity. Order mirrors the old
+    // ctor exactly: populate + clearHistory BEFORE wiring the history /
+    // modified hooks, so the initial populate is never logged as a user
+    // edit or flagged as a modification.
+    for (Annotation &a : m_editor->readAnnotations()) {
+        m_annotations.add(std::move(a));
+    }
+    m_annotations.clearHistory();
+    QObject::connect(&m_annotations, &AnnotationStore::changed, m_doc.get(),
+                     [this]() { m_annotationsModified = true; });
+    connectAnnotationHistory();
 }
 
 void PdfDocument::connectAnnotationHistory() {
@@ -225,22 +257,12 @@ bool PdfDocument::unlock(const QString &password) {
     m_valid = true;
     m_needsPassword = false;
 
-    // Mirror the unlock on the qpdf-backed editor so edits and
-    // annotation round-tripping work. If the editor fails to load,
-    // editing just won't work — the viewer path still does.
-    m_editor->load(m_path);
-    if (m_editor->isEncrypted()) {
-        m_editor->unlock(password);
-    }
-    if (m_editor->isValid()) {
-        for (Annotation &a : m_editor->readAnnotations()) {
-            m_annotations.add(std::move(a));
-        }
-        m_annotations.clearHistory();
-        QObject::connect(&m_annotations, &AnnotationStore::changed, m_doc.get(),
-                         [this]() { m_annotationsModified = true; });
-        connectAnnotationHistory();
-    }
+    // Remember the password so the deferred editor load can re-unlock the
+    // qpdf side on first genuine editor need. Do NOT eagerly load the
+    // editor or sweep annotations here — that synchronous whole-document
+    // work is exactly the P0 hang this fix avoids (it now runs lazily via
+    // ensureEditorLoaded / ensureAnnotationsLoaded).
+    m_password = password;
     return true;
 }
 
@@ -1215,6 +1237,9 @@ bool PdfDocument::reloadViewerFromEditor() {
     if (!m_editor || !m_editor->isValid()) {
         return false;
     }
+    // A page-graph mutation may add or remove AcroForm fields, so the
+    // cached form-detection result is now stale.
+    m_hasFormFieldsCache.reset();
     auto preview =
         std::make_unique<ScopedTempFile>(QStringLiteral("trailer-preview-XXXXXX.pdf"));
     if (!preview->isValid()) {
@@ -1255,6 +1280,7 @@ bool PdfDocument::reloadViewerFromEditor() {
 }
 
 void PdfDocument::rotatePage(int pageIndex, int degreesClockwise) {
+    ensureEditorLoaded();
     if (!m_valid || !m_editor || !m_editor->isValid()) {
         return;
     }
@@ -1363,6 +1389,7 @@ void PdfDocument::recordPdfCommandApplied() {
 }
 
 void PdfDocument::deletePages(const std::vector<int> &pageIndices) {
+    ensureEditorLoaded();
     if (!m_valid || !m_editor || !m_editor->isValid() || pageIndices.empty()) {
         return;
     }
@@ -1381,6 +1408,7 @@ void PdfDocument::deletePages(const std::vector<int> &pageIndices) {
 }
 
 bool PdfDocument::extractPages(const std::vector<int> &pageIndices, const QString &destPath) const {
+    ensureEditorLoaded();
     if (!m_valid || !m_editor || !m_editor->isValid())
         return false;
     return m_editor->extractPages(pageIndices, destPath);
@@ -1388,6 +1416,7 @@ bool PdfDocument::extractPages(const std::vector<int> &pageIndices, const QStrin
 
 bool PdfDocument::cropPage(int pageIndex, double leftPts, double topPts, double rightPts,
                            double bottomPts) {
+    ensureEditorLoaded();
     if (!m_valid || !m_editor || !m_editor->isValid())
         return false;
     auto cmd = std::make_unique<CropPageCommand>(std::vector<int>{pageIndex}, leftPts, topPts,
@@ -1405,6 +1434,7 @@ bool PdfDocument::cropPage(int pageIndex, double leftPts, double topPts, double 
 
 bool PdfDocument::cropPages(const std::vector<int> &pageIndices, double leftPts, double topPts,
                             double rightPts, double bottomPts) {
+    ensureEditorLoaded();
     if (!m_valid || !m_editor || !m_editor->isValid() || pageIndices.empty()) {
         return false;
     }
@@ -1424,6 +1454,7 @@ bool PdfDocument::cropPages(const std::vector<int> &pageIndices, double leftPts,
 }
 
 bool PdfDocument::insertPagesFrom(const QString &sourcePath, int insertAtIndex) {
+    ensureEditorLoaded();
     if (!m_valid || !m_editor || !m_editor->isValid()) {
         return false;
     }
@@ -1444,6 +1475,7 @@ bool PdfDocument::insertPagesFrom(const QString &sourcePath, int insertAtIndex) 
 }
 
 void PdfDocument::movePage(int from, int to) {
+    ensureEditorLoaded();
     if (!m_valid || !m_editor || !m_editor->isValid()) {
         return;
     }
@@ -1469,6 +1501,10 @@ bool PdfDocument::save(const QString &newPath) {
 }
 
 std::optional<PdfDocument::SaveContext> PdfDocument::saveBeginQpdfPhase(const QString &newPath) {
+    // Saving flushes pending annotations into the qpdf graph, so both the
+    // editor and the (possibly deferred) annotation store must be live.
+    ensureEditorLoaded();
+    ensureAnnotationsLoaded();
     if (!m_valid || !m_editor || !m_editor->isValid()) {
         return std::nullopt;
     }
@@ -1553,6 +1589,10 @@ bool PdfDocument::saveCommitOnUi(const SaveContext &ctx) {
     m_path = ctx.targetPath;
     m_editor = std::make_unique<PdfEditor>();
     m_editor->load(m_path);
+    // The editor is freshly loaded from the saved bytes; keep the lazy
+    // gate consistent and drop the stale form-detection cache.
+    m_editorLoaded = true;
+    m_hasFormFieldsCache.reset();
 
     const int savedPage = currentPage();
     const double savedZoom = m_view ? m_view->zoomFactor() : 1.0;
@@ -1592,12 +1632,14 @@ bool PdfDocument::saveCommitOnUi(const SaveContext &ctx) {
 }
 
 std::vector<FormField> PdfDocument::formFields() const {
+    ensureEditorLoaded();
     if (!m_valid || !m_editor || !m_editor->isValid())
         return {};
     return m_editor->readFormFields();
 }
 
 bool PdfDocument::setFormFieldValue(int id, const QString &value) {
+    ensureEditorLoaded();
     if (!m_valid || !m_editor || !m_editor->isValid())
         return false;
     const bool ok = m_editor->setFormFieldValue(id, value);
@@ -1607,6 +1649,10 @@ bool PdfDocument::setFormFieldValue(int id, const QString &value) {
 }
 
 void PdfDocument::setFormFillingActive(bool active) {
+    if (active) {
+        // Turning form-filling on is a genuine editor need.
+        ensureEditorLoaded();
+    }
     if (m_formOverlay) {
         if (active) {
             // Refresh fields in case the document changed since
@@ -1628,12 +1674,15 @@ void PdfDocument::refreshFormView() {
     // sees the new values immediately. Does not change the overlay's
     // visibility — if form-filling is off the refresh is a no-op until
     // the user toggles it on.
+    ensureEditorLoaded();
     if (!m_formOverlay || !m_editor || !m_editor->isValid())
         return;
     m_formOverlay->setFields(m_editor->readFormFields());
 }
 
 bool PdfDocument::exportWithPassword(const QString &destPath, const QString &password) {
+    ensureEditorLoaded();
+    ensureAnnotationsLoaded();
     if (!m_valid || !m_editor || !m_editor->isValid())
         return false;
     if (destPath.isEmpty())
@@ -1655,6 +1704,8 @@ bool PdfDocument::exportWithPassword(const QString &destPath, const QString &pas
 }
 
 bool PdfDocument::reduceFileSize(const QString &destPath) {
+    ensureEditorLoaded();
+    ensureAnnotationsLoaded();
     if (!m_valid || !m_editor || !m_editor->isValid())
         return false;
     if (destPath.isEmpty())

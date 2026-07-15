@@ -26,11 +26,21 @@
 
 namespace trailer {
 
+// Test instrumentation (see PdfEditor.h). Defined here; incremented at
+// the load() parse and per-page in readAnnotations() so the structural
+// perf tests can prove the P0 open-path deferrals.
+std::atomic<int> PdfEditor::s_parseCount{0};
+std::atomic<int> PdfEditor::s_annotationPageVisits{0};
+
 PdfEditor::PdfEditor() : m_qpdf(std::make_unique<QPDF>()) {}
 
 PdfEditor::~PdfEditor() = default;
 
 bool PdfEditor::load(const QString &path) {
+    // Test instrumentation: count every qpdf whole-file parse. unlock()
+    // does NOT bump this — it reuses the already-parsed document, so the
+    // "second full-file parse deferred" proxy stays meaningful.
+    s_parseCount.fetch_add(1, std::memory_order_relaxed);
     m_path = path;
     m_sources.clear();
     try {
@@ -1087,6 +1097,10 @@ std::vector<Annotation> PdfEditor::readAnnotations() const {
         auto pages = QPDFPageDocumentHelper(*m_qpdf).getAllPages();
         const int total = static_cast<int>(pages.size());
         for (int p = 0; p < total; ++p) {
+            // Test instrumentation: one bump per page visited by the
+            // all-pages sweep (the dominant, whole-document object
+            // resolution cost this P0 fix defers off the open path).
+            s_annotationPageVisits.fetch_add(1, std::memory_order_relaxed);
             QPDFPageObjectHelper &page = pages[static_cast<size_t>(p)];
             QPDFObjectHandle media = page.getMediaBox(/*copy_if_shared=*/true);
             if (!media.isArray() || media.getArrayNItems() < 4)
