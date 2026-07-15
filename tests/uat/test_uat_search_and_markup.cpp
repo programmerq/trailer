@@ -30,6 +30,7 @@
 
 #include <QAction>
 #include <QColorDialog>
+#include <QDir>
 #include <QDockWidget>
 #include <QFont>
 #include <QKeyEvent>
@@ -218,6 +219,68 @@ QString writePdfWithKeywordTimes(const QString &path, const QString &keyword, in
     return path;
 }
 
+// Writes a multi-page A4 PDF that stamps `keyword` as real (selectable,
+// searchable) text on exactly the 0-based page indices in `pages`, one
+// match per listed page. Every other page gets keyword-free filler text
+// so the page exists but yields no search hit. This is the fixture the
+// position-aware seed threshold (ADR 0006) needs: matches on distinct,
+// known pages so the seed can be asserted against currentPage().
+// Deterministic: page order is fixed and QPdfSearchModel streams
+// rowsInserted in page order.
+QString writePdfWithKeywordOnPages(const QString &path, const QString &keyword,
+                                   const QList<int> &pages, int totalPages) {
+    QPdfWriter writer(path);
+    writer.setPageSize(QPageSize(QPageSize::A4));
+    QPainter p(&writer);
+    QFont font(QStringLiteral("Helvetica"));
+    font.setPointSize(24);
+    p.setFont(font);
+    for (int i = 0; i < totalPages; ++i) {
+        if (pages.contains(i)) {
+            p.drawText(300, 400,
+                       QStringLiteral("Match on page %1: %2").arg(i).arg(keyword));
+        } else {
+            p.drawText(300, 400,
+                       QStringLiteral("Filler content on page %1 with no hit").arg(i));
+        }
+        if (i < totalPages - 1)
+            writer.newPage();
+    }
+    p.end();
+    return path;
+}
+
+// Persistent screenshot dir (survives past the run, unlike
+// QTemporaryDir) for G2 evidence PNGs. Mirrors the helper in
+// test_uat_foundations.cpp; file-local so each translation unit keeps
+// its own copy.
+QString screenshotDir() {
+    QDir dir(QDir::current());
+    dir.mkpath(QStringLiteral("uat-screenshots"));
+    return dir.absoluteFilePath(QStringLiteral("uat-screenshots"));
+}
+
+void grabTo(QWidget *w, const QString &name) {
+    const QString path = QDir(screenshotDir()).absoluteFilePath(name);
+    w->grab().save(path, "PNG");
+    qInfo().noquote() << "G2-SCREENSHOT" << path;
+}
+
+// Reads the 0-based page of the currently-seeded search match straight
+// from the view's search model (the same Page role pagesWithSearchMatches
+// walks). Returns -1 if there's no current match.
+int currentSeedPage(QPdfView *view) {
+    if (!view || !view->searchModel())
+        return -1;
+    const int idx = view->currentSearchResultIndex();
+    if (idx < 0 || idx >= view->searchModel()->rowCount(QModelIndex()))
+        return -1;
+    return view->searchModel()
+        ->index(idx, 0)
+        .data(static_cast<int>(QPdfSearchModel::Role::Page))
+        .toInt();
+}
+
 // Writes a one-page PDF that imitates the structure an OCR tool
 // (Tesseract → pdfsandwich, Acrobat OCR, etc.) produces: a scanned
 // raster on top, with an invisible text layer behind it carrying the
@@ -296,6 +359,8 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_vwr_065_searchWithNoMatches();
     void uat_vwr_066_searchOpensSidebarWithMatchPages();
     void uat_vwr_067_searchShowsMatchCounter();
+    void uat_vwr_068_searchSeedsFirstMatchAtOrAfterCurrentPage();
+    void uat_vwr_069_searchSeedPreservesWholeDocumentCoverage();
     void uat_vwr_083_magnifierEscapeDeactivates();
     void uat_ann_010_rectangleToolCreatesAnnotation();
     void uat_ann_012_lineToolCreatesAnnotation();
@@ -579,6 +644,184 @@ void TestUatSearchAndMarkup::uat_vwr_067_searchShowsMatchCounter() {
     QTRY_VERIFY_WITH_TIMEOUT(counter->isVisible() &&
                                  counter->text().endsWith(QStringLiteral("of %1").arg(copies)),
                              5000);
+}
+
+// UAT-VWR-068 — Search seeds the first match at or after the current
+// page (ADR 0006, accepted — Option B). Opening Find while reading a
+// middle page must select the first match whose page is >= the current
+// page, wrapping to index 0 if the viewport is past the last match —
+// not the always-index-0 seed that shipped before. Coverage stays
+// whole-document (asserted in UAT-VWR-069); only the seed index moves.
+//
+// The seed is read ONLY after QTRY_VERIFY confirms the model is fully
+// populated. QPdfSearchModel streams rowsInserted in page order, so an
+// earlier-page match is inserted before the current-page match; the
+// full-population wait is the decisive async-populate guard (ADR 0006
+// R1/R2): if the seed froze on a provisional earlier-page match pushed
+// mid-stream, the at/after assertion below would fail.
+void TestUatSearchAndMarkup::uat_vwr_068_searchSeedsFirstMatchAtOrAfterCurrentPage() {
+    QVERIFY(m_scratch.isValid());
+    const QString keyword = QStringLiteral("zephyrquux");
+    // Matches on distinct, known 0-based pages; 13-page document.
+    const QList<int> matchPages{2, 5, 8, 11};
+    const int totalPages = 13;
+    const QString pdfPath = writePdfWithKeywordOnPages(
+        m_scratch.filePath(QStringLiteral("uat_vwr_068.pdf")), keyword, matchPages, totalPages);
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    QVERIFY2(doc->supportsSearch(), "PDF document should report supportsSearch()");
+
+    QAction *findAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Find…"));
+    QVERIFY(findAction);
+    findAction->trigger();
+    QApplication::processEvents();
+
+    auto *searchBar = mw->findChild<SearchBar *>();
+    QVERIFY(searchBar);
+    auto *lineEdit = searchBar->findChild<QLineEdit *>();
+    QVERIFY(lineEdit);
+
+    auto *view = mw->findChild<QPdfView *>();
+    QVERIFY(view);
+
+    const int knownTotal = static_cast<int>(matchPages.size());
+
+    // Re-seed helper: clear any prior query, navigate to `page`, type the
+    // keyword, and wait for the model to FULLY populate (rowCount ==
+    // knownTotal) before reading the seed. Reading only after full
+    // population is the async guard — see the slot comment.
+    // Writes the resulting 0-based seed page into `seedPage`. Kept void
+    // (not int-returning) because QtTest's QTRY_* macros expand to a
+    // `return;` on failure, which is ill-formed in a value-returning
+    // lambda.
+    int seedPage = -1;
+    auto seedFromPage = [&](int page) {
+        lineEdit->clear();
+        QApplication::processEvents();
+        doc->goToPage(page);
+        QApplication::processEvents();
+        QTRY_COMPARE_WITH_TIMEOUT(doc->currentPage(), page, 2000);
+        lineEdit->setText(keyword);
+        QApplication::processEvents();
+        QTRY_VERIFY_WITH_TIMEOUT(view->searchModel() != nullptr &&
+                                     view->searchModel()->rowCount(QModelIndex()) == knownTotal,
+                                 5000);
+        QTRY_VERIFY_WITH_TIMEOUT(view->currentSearchResultIndex() >= 0, 5000);
+        seedPage = currentSeedPage(view);
+    };
+
+    // (a) Seed at/after current page, first such. Reading page 9 on a doc
+    //     whose matches sit on pages {2,5,8,11}: the seed is page 11's
+    //     match (first page >= 9), NOT page 2's.
+    seedFromPage(9);
+    QVERIFY2(seedPage >= 9, "Seed page must be at or after the current page");
+    QCOMPARE(seedPage, 11);
+    // The 1-based counter maps to that same match (4 of 4 here).
+    QCOMPARE(doc->currentSearchMatchIndex(), static_cast<int>(matchPages.indexOf(11)) + 1);
+
+    // G2 evidence of the seeded-search state.
+    grabTo(mw, QStringLiteral("vwr068_seed_at_or_after_page.png"));
+
+    // (b) On-current-page equality (>=, not >). A match sitting ON the
+    //     current page must be the seed.
+    seedFromPage(8);
+    QCOMPARE(seedPage, 8);
+
+    // (c) Wrap past the last match. Viewport past page 11 (the last
+    //     match): the seed wraps to index 0 (page 2's match).
+    seedFromPage(12);
+    QCOMPARE(seedPage, 2);
+    QCOMPARE(view->currentSearchResultIndex(), 0);
+}
+
+// UAT-VWR-069 — The position-aware seed preserves whole-document
+// coverage (ADR 0006 guardian invariant). Only the initial seed index
+// moves; the populated result set still spans the whole document and
+// Find Previous from the seed reaches the earlier-page matches. Guards
+// against a naive "seed at current page" that would filter the results
+// to pages >= current and hide earlier hits.
+void TestUatSearchAndMarkup::uat_vwr_069_searchSeedPreservesWholeDocumentCoverage() {
+    QVERIFY(m_scratch.isValid());
+    const QString keyword = QStringLiteral("zephyrquux");
+    const QList<int> matchPages{2, 5, 8, 11};
+    const int totalPages = 13;
+    const QString pdfPath = writePdfWithKeywordOnPages(
+        m_scratch.filePath(QStringLiteral("uat_vwr_069.pdf")), keyword, matchPages, totalPages);
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+
+    QAction *findAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Find…"));
+    QVERIFY(findAction);
+    findAction->trigger();
+    QApplication::processEvents();
+
+    auto *searchBar = mw->findChild<SearchBar *>();
+    QVERIFY(searchBar);
+    auto *lineEdit = searchBar->findChild<QLineEdit *>();
+    QVERIFY(lineEdit);
+
+    auto *view = mw->findChild<QPdfView *>();
+    QVERIFY(view);
+
+    const int knownTotal = static_cast<int>(matchPages.size());
+
+    doc->goToPage(9);
+    QApplication::processEvents();
+    QTRY_COMPARE_WITH_TIMEOUT(doc->currentPage(), 9, 2000);
+
+    lineEdit->setText(keyword);
+    QApplication::processEvents();
+    QTRY_VERIFY_WITH_TIMEOUT(view->searchModel() != nullptr &&
+                                 view->searchModel()->rowCount(QModelIndex()) == knownTotal,
+                             5000);
+    QTRY_VERIFY_WITH_TIMEOUT(view->currentSearchResultIndex() >= 0, 5000);
+
+    // (d) Coverage unchanged: the denominator spans the whole document —
+    //     matches before page 9 are still present, not filtered out.
+    QCOMPARE(view->searchModel()->rowCount(QModelIndex()), knownTotal);
+    QCOMPARE(doc->searchMatchCount(), knownTotal);
+
+    // Seed landed on page 11 (the at/after-page match).
+    QCOMPARE(currentSeedPage(view), 11);
+
+    // Find Previous from the seed walks back through the earlier-page
+    // matches — down to page 2, which is before the current page 9 — so
+    // the earlier hits are reachable and coverage is whole-document.
+    emit searchBar->findPreviousRequested();
+    QApplication::processEvents();
+    QCOMPARE(currentSeedPage(view), 8);
+
+    emit searchBar->findPreviousRequested();
+    QApplication::processEvents();
+    QCOMPARE(currentSeedPage(view), 5);
+
+    emit searchBar->findPreviousRequested();
+    QApplication::processEvents();
+    QCOMPARE(currentSeedPage(view), 2);
 }
 
 // UAT-VWR-063 — Escape clears the active query and any match

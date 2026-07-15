@@ -793,18 +793,36 @@ void PdfDocument::setSearchQuery(const QString &query) {
                          [this](const QModelIndex &, int, int) { onSearchResultsPopulated(); });
     }
     m_searchModel->setSearchString(query);
-    m_currentResult = query.isEmpty() ? -1 : 0;
+    if (query.isEmpty()) {
+        m_currentResult = -1;
+        m_seedPending = false;
+        m_provisionalSeedIndex = -1;
+    } else {
+        // Capture where the reader is now; the position-aware seed is the
+        // first match at/after this page (ADR 0006 — Option B). The actual
+        // index is computed once the model has rows, either synchronously
+        // just below (cached results) or from onSearchResultsPopulated as
+        // the async search streams matches in.
+        m_seedFromPage = currentPage();
+        m_seedPending = true;
+        m_provisionalSeedIndex = -1;
+        m_currentResult = 0; // placeholder until the seed is computed
+    }
     if (m_view) {
         m_view->setSearchModel(m_searchModel.get());
         // Clear the view's current index so a late rowsInserted from
         // the *previous* query can't be mistaken for in-flight user
         // navigation by the onSearchResultsPopulated guard.
         m_view->setCurrentSearchResultIndex(-1);
-        // Best-effort synchronous highlight for the cached-results
-        // case. The async rowsInserted signal handles the common
-        // "search still running" path.
-        if (m_currentResult >= 0 && m_searchModel->rowCount({}) > 0) {
-            m_view->setCurrentSearchResultIndex(m_currentResult);
+        // Best-effort synchronous seed for the cached-results case. The
+        // async rowsInserted signal handles the common "search still
+        // running" path. Either way the seed is position-aware, not a
+        // stale index 0.
+        if (m_seedPending && m_searchModel->rowCount({}) > 0) {
+            const int seed = firstResultIndexAtOrAfter(m_seedFromPage);
+            m_currentResult = seed;
+            m_provisionalSeedIndex = seed;
+            m_view->setCurrentSearchResultIndex(seed);
         }
     }
     // Push the (possibly empty) match list to the overlay so an
@@ -816,18 +834,58 @@ void PdfDocument::setSearchQuery(const QString &query) {
 void PdfDocument::onSearchResultsPopulated() {
     if (!m_view || !m_searchModel)
         return;
-    if (m_currentResult < 0)
-        return;
     if (m_searchModel->rowCount({}) <= 0)
         return;
-    // Don't stomp on user navigation: if findNext/findPrevious bumped
-    // the index while the search was still populating, leave it alone.
-    if (m_view->currentSearchResultIndex() >= 0) {
+    // No seed to settle (query cleared, or the seed already froze on user
+    // navigation): just keep the overlay highlights in sync with the
+    // growing model.
+    if (!m_seedPending) {
         refreshSearchHighlights();
         return;
     }
-    m_view->setCurrentSearchResultIndex(m_currentResult);
+    // Distinguish a provisional seed WE pushed from genuine user
+    // navigation. The raw ">= 0" test can't tell them apart: this handler
+    // fires on every rowsInserted, and computing the seed against a
+    // *partially* populated model can wrap to index 0 before the
+    // current-page rows arrive — the old guard then froze that provisional
+    // index for the rest of the populate (ADR 0006 R1). If the view's
+    // index differs from our last provisional push, the user drove
+    // findNext/findPrevious mid-populate: freeze and respect it.
+    const int viewIdx = m_view->currentSearchResultIndex();
+    if (viewIdx >= 0 && viewIdx != m_provisionalSeedIndex) {
+        m_seedPending = false;
+        refreshSearchHighlights();
+        return;
+    }
+    // Re-seed against the now-larger model. As rows stream in page order,
+    // firstResultIndexAtOrAfter converges on the true at/after-page match
+    // once the current-page (or later) rows land, overwriting any earlier
+    // provisional wrap-to-0.
+    const int seed = firstResultIndexAtOrAfter(m_seedFromPage);
+    m_currentResult = seed;
+    m_provisionalSeedIndex = seed;
+    m_view->setCurrentSearchResultIndex(seed);
     refreshSearchHighlights();
+}
+
+int PdfDocument::firstResultIndexAtOrAfter(int page) const {
+    if (!m_searchModel)
+        return 0;
+    const int total = m_searchModel->rowCount({});
+    if (total <= 0)
+        return 0;
+    for (int i = 0; i < total; ++i) {
+        // Results come back ordered by page (same Page role
+        // pagesWithSearchMatches walks), so the first row with page >=
+        // the target is both the first at/after page and the first
+        // reading-order match on that page.
+        const QModelIndex idx = m_searchModel->index(i, 0);
+        const int p = idx.data(static_cast<int>(QPdfSearchModel::Role::Page)).toInt();
+        if (p >= page)
+            return i;
+    }
+    // Nothing at/after the page — wrap to the first match in the document.
+    return 0;
 }
 
 QAbstractItemModel *PdfDocument::outlineModel() {

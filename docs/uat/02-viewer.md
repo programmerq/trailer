@@ -492,6 +492,36 @@ plus integration slots `uat_pdf_080_longDocOpensThumbnailSidebar`
   support search), or the bar opens but finds nothing. The app must not
   crash. (OCR-based image search is deferred to Phase 6.)
 
+### UAT-VWR-068 — Search seeds the first match at or after the current page
+
+**Preconditions:** A multi-page PDF whose keyword appears on several
+distinct, known pages is open. (ADR 0006, accepted — Option B.)
+**Steps:**
+1. Navigate to a middle page `k`.
+2. `Edit > Find…` and type the keyword.
+**Expected:**
+- The initially-selected match is the **first** match whose page is
+  `>= k` (position-aware seed, `>=` not `>`, so a match sitting on page
+  `k` itself is the seed).
+- If the viewport is past the last match's page, the seed **wraps** to
+  the first match in the document (index 0).
+- The seed lands correctly on the asynchronous large-doc populate path,
+  not just the synchronous/cached one — the final seed after the model
+  fully populates is the at/after-page match, never a provisional
+  earlier-page seed frozen mid-stream.
+
+### UAT-VWR-069 — Position-aware seed preserves whole-document coverage
+
+**Preconditions:** As UAT-VWR-068, seeded from a middle page.
+**Steps:**
+1. Seed the search from a middle page (seed lands on a later page).
+2. Walk backward with Find Previous.
+**Expected:**
+- The match total `Y` still spans the whole document — matches before
+  the current page are still present and counted, not filtered out.
+- Find Previous from the seed reaches the earlier-page matches, so
+  coverage is unchanged; only the initial seed index moved.
+
 ---
 
 ## Print
