@@ -69,6 +69,44 @@ existing Obj-C++ seam), or document it as standard macOS behaviour and leave it.
 Cross-link: `2026-07-12-wayland-screenshot-portal` — the Linux/Wayland side of
 the same screenshot-capture surface (G3 "no silent null").
 
+## Resolution / implementation note (2026-07-15)
+
+**(a) Pre-permission explainer + graceful denial — implemented (code).**
+- A shared helper `src/platform/ScreenCapturePermission.{h,cpp}` factors the
+  logic. A pure, platform-agnostic query `shouldShowScreenCaptureExplainer(Settings&)`
+  reports whether to show (true while unacknowledged) without mutating anything,
+  and `acknowledgeScreenCaptureExplainer(Settings&)` persists the `[first_use]`
+  flag (`screen_capture_explainer`) only when the user proceeds — so cancelling
+  the explainer re-shows it next time, and continuing suppresses it across
+  relaunch. A macOS-only, `#ifdef Q_OS_MACOS`-guarded
+  `maybeShowScreenCaptureExplainer(Settings&, QWidget*)` shows the one-time modal
+  explaining that macOS calls this "Screen Recording" even for a still
+  screenshot, points to System Settings ▸ Privacy & Security ▸ Screen Recording,
+  and returns whether to proceed.
+- Both `screencapture` call sites invoke it immediately before capture:
+  `MainWindow::onTakeScreenshot()` and `Application::acquireFromScreenshot()`.
+  The permission is therefore **deferred to first actual use, never at launch**
+  (nothing in `main.cpp`/`Application` init captures the screen).
+- Graceful denial: the previously-silent cancel/empty-output paths now surface a
+  user-visible message — `flashStatus(...)` on the status bar in the MainWindow
+  path, and a brief informational dialog in the no-window Acquire path (which has
+  no status bar) — noting the capture was cancelled and that Screen Recording
+  permission may need granting in System Settings. The non-macOS
+  `QScreen::grabWindow` fallback is untouched.
+- The pure gate is covered by `tests/test_screen_capture_permission.cpp`
+  ("shows once then suppressed" + persists across reload); the native dialog is
+  Mac-only and verified on real hardware per the evidence tier.
+
+**(b) Services submenu — owner-default decision: keep it (no code).** The
+Services submenu is stock AppKit/Qt macOS behaviour that every Cocoa app gets;
+it is harmless and the platform default, **not** something Trailer registers
+(the "Apple developer settings profiler" entry is injected by the owner's
+installed developer tools / config profile). The chosen default is to **keep**
+it — we do **not** add `[NSApp setServicesMenu:nil]`. This is a deliberate
+keep-vs-suppress ruling, documented here so it is not re-litigated: suppressing
+stock system chrome would be more surprising than leaving the standard submenu
+in place.
+
 ## Provenance
 
 v0.3.0 real-Mac dogfood report, 2026-07-13. Root-cause file:line refs from the

@@ -1,9 +1,9 @@
 # 0009 — macOS adaptive (light/dark/tinted) app-icon mechanism: Asset Catalog vs Icon Composer
 
-- **Status:** proposed
+- **Status:** accepted
 - **Arbiter:** the agent role named for this record; the owner (programmerq) is the escalation-only override.
 - **Date proposed:** 2026-07-15
-- **Date accepted / superseded:** —
+- **Date accepted / superseded:** 2026-07-15
 
 ## Context
 
@@ -247,9 +247,77 @@ hardware / a pinned Xcode CLT — not adjudicable from docs):**
 
 ## Arbiter verdict + rationale
 
-Empty while status is `proposed` — the implementing session runs the
-persona/arbiter cycle.
+**Verdict: Option A — Asset Catalog + `actool` luminosity light/dark →
+`Assets.car`, wired by `CFBundleIconName` — is the mechanism to implement now.**
+
+Running the persona/arbiter cycle over the four personas and the admissible
+objections above, Option A wins the *implement-now* decision on four grounds:
+
+1. **It adopts the assets the tree already ships.** The orphaned
+   `trailer-dark_{16..1024}.png` become the `luminosity: dark` images and the
+   existing `trailer_*` PNGs the `luminosity: light` images, with no icon
+   redraw. Option B requires re-authoring the icon as layered Liquid Glass
+   artwork in a Mac-only GUI (Icon Composer) — real new tooling and design work
+   this backlog item does not fund.
+2. **Lowest tooling cost.** A hand-written `.xcassets` `AppIcon` set is plain
+   file authoring that lands in the repo with no Mac-only editor in the loop;
+   only the `actool` *compile* step is Mac-only, and that is shared by both A
+   and B (the options converge on identical build wiring — `actool` →
+   `Assets.car`, `CFBundleIconName`, copied into `Resources`).
+3. **Fully CI-safe off-Mac.** All `actool`/`Assets.car` logic sits behind
+   `if(APPLE)` in CMake and the Darwin-only `scripts/build-macos.sh`; the
+   `.xcassets` files are inert data on Linux/Windows. The Linux `linux-build`
+   and `windows-cross` lanes never evaluate `actool`. The build-integration half
+   of the threshold (`assetutil --info` shows `AppIcon` with the appearance
+   variants; `Info.plist` carries `CFBundleIconName`) is checkable on the
+   `macos-14` runner without an appearance toggle.
+4. **The real-Mac pass is the gate, not a blocker to landing.** The one point A
+   cannot settle from docs — whether a luminosity `AppIcon` actually drives the
+   *pre-Tahoe* Dock light/dark swap (11–15), vs. appearance-adaptive Dock icons
+   being effectively macOS-26-only — is precisely what the real-Mac verification
+   step confirms. Landing A now wires the fully-inspectable build half and lets
+   that live pass close the visual half; it does not gamble the CI lanes on the
+   unproven premise.
+
+**Documented escalation to Option B.** Option B (Icon Composer `.icon`) is the
+recorded escalation, not a rejected path. Escalate to B when either trigger
+fires: (a) the six needs-live-verification points below show that A's luminosity
+`Assets.car` does **not** drive the pre-Tahoe Dock swap on the target install
+base (A would then ship a correct-looking build whose Dark-mode Dock still
+renders light — the "built green but icon didn't change" failure), or (b) the
+owner prioritises the macOS 26 Tahoe tinted/clear Liquid Glass variants, which
+A structurally cannot produce and only B's layered `.icon` delivers (the power
+migrator's admissible objection). Because A and B share the build wiring,
+escalating is swapping the *authoring source* feeding the same `actool` step —
+not re-architecting the bundle.
+
+Option C (do nothing) stays the rejected null baseline: it ships the permanent
+light-chip-in-a-dark-Dock failure that opened this record.
 
 ## Evidence required to reopen
 
-N/A until accepted.
+Reopen (and escalate to Option B, or revise A) if any of the six
+needs-live-verification points recorded above under **Checkable threshold →
+needs-live-verification** resolves against Option A on real hardware / a pinned
+Xcode CLT. Restated as the concrete reopen triggers:
+
+1. A luminosity `AppIcon` Asset Catalog does **not** drive the macOS **Dock**
+   light/dark swap on **pre-Tahoe** macOS (11–15) — i.e. appearance-adaptive
+   Dock icons prove effectively macOS-26-only. (Escalate to B for the pre-Tahoe
+   base, or accept dark-Dock only on 26+.)
+2. The `actool` invocation/flags that compile a plain `.xcassets` `AppIcon` for
+   `--platform macosx` under the pinned CLT differ from those assumed here, or
+   `--minimum-deployment-target 11.0` emits loose files rather than bundling the
+   icon into `Assets.car`.
+3. `Assets.car` alone does **not** suffice on Tahoe, or the backward-compat
+   `.icns` is required for the `11.0` floor in a way A's coexisting
+   `CFBundleIconFile` fallback does not already cover.
+4. `CFBundleIconName` must **replace** rather than **coexist with**
+   `CFBundleIconFile` (`resources/macos/Info.plist.in:10-11`), or it interacts
+   badly with the existing `CFBundleDocumentTypes` block.
+5. The `Assets.car` + `--output-partial-info-plist` merge cannot slot into
+   `scripts/build-macos.sh` around `macdeployqt`/DMG without an Xcode project.
+6. The owner's shipped v0.3.0 build is found to have already contained
+   `trailer-dark.icns` (changing the provenance the backlog assumed).
+
+Until one of these fires on real hardware, Option A stands as accepted.

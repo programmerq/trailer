@@ -3,6 +3,7 @@
 #include "TrailerVersion.h"
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
+#include "platform/ScreenCapturePermission.h"
 #include "ui/MainWindow.h"
 
 #include <QAction>
@@ -30,6 +31,18 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
     setApplicationName(QStringLiteral("Trailer"));
     setOrganizationName(QStringLiteral("Trailer"));
     setApplicationVersion(QStringLiteral(TRAILER_VERSION_STRING));
+
+#ifdef Q_OS_MACOS
+    // macOS keeps a dock icon + global menu bar alive with zero windows, so the
+    // app must survive the last window closing; a dismissed dialog must never quit it.
+    setQuitOnLastWindowClosed(false);
+#endif
+    // On Win/Linux the persistent empty-state window means the app is never left
+    // with zero top-level windows, so a modal dialog is never the sole top-level
+    // and dismissing it can't trigger an implicit quit. Qt's default
+    // quit-on-last-window-closed (true) is therefore left in place there —
+    // disabling it would strand the process with no window and no way to quit
+    // or open a file after the last window is torn down via WA_DeleteOnClose.
 
     m_settings.load();
     m_recent.setMaxEntries(m_settings.recentMax());
@@ -219,8 +232,9 @@ void Application::onAboutToQuit() {
     //     closeEvents on the windows; they're still alive in
     //     m_windows when aboutToQuit lands, so this walk catches
     //     the session.
-    //   - Linux / Windows lastWindowClosed → app quits: by the time
-    //     we get here, every window has already been deleted via
+    //   - Linux / Windows lastWindowClosed → app quits (Qt default
+    //     quit-on-last-window-closed is left enabled off-Mac): by the
+    //     time we get here, every window has already been deleted via
     //     WA_DeleteOnClose, so m_windows is empty and the session
     //     list is empty too — which is correct, since the user
     //     manually closed every window before the implicit quit.
@@ -342,16 +356,35 @@ void Application::newFromClipboard() {
 }
 
 void Application::acquireFromScreenshot() {
+    // First use only: explain the "Screen Recording" permission macOS is
+    // about to prompt for. Deferred to first actual use — never at launch.
+    if (!maybeShowScreenCaptureExplainer(m_settings, nullptr)) {
+        // User cancelled the pre-permission explainer — do not capture.
+        return;
+    }
     const QString path = transientImportPath("acquire", "png");
     QProcess proc;
     proc.start(QStringLiteral("/usr/sbin/screencapture"),
                {QStringLiteral("-i"), QStringLiteral("-x"), path});
     proc.waitForFinished(-1);
-    if (proc.exitCode() != 0)
-        return;
     const QFileInfo info(path);
-    if (!info.exists() || info.size() == 0)
+    // There is no status bar in the no-window Acquire flow, so surface hints as
+    // brief informational dialogs rather than failing silently.
+    if (proc.exitCode() != 0) {
+        // Non-zero exit means the user cancelled (Esc) — not an error.
+        QMessageBox::information(nullptr, tr("Acquire from Screenshot"),
+                                 tr("Screen capture cancelled."));
         return;
+    }
+    if (!info.exists() || info.size() == 0) {
+        // Exit 0 but no output — screencapture produced nothing, which can
+        // silently mean Screen Recording permission was denied.
+        QMessageBox::information(
+            nullptr, tr("Acquire from Screenshot"),
+            tr("No image was captured. If you denied Screen Recording, grant it "
+               "in System Settings ▸ Privacy & Security ▸ Screen Recording."));
+        return;
+    }
     openFiles({path});
 }
 #endif
@@ -365,23 +398,16 @@ bool Application::event(QEvent *event) {
             return true;
         }
     }
-#ifdef Q_OS_MACOS
-    // macOS-only: on macOS there is no persistent empty window — closing
-    // the last window leaves just the dock icon + global menu bar.
-    // Re-activating the app with zero windows (clicking the dock icon,
-    // Cmd-Tab back in) should reopen the file-open panel, mirroring
-    // Preview's behaviour. This cannot be exercised on the Linux CI —
-    // ApplicationStateChange to Active is a native app-lifecycle event —
-    // so it is validated by code review only.
-    if (event->type() == QEvent::ApplicationStateChange) {
-        if (applicationState() == Qt::ApplicationActive && windowCount() == 0 &&
-            !m_openPanelActive) {
-            m_openPanelActive = true;
-            openFilesFromDialog();
-            m_openPanelActive = false;
-        }
-    }
-#endif
+    // macOS-only note: on macOS there is no persistent empty window —
+    // closing the last window leaves just the dock icon + global menu bar.
+    // Re-activating the app with zero windows (dock click, Cmd-Tab back in)
+    // deliberately does NOTHING automatic: no file-open panel is presented.
+    // Owner ruling (backlog 2026-07-12-macos-launch-no-open-panel): macOS
+    // launch/activation with no windows is dock icon + menu bar only, and an
+    // automatically-presented Open panel — whose dismissal read as an
+    // unwanted quit — is removed. ⌘O / File → Open remain explicit user
+    // actions that open the panel (see installNoWindowMenuBar's openAction).
+    // We therefore no longer special-case ApplicationStateChange here.
     return QApplication::event(event);
 }
 

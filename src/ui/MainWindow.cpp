@@ -30,6 +30,7 @@
 #include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "ml/OcrEngine.h"
+#include "platform/ScreenCapturePermission.h"
 #include "platform/Share.h"
 #include "settings/AppPaths.h"
 #include "ml/SamSession.h"
@@ -2151,6 +2152,13 @@ void MainWindow::onTakeScreenshot() {
     const QString path = screenshotTargetPath();
 
 #ifdef Q_OS_MACOS
+    // First use only: explain that macOS will prompt for "Screen Recording"
+    // permission (its name even for a still screenshot) before we shell to
+    // screencapture. Deferred to first actual use — never at launch.
+    if (!maybeShowScreenCaptureExplainer(m_app->settings(), this)) {
+        // User cancelled the pre-permission explainer — do not capture.
+        return;
+    }
     // Hide our window so it doesn't occlude the target, then use the native
     // macOS capture tool for proper DPI handling and interactive selection.
     hide();
@@ -2174,8 +2182,18 @@ void MainWindow::onTakeScreenshot() {
     show();
     raise();
     activateWindow();
-    if (proc.exitCode() != 0 || !QFileInfo(path).exists() || QFileInfo(path).size() == 0) {
-        // User cancelled (Esc) or no output — don't treat as an error.
+    if (proc.exitCode() != 0) {
+        // Non-zero exit means the user cancelled (Esc) — not an error.
+        flashStatus(tr("Screen capture cancelled."));
+        return;
+    }
+    if (!QFileInfo(path).exists() || QFileInfo(path).size() == 0) {
+        // Exit 0 but no output — screencapture produced nothing, which can
+        // silently mean Screen Recording permission was denied. Surface a
+        // graceful hint pointing at the permission setting.
+        flashStatus(tr("No image was captured. If you denied Screen Recording, "
+                       "grant it in System Settings ▸ Privacy & Security ▸ "
+                       "Screen Recording."));
         return;
     }
 #else

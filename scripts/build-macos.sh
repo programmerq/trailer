@@ -369,6 +369,37 @@ fi
 echo "    no external dylib references"
 
 # ---------------------------------------------------------------------
+# Verify the adaptive app icon landed (ADR 0009 Option A). Cheap
+# build-integration check that runs only here / on the macos-14 runner:
+#   - Contents/Resources/Assets.car exists (actool's POST_BUILD step in
+#     CMakeLists.txt produced it during `cmake --build`),
+#   - Info.plist declares CFBundleIconName=AppIcon (the key that makes
+#     macOS read the catalog), and
+#   - assetutil --info confirms the compiled catalog carries an AppIcon.
+# The visual light/dark Dock swap is a separate real-Mac verification
+# (the surface is native Dock/Finder chrome; `grab()` can't see it).
+# ---------------------------------------------------------------------
+echo "==> Verifying adaptive app icon (Assets.car + CFBundleIconName)"
+ASSETS_CAR="$APP_PATH/Contents/Resources/Assets.car"
+if [[ ! -f "$ASSETS_CAR" ]]; then
+    echo "ERROR: $ASSETS_CAR missing — the actool step did not produce" >&2
+    echo "       Assets.car. Check the APPLE-guarded actool POST_BUILD" >&2
+    echo "       command in CMakeLists.txt and that Xcode/actool is present." >&2
+    exit 1
+fi
+ICON_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconName" \
+            "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)
+if [[ "$ICON_NAME" != "AppIcon" ]]; then
+    echo "ERROR: Info.plist CFBundleIconName is '$ICON_NAME', expected 'AppIcon'." >&2
+    exit 1
+fi
+if ! assetutil --info "$ASSETS_CAR" | grep -qi "AppIcon"; then
+    echo "ERROR: assetutil --info does not mention AppIcon in $ASSETS_CAR." >&2
+    exit 1
+fi
+echo "    Assets.car present; CFBundleIconName=$ICON_NAME; assetutil confirms AppIcon"
+
+# ---------------------------------------------------------------------
 # Package as DMG.
 #
 # Filename is fixed (trailer-macos-arm64.dmg) so CI's

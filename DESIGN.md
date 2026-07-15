@@ -181,10 +181,16 @@ making them hunt. Its *shape* follows the platform's native convention:
 - **macOS: no window.** A Mac app with no document open shows **no
   window** — just the dock icon and the menu bar. Launching with no file,
   or closing the last window, returns to this state (it does not quit).
-  Activating the app (dock click, `⌘O`, or File → Open) presents the
-  standard **Open panel**. This matches how Preview and other
-  document-based Mac apps behave; a Mac user reads an empty window on
-  launch as the app being confused, not welcoming.
+  Launch and activation with no windows show **only the dock icon and
+  menu bar** — **no** Open panel is presented automatically. `⌘O` and
+  File → Open remain **explicit user actions** that open the standard
+  **Open panel**; nothing opens it on the user's behalf. Dismissing any
+  dialog never quits the app. (Owner ruling, backlog
+  `2026-07-12-macos-launch-no-open-panel`: an auto-presented panel whose
+  dismissal read as an unwanted quit is exactly the behaviour removed.)
+  This matches how Preview and other document-based Mac apps behave; a Mac
+  user reads an empty window on launch as the app being confused, not
+  welcoming.
 - **Windows / Linux: an empty window.** On Windows and Linux the app
   opens an **empty window** carrying **Open** and **Recent** affordances
   and a **centered drop-target** — an unambiguous "*Open a file*" prompt
