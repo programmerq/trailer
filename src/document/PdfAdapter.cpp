@@ -724,6 +724,17 @@ QImage PdfDocument::renderPageForOcr(int pageIndex) const {
     return canvas;
 }
 
+QSizeF PdfDocument::pageSizeHint(int pageIndex) const {
+    // Cheap page-geometry probe used by the sidebar to size each
+    // thumbnail row by aspect. Mirrors the validity/bounds guards in
+    // renderThumbnail but does no rendering — QPdfDocument::pagePointSize
+    // returns the /CropBox (falling back to /MediaBox) dimensions.
+    if (!m_valid || !m_doc || pageIndex < 0 || pageIndex >= m_doc->pageCount()) {
+        return {};
+    }
+    return m_doc->pagePointSize(pageIndex);
+}
+
 QImage PdfDocument::renderThumbnail(int pageIndex, QSize targetSize) {
     if (!m_valid || pageIndex < 0 || pageIndex >= m_doc->pageCount()) {
         return {};

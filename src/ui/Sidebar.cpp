@@ -15,14 +15,18 @@
 #include <QListWidget>
 #include <QListWidgetItem>
 #include <QPainter>
+#include <QPalette>
 #include <QPixmap>
 #include <QResizeEvent>
+#include <QTimer>
 #include <QStackedWidget>
 #include <QStyledItemDelegate>
 #include <QTabWidget>
 #include <QTreeView>
 #include <QVBoxLayout>
 
+#include <algorithm>
+#include <cmath>
 #include <functional>
 
 namespace trailer {
@@ -54,15 +58,32 @@ namespace {
 // item needs is breathing room above and below the thumbnail.
 constexpr int kThumbVerticalPadding = 4;
 
+// Horizontal gutter between the thumbnail and each edge of the sidebar
+// column. The thumbnail is scaled to fill (viewport width − 2×this) and
+// left-aligned at this inset, so the page image reads as filling the
+// column rather than floating in it. 6 px matches the vertical breathing
+// room's scale; tried 0 (thumbnail touches the scrollbar/edge, looks
+// cramped) and 12 (visibly wasteful on a narrow sidebar) — 6 is the
+// balance. Symptom to change: thumbnails crowd the edge, or leave an
+// obvious empty margin.
+constexpr int kThumbHorizontalMargin = 6;
+
 class ThumbnailDelegate : public QStyledItemDelegate {
   public:
     explicit ThumbnailDelegate(QListView *view) : QStyledItemDelegate(view), m_view(view) {}
 
     QSize sizeHint(const QStyleOptionViewItem & /*option*/,
-                   const QModelIndex & /*index*/) const override {
-        const QSize icon = m_view->iconSize();
-        const int h = icon.height() + 2 * kThumbVerticalPadding;
-        return QSize(m_view->viewport()->width(), h);
+                   const QModelIndex &index) const override {
+        // Row height tracks the page aspect at the current column width,
+        // so portrait rows are tall and landscape rows short — no fixed
+        // 108 px slack. availW is the width the thumbnail is scaled to.
+        const int vpW = m_view->viewport()->width();
+        const int availW = std::max(16, vpW - 2 * kThumbHorizontalMargin);
+        qreal aspect = index.data(ThumbnailModel::AspectRole).toReal();
+        if (aspect <= 0.0)
+            aspect = 0.8; // legacy 80x100 fallback (see ThumbnailModel::data)
+        const int thumbH = int(std::lround(availW / aspect));
+        return QSize(vpW, thumbH + 2 * kThumbVerticalPadding);
     }
 
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
@@ -74,21 +95,27 @@ class ThumbnailDelegate : public QStyledItemDelegate {
             painter->fillRect(option.rect, option.palette.highlight());
         }
 
-        const QSize iconSize = m_view->iconSize();
         const QPixmap pm = qvariant_cast<QPixmap>(index.data(Qt::DecorationRole));
 
+        const int availW = option.rect.width() - 2 * kThumbHorizontalMargin;
         const int y = option.rect.top() + kThumbVerticalPadding;
-        QRect imageRect(option.rect.x(), y, option.rect.width(), iconSize.height());
-        if (!pm.isNull()) {
-            // KeepAspectRatio preserves page proportions for mixed
-            // Letter/A4/landscape decks; the result is centred
-            // horizontally inside the column so portrait and
-            // landscape pages line up on their vertical midline.
-            const QPixmap scaled =
-                pm.scaled(iconSize, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-            const int x = option.rect.x() + (option.rect.width() - scaled.width()) / 2;
+        const int x = option.rect.x() + kThumbHorizontalMargin;
+        QRect imageRect(x, y, std::max(0, availW), option.rect.height() - 2 * kThumbVerticalPadding);
+        if (!pm.isNull() && availW > 0) {
+            // Scale the page to fill the column width (aspect preserved via
+            // scaledToWidth) and left-align it at the margin, so the
+            // thumbnail reads as filling the sidebar rather than floating a
+            // small fixed box in its centre.
+            const QPixmap scaled = pm.scaledToWidth(availW, Qt::SmoothTransformation);
             painter->drawPixmap(x, y, scaled);
             imageRect = QRect(x, y, scaled.width(), scaled.height());
+
+            // Subtle 1 px border around the page so its edge is visible
+            // against the sidebar base (and gives UAT a detectable edge).
+            painter->setRenderHint(QPainter::Antialiasing, false);
+            painter->setBrush(Qt::NoBrush);
+            painter->setPen(option.palette.color(QPalette::Mid));
+            painter->drawRect(imageRect.adjusted(0, 0, -1, -1));
         }
 
         // Page-number badge in the lower-right corner of the
@@ -129,7 +156,24 @@ class ThumbnailDelegate : public QStyledItemDelegate {
 
 class ThumbnailListView : public QListView {
   public:
-    using QListView::QListView;
+    explicit ThumbnailListView(QWidget *parent = nullptr) : QListView(parent) {
+        // Debounce render-width updates: a resize relayouts immediately
+        // (so scale-to-width fills instantly) but the crisp re-render at
+        // the new column width waits ~120 ms so dragging the splitter
+        // doesn't thrash the render cache. Tried 0 ms (re-rendered every
+        // intermediate drag width) and 400 ms (visibly late crispness);
+        // 120 ms matches the sidebar's other debounce (m_pageSyncTimer).
+        m_renderTimer.setSingleShot(true);
+        m_renderTimer.setInterval(120);
+        connect(&m_renderTimer, &QTimer::timeout, this, [this]() {
+            if (auto *tm = qobject_cast<ThumbnailModel *>(model())) {
+                tm->setRenderWidth(m_pendingRenderWidth);
+                // Keep iconSize consistent with the render box even though
+                // the delegate no longer derives layout from it.
+                setIconSize(QSize(m_pendingRenderWidth, m_pendingRenderWidth * 2));
+            }
+        });
+    }
 
     using MoveHandler = std::function<void(int, int)>;
     void setMoveHandler(MoveHandler h) { m_moveHandler = std::move(h); }
@@ -137,7 +181,17 @@ class ThumbnailListView : public QListView {
   protected:
     void resizeEvent(QResizeEvent *event) override {
         QListView::resizeEvent(event);
+        // Immediate layout so per-row sizeHint (and scale-to-width paint)
+        // responds to the new width on this frame.
         scheduleDelayedItemsLayout();
+        // Clamp the render width to a sane band: [48, 600] px. Below 48 a
+        // thumbnail is illegible; above 600 the render cost/pixmap memory
+        // outgrows any sidebar a user would actually widen to. Symptom to
+        // change: thumbnails blur when the sidebar is very wide (raise the
+        // cap) or the app renders needlessly large pixmaps (lower it).
+        m_pendingRenderWidth =
+            std::clamp(viewport()->width() - 2 * kThumbHorizontalMargin, 48, 600);
+        m_renderTimer.start();
     }
 
     void dropEvent(QDropEvent *event) override {
@@ -185,6 +239,8 @@ class ThumbnailListView : public QListView {
 
   private:
     MoveHandler m_moveHandler;
+    QTimer m_renderTimer;
+    int m_pendingRenderWidth = 0;
 };
 
 } // namespace
