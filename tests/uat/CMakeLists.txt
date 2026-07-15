@@ -75,6 +75,12 @@ trailer_add_uat_test(test_uat_ml_affordances test_uat_ml_affordances.cpp)
 trailer_add_uat_test(test_uat_pdf_pages test_uat_pdf_pages.cpp)
 target_link_libraries(test_uat_pdf_pages PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 
+# Sidebar thumbnail sizing (scale-to-width + aspect-fit rows, ADR 0006).
+# Builds a mixed portrait/landscape deck via QPdfWriter and reads back
+# per-page point sizes through QPdfDocument, so it links Qt PDF.
+trailer_add_uat_test(test_uat_thumbnail_sidebar test_uat_thumbnail_sidebar.cpp)
+target_link_libraries(test_uat_thumbnail_sidebar PRIVATE Qt6::Pdf Qt6::PdfWidgets)
+
 # Unified undo log past the annotation history cap (UAT-UND-150) —
 # the cap is shrunk to 5 via the store's test seam so the 70 edits
 # genuinely cross it and eviction fires. Needs Qt PDF for the
