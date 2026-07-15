@@ -497,6 +497,18 @@ class MainWindow : public QMainWindow {
     // them if the doc closes mid-compute. Maps to the MlScheduler task
     // id returned by submit(); zero means no in-flight job.
     QHash<const IDocument *, std::uint64_t> m_pendingCandidateJobs;
+    // Item A on-demand search OCR: images whose page 0 we have already
+    // asked to OCR because the user typed a search query while the OCR
+    // store was still empty. Guards against re-submitting (and thus
+    // cancel/restarting) the same page on every keystroke. Pointers are
+    // identity-only; entries are purged when the document closes.
+    QSet<IDocument *> m_searchOcrKicked;
+    // Kick page-0 OCR for an image the user is searching before it has any
+    // OCR results, so Find works even without a prior manual Recognize run.
+    // No-op for non-images (PDFs search native text), empty queries, and
+    // pages that already have results. Uses the same OcrController path the
+    // menu uses; when the model is absent it silently no-ops (no modal).
+    void maybeKickSearchOcr(IDocument *doc, const QString &query);
 };
 
 } // namespace trailer

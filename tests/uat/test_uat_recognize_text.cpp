@@ -34,6 +34,7 @@
 #include "ml/OcrEngine.h"
 #include "settings/AppPaths.h"
 #include "settings/Settings.h"
+#include "ui/AnnotationOverlay.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
 #include "ui/MlProgressWidget.h"
@@ -190,6 +191,7 @@ class TestUatRecognizeText : public QObject {
     void uat_ocr_070_nonForceSkipsNativeTextForceReruns();
     void uat_ocr_080_ocrOnPdfBlocksLandInPointSpace();
     void uat_ocr_090_noticeLinkRevealsProgressNoModal();
+    void uat_ocr_100_imageSearchEnabledAndHighlightsMatch();
 
   private:
     QTemporaryDir m_scratch;
@@ -784,6 +786,54 @@ void TestUatRecognizeText::uat_ocr_090_noticeLinkRevealsProgressNoModal() {
     }
     saveNoticeShot(mw, QStringLiteral("notice_g5_consent_model_absent.png"));
     mw->setOcrModelDownloadHookForTesting(nullptr);
+}
+
+// uat_ocr_100 — Item A end-to-end: an image document that has OCR results
+// exposes an ENABLED Find action (previously dead — supportsSearch() was
+// false for every image) and a query paints a highlight in the overlay.
+void TestUatRecognizeText::uat_ocr_100_imageSearchEnabledAndHighlightsMatch() {
+    QVERIFY(m_scratch.isValid());
+    const QString imgPath = writeTextImage(m_scratch.filePath(QStringLiteral("ocr100.png")));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    auto *imgDoc = dynamic_cast<ImageDocument *>(dv->currentDocument());
+    QVERIFY2(imgDoc, "Active document should be an ImageDocument");
+
+    // Find is enabled for the image now that it advertises search.
+    QAction *findAction = findActionByText(mw->menuBar(), QStringLiteral("&Find…"));
+    QVERIFY2(findAction, "Edit → Find… action is missing");
+    QVERIFY2(findAction->isEnabled(),
+             "Find must be enabled for an image once it supports search (Item A)");
+
+    // Simulate OCR results landing for the visible page.
+    OcrEngine::TextBlock b;
+    b.text = QStringLiteral("HELLO 1234");
+    b.polygon = QPolygon(QRect(20, 20, 200, 60));
+    imgDoc->selectableText()->put(0, 42ULL, {b});
+
+    // A query matching the recognized text produces a match and a highlight.
+    imgDoc->setSearchQuery(QStringLiteral("hello"));
+    QCOMPARE(imgDoc->searchMatchCount(), 1);
+    QCOMPARE(imgDoc->currentSearchMatchIndex(), 1);
+
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
+    QVERIFY2(overlay, "image view should host an AnnotationOverlay");
+    QVERIFY2(overlay->searchHighlightCountForTest() > 0,
+             "setting a matching query must push a search highlight into the overlay");
+    saveNoticeShot(mw, QStringLiteral("image_search_highlight.png"));
+
+    // Clearing the query removes the highlight.
+    imgDoc->clearSearch();
+    QCOMPARE(imgDoc->searchMatchCount(), 0);
+    QCOMPARE(overlay->searchHighlightCountForTest(), 0);
 }
 
 int main(int argc, char **argv) {

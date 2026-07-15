@@ -105,7 +105,39 @@ class TestAdapters : public QObject {
     void pdfViewReflowsOnResizeInFitInView();
     void pdfDownArrowStepsPageImmediatelyInFitMode();
     void imageDocumentResizeEventTriggersRefit();
+    // Item A — image documents become searchable via their OCR store.
+    void imageDocumentSupportsSearch();
+    void imageDocumentSearchFindsOcrText();
+    void imageDocumentSearchIsCaseInsensitive();
+    void imageDocumentEmptyStoreSearchNoMatches();
 };
+
+namespace {
+// Open a freshly-written white PNG through the adapter. Shared by the
+// Item A image-search tests, which seed the returned document's
+// SelectableTextStore directly (no OCR run needed).
+std::unique_ptr<IDocument> openBlankImage(QTemporaryDir &dir, const QString &name) {
+    const QString path = dir.filePath(name);
+    QImage img(64, 64, QImage::Format_ARGB32);
+    img.fill(Qt::white);
+    img.save(path, "PNG");
+    ImageAdapter adapter;
+    return adapter.open(path);
+}
+
+// Seed two OCR blocks into a store on page 0 so search has something to
+// hit. "Hello World" and "Foobar" both contain 'o', which the multi-
+// match advance test relies on.
+void seedOcrBlocks(SelectableTextStore *store) {
+    OcrEngine::TextBlock a;
+    a.text = QStringLiteral("Hello World");
+    a.polygon = QPolygon(QRect(10, 10, 80, 20));
+    OcrEngine::TextBlock b;
+    b.text = QStringLiteral("Foobar");
+    b.polygon = QPolygon(QRect(10, 40, 80, 20));
+    store->put(0, 1ULL, {a, b});
+}
+} // namespace
 
 void TestAdapters::pdfAdapterAdvertisesPdfExtension() {
     PdfAdapter adapter;
@@ -1875,6 +1907,87 @@ void TestAdapters::pdfAnnotationUndoAfterInWindowEditPreservesLoadedAnnotations(
     }
     QCOMPARE(rects, 1);
     QCOMPARE(ells, 1);
+}
+
+// Item A — an ImageDocument advertises search once the OCR-store bridge
+// exists, so MainWindow's Find enablement (gated on supportsSearch())
+// lights up for images.
+void TestAdapters::imageDocumentSupportsSearch() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto doc = openBlankImage(dir, QStringLiteral("supportssearch.png"));
+    QVERIFY(doc != nullptr);
+    QVERIFY2(doc->supportsSearch(),
+             "ImageDocument must advertise search so Find is enabled for images");
+}
+
+// Item A — case-insensitive substring search over the OCR store's blocks
+// yields a match count and cycles current-match via findNext/findPrevious.
+void TestAdapters::imageDocumentSearchFindsOcrText() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto doc = openBlankImage(dir, QStringLiteral("findocr.png"));
+    QVERIFY(doc != nullptr);
+    auto *store = doc->selectableText();
+    QVERIFY(store);
+    seedOcrBlocks(store);
+
+    // A query hitting a single block.
+    doc->setSearchQuery(QStringLiteral("world"));
+    QCOMPARE(doc->searchMatchCount(), 1);
+    QCOMPARE(doc->currentSearchMatchIndex(), 1);
+    QCOMPARE(doc->pagesWithSearchMatches(), (std::vector<int>{0}));
+
+    // A query hitting both blocks — findNext/findPrevious cycle through them.
+    doc->setSearchQuery(QStringLiteral("o"));
+    QCOMPARE(doc->searchMatchCount(), 2);
+    QCOMPARE(doc->currentSearchMatchIndex(), 1);
+    doc->findNext();
+    QCOMPARE(doc->currentSearchMatchIndex(), 2);
+    doc->findNext(); // wraps
+    QCOMPARE(doc->currentSearchMatchIndex(), 1);
+    doc->findPrevious(); // wraps back
+    QCOMPARE(doc->currentSearchMatchIndex(), 2);
+
+    // Clearing the search drops all matches.
+    doc->clearSearch();
+    QCOMPARE(doc->searchMatchCount(), 0);
+    QCOMPARE(doc->currentSearchMatchIndex(), -1);
+    QVERIFY(doc->pagesWithSearchMatches().empty());
+}
+
+// Item A — search matching ignores case in both directions.
+void TestAdapters::imageDocumentSearchIsCaseInsensitive() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto doc = openBlankImage(dir, QStringLiteral("caseins.png"));
+    QVERIFY(doc != nullptr);
+    auto *store = doc->selectableText();
+    QVERIFY(store);
+    seedOcrBlocks(store);
+
+    doc->setSearchQuery(QStringLiteral("HELLO"));
+    QCOMPARE(doc->searchMatchCount(), 1);
+    doc->setSearchQuery(QStringLiteral("foObAr"));
+    QCOMPARE(doc->searchMatchCount(), 1);
+}
+
+// Item A — with no OCR results a query yields nothing and the navigation
+// calls are safe no-ops.
+void TestAdapters::imageDocumentEmptyStoreSearchNoMatches() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto doc = openBlankImage(dir, QStringLiteral("emptystore.png"));
+    QVERIFY(doc != nullptr);
+    QVERIFY(doc->selectableText());
+    QVERIFY2(!doc->selectableText()->hasResults(0), "store must start empty");
+
+    doc->setSearchQuery(QStringLiteral("anything"));
+    QCOMPARE(doc->searchMatchCount(), 0);
+    QCOMPARE(doc->currentSearchMatchIndex(), -1);
+    doc->findNext();     // must not crash
+    doc->findPrevious(); // must not crash
+    QVERIFY(doc->pagesWithSearchMatches().empty());
 }
 
 QTEST_MAIN(TestAdapters)

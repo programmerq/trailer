@@ -152,6 +152,10 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         if (auto *doc = m_documentView->currentDocument()) {
             doc->setSearchQuery(q);
             m_searchBar->setMatchCounter(doc->currentSearchMatchIndex(), doc->searchMatchCount());
+            // Item A: an image the user searches before OCR has run has an
+            // empty store, so setSearchQuery finds nothing. Kick page-0 OCR
+            // so results (and highlights) appear once recognition lands.
+            maybeKickSearchOcr(doc, q);
         }
     });
     connect(m_searchBar, &SearchBar::findNextRequested, this, [this]() {
@@ -198,6 +202,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         if (!doc)
             return;
         m_backgroundCandidateDocs.remove(doc);
+        m_searchOcrKicked.remove(doc);
         auto it = m_pendingCandidateJobs.find(doc);
         if (it != m_pendingCandidateJobs.end()) {
             m_app->mlScheduler().cancel(it.value());
@@ -2032,6 +2037,28 @@ void MainWindow::onSmartLasso() {
     if (!dynamic_cast<ImageDocument *>(doc))
         return;
     activateSamTool(this, m_markupToolbar, AnnotationTool::SmartLasso);
+}
+
+void MainWindow::maybeKickSearchOcr(IDocument *doc, const QString &query) {
+    if (!doc || query.isEmpty() || !m_ocrController)
+        return;
+    // Only images need this: PDFs search their native text layer, and the
+    // menu-driven Recognize flow covers explicit multi-page runs.
+    if (!dynamic_cast<ImageDocument *>(doc))
+        return;
+    if (!doc->supportsSelectableText())
+        return;
+    auto *store = doc->selectableText();
+    if (!store || store->hasResults(0))
+        return; // already OCR'd — setSearchQuery already searched it
+    if (m_searchOcrKicked.contains(doc))
+        return; // already kicked for this doc; don't churn on each keystroke
+    m_searchOcrKicked.insert(doc);
+    // Same mechanism the Recognize Text menu uses. When the model is
+    // absent the batch silently no-ops (resolves before the reveal delay,
+    // so no progress flash and no download modal); the menu path remains
+    // the place that offers the model download.
+    m_ocrController->submitUserPages(doc, {0}, /*forceRerun=*/false);
 }
 
 void MainWindow::onRecognizeText() {
