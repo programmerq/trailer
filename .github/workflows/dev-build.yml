@@ -113,17 +113,24 @@ jobs:
         run: cmake --build build --config Release --parallel
 
       - name: Unit tests
+        # Dev builds exist to GUI-test WIP code, which may legitimately
+        # have red tests. Run the suite for signal (the result is visible
+        # in the run), but continue-on-error so a failure does NOT block
+        # the artifact upload below. Release keeps its tests blocking.
+        continue-on-error: true
         working-directory: build
         run: ctest -C Release --output-on-failure --label-exclude uat
         env:
           QT_QPA_PLATFORM: offscreen
 
       - name: Stage Linux artifact
-        # Same portable tarball shape as release.yml's linux-build. The
-        # verbatim third-party license bundle (`licenses/third-party/`)
-        # that release.yml also copies lives on an unmerged branch and
-        # is NOT on main — a dev build stages from main as-is, so only
-        # the first-party docs that exist on main are bundled here.
+        # Same portable tarball shape as release.yml's linux-build on main
+        # today: the first-party LICENSE plus THIRD_PARTY_LICENSES.md,
+        # PHILOSOPHY.md, and README.md. The verbatim third-party license
+        # bundle (`licenses/third-party/`) lives on the unmerged packaging
+        # branch (#61), not on main, so neither release.yml nor this
+        # workflow copies it yet. Once #61 lands, update this step (and the
+        # Windows one below) to also copy licenses/third-party for parity.
         run: |
           set -euo pipefail
           mkdir -p dist/trailer-linux-x86_64
@@ -187,8 +194,11 @@ jobs:
         # (--in-container skips its configure branch since build-win/
         # already exists). imageformats/ is added on top because the
         # JPEG export plugin loads at runtime and the import walk can't
-        # see runtime-loaded plugins. Same as release.yml minus the
-        # `licenses/third-party/` copy (not on main — see dev-linux note).
+        # see runtime-loaded plugins. Mirrors release.yml's current
+        # portable bundle on main (first-party LICENSE + THIRD_PARTY_-
+        # LICENSES.md + PHILOSOPHY.md + README.md); the verbatim
+        # `licenses/third-party/` bundle is on the unmerged #61 branch, so
+        # neither workflow copies it yet — see the dev-linux note.
         run: |
           set -euo pipefail
           BUILD_DIR="$PWD/build-win" \
