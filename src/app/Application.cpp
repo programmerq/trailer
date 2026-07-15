@@ -32,14 +32,17 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
     setOrganizationName(QStringLiteral("Trailer"));
     setApplicationVersion(QStringLiteral(TRAILER_VERSION_STRING));
 
-    // The empty-state window model keeps the app alive with no windows
-    // (macOS: dock + menu bar only; Win/Linux: a persistent empty-state
-    // window). So Qt must NOT quit when the last window closes — otherwise
-    // tearing down the last window, or dismissing a modal dialog that is
-    // momentarily the only top-level, would implicitly quit the app. Owner
-    // ruling (backlog 2026-07-12-macos-launch-no-open-panel): dismissing a
-    // dialog must never quit. Correct on every platform given this model.
+#ifdef Q_OS_MACOS
+    // macOS keeps a dock icon + global menu bar alive with zero windows, so the
+    // app must survive the last window closing; a dismissed dialog must never quit it.
     setQuitOnLastWindowClosed(false);
+#endif
+    // On Win/Linux the persistent empty-state window means the app is never left
+    // with zero top-level windows, so a modal dialog is never the sole top-level
+    // and dismissing it can't trigger an implicit quit. Qt's default
+    // quit-on-last-window-closed (true) is therefore left in place there —
+    // disabling it would strand the process with no window and no way to quit
+    // or open a file after the last window is torn down via WA_DeleteOnClose.
 
     m_settings.load();
     m_recent.setMaxEntries(m_settings.recentMax());
@@ -229,8 +232,9 @@ void Application::onAboutToQuit() {
     //     closeEvents on the windows; they're still alive in
     //     m_windows when aboutToQuit lands, so this walk catches
     //     the session.
-    //   - Linux / Windows lastWindowClosed → app quits: by the time
-    //     we get here, every window has already been deleted via
+    //   - Linux / Windows lastWindowClosed → app quits (Qt default
+    //     quit-on-last-window-closed is left enabled off-Mac): by the
+    //     time we get here, every window has already been deleted via
     //     WA_DeleteOnClose, so m_windows is empty and the session
     //     list is empty too — which is correct, since the user
     //     manually closed every window before the implicit quit.
