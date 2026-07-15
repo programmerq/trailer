@@ -91,10 +91,6 @@ class Application : public QApplication {
     QList<QPointer<MainWindow>> m_windows;
 #ifdef Q_OS_MACOS
     QPointer<QMenuBar> m_noWindowMenuBar;
-    // Re-entrancy guard: while the activate-with-no-windows file-open
-    // panel is up, a second ApplicationStateChange→active (e.g. the
-    // panel itself grabbing focus) must not stack a second panel.
-    bool m_openPanelActive = false;
 #endif
 };
 

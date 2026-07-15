@@ -67,6 +67,7 @@ trailer_add_test(test_ml_scheduler test_ml_scheduler.cpp)
 trailer_add_test(test_ml_progress_widget test_ml_progress_widget.cpp)
 trailer_add_test(test_empty_state_widget test_empty_state_widget.cpp)
 trailer_add_test(test_preferences test_preferences.cpp)
+trailer_add_test(test_macos_launch test_macos_launch.cpp)
 
 # Structural, CI-safe performance tests. These assert ordering / counts /
 # thread facts (never wall-clock time) and read the checked-in reference

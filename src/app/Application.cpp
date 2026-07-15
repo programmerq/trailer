@@ -31,6 +31,15 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
     setOrganizationName(QStringLiteral("Trailer"));
     setApplicationVersion(QStringLiteral(TRAILER_VERSION_STRING));
 
+    // The empty-state window model keeps the app alive with no windows
+    // (macOS: dock + menu bar only; Win/Linux: a persistent empty-state
+    // window). So Qt must NOT quit when the last window closes — otherwise
+    // tearing down the last window, or dismissing a modal dialog that is
+    // momentarily the only top-level, would implicitly quit the app. Owner
+    // ruling (backlog 2026-07-12-macos-launch-no-open-panel): dismissing a
+    // dialog must never quit. Correct on every platform given this model.
+    setQuitOnLastWindowClosed(false);
+
     m_settings.load();
     m_recent.setMaxEntries(m_settings.recentMax());
     m_recent.load();
@@ -365,23 +374,16 @@ bool Application::event(QEvent *event) {
             return true;
         }
     }
-#ifdef Q_OS_MACOS
-    // macOS-only: on macOS there is no persistent empty window — closing
-    // the last window leaves just the dock icon + global menu bar.
-    // Re-activating the app with zero windows (clicking the dock icon,
-    // Cmd-Tab back in) should reopen the file-open panel, mirroring
-    // Preview's behaviour. This cannot be exercised on the Linux CI —
-    // ApplicationStateChange to Active is a native app-lifecycle event —
-    // so it is validated by code review only.
-    if (event->type() == QEvent::ApplicationStateChange) {
-        if (applicationState() == Qt::ApplicationActive && windowCount() == 0 &&
-            !m_openPanelActive) {
-            m_openPanelActive = true;
-            openFilesFromDialog();
-            m_openPanelActive = false;
-        }
-    }
-#endif
+    // macOS-only note: on macOS there is no persistent empty window —
+    // closing the last window leaves just the dock icon + global menu bar.
+    // Re-activating the app with zero windows (dock click, Cmd-Tab back in)
+    // deliberately does NOTHING automatic: no file-open panel is presented.
+    // Owner ruling (backlog 2026-07-12-macos-launch-no-open-panel): macOS
+    // launch/activation with no windows is dock icon + menu bar only, and an
+    // automatically-presented Open panel — whose dismissal read as an
+    // unwanted quit — is removed. ⌘O / File → Open remain explicit user
+    // actions that open the panel (see installNoWindowMenuBar's openAction).
+    // We therefore no longer special-case ApplicationStateChange here.
     return QApplication::event(event);
 }
 
