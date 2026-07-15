@@ -13,8 +13,9 @@ BuildRequires:  python3-pip
 BuildRequires:  qpdf-devel
 BuildRequires:  mesa-libGL-devel
 BuildRequires:  glib2-devel
-# Qt 6.8.0 with qtpdf is installed via aqtinstall during build
-# (not available as a Fedora package at the required version)
+# Qt 6.11 with qtpdf is provided out-of-band during build (via aqtinstall in
+# the Docker path, or a preinstalled Qt prefix on the host runner) — it is not
+# available as a Fedora package at the required version.
 
 Requires:       qpdf-libs
 Requires:       mesa-libGL
@@ -55,6 +56,11 @@ install -Dm644 %{_builddir}/trailer-source/resources/icons/trailer_256.png \
     %{buildroot}%{_datadir}/icons/hicolor/256x256/apps/trailer.png
 install -Dm644 %{_builddir}/trailer-source/resources/icons/trailer_512.png \
     %{buildroot}%{_datadir}/icons/hicolor/512x512/apps/trailer.png
+# README goes alongside the license texts that `cmake --install` already
+# staged under %{_datadir}/doc/%{name}/ (LICENSE, THIRD_PARTY_LICENSES.md,
+# licenses/third-party/…) via the GNUInstallDirs rules in CMakeLists.txt.
+install -Dm644 %{_builddir}/trailer-source/README.md \
+    %{buildroot}%{_datadir}/doc/%{name}/README.md
 # TODO: Bundle Qt 6 libs (ldd walk) into %{buildroot}%{_prefix}/lib/trailer/ and list in %files
 
 %post
@@ -74,8 +80,13 @@ if [ $1 -eq 0 ]; then
 fi
 
 %files
-%license LICENSE
-%doc README.md
+# License / attribution texts staged into the doc dir by `cmake --install`
+# (share/doc/trailer): the first-party MIT license plus the verbatim upstream
+# license texts for ONNX Runtime, qpdf, PaddleOCR, Qt, libjpeg-turbo, etc.
+%license %{_datadir}/doc/%{name}/LICENSE
+%doc %{_datadir}/doc/%{name}/THIRD_PARTY_LICENSES.md
+%doc %{_datadir}/doc/%{name}/README.md
+%{_datadir}/doc/%{name}/licenses
 %{_bindir}/trailer
 %{_datadir}/applications/trailer.desktop
 %{_datadir}/metainfo/org.trailer.Trailer.metainfo.xml
@@ -89,5 +100,5 @@ fi
 %changelog
 * Sun Jul 12 2026 Trailer Contributors <TODO@trailer.example.com> - 0.3.0-1
 - Release 0.3.0
-* Sun Apr 27 2026 Trailer Contributors <TODO@trailer.example.com> - 0.1.0-1
+* Mon Apr 27 2026 Trailer Contributors <TODO@trailer.example.com> - 0.1.0-1
 - Initial package

@@ -134,6 +134,71 @@ lines += [
     '    <ComponentGroup Id="DllComponents">',
     *[f'      <ComponentRef Id="{cid}" />' for cid in component_ids],
     "    </ComponentGroup>",
+]
+
+# ── License / attribution texts ─────────────────────────────────────────────
+#
+# Ship the first-party MIT license, the third-party dependency summary, and the
+# verbatim upstream license texts inside the MSI so the installed application
+# directory satisfies each dependency's redistribution terms — mirroring what
+# the .deb / .rpm bundle under share/doc/trailer/. The files land in a
+# `licenses\` subfolder of the install directory (LICENSE and
+# THIRD_PARTY_LICENSES.md at its root, the per-dependency texts under
+# `licenses\third-party\`).
+#
+# The LicensesFolder / LicensesThirdPartyFolder directories are DEFINED here
+# (nested inside a DirectoryRef to the hand-authored TrailerFolder) so the
+# static trailer.wxs doesn't need to know how many license files exist.
+
+license_component_ids: list[str] = []
+
+
+def _license_component(rel_install: str, abs_path: Path, indent: str) -> None:
+    """Emit a Component/File pair installing abs_path at rel_install (used only
+    to append lines + record the component id)."""
+    comp_id = _sanitize(rel_install, "License_")
+    comp_guid = deterministic_guid("license/" + rel_install)
+    file_id = comp_id + "_File"
+    # wixl resolves Source relative to its working directory (the repo root),
+    # matching the build-windows/... and resources/... sources in trailer.wxs.
+    source = abs_path.relative_to(REPO_ROOT).as_posix()
+    lines.append(f'{indent}<Component Id="{comp_id}" Guid="{comp_guid}">')
+    lines.append(f'{indent}  <File Id="{file_id}" Source="{source}" KeyPath="yes" />')
+    lines.append(f'{indent}</Component>')
+    license_component_ids.append(comp_id)
+
+
+# Top-level license files (install to licenses\<name>).
+top_level_licenses = [
+    REPO_ROOT / "LICENSE",
+    REPO_ROOT / "THIRD_PARTY_LICENSES.md",
+]
+# Per-dependency upstream texts (install to licenses\third-party\<name>).
+third_party_dir = REPO_ROOT / "licenses" / "third-party"
+
+lines += [
+    "",
+    '    <DirectoryRef Id="TrailerFolder">',
+    '      <Directory Id="LicensesFolder" Name="licenses">',
+]
+for lic in top_level_licenses:
+    if lic.is_file():
+        _license_component(lic.name, lic, "        ")
+
+lines.append('        <Directory Id="LicensesThirdPartyFolder" Name="third-party">')
+if third_party_dir.is_dir():
+    for lic in sorted(third_party_dir.iterdir()):
+        if lic.is_file():
+            _license_component(f"third-party/{lic.name}", lic, "          ")
+lines.append('        </Directory>')
+
+lines += [
+    '      </Directory>',
+    '    </DirectoryRef>',
+    "",
+    '    <ComponentGroup Id="LicenseComponents">',
+    *[f'      <ComponentRef Id="{cid}" />' for cid in license_component_ids],
+    "    </ComponentGroup>",
     "  </Fragment>",
     "</Wix>",
 ]
@@ -141,4 +206,5 @@ lines += [
 # ── Write output ────────────────────────────────────────────────────────────
 
 OUTPUT_WXS.write_text("\n".join(lines) + "\n", encoding="utf-8")
-print(f"Wrote {len(component_ids)} component(s) to {OUTPUT_WXS}")
+print(f"Wrote {len(component_ids)} DLL component(s) and "
+      f"{len(license_component_ids)} license component(s) to {OUTPUT_WXS}")

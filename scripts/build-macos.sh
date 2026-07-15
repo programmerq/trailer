@@ -388,6 +388,25 @@ trap 'rm -rf "$STAGING_DIR"' EXIT
 cp -R "$APP_PATH" "$STAGING_DIR/"
 ln -s /Applications "$STAGING_DIR/Applications"
 
+# Bundle the first-party + third-party license texts alongside the .app so
+# the .dmg satisfies each dependency's redistribution terms (mirrors what the
+# .deb / .rpm ship under share/doc/trailer/ and the .msi under licenses\).
+# Placed in the DMG staging dir only — this runs AFTER codesign, so it does
+# not disturb the .app's sealed Resources. Guarded so a missing file is not
+# fatal.
+#
+# TODO(phase 2b): if the .app's own Contents/Resources/ should carry these
+# texts too (for an installed-app "About > Licenses" surface), add them before
+# the codesign step rather than here.
+LICENSE_STAGE="$STAGING_DIR/Licenses"
+mkdir -p "$LICENSE_STAGE"
+for _lic in "$REPO_ROOT/LICENSE" "$REPO_ROOT/THIRD_PARTY_LICENSES.md"; do
+    [[ -f "$_lic" ]] && cp "$_lic" "$LICENSE_STAGE/"
+done
+if [[ -d "$REPO_ROOT/licenses/third-party" ]]; then
+    cp -R "$REPO_ROOT/licenses/third-party" "$LICENSE_STAGE/third-party"
+fi
+
 echo "==> Creating DMG"
 hdiutil create \
     -volname "Trailer $VERSION" \

@@ -1,28 +1,56 @@
 #!/usr/bin/env bash
-# Inner build script — runs inside the Docker container built by build-linux-deb.sh.
-# Do not invoke directly; use scripts/build-linux-deb.sh instead.
+# Inner build script — performs the actual DEB build.
+#
+# Runs in two contexts:
+#   * inside the Docker container built by build-linux-deb.sh (legacy /src /output paths)
+#   * directly on a Linux host, invoked by `build-linux-deb.sh --no-docker`
+#
+# All environment-specific paths are overridable via env vars so the same
+# logic works in both. Defaults match the historical Docker layout so the
+# containerised path keeps working unchanged.
+#
+#   SRC          repo root                (default: /src)
+#   OUTPUT_DIR   where the .deb is written (default: /output)
+#   QT_PREFIX    Qt install prefix        (default: /opt/Qt/6.8.0/gcc_64)
+#   ORT_PREFIX   onnxruntime prefix       (optional; added to CMAKE_PREFIX_PATH if set)
+#   BUILD_DIR    cmake build tree         (default: /tmp/build-linux)
+#   STAGING      DESTDIR staging tree     (default: /tmp/deb-staging)
+#
+# Do not invoke directly unless you set the vars; use scripts/build-linux-deb.sh.
 
 set -euo pipefail
 
-SRC=/src
-BUILD_DIR=/tmp/build-linux
-STAGING=/tmp/deb-staging
-QT_PREFIX=/opt/Qt/6.8.0/gcc_64
-PROJECT_VERSION=$(grep -E '^\s*VERSION [0-9]+\.[0-9]+\.[0-9]+' "$SRC/CMakeLists.txt" \
-    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+SRC="${SRC:-/src}"
+OUTPUT_DIR="${OUTPUT_DIR:-/output}"
+BUILD_DIR="${BUILD_DIR:-/tmp/build-linux}"
+STAGING="${STAGING:-/tmp/deb-staging}"
+QT_PREFIX="${QT_PREFIX:-/opt/Qt/6.8.0/gcc_64}"
+ORT_PREFIX="${ORT_PREFIX:-}"
+
+PROJECT_VERSION=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' "$SRC/VERSION" | head -1)
 if [[ -z "$PROJECT_VERSION" ]]; then
-    echo "ERROR: could not extract project version from $SRC/CMakeLists.txt" >&2
+    echo "ERROR: could not extract project version from $SRC/VERSION" >&2
     exit 1
 fi
 DEB_REVISION=1
 PKG_VERSION="${PROJECT_VERSION}-${DEB_REVISION}"
 DEB_ARCH=$(dpkg --print-architecture)
-DEB_OUT="/output/trailer_${PKG_VERSION}_${DEB_ARCH}.deb"
+DEB_OUT="${OUTPUT_DIR}/trailer_${PKG_VERSION}_${DEB_ARCH}.deb"
 
-echo "==> Configuring CMake"
+# Assemble CMAKE_PREFIX_PATH: Qt plus, optionally, a prebuilt onnxruntime.
+CMAKE_PREFIX="$QT_PREFIX"
+if [[ -n "$ORT_PREFIX" ]]; then
+    CMAKE_PREFIX="${CMAKE_PREFIX};${ORT_PREFIX}"
+fi
+
+echo "==> Configuring CMake (prefix: $CMAKE_PREFIX)"
+# CMAKE_INSTALL_DOCDIR is forced to the lowercase package name so the
+# bundled license texts land in share/doc/trailer (matching Debian's
+# package-name convention) rather than the CMake default share/doc/Trailer.
 cmake -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE=Release \
-    -DCMAKE_PREFIX_PATH="$QT_PREFIX" \
+    -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX" \
+    -DCMAKE_INSTALL_DOCDIR=share/doc/trailer \
     -S "$SRC"
 
 echo "==> Building ($(nproc) jobs)"
@@ -32,7 +60,8 @@ echo "==> Installing into staging tree"
 rm -rf "$STAGING"
 mkdir -p "$STAGING"
 # cmake --install populates usr/bin/trailer, usr/share/applications,
-# usr/share/metainfo, and usr/share/icons via the GNUInstallDirs rules in CMakeLists.txt
+# usr/share/metainfo, usr/share/icons, and the license texts under
+# usr/share/doc/trailer/ via the GNUInstallDirs rules in CMakeLists.txt
 DESTDIR="$STAGING" cmake --install "$BUILD_DIR"
 
 echo "==> Copying DEBIAN control files"
@@ -44,8 +73,8 @@ cp "$SRC/packaging/deb/DEBIAN/prerm"     "$STAGING/DEBIAN/"
 chmod 755 "$STAGING/DEBIAN/postinst" "$STAGING/DEBIAN/prerm"
 
 echo "==> Bundling Qt libs into /opt/trailer/lib/"
-# Qt 6.8.0 is not in Ubuntu 22.04's repos; bundle the shared libs so
-# the package is self-contained.
+# Qt at this version is not in Ubuntu 22.04's repos; bundle the shared
+# libs so the package is self-contained.
 
 TRAILER_BIN="$STAGING/usr/bin/trailer"
 BUNDLE_LIB="$STAGING/opt/trailer/lib"
@@ -109,6 +138,7 @@ chmod 755 "$STAGING/opt/trailer/bin/trailer"
 chmod 755 "$STAGING/DEBIAN/postinst" "$STAGING/DEBIAN/prerm"
 
 echo "==> Building DEB package"
+mkdir -p "$OUTPUT_DIR"
 dpkg-deb --build "$STAGING" "$DEB_OUT"
 
 echo "==> Done: $DEB_OUT"
