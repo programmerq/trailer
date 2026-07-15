@@ -1004,8 +1004,8 @@ void ImageDocument::refreshSearchHighlights() {
     if (m_overlay) {
         std::vector<AnnotationOverlay::SearchHighlight> highlights;
         highlights.reserve(m_searchMatches.size());
-        for (int i = 0; i < static_cast<int>(m_searchMatches.size()); ++i) {
-            highlights.push_back({0, m_searchMatches[i], i == m_currentMatch});
+        for (size_t i = 0; i < m_searchMatches.size(); ++i) {
+            highlights.push_back({0, m_searchMatches[i], static_cast<int>(i) == m_currentMatch});
         }
         m_overlay->setSearchHighlights(std::move(highlights));
     }
@@ -1013,7 +1013,7 @@ void ImageDocument::refreshSearchHighlights() {
     // there is no page jump, only a pan when zoomed in past the viewport).
     if (m_scroll && m_currentMatch >= 0 &&
         m_currentMatch < static_cast<int>(m_searchMatches.size())) {
-        const QRectF r = m_searchMatches[m_currentMatch];
+        const QRectF r = m_searchMatches[static_cast<size_t>(m_currentMatch)];
         const QPointF center(r.center().x() * m_scale, r.center().y() * m_scale);
         m_scroll->ensureVisible(static_cast<int>(center.x()), static_cast<int>(center.y()));
     }
