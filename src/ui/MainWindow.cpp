@@ -9,6 +9,7 @@
 #include "Inspector.h"
 #include "Magnifier.h"
 #include "FormToolbar.h"
+#include "CropPagesDialog.h"
 #include "IconHelper.h"
 #include "MarkupToolbar.h"
 #include "MyCardDialog.h"
@@ -1539,48 +1540,20 @@ void MainWindow::onCropPages() {
     if (!doc || !doc->supportsEditing())
         return;
 
-    QDialog dialog(this);
-    dialog.setWindowTitle(tr("Crop Pages"));
-    auto *form = new QFormLayout(&dialog);
-
-    auto makeSpin = [&]() {
-        auto *s = new QDoubleSpinBox(&dialog);
-        s->setRange(0.0, 500.0);
-        s->setDecimals(1);
-        s->setSuffix(QStringLiteral(" mm"));
-        return s;
-    };
-    auto *leftSpin = makeSpin();
-    auto *topSpin = makeSpin();
-    auto *rightSpin = makeSpin();
-    auto *bottomSpin = makeSpin();
-    form->addRow(tr("Left margin"), leftSpin);
-    form->addRow(tr("Top margin"), topSpin);
-    form->addRow(tr("Right margin"), rightSpin);
-    form->addRow(tr("Bottom margin"), bottomSpin);
-
-    auto *allPagesCheck = new QCheckBox(tr("Apply to all pages"), &dialog);
-    allPagesCheck->setChecked(true);
-    form->addRow(allPagesCheck);
-
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-    form->addRow(buttons);
-
+    CropPagesDialog dialog(doc->pageCount(), this);
     if (dialog.exec() != QDialog::Accepted)
         return;
 
     constexpr double kMmToPt = 72.0 / 25.4;
-    const double l = leftSpin->value() * kMmToPt;
-    const double t = topSpin->value() * kMmToPt;
-    const double r = rightSpin->value() * kMmToPt;
-    const double b = bottomSpin->value() * kMmToPt;
+    const double l = dialog.leftMm() * kMmToPt;
+    const double t = dialog.topMm() * kMmToPt;
+    const double r = dialog.rightMm() * kMmToPt;
+    const double b = dialog.bottomMm() * kMmToPt;
     if (l == 0.0 && t == 0.0 && r == 0.0 && b == 0.0)
         return;
 
     bool anyApplied = false;
-    if (allPagesCheck->isChecked()) {
+    if (dialog.applyToAllPages()) {
         const int pages = doc->pageCount();
         std::vector<int> all;
         all.reserve(static_cast<size_t>(pages));
