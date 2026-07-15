@@ -5,6 +5,7 @@
 #include <QObject>
 
 #include <algorithm>
+#include <functional>
 #include <vector>
 
 namespace trailer {
@@ -95,6 +96,28 @@ class AnnotationStore : public QObject {
     void setMaxUndoDepth(size_t depth);
     size_t maxUndoDepth() const { return m_maxUndoDepth; }
 
+    // Optional pre-edit hook, invoked once at the very top of pushHistory()
+    // — i.e. BEFORE any history-pushing mutation (add / remove / update /
+    // removeMultiple / clear) captures its snapshot. Lets an owner flush a
+    // deferred baseline into the store first, so the snapshot the edit
+    // records — and therefore the state undo reverts to — is the COMPLETE
+    // pre-edit state, not a partial one.
+    //
+    // This is the low-risk fix for the async-load data-loss bug: when the
+    // annotation sweep loads off-thread and the user edits during the load
+    // window, the hook (wired by PdfDocument to ensureAnnotationsLoadedSync())
+    // commits the loaded annotations as the baseline before the edit's
+    // snapshot is taken, so undo reverts to that baseline instead of an empty
+    // pre-load snapshot that would wipe every file annotation.
+    //
+    // The hook is NOT invoked by addBatch() (the bulk populate pushes no
+    // history), so the baseline commit itself cannot re-enter it; a
+    // re-entrancy guard additionally ensures the hook never fires from within
+    // its own execution. The hook must be idempotent — it is called on every
+    // pushHistory(), and is expected to no-op cheaply once the baseline is
+    // committed.
+    void setPreEditHook(std::function<void()> hook) { m_preEditHook = std::move(hook); }
+
   signals:
     void changed();
     // Emitted exactly when a real undo frame is pushed — one per
@@ -146,6 +169,12 @@ class AnnotationStore : public QObject {
     // lower if memory profiling points at AnnotationStore.
     static constexpr size_t kDefaultMaxUndoDepth = 128;
     size_t m_maxUndoDepth = kDefaultMaxUndoDepth;
+
+    // Pre-edit hook (see setPreEditHook). m_inPreEditHook guards against
+    // re-entrancy so a hook that itself mutates the store cannot recurse
+    // into pushHistory()'s own hook invocation.
+    std::function<void()> m_preEditHook;
+    bool m_inPreEditHook = false;
 };
 
 } // namespace trailer

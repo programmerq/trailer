@@ -22,6 +22,7 @@
 
 #include <QSignalSpy>
 #include <QThread>
+#include <QThreadPool>
 #include <QtTest/QtTest>
 
 using namespace trailer;
@@ -39,6 +40,17 @@ std::unique_ptr<IDocument> openPdf(DocumentRegistry &registry, const QString &na
 class TestPerfLazyOpen : public QObject {
     Q_OBJECT
   private slots:
+    // The instrumentation counters (parse / page-visit / sweep-thread) are
+    // process-global, and ~PdfDocument deliberately does NOT await the
+    // detached annotation-sweep worker (closing a tab mid-load must never
+    // re-freeze the GUI). A prior slot's still-running sweep would otherwise
+    // tick this slot's counters right after resetInstrumentation(), tripping
+    // the QCOMPARE(annotationPageVisits(), 0) / sweepThread == nullptr checks
+    // non-deterministically on a loaded runner. Drain the global pool the
+    // workers run on after each slot so every slot starts from a fully quiesced
+    // pool before it resets and re-observes the counters.
+    void cleanup() { QThreadPool::globalInstance()->waitForDone(); }
+
     void annotationSweepDoesNotRunSynchronously();
     void annotationSweepRunsOnWorkerThread();
     void annotationCommitEmitsSingleChanged();

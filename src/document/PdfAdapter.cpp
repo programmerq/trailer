@@ -211,6 +211,16 @@ void PdfDocument::ensureAnnotationHooksWired() {
         if (!m_suppressUndoLog)
             m_annotationsModified = true;
     });
+    // Pre-edit hook: BEFORE the store records the snapshot for the FIRST user
+    // edit, force the deferred off-thread sweep to commit so the loaded file
+    // annotations are the baseline that undo reverts to. Without this, an edit
+    // made during the async load window snapshots the still-empty pre-load
+    // state, and a later undo would wipe every file annotation once addBatch
+    // has appended them (BLOCKER B1). ensureAnnotationsLoadedSync() is
+    // idempotent (no-ops once loaded) and safe to call here: it is never
+    // reached from within the load's own finished slot, and the baseline
+    // commit uses addBatch (no pushHistory), so it cannot re-enter this hook.
+    m_annotations.setPreEditHook([this]() { ensureAnnotationsLoadedSync(); });
     connectAnnotationHistory();
 }
 

@@ -95,6 +95,19 @@ void AnnotationStore::clear() {
 }
 
 void AnnotationStore::pushHistory() {
+    // Pre-edit hook: give the owner a chance to flush any deferred baseline
+    // into the store BEFORE this edit's snapshot is captured, so undo reverts
+    // to the complete pre-edit state (see setPreEditHook). Runs at the very
+    // top — before the compound early-return and before the snapshot push —
+    // so even the first mutation of a compound gesture snapshots on top of the
+    // committed baseline. Guarded against re-entrancy: the hook commits its
+    // baseline via addBatch() (which pushes no history), so it cannot recurse
+    // here, but the guard makes that invariant explicit and safe.
+    if (m_preEditHook && !m_inPreEditHook) {
+        m_inPreEditHook = true;
+        m_preEditHook();
+        m_inPreEditHook = false;
+    }
     // While a compound gesture is in flight, callers (e.g. the drag
     // path in mouseMoveEvent) mutate the store every frame. We only
     // want one undo frame for the whole gesture, captured from the
