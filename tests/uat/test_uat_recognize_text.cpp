@@ -57,6 +57,7 @@
 #include <QPainter>
 #include <QPdfWriter>
 #include <QPolygon>
+#include <QScopeGuard>
 #include <QSemaphore>
 
 #include <atomic>
@@ -185,6 +186,7 @@ class TestUatRecognizeText : public QObject {
     void uat_ocr_050_recognizeTextLayerIsOverlayChildOfView();
     void uat_ocr_060_largeDocNoticeGuardedDismissableSelfClearing();
     void uat_ocr_065_noticeDismissalIsPerDocument();
+    void uat_ocr_067_noticeAndProbeCachesPurgedOnClose();
     void uat_ocr_070_nonForceSkipsNativeTextForceReruns();
     void uat_ocr_080_ocrOnPdfBlocksLandInPointSpace();
     void uat_ocr_090_noticeLinkRevealsProgressNoModal();
@@ -487,7 +489,13 @@ void TestUatRecognizeText::uat_ocr_065_noticeDismissalIsPerDocument() {
     QVERIFY(app);
     // Two docs in ONE window (tabs) so they share the single status-bar
     // notice; NewWindow would give each its own MainWindow and moot the
-    // per-document question.
+    // per-document question. Capture the prior mode and restore it on
+    // scope exit via RAII so an early QVERIFY/QCOMPARE failure below
+    // can't leak the temporary NewTab setting into later UAT slots and
+    // make the suite order-dependent.
+    const OpenFilesIn priorOpenFilesIn = app->settings().openFilesIn();
+    const auto restoreOpenFilesIn =
+        qScopeGuard([&] { app->settings().setOpenFilesIn(priorOpenFilesIn); });
     app->settings().setOpenFilesIn(OpenFilesIn::NewTab);
 
     const QString a = writeMultiPagePdf(m_scratch.filePath(QStringLiteral("perdoc_a.pdf")), 55,
@@ -529,8 +537,64 @@ void TestUatRecognizeText::uat_ocr_065_noticeDismissalIsPerDocument() {
     dv->setCurrentIndex(0);
     QApplication::processEvents();
     QVERIFY2(notice->isVisible(), "A remains un-dismissed after revisiting B");
+    // openFilesIn is restored by restoreOpenFilesIn (RAII) on scope exit.
+}
 
-    app->settings().setOpenFilesIn(OpenFilesIn::NewWindow);
+// uat_ocr_067 — the pointer-keyed notice-dismissal set and pageHasText
+// probe cache are purged when a document closes (Copilot review #58). A
+// closed doc's raw IDocument* must not linger in either container, or a
+// recycled address could inherit a stale dismissal / probe hit.
+void TestUatRecognizeText::uat_ocr_067_noticeAndProbeCachesPurgedOnClose() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    // Single window so the close goes through the in-window tab teardown
+    // (onTabCloseRequested → documentAboutToBeRemoved), which is the hook
+    // that must purge the caches.
+    const OpenFilesIn priorOpenFilesIn = app->settings().openFilesIn();
+    const auto restoreOpenFilesIn =
+        qScopeGuard([&] { app->settings().setOpenFilesIn(priorOpenFilesIn); });
+    app->settings().setOpenFilesIn(OpenFilesIn::NewTab);
+
+    const QString p = writeMultiPagePdf(m_scratch.filePath(QStringLiteral("purge_on_close.pdf")),
+                                        55, /*withText=*/false);
+    app->openFiles({p});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    QCOMPARE(dv->documentCount(), 1);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+
+    // Textless large doc → notice shows; dismiss it so the doc is recorded
+    // in m_largeDocOcrHintDismissed. Let the ~7Hz poll run so the
+    // pageHasText probe caches an entry for this doc as well.
+    auto *notice = mw->findChild<QWidget *>(QStringLiteral("largeDocOcrHint"));
+    QVERIFY(notice);
+    auto *dismiss = mw->findChild<QToolButton *>(QStringLiteral("largeDocOcrHintDismiss"));
+    QVERIFY(dismiss);
+    QVERIFY2(notice->isVisible(), "notice visible on textless large doc");
+    QTest::qWait(250); // let the pageHasText poll seed its cache
+    dismiss->click();
+    QApplication::processEvents();
+    QVERIFY2(mw->isLargeDocOcrHintDismissedForTesting(doc),
+             "dismissal must be recorded before close");
+    QVERIFY2(mw->pageHasTextCacheHasDocForTesting(doc),
+             "pageHasText probe must have cached this doc before close");
+
+    // Close the document the way the tab close button does.
+    QVERIFY(QMetaObject::invokeMethod(dv, "onTabCloseRequested", Q_ARG(int, 0)));
+    QApplication::processEvents();
+    QCOMPARE(dv->documentCount(), 0);
+
+    // Both pointer-keyed caches must have dropped the now-dangling pointer,
+    // so a new document reusing the address can't inherit stale state.
+    QVERIFY2(!mw->isLargeDocOcrHintDismissedForTesting(doc),
+             "dismissal set must not retain the closed doc pointer");
+    QVERIFY2(!mw->pageHasTextCacheHasDocForTesting(doc),
+             "pageHasText cache must not retain the closed doc pointer");
 }
 
 // uat_ocr_070 — on a born-digital page (native text already ingested), a

@@ -195,6 +195,17 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         }
         m_autoEnabledFormDocs.remove(doc);
         m_restoredViewStateDocs.remove(doc);
+        // Drop the large-doc recognize-notice dismissal + the pageHasText
+        // probe cache for this doc. Both are keyed by the raw IDocument*;
+        // without this a closed document's address could be recycled by
+        // the allocator and a fresh document at the same address would
+        // inherit the prior dismissal or a stale pageHasText cache hit.
+        m_largeDocOcrHintDismissed.remove(doc);
+        if (m_pageHasTextCacheDoc == doc) {
+            m_pageHasTextCacheDoc = nullptr;
+            m_pageHasTextCachePage = -1;
+            m_pageHasTextCacheValue = false;
+        }
         // Drop the SAM encoder cache + cancel in-flight tasks for this
         // doc. Without this a closed document's address could be
         // recycled by the allocator and a fresh document at the same

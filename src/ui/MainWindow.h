@@ -84,6 +84,18 @@ class MainWindow : public QMainWindow {
         m_ocrModelDownloadHook = std::move(hook);
     }
 
+    // Test-only introspection for the pointer-keyed large-doc notice /
+    // pageHasText caches (Copilot review #58). Both are keyed by the raw
+    // IDocument* and must be purged when a document closes so a recycled
+    // address can't inherit a prior dismissal or a stale probe hit. These
+    // let a UAT prove the documentAboutToBeRemoved hook drops the entry.
+    bool isLargeDocOcrHintDismissedForTesting(const IDocument *doc) const {
+        return m_largeDocOcrHintDismissed.contains(const_cast<IDocument *>(doc));
+    }
+    bool pageHasTextCacheHasDocForTesting(const IDocument *doc) const {
+        return m_pageHasTextCacheDoc == doc;
+    }
+
   public slots:
     void rebuildRecentMenu();
     // Save every dirty document with an established file path. Wired
