@@ -13,12 +13,29 @@ class ThumbnailModel : public QAbstractListModel {
     Q_OBJECT
 
   public:
+    // Custom item roles. AspectRole exposes each page's width/height ratio
+    // (from IDocument::pageSizeHint, no render) so ThumbnailDelegate can
+    // size a row's height from the column width without decoding a pixmap.
+    enum Roles {
+        AspectRole = Qt::UserRole + 1,
+    };
+
     explicit ThumbnailModel(QObject *parent = nullptr);
 
     void setDocument(IDocument *doc);
     void refresh();
     void setThumbnailSize(QSize size);
     QSize thumbnailSize() const { return m_size; }
+
+    // Lightweight render-width update for sidebar resizes. Unlike
+    // setThumbnailSize (which does a full model reset and would drop the
+    // selection/scroll on every resize settle), this only re-renders: it
+    // clears the pixmap cache and emits dataChanged for DecorationRole,
+    // leaving row identity — and thus selection — intact. `w` is the
+    // logical column width in pixels; the stored box height is generous
+    // (w*2) so tall portrait pages render at full resolution. No-op when
+    // the width barely changed (see the 8 px hysteresis in the .cpp).
+    void setRenderWidth(int w);
 
     // When non-empty, the model only reports rows matching the
     // listed page indices (in document order). Used by the

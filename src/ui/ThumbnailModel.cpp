@@ -44,6 +44,27 @@ void ThumbnailModel::setThumbnailSize(QSize size) {
     endResetModel();
 }
 
+void ThumbnailModel::setRenderWidth(int w) {
+    // Generous height so tall portrait pages render at full resolution
+    // when scaled to the column width by the delegate. Height is not a
+    // layout constraint (the delegate sizes rows by aspect); it only caps
+    // the render so a very tall page still fits the cache pixmap.
+    const QSize target(w, w * 2);
+    // 8 px hysteresis: skip re-renders for sub-pixel/one-off resize jitter
+    // so a slow drag doesn't thrash the render cache. Tried tighter (0 px)
+    // — every intermediate drag width re-rendered; 8 px settles cleanly.
+    if (std::abs(w - m_size.width()) <= 8) {
+        return;
+    }
+    m_size = target;
+    m_cache.clear();
+    const int last = rowCount({}) - 1;
+    if (last >= 0) {
+        // Preserve selection/scroll: re-render in place rather than reset.
+        emit dataChanged(index(0), index(last), {Qt::DecorationRole});
+    }
+}
+
 QStringList ThumbnailModel::mimeTypes() const {
     return {QStringLiteral("application/x-trailer-pages"), QStringLiteral("text/uri-list")};
 }
@@ -140,6 +161,17 @@ QVariant ThumbnailModel::data(const QModelIndex &index, int role) const {
     switch (role) {
     case Qt::DisplayRole:
         return QString::number(page + 1);
+    case AspectRole: {
+        // width/height of the page, computed without rendering. Falls back
+        // to 0.8 — the legacy 80x100 logical box ratio — when the document
+        // can't supply a size (null size / unsupported adapter), so the
+        // delegate always has a usable aspect.
+        const QSizeF hint = m_doc->pageSizeHint(page);
+        if (hint.isEmpty() || hint.height() <= 0.0) {
+            return qreal(0.8);
+        }
+        return qreal(hint.width() / hint.height());
+    }
     case Qt::DecorationRole: {
         auto it = m_cache.find(page);
         if (it == m_cache.end()) {

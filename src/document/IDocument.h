@@ -5,6 +5,7 @@
 
 #include <QImage>
 #include <QSize>
+#include <QSizeF>
 #include <QString>
 #include <QWidget>
 
@@ -108,6 +109,12 @@ class IDocument {
     virtual bool supportsThumbnails() const { return false; }
     virtual int pageCount() const { return 0; }
     virtual QImage renderThumbnail(int /*pageIndex*/, QSize /*targetSize*/) { return {}; }
+    // Natural size of a page WITHOUT rendering it — points for PDF pages,
+    // pixels for raster documents. Used by the sidebar to compute each
+    // thumbnail row's aspect ratio (and thus its height) cheaply, before
+    // the pixmap is rendered. Default empty: adapters that don't support
+    // thumbnails opt out and the sidebar falls back to a legacy aspect.
+    virtual QSizeF pageSizeHint(int /*pageIndex*/) const { return {}; }
     virtual int currentPage() const { return 0; }
     virtual void goToPage(int /*pageIndex*/) {}
 

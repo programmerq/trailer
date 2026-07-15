@@ -2,7 +2,7 @@
 id: 2026-07-13-thumbnail-sidebar-sizing
 title: Sidebar thumbnails use ~1/8 of the sidebar width and leave vertical slack; must scale to sidebar width
 priority: P1
-status: open
+status: in-progress
 source: v0.3.0 real-Mac dogfood report (2026-07-13)
 created: 2026-07-13
 ---

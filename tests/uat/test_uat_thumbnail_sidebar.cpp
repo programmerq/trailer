@@ -204,6 +204,9 @@ void TestUatThumbnailSidebar::checkAtWidth(MainWindow *mw, Sidebar *sidebar,
     // Direct width scan on a portrait row: the thumbnail (white paper +
     // 1px border) must horizontally fill ~availW, left-aligned at the margin.
     // Grab the viewport so visualRect coordinates map directly into the image.
+    // Scroll the portrait row fully into view first so its band is on-screen.
+    view->scrollTo(pIdx, QAbstractItemView::PositionAtTop);
+    QApplication::processEvents();
     const QRect band = view->visualRect(pIdx);
     QImage vp = view->viewport()->grab().toImage();
     const double sx =
@@ -266,7 +269,7 @@ void TestUatThumbnailSidebar::uat_thumb_010_scaleToWidthAndAspectRows() {
     QVERIFY(mw);
     mw->resize(1100, 800);
     mw->show();
-    QTest::qWaitForWindowExposed(mw);
+    (void)QTest::qWaitForWindowExposed(mw);
     QApplication::processEvents();
 
     auto *dv = mw->findChild<DocumentView *>();

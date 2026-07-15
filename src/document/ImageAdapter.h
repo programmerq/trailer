@@ -54,6 +54,13 @@ class ImageDocument : public IDocument {
 
     bool supportsThumbnails() const override { return !m_image.isNull() && !m_animated; }
     QImage renderThumbnail(int pageIndex, QSize targetSize) override;
+    // Natural pixel size of the single image page (page 0). Empty for a
+    // null image or any other page index. No rendering — used by the
+    // sidebar to size the thumbnail row by aspect.
+    QSizeF pageSizeHint(int pageIndex) const override {
+        return (pageIndex == 0 && !m_image.isNull()) ? QSizeF(m_image.size())
+                                                     : QSizeF();
+    }
 
     AnnotationStore *annotations() override { return &m_annotations; }
     SelectableTextStore *selectableText() override { return &m_selectableText; }

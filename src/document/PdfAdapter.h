@@ -62,6 +62,7 @@ class PdfDocument : public IDocument {
     bool supportsThumbnails() const override { return true; }
     int pageCount() const override;
     QImage renderThumbnail(int pageIndex, QSize targetSize) override;
+    QSizeF pageSizeHint(int pageIndex) const override;
     int currentPage() const override;
     void goToPage(int pageIndex) override;
 
