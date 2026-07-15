@@ -10,6 +10,7 @@
 
 #include <QAction>
 #include <QImage>
+#include <QWidgetAction>
 #include <QMetaType>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
@@ -143,6 +144,11 @@ void TestFormToolbar::everyActionHasARenderedIcon() {
     FormToolbar bar;
     for (QAction* a : bar.actions()) {
         if (a->isSeparator()) continue;
+        // The leading expanding spacer (ADR 0007 R2b, right-aligns the
+        // tool group) is a QWidgetAction hosting a blank QWidget; it
+        // legitimately carries no icon, so it's not part of the
+        // icon-coverage contract.
+        if (qobject_cast<QWidgetAction*>(a)) continue;
         QVERIFY2(!a->icon().isNull(),
                  qPrintable(QStringLiteral("action without icon: %1")
                                 .arg(a->text())));

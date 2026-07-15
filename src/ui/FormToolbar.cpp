@@ -6,6 +6,7 @@
 #include <QActionGroup>
 #include <QCursor>
 #include <QPoint>
+#include <QSizePolicy>
 #include <QWidget>
 
 namespace trailer {
@@ -22,6 +23,14 @@ FormToolbar::FormToolbar(QWidget *parent) : QToolBar(parent) {
 
     m_group = new QActionGroup(this);
     m_group->setExclusive(true);
+
+    // Leading expanding spacer pushes the form buttons to the trailing
+    // edge, right near the main toolbar's search field (ADR 0007,
+    // Option A, R2b — mirrors the main toolbar's spacer). Added before
+    // any real action so the whole tool group sits right-aligned.
+    auto *leadingSpacer = new QWidget(this);
+    leadingSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
+    addWidget(leadingSpacer);
 
     auto *selectAction = makeToolAction(tr("Select"), AnnotationTool::Select, QString(),
                                         QStringLiteral(":/icons/actions/tool-select.svg"));

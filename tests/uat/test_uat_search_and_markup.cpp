@@ -23,6 +23,7 @@
 #include "settings/DocumentTypeDefaults.h"
 #include "ui/AnnotationOverlay.h"
 #include "ui/DocumentView.h"
+#include "ui/FormToolbar.h"
 #include "ui/MainWindow.h"
 #include "ui/MarkupToolbar.h"
 #include "ui/SearchBar.h"
@@ -35,6 +36,7 @@
 #include <QFont>
 #include <QKeyEvent>
 #include <QLabel>
+#include <QLayout>
 #include <QLineEdit>
 #include <QListWidget>
 #include <QMenu>
@@ -394,6 +396,7 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_hn_010_highlightsModeDisabledForEmptyDoc();
     void uat_hn_011_highlightsModeEnabledAfterAddingNote();
     void uat_hn_012_listFiltersToTextContentTypes();
+    void uat_xct_070_toolbarAnchoringAndOverflow();
 
   private:
     QTemporaryDir m_scratch;
@@ -2643,6 +2646,177 @@ void TestUatSearchAndMarkup::uat_ann_140_interleavedUndoIsChronological() {
     QApplication::processEvents();
     QCOMPARE(doc->pageCount(), 1);
     QCOMPARE(store->count(), 1);
+}
+
+// UAT-XCT-070 — Toolbar anchoring & overflow (ADR 0007, Option A).
+//
+// Geometry-provable (AGENTS.md G2) encoding of the four invariants the
+// accepted decision record establishes, driven under
+// QT_QPA_PLATFORM=offscreen:
+//
+//   #1 The main toolbar's top-left origin is stable when the form (or
+//      markup) contextual bar is toggled, with the window size held
+//      constant, and the main toolbar sits on the top row.
+//   #2 The form toolbar's buttons are right-aligned near the search
+//      field (a leading expanding spacer pushes them to the trailing
+//      edge).
+//   #3 At the window minimum width the widest contextual bar (markup)
+//      overflows into its extension chevron while the primary row's
+//      trailing search stays fully visible.
+//   #4 The overflow chevron's width is pinned to a fixed constant and
+//      the leading markup neighbour + primary search do not move across
+//      the overflow appear/disappear transition.
+//
+// Grab evidence (G2 screenshots) is captured for the form-hidden,
+// form-shown, and narrow-overflow states.
+void TestUatSearchAndMarkup::uat_xct_070_toolbarAnchoringAndOverflow() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_xct_070.pdf")), QStringLiteral("fixture"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+
+    auto *mainTb = mw->findChild<QToolBar *>(QStringLiteral("MainToolbar"));
+    auto *markupTb = mw->findChild<MarkupToolbar *>();
+    auto *formTb = mw->findChild<FormToolbar *>();
+    QVERIFY2(mainTb, "MainToolbar not found");
+    QVERIFY2(markupTb, "MarkupToolbar not found");
+    QVERIFY2(formTb, "FormToolbar not found");
+
+    // Hold the window size constant for the invariant-#1 toggle.
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    // ---- Invariant #1: main origin stable + on the top row ----
+    markupTb->hide();
+    formTb->hide();
+    QApplication::processEvents();
+
+    const QPoint mainOriginFormHidden = mainTb->mapTo(mw, QPoint(0, 0));
+    grabTo(mw, QStringLiteral("xct070_form_hidden.png"));
+
+    formTb->show();
+    QApplication::processEvents();
+    const QPoint mainOriginFormShown = mainTb->mapTo(mw, QPoint(0, 0));
+    grabTo(mw, QStringLiteral("xct070_form_shown.png"));
+
+    QVERIFY2(mainOriginFormShown == mainOriginFormHidden,
+             qPrintable(QStringLiteral("main toolbar origin moved when the form bar "
+                                       "was shown: hidden=(%1,%2) shown=(%3,%4)")
+                            .arg(mainOriginFormHidden.x())
+                            .arg(mainOriginFormHidden.y())
+                            .arg(mainOriginFormShown.x())
+                            .arg(mainOriginFormShown.y())));
+
+    // main sits on the top row: its y is <= the contextual bar's y.
+    const int mainY = mainTb->mapTo(mw, QPoint(0, 0)).y();
+    const int formY = formTb->mapTo(mw, QPoint(0, 0)).y();
+    QVERIFY2(mainY <= formY, "main toolbar must sit on the top row (minimal y)");
+
+    // ---- Invariant #2: form buttons right-aligned near search ----
+    // The form bar is shown from #1. Its first real action is "Select";
+    // the leading spacer widget is skipped by matching on the text.
+    QAction *selectAction = nullptr;
+    for (QAction *a : formTb->actions()) {
+        if (a->text() == QStringLiteral("Select")) {
+            selectAction = a;
+            break;
+        }
+    }
+    QVERIFY2(selectAction, "form toolbar Select action not found");
+    QWidget *selectWidget = formTb->widgetForAction(selectAction);
+    QVERIFY2(selectWidget, "form toolbar Select widget not realised");
+    QVERIFY2(selectWidget->geometry().x() > formTb->width() / 2,
+             qPrintable(QStringLiteral("form buttons must be right-aligned near the "
+                                       "search field: first-button x=%1, half-width=%2")
+                            .arg(selectWidget->geometry().x())
+                            .arg(formTb->width() / 2)));
+
+    // ---- Invariant #3: widest contextual bar overflows at min width ----
+    formTb->hide();
+    QApplication::processEvents();
+
+    const int minW = mw->minimumWidth();
+    QVERIFY2(minW > 0, "MainWindow must carry a minimum width (R3) so the primary "
+                       "row never overflows search into its own chevron");
+    mw->resize(minW, 750);
+    QApplication::processEvents();
+    markupTb->show();
+    QApplication::processEvents();
+    markupTb->layout()->activate();
+    QApplication::processEvents();
+
+    QToolButton *markupExt =
+        markupTb->findChild<QToolButton *>(QStringLiteral("qt_toolbar_ext_button"));
+    QVERIFY2(markupExt, "markup toolbar extension chevron object not found");
+    QTRY_VERIFY2(markupExt->isVisible(),
+                 "the widest contextual bar (markup) must overflow into its extension "
+                 "chevron at the window minimum width");
+
+    QToolButton *searchBtn = nullptr;
+    for (QToolButton *b : mainTb->findChildren<QToolButton *>()) {
+        if (b->accessibleName() == QStringLiteral("Search")) {
+            searchBtn = b;
+            break;
+        }
+    }
+    QVERIFY2(searchBtn, "primary search button not found on the main toolbar");
+    QVERIFY2(searchBtn->isVisible(),
+             "primary search must remain visible at the window minimum width — never "
+             "collapsed into the main toolbar's own chevron");
+    const QRect searchInMain(searchBtn->mapTo(mainTb, QPoint(0, 0)), searchBtn->size());
+    QVERIFY2(mainTb->rect().contains(searchInMain.center()),
+             "primary search must sit inside the main toolbar, not the overflow menu");
+    grabTo(mw, QStringLiteral("xct070_narrow_overflow.png"));
+
+    // ---- Invariant #4: chevron width pinned + neighbours stable ----
+    // The R2 stylesheet pins the chevron's content width to 20px; the
+    // Fusion style frames it with a 1px border on each side, so the
+    // realised widget width is a deterministic 22px (vs. the unpinned
+    // default of 12px). What matters is that it is fixed, so toggling
+    // the overflow popup cannot reflow neighbours.
+    const int kPinnedChevronWidth = 22;
+    QCOMPARE(markupExt->width(), kPinnedChevronWidth);
+
+    // The chevron must not overlap the last visible markup button.
+    QAction *markupSelect = findToolAction(markupTb, QStringLiteral("Select"));
+    QVERIFY(markupSelect);
+    QWidget *markupSelectW = markupTb->widgetForAction(markupSelect);
+    QVERIFY(markupSelectW);
+    const QRect leadNarrow = markupSelectW->geometry();
+    const bool searchVisibleNarrow = searchBtn->isVisible();
+
+    // Widen so the whole markup bar fits: the chevron disappears.
+    mw->resize(1500, 750);
+    QApplication::processEvents();
+    markupTb->layout()->activate();
+    QApplication::processEvents();
+    QTRY_VERIFY2(!markupExt->isVisible(),
+                 "markup extension chevron must disappear once the bar fits");
+    const QRect leadWide = markupSelectW->geometry();
+
+    // The leading neighbour does not move across the overflow transition,
+    // and the primary search stays visible throughout.
+    QCOMPARE(leadWide, leadNarrow);
+    QVERIFY2(searchVisibleNarrow && searchBtn->isVisible(),
+             "primary search stays visible across the overflow appear/disappear "
+             "transition");
+
+    // Narrow again: the chevron reappears at its pinned width (its size
+    // does not depend on the overflow state, so toggling it cannot reflow
+    // its neighbours).
+    mw->resize(minW, 750);
+    QApplication::processEvents();
+    markupTb->layout()->activate();
+    QApplication::processEvents();
+    QTRY_VERIFY(markupExt->isVisible());
+    QCOMPARE(markupExt->width(), kPinnedChevronWidth);
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG

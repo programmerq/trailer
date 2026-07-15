@@ -301,6 +301,57 @@ with no warning. Cross-ref UAT-FND-092.
 
 ---
 
+## Toolbar anchoring & overflow
+
+Adjudicated in
+[docs/decision-records/0007-toolbar-anchoring-and-overflow.md](../decision-records/0007-toolbar-anchoring-and-overflow.md)
+(Option A, accepted). The main toolbar is a fixed primary row anchored
+top-left; the markup and form contextual bars take their own second row;
+the trailing search stays visible at every window size; and the built-in
+overflow chevron is a fixed size so toggling it never reflows its
+neighbours.
+
+### UAT-XCT-070 — Main toolbar anchored top-left; form bar right-aligned; overflow chevron pinned
+
+**Preconditions:** An editable document is open (so the markup and form
+toolbars are meaningful). Contextual bars start hidden.
+**Steps:**
+1. (Automated, geometry-provable — `QT_QPA_PLATFORM=offscreen`) Hold the
+   window at a fixed size, record the main toolbar's top-left origin
+   with the form toolbar hidden, then show the form toolbar and record
+   it again.
+2. With the form toolbar shown, read the geometry of its first real tool
+   button.
+3. Shrink the window to its minimum width and show the markup toolbar
+   (the widest contextual bar).
+4. Widen the window until the markup bar fits, then narrow it again.
+
+**Expected (the four invariants ADR 0007 establishes):**
+- **#1 — origin stable + top row.** Showing the form toolbar does not
+  move the main toolbar's top-left origin (same x and y), and the main
+  toolbar sits on the top row (minimal y). Before the fix, opening the
+  form bar shoved the main toolbar ~183px to the right because it was a
+  tenant on the form bar's row. G2 grabs: `xct070_form_hidden.png`,
+  `xct070_form_shown.png`.
+- **#2 — form buttons right-aligned.** The first real form button sits
+  in the trailing half of the form toolbar (a leading expanding spacer
+  pushes the tool group against the search-field edge), not left-packed.
+- **#3 — widest bar overflows, search stays visible.** At the window
+  minimum width the markup toolbar overflows into its
+  `qt_toolbar_ext_button` chevron, while the primary row's trailing
+  search button stays fully visible inside the main toolbar (never
+  collapsed into the main toolbar's own chevron). G2 grab:
+  `xct070_narrow_overflow.png`.
+- **#4 — chevron pinned + neighbours stable.** The overflow chevron's
+  width is a fixed constant (pinned via a class-targeted stylesheet), so
+  its neighbours — the leading markup button and the primary search — do
+  not move across the overflow appear/disappear transition.
+
+Driven by
+`tests/uat/test_uat_search_and_markup.cpp::uat_xct_070_toolbarAnchoringAndOverflow`.
+
+---
+
 ## Process lifecycle
 
 ### UAT-XCT-050 — Second launch with an arg attaches to running instance (Platform: macOS)
