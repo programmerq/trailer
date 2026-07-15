@@ -107,6 +107,16 @@ Gather the passes and analyze them. Each finding gets exactly one disposition:
 Only after **every** finding is dispositioned (fix / justify / defer) may you
 `git push` or open the PR. After pushing/opening, proceed as normal.
 
+### 5. Inline UAT evidence in the PR (2026-07-15 refinement)
+For any UI / user-visible change, the G2 UAT evidence must be **inline** on the
+PR page, not merely produced in-session or attached to chat — the merge decision
+has to be evidence-visible (what the owner merges is what the owner saw). Commit
+the **curated** before/after grab() captures under `docs/uat/images/` and
+reference them inline in the PR body (e.g. a `raw.githubusercontent.com` URL
+pinned to the commit SHA so the image renders on the PR). **Working/throwaway
+captures stay gitignored** (`uat-screenshots/`, `docs/screenshots/`) — only the
+curated, referenced images are committed.
+
 ## Checklist (copyable)
 
 - [ ] Relevant tests written for the change and passing (regression tests failed against old code first). ← Step 0, do before everything
@@ -116,4 +126,5 @@ Only after **every** finding is dispositioned (fix / justify / defer) may you
 - [ ] Ran reviewer #2 (HIG-polish critic).      ← required if UI/user-visible
 - [ ] Every finding dispositioned: fix / justify / defer-with-Decision-Record.
 - [ ] All "fix" items applied; "justify" reasons written down; "defer" records opened.
+- [ ] UI change: curated UAT evidence committed under `docs/uat/images/` and referenced inline in the PR body (throwaway captures left gitignored).
 - [ ] ONLY NOW: push / open PR.
