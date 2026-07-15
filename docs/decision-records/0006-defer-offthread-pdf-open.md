@@ -5,6 +5,27 @@
 - **Date proposed:** 2026-07-15
 - **Date accepted / superseded:** 2026-07-15
 
+> **Update (2026-07-15, follow-on change on `fix/startup-hang-large-pdf`):**
+> The annotation sweep (proxy #1, the dominant cost) is no longer merely
+> *deferred* on the GUI thread — it now runs entirely **off** the GUI thread
+> on an isolated, throwaway qpdf instance loaded from the same path in a
+> `QtConcurrent` worker (`PdfDocument::startAnnotationLoad`,
+> `src/document/PdfAdapter.cpp`). `annotations()` kicks the worker and returns
+> the (initially empty) store immediately; the GUI-thread finished slot commits
+> the result via a single batched `AnnotationStore::addBatch`. A fresh qpdf
+> instance is used because `QPDF` is not safe for concurrent access (even reads
+> mutate its lazy object cache), so the worker shares nothing with the
+> GUI-thread `m_editor` — no mutex, no disable-editing. Measured on a
+> 195MB / 1,000,000-annotation fixture: the GUI thread is free after the
+> synchronous open path (~2.5s) and stays fully responsive (thousands of
+> event-loop ticks) while the ~15s sweep runs on the worker; the batched GUI
+> commit of all 1M annotations costs ~125–200ms (a single coalesced refresh).
+> What remains synchronous on the GUI thread at open is only the residual
+> below: `QPdfDocument::load` (~1.8s) + the forms parse (~0.55s). The full
+> off-thread open + placeholder first page + a `capabilitiesChanged`-style
+> refresh signal remains the P2 follow-up
+> (`docs/backlog/2026-07-15-offthread-pdf-open-placeholder.md`).
+
 ## Context
 
 Opening a large PDF froze the whole app for minutes
@@ -118,16 +139,17 @@ with the `test_perf_gui_thread_io` QSKIP as its acceptance flip.
 
 Residual accepted under A: `MainWindow::onCurrentDocumentChanged` queries
 `supportsFormFilling()` (`src/ui/MainWindow.cpp:2875,2972`) and
-`annotations()` (`:2985`) synchronously when a document becomes current,
-so in the integrated app the qpdf parse and the sweep execute on the GUI
-thread shortly *after* `open()` returns (at view-attach), not in the
-ctor. The construction/registry-open path — what the structural tests and
-the local wall-clock split measure — is clean. `supportsFormFilling()` is
-the one capability probe that intentionally triggers the lazy editor
-parse (there is no cheaper way to detect an AcroForm, and it is queried
-at open); it never triggers the annotation sweep, which stays deferred.
-Fully removing the parse + sweep from the GUI thread is exactly the
-follow-up (b).
+`annotations()` (`:2985`) when a document becomes current. As of the
+follow-on change (see the Update note at the top), `annotations()` no
+longer runs the sweep on the GUI thread at all — it kicks a background
+worker and returns immediately, so only the qpdf parse (via
+`supportsFormFilling()`) and `QPdfDocument::load` remain synchronous at
+view-attach. `supportsFormFilling()` is the one capability probe that
+intentionally triggers the lazy editor parse (there is no cheaper way to
+detect an AcroForm, and it is queried at open). Fully removing that
+residual parse + the `QPdfDocument::load` from the GUI thread (behind a
+placeholder first page, with a capabilities-refresh signal) is exactly
+the follow-up (b).
 
 ## Evidence required to reopen
 

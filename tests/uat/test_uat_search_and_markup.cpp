@@ -1867,8 +1867,11 @@ void TestUatSearchAndMarkup::uat_ann_110_annotationsSurviveSaveReopen() {
     AnnotationStore *store2 = doc2->annotations();
     QVERIFY(store2);
 
-    QVERIFY2(store2->count() >= 1, "Saved-and-reopened PDF must restore the rectangle "
-                                   "annotation drawn in the previous session");
+    // The annotation sweep now runs on a background worker, so the restored
+    // annotations land asynchronously — pump the event loop until the load
+    // commits rather than reading the store synchronously.
+    QTRY_VERIFY2(store2->count() >= 1, "Saved-and-reopened PDF must restore the rectangle "
+                                       "annotation drawn in the previous session");
     bool hasRect = false;
     for (const auto &a : store2->annotations()) {
         if (a.type == AnnotationType::Rectangle)

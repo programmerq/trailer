@@ -8,6 +8,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QEvent>
+#include <QFutureWatcher>
 #include <QInputDialog>
 #include <QLineEdit>
 #include <QObject>
@@ -33,8 +34,10 @@
 #include <QPrinter>
 #include <QScrollBar>
 #include <QSizeF>
+#include <QThread>
 #include <QTimer>
 #include <QVBoxLayout>
+#include <QtConcurrent>
 
 #include <algorithm>
 #include <cmath>
@@ -164,9 +167,10 @@ PdfDocument::PdfDocument(QString path)
     // docs/backlog/2026-07-13-startup-hang-large-pdf.md): the qpdf
     // processFile parse (m_editor->load) and the all-pages annotation
     // sweep (readAnnotations) both used to run synchronously in this
-    // ctor, freezing the GUI thread for minutes on large PDFs. They are
-    // now deferred to first genuine access — see ensureEditorLoaded() and
-    // ensureAnnotationsLoaded(). The kept QPdfDocument::load above is the
+    // ctor, freezing the GUI thread for minutes on large PDFs. The parse is
+    // now deferred to first genuine editor need (ensureEditorLoaded()); the
+    // sweep is run on a BACKGROUND worker (startAnnotationLoad()) so it never
+    // blocks the GUI thread at all. The kept QPdfDocument::load above is the
     // bounded progressive read that already yields pageCount + page-0.
 }
 
@@ -182,26 +186,122 @@ void PdfDocument::ensureEditorLoaded() const {
     // so editing / annotation round-tripping work on encrypted docs.
     if (m_editor->isEncrypted() && !m_password.isEmpty()) {
         m_editor->unlock(m_password);
+        // The GUI editor is now unlocked. If the background annotation load
+        // has already captured its own copy of the password, drop the
+        // remembered plaintext rather than retain it for the doc lifetime
+        // (whichever of these two consumers runs second clears it).
+        if (m_annotationLoadStarted)
+            m_password.clear();
     }
 }
 
-void PdfDocument::ensureAnnotationsLoaded() {
+void PdfDocument::ensureAnnotationHooksWired() {
+    if (m_annotationHooksWired || !m_valid)
+        return;
+    m_annotationHooksWired = true;
+    // Wire the store's modified / history mirrors SYNCHRONOUSLY the instant
+    // the store is first handed out, so any user annotation edit — including
+    // one made while the background sweep is still in flight — is tracked.
+    // The bulk background populate is committed via AnnotationStore::addBatch
+    // (which pushes no undo frame) under the m_suppressUndoLog guard, so it
+    // never sets the dirty flag or logs an undo step. This preserves the
+    // pre-async invariant (initial populate is never logged as a user edit)
+    // without depending on the populate completing before the first edit.
+    QObject::connect(&m_annotations, &AnnotationStore::changed, m_doc.get(), [this]() {
+        if (!m_suppressUndoLog)
+            m_annotationsModified = true;
+    });
+    connectAnnotationHistory();
+}
+
+void PdfDocument::startAnnotationLoad() {
+    ensureAnnotationHooksWired();
+    if (m_annotationsLoaded || m_annotationLoadStarted || !m_valid)
+        return;
+    m_annotationLoadStarted = true;
+    // Capture value copies for the worker; it must share NOTHING with this
+    // object or the GUI-thread m_editor (qpdf's QPDF is not safe for
+    // concurrent access — even reads mutate its lazy object cache).
+    const QString path = m_path;
+    const QString password = m_password;
+    m_annotationWatcher = std::make_unique<QFutureWatcher<std::vector<Annotation>>>();
+    // Context = m_doc.get() (a GUI-thread QObject); the finished slot runs
+    // on the GUI thread and commits the result.
+    QObject::connect(m_annotationWatcher.get(), &QFutureWatcherBase::finished, m_doc.get(),
+                     [this]() { onAnnotationLoadFinished(); });
+    m_annotationWatcher->setFuture(QtConcurrent::run([path, password]() -> std::vector<Annotation> {
+        // Throwaway, fully isolated qpdf instance loaded from the same path.
+        // Freed when this lambda returns. Parses the file a second time
+        // (~0.5s) — fine, it is off the GUI thread. The PdfEditor
+        // instrumentation counters (parse / page-visit / sweep-thread) tick
+        // on this worker instance, which is exactly what the perf test
+        // observes.
+        PdfEditor tmp;
+        tmp.load(path);
+        if (tmp.isEncrypted() && !password.isEmpty())
+            tmp.unlock(password);
+        return tmp.readAnnotations();
+    }));
+    // Secondary hardening: if the GUI editor is already loaded/unlocked, the
+    // worker now holds the only copy of the password it needs, so drop the
+    // remembered plaintext (whichever consumer runs second clears it).
+    if (m_editorLoaded)
+        m_password.clear();
+}
+
+void PdfDocument::onAnnotationLoadFinished() {
+    if (!m_annotationWatcher)
+        return;
+    // Detach the watcher and delete it via the event loop so we never free
+    // it from inside its own finished emission.
+    QFutureWatcher<std::vector<Annotation>> *watcher = m_annotationWatcher.release();
+    watcher->deleteLater();
+    // A synchronous ensure (save/export/reduce) may have already committed
+    // while the worker was finishing; if so, discard the duplicate result.
+    if (m_annotationsLoaded)
+        return;
+    commitAnnotations(watcher->result());
+}
+
+void PdfDocument::commitAnnotations(std::vector<Annotation> loaded) {
+    m_annotationsLoaded = true;
+    ensureAnnotationHooksWired();
+    // Single batched populate: append the whole loaded set and emit exactly
+    // ONE AnnotationStore::changed (coalesced overlay/sidebar/inspector
+    // refresh). The suppress guard keeps that changed() from tripping the
+    // dirty flag; addBatch pushes no undo frame, so the unified undo log is
+    // untouched. If the user already made edits during the load window,
+    // those frames/dirty state are preserved (this only appends).
+    m_suppressUndoLog = true;
+    m_annotations.addBatch(std::move(loaded));
+    m_suppressUndoLog = false;
+}
+
+void PdfDocument::ensureAnnotationsLoadedSync() {
     if (m_annotationsLoaded || !m_valid)
         return;
-    m_annotationsLoaded = true;
-    ensureEditorLoaded();
-    // readAnnotations() returns empty if the editor failed to load, so
-    // this is safe regardless of editor validity. Order mirrors the old
-    // ctor exactly: populate + clearHistory BEFORE wiring the history /
-    // modified hooks, so the initial populate is never logged as a user
-    // edit or flagged as a modification.
-    for (Annotation &a : m_editor->readAnnotations()) {
-        m_annotations.add(std::move(a));
+    ensureAnnotationHooksWired();
+    if (m_annotationLoadStarted && m_annotationWatcher) {
+        // A background load is in flight — block for the worker, then commit
+        // its result here. Reached only by the synchronous write paths, which
+        // must see the COMPLETE set. In the shipping app the load is kicked at
+        // view-attach and has long since committed by the time any save runs,
+        // so this wait is a safety net, not a hot path. It is never called
+        // from within the watcher's own finished slot, so it cannot deadlock.
+        m_annotationWatcher->future().waitForFinished();
+        if (!m_annotationsLoaded) {
+            QFutureWatcher<std::vector<Annotation>> *watcher = m_annotationWatcher.release();
+            std::vector<Annotation> loaded = watcher->result();
+            watcher->deleteLater();
+            commitAnnotations(std::move(loaded));
+        }
+        return;
     }
-    m_annotations.clearHistory();
-    QObject::connect(&m_annotations, &AnnotationStore::changed, m_doc.get(),
-                     [this]() { m_annotationsModified = true; });
-    connectAnnotationHistory();
+    // Never kicked (e.g. a document saved without ever being viewed): read
+    // synchronously through the GUI-thread editor — the old inline path.
+    m_annotationLoadStarted = true;
+    ensureEditorLoaded();
+    commitAnnotations(m_editor->readAnnotations());
 }
 
 void PdfDocument::connectAnnotationHistory() {
@@ -257,16 +357,24 @@ bool PdfDocument::unlock(const QString &password) {
     m_valid = true;
     m_needsPassword = false;
 
-    // Remember the password so the deferred editor load can re-unlock the
-    // qpdf side on first genuine editor need. Do NOT eagerly load the
-    // editor or sweep annotations here — that synchronous whole-document
-    // work is exactly the P0 hang this fix avoids (it now runs lazily via
-    // ensureEditorLoaded / ensureAnnotationsLoaded).
+    // Remember the password so the deferred editor load (and the background
+    // sweep's throwaway editor) can re-unlock the qpdf side. Do NOT eagerly
+    // load the editor or sweep annotations here — that synchronous
+    // whole-document work is exactly the P0 hang this fix avoids (it now runs
+    // lazily via ensureEditorLoaded / on a worker via startAnnotationLoad).
     m_password = password;
     return true;
 }
 
 PdfDocument::~PdfDocument() {
+    // Detach any in-flight annotation load so its finished slot cannot fire
+    // on a half-destroyed this. Dropping the watcher disconnects the pending
+    // finished signal; the worker lambda captures only value copies and a
+    // local editor, so it stays self-contained as it winds down. We
+    // deliberately do NOT wait for the worker — closing a tab mid-load must
+    // never re-freeze the GUI.
+    m_annotationWatcher.reset();
+
     // QPdfDocument::close() (reached from ~QPdfDocument) synchronously
     // emits currentPageChanged, which createView() wires to a lambda that
     // calls ingestNativeTextLayer() → m_selectableText.put(). The view and
@@ -527,6 +635,11 @@ QWidget *PdfDocument::createView(QWidget *parent) {
             return {};
         return m_doc->pagePointSize(page);
     });
+    // The form overlay is populated lazily: at createView time the qpdf
+    // editor is usually not yet loaded (deferred), so this seeds fields only
+    // if it happens to be live already. The real population happens on demand
+    // in setFormFillingActive()/refreshFormView(), which force the editor
+    // load — so the initial empty overlay is expected and correct.
     if (m_editor && m_editor->isValid()) {
         formOverlay->setFields(m_editor->readFormFields());
     }
@@ -1504,7 +1617,7 @@ std::optional<PdfDocument::SaveContext> PdfDocument::saveBeginQpdfPhase(const QS
     // Saving flushes pending annotations into the qpdf graph, so both the
     // editor and the (possibly deferred) annotation store must be live.
     ensureEditorLoaded();
-    ensureAnnotationsLoaded();
+    ensureAnnotationsLoadedSync();
     if (!m_valid || !m_editor || !m_editor->isValid()) {
         return std::nullopt;
     }
@@ -1682,7 +1795,7 @@ void PdfDocument::refreshFormView() {
 
 bool PdfDocument::exportWithPassword(const QString &destPath, const QString &password) {
     ensureEditorLoaded();
-    ensureAnnotationsLoaded();
+    ensureAnnotationsLoadedSync();
     if (!m_valid || !m_editor || !m_editor->isValid())
         return false;
     if (destPath.isEmpty())
@@ -1705,7 +1818,7 @@ bool PdfDocument::exportWithPassword(const QString &destPath, const QString &pas
 
 bool PdfDocument::reduceFileSize(const QString &destPath) {
     ensureEditorLoaded();
-    ensureAnnotationsLoaded();
+    ensureAnnotationsLoadedSync();
     if (!m_valid || !m_editor || !m_editor->isValid())
         return false;
     if (destPath.isEmpty())

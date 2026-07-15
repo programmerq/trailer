@@ -20,6 +20,7 @@ class QPdfSearchModel;
 class QPdfBookmarkModel;
 class QIdentityProxyModel;
 class QPdfView;
+template <typename T> class QFutureWatcher;
 // tests/test_adapters.cpp — befriended so the desync test seam below
 // stays private instead of shipping as callable production API.
 class TestAdapters;
@@ -177,10 +178,14 @@ class PdfDocument : public IDocument {
     bool saveCommitOnUi(const SaveContext &ctx);
 
     AnnotationStore *annotations() override {
-        // First genuine annotation access: this is the seam that runs the
-        // deferred all-pages sweep (the overlay/view/inspector all reach
-        // the store through here). Idempotent after the first call.
-        ensureAnnotationsLoaded();
+        // First genuine annotation access kicks the deferred all-pages
+        // sweep onto a BACKGROUND worker (idempotent) and returns the store
+        // immediately — empty at first, populated live when the worker
+        // commits. This is the P0 fix: the ~12s sweep on a heavily-annotated
+        // document no longer runs on the GUI thread at view-attach. The
+        // overlay/sidebar/inspector all subscribe to AnnotationStore::changed,
+        // so the late populate propagates automatically.
+        startAnnotationLoad();
         return &m_annotations;
     }
     SelectableTextStore *selectableText() override { return &m_selectableText; }
@@ -229,15 +234,39 @@ class PdfDocument : public IDocument {
     //                               because capability probes / const
     //                               accessors gate on it; it only mutates
     //                               the mutable load-state members below.
-    //   ensureAnnotationsLoaded() — runs the all-pages annotation sweep
-    //                               once, then wires the annotation
-    //                               history hooks in the SAME order the
-    //                               ctor used to (populate + clearHistory
-    //                               BEFORE connecting) so the initial
-    //                               populate is never logged as edits.
+    //   startAnnotationLoad()     — kicks the all-pages annotation sweep
+    //                               onto a background worker ONCE (loading a
+    //                               throwaway, isolated qpdf instance from
+    //                               m_path — see the .cpp). The GUI-thread
+    //                               finished slot then commits the result.
+    //                               Wires the annotation history hooks
+    //                               synchronously up front so user edits made
+    //                               during the (possibly multi-second) load
+    //                               are tracked; the bulk populate itself is
+    //                               committed via AnnotationStore::addBatch
+    //                               (no undo frame) under m_suppressUndoLog,
+    //                               so it is never mistaken for a user edit.
     // Both are idempotent and no-op while the document is locked/invalid.
     void ensureEditorLoaded() const;
-    void ensureAnnotationsLoaded();
+    void startAnnotationLoad();
+    // Wire the AnnotationStore history/modified mirrors (idempotent). Split
+    // out of the commit so it can also run synchronously the instant the
+    // store is first handed out, keeping edits tracked during the load.
+    void ensureAnnotationHooksWired();
+    // Block for the deferred annotation load and commit its result NOW.
+    // Used by the synchronous consumers that must see the COMPLETE set
+    // (save / exportWithPassword / reduceFileSize). If a background load is
+    // in flight it waits for the worker; if the load was never kicked it
+    // reads synchronously through the GUI-thread editor (the old inline
+    // path). Never invoked from within the load's own finished slot.
+    void ensureAnnotationsLoadedSync();
+    // GUI-thread commit of a loaded annotation set: batched populate that
+    // emits a single AnnotationStore::changed and touches neither the dirty
+    // flag nor the undo log.
+    void commitAnnotations(std::vector<Annotation> loaded);
+    // QFutureWatcher::finished slot — commits the worker's result unless a
+    // sync-ensure already beat it to it.
+    void onAnnotationLoadFinished();
 
     void applyViewMode();
     void applyZoomFactor(double factor);
@@ -305,16 +334,36 @@ class PdfDocument : public IDocument {
     bool m_dirty = false;
     bool m_annotationsModified = false;
     bool m_needsPassword = false;
-    // Lazy-open state (see ensureEditorLoaded/ensureAnnotationsLoaded).
+    // Lazy-open state (see ensureEditorLoaded/startAnnotationLoad).
     // m_editorLoaded is mutable so const capability probes can trigger
     // the parse. m_password is remembered from unlock() so the deferred
-    // editor load can re-unlock the qpdf side. m_hasFormFieldsCache
-    // memoises the one form-detection scan; invalidated on any edit that
-    // rebuilds the editor's page graph.
+    // editor load (and the background sweep's throwaway editor) can
+    // re-unlock the qpdf side; it is mutable so the const editor probe can
+    // consume+clear it, and it is dropped once both consumers have taken
+    // their copy so plaintext isn't retained for the doc lifetime.
+    // m_hasFormFieldsCache memoises the one form-detection scan; invalidated
+    // on any edit that rebuilds the editor's page graph.
+    //
+    // Threading note: every flag here is touched only on the GUI thread.
+    // The background sweep worker touches NONE of them — it operates purely
+    // on value copies (path/password) and its own local, isolated PdfEditor
+    // — so there is no GUI/worker race on this object's state.
     mutable bool m_editorLoaded = false;
+    // m_annotationsLoaded: the sweep result has been committed into the
+    // store. m_annotationLoadStarted: the background worker has been kicked
+    // (guards against a second launch). m_annotationHooksWired: the store's
+    // history/modified mirrors have been connected.
     bool m_annotationsLoaded = false;
-    QString m_password;
+    bool m_annotationLoadStarted = false;
+    bool m_annotationHooksWired = false;
+    mutable QString m_password;
     mutable std::optional<bool> m_hasFormFieldsCache;
+    // Watches the background annotation-load future. Held as a member so
+    // its lifetime is bounded by this document: the destructor resets it so
+    // a still-pending finished signal cannot fire on a half-destroyed this.
+    // The worker lambda captures only value copies, so it stays safe as it
+    // winds down after the watcher is dropped.
+    std::unique_ptr<QFutureWatcher<std::vector<Annotation>>> m_annotationWatcher;
     // One-shot guard for applyInitialFitZoom — fit-to-content is
     // applied the first time the viewport has a real size, then never
     // again so the user's zoom choices stick.

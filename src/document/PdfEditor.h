@@ -10,6 +10,7 @@
 #include <vector>
 
 class QPDF;
+class QThread;
 
 namespace trailer {
 
@@ -163,20 +164,31 @@ class PdfEditor {
     //   * s_annotationPageVisits — bumped once per page walked inside
     //                        readAnnotations(); proves the all-pages
     //                        annotation sweep does not run at open.
+    //   * s_annotationSweepThread — records QThread::currentThread() the
+    //                        last time readAnnotations() ran, so the perf
+    //                        test can prove the deferred sweep executes on
+    //                        a worker thread (NOT the GUI/caller thread),
+    //                        the deterministic liveness/ordering proxy for
+    //                        the P0 fix.
     // Not part of the production contract; safe to ignore outside tests.
     static int parseCount() { return s_parseCount.load(std::memory_order_relaxed); }
     static int annotationPageVisits() {
         return s_annotationPageVisits.load(std::memory_order_relaxed);
     }
+    static QThread *annotationSweepThread() {
+        return s_annotationSweepThread.load(std::memory_order_relaxed);
+    }
     static void resetInstrumentation() {
         s_parseCount.store(0, std::memory_order_relaxed);
         s_annotationPageVisits.store(0, std::memory_order_relaxed);
+        s_annotationSweepThread.store(nullptr, std::memory_order_relaxed);
     }
 
   private:
     // Test instrumentation counters (see the accessors above).
     static std::atomic<int> s_parseCount;
     static std::atomic<int> s_annotationPageVisits;
+    static std::atomic<QThread *> s_annotationSweepThread;
 
     bool saveImpl(const QString &path, const EncryptionOptions *enc);
 

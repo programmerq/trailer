@@ -16,6 +16,16 @@ class AnnotationStore : public QObject {
     explicit AnnotationStore(QObject *parent = nullptr);
 
     int add(Annotation annotation);
+    // Bulk-append entries assigning each a fresh id, emitting changed()
+    // exactly ONCE at the end. Used by the deferred (background)
+    // annotation load to commit a whole document's annotations in a
+    // single coalesced refresh — a per-item add() would emit changed()
+    // (and drive its consumers' repaints) once per annotation, which is
+    // pathological on a document carrying a million of them. Deliberately
+    // does NOT push undo history: the initial document populate is not a
+    // user edit, so no historyPushed()/historyEvicted() is emitted and
+    // the store's undo stack is left untouched.
+    void addBatch(std::vector<Annotation> items);
     bool remove(int id);
     // Remove all annotations whose id appears in `ids` in a single
     // undo-history step. Returns true if at least one was removed.

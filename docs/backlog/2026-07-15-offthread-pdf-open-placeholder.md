@@ -24,24 +24,35 @@ editor/annotation loading. See decision record
 `docs/decision-records/0006-defer-offthread-pdf-open.md` for why the
 worker+placeholder work was deferred rather than done in the same change.
 
-As of the P0 fix, the `PdfDocument` constructor no longer runs the two
-heavy whole-document passes — the qpdf `processFile` parse and the
-all-pages `readAnnotations()` sweep are lazy
-(`PdfDocument::ensureEditorLoaded()` / `ensureAnnotationsLoaded()`,
-`src/document/PdfAdapter.cpp`). What remains synchronous on the GUI thread
-at open is:
+### Done since this item was filed
+
+- The all-pages `readAnnotations()` sweep (proxy #1, the dominant cost) is
+  now run **off** the GUI thread on an isolated, throwaway qpdf instance
+  (`PdfDocument::startAnnotationLoad()`, `src/document/PdfAdapter.cpp`,
+  landed on `fix/startup-hang-large-pdf`). `annotations()` kicks the worker
+  and returns the empty store immediately; a GUI-thread finished slot commits
+  the result via a single batched `AnnotationStore::addBatch`. The GUI thread
+  no longer blocks on the sweep at view-attach. See decision record 0006's
+  Update note.
+
+### Still deferred (this item)
+
+As of the P0 fix + that follow-on, the `PdfDocument` constructor runs only
+`QPdfDocument::load`; the qpdf parse is lazy and the sweep is on a worker.
+What remains synchronous on the GUI thread at open is:
 
 1. `QPdfDocument::load(path)` in the ctor — a bounded progressive read
-   (~16ms on a 115MB/8000-page file) that yields `pageCount()` + a page-0
+   (~1.8s on a 195MB/2500-page file) that yields `pageCount()` + a page-0
    render. This is the residual open-path IO this item targets.
 2. `MainWindow::onCurrentDocumentChanged` querying `supportsFormFilling()`
-   (`src/ui/MainWindow.cpp:2875,2972`) and `annotations()` (`:2985`) when
-   a document becomes current — these trigger the now-lazy qpdf parse and
-   annotation sweep on the GUI thread at *view-attach*, shortly after
-   `open()` returns. Moving open off-thread should also address where
-   these lazy loads run (e.g. warm them on the worker before the view is
-   attached, or attach the view against a placeholder and populate on the
-   worker), so the GUI thread never blocks on them either.
+   (`src/ui/MainWindow.cpp:2875,2972`) when a document becomes current —
+   this triggers the lazy qpdf `processFile` parse (~0.55s) on the GUI
+   thread at *view-attach*. (`annotations()` no longer blocks the GUI
+   thread — its sweep is now on a worker.) Moving open off-thread should
+   also warm this parse on the worker (or attach the view against a
+   placeholder and populate on the worker), so the GUI thread never blocks
+   on it either — which needs a capabilities-refresh signal so the toolbar
+   updates when the off-thread form detection completes.
 
 ## Fix direction
 

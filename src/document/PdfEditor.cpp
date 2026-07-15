@@ -15,6 +15,7 @@
 #include <QImage>
 #include <QPainter>
 #include <QPdfDocument>
+#include <QThread>
 
 #include "util/TempPath.h"
 
@@ -31,6 +32,7 @@ namespace trailer {
 // perf tests can prove the P0 open-path deferrals.
 std::atomic<int> PdfEditor::s_parseCount{0};
 std::atomic<int> PdfEditor::s_annotationPageVisits{0};
+std::atomic<QThread *> PdfEditor::s_annotationSweepThread{nullptr};
 
 PdfEditor::PdfEditor() : m_qpdf(std::make_unique<QPDF>()) {}
 
@@ -1093,6 +1095,10 @@ std::vector<Annotation> PdfEditor::readAnnotations() const {
     std::vector<Annotation> out;
     if (!m_valid)
         return out;
+    // Test instrumentation: record which thread ran the all-pages sweep.
+    // The P0 fix runs it on a background worker; the perf test asserts
+    // this is NOT the GUI/caller thread. (Deterministic liveness proxy.)
+    s_annotationSweepThread.store(QThread::currentThread(), std::memory_order_relaxed);
     try {
         auto pages = QPDFPageDocumentHelper(*m_qpdf).getAllPages();
         const int total = static_cast<int>(pages.size());
