@@ -59,7 +59,10 @@ the `ThumbnailModel.h:47` constant; height follows page aspect exposed via a
 cheap model role (aspect from `QPdfDocument::pagePointSize`, already used in
 `PdfDocument::renderThumbnail`, `PdfAdapter.cpp:731`). The thumbnail-sizing
 research theme in `docs/research/2026-07-13-ux-research-agenda.md` feeds the
-scale-to-width vs fixed-aspect decision.
+scale-to-width vs fixed-aspect decision. That decision is captured in
+`docs/decision-records/0010-thumbnail-sidebar-sizing.md`, which **ratifies** this
+item's width-fill direction (it does not fork it) and adds the page-number
+placement axis.
 
 ### Recurrence — this complaint has been diagnosed but never fixed in code
 

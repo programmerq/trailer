@@ -78,6 +78,9 @@ research theme in `docs/research/2026-07-13-ux-research-agenda.md` feeds this
 item's decision on QoS/off-main-thread budgets.
 
 Cross-links:
+- `docs/decision-records/0008-staged-document-open-scheduling.md` — the DR that
+  adjudicates the open-staging choice (defer editor load / worker-thread open /
+  hybrid) feeding this item's structural proxies.
 - `docs/performance-budgets.md:56-66` (binding structural invariants), B5/B6
   rows (`:123-132`).
 - `tests/test_perf_gui_thread_io.cpp` (live `QSKIP` this item retires) and

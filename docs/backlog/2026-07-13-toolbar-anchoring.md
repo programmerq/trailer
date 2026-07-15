@@ -30,6 +30,10 @@ chevron; the chevron's rect is identical before/after toggle. `[real-Mac]`
 confirmation of the pixel behaviour is a bonus but not required — `grab()`
 suffices per the ux-evidence ruling for non-native-chrome layout.
 
+These thresholds are adjudicated in
+`docs/decision-records/0007-toolbar-anchoring-and-overflow.md` (Option A),
+which encodes them as the four G2 pixel invariants.
+
 ## Context
 
 Owner dogfood report: opening the form toolbar pushes the main toolbar to the
