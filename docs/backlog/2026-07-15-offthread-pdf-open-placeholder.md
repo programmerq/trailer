@@ -66,6 +66,28 @@ flip the `test_perf_gui_thread_io` `QSKIP` (lines ~88-108) to a hard
 on close per the background-scheduling research theme
 (`docs/research/2026-07-13-ux-research-agenda.md`).
 
+## Minor tracked items (found while landing the B1 async-load fix)
+
+Both are low-priority follow-ons surfaced on `fix/startup-hang-large-pdf`;
+neither blocks this item.
+
+- **(a) Save-As suffix omitted during the load window (cosmetic, no data
+  loss).** If Save-As is invoked while the async annotation sweep is still
+  in flight, the auto-suffix logic (`_marked` / `_signed`) can be skipped
+  because the marked/signed state is derived before the sweep commits, so
+  the suggested filename lacks the suffix (`src/ui/MainWindow.cpp:2256-2270`).
+  Purely cosmetic — the sync-ensure on the write path still flushes the full
+  annotation set into the saved file, so nothing is lost; only the *suggested
+  name* is affected. Fix: force `ensureAnnotationsLoadedSync()` (or read the
+  committed state) before computing the suffix.
+- **(b) Chunked / yielding `addBatch` to smooth the one-shot GUI hitch.**
+  `AnnotationStore::addBatch()` appends the whole loaded set and emits a
+  single coalesced `changed()`. On a pathological 1M-annotation document the
+  batched GUI commit is a one-shot ~125–200ms hitch. A chunked / yielding
+  `addBatch` (commit in bounded slices across event-loop turns, coalescing
+  refreshes) would spread that cost so the GUI never stalls for a visible
+  frame on such documents.
+
 ## Cross-links
 
 - `docs/backlog/2026-07-13-startup-hang-large-pdf.md` — the P0 parent this
