@@ -195,6 +195,17 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         }
         m_autoEnabledFormDocs.remove(doc);
         m_restoredViewStateDocs.remove(doc);
+        // Drop the large-doc recognize-notice dismissal + the pageHasText
+        // probe cache for this doc. Both are keyed by the raw IDocument*;
+        // without this a closed document's address could be recycled by
+        // the allocator and a fresh document at the same address would
+        // inherit the prior dismissal or a stale pageHasText cache hit.
+        m_largeDocOcrHintDismissed.remove(doc);
+        if (m_pageHasTextCacheDoc == doc) {
+            m_pageHasTextCacheDoc = nullptr;
+            m_pageHasTextCachePage = -1;
+            m_pageHasTextCacheValue = false;
+        }
         // Drop the SAM encoder cache + cancel in-flight tasks for this
         // doc. Without this a closed document's address could be
         // recycled by the allocator and a fresh document at the same
@@ -409,23 +420,59 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // affordance to *do* the thing, not the modal that says we
     // didn't.
     auto *hint = new QWidget(this);
+    hint->setObjectName(QStringLiteral("largeDocOcrHint"));
     auto *hintLayout = new QHBoxLayout(hint);
     hintLayout->setContentsMargins(0, 0, 0, 0);
     hintLayout->setSpacing(4);
-    auto *hintLabel = new QLabel(tr("Text isn't selectable here."), hint);
+    // Benefit-first wording (ADR 0002 §3 / ADR 0006): the link routes
+    // through the same one-time-consent download flow the compliant
+    // paths use — no "model"/"OCR" jargon, no silent no-op.
+    auto *hintLabel = new QLabel(tr("This page's text isn't selectable yet."), hint);
     auto *hintLink = new QLabel(
         tr("<a href=\"#recognize\">Recognize text on this page</a>"), hint);
+    hintLink->setObjectName(QStringLiteral("largeDocOcrHintLink"));
     hintLink->setTextFormat(Qt::RichText);
     hintLink->setOpenExternalLinks(false);
     connect(hintLink, &QLabel::linkActivated, this, [this](const QString &) {
         auto *doc = m_documentView->currentDocument();
-        if (!doc)
+        if (!doc || !doc->supportsSelectableText())
+            return;
+        // Route through the sanctioned consent/download gate (ADR 0006):
+        // mirror onRecognizeText and the compliant m_ocrModelMissingHint
+        // handler rather than calling submitUserPages() directly (which
+        // silently no-ops when the language model is absent). The test
+        // seam intercepts the gate so the routing is verifiable without a
+        // real modal.
+        bool ready;
+        if (m_ocrModelDownloadHook) {
+            ready = m_ocrModelDownloadHook();
+        } else {
+            OcrEngine gateEngine(&m_app->modelRegistry());
+            ready = ensureOcrModelsReady(this, gateEngine);
+        }
+        if (!ready)
             return;
         const int page = doc->currentPage();
         m_ocrController->submitUserPages(doc, {page}, /*forceRerun=*/false);
     });
+    // Dismiss (×) affordance — a permanent status-bar widget with no way
+    // out reads as a stuck control (ADR 0006). Dismissal is per-document
+    // (reset on document change) so it stays hidden for the doc the user
+    // dismissed it on but returns for the next document.
+    auto *hintDismiss = new QToolButton(hint);
+    hintDismiss->setText(QStringLiteral("×"));
+    hintDismiss->setAutoRaise(true);
+    hintDismiss->setToolTip(tr("Dismiss"));
+    hintDismiss->setObjectName(QStringLiteral("largeDocOcrHintDismiss"));
+    connect(hintDismiss, &QToolButton::clicked, this, [this]() {
+        if (auto *doc = m_documentView->currentDocument())
+            m_largeDocOcrHintDismissed.insert(doc);
+        if (m_largeDocOcrHint)
+            m_largeDocOcrHint->setVisible(false);
+    });
     hintLayout->addWidget(hintLabel);
     hintLayout->addWidget(hintLink);
+    hintLayout->addWidget(hintDismiss);
     hint->setVisible(false);
     statusBar()->addPermanentWidget(hint);
     m_largeDocOcrHint = hint;
@@ -557,6 +604,11 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         auto *doc = m_documentView->currentDocument();
         if (!doc || !m_ocrController)
             return;
+        // Re-derive the large-doc recognize notice every tick so it self-
+        // clears the moment the visible page gains text / OCR results
+        // (ADR 0006). The helper short-circuits on the cheap guards before
+        // it ever probes pageHasText(), so this stays light.
+        updateLargeDocOcrHint();
         const int page = doc->currentPage();
         if (page == m_lastOcrPage)
             return;
@@ -3045,20 +3097,45 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     syncViewModeActions(doc);
     updateTitleForDocument(doc);
 
-    // Large-doc OCR hint chip. We surface it only when:
-    //  - The doc supports OCR (raster pages we can recognize).
-    //  - The page count is above the auto-OCR threshold.
-    //  - The visible page is not already cached in the OCR store.
-    if (m_largeDocOcrHint) {
-        bool show = false;
-        if (m_ocrController && m_ocrController->isLargeDoc() && doc && doc->supportsSelectableText()) {
-            auto *store = doc->selectableText();
-            if (store && !store->hasResults(doc->currentPage())) {
-                show = true;
+    // Large-doc OCR hint chip. Dismissal is keyed per-document (ADR
+    // 0006), so switching documents does not clear another document's
+    // dismissal. Visibility is derived by the shared helper, also re-run
+    // on page change / after OCR by the m_ocrPagePoll tick so the notice
+    // self-clears.
+    updateLargeDocOcrHint();
+}
+
+void MainWindow::updateLargeDocOcrHint() {
+    if (!m_largeDocOcrHint)
+        return;
+    bool show = false;
+    // Cheap guards first; the pageHasText() probe (which re-extracts page
+    // text) is reached only for a large, selectable, not-yet-recognised,
+    // not-dismissed page — and even then it is served from a per-(doc,
+    // page) cache.
+    auto *doc = m_documentView->currentDocument();
+    if (doc && !m_largeDocOcrHintDismissed.contains(doc) && m_ocrController &&
+        m_ocrController->isLargeDoc() && doc->supportsSelectableText()) {
+        const int page = doc->currentPage();
+        auto *store = doc->selectableText();
+        // Show only for a genuinely text-less page: no cached OCR results
+        // AND no native text layer (ADR 0006 — the missing real per-page
+        // guard was why this fired on born-digital docs).
+        if (store && !store->hasResults(page)) {
+            bool hasText;
+            if (m_pageHasTextCacheDoc == doc && m_pageHasTextCachePage == page) {
+                hasText = m_pageHasTextCacheValue;
+            } else {
+                hasText = doc->pageHasText(page);
+                m_pageHasTextCacheDoc = doc;
+                m_pageHasTextCachePage = page;
+                m_pageHasTextCacheValue = hasText;
             }
+            if (!hasText)
+                show = true;
         }
-        m_largeDocOcrHint->setVisible(show);
     }
+    m_largeDocOcrHint->setVisible(show);
 }
 
 void MainWindow::onActiveAnnotationStoreChanged() {

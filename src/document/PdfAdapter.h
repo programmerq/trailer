@@ -96,6 +96,11 @@ class PdfDocument : public IDocument {
     // expose an empty layer). Text-aware markup tools are offered.
     bool hasTextLayer() const override { return m_valid; }
 
+    // Per-page native-text probe: true iff Qt PDF can extract a non-
+    // empty text string for this page (a born-digital page, as opposed
+    // to an image-only scan). Cheap enough to call on page change.
+    bool pageHasText(int page) const override;
+
     // PDF outline (Table of Contents) — backed by QPdfBookmarkModel,
     // lazily constructed on first access. Empty for documents without
     // an /Outlines tree; hasOutline() pre-checks rowCount so the
@@ -161,6 +166,14 @@ class PdfDocument : public IDocument {
     SelectableTextStore *selectableText() override { return &m_selectableText; }
     bool supportsSelectableText() const override { return m_valid; }
     QImage renderPageForOcr(int pageIndex) const override;
+    double ocrSourceToDocScale(int pageIndex) const override;
+    // Ingest the native PDF text layer for `page` into m_selectableText
+    // as line-level TextBlocks (text + point-space geometry), so drag-
+    // select + Ctrl+C work on born-digital pages without an OCR run. No-
+    // op when the page has no native text or the store already holds
+    // results for it (never clobbers real OCR output). Called lazily as
+    // pages become current. Non-const: writes into the store.
+    void ingestNativeTextLayer(int page);
     void setAnnotationTool(AnnotationTool tool) override;
     void setAnnotationStyle(const AnnotationStyle &style) override;
     void setPendingAnnotationText(const QString &text) override;

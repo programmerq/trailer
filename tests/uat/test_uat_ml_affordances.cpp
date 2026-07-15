@@ -256,7 +256,12 @@ void TestUatMlAffordances::uat_ml_g1_determinateBatchProgress() {
     QSignalSpy progress(&controller, &OcrController::ocrBatchProgress);
     QSignalSpy finished(&controller, &OcrController::ocrBatchFinished);
 
-    controller.submitUserPages(doc, {0, 1, 2, 3}, /*forceRerun=*/false);
+    // forceRerun=true so all 4 pages run through the gated recognizer: the
+    // born-digital sample PDF now has its page-0 native text ingested into
+    // the store on open (R1), which a non-force batch would treat as
+    // already-cached and skip. Every sibling batch test here forces for the
+    // same reason; this exercises the determinate 4-page progress contract.
+    controller.submitUserPages(doc, {0, 1, 2, 3}, /*forceRerun=*/true);
     QCOMPARE(started.count(), 1);
     QCOMPARE(started.at(0).at(0).toInt(), 4);
 

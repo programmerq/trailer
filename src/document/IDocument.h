@@ -135,6 +135,16 @@ class IDocument {
     // meaningful.
     virtual bool hasTextLayer() const { return false; }
 
+    // True iff `page` carries a real, extractable native text layer
+    // (born-digital PDF text, not a bare scan). Distinct from the
+    // coarse hasTextLayer() capability stub — this performs a per-page
+    // check so callers can tell a text page from an image-only page.
+    // Drives native-text ingestion into SelectableTextStore and the
+    // suppression of the "Recognize text" notice on pages that already
+    // have selectable text. Default false — adapters without a native
+    // text layer (images, stub) opt out.
+    virtual bool pageHasText(int /*page*/) const { return false; }
+
     // Outline / Table of Contents access. Documents that ship with a
     // /Outlines tree (most authored PDFs do) expose it through this
     // model so the Sidebar's "Table of Contents" mode can render a
@@ -268,6 +278,15 @@ class IDocument {
     // signals "this adapter does not support OCR submission" so the
     // scheduler will simply not enqueue work.
     virtual QImage renderPageForOcr(int /*pageIndex*/) const { return {}; }
+    // Uniform scale mapping a renderPageForOcr() source-pixel coordinate
+    // into the document coordinate space that SelectableTextLayer's
+    // docToView expects. PDFs render OCR sources at a fixed DPI while
+    // docToView works in PDF points (72/inch), so PdfDocument returns
+    // points-per-pixel (< 1); image documents render OCR in native pixel
+    // space and docToView is pixel-based, so the default 1.0 is correct.
+    // OcrController multiplies recognized block geometry by this before
+    // storing, so forced OCR on a PDF page lands aligned with selection.
+    virtual double ocrSourceToDocScale(int /*pageIndex*/) const { return 1.0; }
 
     virtual void setAnnotationTool(AnnotationTool /*tool*/) {}
     virtual void setAnnotationStyle(const AnnotationStyle & /*style*/) {}

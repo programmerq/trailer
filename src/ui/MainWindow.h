@@ -84,6 +84,18 @@ class MainWindow : public QMainWindow {
         m_ocrModelDownloadHook = std::move(hook);
     }
 
+    // Test-only introspection for the pointer-keyed large-doc notice /
+    // pageHasText caches (Copilot review #58). Both are keyed by the raw
+    // IDocument* and must be purged when a document closes so a recycled
+    // address can't inherit a prior dismissal or a stale probe hit. These
+    // let a UAT prove the documentAboutToBeRemoved hook drops the entry.
+    bool isLargeDocOcrHintDismissedForTesting(const IDocument *doc) const {
+        return m_largeDocOcrHintDismissed.contains(const_cast<IDocument *>(doc));
+    }
+    bool pageHasTextCacheHasDocForTesting(const IDocument *doc) const {
+        return m_pageHasTextCacheDoc == doc;
+    }
+
   public slots:
     void rebuildRecentMenu();
     // Save every dirty document with an established file path. Wired
@@ -232,6 +244,11 @@ class MainWindow : public QMainWindow {
     void showSearchBar();
     void hideSearchBar();
     void updateTitleForDocument(IDocument *doc);
+    // Re-derive the large-doc "Recognize text" notice visibility (ADR
+    // 0006). Called from onCurrentDocumentChanged and the m_ocrPagePoll
+    // tick so the notice is guarded by a real per-page text check and
+    // self-clears once the page gains text / OCR results / is dismissed.
+    void updateLargeDocOcrHint();
     void updateUndoRedoActions(IDocument *doc);
     int selectedPageForEdit(IDocument *doc) const;
     // Size the window to fit the first document opened. Clamped to a
@@ -437,6 +454,18 @@ class MainWindow : public QMainWindow {
     // Shown only when the active doc is large + non-OCR'd; hidden
     // otherwise so the status bar stays clean.
     QWidget *m_largeDocOcrHint = nullptr;
+    // Per-document dismissal for the large-doc recognize notice (ADR
+    // 0006). Keyed by IDocument* so a notice dismissed on doc A stays
+    // hidden when the user tab-switches away and back, independently of
+    // other documents. Pointers are used only for identity membership,
+    // never dereferenced.
+    QSet<IDocument *> m_largeDocOcrHintDismissed;
+    // Single-entry cache for the pageHasText() probe, which re-extracts
+    // the full page text and is polled ~7Hz by m_ocrPagePoll. Only re-
+    // probed when the (document, page) changes.
+    IDocument *m_pageHasTextCacheDoc = nullptr;
+    int m_pageHasTextCachePage = -1;
+    bool m_pageHasTextCacheValue = false;
 
     // Decoration applied to the Remove Background menu entry when the
     // current image is a strong candidate for background removal. The
