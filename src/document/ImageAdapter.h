@@ -61,7 +61,11 @@ class ImageDocument : public IDocument {
     // AnnotationOverlay's search-highlight pass, exactly as PdfDocument
     // feeds its overlay. Works headlessly (no view) so callers can seed the
     // store and query without a widget.
-    bool supportsSearch() const override { return true; }
+    // Gate search on the same capability that lets the OCR store populate:
+    // an animated GIF or a null image can never gain a searchable text
+    // layer (maybeKickSearchOcr bails on !supportsSelectableText), so
+    // lighting up Find for them would be a dead control.
+    bool supportsSearch() const override { return supportsSelectableText(); }
     void setSearchQuery(const QString &query) override;
     void findNext() override;
     void findPrevious() override;
@@ -211,6 +215,14 @@ class ImageDocument : public IDocument {
     QString m_searchQuery;
     std::vector<QRectF> m_searchMatches;
     int m_currentMatch = -1;
+    // The store->changed() → recomputeSearchMatches() connection. Its
+    // lambda captures `this` and touches the search-state members above,
+    // which are declared AFTER m_selectableText and therefore destroyed
+    // BEFORE it — so an emission racing destruction could touch freed
+    // members. We disconnect it explicitly in ~ImageDocument (see the
+    // dtor) before any member teardown to make the ordering safe by
+    // intent rather than by declaration accident.
+    QMetaObject::Connection m_searchOcrConnection;
     double m_scale = 1.0;
     // Tracks the user's intent (Fit-page, Fit-width, Actual, custom
     // factor) so the persistence layer can round-trip the mode and

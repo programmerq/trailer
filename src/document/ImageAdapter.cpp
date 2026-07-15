@@ -249,10 +249,11 @@ ImageDocument::ImageDocument(QString path) : m_path(std::move(path)) {
     // query typed before recognition finished (on-demand OCR) surfaces its
     // matches as soon as the blocks arrive. The store is a member QObject
     // that dies with the document, so it doubles as the connection context.
-    QObject::connect(&m_selectableText, &SelectableTextStore::changed, &m_selectableText, [this]() {
-        if (!m_searchQuery.isEmpty())
-            recomputeSearchMatches();
-    });
+    m_searchOcrConnection = QObject::connect(
+        &m_selectableText, &SelectableTextStore::changed, &m_selectableText, [this]() {
+            if (!m_searchQuery.isEmpty())
+                recomputeSearchMatches();
+        });
 }
 
 void ImageDocument::connectAnnotationHistory() {
@@ -505,6 +506,13 @@ void ImageDocument::installResizeWatcher() {
 }
 
 ImageDocument::~ImageDocument() {
+    // Drop the store->changed() → recomputeSearchMatches() connection
+    // before member teardown. Its lambda captures `this` and reads the
+    // search-state members (m_searchQuery / m_searchMatches / m_overlay),
+    // which are declared after m_selectableText and so destroyed first; a
+    // queued/late emission during destruction must not run against those
+    // already-freed members.
+    QObject::disconnect(m_searchOcrConnection);
     if (m_aliveFlag)
         *m_aliveFlag = false;
 }
@@ -985,10 +993,16 @@ void ImageDocument::recomputeSearchMatches() {
     m_searchMatches.clear();
     m_currentMatch = -1;
     if (!m_searchQuery.isEmpty()) {
-        // Image OCR only ever populates page 0. Case-insensitive substring
-        // match; each hit contributes the block's bounding rect (doc-pixel
-        // space) so the overlay can highlight it. Blocks are kept in the
-        // store's reading order, so match order follows suit.
+        // Image OCR only ever populates page 0. Per-block match semantics:
+        // one match per BLOCK that contains the query (case-insensitive
+        // substring), and the highlight is that block's bounding rect
+        // (doc-pixel space). A block matched twice still counts once, and a
+        // block is highlighted as a whole rather than per glyph-run. This
+        // intentionally differs from PdfDocument's per-OCCURRENCE model:
+        // the OCR store hands us block-level geometry (no per-character
+        // boxes), so block granularity is the finest highlight we can
+        // honestly draw. Blocks are kept in the store's reading order, so
+        // match order follows suit.
         for (const auto &block : m_selectableText.blocks(0)) {
             if (block.text.contains(m_searchQuery, Qt::CaseInsensitive)) {
                 m_searchMatches.push_back(QRectF(block.polygon.boundingRect()));
