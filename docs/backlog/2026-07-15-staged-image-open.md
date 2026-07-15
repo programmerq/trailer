@@ -56,7 +56,7 @@ structural proxy in `tests/test_perf_gui_thread_io.cpp` (no GUI-thread
 full-pixel decode on open).
 
 Grounded by `docs/decision-records/0008-staged-document-open-scheduling.md` and
-`docs/decision-records/0012-image-ocr-pipeline-lazy-window-bounded-cache.md`.
+`docs/decision-records/0013-image-ocr-pipeline-lazy-window-bounded-cache.md`.
 
 File pointers:
 - `src/document/ImageAdapter.cpp:237-248` — synchronous full-res

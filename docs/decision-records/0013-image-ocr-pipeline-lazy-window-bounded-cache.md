@@ -1,10 +1,10 @@
-# 0012 — OCR pipeline for images: auto-OCR small images, lazy per-page for large docs, on-demand triggers, bounded disk cache
+# 0013 — OCR pipeline for images: auto-OCR small images, lazy per-page for large docs, on-demand triggers, bounded disk cache
 
 - **Status:** accepted
 - **Arbiter:** the agent role named for this record; the owner (programmerq) is the escalation-only override.
 - **Date proposed:** 2026-07-15
 - **Date accepted / superseded:** 2026-07-15 (accepted)
-- **Builds on:** ADR-0002 §3 (Missing model / no-lying honesty) and ADR-0008 (staged document open: never block the GUI thread on whole-file work). **Complements** ADR-0011, which reconciled the PDF recognize-text affordance; 0011 fixed *when the chip fires and how it routes*, and 0012 extends the OCR **pipeline** to images and defines the eager-vs-lazy scheduling and caching policy that governs *when text is computed at all*. It does not amend 0011's affordance rules.
+- **Builds on:** ADR-0002 §3 (Missing model / no-lying honesty) and ADR-0008 (staged document open: never block the GUI thread on whole-file work). **Complements** ADR-0011, which reconciled the PDF recognize-text affordance; 0011 fixed *when the chip fires and how it routes*, and 0013 extends the OCR **pipeline** to images and defines the eager-vs-lazy scheduling and caching policy that governs *when text is computed at all*. It does not amend 0011's affordance rules.
 
 ## Context
 
@@ -187,7 +187,7 @@ ADR-0011's G-numbered assertions. G2 evidence is offscreen `QWidget::grab()` und
 `QT_QPA_PLATFORM=offscreen` per AGENTS.md G2; scheduling assertions use the OCR
 batch/handle spies already used by the OcrController tests.
 
-- **G12.1 — Small-image eager auto-OCR; large is not greedy.** *Small* is defined
+- **G13.1 — Small-image eager auto-OCR; large is not greedy.** *Small* is defined
   concretely as **a single-page document (`pageCount() == 1`, which images always are)
   whose source pixel area is ≤ 4 megapixels** (≤ 4,194,304 px, e.g. 2048×2048).
   Rationale for 4 MP: it spans a phone screenshot and a typical letter-size scan at
@@ -198,11 +198,11 @@ batch/handle spies already used by the OcrController tests.
   single-page image with area ≤ 4 MP (model present, `recognize_text_in_background=true`,
   not battery-suppressed) submits background OCR for page 0 at `VisiblePage` priority
   **with no user action** — `SelectableTextStore::hasResults(0)` becomes true, or the
-  G12.2 discard path fires. Opening a single-page image with area **> 4 MP** submits **no**
-  eager whole-image auto-OCR on open; it falls to the G12.3 lazy path. (This adds a
+  G13.2 discard path fires. Opening a single-page image with area **> 4 MP** submits **no**
+  eager whole-image auto-OCR on open; it falls to the G13.3 lazy path. (This adds a
   pixel-area rule the current code lacks; `> 50` pages remains large by construction and
   is unaffected.)
-- **G12.2 — Silent discard of the layer + honest completion status.** When an OCR pass for
+- **G13.2 — Silent discard of the layer + honest completion status.** When an OCR pass for
   a page yields **zero blocks, or only blocks below the confidence floor** (noise/garbage),
   (a) **no persistent selectable-text layer and no persistent recognize affordance** is
   left for that page — `grab()` of the viewer/status bar after completion shows no dangling
@@ -212,7 +212,7 @@ batch/handle spies already used by the OcrController tests.
   **never** a false success claim such as "Text recognition complete." This is the explicit
   reconciliation of "dismiss that discovered layer silently" (part a) with ADR-0002 §3 / no
   lying (part b): the *layer* is discarded silently; the *outcome* is reported truthfully.
-- **G12.3 — Lazy window ± N, on-demand on jump, OCR-as-scanned, within CPU gates.** For a
+- **G13.3 — Lazy window ± N, on-demand on jump, OCR-as-scanned, within CPU gates.** For a
   document above the small threshold (or multi-page), background OCR is confined to the
   visible page(s) **± 2** (**N = 2**, a 5-page window). Rationale for N = 2: a modest,
   hand-tuned step up from today's ±1 that pre-covers the thumbnails immediately above/below
@@ -228,7 +228,7 @@ batch/handle spies already used by the OcrController tests.
   `recognize_text_in_background=false` there are **zero** background OCR submissions
   (explicit Recognize Text is unaffected). This is what operationalises "we don't want to
   cook the CPU … but we want search and replace to work."
-- **G12.4 — Bounded on-disk cache: design accepted here, implementation deferred.** The
+- **G13.4 — Bounded on-disk cache: design accepted here, implementation deferred.** The
   on-disk OCR cache, when implemented, is **keyed by content hash**
   (`hashImageContent`/`contentHashFor`), bounded by a **total-size ceiling of 256 MB with
   LRU eviction** (matching the thumbnail cache budget landed in PR #55 for one memory story),
@@ -240,7 +240,7 @@ batch/handle spies already used by the OcrController tests.
   selectable text **without re-OCR**; (iv) no user-facing control or status ever exposes the
   cache. **This record accepts the design only** — `SelectableTextStore` is in-memory today
   (`SelectableTextStore.h:18-20`), and the disk-cache implementation is deferred to a backlog
-  item (filed alongside this record). G12.4 is the acceptance test that item must meet.
+  item (filed alongside this record). G13.4 is the acceptance test that item must meet.
 
 ## Arbiter verdict + rationale
 
@@ -256,7 +256,7 @@ than by a persistent control the user cannot act on.
 
 The one objection that genuinely reshaped the policy is the honesty tension the office and
 older-careful lenses raised against a naive reading of "dismiss silently." The resolution,
-now binding as **G12.2**, splits the directive cleanly: *silent* governs the **layer and any
+now binding as **G13.2**, splits the directive cleanly: *silent* governs the **layer and any
 persistent affordance** — we do not clutter the UI with an empty selectable layer or a
 "recognize?" chip when there is nothing to select — while the **completion status stays
 honest** under ADR-0002 §3, reporting "No text found" rather than a false "Text recognition
@@ -271,9 +271,9 @@ content-hash-keyed LRU disk cache** — are the checkable form of "run small ima
 automatically, don't greedily OCR large docs, keep it transparent, don't cook the CPU, cache
 space-efficiently and never unbounded." The disk-cache **implementation** is explicitly
 deferred to the backlog (the store is in-memory-only today per `SelectableTextStore.h:18-20`,
-and re-OCR-on-reopen remains acceptable until the cache lands); G12.4 is the acceptance test
+and re-OCR-on-reopen remains acceptable until the cache lands); G13.4 is the acceptance test
 for that deferred work. The lazy-window and OCR-as-scanned scheduling for large/multi-page
-docs is likewise filed as a backlog item scoped to G12.3, as it extends the current ±1 /
+docs is likewise filed as a backlog item scoped to G13.3, as it extends the current ±1 /
 large-doc-no-ambient-OCR behaviour rather than shipping in the images PR that accepts this
 record.
 

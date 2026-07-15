@@ -3,13 +3,13 @@ id: 2026-07-15-bounded-ondisk-ocr-cache
 title: Bounded on-disk OCR cache (content-hash keyed, 256 MB LRU, invalidated on edit, transparent, never unbounded)
 priority: P2
 status: open
-source: ADR 0012 (OCR pipeline for images) — G12.4, deferred (disk-cache implementation)
+source: ADR 0013 (OCR pipeline for images) — G13.4, deferred (disk-cache implementation)
 created: 2026-07-15
 ---
 
 ## Threshold
 
-Per **ADR 0012 §G12.4**. Give `SelectableTextStore` an on-disk backing cache so
+Per **ADR 0013 §G13.4**. Give `SelectableTextStore` an on-disk backing cache so
 OCR survives reopen, bounded so it never grows without limit. Declared pass/fail
 (unit tests over the cache):
 
@@ -37,10 +37,10 @@ hash: callers stash the source hash alongside results (`hashImageContent`,
 call `invalidate(page)` (`:65`) — so the keying and invalidation seams the disk
 cache needs already exist; this item adds the bounded on-disk tier behind them.
 
-ADR 0012 accepts the **design** (content-hash key, 256 MB LRU ceiling,
+ADR 0013 accepts the **design** (content-hash key, 256 MB LRU ceiling,
 invalidate-on-edit, invisible to the user); this item is the deferred
-**implementation**, and §G12.4 is its acceptance test. Grounded by
-`docs/decision-records/0012-image-ocr-pipeline-lazy-window-bounded-cache.md`
-(§G12.4). The 256 MB ceiling is a hand-tuned value ratified there; changing it
+**implementation**, and §G13.4 is its acceptance test. Grounded by
+`docs/decision-records/0013-image-ocr-pipeline-lazy-window-bounded-cache.md`
+(§G13.4). The 256 MB ceiling is a hand-tuned value ratified there; changing it
 needs the reopen evidence the ADR names (a usage pattern where the ceiling
 thrashes or is wastefully large).

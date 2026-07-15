@@ -3,13 +3,13 @@ id: 2026-07-15-lazy-per-page-ocr-window
 title: Lazy per-page OCR window for large/multi-page documents (visible ±2, on-demand on jump, OCR-as-scanned for search/replace)
 priority: P2
 status: open
-source: ADR 0012 (OCR pipeline for images) — G12.3, deferred past the images PR
+source: ADR 0013 (OCR pipeline for images) — G13.3, deferred past the images PR
 created: 2026-07-15
 ---
 
 ## Threshold
 
-Per **ADR 0012 §G12.3**. For a document above the small-image threshold (or any
+Per **ADR 0013 §G13.3**. For a document above the small-image threshold (or any
 multi-page document), background OCR is confined to the visible page(s) **± 2**
 (N = 2, a 5-page window), recenters on demand when the user jumps, OCRs pages as
 a search/replace scan reaches them, and stays inside the existing
@@ -32,7 +32,7 @@ offscreen `QWidget::grab()` per AGENTS.md G2):
 
 ## Context
 
-ADR 0012 accepts the owner's tiered OCR policy: small images auto-OCR eagerly,
+ADR 0013 accepts the owner's tiered OCR policy: small images auto-OCR eagerly,
 larger/multi-page documents are lazy. This item is the **large/lazy** half,
 deferred past the images PR that accepts the ADR.
 
@@ -50,6 +50,6 @@ Current state this extends:
   (`MlScheduler.h:81-97`, `MlScheduler.cpp:65-90,256-262`); `[ml.scheduler]`
   settings (`src/settings/Settings.h:134-141`).
 
-Grounded by `docs/decision-records/0012-image-ocr-pipeline-lazy-window-bounded-cache.md`
-(§G12.3). The ± 2 window and N = 2 are hand-tuned values ratified there; a change
+Grounded by `docs/decision-records/0013-image-ocr-pipeline-lazy-window-bounded-cache.md`
+(§G13.3). The ± 2 window and N = 2 are hand-tuned values ratified there; a change
 needs the reopen evidence the ADR names.
