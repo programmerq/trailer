@@ -302,8 +302,12 @@ QString screenshotDir() {
 }
 
 void grabTo(QWidget *w, const QString &name) {
-    const QString path = QDir(screenshotDir()).absoluteFilePath(name);
-    w->grab().save(path, "PNG");
+    const QString dir = screenshotDir();
+    QVERIFY2(QDir().mkpath(dir) || QDir(dir).exists(),
+             qPrintable(QStringLiteral("G2 screenshot dir unavailable: %1").arg(dir)));
+    const QString path = QDir(dir).absoluteFilePath(name);
+    const bool saved = w->grab().save(path, "PNG");
+    QVERIFY2(saved, qPrintable(QStringLiteral("G2 screenshot save failed: %1").arg(path)));
     qInfo().noquote() << "G2-SCREENSHOT" << path;
 }
 
