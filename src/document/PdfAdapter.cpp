@@ -980,6 +980,13 @@ void PdfDocument::clearSearch() {
         m_searchModel->setSearchString(QString());
     }
     m_currentResult = -1;
+    // Reset the async-seed guard for symmetry with the empty-query branch of
+    // search() (PdfAdapter.cpp ~797). clearSearch() bypasses search(), so
+    // without this a stale m_seedPending / m_provisionalSeedIndex from the
+    // previous query would linger until the next non-empty query overwrote
+    // them.
+    m_seedPending = false;
+    m_provisionalSeedIndex = -1;
     if (m_view) {
         m_view->setCurrentSearchResultIndex(-1);
     }

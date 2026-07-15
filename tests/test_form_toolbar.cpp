@@ -142,12 +142,21 @@ void TestFormToolbar::toolsAreMutuallyExclusive() {
 // QIcon API does not throw — and we'd ship a blank-button toolbar.
 void TestFormToolbar::everyActionHasARenderedIcon() {
     FormToolbar bar;
+    // The leading expanding spacer (ADR 0007 R2b, right-aligns the tool
+    // group) is the ONE QWidgetAction that legitimately carries no icon.
+    // Pin the count to exactly one so a future real widget-action (which
+    // SHOULD carry an icon) can't be silently skipped by the blanket
+    // QWidgetAction guard below — it would bump this count and fail here.
+    int widgetActionCount = 0;
+    for (QAction* a : bar.actions()) {
+        if (qobject_cast<QWidgetAction*>(a)) ++widgetActionCount;
+    }
+    QCOMPARE(widgetActionCount, 1);
     for (QAction* a : bar.actions()) {
         if (a->isSeparator()) continue;
-        // The leading expanding spacer (ADR 0007 R2b, right-aligns the
-        // tool group) is a QWidgetAction hosting a blank QWidget; it
-        // legitimately carries no icon, so it's not part of the
-        // icon-coverage contract.
+        // Skip only the known leading spacer (the sole QWidgetAction,
+        // asserted above); a blank QWidget host legitimately carries no
+        // icon, so it's not part of the icon-coverage contract.
         if (qobject_cast<QWidgetAction*>(a)) continue;
         QVERIFY2(!a->icon().isNull(),
                  qPrintable(QStringLiteral("action without icon: %1")

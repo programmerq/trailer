@@ -235,11 +235,16 @@ class PdfDocument : public IDocument {
     // Async-populate seed guard (ADR 0006 R1). The search model streams
     // rowsInserted incrementally in page order, so each populate re-seeds
     // against the growing model until the current-page rows arrive.
-    // m_seedPending is true from when a non-empty query is set until the
-    // seed settles or the user manually navigates; m_seedFromPage is the
-    // viewport page captured at query time; m_provisionalSeedIndex is the
-    // last seed index WE pushed, so a differing view index reads as
-    // genuine user navigation and freezes the seed.
+    // m_seedPending is set true when a non-empty query is issued and is
+    // cleared only on a reset event: a new/empty query (search() or
+    // clearSearch()) or genuine user navigation freezing the seed. It is
+    // deliberately NOT cleared when the async seed simply settles — a
+    // fully-populated model keeps re-running onSearchResultsPopulated, which
+    // recomputes the same converged seed each time, so leaving the flag set
+    // is harmless. m_seedFromPage is the viewport page captured at query
+    // time; m_provisionalSeedIndex is the last seed index WE pushed, so a
+    // differing view index reads as genuine user navigation and freezes the
+    // seed.
     bool m_seedPending = false;
     int m_seedFromPage = 0;
     int m_provisionalSeedIndex = -1;

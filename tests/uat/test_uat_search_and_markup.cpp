@@ -252,6 +252,45 @@ QString writePdfWithKeywordOnPages(const QString &path, const QString &keyword,
     return path;
 }
 
+// Like writePdfWithKeywordOnPages, but one designated `seedPage` carries
+// `seedPageCount` (>=2) occurrences of `keyword` stamped at known,
+// ASCENDING y positions — so reading order (top-to-bottom) is
+// deterministic and the tie-break rule (ADR 0006 item 3 / R4 — the
+// earliest-indexed match on the at/after-page seed wins) can be asserted.
+// Every other page in `pages` still gets exactly one match; `seedPage`
+// gets `seedPageCount` instead of one. QPdfSearchModel streams matches in
+// reading order within a page, so the topmost (smallest y) occurrence is
+// the earliest model index on that page.
+QString writePdfWithMultiMatchSeedPage(const QString &path, const QString &keyword,
+                                       const QList<int> &pages, int totalPages, int seedPage,
+                                       int seedPageCount) {
+    QPdfWriter writer(path);
+    writer.setPageSize(QPageSize(QPageSize::A4));
+    QPainter p(&writer);
+    QFont font(QStringLiteral("Helvetica"));
+    font.setPointSize(24);
+    p.setFont(font);
+    for (int i = 0; i < totalPages; ++i) {
+        if (i == seedPage) {
+            // Ascending y => the j==0 stamp is topmost => the earliest
+            // reading-order match => the smallest model index on this page.
+            for (int j = 0; j < seedPageCount; ++j) {
+                p.drawText(300, 400 + j * 800,
+                           QStringLiteral("Seed-page hit #%1: %2").arg(j).arg(keyword));
+            }
+        } else if (pages.contains(i)) {
+            p.drawText(300, 400, QStringLiteral("Match on page %1: %2").arg(i).arg(keyword));
+        } else {
+            p.drawText(300, 400,
+                       QStringLiteral("Filler content on page %1 with no hit").arg(i));
+        }
+        if (i < totalPages - 1)
+            writer.newPage();
+    }
+    p.end();
+    return path;
+}
+
 // Persistent screenshot dir (survives past the run, unlike
 // QTemporaryDir) for G2 evidence PNGs. Mirrors the helper in
 // test_uat_foundations.cpp; file-local so each translation unit keeps
@@ -363,6 +402,7 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_vwr_067_searchShowsMatchCounter();
     void uat_vwr_068_searchSeedsFirstMatchAtOrAfterCurrentPage();
     void uat_vwr_069_searchSeedPreservesWholeDocumentCoverage();
+    void uat_vwr_070_searchSeedTieBreakEarliestOnPage();
     void uat_vwr_083_magnifierEscapeDeactivates();
     void uat_ann_010_rectangleToolCreatesAnnotation();
     void uat_ann_012_lineToolCreatesAnnotation();
@@ -825,6 +865,82 @@ void TestUatSearchAndMarkup::uat_vwr_069_searchSeedPreservesWholeDocumentCoverag
     emit searchBar->findPreviousRequested();
     QApplication::processEvents();
     QCOMPARE(currentSeedPage(view), 2);
+}
+
+// UAT-VWR-070 — Tie-break (ADR 0006 item 3 / R4): when the at/after-page
+// seed page carries several matches, the seed lands on the EARLIEST model
+// index on that page — the first match in reading order — not a later
+// occurrence. The fixture stamps TWO occurrences on the seed page at
+// known, ascending y positions, so a regression returning the LAST match
+// on the seed page lands on the higher index and fails this test.
+void TestUatSearchAndMarkup::uat_vwr_070_searchSeedTieBreakEarliestOnPage() {
+    QVERIFY(m_scratch.isValid());
+    const QString keyword = QStringLiteral("zephyrquux");
+    // One match each on pages 2 and 8; the SEED page (5) carries TWO.
+    const QList<int> matchPages{2, 5, 8};
+    const int totalPages = 13;
+    const int seedPage = 5;
+    const int seedPageCount = 2;
+    const QString pdfPath = writePdfWithMultiMatchSeedPage(
+        m_scratch.filePath(QStringLiteral("uat_vwr_070.pdf")), keyword, matchPages, totalPages,
+        seedPage, seedPageCount);
+
+    // Global match layout in page/reading order:
+    //   idx 0 → page 2 (single)
+    //   idx 1 → page 5, TOP occurrence  (the correct tie-break seed)
+    //   idx 2 → page 5, lower occurrence (a "last match" regression lands here)
+    //   idx 3 → page 8 (single)
+    const int knownTotal = 4;
+    const int expectedSeedIndex = 1; // earliest model index on the seed page
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    QVERIFY2(doc->supportsSearch(), "PDF document should report supportsSearch()");
+
+    QAction *findAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Find…"));
+    QVERIFY(findAction);
+    findAction->trigger();
+    QApplication::processEvents();
+
+    auto *searchBar = mw->findChild<SearchBar *>();
+    QVERIFY(searchBar);
+    auto *lineEdit = searchBar->findChild<QLineEdit *>();
+    QVERIFY(lineEdit);
+    auto *view = mw->findChild<QPdfView *>();
+    QVERIFY(view);
+
+    doc->goToPage(seedPage);
+    QApplication::processEvents();
+    QTRY_COMPARE_WITH_TIMEOUT(doc->currentPage(), seedPage, 2000);
+
+    lineEdit->setText(keyword);
+    QApplication::processEvents();
+    // Read the seed only after FULL population (async guard) — same wait
+    // as the other position-aware seed tests.
+    QTRY_VERIFY_WITH_TIMEOUT(view->searchModel() != nullptr &&
+                                 view->searchModel()->rowCount(QModelIndex()) == knownTotal,
+                             5000);
+    QTRY_VERIFY_WITH_TIMEOUT(view->currentSearchResultIndex() >= 0, 5000);
+
+    // The seed sits on the seed page…
+    QCOMPARE(currentSeedPage(view), seedPage);
+    // …and specifically on the EARLIEST model index on that page (the
+    // first reading-order occurrence). A regression returning the last
+    // match on the seed page would land on index 2 here and fail.
+    QCOMPARE(view->currentSearchResultIndex(), expectedSeedIndex);
+    QCOMPARE(doc->currentSearchMatchIndex(), expectedSeedIndex + 1); // 1-based counter
+
+    grabTo(mw, QStringLiteral("vwr070_tiebreak_earliest_on_page.png"));
 }
 
 // UAT-VWR-063 — Escape clears the active query and any match
@@ -2776,13 +2892,45 @@ void TestUatSearchAndMarkup::uat_xct_070_toolbarAnchoringAndOverflow() {
     grabTo(mw, QStringLiteral("xct070_narrow_overflow.png"));
 
     // ---- Invariant #4: chevron width pinned + neighbours stable ----
-    // The R2 stylesheet pins the chevron's content width to 20px; the
-    // Fusion style frames it with a 1px border on each side, so the
-    // realised widget width is a deterministic 22px (vs. the unpinned
-    // default of 12px). What matters is that it is fixed, so toggling
-    // the overflow popup cannot reflow neighbours.
-    const int kPinnedChevronWidth = 22;
-    QCOMPARE(markupExt->width(), kPinnedChevronWidth);
+    // The R2 stylesheet (kToolbarExtensionPinStyle) pins the chevron's
+    // *content* width to 20px. The realised widget width is style-
+    // dependent: Fusion frames it with ~1px on each side (→ 22px), other
+    // styles add a different frame — so a hardcoded "== 22" only passes
+    // under Fusion/headless-Linux and is a portability trap. Assert a
+    // style-relative window instead: >= 20 (the stylesheet min-width
+    // floor) and <= 24 (a generous frame allowance). This still
+    // discriminates against the R2 stylesheet being removed — the
+    // unpinned default extent is ~12px, which is < 20 and fails the floor.
+    constexpr int kChevronMinPin = 20; // stylesheet min-width floor
+    constexpr int kChevronMaxPin = 24; // + frame allowance
+    const int pinnedW = markupExt->width();
+    QVERIFY2(pinnedW >= kChevronMinPin && pinnedW <= kChevronMaxPin,
+             qPrintable(QStringLiteral("pinned chevron width %1 must be in the "
+                                       "style-relative range [%2,%3] (removing the R2 "
+                                       "stylesheet drops it to the ~12px default)")
+                            .arg(pinnedW)
+                            .arg(kChevronMinPin)
+                            .arg(kChevronMaxPin)));
+
+    // Pin invariance: the SAME class-targeted stylesheet is set on all
+    // three toolbars, so their extension chevrons must share one width.
+    // The chevrons are created eagerly in Qt6 (findChild-reachable even
+    // while hidden); sizeHint() reflects the QSS min/max-width clamp
+    // regardless of overflow state, so it is the style-relative measure
+    // to compare across bars.
+    QToolButton *mainExtBtn =
+        mainTb->findChild<QToolButton *>(QStringLiteral("qt_toolbar_ext_button"));
+    QToolButton *formExtBtn =
+        formTb->findChild<QToolButton *>(QStringLiteral("qt_toolbar_ext_button"));
+    QVERIFY2(mainExtBtn && formExtBtn, "main/form extension chevrons not found");
+    const int markupHint = markupExt->sizeHint().width();
+    QVERIFY2(mainExtBtn->sizeHint().width() == markupHint &&
+                 formExtBtn->sizeHint().width() == markupHint,
+             qPrintable(QStringLiteral("all three toolbars' pinned chevrons must share "
+                                       "one width (pin invariance): markup=%1 main=%2 form=%3")
+                            .arg(markupHint)
+                            .arg(mainExtBtn->sizeHint().width())
+                            .arg(formExtBtn->sizeHint().width())));
 
     // The chevron must not overlap the last visible markup button.
     QAction *markupSelect = findToolAction(markupTb, QStringLiteral("Select"));
@@ -2816,7 +2964,57 @@ void TestUatSearchAndMarkup::uat_xct_070_toolbarAnchoringAndOverflow() {
     markupTb->layout()->activate();
     QApplication::processEvents();
     QTRY_VERIFY(markupExt->isVisible());
-    QCOMPARE(markupExt->width(), kPinnedChevronWidth);
+    const int pinnedW2 = markupExt->width();
+    QVERIFY2(pinnedW2 >= kChevronMinPin && pinnedW2 <= kChevronMaxPin,
+             "re-narrowed chevron must reappear at its pinned (style-relative) width");
+    // Pin invariance across the overflow appear/disappear toggle: the
+    // width does not depend on the overflow state.
+    QCOMPARE(pinnedW2, pinnedW);
+
+    // ---- R3 open-search overflow guard (ADR 0007, Option A, R3) ----
+    // The window minimum-width floor must fold in the OPENED search bar's
+    // footprint, not merely the collapsed search icon it measured at build
+    // time. Otherwise, at the minimum width, a user who OPENS Find gets the
+    // SearchBar (maxWidth 360, non-trivial minimumSizeHint) shoved into the
+    // main toolbar's OWN extension chevron — the exact HIG "trailing items
+    // stay visible at all sizes" violation R3 exists to prevent. Reproduce
+    // it: at the window minimum width, open the search bar and assert it
+    // sits fully inside the primary row and the main toolbar's own chevron
+    // never appears.
+    markupTb->hide();
+    formTb->hide();
+    mw->resize(mw->minimumWidth(), 750);
+    QApplication::processEvents();
+
+    QAction *findForOpen =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Find…"));
+    QVERIFY2(findForOpen, "Edit → Find… action not found");
+    findForOpen->trigger(); // showSearchBar(): hides the icon, expands the bar
+    QApplication::processEvents();
+    mainTb->layout()->activate();
+    QApplication::processEvents();
+
+    auto *searchBarWidget = mw->findChild<SearchBar *>();
+    QVERIFY2(searchBarWidget, "SearchBar widget not found");
+    QTRY_VERIFY2(searchBarWidget->isVisible(),
+                 "opening Find must expand the SearchBar at the window minimum width, "
+                 "not collapse it into the main toolbar's overflow chevron");
+    const QRect barInMain(searchBarWidget->mapTo(mainTb, QPoint(0, 0)), searchBarWidget->size());
+    QVERIFY2(mainTb->rect().contains(barInMain.center()),
+             qPrintable(QStringLiteral("opened SearchBar center (%1,%2) must sit inside the "
+                                       "main toolbar rect %3x%4 — not overflow into its own "
+                                       "chevron — at the window minimum width")
+                            .arg(barInMain.center().x())
+                            .arg(barInMain.center().y())
+                            .arg(mainTb->rect().width())
+                            .arg(mainTb->rect().height())));
+
+    QToolButton *mainOwnExt =
+        mainTb->findChild<QToolButton *>(QStringLiteral("qt_toolbar_ext_button"));
+    QVERIFY2(!mainOwnExt || !mainOwnExt->isVisible(),
+             "the main toolbar's OWN overflow chevron must NOT appear when Find is opened "
+             "at the window minimum width — the opened search must fit the primary row");
+    grabTo(mw, QStringLiteral("xct070_open_search_min_width.png"));
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG

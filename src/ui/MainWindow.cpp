@@ -755,7 +755,8 @@ void MainWindow::buildMainToolbar() {
     // row and got shoved right whenever the form bar was shown.
     // insertToolBar puts main at the FRONT of the top-area order
     // (main, markup, form); with a break before markup (below) and
-    // before form (:341) and NO break before main, main owns row 1
+    // before form (insertToolBarBreak(m_formToolbar), ~:359) and NO
+    // break before main, main owns row 1
     // permanently while markup or form take row 2.
     insertToolBar(m_markupToolbar, m_mainToolbar);
     insertToolBarBreak(m_markupToolbar);
@@ -874,14 +875,36 @@ void MainWindow::buildMainToolbar() {
     // main row, so without a floor a narrow-enough window would hide
     // search behind the main toolbar's own "show more" menu — breaking
     // the HIG rule that trailing items stay visible at every window
-    // size. Pin the window minimum to the main toolbar's content width
-    // (the search bar itself is collapsed to its icon button here, so
-    // this measures the primary row's minimum footprint). This stays
-    // well under the launch resize(1100, 750) so it never fights it.
+    // size. Measuring sizeHint() with the search collapsed to its icon
+    // button (its action is hidden above) UNDER-counts the footprint the
+    // row needs once the user OPENS Find: showSearchBar() hides the
+    // ~icon-sized button and expands the far wider SearchBar (maxWidth
+    // 360). To pin the floor to the OPENED-search footprint, temporarily
+    // reveal the search-bar action (and hide the button) exactly as
+    // showSearchBar() does, re-measure the toolbar's sizeHint(), then
+    // restore the collapsed state. Using the opened sizeHint (not the
+    // SearchBar's bare minimumSizeHint) accounts for the toolbar's own
+    // layout margins/spacing, so the primary row fits the opened search
+    // at the minimum width with no off-by-margin overflow. This stays
+    // well under the launch resize(1100, 750) so it never fights it, and
+    // above the sidebar's 240px minimum.
     m_mainToolbar->ensurePolished();
+    m_searchBar->ensurePolished();
     const int primaryRowWidth = m_mainToolbar->sizeHint().width();
     if (primaryRowWidth > 0) {
-        setMinimumWidth(primaryRowWidth);
+        m_searchButton->setVisible(false);
+        if (m_searchBarAction)
+            m_searchBarAction->setVisible(true);
+        m_searchBar->setVisible(true);
+        m_mainToolbar->layout()->activate();
+        const int openedSearchFloor = m_mainToolbar->sizeHint().width();
+        // Restore the collapsed default (button shown, bar hidden).
+        m_searchBar->hide();
+        if (m_searchBarAction)
+            m_searchBarAction->setVisible(false);
+        m_searchButton->setVisible(true);
+        m_mainToolbar->layout()->activate();
+        setMinimumWidth(qMax(primaryRowWidth, openedSearchFloor));
     }
 }
 
