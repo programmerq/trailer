@@ -288,6 +288,16 @@ if(UNIX AND NOT APPLE)
                 DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${_size}x${_size}/apps
                 RENAME trailer.png)
     endforeach()
+
+    # License / attribution files. Ship the first-party MIT license, the
+    # third-party dependency summary, and the verbatim upstream license texts
+    # so the packaged artifact satisfies each dependency's redistribution
+    # terms. CMAKE_INSTALL_DOCDIR (from GNUInstallDirs) resolves to
+    # share/doc/trailer.
+    install(FILES LICENSE THIRD_PARTY_LICENSES.md
+            DESTINATION ${CMAKE_INSTALL_DOCDIR})
+    install(DIRECTORY licenses/third-party
+            DESTINATION ${CMAKE_INSTALL_DOCDIR}/licenses)
 endif()
 
 # Developer-facing tool: renders every toolbar SVG into a sheet PNG
