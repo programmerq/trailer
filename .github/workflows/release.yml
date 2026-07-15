@@ -141,7 +141,13 @@ jobs:
           fi
 
   linux-build:
-    needs: [precheck]
+    # UAT gates the per-OS build matrix: a UAT failure short-circuits
+    # the release before any expensive artifact is built (see the
+    # release-uat-before-build backlog item). precheck stays in
+    # `needs:` because the `if:` references needs.precheck.outputs.*;
+    # a plain (non-always()) `if:` still requires every listed need to
+    # succeed, so adding `uat` orders this job after it and fails fast.
+    needs: [precheck, uat]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: Linux build
     runs-on: trailer-k8s
@@ -200,7 +206,13 @@ jobs:
           retention-days: 30
 
   windows-cross:
-    needs: [precheck]
+    # UAT gates the per-OS build matrix: a UAT failure short-circuits
+    # the release before any expensive artifact is built (see the
+    # release-uat-before-build backlog item). precheck stays in
+    # `needs:` because the `if:` references needs.precheck.outputs.*;
+    # a plain (non-always()) `if:` still requires every listed need to
+    # succeed, so adding `uat` orders this job after it and fails fast.
+    needs: [precheck, uat]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: Windows cross-build (mingw-w64)
     # Runs directly on the self-hosted trailer-k8s pods — NO Docker.
@@ -336,14 +348,18 @@ jobs:
           retention-days: 30
 
   macos-build:
-    # Gate the expensive GitHub-hosted macOS build behind the two
+    # Gate the expensive GitHub-hosted macOS build behind UAT and the two
     # self-hosted targets (linux-build + windows-cross) so a flaky-runner
-    # rerun doesn't burn macOS action minutes until the cheap self-hosted
-    # platforms pass. precheck stays in `needs:` because the `if:` below
-    # references needs.precheck.outputs.*; a plain (non-always()) `if:`
-    # still requires every listed need to succeed, so adding the two
-    # build jobs is sufficient to order macos-build after them.
-    needs: [precheck, linux-build, windows-cross]
+    # rerun doesn't burn macOS action minutes until UAT passes and the
+    # cheap self-hosted platforms pass. UAT is the primary fail-fast gate
+    # (see the release-uat-before-build backlog item); linux-build and
+    # windows-cross already gate on `uat` too, so listing them here also
+    # transitively orders macos-build after UAT. precheck stays in
+    # `needs:` because the `if:` below references needs.precheck.outputs.*;
+    # a plain (non-always()) `if:` still requires every listed need to
+    # succeed, so adding these jobs is sufficient to order macos-build
+    # after them.
+    needs: [precheck, uat, linux-build, windows-cross]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: macOS .app build (Apple Silicon)
     # macos-14 is Apple Silicon. The artifact is arm64-only because
