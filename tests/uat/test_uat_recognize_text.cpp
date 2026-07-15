@@ -29,11 +29,14 @@
 #include "document/IDocument.h"
 #include "document/ImageAdapter.h"
 #include "document/SelectableTextStore.h"
+#include "ml/CancellationToken.h"
 #include "ml/ModelRegistry.h"
 #include "ml/OcrEngine.h"
 #include "settings/AppPaths.h"
+#include "settings/Settings.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
+#include "ui/MlProgressWidget.h"
 #include "ui/OcrController.h"
 #include "ui/OcrResultsDialog.h"
 #include "ui/SelectableTextLayer.h"
@@ -54,6 +57,9 @@
 #include <QPainter>
 #include <QPdfWriter>
 #include <QPolygon>
+#include <QSemaphore>
+
+#include <atomic>
 #include <QTemporaryDir>
 #include <QToolButton>
 #include <QWidget>
@@ -153,6 +159,19 @@ void saveNoticeShot(MainWindow *mw, const QString &name) {
     mw->grab().save(QString::fromLocal8Bit(shotDir) + "/" + name);
 }
 
+// A recognizer that blocks on `gate` before returning a single sentinel
+// block, so a batch stays mid-flight long enough to grab the revealed
+// progress widget.
+OcrController::RecognizeFn gatedRecognizer(std::shared_ptr<QSemaphore> gate) {
+    return [gate](const QImage &, const CancellationToken *) -> QVector<OcrEngine::TextBlock> {
+        gate->acquire();
+        OcrEngine::TextBlock b;
+        b.text = QStringLiteral("recognised");
+        b.polygon = QPolygon(QRect(0, 0, 20, 20));
+        return {b};
+    };
+}
+
 } // namespace
 
 class TestUatRecognizeText : public QObject {
@@ -165,6 +184,10 @@ class TestUatRecognizeText : public QObject {
     void uat_ocr_040_recognizeTextDialogOffersForceRerunForPdf();
     void uat_ocr_050_recognizeTextLayerIsOverlayChildOfView();
     void uat_ocr_060_largeDocNoticeGuardedDismissableSelfClearing();
+    void uat_ocr_065_noticeDismissalIsPerDocument();
+    void uat_ocr_070_nonForceSkipsNativeTextForceReruns();
+    void uat_ocr_080_ocrOnPdfBlocksLandInPointSpace();
+    void uat_ocr_090_noticeLinkRevealsProgressNoModal();
 
   private:
     QTemporaryDir m_scratch;
@@ -454,6 +477,249 @@ void TestUatRecognizeText::uat_ocr_060_largeDocNoticeGuardedDismissableSelfClear
     QTest::qWait(250); // let the poll re-derive
     QVERIFY2(!notice->isVisible(),
              "notice must self-clear once the page gains OCR results");
+}
+
+// uat_ocr_065 — dismissal is truly per-document (reviewer #3): dismiss on
+// doc A, switch to B, back to A → A stays dismissed; B is independent.
+void TestUatRecognizeText::uat_ocr_065_noticeDismissalIsPerDocument() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    // Two docs in ONE window (tabs) so they share the single status-bar
+    // notice; NewWindow would give each its own MainWindow and moot the
+    // per-document question.
+    app->settings().setOpenFilesIn(OpenFilesIn::NewTab);
+
+    const QString a = writeMultiPagePdf(m_scratch.filePath(QStringLiteral("perdoc_a.pdf")), 55,
+                                        /*withText=*/false);
+    const QString b = writeMultiPagePdf(m_scratch.filePath(QStringLiteral("perdoc_b.pdf")), 55,
+                                        /*withText=*/false);
+    app->openFiles({a});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    app->openFiles({b});
+    QApplication::processEvents();
+    QCOMPARE(dv->documentCount(), 2);
+
+    auto *notice = mw->findChild<QWidget *>(QStringLiteral("largeDocOcrHint"));
+    QVERIFY(notice);
+    auto *dismiss = mw->findChild<QToolButton *>(QStringLiteral("largeDocOcrHintDismiss"));
+    QVERIFY(dismiss);
+
+    // Current tab is B (text-less large) → notice visible; dismiss it.
+    QVERIFY2(notice->isVisible(), "notice visible on doc B");
+    dismiss->click();
+    QApplication::processEvents();
+    QVERIFY2(!notice->isVisible(), "notice hidden after dismiss on B");
+
+    // Switch to A → notice re-appears (A was never dismissed).
+    dv->setCurrentIndex(0);
+    QApplication::processEvents();
+    QVERIFY2(notice->isVisible(), "notice must show on A — dismissal is per-document, not global");
+
+    // Back to B → still dismissed.
+    dv->setCurrentIndex(1);
+    QApplication::processEvents();
+    QVERIFY2(!notice->isVisible(), "B stays dismissed across a tab switch away and back");
+
+    // A remains independent.
+    dv->setCurrentIndex(0);
+    QApplication::processEvents();
+    QVERIFY2(notice->isVisible(), "A remains un-dismissed after revisiting B");
+
+    app->settings().setOpenFilesIn(OpenFilesIn::NewWindow);
+}
+
+// uat_ocr_070 — on a born-digital page (native text already ingested), a
+// NON-force Recognize is a no-op (page already selectable), while force-
+// rerun re-OCRs (reviewer #5 — replaces the g1 masking with an explicit
+// assertion of the intended behaviour).
+void TestUatRecognizeText::uat_ocr_070_nonForceSkipsNativeTextForceReruns() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    const QString pdf = writeMultiPagePdf(m_scratch.filePath(QStringLiteral("bornsmall.pdf")), 2,
+                                          /*withText=*/true);
+    app->openFiles({pdf});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    IDocument *doc = mw->findChild<DocumentView *>()->currentDocument();
+    QVERIFY(doc);
+    auto *store = doc->selectableText();
+    QVERIFY(store);
+    // Native text was ingested on open.
+    QVERIFY2(store->hasResults(0), "born-digital page 0 has native text after open");
+    const QString nativeText = store->blocks(0).front().text;
+    QVERIFY(nativeText.contains(QStringLiteral("Born-digital")));
+
+    OcrController controller(app);
+    controller.setDocument(doc);
+    controller.setProgressRevealDelayMs(0);
+    std::atomic<int> calls{0};
+    controller.setRecognizerForTesting(
+        [&calls](const QImage &, const CancellationToken *) -> QVector<OcrEngine::TextBlock> {
+            ++calls;
+            OcrEngine::TextBlock b;
+            b.text = QStringLiteral("ocr-sentinel");
+            b.polygon = QPolygon(QRect(0, 0, 20, 20));
+            return {b};
+        });
+
+    // NON-force: page already has native text → recognizer never runs, the
+    // native block is preserved.
+    controller.submitUserPages(doc, {0}, /*forceRerun=*/false);
+    QApplication::processEvents();
+    QTest::qWait(50);
+    QCOMPARE(calls.load(), 0);
+    QCOMPARE(store->blocks(0).front().text, nativeText);
+
+    // Force-rerun: the recognizer runs and replaces the block.
+    controller.submitUserPages(doc, {0}, /*forceRerun=*/true);
+    QTRY_VERIFY(store->hasResults(0) &&
+                store->blocks(0).front().text == QStringLiteral("ocr-sentinel"));
+    QVERIFY(calls.load() >= 1);
+}
+
+// uat_ocr_080 — forced OCR on a PDF page stores blocks in PDF POINT space
+// aligned with native/docToView, NOT in 144-DPI pixel space (reviewer #2
+// regression). A stub recognizer returns a block at the glyph's 144-DPI
+// pixel location; after ingestion it must land back on the native point
+// geometry (×0.5), not 2× off.
+void TestUatRecognizeText::uat_ocr_080_ocrOnPdfBlocksLandInPointSpace() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    const QString pdf = writeMultiPagePdf(m_scratch.filePath(QStringLiteral("ocrpts.pdf")), 1,
+                                          /*withText=*/true);
+    app->openFiles({pdf});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    IDocument *doc = mw->findChild<DocumentView *>()->currentDocument();
+    QVERIFY(doc);
+    auto *store = doc->selectableText();
+    QVERIFY(store && store->hasResults(0));
+    // Native (known-aligned, point-space) geometry for the line.
+    const QRect nativePts = store->blocks(0).front().polygon.boundingRect();
+    QVERIFY(!nativePts.isEmpty());
+
+    // renderPageForOcr is 144 DPI = 2× points, so a real OCR pass would
+    // detect this glyph at ~2× the native point rect. The stub returns
+    // exactly that pixel-space rect.
+    const QRect pixelRect(nativePts.x() * 2, nativePts.y() * 2, nativePts.width() * 2,
+                          nativePts.height() * 2);
+    OcrController controller(app);
+    controller.setDocument(doc);
+    controller.setProgressRevealDelayMs(0);
+    controller.setRecognizerForTesting(
+        [pixelRect](const QImage &, const CancellationToken *) -> QVector<OcrEngine::TextBlock> {
+            OcrEngine::TextBlock b;
+            b.text = QStringLiteral("ocrblock");
+            b.polygon = QPolygon(pixelRect);
+            return {b};
+        });
+
+    controller.submitUserPages(doc, {0}, /*forceRerun=*/true);
+    QTRY_VERIFY(store->hasResults(0) &&
+                store->blocks(0).front().text == QStringLiteral("ocrblock"));
+    const QRect storedPts = store->blocks(0).front().polygon.boundingRect();
+
+    // The stored OCR block must land on the native point geometry (scaled
+    // back by ×0.5), not at the raw 2× pixel location.
+    const QRect inter = storedPts.intersected(nativePts);
+    const double coverage = (inter.width() * double(inter.height())) /
+                            (nativePts.width() * double(nativePts.height()));
+    QVERIFY2(coverage > 0.8,
+             qPrintable(QStringLiteral("OCR-on-PDF block not aligned to point space: coverage %1, "
+                                       "stored %2x%3 @ %4,%5 vs native %6x%7 @ %8,%9")
+                            .arg(coverage)
+                            .arg(storedPts.width()).arg(storedPts.height())
+                            .arg(storedPts.x()).arg(storedPts.y())
+                            .arg(nativePts.width()).arg(nativePts.height())
+                            .arg(nativePts.x()).arg(nativePts.y())));
+    // And it is emphatically NOT the un-scaled 2× rect.
+    QVERIFY2(std::abs(storedPts.width() - nativePts.width()) <= 3,
+             "stored width must match point space, not be ~2× (unscaled) off");
+    QVERIFY2(storedPts.width() < pixelRect.width() - 2,
+             "stored block must be scaled down from the 144-DPI pixel rect");
+}
+
+// uat_ocr_090 — ADR-0002 G5: clicking the notice link reveals the standard
+// MlProgressWidget with the model present (no ad-hoc modal), and routes to
+// the consent gate with the model absent (no QDialog spawned). Grabs both.
+void TestUatRecognizeText::uat_ocr_090_noticeLinkRevealsProgressNoModal() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    const QString scan = writeMultiPagePdf(m_scratch.filePath(QStringLiteral("g5scan.pdf")), 55,
+                                           /*withText=*/false);
+    app->openFiles({scan});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *notice = mw->findChild<QWidget *>(QStringLiteral("largeDocOcrHint"));
+    auto *link = mw->findChild<QLabel *>(QStringLiteral("largeDocOcrHintLink"));
+    auto *ctrl = mw->findChild<OcrController *>();
+    auto *mlp = mw->findChild<MlProgressWidget *>();
+    QVERIFY(notice && link && ctrl && mlp);
+    QVERIFY(notice->isVisible());
+
+    // --- Model present: link reveals the standard progress widget, no modal.
+    ctrl->setProgressRevealDelayMs(0);
+    auto gate = std::make_shared<QSemaphore>();
+    ctrl->setRecognizerForTesting(gatedRecognizer(gate));
+    mw->setOcrModelDownloadHookForTesting([]() { return true; });
+    emit link->linkActivated(QStringLiteral("#recognize"));
+    QApplication::processEvents();
+    QTRY_VERIFY2(mlp->state() == MlProgressWidget::Running,
+                 "notice link with model present must reveal the MlProgressWidget");
+    QCOMPARE(QApplication::activeModalWidget(), nullptr);
+    for (QWidget *w : QApplication::topLevelWidgets()) {
+        QVERIFY2(!qobject_cast<QMessageBox *>(w), "no ad-hoc QMessageBox");
+        QVERIFY2(!qobject_cast<QDialog *>(w), "no ad-hoc QDialog");
+    }
+    saveNoticeShot(mw, QStringLiteral("notice_g5_progress_model_present.png"));
+    gate->release(1);
+    QTRY_VERIFY(mlp->state() != MlProgressWidget::Running);
+    mw->setOcrModelDownloadHookForTesting(nullptr);
+
+    // --- Model absent: link routes to the consent gate, no dialog, no
+    // silent write. Reopen a fresh scan so the store is empty again.
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (qobject_cast<MainWindow *>(w))
+            w->close();
+    }
+    QApplication::processEvents();
+    const QString scan2 = writeMultiPagePdf(m_scratch.filePath(QStringLiteral("g5scan2.pdf")), 55,
+                                            /*withText=*/false);
+    app->openFiles({scan2});
+    QApplication::processEvents();
+    mw = currentMainWindow();
+    QVERIFY(mw);
+    link = mw->findChild<QLabel *>(QStringLiteral("largeDocOcrHintLink"));
+    IDocument *doc = mw->findChild<DocumentView *>()->currentDocument();
+    QVERIFY(link && doc);
+    bool routedToConsent = false;
+    mw->setOcrModelDownloadHookForTesting([&routedToConsent]() {
+        routedToConsent = true;
+        return false; // consent entered, download not completed
+    });
+    emit link->linkActivated(QStringLiteral("#recognize"));
+    QApplication::processEvents();
+    QVERIFY2(routedToConsent, "model-absent click must reach the consent gate");
+    QVERIFY2(!doc->selectableText()->hasResults(doc->currentPage()),
+             "no text written when the model is absent (no silent no-op OCR)");
+    QCOMPARE(QApplication::activeModalWidget(), nullptr);
+    for (QWidget *w : QApplication::topLevelWidgets()) {
+        QVERIFY2(!qobject_cast<QMessageBox *>(w), "consent routing must not spawn a QMessageBox");
+        QVERIFY2(!qobject_cast<QDialog *>(w), "consent routing must not spawn a QDialog");
+    }
+    saveNoticeShot(mw, QStringLiteral("notice_g5_consent_model_absent.png"));
+    mw->setOcrModelDownloadHookForTesting(nullptr);
 }
 
 int main(int argc, char **argv) {

@@ -45,6 +45,12 @@ namespace {
 constexpr double kZoomStep = 1.1;
 constexpr double kZoomMin = 0.10;
 constexpr double kZoomMax = 16.0;
+// DPI at which pages are rasterised for OCR (renderPageForOcr). A 144-DPI
+// raster of a US-letter page is ~1224×1584 — above PP-OCRv3's stride
+// threshold, below the memory cost of 300 DPI on long PDFs. Shared with
+// ocrSourceToDocScale() so the OCR→point scale always tracks it (range
+// tried: 96 too coarse for 8pt scans, 300 blows memory on long docs).
+constexpr double kOcrRenderDpi = 144.0;
 
 // Bridge proxy for QPdfBookmarkModel: a vanilla QTreeView fetches
 // row text via Qt::DisplayRole, but QPdfBookmarkModel exposes its
@@ -723,16 +729,13 @@ QImage PdfDocument::renderPageForOcr(int pageIndex) const {
         return {};
     }
     // PP-OCRv3 caps the long side at 960 px internally, but we want a
-    // little extra so smaller scans render legible glyphs. A 144 DPI
-    // raster of a US-letter page is ~1224×1584 — comfortably above the
-    // detector's stride threshold and well below the 4× memory blow-up
-    // a 300 DPI render would cost on long PDFs.
-    constexpr double kDpi = 144.0;
+    // little extra so smaller scans render legible glyphs. See
+    // kOcrRenderDpi for the DPI rationale.
     const QSizeF pagePts = m_doc->pagePointSize(pageIndex);
     if (pagePts.isEmpty())
         return {};
-    const int w = std::max(1, static_cast<int>(pagePts.width() / 72.0 * kDpi));
-    const int h = std::max(1, static_cast<int>(pagePts.height() / 72.0 * kDpi));
+    const int w = std::max(1, static_cast<int>(pagePts.width() / 72.0 * kOcrRenderDpi));
+    const int h = std::max(1, static_cast<int>(pagePts.height() / 72.0 * kOcrRenderDpi));
     QImage rendered = m_doc->render(pageIndex, QSize(w, h));
     if (rendered.isNull())
         return rendered;
@@ -756,6 +759,21 @@ QSizeF PdfDocument::pageSizeHint(int pageIndex) const {
         return {};
     }
     return m_doc->pagePointSize(pageIndex);
+}
+
+double PdfDocument::ocrSourceToDocScale(int pageIndex) const {
+    if (!m_valid || !m_doc || pageIndex < 0 || pageIndex >= m_doc->pageCount())
+        return 1.0;
+    const QSizeF pagePts = m_doc->pagePointSize(pageIndex);
+    if (pagePts.isEmpty())
+        return 1.0;
+    // renderPageForOcr rasterises at kOcrRenderDpi; recognized block
+    // geometry therefore comes back in that pixel space, but docToView
+    // (and native ingestion) work in PDF points. Derive the points-per-
+    // pixel scale from the identical width computation so integer
+    // truncation is accounted for exactly.
+    const int renderedW = std::max(1, static_cast<int>(pagePts.width() / 72.0 * kOcrRenderDpi));
+    return pagePts.width() / static_cast<double>(renderedW);
 }
 
 bool PdfDocument::pageHasText(int page) const {

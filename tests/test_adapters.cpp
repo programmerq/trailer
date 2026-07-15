@@ -19,7 +19,37 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <algorithm>
+
 using namespace trailer;
+
+namespace {
+
+// Bounding box of the "dark" (text) pixels in a white-background render.
+// Used to locate where glyphs actually landed, independent of any text-
+// layer geometry, so selection alignment can be checked against the real
+// raster.
+QRect darkPixelBBox(const QImage &imgIn) {
+    const QImage img = imgIn.convertToFormat(QImage::Format_ARGB32);
+    int minX = img.width(), minY = img.height(), maxX = -1, maxY = -1;
+    for (int y = 0; y < img.height(); ++y) {
+        for (int x = 0; x < img.width(); ++x) {
+            const QRgb px = img.pixel(x, y);
+            // "Dark enough to be ink": any channel well below white.
+            if (qRed(px) < 128 && qGreen(px) < 128 && qBlue(px) < 128) {
+                minX = std::min(minX, x);
+                minY = std::min(minY, y);
+                maxX = std::max(maxX, x);
+                maxY = std::max(maxY, y);
+            }
+        }
+    }
+    if (maxX < 0)
+        return {};
+    return QRect(QPoint(minX, minY), QPoint(maxX, maxY));
+}
+
+} // namespace
 
 class TestAdapters : public QObject {
     Q_OBJECT
@@ -37,6 +67,8 @@ class TestAdapters : public QObject {
     void pdfDocumentPageHasTextDistinguishesTextFromBlankPage();
     void pdfDocumentNativeTextLayerFeedsSelectableStore();
     void pdfDocumentNativeTextDragSelectsRealString();
+    void pdfDocumentNativeTextAlignsWithRenderedGlyphs();
+    void pdfDocumentNativeTextMultiLineOrdering();
     void printSupportReflectsValidity();
     void pdfDocumentRotationMarksDirtyAndSaveClears();
     void pdfDocumentDeletePagesRemovesAndMarksDirty();
@@ -373,6 +405,138 @@ void TestAdapters::pdfDocumentNativeTextDragSelectsRealString() {
     // The selection equals what Ctrl+C would copy (selectedText() is the
     // clipboard source).
     QCOMPARE(layer.selectedBlockCount(), static_cast<int>(blocks.size()));
+}
+
+// R1 real-view alignment (reviewer M1): drive selection through the REAL
+// adapter docToView (points→view: origin + p*zoom, as in
+// PdfAdapter.cpp) and assert the block lands on the actual rendered
+// glyphs — not just that the wiring works under an identity mapping.
+void TestAdapters::pdfDocumentNativeTextAlignsWithRenderedGlyphs() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("align.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::Letter));
+        QPainter painter(&writer);
+        QFont f;
+        f.setPixelSize(48);
+        painter.setFont(f);
+        painter.drawText(QRect(120, 160, 1600, 120), Qt::AlignLeft, "AlignmentProbe");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    doc.ingestNativeTextLayer(0);
+    auto *store = doc.selectableText();
+    QVERIFY(store && store->hasResults(0));
+    const auto &blocks = store->blocks(0);
+    QVERIFY(!blocks.empty());
+    const QRectF blockPts = blocks.front().polygon.boundingRect();
+
+    // renderPageForOcr renders at 144 DPI = exactly 2× PDF points, so with
+    // zoom = 2 and origin = 0 the OCR raster IS the view space. This lets
+    // us locate the glyphs independently (dark pixels) and compare against
+    // the block mapped through the real docToView.
+    const double zoom = 2.0;
+    const QPointF origin(0.0, 0.0);
+    auto docToView = [origin, zoom](QPointF p) {
+        return QPointF(origin.x() + p.x() * zoom, origin.y() + p.y() * zoom);
+    };
+    const QRectF blockView(docToView(blockPts.topLeft()), docToView(blockPts.bottomRight()));
+
+    const QImage raster = doc.renderPageForOcr(0);
+    QVERIFY(!raster.isNull());
+    const QRect glyphPx = darkPixelBBox(raster);
+    QVERIFY2(!glyphPx.isEmpty(), "rendered page must contain ink");
+
+    // The block, mapped through the real docToView, must overlap the
+    // actual glyphs and cover most of them (proves point-space alignment,
+    // not a 2×-off placement).
+    QVERIFY2(blockView.intersects(QRectF(glyphPx)),
+             "native block (via real docToView) must overlap the rendered glyphs");
+    const QRectF inter = blockView.intersected(QRectF(glyphPx));
+    const double coverage =
+        (inter.width() * inter.height()) / (glyphPx.width() * glyphPx.height());
+    QVERIFY2(coverage > 0.6,
+             qPrintable(QStringLiteral("block/glyph overlap too small: %1 (blockView %2, glyphPx %3)")
+                            .arg(coverage)
+                            .arg(QStringLiteral("%1,%2 %3x%4")
+                                     .arg(blockView.x()).arg(blockView.y())
+                                     .arg(blockView.width()).arg(blockView.height()))
+                            .arg(QStringLiteral("%1,%2 %3x%4")
+                                     .arg(glyphPx.x()).arg(glyphPx.y())
+                                     .arg(glyphPx.width()).arg(glyphPx.height()))));
+
+    // And a real drag in VIEW space over the glyph region selects the
+    // block: this exercises SelectableTextLayer's docToView-fed hit-test
+    // end-to-end.
+    SelectableTextLayer layer;
+    layer.resize(raster.width() + 4, raster.height() + 4);
+    layer.setStore(store);
+    layer.setCurrentPage(0);
+    layer.setDocToView([docToView](QPointF p, int) { return docToView(p); });
+    const QString selected =
+        layer.simulateDragForTest(QPointF(glyphPx.left() + 1, glyphPx.top() + 1),
+                                  QPointF(glyphPx.right() - 1, glyphPx.bottom() - 1));
+    QVERIFY2(selected.contains(QStringLiteral("Alignment")),
+             qPrintable(QStringLiteral("view-space drag over glyphs missed the block, got: ") +
+                        selected));
+}
+
+// R1 multi-line (reviewer #6): a two-line page produces per-line blocks in
+// reading order with vertically ordered, non-overlapping rects — proving
+// the getAllText index → getSelectionAtIndex per-line mapping on real
+// multi-line content, not just a single line.
+void TestAdapters::pdfDocumentNativeTextMultiLineOrdering() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("multiline.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::Letter));
+        // Resolution 72 → device units are PDF points, so the two lines
+        // are ~150pt apart and Qt keeps them as distinct text lines (at the
+        // default 1200 DPI the same pixel gap collapses to ~10pt and Qt
+        // merges them into one line).
+        writer.setResolution(72);
+        QPainter painter(&writer);
+        QFont f;
+        f.setPixelSize(24);
+        painter.setFont(f);
+        painter.drawText(QRect(72, 100, 400, 40), Qt::AlignLeft, "First line alpha");
+        painter.drawText(QRect(72, 250, 400, 40), Qt::AlignLeft, "Second line beta");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    doc.ingestNativeTextLayer(0);
+    const auto &blocks = doc.selectableText()->blocks(0);
+    QVERIFY2(blocks.size() >= 2,
+             qPrintable(QStringLiteral("expected >=2 line blocks, got %1").arg(blocks.size())));
+
+    // Locate the alpha/beta lines regardless of block index order.
+    int alphaIdx = -1, betaIdx = -1;
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        if (blocks[i].text.contains(QStringLiteral("alpha")))
+            alphaIdx = static_cast<int>(i);
+        if (blocks[i].text.contains(QStringLiteral("beta")))
+            betaIdx = static_cast<int>(i);
+    }
+    QVERIFY2(alphaIdx >= 0, "first line ('alpha') must be its own block");
+    QVERIFY2(betaIdx >= 0, "second line ('beta') must be its own block");
+    QVERIFY2(alphaIdx != betaIdx, "the two lines must be distinct blocks");
+
+    const QRect alphaR = blocks[static_cast<size_t>(alphaIdx)].polygon.boundingRect();
+    const QRect betaR = blocks[static_cast<size_t>(betaIdx)].polygon.boundingRect();
+    // The first line sits above the second, and their rects don't overlap
+    // vertically (each line mapped to its own geometry, no bleed).
+    QVERIFY2(alphaR.center().y() < betaR.center().y(),
+             "first line must render above the second");
+    QVERIFY2(alphaR.bottom() <= betaR.top(),
+             "line rects must not overlap vertically");
 }
 
 void TestAdapters::printSupportReflectsValidity() {

@@ -113,14 +113,24 @@ evidence per AGENTS.md G2 (mirrors ADR-0002 G5/G6).
    pages become current (`PdfAdapter.cpp` `createView`). Guarded on
    `!store->hasResults(page)` so it never clobbers real OCR output. The coarse
    `hasTextLayer()` stub is left untouched (it gates the auto-OCR path).
+   *Coordinate correctness (dogfood review):* the pre-existing OCR-on-PDF path
+   stored recognized blocks in `renderPageForOcr`'s 144-DPI pixel space, which is
+   exactly 2× PDF points, so a forced OCR on a PDF page placed selection ~2× off
+   `docToView`. Fixed at the ingestion boundary: `IDocument::ocrSourceToDocScale(int)`
+   (default 1.0; `PdfDocument` returns points-per-pixel) and `OcrController`
+   scales blocks into document space before `put()`. Image documents render OCR
+   in native pixels (scale 1.0) and are unaffected — no double-scaling.
 2. **Notice guarded by a real per-page check.** The show-condition gains
    `&& !doc->pageHasText(page) && store && !store->hasResults(page)`, keeping the
    existing `isLargeDoc()` (>50-page) scope by design.
-3. **Dismissable + self-clearing.** A × button sets a per-document dismissed
-   flag (reset on document change); visibility is re-derived by the existing
-   150 ms `m_ocrPagePoll` tick via `MainWindow::updateLargeDocOcrHint()` (called
-   from both `onCurrentDocumentChanged` and the poll) so it hides the moment the
-   page gains text / OCR results.
+3. **Dismissable + self-clearing.** A × button records the dismissal keyed by
+   `IDocument*` (a `QSet`, identity only — never dereferenced), so a notice
+   dismissed on one document stays hidden across tab switches away and back and
+   is independent per document. Visibility is re-derived by the existing 150 ms
+   `m_ocrPagePoll` tick via `MainWindow::updateLargeDocOcrHint()` (called from
+   both `onCurrentDocumentChanged` and the poll) so it hides the moment the page
+   gains text / OCR results. The `pageHasText()` probe is cached per (document,
+   page) so the poll does not re-extract page text at ~7 Hz.
 4. **Action routes through consent + standard progress.** The link handler now
    gates on `ensureOcrModelsReady(this, engine)` (mirroring `onRecognizeText` and
    `m_ocrModelMissingHint`) before `submitUserPages`, and is re-worded benefit-

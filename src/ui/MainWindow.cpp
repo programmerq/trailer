@@ -454,7 +454,8 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     hintDismiss->setToolTip(tr("Dismiss"));
     hintDismiss->setObjectName(QStringLiteral("largeDocOcrHintDismiss"));
     connect(hintDismiss, &QToolButton::clicked, this, [this]() {
-        m_largeDocOcrHintDismissed = true;
+        if (auto *doc = m_documentView->currentDocument())
+            m_largeDocOcrHintDismissed.insert(doc);
         if (m_largeDocOcrHint)
             m_largeDocOcrHint->setVisible(false);
     });
@@ -3085,12 +3086,11 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     syncViewModeActions(doc);
     updateTitleForDocument(doc);
 
-    // Large-doc OCR hint chip. Dismissal is per-document — a fresh
-    // document starts with the notice un-dismissed (ADR 0006). Visibility
-    // is then derived by the shared helper, which is also re-run on page
-    // change / after OCR by the m_ocrPagePoll tick so the notice self-
-    // clears.
-    m_largeDocOcrHintDismissed = false;
+    // Large-doc OCR hint chip. Dismissal is keyed per-document (ADR
+    // 0006), so switching documents does not clear another document's
+    // dismissal. Visibility is derived by the shared helper, also re-run
+    // on page change / after OCR by the m_ocrPagePoll tick so the notice
+    // self-clears.
     updateLargeDocOcrHint();
 }
 
@@ -3098,18 +3098,30 @@ void MainWindow::updateLargeDocOcrHint() {
     if (!m_largeDocOcrHint)
         return;
     bool show = false;
-    // Cheap guards first; pageHasText() (the only non-trivial probe) is
-    // reached only for a large, selectable, not-yet-recognised page.
+    // Cheap guards first; the pageHasText() probe (which re-extracts page
+    // text) is reached only for a large, selectable, not-yet-recognised,
+    // not-dismissed page — and even then it is served from a per-(doc,
+    // page) cache.
     auto *doc = m_documentView->currentDocument();
-    if (!m_largeDocOcrHintDismissed && m_ocrController && m_ocrController->isLargeDoc() && doc &&
-        doc->supportsSelectableText()) {
+    if (doc && !m_largeDocOcrHintDismissed.contains(doc) && m_ocrController &&
+        m_ocrController->isLargeDoc() && doc->supportsSelectableText()) {
         const int page = doc->currentPage();
         auto *store = doc->selectableText();
         // Show only for a genuinely text-less page: no cached OCR results
         // AND no native text layer (ADR 0006 — the missing real per-page
         // guard was why this fired on born-digital docs).
-        if (store && !store->hasResults(page) && !doc->pageHasText(page)) {
-            show = true;
+        if (store && !store->hasResults(page)) {
+            bool hasText;
+            if (m_pageHasTextCacheDoc == doc && m_pageHasTextCachePage == page) {
+                hasText = m_pageHasTextCacheValue;
+            } else {
+                hasText = doc->pageHasText(page);
+                m_pageHasTextCacheDoc = doc;
+                m_pageHasTextCachePage = page;
+                m_pageHasTextCacheValue = hasText;
+            }
+            if (!hasText)
+                show = true;
         }
     }
     m_largeDocOcrHint->setVisible(show);

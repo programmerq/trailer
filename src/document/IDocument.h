@@ -278,6 +278,15 @@ class IDocument {
     // signals "this adapter does not support OCR submission" so the
     // scheduler will simply not enqueue work.
     virtual QImage renderPageForOcr(int /*pageIndex*/) const { return {}; }
+    // Uniform scale mapping a renderPageForOcr() source-pixel coordinate
+    // into the document coordinate space that SelectableTextLayer's
+    // docToView expects. PDFs render OCR sources at a fixed DPI while
+    // docToView works in PDF points (72/inch), so PdfDocument returns
+    // points-per-pixel (< 1); image documents render OCR in native pixel
+    // space and docToView is pixel-based, so the default 1.0 is correct.
+    // OcrController multiplies recognized block geometry by this before
+    // storing, so forced OCR on a PDF page lands aligned with selection.
+    virtual double ocrSourceToDocScale(int /*pageIndex*/) const { return 1.0; }
 
     virtual void setAnnotationTool(AnnotationTool /*tool*/) {}
     virtual void setAnnotationStyle(const AnnotationStyle & /*style*/) {}

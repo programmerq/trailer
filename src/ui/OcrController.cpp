@@ -342,6 +342,14 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
     if (source.isNull())
         return SubmitResult::Skipped;
 
+    // Recognized geometry comes back in renderPageForOcr's source-pixel
+    // space. For PDFs that raster is at a fixed DPI while the selection
+    // layer's docToView works in PDF points, so blocks must be scaled
+    // into point space before they are stored or selection lands ~2× off
+    // (image documents render OCR in native pixels and return 1.0). The
+    // document owns the conversion; we capture it on the UI thread here.
+    const double ocrScale = doc->ocrSourceToDocScale(page);
+
     // Submit. The lambda captures by value to outlive the controller.
     QString label;
     if (priority == MlPriority::UserAction) {
@@ -380,7 +388,7 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
     const int epoch = batchTracked ? m_batchEpoch : -1;
 
     auto handle = m_app->mlScheduler().submit(priority, label,
-        [engine, recognizer, source, page, storePtr, self, cancelGuard, epoch](CancellationToken &token) {
+        [engine, recognizer, source, page, storePtr, self, cancelGuard, epoch, ocrScale](CancellationToken &token) {
             if (token.isCancelled())
                 return;
             // OcrEngine::recognize cooperates with the same token
@@ -406,10 +414,24 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
                 recognizer ? recognizer(source, &token) : engine->recognize(source, &token);
             const bool cancelled = token.isCancelled();
             const std::uint64_t contentHash = hashImageContent(source);
+            // Scale block geometry from OCR source pixels into the
+            // document's coordinate space (points for PDF, pixels for
+            // images → 1.0 no-op). Rounds to the polygon's integer grid;
+            // block-level selection tolerates sub-pixel rounding.
+            std::vector<OcrEngine::TextBlock> out(blocks.constBegin(), blocks.constEnd());
+            if (ocrScale != 1.0) {
+                for (auto &b : out) {
+                    QPolygon scaled;
+                    scaled.reserve(b.polygon.size());
+                    for (const QPoint &p : b.polygon) {
+                        scaled << QPoint(qRound(p.x() * ocrScale), qRound(p.y() * ocrScale));
+                    }
+                    b.polygon = std::move(scaled);
+                }
+            }
             // Hand the result back to the UI thread. The store is a
             // QObject parented to the document on the UI thread, so
             // queue the write through its thread context.
-            std::vector<OcrEngine::TextBlock> out(blocks.constBegin(), blocks.constEnd());
             QMetaObject::invokeMethod(
                 storePtr,
                 [storePtr, self, cancelGuard, page, contentHash, cancelled, epoch,

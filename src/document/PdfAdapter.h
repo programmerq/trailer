@@ -166,6 +166,7 @@ class PdfDocument : public IDocument {
     SelectableTextStore *selectableText() override { return &m_selectableText; }
     bool supportsSelectableText() const override { return m_valid; }
     QImage renderPageForOcr(int pageIndex) const override;
+    double ocrSourceToDocScale(int pageIndex) const override;
     // Ingest the native PDF text layer for `page` into m_selectableText
     // as line-level TextBlocks (text + point-space geometry), so drag-
     // select + Ctrl+C work on born-digital pages without an OCR run. No-
