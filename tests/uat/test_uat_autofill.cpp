@@ -274,7 +274,10 @@ void TestUatAutoFill::uat_af_010_autoFillPopulatesMatchingTextFields() {
     QVERIFY(dv);
     IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
-    QVERIFY(doc->supportsFormFilling());
+    // Since PR #63 the qpdf parse behind supportsFormFilling() runs on a
+    // background worker, so form detection resolves a moment after open. Pump
+    // the event loop until it lands (QTRY passes immediately once resolved).
+    QTRY_VERIFY(doc->supportsFormFilling());
 
     // Also verify the Tools > AutoFill Form action is present and
     // enabled — but don't trigger it, because it pops a modal
@@ -334,6 +337,9 @@ void TestUatAutoFill::uat_af_020_autoFillFallsBackToAlternativeName() {
     QVERIFY(dv);
     IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
+    // Form detection is async since PR #63 — wait for it before autofilling
+    // (autoFillDocument short-circuits on supportsFormFilling()).
+    QTRY_VERIFY(doc->supportsFormFilling());
 
     CardStore store(AppPaths::cardsFile());
     store.load();
@@ -392,8 +398,10 @@ void TestUatAutoFill::uat_af_030_autoFillMenuActionShowsStatusAndActivatesForm()
     // pop a modal (no hang) and writes a status-bar line.
     QAction *fillForms = findMenuAction(mw, QStringLiteral("Fill Forms"));
     QVERIFY(fillForms);
-    QVERIFY2(fillForms->isChecked(), "Fill Forms must be auto-enabled on a fillable PDF "
-                                     "(see UAT-FRM-040)");
+    // Auto-enable fires when async form detection completes (PR #63), a moment
+    // after open — pump until it lands.
+    QTRY_VERIFY2(fillForms->isChecked(), "Fill Forms must be auto-enabled on a fillable PDF "
+                                         "(see UAT-FRM-040)");
 
     QAction *autoFill = findMenuAction(mw, QStringLiteral("AutoFill from My Card"));
     QVERIFY(autoFill);

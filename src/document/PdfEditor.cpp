@@ -15,6 +15,7 @@
 #include <QImage>
 #include <QPainter>
 #include <QPdfDocument>
+#include <QThread>
 
 #include "util/TempPath.h"
 
@@ -26,11 +27,27 @@
 
 namespace trailer {
 
+// Test instrumentation (see PdfEditor.h). Defined here; incremented at
+// the load() parse and per-page in readAnnotations() so the structural
+// perf tests can prove the P0 open-path deferrals.
+std::atomic<int> PdfEditor::s_parseCount{0};
+std::atomic<int> PdfEditor::s_annotationPageVisits{0};
+std::atomic<QThread *> PdfEditor::s_annotationSweepThread{nullptr};
+std::atomic<QThread *> PdfEditor::s_parseThread{nullptr};
+
 PdfEditor::PdfEditor() : m_qpdf(std::make_unique<QPDF>()) {}
 
 PdfEditor::~PdfEditor() = default;
 
 bool PdfEditor::load(const QString &path) {
+    // Test instrumentation: count every qpdf whole-file parse. unlock()
+    // does NOT bump this — it reuses the already-parsed document, so the
+    // "second full-file parse deferred" proxy stays meaningful.
+    s_parseCount.fetch_add(1, std::memory_order_relaxed);
+    // Record which thread ran the parse. The forms-capability probe used to
+    // force this on the GUI thread at open; it now runs on the background
+    // worker (PdfDocument::startBackgroundLoad), which the perf test asserts.
+    s_parseThread.store(QThread::currentThread(), std::memory_order_relaxed);
     m_path = path;
     m_sources.clear();
     try {
@@ -1083,10 +1100,18 @@ std::vector<Annotation> PdfEditor::readAnnotations() const {
     std::vector<Annotation> out;
     if (!m_valid)
         return out;
+    // Test instrumentation: record which thread ran the all-pages sweep.
+    // The P0 fix runs it on a background worker; the perf test asserts
+    // this is NOT the GUI/caller thread. (Deterministic liveness proxy.)
+    s_annotationSweepThread.store(QThread::currentThread(), std::memory_order_relaxed);
     try {
         auto pages = QPDFPageDocumentHelper(*m_qpdf).getAllPages();
         const int total = static_cast<int>(pages.size());
         for (int p = 0; p < total; ++p) {
+            // Test instrumentation: one bump per page visited by the
+            // all-pages sweep (the dominant, whole-document object
+            // resolution cost this P0 fix defers off the open path).
+            s_annotationPageVisits.fetch_add(1, std::memory_order_relaxed);
             QPDFPageObjectHelper &page = pages[static_cast<size_t>(p)];
             QPDFObjectHandle media = page.getMediaBox(/*copy_if_shared=*/true);
             if (!media.isArray() || media.getArrayNItems() < 4)

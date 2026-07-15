@@ -5,10 +5,12 @@
 #include <QRectF>
 #include <QString>
 #include <QStringList>
+#include <atomic>
 #include <memory>
 #include <vector>
 
 class QPDF;
+class QThread;
 
 namespace trailer {
 
@@ -152,7 +154,50 @@ class PdfEditor {
 
     QPDF *qpdf() { return m_qpdf.get(); }
 
+    // --- Test instrumentation (always compiled, negligible cost) ---
+    // These counters exist purely so the structural perf tests
+    // (tests/test_perf_lazy_open.cpp) can assert the P0 startup-hang
+    // deferrals without touching wall-clock time:
+    //   * s_parseCount     — bumped once per qpdf processFile parse in
+    //                        load(); proves the second full-file parse is
+    //                        deferred off the synchronous open path.
+    //   * s_annotationPageVisits — bumped once per page walked inside
+    //                        readAnnotations(); proves the all-pages
+    //                        annotation sweep does not run at open.
+    //   * s_annotationSweepThread — records QThread::currentThread() the
+    //                        last time readAnnotations() ran, so the perf
+    //                        test can prove the deferred sweep executes on
+    //                        a worker thread (NOT the GUI/caller thread),
+    //                        the deterministic liveness/ordering proxy for
+    //                        the P0 fix.
+    //   * s_parseThread    — records QThread::currentThread() the last time
+    //                        load() parsed a file, so the perf test can prove
+    //                        the qpdf processFile parse (forced by the forms
+    //                        capability probe) runs on the background worker,
+    //                        NOT synchronously on the GUI thread at open.
+    // Not part of the production contract; safe to ignore outside tests.
+    static int parseCount() { return s_parseCount.load(std::memory_order_relaxed); }
+    static int annotationPageVisits() {
+        return s_annotationPageVisits.load(std::memory_order_relaxed);
+    }
+    static QThread *annotationSweepThread() {
+        return s_annotationSweepThread.load(std::memory_order_relaxed);
+    }
+    static QThread *parseThread() { return s_parseThread.load(std::memory_order_relaxed); }
+    static void resetInstrumentation() {
+        s_parseCount.store(0, std::memory_order_relaxed);
+        s_annotationPageVisits.store(0, std::memory_order_relaxed);
+        s_annotationSweepThread.store(nullptr, std::memory_order_relaxed);
+        s_parseThread.store(nullptr, std::memory_order_relaxed);
+    }
+
   private:
+    // Test instrumentation counters (see the accessors above).
+    static std::atomic<int> s_parseCount;
+    static std::atomic<int> s_annotationPageVisits;
+    static std::atomic<QThread *> s_annotationSweepThread;
+    static std::atomic<QThread *> s_parseThread;
+
     bool saveImpl(const QString &path, const EncryptionOptions *enc);
 
     std::unique_ptr<QPDF> m_qpdf;

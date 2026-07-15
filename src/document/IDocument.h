@@ -18,6 +18,7 @@ namespace trailer {
 
 class AnnotationStore;
 class SelectableTextStore;
+class CapabilityNotifier;
 
 // API: session-only today — `ViewMode` is *not* persisted in
 // `recent.json`, `settings.toml`, or `DocumentTypeDefaults` (only
@@ -232,6 +233,13 @@ class IDocument {
     // (persisted on the next save()).
     virtual bool supportsFormFilling() const { return false; }
     virtual std::vector<FormField> formFields() const { return {}; }
+    // Emitter for "a capability that resolves asynchronously is now known".
+    // Returns nullptr for documents whose capabilities are all settled at
+    // open. PdfDocument returns one and fires its capabilitiesChanged()
+    // signal once the background load (qpdf parse + AcroForm detection)
+    // completes, so MainWindow can re-run the forms-toolbar setup a moment
+    // after open instead of blocking the GUI thread on the parse at open.
+    virtual CapabilityNotifier *capabilityNotifier() { return nullptr; }
     virtual bool setFormFieldValue(int /*id*/, const QString & /*value*/) { return false; }
     // Show or hide the interactive form overlay. Callers toggle this
     // when the user enters / leaves form-filling mode.

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "CapabilityNotifier.h"
 #include "IDocument.h"
 #include "IFormatAdapter.h"
 #include "PdfCommands.h"
@@ -20,6 +21,7 @@ class QPdfSearchModel;
 class QPdfBookmarkModel;
 class QIdentityProxyModel;
 class QPdfView;
+template <typename T> class QFutureWatcher;
 // tests/test_adapters.cpp — befriended so the desync test seam below
 // stays private instead of shipping as callable production API.
 class TestAdapters;
@@ -79,18 +81,42 @@ class PdfDocument : public IDocument {
     void print(QWidget *dialogParent) override;
 
     bool supportsEditing() const override { return m_valid; }
-    bool supportsPasswordExport() const override {
-        return m_valid && m_editor && m_editor->isValid();
-    }
+    // Any valid PDF can be re-encrypted / re-linearized on export; the
+    // qpdf editor is loaded lazily by the actual export action, so these
+    // capability probes must NOT force the parse (P0 startup-hang fix,
+    // docs/backlog/2026-07-13-startup-hang-large-pdf.md).
+    bool supportsPasswordExport() const override { return m_valid; }
     bool exportWithPassword(const QString &destPath, const QString &password) override;
 
-    bool supportsFileSizeReduction() const override {
-        return m_valid && m_editor && m_editor->isValid();
-    }
+    bool supportsFileSizeReduction() const override { return m_valid; }
     bool reduceFileSize(const QString &destPath) override;
 
+    // Form-field detection genuinely needs the qpdf editor (there is no
+    // cheaper way to know a PDF carries an AcroForm). The ~0.55s qpdf
+    // processFile parse this used to force synchronously must NOT block the
+    // GUI thread at open (owner feedback on PR #63): so this probe no longer
+    // forces a synchronous ensureEditorLoaded(). It answers definitively
+    // from the editor once the background load has adopted it, and returns a
+    // provisional "not ready yet" (false) meanwhile — kicking that
+    // background load so the answer resolves. The forms toolbar is disabled
+    // during the window and enables when capabilitiesChanged() fires (G3
+    // disabled-not-lying). The result is cached so repeated toolbar
+    // refreshes don't re-scan; an edit that rebuilds the page graph clears
+    // the cache (reloadViewerFromEditor) and the definitive branch recomputes.
     bool supportsFormFilling() const override {
-        return m_valid && m_editor && m_editor->isValid() && m_editor->hasFormFields();
+        if (!m_valid)
+            return false;
+        if (m_editorLoaded && m_editor && m_editor->isValid()) {
+            if (!m_hasFormFieldsCache)
+                m_hasFormFieldsCache = m_editor->hasFormFields();
+            return *m_hasFormFieldsCache;
+        }
+        // Editor not adopted yet: kick the background load (idempotent,
+        // non-blocking) and report provisionally not-ready. const_cast: the
+        // kick mutates lazy-load bookkeeping, mirroring how ensureEditorLoaded
+        // mutates its mutable members from a const probe.
+        const_cast<PdfDocument *>(this)->startBackgroundLoad();
+        return false;
     }
     // PDFs always carry a text layer (even scan-only PDFs typically
     // expose an empty layer). Text-aware markup tools are offered.
@@ -109,6 +135,10 @@ class PdfDocument : public IDocument {
     bool hasOutline() const override;
     void goToOutlineEntry(const QModelIndex& index) override;
     std::vector<FormField> formFields() const override;
+    // Fires once the background load has parsed the editor + detected the
+    // AcroForm, so MainWindow can re-run its forms-toolbar setup a moment
+    // after open (owner feedback on PR #63).
+    CapabilityNotifier *capabilityNotifier() override { return &m_capabilityNotifier; }
     bool setFormFieldValue(int id, const QString &value) override;
     void setFormFillingActive(bool active) override;
     void refreshFormView() override;
@@ -162,7 +192,18 @@ class PdfDocument : public IDocument {
     // true on success.
     bool saveCommitOnUi(const SaveContext &ctx);
 
-    AnnotationStore *annotations() override { return &m_annotations; }
+    AnnotationStore *annotations() override {
+        // First genuine annotation access kicks the deferred unified load onto
+        // a BACKGROUND worker (idempotent) and returns the store immediately —
+        // empty at first, populated live when the worker commits. This is the
+        // P0 fix: the ~12s sweep on a heavily-annotated document no longer runs
+        // on the GUI thread at view-attach (and, since PR #63, neither does the
+        // qpdf parse + AcroForm detection). The overlay/sidebar/inspector all
+        // subscribe to AnnotationStore::changed, so the late populate
+        // propagates automatically.
+        startBackgroundLoad();
+        return &m_annotations;
+    }
     SelectableTextStore *selectableText() override { return &m_selectableText; }
     bool supportsSelectableText() const override { return m_valid; }
     QImage renderPageForOcr(int pageIndex) const override;
@@ -200,6 +241,74 @@ class PdfDocument : public IDocument {
         m_pdfRedoStack.clear();
     }
 
+    // --- Lazy open gates (P0 startup-hang fix + PR #63 off-thread parse) ---
+    // The heavy whole-document passes that used to run in the ctor are
+    // deferred off the synchronous open path. A single background worker now
+    // does BOTH the all-pages annotation sweep AND the qpdf processFile parse
+    // + AcroForm detection, so neither blocks the GUI thread at open:
+    //   startBackgroundLoad()     — kicks that worker ONCE. On its own
+    //                               isolated qpdf instances (see the .cpp) it
+    //                               (1) sweeps annotations on a throwaway
+    //                               instance freed before it returns — keeping
+    //                               steady-state RSS low (Option B, DR 0006) —
+    //                               and (2) parses a separate, parse-only
+    //                               editor and reads AcroForm presence. The
+    //                               GUI-thread finished slot ADOPTS that editor
+    //                               as m_editor and commits the annotations.
+    //                               Wires the annotation history hooks
+    //                               synchronously up front so user edits made
+    //                               during the (possibly multi-second) load
+    //                               are tracked; the bulk populate itself is
+    //                               committed via AnnotationStore::addBatch
+    //                               (no undo frame) under m_suppressUndoLog,
+    //                               so it is never mistaken for a user edit.
+    //   ensureEditorLoaded()      — the sync consumers (edit/save paths) that
+    //                               genuinely need a live editor NOW. If the
+    //                               background load is in flight it BLOCKS for
+    //                               the worker and adopts its editor; if the
+    //                               load was never kicked it parses inline (the
+    //                               old path). const because const accessors
+    //                               gate on it; only mutates mutable state.
+    // All are idempotent and no-op while the document is locked/invalid.
+    //
+    // The single worker result: the parse-only editor to adopt (shared_ptr so
+    // the copyable QFuture result requirement is satisfied; moved out via
+    // takeResult so the ~GB annotation vector is never copied), the swept
+    // annotations, and the AcroForm-presence answer.
+    struct BackgroundLoadResult {
+        std::vector<Annotation> annotations;
+        std::shared_ptr<PdfEditor> editor; // parse-only; adopted as m_editor
+        bool hasFormFields = false;
+    };
+    void ensureEditorLoaded() const;
+    void startBackgroundLoad();
+    // Drain the in-flight background load (must already be started) and adopt
+    // its result on the GUI thread: adopt the parse-only editor as m_editor
+    // (unless a sync path already parsed one), cache the AcroForm answer,
+    // commit the annotation set (unless a sync-ensure beat it), and fire
+    // capabilitiesChanged(). Idempotent — the released-watcher guard makes it
+    // a no-op after the first adoption. Never called from within the
+    // watcher's own finished emission except via the finished slot below.
+    void adoptBackgroundLoadResult();
+    // Wire the AnnotationStore history/modified mirrors (idempotent). Split
+    // out of the commit so it can also run synchronously the instant the
+    // store is first handed out, keeping edits tracked during the load.
+    void ensureAnnotationHooksWired();
+    // Block for the deferred load and commit its annotation result NOW.
+    // Used by the synchronous consumers that must see the COMPLETE set
+    // (save / exportWithPassword / reduceFileSize). If a background load is
+    // in flight it waits for the worker; if the load was never kicked it
+    // reads synchronously through the GUI-thread editor (the old inline
+    // path). Never invoked from within the load's own finished slot.
+    void ensureAnnotationsLoadedSync();
+    // GUI-thread commit of a loaded annotation set: batched populate that
+    // emits a single AnnotationStore::changed and touches neither the dirty
+    // flag nor the undo log.
+    void commitAnnotations(std::vector<Annotation> loaded);
+    // QFutureWatcher::finished slot — adopts the worker's result unless a
+    // sync-ensure already beat it to it.
+    void onBackgroundLoadFinished();
+
     void applyViewMode();
     void applyZoomFactor(double factor);
     // Fit the freshly-opened doc into the viewport on first show.
@@ -236,7 +345,10 @@ class PdfDocument : public IDocument {
     // the bookmark titles without a custom delegate.
     mutable std::unique_ptr<QPdfBookmarkModel> m_bookmarkModel;
     mutable std::unique_ptr<QIdentityProxyModel> m_outlineProxy;
-    std::unique_ptr<PdfEditor> m_editor;
+    // shared_ptr (not unique_ptr) so the background worker can hand the
+    // parsed editor back through a copyable QFuture result and the GUI thread
+    // can adopt it here by move (see startBackgroundLoad / adoptBackgroundLoadResult).
+    std::shared_ptr<PdfEditor> m_editor;
     std::unique_ptr<ScopedTempFile> m_previewFile;
     QPointer<QPdfView> m_view;
     QPointer<AnnotationOverlay> m_overlay;
@@ -266,6 +378,41 @@ class PdfDocument : public IDocument {
     bool m_dirty = false;
     bool m_annotationsModified = false;
     bool m_needsPassword = false;
+    // Lazy-open state (see ensureEditorLoaded/startBackgroundLoad).
+    // m_editorLoaded is mutable so const capability probes can trigger
+    // the parse. m_password is remembered from unlock() so the deferred
+    // editor load (and the background worker's isolated editors) can
+    // re-unlock the qpdf side; it is mutable so the const editor probe can
+    // consume+clear it, and it is dropped once both consumers have taken
+    // their copy so plaintext isn't retained for the doc lifetime.
+    // m_hasFormFieldsCache memoises the one form-detection scan; invalidated
+    // on any edit that rebuilds the editor's page graph.
+    //
+    // Threading note: every flag here is touched only on the GUI thread.
+    // The background worker touches NONE of them — it operates purely on
+    // value copies (path/password) and its own local, isolated PdfEditor
+    // instances, handed back through the QFuture result — so there is no
+    // GUI/worker race on this object's state.
+    mutable bool m_editorLoaded = false;
+    // m_annotationsLoaded: the sweep result has been committed into the
+    // store. m_backgroundLoadStarted: the background worker has been kicked
+    // (guards against a second launch). m_annotationHooksWired: the store's
+    // history/modified mirrors have been connected.
+    bool m_annotationsLoaded = false;
+    bool m_backgroundLoadStarted = false;
+    bool m_annotationHooksWired = false;
+    mutable QString m_password;
+    mutable std::optional<bool> m_hasFormFieldsCache;
+    // Emitter fired once the background load has adopted the editor + detected
+    // the AcroForm, so MainWindow re-runs its forms-toolbar setup (PR #63).
+    CapabilityNotifier m_capabilityNotifier;
+    // Watches the unified background-load future (annotation sweep + editor
+    // parse + AcroForm detection). Held as a member so its lifetime is bounded
+    // by this document: the destructor resets it so a still-pending finished
+    // signal cannot fire on a half-destroyed this. The worker lambda captures
+    // only value copies and its own local editors, so it stays safe as it
+    // winds down after the watcher is dropped.
+    std::unique_ptr<QFutureWatcher<BackgroundLoadResult>> m_backgroundWatcher;
     // One-shot guard for applyInitialFitZoom — fit-to-content is
     // applied the first time the viewport has a real size, then never
     // again so the user's zoom choices stick.

@@ -7,12 +7,21 @@
 // window while it opens.
 //
 // CURRENT ARCHITECTURE (the honest reality this test documents):
-// document open is fully SYNCHRONOUS on the calling thread —
-// DocumentRegistry::open() → PdfAdapter::open() → the PdfDocument ctor,
-// which calls QPdfDocument::load(path) and PdfEditor::load(path) inline.
-// MainWindow invokes DocumentRegistry::open on the GUI thread, so today
-// that file IO happens ON the GUI thread. There is no worker-thread open
-// seam yet.
+// document open is still SYNCHRONOUS on the calling thread —
+// DocumentRegistry::open() → PdfAdapter::open() → the PdfDocument ctor.
+// As of the P0 startup-hang fix
+// (docs/backlog/2026-07-13-startup-hang-large-pdf.md) the two heavy
+// whole-document passes — the qpdf PdfEditor::load(processFile) parse and
+// the all-pages readAnnotations() sweep — are now LAZY: they no longer
+// run in the ctor, so they are off the synchronous open path. What
+// remains on the open path is QPdfDocument::load(path)'s bounded
+// progressive read (~16ms on a 115MB/8000-page file — it yields
+// pageCount + a page-0 render without consuming the whole file).
+// MainWindow still invokes DocumentRegistry::open on the GUI thread, so
+// that residual bounded read happens ON the GUI thread: there is no
+// worker-thread open seam yet. Moving it off-thread behind a first-page
+// placeholder is the deferred follow-up
+// (docs/backlog/2026-07-15-offthread-pdf-open-placeholder.md).
 //
 // Rather than force a passing assertion that contradicts that reality,
 // this test (1) makes a live, TRUE assertion that the PDF IO layer does
@@ -53,13 +62,15 @@ void TestPerfGuiThreadIo::openIsSynchronousOnCallingThread() {
 
     // --- Reality check 1: the real open path is synchronous on the
     // calling thread. After DocumentRegistry::open() returns on this
-    // (the "GUI") thread, the document is already fully loaded — proof
-    // the read happened inline, on this thread, not deferred to a worker.
+    // (the "GUI") thread, QPdfDocument's bounded progressive load has
+    // already run inline — pageCount is available with no worker hop.
+    // (The qpdf parse + annotation sweep are now lazy, so they are NOT
+    // part of this synchronous open; only QPdfDocument's read is.)
     DocumentRegistry registry;
     registry.registerAdapter(std::make_unique<PdfAdapter>());
     auto doc = registry.open(corpus(QStringLiteral("text_20page.pdf")));
     QVERIFY2(doc != nullptr, "registry must return a document");
-    QCOMPARE(doc->pageCount(), 20); // fully loaded synchronously, inline
+    QCOMPARE(doc->pageCount(), 20); // resolved synchronously, inline, on this thread
 
     // --- Reality check 2 (live assertion): the PDF IO layer serves every
     // read on whichever thread drives it — it spins up no worker of its
@@ -86,16 +97,22 @@ void TestPerfGuiThreadIo::openIsSynchronousOnCallingThread() {
     }
 
     // --- The gap. The target invariant — that this IO run OFF the GUI
-    // thread — does not hold in the current architecture (open is
-    // synchronous on the caller, and MainWindow calls it on the GUI
-    // thread). Document it as a skip instead of a red test or a false
-    // green.
-    QSKIP("off-GUI-thread document open is not yet implemented: "
-          "DocumentRegistry::open -> PdfAdapter::open -> PdfDocument ctor read the file "
-          "synchronously on the calling thread, which is the GUI thread in MainWindow. "
-          "Target invariant: perform document-open IO off the GUI thread "
+    // thread — still does not hold. The P0 startup-hang fix removed the
+    // two heavy whole-document passes (qpdf processFile parse + all-pages
+    // annotation sweep) from the open path by making them lazy, but the
+    // residual QPdfDocument bounded progressive read is still synchronous
+    // on the caller, which is the GUI thread in MainWindow. Moving that
+    // last read off-thread behind a first-page placeholder is the
+    // deferred follow-up, so this stays a documented skip rather than a
+    // red test or a false green.
+    QSKIP("off-GUI-thread document open is not yet implemented: the P0 startup-hang fix made "
+          "the qpdf editor parse and the all-pages annotation sweep lazy (off the open path), "
+          "but DocumentRegistry::open -> PdfAdapter::open -> PdfDocument ctor still runs "
+          "QPdfDocument's bounded progressive read synchronously on the calling thread, which "
+          "is the GUI thread in MainWindow. Target invariant: perform the residual "
+          "document-open IO off the GUI thread behind a placeholder first page "
           "(docs/performance-budgets.md 'The whole UI never blocks during long work'). "
-          "Tracked as a perf follow-up.");
+          "Tracked as docs/backlog/2026-07-15-offthread-pdf-open-placeholder.md.");
 }
 
 QTEST_MAIN(TestPerfGuiThreadIo)

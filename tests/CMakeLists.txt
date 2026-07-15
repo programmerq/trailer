@@ -87,5 +87,6 @@ endfunction()
 trailer_add_perf_test(test_perf_render_ordering test_perf_render_ordering.cpp)
 trailer_add_perf_test(test_perf_gui_thread_io   test_perf_gui_thread_io.cpp)
 trailer_add_perf_test(test_perf_paint_budget    test_perf_paint_budget.cpp)
+trailer_add_perf_test(test_perf_lazy_open       test_perf_lazy_open.cpp)
 
 add_subdirectory(uat)

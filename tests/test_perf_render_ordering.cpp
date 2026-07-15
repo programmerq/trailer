@@ -53,7 +53,11 @@ void TestPerfRenderOrdering::acroFormCorpusOpensWithInteractiveField() {
     auto doc = adapter.open(corpus(QStringLiteral("form_1page.pdf")));
     QVERIFY2(doc != nullptr, "AcroForm corpus must open through PdfAdapter");
     QCOMPARE(doc->pageCount(), 1);
-    QVERIFY2(doc->supportsFormFilling(), "corpus PDF must expose AcroForm filling");
+    // Since PR #63 the qpdf parse behind supportsFormFilling() runs on a
+    // background worker, so form detection resolves a moment after open (the
+    // GUI thread is not blocked on the parse). The first call kicks that load
+    // and returns provisionally false; pump the event loop until it lands.
+    QTRY_VERIFY2(doc->supportsFormFilling(), "corpus PDF must expose AcroForm filling");
     QVERIFY2(!doc->formFields().empty(),
              "AcroForm corpus must carry at least one interactive form field");
 }

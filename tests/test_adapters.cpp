@@ -3,6 +3,7 @@
 #include "document/DocumentRegistry.h"
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
+#include "document/PdfEditor.h"
 #include "document/SelectableTextStore.h"
 #include "ui/SelectableTextLayer.h"
 
@@ -78,6 +79,7 @@ class TestAdapters : public QObject {
     void pdfDocumentSmallCapEvictionKeepsLogAndStoreInLockstep();
     void pdfDocumentUndoRedoSurviveForcedLogDesync();
     void pdfDocumentSaveReloadRebuildsUndoLogFromRetainedStacks();
+    void pdfAnnotationUndoAfterInWindowEditPreservesLoadedAnnotations();
     void imageDocumentRotateSwapsDimensionsAndMarksDirty();
     void imageDocumentFlipHorizontalMarksDirty();
     void imageDocumentResizeChangesPixelSize();
@@ -1780,6 +1782,99 @@ void TestAdapters::pdfDocumentSaveReloadRebuildsUndoLogFromRetainedStacks() {
     QCOMPARE(doc.contentSizeHint(), landscape);
     QCOMPARE(store->count(), 1);
     QVERIFY(!doc.canRedo());
+}
+
+// BLOCKER B1 regression guard: data loss on undo after an edit made during
+// the asynchronous annotation-load window.
+//
+// The sweep now loads off-thread; commitAnnotations() populates the store via
+// addBatch() (no undo frame). AnnotationStore undo is SNAPSHOT-based: an add()
+// snapshots the WHOLE vector before appending. The interleaving that loses
+// data:
+//   1. annotations() kicks the async load; the store is still empty.
+//   2. During the load window the user draws — add() snapshots the EMPTY
+//      pre-draw state, then appends the user annotation.
+//   3. The load completes — addBatch APPENDS the file's annotations, no frame.
+//   4. Undo restores the empty snapshot → every ORIGINAL file annotation is
+//      wiped (and lost on the next save).
+//
+// This test opens a genuinely annotated PDF, edits DURING the load window, lets
+// the load commit, then undoes — and asserts the original file annotations
+// survive while only the user's draw is reverted. Against 7a53ad9 (no pre-edit
+// baseline commit) step 4 wipes them and this FAILS; the fix (AnnotationStore
+// pre-edit hook forcing the loaded baseline to commit before the first user
+// edit snapshots) makes it pass.
+void TestAdapters::pdfAnnotationUndoAfterInWindowEditPreservesLoadedAnnotations() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    // Build a base PDF, then stamp two real /Annots into it via PdfEditor so
+    // the off-thread sweep has something to load.
+    const QString base = dir.filePath("base.pdf");
+    {
+        QPdfWriter writer(base);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, "annotated");
+        painter.end();
+    }
+    const QString annotated = dir.filePath("annotated.pdf");
+    {
+        PdfEditor editor;
+        QVERIFY(editor.load(base));
+        std::vector<Annotation> anns;
+        Annotation rect;
+        rect.page = 0;
+        rect.type = AnnotationType::Rectangle;
+        rect.bounds = QRectF(50, 60, 120, 80);
+        anns.push_back(rect);
+        Annotation ell;
+        ell.page = 0;
+        ell.type = AnnotationType::Ellipse;
+        ell.bounds = QRectF(100, 100, 80, 40);
+        anns.push_back(ell);
+        QVERIFY(editor.writeAnnotations(anns));
+        QVERIFY(editor.save(annotated));
+    }
+
+    PdfDocument doc(annotated);
+    QVERIFY(doc.isValid());
+
+    AnnotationStore *store = doc.annotations(); // kicks the async load
+    QVERIFY(store != nullptr);
+    // The off-thread sweep has not committed yet — store is empty and the
+    // history hooks are already wired, so the edit below is tracked.
+    QVERIFY(store->isEmpty());
+
+    // The user draws BEFORE the async commit lands.
+    Annotation user;
+    user.page = 0;
+    user.type = AnnotationType::Arrow;
+    user.bounds = QRectF(5, 5, 10, 10);
+    user.points = {QPointF(5, 5), QPointF(15, 15)};
+    const int userId = store->add(user);
+    QVERIFY(userId > 0);
+
+    // Let the off-thread load commit (with the fix the pre-edit hook already
+    // forced this synchronously inside add(); QTRY covers both timings).
+    QTRY_COMPARE(store->count(), 3); // 2 loaded + 1 user
+
+    // Undo the user's draw. The two ORIGINAL file annotations must survive —
+    // undoing back to the loaded baseline, not to an empty pre-load snapshot.
+    QVERIFY(doc.canUndo());
+    QVERIFY(doc.undo());
+    QCOMPARE(store->count(), 2);
+    QVERIFY2(store->find(userId) == nullptr, "the user's drawn annotation must be reverted");
+
+    int rects = 0, ells = 0;
+    for (const Annotation &a : store->annotations()) {
+        if (a.type == AnnotationType::Rectangle)
+            ++rects;
+        else if (a.type == AnnotationType::Ellipse)
+            ++ells;
+    }
+    QCOMPARE(rects, 1);
+    QCOMPARE(ells, 1);
 }
 
 QTEST_MAIN(TestAdapters)

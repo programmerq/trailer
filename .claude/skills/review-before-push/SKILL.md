@@ -25,7 +25,46 @@ minutes from being burned on the push → CI-fail → fix → re-push loop.
 > round (or two) avoids burning runner minutes and cuts the push -> CI-fail ->
 > fix -> re-push back-and-forth noise/volume.
 
+## 2026-07-14 refinement (verbatim)
+
+The owner refined the policy on 2026-07-14. Quoted verbatim:
+
+> "We can't rely on external reviewers each time. ... a project policy to do a
+> self review _before_ opening a PR is better. So if an agent feels like it's
+> time to open a PR, it isn't. First, it should make sure it has written
+> relevant tests for the change. Next, it should spin up a reviewer agent that
+> does a code review on the proposed changes. It can even do a pass to address
+> those changes if they are clear and unambiguous. Then it can open the PR. We
+> may occasionally have a copilot/cursor/claude reviewer chime in, but it won't
+> be guaranteed on every PR/change/update."
+
+**Net sequence this establishes, per change:** (1) **relevant tests written for
+the change — verify this before anything else** (Step 0 below); (2) reviewer
+agent(s) review the diff; (3) address clear/unambiguous findings (ambiguous
+ones get dispositioned fix / justify / defer per Step 3); (4) THEN open the PR.
+Two load-bearing rules from the refinement:
+
+- **"If it's time to open a PR, it isn't."** Treat the urge to push/open as the
+  cue to run Step 0 → Step 4 first, not as permission to skip them.
+- **External reviewers (Copilot / Cursor / Claude bots) are occasional bonus
+  signal, never a relied-upon gate.** The local tests + reviewer pass are the
+  guarantee; a bot chiming in is not, and its absence is never a reason to hold.
+
+**Current practice (since self-hosted CI):** push the per-item branch and open
+its PR **ready-for-review** as normal — per-item PRs no longer cost hosted
+minutes, and the 2026-07-09/10 batching constraint is retired. Merges to main
+remain the owner's explicit call.
+
 ## Procedure
+
+### 0. Write the change's tests FIRST
+Before the review round — ideally before/alongside the implementation — make
+sure the change carries **relevant tests** and that they pass (and, for a
+regression/bug fix or a new invariant, that they *failed* against the old code
+first). This is the owner's 2026-07-14 tests-first step: a change arriving at
+the review gate without its tests is not ready, regardless of how clean the
+diff looks. Structural/perf changes assert counts/ordering, not wall-clock
+(see [[trailer-perf-measurement-ruling]]).
 
 ### 1. Stage the diff
 Compute the review target: `git diff <base>..HEAD` (and `git diff` for any
@@ -70,6 +109,7 @@ Only after **every** finding is dispositioned (fix / justify / defer) may you
 
 ## Checklist (copyable)
 
+- [ ] Relevant tests written for the change and passing (regression tests failed against old code first). ← Step 0, do before everything
 - [ ] Identified push base; computed `git diff <base>..HEAD`.
 - [ ] Ran reviewer #1 (correctness skeptic).
 - [ ] Ran reviewer #3 (frugality auditor).      ← code change minimum
