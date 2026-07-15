@@ -1,7 +1,7 @@
 # 0002 — ML background removal: progress, cancel, and the missing-model prompt
 
 - **Status:** accepted
-- **Amended-in-part by:** [ADR-0006](0006-text-selection-and-recognize-notice-refinement.md) — refines §3 (Missing model) and gates G5/G6 for the text-selection / Recognize-text notice affordance, on v0.3.0 dogfood evidence. §1/§2/§4/§5 (progress, cancel, concurrency, no-substitution) stand unchanged.
+- **Amended-in-part by:** [ADR-0011](0011-recognize-text-affordance-reconciliation.md) — refines §3 (Missing model) and gates G5/G6 for the text-selection / Recognize-text notice affordance, on v0.3.0 dogfood evidence. §1/§2/§4/§5 (progress, cancel, concurrency, no-substitution) stand unchanged.
 - **Arbiter:** the agent role named for this record; the owner (programmerq) is the escalation-only override.
 - **Date proposed:** 2026-07-09
 - **Date accepted / superseded:** 2026-07-12 (arbiter verdict)

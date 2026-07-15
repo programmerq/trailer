@@ -1,9 +1,10 @@
 # 0011 — Reconciling the misfiring "Recognize text" affordance with ADR-0002 §3
 
-- **Status:** proposed
+- **Status:** accepted
 - **Arbiter:** the agent role named for this record; the owner (programmerq) is the escalation-only override.
 - **Date proposed:** 2026-07-15
-- **Date accepted / superseded:** —
+- **Date accepted / superseded:** 2026-07-15 (accepted)
+- **Amends:** ADR-0002 §3 (Missing model) and gates G5/G6 — extends the missing-model affordance rules to the Recognize-text chip; it does not replace ADR-0002 §1/§2/§4/§5 (progress, cancel, concurrency, no-substitution), which stand unchanged.
 
 ## Context
 
@@ -238,9 +239,68 @@ removing it where `m_ocrModelMissingHint` already covers the scanned case
 
 ## Arbiter verdict + rationale
 
-Empty while status is `proposed` — the implementing session runs the
-persona/arbiter cycle.
+**Accepted 2026-07-15 — Option A (reconcile the chip into the ADR-0002-§3
+machinery).** The wave-2 implementing session's guard landed green
+(UAT `tests/uat/test_uat_recognize_text.cpp`, adapter tests
+`tests/test_adapters.cpp`), so this record moves from `proposed` to `accepted`
+exactly as its Context anticipated ("the implementing session accepts it once
+the guard lands green"). Option C fails G1.1–G1.4 by construction and is
+rejected; Option B was not taken because a genuinely text-less large (>50-page)
+scan still wants the large-doc surfacing, which A folds into the compliant
+machinery rather than dropping. The four shipped corrections:
+
+1. **Native text feeds selection (fixes the dead-selection half of the dogfood
+   report).** `IDocument::pageHasText(int)` (default false; `PdfDocument`
+   implements it as `!m_doc->getAllText(page).text().trimmed().isEmpty()`) plus
+   `PdfDocument::ingestNativeTextLayer(int)`, which builds line-level
+   `OcrEngine::TextBlock`s (native text + point-space geometry via
+   `getSelectionAtIndex`) into `SelectableTextStore`, wired lazily per page as
+   pages become current (`PdfAdapter.cpp` `createView`). Guarded on
+   `!store->hasResults(page)` so it never clobbers real OCR output. The coarse
+   `hasTextLayer()` stub is left untouched (it gates the auto-OCR path).
+   *Coordinate correctness (dogfood review):* the pre-existing OCR-on-PDF path
+   stored recognized blocks in `renderPageForOcr`'s 144-DPI pixel space, which
+   is exactly 2× PDF points, so a forced OCR on a PDF page placed selection ~2×
+   off `docToView`. Fixed at the ingestion boundary:
+   `IDocument::ocrSourceToDocScale(int)` (default 1.0; `PdfDocument` returns
+   points-per-pixel) and `OcrController` scales blocks into document space
+   before `put()`. Image documents render OCR in native pixels (scale 1.0) and
+   are unaffected — no double-scaling.
+2. **G1.1 — gated by a real per-page text check.** The show-condition gains
+   `&& !doc->pageHasText(page) && store && !store->hasResults(page)`, keeping the
+   existing `isLargeDoc()` (>50-page) scope. This is a *per-page* refinement of
+   the record's doc-level `!hasTextLayer()` gate: it suppresses the chip on any
+   page that already carries text (the born-digital case §G1.1 targets) while
+   still surfacing on a genuinely image-only page inside an otherwise mixed
+   document — strictly stronger than the coarse gate, and it satisfies the G1.1
+   assertion (chip never visible while the page has a text layer).
+3. **G1.3/G1.4 partial — dismissable + self-clearing.** A × button records the
+   dismissal keyed by `IDocument*` (a `QSet`, identity only — never
+   dereferenced), so a notice dismissed on one document stays hidden across tab
+   switches away and back and is independent per document. Visibility is
+   re-derived by the existing 150 ms `m_ocrPagePoll` tick via
+   `MainWindow::updateLargeDocOcrHint()` (called from both
+   `onCurrentDocumentChanged` and the poll) so it hides the moment the page
+   gains text / OCR results — satisfying G1.3's page-state-driven re-derivation.
+   The `pageHasText()` probe is cached per (document, page) so the poll does not
+   re-extract page text at ~7 Hz.
+4. **G1.2/G1.4 — routes through consent + benefit wording.** The link handler now
+   gates on `ensureOcrModelsReady(this, engine)` (mirroring `onRecognizeText` and
+   `m_ocrModelMissingHint`) before `submitUserPages`, ending the direct-call
+   silent no-op, and is re-worded benefit-first ("This page's text isn't
+   selectable yet.") with no `OCR`/`model` jargon token. `MlProgressWidget`
+   shows progress automatically off the batch signals.
+
+Rationale: the admissible objections against Option C (no-lying-controls
+misfire on a text-layer doc; silent-no-op link bypassing ADR-0002 §3 consent;
+stale document-change-only recompute) each map onto one of the four
+corrections. This aligns `m_largeDocOcrHint` with the ADR-0002 §3 pattern the
+compliant `m_ocrModelMissingHint` already embodies, satisfying G1.1–G1.4.
 
 ## Evidence required to reopen
 
-N/A until accepted.
+A measured case where native-text ingestion produces wrong/misaligned selection
+on a real born-digital PDF, or where the per-page `pageHasText` guard suppresses
+the notice on a page that genuinely needs OCR (e.g. a text layer that is a
+watermark only), plus owner sign-off. The RecognizeText dialog's force-re-run
+path already covers the watermark case without reopening this record.
