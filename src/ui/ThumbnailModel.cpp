@@ -16,10 +16,36 @@
 #include <cmath>
 
 #include <algorithm>
+#include <cstdlib>
 
 namespace trailer {
 
-ThumbnailModel::ThumbnailModel(QObject *parent) : QAbstractListModel(parent) {}
+namespace {
+
+// Total pixmap-cache budget, expressed in kilobytes (the QCache cost unit
+// used here is each entry's byte size / 1024). 256 MB. Rationale: with the
+// viewport-driven render size (m_size = {w, w*2}, w clamped to [48,600] in
+// Sidebar.cpp) a single 600-px-wide portrait page on a 2x display renders to
+// roughly 8-11 MB; a 200-500 page deck fully scrolled would, with the old
+// unbounded QHash, hold gigabytes resident. 256 MB caps that with cost-based
+// LRU eviction while still keeping a few hundred small thumbnails hot.
+// Symptom to change: thumbnails re-render visibly on scroll-back at a wide
+// sidebar (raise) or the app's resident memory balloons on huge decks (lower).
+constexpr int kThumbCacheBudgetKB = 256 * 1024;
+
+// Cache cost of a rendered pixmap, in kilobytes (matches the budget unit).
+// depth() is bits-per-pixel; /8 -> bytes; /1024 -> KB. Floored at 1 so even
+// a tiny/empty pixmap consumes a slot and eviction accounting stays sane.
+int pixmapCostKB(const QPixmap &pm) {
+    const qint64 bytes = qint64(pm.width()) * pm.height() * pm.depth() / 8;
+    return int(std::max<qint64>(1, bytes / 1024));
+}
+
+} // namespace
+
+ThumbnailModel::ThumbnailModel(QObject *parent) : QAbstractListModel(parent) {
+    m_cache.setMaxCost(kThumbCacheBudgetKB);
+}
 
 void ThumbnailModel::setDocument(IDocument *doc) {
     beginResetModel();
@@ -173,26 +199,33 @@ QVariant ThumbnailModel::data(const QModelIndex &index, int role) const {
         return qreal(hint.width() / hint.height());
     }
     case Qt::DecorationRole: {
-        auto it = m_cache.find(page);
-        if (it == m_cache.end()) {
-            // Render at native resolution for the user's primary
-            // screen and stamp devicePixelRatio on the result so
-            // Qt treats the pixmap as logical m_size while
-            // sampling the high-DPI pixels. Without this the
-            // sidebar thumbnail looks blurry on Retina.
-            qreal dpr = 1.0;
-            if (auto *screen = QGuiApplication::primaryScreen()) {
-                dpr = screen->devicePixelRatio();
-            }
-            const QSize nativeSize(int(std::ceil(m_size.width() * dpr)),
-                                   int(std::ceil(m_size.height() * dpr)));
-            QImage img = m_doc->renderThumbnail(page, nativeSize);
-            if (!img.isNull()) {
-                img.setDevicePixelRatio(dpr);
-            }
-            it = m_cache.insert(page, img.isNull() ? QPixmap() : QPixmap::fromImage(img));
+        if (const QPixmap *cached = m_cache.object(page)) {
+            return *cached;
         }
-        return it.value();
+        // Render at native resolution for the user's primary
+        // screen and stamp devicePixelRatio on the result so
+        // Qt treats the pixmap as logical m_size while
+        // sampling the high-DPI pixels. Without this the
+        // sidebar thumbnail looks blurry on Retina.
+        qreal dpr = 1.0;
+        if (auto *screen = QGuiApplication::primaryScreen()) {
+            dpr = screen->devicePixelRatio();
+        }
+        const QSize nativeSize(int(std::ceil(m_size.width() * dpr)),
+                               int(std::ceil(m_size.height() * dpr)));
+        QImage img = m_doc->renderThumbnail(page, nativeSize);
+        if (!img.isNull()) {
+            img.setDevicePixelRatio(dpr);
+        }
+        const QPixmap pm = img.isNull() ? QPixmap() : QPixmap::fromImage(img);
+        // Cache a copy under a cost-bounded LRU. QCache takes ownership of the
+        // pointer and may drop it immediately if the cost exceeds the whole
+        // budget, so return the local `pm` value (cheap implicit-share copy)
+        // rather than dereferencing the just-inserted pointer. A failed render
+        // caches an empty pixmap (cost 1) so the page isn't re-rendered on
+        // every repaint — matching the prior QHash sentinel behaviour.
+        m_cache.insert(page, new QPixmap(pm), pixmapCostKB(pm));
+        return pm;
     }
     case Qt::ToolTipRole:
         return QObject::tr("Page %1").arg(page + 1);
