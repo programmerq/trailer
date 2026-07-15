@@ -2130,13 +2130,18 @@ void MainWindow::onTakeScreenshot() {
     show();
     raise();
     activateWindow();
-    if (proc.exitCode() != 0 || !QFileInfo(path).exists() || QFileInfo(path).size() == 0) {
-        // User cancelled (Esc) or no output — don't treat as an error, but
-        // surface a graceful hint: an empty capture can also mean Screen
-        // Recording permission was denied, which is otherwise silent.
-        flashStatus(tr("Screen capture was cancelled. If nothing was captured, "
-                       "grant Screen Recording in System Settings ▸ Privacy & "
-                       "Security ▸ Screen Recording."));
+    if (proc.exitCode() != 0) {
+        // Non-zero exit means the user cancelled (Esc) — not an error.
+        flashStatus(tr("Screen capture cancelled."));
+        return;
+    }
+    if (!QFileInfo(path).exists() || QFileInfo(path).size() == 0) {
+        // Exit 0 but no output — screencapture produced nothing, which can
+        // silently mean Screen Recording permission was denied. Surface a
+        // graceful hint pointing at the permission setting.
+        flashStatus(tr("No image was captured. If you denied Screen Recording, "
+                       "grant it in System Settings ▸ Privacy & Security ▸ "
+                       "Screen Recording."));
         return;
     }
 #else

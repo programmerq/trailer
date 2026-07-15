@@ -368,16 +368,21 @@ void Application::acquireFromScreenshot() {
                {QStringLiteral("-i"), QStringLiteral("-x"), path});
     proc.waitForFinished(-1);
     const QFileInfo info(path);
-    if (proc.exitCode() != 0 || !info.exists() || info.size() == 0) {
-        // Cancelled (Esc) or nothing captured. There is no status bar in the
-        // no-window Acquire flow, so surface the graceful hint — an empty
-        // capture can also mean Screen Recording permission was denied — as a
-        // brief informational dialog rather than failing silently.
+    // There is no status bar in the no-window Acquire flow, so surface hints as
+    // brief informational dialogs rather than failing silently.
+    if (proc.exitCode() != 0) {
+        // Non-zero exit means the user cancelled (Esc) — not an error.
+        QMessageBox::information(nullptr, tr("Acquire from Screenshot"),
+                                 tr("Screen capture cancelled."));
+        return;
+    }
+    if (!info.exists() || info.size() == 0) {
+        // Exit 0 but no output — screencapture produced nothing, which can
+        // silently mean Screen Recording permission was denied.
         QMessageBox::information(
             nullptr, tr("Acquire from Screenshot"),
-            tr("Screen capture was cancelled. If nothing was captured, grant "
-               "Screen Recording in System Settings ▸ Privacy & Security ▸ "
-               "Screen Recording."));
+            tr("No image was captured. If you denied Screen Recording, grant it "
+               "in System Settings ▸ Privacy & Security ▸ Screen Recording."));
         return;
     }
     openFiles({path});

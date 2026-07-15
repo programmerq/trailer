@@ -34,10 +34,12 @@ using namespace trailer;
 class TestMacosLaunch : public QObject {
     Q_OBJECT
   private slots:
-    // All platforms: the empty-state window model means the app must
-    // outlive its last window, so quit-on-last-window-closed must be off.
-    // This is the concrete, off-Mac guarantee that dismissing a dialog
-    // never quits the app.
+    // The quit-on-last-window-closed policy is platform-split: on macOS the
+    // app must outlive its last window (it lives on as dock icon + global menu
+    // bar with zero windows), so quit-on-last-window-closed is disabled. On
+    // Linux/Windows Qt's default (quit on last window closed) is retained,
+    // because the persistent empty-state window already keeps a top-level alive
+    // so a dialog is never the sole window. The test body asserts both halves.
     void quitOnLastWindowClosedIsDisabled();
 
     // NOTE: "activating the app with zero windows does nothing automatic
