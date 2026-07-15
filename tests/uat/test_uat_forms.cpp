@@ -196,7 +196,10 @@ void TestUatForms::uat_frm_010_formFieldsReportedOnOpen() {
     IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
 
-    QVERIFY(doc->supportsFormFilling());
+    // Since PR #63 the qpdf parse behind supportsFormFilling() runs on a
+    // background worker, so form detection resolves a moment after open. Pump
+    // the event loop until it lands (QTRY passes immediately once resolved).
+    QTRY_VERIFY(doc->supportsFormFilling());
 
     const auto fields = doc->formFields();
     QCOMPARE(static_cast<int>(fields.size()), 3);
@@ -233,7 +236,8 @@ void TestUatForms::uat_frm_020_setFormFillingActiveShowsFields() {
     QVERIFY(dv);
     IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
-    QVERIFY(doc->supportsFormFilling());
+    // Async form detection (PR #63): pump until it resolves.
+    QTRY_VERIFY(doc->supportsFormFilling());
 
     // Toggle on then off — must not crash on either transition.
     doc->setFormFillingActive(true);
@@ -264,7 +268,8 @@ void TestUatForms::uat_frm_030_fillTextFieldPersistsAcrossSave() {
         QVERIFY(dv);
         IDocument *doc = dv->currentDocument();
         QVERIFY(doc);
-        QVERIFY(doc->supportsFormFilling());
+        // Async form detection (PR #63): pump until it resolves.
+        QTRY_VERIFY(doc->supportsFormFilling());
 
         // Find the "fullname" text field.
         const auto fields = doc->formFields();
@@ -297,7 +302,8 @@ void TestUatForms::uat_frm_030_fillTextFieldPersistsAcrossSave() {
         QVERIFY(dv);
         IDocument *doc = dv->currentDocument();
         QVERIFY(doc);
-        QVERIFY(doc->supportsFormFilling());
+        // Async form detection (PR #63): pump until it resolves.
+        QTRY_VERIFY(doc->supportsFormFilling());
 
         const auto fields = doc->formFields();
         const FormField *tf = nullptr;
@@ -347,9 +353,12 @@ void TestUatForms::uat_frm_040_fillFormsAutoEnabledOnFillablePdf() {
 
     QAction *fillForms = findFillFormsAction(mw);
     QVERIFY2(fillForms, "Tools > Fill Forms action not found");
+    // Enable + auto-enable fire when async form detection completes (PR #63),
+    // a moment after open — pump until it lands.
+    QTRY_VERIFY2(fillForms->isChecked(),
+                 "Fill Forms must be auto-enabled the first time a fillable "
+                 "PDF becomes the current document");
     QVERIFY2(fillForms->isEnabled(), "Fill Forms must be enabled for a fillable PDF");
-    QVERIFY2(fillForms->isChecked(), "Fill Forms must be auto-enabled the first time a fillable "
-                                     "PDF becomes the current document");
 }
 
 // UAT-FRM-041 — If the user explicitly toggles Fill Forms off for a
@@ -369,7 +378,9 @@ void TestUatForms::uat_frm_041_fillFormsRespectsExplicitToggleOff() {
 
     QAction *fillForms = findFillFormsAction(mw);
     QVERIFY(fillForms);
-    QVERIFY(fillForms->isChecked());
+    // Auto-enable fires when async form detection completes (PR #63) — pump
+    // until it lands before exercising the explicit toggle-off.
+    QTRY_VERIFY(fillForms->isChecked());
 
     // User explicitly toggles off.
     fillForms->trigger();
@@ -413,7 +424,8 @@ void TestUatForms::uat_frm_050_tabMovesBetweenFieldsInReadingOrder() {
     QVERIFY(dv);
     auto *doc = dv->currentDocument();
     QVERIFY(doc);
-    QVERIFY(doc->supportsFormFilling());
+    // Async form detection (PR #63): pump until it resolves.
+    QTRY_VERIFY(doc->supportsFormFilling());
 
     // Force the form overlay to populate by toggling form-filling on.
     // (UAT-FRM-040 makes this happen automatically, but be explicit so
@@ -503,14 +515,16 @@ void TestUatForms::uat_frm_060_formForcesSidebarHiddenOverridingTypeDefault() {
     QVERIFY(dv);
     IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
-    // Precondition: the fixture is recognised as a 3-field form.
-    QVERIFY2(doc->supportsFormFilling(), "fixture must be a fillable form");
+    // Precondition: the fixture is recognised as a 3-field form. Form detection
+    // is async since PR #63, so pump until it resolves; the content-aware
+    // sidebar decision is re-evaluated on the same capabilities signal.
+    QTRY_VERIFY2(doc->supportsFormFilling(), "fixture must be a fillable form");
     QCOMPARE(static_cast<int>(doc->formFields().size()), 3);
 
     // The form heuristic wins over the seeded per-type "show thumbnails".
     auto *sidebar = mw->findChild<Sidebar *>();
     QVERIFY2(sidebar, "MainWindow should host a Sidebar");
-    QCOMPARE(static_cast<int>(sidebar->mode()), static_cast<int>(Sidebar::Mode::Hidden));
+    QTRY_COMPARE(static_cast<int>(sidebar->mode()), static_cast<int>(Sidebar::Mode::Hidden));
 }
 
 // Custom main: create Application (not just QApplication) so

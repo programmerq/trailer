@@ -55,6 +55,8 @@ class TestPerfLazyOpen : public QObject {
     void annotationSweepRunsOnWorkerThread();
     void annotationCommitEmitsSingleChanged();
     void editorParseDeferredUntilNeeded();
+    void formCapabilityProbeDoesNotParseSynchronously();
+    void formCapabilityBecomesAvailableAfterAsyncLoad();
 };
 
 // Proxy #1 (non-negotiable): the all-pages annotation sweep does NOT run on
@@ -164,6 +166,70 @@ void TestPerfLazyOpen::editorParseDeferredUntilNeeded() {
     // Kicking the annotation load parses (on the worker) exactly once.
     (void)doc->annotations();
     QTRY_VERIFY(PdfEditor::parseCount() >= 1);
+}
+
+// Owner feedback on PR #63: the qpdf editor parse (~0.55s) that
+// supportsFormFilling() forced synchronously at open must NOT block the GUI
+// thread. supportsFormFilling() now returns a provisional "not ready" (false)
+// and the parse + form detection run on the SAME background worker as the
+// annotation sweep; the forms toolbar becomes available a moment after open.
+//
+// Proxy: the capability probe does not parse on the synchronous open path.
+// Reset counters, open, simulate the onCurrentDocumentChanged capability
+// queries — parseCount() is still 0 the instant they return (no sync parse).
+// Then pump the event loop: the parse runs (parseCount() >= 1) on a WORKER
+// thread (parseThread() != GUI thread).
+//
+// Fail-first: against the pre-change code supportsFormFilling() forces a
+// synchronous ensureEditorLoaded() → PdfEditor::load() on the GUI thread, so
+// parseCount() is already 1 (QCOMPARE(..., 0) fails) and, if it did reach the
+// pump, parseThread() would equal the GUI thread.
+void TestPerfLazyOpen::formCapabilityProbeDoesNotParseSynchronously() {
+    PdfEditor::resetInstrumentation();
+
+    DocumentRegistry registry;
+    registry.registerAdapter(std::make_unique<PdfAdapter>());
+    auto doc = openPdf(registry, QStringLiteral("form_1page.pdf"));
+    QVERIFY(doc != nullptr);
+    QCOMPARE(doc->pageCount(), 1);
+
+    QThread *guiThread = QThread::currentThread();
+
+    // Simulate onCurrentDocumentChanged's capability queries. None of these
+    // may force a qpdf parse on the calling (GUI) thread.
+    (void)doc->supportsFormFilling();
+    (void)doc->annotations(); // kicks the unified background load
+
+    // IMMEDIATELY, before spinning the event loop: no parse has run here.
+    QCOMPARE(PdfEditor::parseCount(), 0);
+
+    // Pump the event loop: the background worker parses + detects forms.
+    QTRY_VERIFY(PdfEditor::parseCount() >= 1);
+    QVERIFY(PdfEditor::parseThread() != nullptr);
+    QVERIFY(PdfEditor::parseThread() != guiThread);
+}
+
+// The forms capability resolves asynchronously: supportsFormFilling() is false
+// synchronously right after open (the editor parse has not run yet) and turns
+// true once the background load has produced the editor + form detection.
+//
+// Fail-first: against the pre-change code supportsFormFilling() forces the
+// parse inline and returns true synchronously, so QVERIFY(!supportsFormFilling())
+// fails immediately.
+void TestPerfLazyOpen::formCapabilityBecomesAvailableAfterAsyncLoad() {
+    PdfEditor::resetInstrumentation();
+
+    DocumentRegistry registry;
+    registry.registerAdapter(std::make_unique<PdfAdapter>());
+    auto doc = openPdf(registry, QStringLiteral("form_1page.pdf"));
+    QVERIFY(doc != nullptr);
+
+    // Provisional "not ready yet" synchronously at open — kicks the load.
+    QVERIFY(!doc->supportsFormFilling());
+
+    // After the background load completes, the AcroForm is detected.
+    QTRY_VERIFY(doc->supportsFormFilling());
+    QVERIFY(!doc->formFields().empty());
 }
 
 QTEST_MAIN(TestPerfLazyOpen)

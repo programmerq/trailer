@@ -170,6 +170,11 @@ class PdfEditor {
     //                        a worker thread (NOT the GUI/caller thread),
     //                        the deterministic liveness/ordering proxy for
     //                        the P0 fix.
+    //   * s_parseThread    — records QThread::currentThread() the last time
+    //                        load() parsed a file, so the perf test can prove
+    //                        the qpdf processFile parse (forced by the forms
+    //                        capability probe) runs on the background worker,
+    //                        NOT synchronously on the GUI thread at open.
     // Not part of the production contract; safe to ignore outside tests.
     static int parseCount() { return s_parseCount.load(std::memory_order_relaxed); }
     static int annotationPageVisits() {
@@ -178,10 +183,12 @@ class PdfEditor {
     static QThread *annotationSweepThread() {
         return s_annotationSweepThread.load(std::memory_order_relaxed);
     }
+    static QThread *parseThread() { return s_parseThread.load(std::memory_order_relaxed); }
     static void resetInstrumentation() {
         s_parseCount.store(0, std::memory_order_relaxed);
         s_annotationPageVisits.store(0, std::memory_order_relaxed);
         s_annotationSweepThread.store(nullptr, std::memory_order_relaxed);
+        s_parseThread.store(nullptr, std::memory_order_relaxed);
     }
 
   private:
@@ -189,6 +196,7 @@ class PdfEditor {
     static std::atomic<int> s_parseCount;
     static std::atomic<int> s_annotationPageVisits;
     static std::atomic<QThread *> s_annotationSweepThread;
+    static std::atomic<QThread *> s_parseThread;
 
     bool saveImpl(const QString &path, const EncryptionOptions *enc);
 

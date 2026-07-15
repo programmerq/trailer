@@ -216,6 +216,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
             m_pageHasTextCachePage = -1;
             m_pageHasTextCacheValue = false;
         }
+        m_contentAwareFormSidebarPending.remove(doc);
         // Drop the SAM encoder cache + cancel in-flight tasks for this
         // doc. Without this a closed document's address could be
         // recycled by the allocator and a fresh document at the same
@@ -2793,6 +2794,15 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             connect(store, &AnnotationStore::changed, this,
                     &MainWindow::onActiveAnnotationStoreChanged, Qt::UniqueConnection);
         }
+        // Re-run the forms-toolbar setup when the doc's async form detection
+        // completes. Since PR #63 the qpdf parse behind supportsFormFilling()
+        // runs on a background worker, so the forms capability is not known at
+        // open; the notifier fires once it is. Named-slot + UniqueConnection so
+        // repeated tab switches don't accumulate duplicate connections.
+        if (auto *notifier = doc->capabilityNotifier()) {
+            connect(notifier, &CapabilityNotifier::capabilitiesChanged, this,
+                    &MainWindow::onDocumentCapabilitiesChanged, Qt::UniqueConnection);
+        }
         // Forward annotation-selection changes from the doc's overlay
         // to the Inspector. The overlay is a child of the doc's view
         // widget; we re-find it on every focus change because the
@@ -3009,24 +3019,13 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     m_cropImageAction->setEnabled(canEdit && isImage);
     m_insertPagesAction->setEnabled(isPdfLike);
     m_cropPagesAction->setEnabled(isPdfLike);
-    const bool hasForms = doc && doc->supportsFormFilling();
-    if (!hasForms && m_fillFormsAction->isChecked()) {
-        // Deactivate fill-forms mode when switching to a document that
-        // doesn't support it, without triggering the toggled signal.
-        QSignalBlocker blk(m_fillFormsAction);
-        m_fillFormsAction->setChecked(false);
-    }
-    m_fillFormsAction->setEnabled(hasForms);
-    m_autoFillFormAction->setEnabled(hasForms);
-    // Auto-enable Fill Forms the first time we see a fillable document
-    // so the user gets visible widgets + click-to-type without having
-    // to discover the menu toggle. We only do this once per document
-    // pointer — if the user explicitly toggles it off, we respect that
-    // for the rest of the document's lifetime.
-    if (hasForms && !m_autoEnabledFormDocs.contains(doc) && !m_fillFormsAction->isChecked()) {
-        m_autoEnabledFormDocs.insert(doc);
-        m_fillFormsAction->setChecked(true); // → setFormFillingActive(true)
-    }
+    // Forms-toolbar enable/populate. Extracted so it can run both here (at
+    // open) AND when the document's async form detection later completes
+    // (capabilitiesChanged → onDocumentCapabilitiesChanged). Since PR #63 the
+    // qpdf parse that answers supportsFormFilling() runs on a background
+    // worker, so at open this reports "no forms yet" and the block re-runs a
+    // moment later when the answer lands.
+    refreshFormCapabilities(doc);
     // My Card editor is always available — a user may want to edit
     // their card even without a PDF open.
     m_myCardAction->setEnabled(true);
@@ -3110,6 +3109,13 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             if (const auto mode = contentAwareSidebarMode(
                     doc->pageCount(), doc->supportsFormFilling(), formFieldCount)) {
                 m_sidebar->setMode(*mode);
+            } else {
+                // The form heuristic depends on supportsFormFilling(), which
+                // since PR #63 resolves on a background worker and is not known
+                // yet. Mark this first-open doc so onDocumentCapabilitiesChanged
+                // re-evaluates the content-aware sidebar once detection lands —
+                // a short form then correctly hides the sidebar.
+                m_contentAwareFormSidebarPending.insert(doc);
             }
         }
     }
@@ -3238,6 +3244,48 @@ void MainWindow::onActiveAnnotationStoreChanged() {
         m_highlightsAndNotesSidebarAction->setEnabled(count > 0);
         if (count == 0 && m_sidebar->mode() == Sidebar::Mode::HighlightsAndNotes) {
             m_sidebar->setMode(Sidebar::Mode::Hidden);
+        }
+    }
+}
+
+void MainWindow::refreshFormCapabilities(IDocument *doc) {
+    const bool hasForms = doc && doc->supportsFormFilling();
+    if (!hasForms && m_fillFormsAction->isChecked()) {
+        // Deactivate fill-forms mode when switching to a document that
+        // doesn't support it, without triggering the toggled signal.
+        QSignalBlocker blk(m_fillFormsAction);
+        m_fillFormsAction->setChecked(false);
+    }
+    m_fillFormsAction->setEnabled(hasForms);
+    m_autoFillFormAction->setEnabled(hasForms);
+    // Auto-enable Fill Forms the first time we see a fillable document
+    // so the user gets visible widgets + click-to-type without having
+    // to discover the menu toggle. We only do this once per document
+    // pointer — if the user explicitly toggles it off, we respect that
+    // for the rest of the document's lifetime.
+    if (hasForms && !m_autoEnabledFormDocs.contains(doc) && !m_fillFormsAction->isChecked()) {
+        m_autoEnabledFormDocs.insert(doc);
+        m_fillFormsAction->setChecked(true); // → setFormFillingActive(true)
+    }
+}
+
+void MainWindow::onDocumentCapabilitiesChanged() {
+    // A document's async capability detection (the qpdf parse + AcroForm
+    // scan, now off the GUI thread per PR #63) just completed. Re-run the
+    // forms-toolbar setup for whichever document is currently active. The
+    // notifier is per-document, but refreshing the current doc is always
+    // correct (idempotent) even if the user switched tabs during the load.
+    IDocument *doc = m_documentView ? m_documentView->currentDocument() : nullptr;
+    refreshFormCapabilities(doc);
+    // If this first-open doc deferred its content-aware sidebar decision
+    // pending form detection (see onCurrentDocumentChanged), re-evaluate it
+    // now that the answer is known — a short form hides the sidebar.
+    if (doc && m_sidebar && m_contentAwareFormSidebarPending.remove(doc)) {
+        const int formFieldCount =
+            doc->supportsFormFilling() ? static_cast<int>(doc->formFields().size()) : 0;
+        if (const auto mode = contentAwareSidebarMode(doc->pageCount(), doc->supportsFormFilling(),
+                                                      formFieldCount)) {
+            m_sidebar->setMode(*mode);
         }
     }
 }

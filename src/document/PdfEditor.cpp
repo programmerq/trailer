@@ -33,6 +33,7 @@ namespace trailer {
 std::atomic<int> PdfEditor::s_parseCount{0};
 std::atomic<int> PdfEditor::s_annotationPageVisits{0};
 std::atomic<QThread *> PdfEditor::s_annotationSweepThread{nullptr};
+std::atomic<QThread *> PdfEditor::s_parseThread{nullptr};
 
 PdfEditor::PdfEditor() : m_qpdf(std::make_unique<QPDF>()) {}
 
@@ -43,6 +44,10 @@ bool PdfEditor::load(const QString &path) {
     // does NOT bump this — it reuses the already-parsed document, so the
     // "second full-file parse deferred" proxy stays meaningful.
     s_parseCount.fetch_add(1, std::memory_order_relaxed);
+    // Record which thread ran the parse. The forms-capability probe used to
+    // force this on the GUI thread at open; it now runs on the background
+    // worker (PdfDocument::startBackgroundLoad), which the perf test asserts.
+    s_parseThread.store(QThread::currentThread(), std::memory_order_relaxed);
     m_path = path;
     m_sources.clear();
     try {

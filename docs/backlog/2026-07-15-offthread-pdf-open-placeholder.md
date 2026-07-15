@@ -28,31 +28,39 @@ worker+placeholder work was deferred rather than done in the same change.
 
 - The all-pages `readAnnotations()` sweep (proxy #1, the dominant cost) is
   now run **off** the GUI thread on an isolated, throwaway qpdf instance
-  (`PdfDocument::startAnnotationLoad()`, `src/document/PdfAdapter.cpp`,
+  (`PdfDocument::startBackgroundLoad()`, `src/document/PdfAdapter.cpp`,
   landed on `fix/startup-hang-large-pdf`). `annotations()` kicks the worker
   and returns the empty store immediately; a GUI-thread finished slot commits
   the result via a single batched `AnnotationStore::addBatch`. The GUI thread
   no longer blocks on the sweep at view-attach. See decision record 0006's
   Update note.
+- **(PR #63 owner feedback) The qpdf editor parse + AcroForm detection are
+  now ALSO off the GUI thread.** `supportsFormFilling()` used to force a
+  synchronous ~0.55s qpdf `processFile` parse at view-attach; it now returns
+  a provisional `false` until the SAME background worker parses a separate
+  parse-only editor and reads AcroForm presence. On completion the GUI thread
+  adopts that editor as `m_editor` and fires `capabilitiesChanged()`
+  (`CapabilityNotifier`), which re-runs `MainWindow::refreshFormCapabilities()`
+  so the forms toolbar enables a moment after open instead of blocking it.
+  The adopted editor is parse-only (never annotation-swept), so steady-state
+  RSS stays modest (Option B — DR 0006). The sync edit/save paths block on the
+  in-flight load and adopt its editor if a mutation lands mid-window. The
+  capabilities-refresh signal that this item's fix direction called for has
+  therefore landed as part of this change.
 
 ### Still deferred (this item)
 
-As of the P0 fix + that follow-on, the `PdfDocument` constructor runs only
-`QPdfDocument::load`; the qpdf parse is lazy and the sweep is on a worker.
-What remains synchronous on the GUI thread at open is:
+As of the P0 fix + those follow-ons, the `PdfDocument` constructor runs only
+`QPdfDocument::load`; the qpdf parse + form detection AND the annotation sweep
+are all on a worker. What remains synchronous on the GUI thread at open is the
+single item this backlog now targets:
 
 1. `QPdfDocument::load(path)` in the ctor — a bounded progressive read
-   (~1.8s on a 195MB/2500-page file) that yields `pageCount()` + a page-0
-   render. This is the residual open-path IO this item targets.
-2. `MainWindow::onCurrentDocumentChanged` querying `supportsFormFilling()`
-   (`src/ui/MainWindow.cpp:2875,2972`) when a document becomes current —
-   this triggers the lazy qpdf `processFile` parse (~0.55s) on the GUI
-   thread at *view-attach*. (`annotations()` no longer blocks the GUI
-   thread — its sweep is now on a worker.) Moving open off-thread should
-   also warm this parse on the worker (or attach the view against a
-   placeholder and populate on the worker), so the GUI thread never blocks
-   on it either — which needs a capabilities-refresh signal so the toolbar
-   updates when the off-thread form detection completes.
+   (~16ms typical; ~1.8s on a 195MB/2500-page file) that yields `pageCount()`
+   + a page-0 render. This is the residual open-path IO this item targets.
+   (The ~0.55s forms parse that used to sit here has moved to the worker —
+   see "Done since" above.) Moving this last read off the GUI thread behind a
+   placeholder first page is the remaining work.
 
 ## Fix direction
 

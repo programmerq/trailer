@@ -184,6 +184,17 @@ class MainWindow : public QMainWindow {
     // don't have an anchor) falls back to the cursor position.
     void onSignHere(const QPoint &anchorGlobalPos = QPoint());
     void onCurrentDocumentChanged(IDocument *doc);
+    // Forms-toolbar enable/populate for `doc`. Extracted from
+    // onCurrentDocumentChanged so it can run both at open and when the
+    // document's async form detection completes (PR #63: the qpdf parse that
+    // answers supportsFormFilling() runs on a background worker, so forms are
+    // not known at open).
+    void refreshFormCapabilities(IDocument *doc);
+    // Slot fired by IDocument::capabilityNotifier() when async capability
+    // detection completes; re-runs refreshFormCapabilities for the current
+    // document. Must be a member function — not a lambda — so the
+    // Qt::UniqueConnection flag in the connect() call actually takes effect.
+    void onDocumentCapabilitiesChanged();
     // Invoked whenever the active document's annotation store mutates
     // (add / remove / update / undo / redo). Refreshes the window
     // title, dirty marker, and Undo/Redo action state. Must be a
@@ -351,6 +362,12 @@ class MainWindow : public QMainWindow {
     // restored on focus. Tracked per-document so a tab switch
     // doesn't bounce the user back to the saved page mid-session.
     QSet<const IDocument *> m_restoredViewStateDocs;
+    // First-open documents whose content-aware sidebar decision was deferred
+    // because form detection had not yet completed (async since PR #63).
+    // onDocumentCapabilitiesChanged re-evaluates and removes them once the
+    // AcroForm answer lands. Pointers may dangle after close, which is
+    // harmless: entries are removed on close and never dereferenced stale.
+    QSet<const IDocument *> m_contentAwareFormSidebarPending;
     // One-shot guard for applyInitialWindowSize. True after the
     // first opened doc has driven a resize so opening additional
     // tabs in the same window doesn't bounce the geometry around.

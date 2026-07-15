@@ -80,6 +80,7 @@ set(TRAILER_SOURCES
     src/document/IFormatAdapter.h
     src/document/ImageAdapter.cpp
     src/document/ImageAdapter.h
+    src/document/CapabilityNotifier.h
     src/document/PdfAdapter.cpp
     src/document/PdfAdapter.h
     src/document/PdfCommands.cpp
