@@ -194,6 +194,9 @@ class TestUatRecognizeText : public QObject {
     void uat_ocr_090_noticeLinkRevealsProgressNoModal();
     void uat_ocr_100_imageSearchEnabledAndHighlightsMatch();
     void uat_ocr_110_emptyResultDoesNotClaimTextLayer();
+    void uat_ocr_120_smallImageAutoOcrsOnOpen();
+    void uat_ocr_130_imageOverThresholdDoesNotEagerOcr();
+    void uat_ocr_140_emptyPageNotReOcrdOnRevisit();
 
   private:
     QTemporaryDir m_scratch;
@@ -875,6 +878,159 @@ void TestUatRecognizeText::uat_ocr_110_emptyResultDoesNotClaimTextLayer() {
     QVERIFY2(!store->hasResults(0),
              "a zero-block OCR result must not create a hasResults text-layer entry");
     QVERIFY(store->blocks(0).empty());
+}
+
+// uat_ocr_120 — ADR G13.1 headline: opening a SMALL (≤4 MP) single image
+// auto-OCRs page 0 on the AMBIENT path (onVisiblePageChanged, the same
+// call MainWindow drives on open/settle) with NO user action — the store
+// gains results and no user-action batch is ever started.
+void TestUatRecognizeText::uat_ocr_120_smallImageAutoOcrsOnOpen() {
+    QVERIFY(m_scratch.isValid());
+    const QString imgPath = writeTextImage(m_scratch.filePath(QStringLiteral("ocr120.png")));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->settings().setMlRecognizeTextInBackground(true);
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    IDocument *doc = mw->findChild<DocumentView *>()->currentDocument();
+    QVERIFY(doc);
+    QCOMPARE(doc->pageCount(), 1);
+    const QSizeF hint = doc->pageSizeHint(0);
+    QVERIFY2(hint.width() * hint.height() <= double(OcrController::kEagerOcrMaxPixels),
+             "fixture must be a small (≤4 MP) image");
+    auto *store = doc->selectableText();
+    QVERIFY(store && !store->hasResults(0));
+
+    OcrController controller(app);
+    controller.setDocument(doc);
+    controller.setModelReadyForTesting(true);
+    std::atomic<int> calls{0};
+    controller.setRecognizerForTesting(
+        [&calls](const QImage &, const CancellationToken *) -> QVector<OcrEngine::TextBlock> {
+            ++calls;
+            OcrEngine::TextBlock b;
+            b.text = QStringLiteral("auto");
+            b.polygon = QPolygon(QRect(0, 0, 20, 20));
+            return {b};
+        });
+    // A user action (submitUserPages) would emit ocrBatchStarted; the
+    // ambient VisiblePage path never does. Spy on it to prove "no user
+    // action."
+    QSignalSpy batchStarted(&controller, &OcrController::ocrBatchStarted);
+
+    controller.onVisiblePageChanged(0);
+    QTRY_VERIFY(store->hasResults(0));
+    QVERIFY2(calls.load() >= 1, "small image must auto-OCR page 0 on the ambient path");
+    QCOMPARE(batchStarted.count(), 0);
+}
+
+// uat_ocr_130 — ADR G13.1: a single image whose pixel area exceeds the
+// 4 MP eager ceiling is NOT greedy — the ambient path submits no eager
+// OCR on open. Manual Recognize Text (UserAction) still runs for it.
+void TestUatRecognizeText::uat_ocr_130_imageOverThresholdDoesNotEagerOcr() {
+    QVERIFY(m_scratch.isValid());
+    // 3000×2000 = 6,000,000 px > the 4 MP (2048×2048 = 4,194,304) ceiling.
+    const QString imgPath = writeTextImage(m_scratch.filePath(QStringLiteral("ocr130.png")),
+                                           QStringLiteral("BIG SCAN"), 3000, 2000);
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->settings().setMlRecognizeTextInBackground(true);
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    IDocument *doc = mw->findChild<DocumentView *>()->currentDocument();
+    QVERIFY(doc);
+    QCOMPARE(doc->pageCount(), 1);
+    const QSizeF hint = doc->pageSizeHint(0);
+    QVERIFY2(hint.width() * hint.height() > double(OcrController::kEagerOcrMaxPixels),
+             "fixture must exceed the 4 MP eager ceiling");
+    auto *store = doc->selectableText();
+    QVERIFY(store && !store->hasResults(0));
+
+    OcrController controller(app);
+    controller.setDocument(doc);
+    controller.setModelReadyForTesting(true);
+    std::atomic<int> calls{0};
+    controller.setRecognizerForTesting(
+        [&calls](const QImage &, const CancellationToken *) -> QVector<OcrEngine::TextBlock> {
+            ++calls;
+            OcrEngine::TextBlock b;
+            b.text = QStringLiteral("big");
+            b.polygon = QPolygon(QRect(0, 0, 20, 20));
+            return {b};
+        });
+
+    // Ambient path: the >4 MP gate suppresses eager auto-OCR entirely.
+    controller.onVisiblePageChanged(0);
+    QApplication::processEvents();
+    QTest::qWait(50);
+    QCOMPARE(calls.load(), 0);
+    QVERIFY2(!store->hasResults(0),
+             "a >4 MP single image must not eager-auto-OCR on the ambient path");
+
+    // But UserAction (manual Recognize Text) must always run, gate or not.
+    controller.setProgressRevealDelayMs(0);
+    controller.submitUserPages(doc, {0}, /*forceRerun=*/false);
+    QTRY_VERIFY(store->hasResults(0));
+    QVERIFY2(calls.load() >= 1,
+             "manual Recognize Text must run for a >4 MP image regardless of the eager gate");
+}
+
+// uat_ocr_140 — FIX 1: a page that OCRs to zero blocks is memoed as
+// attempted (keyed by content hash) so the ambient path does NOT re-OCR
+// it on every revisit, while hasResults() stays false for the honest
+// "No text found" status. An edited page (different hash) re-OCRs.
+void TestUatRecognizeText::uat_ocr_140_emptyPageNotReOcrdOnRevisit() {
+    QVERIFY(m_scratch.isValid());
+    const QString imgPath = writeTextImage(m_scratch.filePath(QStringLiteral("ocr140.png")));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->settings().setMlRecognizeTextInBackground(true);
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *imgDoc = dynamic_cast<ImageDocument *>(mw->findChild<DocumentView *>()->currentDocument());
+    QVERIFY(imgDoc);
+    auto *store = imgDoc->selectableText();
+    QVERIFY(store && !store->hasResults(0));
+
+    OcrController controller(app);
+    controller.setDocument(imgDoc);
+    controller.setModelReadyForTesting(true);
+    controller.setProgressRevealDelayMs(0);
+    std::atomic<int> calls{0};
+    controller.setRecognizerForTesting(
+        [&calls](const QImage &, const CancellationToken *) -> QVector<OcrEngine::TextBlock> {
+            ++calls;
+            return {}; // text-less page
+        });
+
+    // First pass: recognise page 0, get zero blocks. The store must NOT
+    // gain a text layer (honesty), but the page IS memoed as attempted.
+    controller.submitUserPages(imgDoc, {0}, /*forceRerun=*/true);
+    QTRY_VERIFY(calls.load() >= 1);
+    QTRY_VERIFY2(!store->hasResults(0), "a zero-block result must not claim a text layer");
+    const quint64 h = hashImageContent(imgDoc->image());
+    QTRY_VERIFY(store->wasAttempted(0, h));
+    // Hash-keyed: a different hash (an edited page) is NOT considered done.
+    QVERIFY(!store->wasAttempted(0, h ^ 0x1ULL));
+    const int callsAfterFirst = calls.load();
+
+    // Revisit on the ambient path: the memo makes submitPage return Cached,
+    // so the text-less page is NOT re-rendered-and-re-OCR'd every visit —
+    // the perf/battery regression this fix closes. No new recognizer calls.
+    controller.onVisiblePageChanged(0);
+    QApplication::processEvents();
+    QTest::qWait(50);
+    QCOMPARE(calls.load(), callsAfterFirst);
+    QVERIFY2(!store->hasResults(0), "hasResults stays false across the revisit");
 }
 
 int main(int argc, char **argv) {
