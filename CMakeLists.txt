@@ -111,6 +111,8 @@ set(TRAILER_SOURCES
     src/ml/SamSession.h
     src/platform/PowerSource.cpp
     src/platform/PowerSource.h
+    src/platform/ScreenCapturePermission.cpp
+    src/platform/ScreenCapturePermission.h
     src/recent/RecentFiles.cpp
     src/recent/RecentFiles.h
     src/settings/AppPaths.cpp

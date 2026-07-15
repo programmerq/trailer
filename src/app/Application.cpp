@@ -3,6 +3,7 @@
 #include "TrailerVersion.h"
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
+#include "platform/ScreenCapturePermission.h"
 #include "ui/MainWindow.h"
 
 #include <QAction>
@@ -351,16 +352,30 @@ void Application::newFromClipboard() {
 }
 
 void Application::acquireFromScreenshot() {
+    // First use only: explain the "Screen Recording" permission macOS is
+    // about to prompt for. Deferred to first actual use — never at launch.
+    if (!maybeShowScreenCaptureExplainer(m_settings, nullptr)) {
+        // User cancelled the pre-permission explainer — do not capture.
+        return;
+    }
     const QString path = transientImportPath("acquire", "png");
     QProcess proc;
     proc.start(QStringLiteral("/usr/sbin/screencapture"),
                {QStringLiteral("-i"), QStringLiteral("-x"), path});
     proc.waitForFinished(-1);
-    if (proc.exitCode() != 0)
-        return;
     const QFileInfo info(path);
-    if (!info.exists() || info.size() == 0)
+    if (proc.exitCode() != 0 || !info.exists() || info.size() == 0) {
+        // Cancelled (Esc) or nothing captured. There is no status bar in the
+        // no-window Acquire flow, so surface the graceful hint — an empty
+        // capture can also mean Screen Recording permission was denied — as a
+        // brief informational dialog rather than failing silently.
+        QMessageBox::information(
+            nullptr, tr("Acquire from Screenshot"),
+            tr("Screen capture was cancelled. If nothing was captured, grant "
+               "Screen Recording in System Settings ▸ Privacy & Security ▸ "
+               "Screen Recording."));
         return;
+    }
     openFiles({path});
 }
 #endif
