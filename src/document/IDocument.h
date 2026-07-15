@@ -135,6 +135,16 @@ class IDocument {
     // meaningful.
     virtual bool hasTextLayer() const { return false; }
 
+    // True iff `page` carries a real, extractable native text layer
+    // (born-digital PDF text, not a bare scan). Distinct from the
+    // coarse hasTextLayer() capability stub — this performs a per-page
+    // check so callers can tell a text page from an image-only page.
+    // Drives native-text ingestion into SelectableTextStore and the
+    // suppression of the "Recognize text" notice on pages that already
+    // have selectable text. Default false — adapters without a native
+    // text layer (images, stub) opt out.
+    virtual bool pageHasText(int /*page*/) const { return false; }
+
     // Outline / Table of Contents access. Documents that ship with a
     // /Outlines tree (most authored PDFs do) expose it through this
     // model so the Sidebar's "Table of Contents" mode can render a

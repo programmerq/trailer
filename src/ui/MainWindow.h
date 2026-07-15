@@ -232,6 +232,11 @@ class MainWindow : public QMainWindow {
     void showSearchBar();
     void hideSearchBar();
     void updateTitleForDocument(IDocument *doc);
+    // Re-derive the large-doc "Recognize text" notice visibility (ADR
+    // 0006). Called from onCurrentDocumentChanged and the m_ocrPagePoll
+    // tick so the notice is guarded by a real per-page text check and
+    // self-clears once the page gains text / OCR results / is dismissed.
+    void updateLargeDocOcrHint();
     void updateUndoRedoActions(IDocument *doc);
     int selectedPageForEdit(IDocument *doc) const;
     // Size the window to fit the first document opened. Clamped to a
@@ -437,6 +442,10 @@ class MainWindow : public QMainWindow {
     // Shown only when the active doc is large + non-OCR'd; hidden
     // otherwise so the status bar stays clean.
     QWidget *m_largeDocOcrHint = nullptr;
+    // Per-document dismissal flag for the large-doc recognize notice
+    // (ADR 0006). Set when the user clicks the notice's × ; reset on
+    // document change so the next document can surface it again.
+    bool m_largeDocOcrHintDismissed = false;
 
     // Decoration applied to the Remove Background menu entry when the
     // current image is a strong candidate for background removal. The

@@ -3,6 +3,8 @@
 #include "document/DocumentRegistry.h"
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
+#include "document/SelectableTextStore.h"
+#include "ui/SelectableTextLayer.h"
 
 #include <QImage>
 #include <QKeyEvent>
@@ -32,6 +34,9 @@ class TestAdapters : public QObject {
     void pdfDocumentAdvertisesCapabilities();
     void pdfDocumentRendersThumbnailsForValidFile();
     void pdfDocumentAcceptsSearchQueryWithoutView();
+    void pdfDocumentPageHasTextDistinguishesTextFromBlankPage();
+    void pdfDocumentNativeTextLayerFeedsSelectableStore();
+    void pdfDocumentNativeTextDragSelectsRealString();
     void printSupportReflectsValidity();
     void pdfDocumentRotationMarksDirtyAndSaveClears();
     void pdfDocumentDeletePagesRemovesAndMarksDirty();
@@ -233,6 +238,141 @@ void TestAdapters::pdfDocumentAcceptsSearchQueryWithoutView() {
     missing.setSearchQuery("anything");
     missing.findNext();
     missing.clearSearch();
+}
+
+// R2/backlog 2026-07-13: pageHasText() is a real per-page probe — true
+// for a born-digital page, false for a text-less (blank/scanned) page.
+// This is the guard that keeps the Recognize-text notice off text-layer
+// docs, distinct from the coarse hasTextLayer() capability stub.
+void TestAdapters::pdfDocumentPageHasTextDistinguishesTextFromBlankPage() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("mixed.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        // Page 0: real text. Page 1: no drawText at all — a text-less
+        // page, the closest fixture to an image-only scan.
+        painter.drawText(QRect(100, 100, 800, 200), Qt::AlignLeft, "Born digital page");
+        writer.newPage();
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    QCOMPARE(doc.pageCount(), 2);
+    // hasTextLayer() stays the coarse capability stub (true for any valid
+    // PDF) — we must not have perturbed it.
+    QVERIFY(doc.hasTextLayer());
+    QVERIFY2(doc.pageHasText(0), "Page with drawn text must report pageHasText() true");
+    QVERIFY2(!doc.pageHasText(1), "Blank/text-less page must report pageHasText() false");
+    // Out-of-range and invalid docs are false, never a crash.
+    QVERIFY(!doc.pageHasText(-1));
+    QVERIFY(!doc.pageHasText(99));
+
+    PdfDocument missing("/tmp/definitely-not-a-real-file.pdf");
+    QVERIFY(!missing.isValid());
+    QVERIFY(!missing.pageHasText(0));
+}
+
+// R1: the native PDF text layer feeds SelectableTextStore for born-
+// digital pages — so selection has something to hit-test even though no
+// OCR ever ran. ingestNativeTextLayer() populates the store; it must not
+// clobber existing (OCR) results.
+void TestAdapters::pdfDocumentNativeTextLayerFeedsSelectableStore() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("native.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 900, 120), Qt::AlignLeft, "Selectable native line");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    auto *store = doc.selectableText();
+    QVERIFY(store);
+    QVERIFY2(!store->hasResults(0), "Store starts empty before ingestion");
+
+    doc.ingestNativeTextLayer(0);
+    QVERIFY2(store->hasResults(0), "Native ingestion must populate the store for a text page");
+    const auto &blocks = store->blocks(0);
+    QVERIFY(!blocks.empty());
+    // The joined native text carries the drawn string.
+    QStringList parts;
+    for (const auto &b : blocks)
+        parts << b.text;
+    const QString joined = parts.join(QLatin1Char(' '));
+    QVERIFY2(joined.contains(QStringLiteral("Selectable")),
+             qPrintable(QStringLiteral("native text missing expected word, got: ") + joined));
+    // Geometry is real (point-space), not a degenerate rect.
+    QVERIFY(!blocks.front().polygon.boundingRect().isEmpty());
+
+    // Re-ingest must NOT clobber: seed a distinct "OCR" entry, re-run,
+    // and confirm the stored blocks are the OCR ones (hasResults short-
+    // circuits so real recognition output always wins).
+    OcrEngine::TextBlock ocr;
+    ocr.text = QStringLiteral("OCR-SENTINEL");
+    ocr.polygon = QPolygon({{0, 0}, {10, 0}, {10, 10}, {0, 10}});
+    store->put(0, 12345ULL, {ocr});
+    doc.ingestNativeTextLayer(0);
+    QCOMPARE(store->blocks(0).size(), static_cast<size_t>(1));
+    QCOMPARE(store->blocks(0).front().text, QStringLiteral("OCR-SENTINEL"));
+
+    // A text-less page stays empty after an ingest attempt.
+    doc.ingestNativeTextLayer(1);
+    QVERIFY(!store->hasResults(1));
+}
+
+// R1 end-to-end: with the native blocks in the store, a drag over the
+// text region through a SelectableTextLayer yields the real native
+// string (find already worked; this closes the selection gap).
+void TestAdapters::pdfDocumentNativeTextDragSelectsRealString() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("dragnative.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 900, 120), Qt::AlignLeft, "Draggable words");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    doc.ingestNativeTextLayer(0);
+    auto *store = doc.selectableText();
+    QVERIFY(store && store->hasResults(0));
+    const auto &blocks = store->blocks(0);
+    QVERIFY(!blocks.empty());
+    const QRect region = blocks.front().polygon.boundingRect();
+    QVERIFY(!region.isEmpty());
+
+    // Identity docToView mapping: the layer's block coords are already in
+    // the point space this test drags in (same space the adapter's real
+    // docToView multiplies by zoom).
+    SelectableTextLayer layer;
+    layer.resize(1200, 1600);
+    layer.setStore(store);
+    layer.setCurrentPage(0);
+    layer.setDocToView([](QPointF p, int) { return p; });
+
+    // Drag across the whole region — snaps to the block, exactly like the
+    // OCR path.
+    const QString selected =
+        layer.simulateDragForTest(QPointF(region.left() + 1, region.top() + 1),
+                                  QPointF(region.right() - 1, region.bottom() - 1));
+    QVERIFY2(!selected.isEmpty(), "Drag over native text must yield a non-empty selection");
+    QVERIFY2(selected.contains(QStringLiteral("Draggable")),
+             qPrintable(QStringLiteral("selection missing expected word, got: ") + selected));
+    // The selection equals what Ctrl+C would copy (selectedText() is the
+    // clipboard source).
+    QCOMPARE(layer.selectedBlockCount(), static_cast<int>(blocks.size()));
 }
 
 void TestAdapters::printSupportReflectsValidity() {

@@ -26,6 +26,7 @@
 //   uat_ocr_050_recognizeTextLayerIsOverlayChildOfView
 
 #include "app/Application.h"
+#include "document/IDocument.h"
 #include "document/ImageAdapter.h"
 #include "document/SelectableTextStore.h"
 #include "ml/ModelRegistry.h"
@@ -33,20 +34,29 @@
 #include "settings/AppPaths.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
+#include "ui/OcrController.h"
 #include "ui/OcrResultsDialog.h"
 #include "ui/SelectableTextLayer.h"
 
 #include <QAction>
 #include <QCheckBox>
+#include <QDialog>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
 #include <QFont>
 #include <QImage>
+#include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
+#include <QPageSize>
 #include <QPainter>
+#include <QPdfWriter>
+#include <QPolygon>
 #include <QTemporaryDir>
+#include <QToolButton>
+#include <QWidget>
 #include <QtTest/QtTest>
 
 using namespace trailer;
@@ -113,6 +123,36 @@ void wipePpOcrCache() {
     QFile::remove(QDir(dir).filePath(QStringLiteral("pp_ocr_rec_en.onnx")));
 }
 
+// Write a `pages`-page PDF. When `withText`, each page carries a drawn
+// text line (a born-digital text layer); otherwise pages are blank —
+// the closest fixture to an image-only scan. Used to exercise the
+// large-doc (>50 page) Recognize-text notice guard.
+QString writeMultiPagePdf(const QString &path, int pages, bool withText) {
+    QPdfWriter writer(path);
+    writer.setPageSize(QPageSize(QPageSize::A4));
+    QPainter p(&writer);
+    for (int i = 0; i < pages; ++i) {
+        if (i > 0)
+            writer.newPage();
+        if (withText) {
+            p.drawText(QRect(200, 200, 3000, 400), Qt::AlignLeft,
+                       QStringLiteral("Born-digital page %1 selectable text").arg(i + 1));
+        }
+    }
+    p.end();
+    return path;
+}
+
+// G2 evidence: grab the running window to PNG when TRAILER_SHOT_DIR is
+// set. Offscreen-safe (QWidget::grab renders without a display).
+void saveNoticeShot(MainWindow *mw, const QString &name) {
+    const QByteArray shotDir = qgetenv("TRAILER_SHOT_DIR");
+    if (shotDir.isEmpty())
+        return;
+    QDir().mkpath(QString::fromLocal8Bit(shotDir));
+    mw->grab().save(QString::fromLocal8Bit(shotDir) + "/" + name);
+}
+
 } // namespace
 
 class TestUatRecognizeText : public QObject {
@@ -124,6 +164,7 @@ class TestUatRecognizeText : public QObject {
     void uat_ocr_030_recognizeTextNoopsWithoutModels();
     void uat_ocr_040_recognizeTextDialogOffersForceRerunForPdf();
     void uat_ocr_050_recognizeTextLayerIsOverlayChildOfView();
+    void uat_ocr_060_largeDocNoticeGuardedDismissableSelfClearing();
 
   private:
     QTemporaryDir m_scratch;
@@ -294,6 +335,125 @@ void TestUatRecognizeText::uat_ocr_050_recognizeTextLayerIsOverlayChildOfView() 
     // viewport). We don't assert the exact type — just that it has
     // one, so it lives inside the document view.
     QVERIFY(layer->parentWidget() != nullptr);
+}
+
+// uat_ocr_060 — the large-doc "Recognize text on this page" notice
+// (m_largeDocOcrHint) is (a) guarded by a real per-page text check so it
+// never fires on a born-digital doc, (b) visible only for a genuinely
+// text-less large-doc page, (c) routed through the consent/download gate
+// (no silent no-op), (d) dismissable and self-clearing. Backlog
+// 2026-07-13 / ADR 0006 (refines ADR-0002 §3 G5/G6).
+void TestUatRecognizeText::uat_ocr_060_largeDocNoticeGuardedDismissableSelfClearing() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    // --- (a) Born-digital LARGE doc (>50 pages, real text): notice hidden.
+    const QString bornDigital = writeMultiPagePdf(
+        m_scratch.filePath(QStringLiteral("large_text.pdf")), 55, /*withText=*/true);
+    app->openFiles({bornDigital});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *controller = mw->findChild<OcrController *>();
+    QVERIFY(controller);
+    QVERIFY2(controller->isLargeDoc(), "55-page doc must count as a large doc (>50)");
+
+    auto *notice = mw->findChild<QWidget *>(QStringLiteral("largeDocOcrHint"));
+    QVERIFY2(notice, "large-doc recognize notice widget must exist");
+    IDocument *doc = mw->findChild<DocumentView *>()->currentDocument();
+    QVERIFY(doc);
+    QVERIFY2(doc->pageHasText(doc->currentPage()),
+             "born-digital page must report native text");
+    QVERIFY2(!notice->isVisible(),
+             "notice must stay hidden on a born-digital large doc (real per-page guard)");
+    saveNoticeShot(mw, QStringLiteral("notice_a_hidden_born_digital.png"));
+
+    // --- (b) Text-less LARGE doc: notice visible. Close the born-digital
+    // window first so currentMainWindow()/currentDocument() resolve to the
+    // new doc unambiguously (openFiles may open a fresh window).
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (qobject_cast<MainWindow *>(w))
+            w->close();
+    }
+    QApplication::processEvents();
+    const QString scanLike = writeMultiPagePdf(
+        m_scratch.filePath(QStringLiteral("large_blank.pdf")), 55, /*withText=*/false);
+    app->openFiles({scanLike});
+    QApplication::processEvents();
+    mw = currentMainWindow();
+    QVERIFY(mw);
+    notice = mw->findChild<QWidget *>(QStringLiteral("largeDocOcrHint"));
+    QVERIFY(notice);
+    doc = mw->findChild<DocumentView *>()->currentDocument();
+    QVERIFY(doc);
+    QVERIFY2(!doc->pageHasText(doc->currentPage()),
+             "text-less page must report no native text");
+    auto *store = doc->selectableText();
+    QVERIFY(store && !store->hasResults(doc->currentPage()));
+    QVERIFY2(notice->isVisible(),
+             "notice must show for a text-less large-doc page with no OCR results");
+    saveNoticeShot(mw, QStringLiteral("notice_b_visible_textless.png"));
+
+    // --- (c) The link routes through the consent gate (not submitUserPages
+    // directly): no silent no-op, no ad-hoc modal.
+    auto *link = mw->findChild<QLabel *>(QStringLiteral("largeDocOcrHintLink"));
+    QVERIFY2(link, "notice must carry a Recognize-text link");
+    bool routedToConsent = false;
+    mw->setOcrModelDownloadHookForTesting([&routedToConsent]() {
+        routedToConsent = true;
+        return false; // simulate: consent flow entered, download not completed
+    });
+    emit link->linkActivated(QStringLiteral("#recognize"));
+    QApplication::processEvents();
+    QVERIFY2(routedToConsent,
+             "notice link must reach the download-consent gate (ensureOcrModelsReady)");
+    QCOMPARE(QApplication::activeModalWidget(), nullptr);
+    for (QWidget *w : QApplication::topLevelWidgets()) {
+        QVERIFY2(!qobject_cast<QMessageBox *>(w), "routing must not spawn a QMessageBox");
+        QVERIFY2(!qobject_cast<QDialog *>(w), "routing must not spawn a QDialog");
+    }
+    mw->setOcrModelDownloadHookForTesting(nullptr);
+
+    // --- (d1) Dismiss (×) hides it and keeps it hidden for this document.
+    auto *dismiss = mw->findChild<QToolButton *>(QStringLiteral("largeDocOcrHintDismiss"));
+    QVERIFY2(dismiss, "notice must carry a dismiss (×) button");
+    dismiss->click();
+    QApplication::processEvents();
+    QVERIFY2(!notice->isVisible(), "notice must hide immediately on dismiss");
+    // Let the re-derive poll (150ms) run; dismissal is sticky per-document.
+    QTest::qWait(250);
+    QVERIFY2(!notice->isVisible(), "dismissed notice must stay hidden on re-derivation");
+    saveNoticeShot(mw, QStringLiteral("notice_c_hidden_after_dismiss.png"));
+
+    // --- (d2) Self-clear on OCR results: seed results for the current page
+    // and confirm the poll re-derives the notice to hidden even without a
+    // prior dismiss. Open the text-less doc afresh to reset dismissal.
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (qobject_cast<MainWindow *>(w))
+            w->close();
+    }
+    QApplication::processEvents();
+    const QString scanLike2 = writeMultiPagePdf(
+        m_scratch.filePath(QStringLiteral("large_blank2.pdf")), 55, /*withText=*/false);
+    app->openFiles({scanLike2});
+    QApplication::processEvents();
+    mw = currentMainWindow();
+    QVERIFY(mw);
+    notice = mw->findChild<QWidget *>(QStringLiteral("largeDocOcrHint"));
+    QVERIFY(notice);
+    doc = mw->findChild<DocumentView *>()->currentDocument();
+    QVERIFY(doc);
+    QVERIFY2(notice->isVisible(), "notice visible again on a fresh text-less large doc");
+    // Simulate OCR landing text for the visible page.
+    OcrEngine::TextBlock b;
+    b.text = QStringLiteral("recognised");
+    b.polygon = QPolygon({{0, 0}, {10, 0}, {10, 10}, {0, 10}});
+    doc->selectableText()->put(doc->currentPage(), 999ULL, {b});
+    QTest::qWait(250); // let the poll re-derive
+    QVERIFY2(!notice->isVisible(),
+             "notice must self-clear once the page gains OCR results");
 }
 
 int main(int argc, char **argv) {

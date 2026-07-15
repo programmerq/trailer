@@ -27,6 +27,7 @@
 #include <QPdfBookmarkModel>
 #include <QPdfLink>
 #include <QPdfSearchModel>
+#include <QPdfSelection>
 #include <QPdfView>
 #include <QPrintDialog>
 #include <QPrinter>
@@ -237,7 +238,20 @@ bool PdfDocument::unlock(const QString &password) {
     return true;
 }
 
-PdfDocument::~PdfDocument() = default;
+PdfDocument::~PdfDocument() {
+    // QPdfDocument::close() (reached from ~QPdfDocument) synchronously
+    // emits currentPageChanged, which createView() wires to a lambda that
+    // calls ingestNativeTextLayer() → m_selectableText.put(). The view and
+    // its overlays are owned by the enclosing DocumentView, not by us, so
+    // they are still alive at teardown and the connection is still live.
+    // Because m_selectableText is declared after m_doc, member-wise
+    // destruction would free it *before* m_doc, so that teardown-time
+    // signal would touch an already-destroyed store (use-after-free).
+    // Flip m_valid first so ingestNativeTextLayer()'s guard short-circuits,
+    // then release m_doc here while every member is still alive.
+    m_valid = false;
+    m_doc.reset();
+}
 
 QString PdfDocument::displayName() const {
     return QFileInfo(m_path).fileName();
@@ -444,6 +458,11 @@ QWidget *PdfDocument::createView(QWidget *parent) {
         }
         return m_view->pageNavigator()->currentPage();
     });
+    // Feed the native text layer into the store for the initial page so
+    // selection is live on born-digital docs immediately (find already
+    // works via QPdfSearchModel; this closes the selection gap). Lazy,
+    // per page — see ingestNativeTextLayer().
+    ingestNativeTextLayer(view->pageNavigator()->currentPage());
     textLayer->setCurrentPage(view->pageNavigator()->currentPage());
     textLayer->setGeometry(view->viewport()->rect());
     textLayer->lower(); // sit below annotation overlay in the z-order
@@ -451,7 +470,11 @@ QWidget *PdfDocument::createView(QWidget *parent) {
     m_textLayer = textLayer;
 
     QObject::connect(view->pageNavigator(), &QPdfPageNavigator::currentPageChanged, textLayer,
-                     [textLayer](int page) {
+                     [this, textLayer](int page) {
+                         // Ingest native text for the page the user just
+                         // scrolled to before the layer refreshes its
+                         // hit-test cache, so selection is ready on arrival.
+                         ingestNativeTextLayer(page);
                          if (textLayer)
                              textLayer->setCurrentPage(page);
                      });
@@ -733,6 +756,87 @@ QSizeF PdfDocument::pageSizeHint(int pageIndex) const {
         return {};
     }
     return m_doc->pagePointSize(pageIndex);
+}
+
+bool PdfDocument::pageHasText(int page) const {
+    if (!m_valid || !m_doc || page < 0 || page >= m_doc->pageCount())
+        return false;
+    // Real per-page probe (not the coarse hasTextLayer() stub): a born-
+    // digital page yields a non-empty extraction, an image-only scan
+    // yields an empty string. m_doc is non-const through the unique_ptr
+    // even in a const method, mirroring renderPageForOcr().
+    return !m_doc->getAllText(page).text().trimmed().isEmpty();
+}
+
+void PdfDocument::ingestNativeTextLayer(int page) {
+    if (!m_valid || !m_doc || page < 0 || page >= m_doc->pageCount())
+        return;
+    // Never clobber real OCR output (or a prior native ingest) — the
+    // store is the shared sink for both pipelines, and hasResults() is
+    // the "already populated" guard.
+    if (m_selectableText.hasResults(page))
+        return;
+    const QPdfSelection all = m_doc->getAllText(page);
+    if (!all.isValid())
+        return;
+    const QString pageText = all.text();
+    if (pageText.trimmed().isEmpty())
+        return;
+
+    // Build line-level TextBlocks. Qt PDF exposes glyph-level bounds via
+    // getAllText().bounds(), but the SelectableTextLayer selects whole
+    // blocks and joins them with '\n', so line granularity matches its
+    // UX (a drag snaps to lines, exactly like the OCR path's regions).
+    // We walk the page string, split it into lines on CR/LF, and re-
+    // query getSelectionAtIndex() for each line's clean text + point-
+    // space bounding rectangle. Point space is what the layer's
+    // docToView() callback expects (it multiplies by the zoom factor;
+    // see the setDocToView() wiring in createView()).
+    std::vector<OcrEngine::TextBlock> blocks;
+    const int n = static_cast<int>(pageText.size());
+    int i = 0;
+    while (i < n) {
+        const QChar c = pageText.at(i);
+        if (c == QLatin1Char('\r') || c == QLatin1Char('\n')) {
+            ++i;
+            continue;
+        }
+        const int start = i;
+        while (i < n && pageText.at(i) != QLatin1Char('\r') &&
+               pageText.at(i) != QLatin1Char('\n')) {
+            ++i;
+        }
+        const int len = i - start;
+        if (len <= 0)
+            continue;
+        const QPdfSelection line = m_doc->getSelectionAtIndex(page, start, len);
+        if (!line.isValid())
+            continue;
+        const QString lineText = line.text();
+        if (lineText.trimmed().isEmpty())
+            continue;
+        const QRectF r = line.boundingRectangle();
+        if (r.isEmpty())
+            continue;
+        OcrEngine::TextBlock b;
+        b.text = lineText;
+        b.polygon = QPolygon({QPoint(qRound(r.left()), qRound(r.top())),
+                              QPoint(qRound(r.right()), qRound(r.top())),
+                              QPoint(qRound(r.right()), qRound(r.bottom())),
+                              QPoint(qRound(r.left()), qRound(r.bottom()))});
+        // Native layer is exact, not a probabilistic OCR read.
+        b.confidence = 1.0f;
+        blocks.push_back(std::move(b));
+    }
+    if (blocks.empty())
+        return;
+    // A stable non-zero content hash keyed off the page text, so the
+    // store's 0 == "no entry" sentinel is never produced. The auto-OCR
+    // scheduler skips text-layer docs anyway, so the exact value only
+    // needs to be deterministic and non-zero.
+    const std::uint64_t hash =
+        static_cast<std::uint64_t>(qHash(pageText)) | 0x1ULL;
+    m_selectableText.put(page, hash, std::move(blocks));
 }
 
 QImage PdfDocument::renderThumbnail(int pageIndex, QSize targetSize) {
