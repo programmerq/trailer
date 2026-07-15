@@ -255,11 +255,54 @@ endif()
 
 # Copy the .icns into the macOS bundle's Resources/ directory so Finder/Dock
 # pick it up, and tell Info.plist about the file via MACOSX_BUNDLE_ICON_FILE.
+# This stays as the pre-catalog fallback (CFBundleIconFile) that coexists with
+# the adaptive Assets.car / CFBundleIconName wiring below.
 if(APPLE AND EXISTS "${TRAILER_MACOS_ICON}")
     target_sources(trailer PRIVATE "${TRAILER_MACOS_ICON}")
     set_source_files_properties("${TRAILER_MACOS_ICON}" PROPERTIES
         MACOSX_PACKAGE_LOCATION "Resources"
     )
+endif()
+
+# Adaptive (light/dark) app icon — ADR 0009 Option A. Compile the luminosity
+# Asset Catalog (resources/macos/Assets.xcassets, AppIcon set with light +
+# `luminosity: dark` variants fed by the existing trailer_*/trailer-dark_*
+# PNGs) into Assets.car and drop it into the bundle's Resources/ via actool.
+# Info.plist.in declares CFBundleIconName=AppIcon alongside the legacy
+# CFBundleIconFile so the two coexist.
+#
+# EVERYTHING here is inside `if(APPLE)` and depends on `actool`, which ships
+# only with Xcode — so it is completely inert on Linux/Windows: the Linux
+# `linux-build` and `windows-cross` CI lanes never evaluate any of it, and the
+# .xcassets files are plain data on those platforms. actool is invoked via
+# `xcrun` (a POST_BUILD step on the trailer target) so it runs during
+# `cmake --build`, before macdeployqt in scripts/build-macos.sh.
+if(APPLE)
+    set(TRAILER_XCASSETS "${CMAKE_SOURCE_DIR}/resources/macos/Assets.xcassets")
+    if(EXISTS "${TRAILER_XCASSETS}")
+        # Match the bundle's LSMinimumSystemVersion floor (Info.plist.in: 11.0)
+        # rather than CMAKE_OSX_DEPLOYMENT_TARGET, which may be unset on a bare
+        # `cmake` invocation on a Mac and would hand actool an empty argument.
+        set(TRAILER_ICON_MIN_MACOS "11.0")
+        add_custom_command(TARGET trailer POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E make_directory
+                    "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources"
+            COMMAND xcrun actool
+                    --app-icon AppIcon
+                    --minimum-deployment-target "${TRAILER_ICON_MIN_MACOS}"
+                    --platform macosx
+                    --target-device mac
+                    --output-partial-info-plist
+                        "${CMAKE_BINARY_DIR}/actool-AppIcon-partial.plist"
+                    --compile "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources"
+                    "${TRAILER_XCASSETS}"
+            BYPRODUCTS
+                "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources/Assets.car"
+                "${CMAKE_BINARY_DIR}/actool-AppIcon-partial.plist"
+            COMMENT "Compiling Assets.xcassets -> Assets.car (AppIcon light/dark) via actool"
+            VERBATIM
+        )
+    endif()
 endif()
 
 set_target_properties(trailer PROPERTIES

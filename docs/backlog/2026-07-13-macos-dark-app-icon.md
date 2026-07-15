@@ -50,6 +50,39 @@ Icon Composer `.icon` for Tahoe specifically. The macOS-adaptive-icons research
 theme in `docs/research/2026-07-13-ux-research-agenda.md` feeds the Asset-Catalog
 vs Icon-Composer decision.
 
+## Resolution / implementation note (2026-07-15)
+
+Implemented **ADR 0009 Option A** (accepted 2026-07-15) — off-Mac-safe, fully
+`if(APPLE)`-guarded:
+
+- **Asset Catalog authored:** `resources/macos/Assets.xcassets/AppIcon.appiconset/`
+  with a `Contents.json` declaring the standard macOS sizes (16/32/128/256/512 at
+  @1x/@2x, idiom `mac`). Each slot has a light entry (default appearance) and a
+  `"appearances": [{"appearance":"luminosity","value":"dark"}]` entry, adopting
+  the previously-orphaned `trailer-dark_*` PNGs as the dark images and
+  `trailer_*` as the light. Pure file authoring — no build impact on
+  Linux/Windows.
+- **CMake wiring (inside `if(APPLE)`):** a `xcrun actool` POST_BUILD step on the
+  `trailer` target compiles the catalog to `Contents/Resources/Assets.car`
+  during `cmake --build` (before macdeployqt). `--minimum-deployment-target 11.0`
+  matches the bundle floor. Verified that a Linux `cmake -S . -B build -G Ninja &&
+  cmake --build build` still configures and builds cleanly with all actool logic
+  inert.
+- **Info.plist.in:** adds `CFBundleIconName=AppIcon` alongside the existing
+  `CFBundleIconFile` (the legacy `.icns` stays as the pre-catalog fallback; the
+  two coexist).
+- **Build-integration check:** `scripts/build-macos.sh` asserts, on the
+  macos-14 runner and locally, that `Assets.car` exists in the bundle,
+  `CFBundleIconName=AppIcon` is in Info.plist, and `assetutil --info` reports an
+  `AppIcon` set. This is the checkable (non-visual) half of the threshold.
+
+Still a **real-Mac verification** item for the visual half: build the bundle,
+toggle System Settings ▸ Appearance, observe the Dock swap light/dark. Per ADR
+0009, if the luminosity swap turns out not to drive the pre-Tahoe Dock, or if
+Tahoe tinted/clear is prioritised, escalate to Option B (Icon Composer `.icon`)
+— the build wiring (actool → `Assets.car`, `CFBundleIconName`) is shared, so
+only the authoring source changes.
+
 ## Provenance
 
 v0.3.0 real-Mac dogfood report, 2026-07-13. Root-cause file:line refs from the
