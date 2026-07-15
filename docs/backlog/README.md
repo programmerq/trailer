@@ -141,6 +141,12 @@ Closure is a git deletion, not a status edit.
 - The PR that implements an item **deletes the item's file** and
   **references the item `id`** in its commit / PR message
   (e.g. `Closes backlog 2026-07-12-macos-launch-no-open-panel`).
+- **Closures ride the code PR** (`closures-ride-code-PRs`, owner 2026-07-15,
+  "code or it doesn't happen"): the file deletion is a **rider commit on the
+  same PR that ships the implementing code**, not a separate bookkeeping-only
+  PR. A PR whose entire diff is backlog-file deletions or status shuffling is
+  not worth opening — fold the deletion into the nearest code PR that closes
+  the item, with the evidence citation in that PR's body.
 - The deletion in git history **is** the closure record: `git log` over the
   file shows when and in which PR it closed, and `git show` recovers its full
   text. No `status: closed`, no churn edits, no separate done-list to keep in

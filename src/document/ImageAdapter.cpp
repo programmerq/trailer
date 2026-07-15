@@ -245,6 +245,15 @@ ImageDocument::ImageDocument(QString path) : m_path(std::move(path)) {
         m_image = reader.read();
     }
     connectAnnotationHistory();
+    // Re-run the active search whenever OCR results land in the store, so a
+    // query typed before recognition finished (on-demand OCR) surfaces its
+    // matches as soon as the blocks arrive. The store is a member QObject
+    // that dies with the document, so it doubles as the connection context.
+    m_searchOcrConnection = QObject::connect(
+        &m_selectableText, &SelectableTextStore::changed, &m_selectableText, [this]() {
+            if (!m_searchQuery.isEmpty())
+                recomputeSearchMatches();
+        });
 }
 
 void ImageDocument::connectAnnotationHistory() {
@@ -497,6 +506,13 @@ void ImageDocument::installResizeWatcher() {
 }
 
 ImageDocument::~ImageDocument() {
+    // Drop the store->changed() → recomputeSearchMatches() connection
+    // before member teardown. Its lambda captures `this` and reads the
+    // search-state members (m_searchQuery / m_searchMatches / m_overlay),
+    // which are declared after m_selectableText and so destroyed first; a
+    // queued/late emission during destruction must not run against those
+    // already-freed members.
+    QObject::disconnect(m_searchOcrConnection);
     if (m_aliveFlag)
         *m_aliveFlag = false;
 }
@@ -966,6 +982,77 @@ void ImageDocument::print(QWidget *dialogParent) {
     const int y = target.y() + (target.height() - scaled.height()) / 2;
     painter.drawImage(QPoint(x, y), scaled);
     painter.end();
+}
+
+void ImageDocument::setSearchQuery(const QString &query) {
+    m_searchQuery = query;
+    recomputeSearchMatches();
+}
+
+void ImageDocument::recomputeSearchMatches() {
+    m_searchMatches.clear();
+    m_currentMatch = -1;
+    if (!m_searchQuery.isEmpty()) {
+        // Image OCR only ever populates page 0. Per-block match semantics:
+        // one match per BLOCK that contains the query (case-insensitive
+        // substring), and the highlight is that block's bounding rect
+        // (doc-pixel space). A block matched twice still counts once, and a
+        // block is highlighted as a whole rather than per glyph-run. This
+        // intentionally differs from PdfDocument's per-OCCURRENCE model:
+        // the OCR store hands us block-level geometry (no per-character
+        // boxes), so block granularity is the finest highlight we can
+        // honestly draw. Blocks are kept in the store's reading order, so
+        // match order follows suit.
+        for (const auto &block : m_selectableText.blocks(0)) {
+            if (block.text.contains(m_searchQuery, Qt::CaseInsensitive)) {
+                m_searchMatches.push_back(QRectF(block.polygon.boundingRect()));
+            }
+        }
+        if (!m_searchMatches.empty())
+            m_currentMatch = 0;
+    }
+    refreshSearchHighlights();
+}
+
+void ImageDocument::refreshSearchHighlights() {
+    if (m_overlay) {
+        std::vector<AnnotationOverlay::SearchHighlight> highlights;
+        highlights.reserve(m_searchMatches.size());
+        for (size_t i = 0; i < m_searchMatches.size(); ++i) {
+            highlights.push_back({0, m_searchMatches[i], static_cast<int>(i) == m_currentMatch});
+        }
+        m_overlay->setSearchHighlights(std::move(highlights));
+    }
+    // Scroll the current match into view (best-effort; single-page image so
+    // there is no page jump, only a pan when zoomed in past the viewport).
+    if (m_scroll && m_currentMatch >= 0 &&
+        m_currentMatch < static_cast<int>(m_searchMatches.size())) {
+        const QRectF r = m_searchMatches[static_cast<size_t>(m_currentMatch)];
+        const QPointF center(r.center().x() * m_scale, r.center().y() * m_scale);
+        m_scroll->ensureVisible(static_cast<int>(center.x()), static_cast<int>(center.y()));
+    }
+}
+
+void ImageDocument::findNext() {
+    if (m_searchMatches.empty())
+        return;
+    m_currentMatch = (m_currentMatch + 1) % static_cast<int>(m_searchMatches.size());
+    refreshSearchHighlights();
+}
+
+void ImageDocument::findPrevious() {
+    if (m_searchMatches.empty())
+        return;
+    const int n = static_cast<int>(m_searchMatches.size());
+    m_currentMatch = (m_currentMatch - 1 + n) % n;
+    refreshSearchHighlights();
+}
+
+void ImageDocument::clearSearch() {
+    m_searchQuery.clear();
+    m_searchMatches.clear();
+    m_currentMatch = -1;
+    refreshSearchHighlights();
 }
 
 QStringList ImageAdapter::mimeTypes() const {

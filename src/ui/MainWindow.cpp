@@ -152,6 +152,10 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         if (auto *doc = m_documentView->currentDocument()) {
             doc->setSearchQuery(q);
             m_searchBar->setMatchCounter(doc->currentSearchMatchIndex(), doc->searchMatchCount());
+            // Item A: an image the user searches before OCR has run has an
+            // empty store, so setSearchQuery finds nothing. Kick page-0 OCR
+            // so results (and highlights) appear once recognition lands.
+            maybeKickSearchOcr(doc, q);
         }
     });
     connect(m_searchBar, &SearchBar::findNextRequested, this, [this]() {
@@ -198,6 +202,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         if (!doc)
             return;
         m_backgroundCandidateDocs.remove(doc);
+        m_searchOcrKicked.remove(doc);
         auto it = m_pendingCandidateJobs.find(doc);
         if (it != m_pendingCandidateJobs.end()) {
             m_app->mlScheduler().cancel(it.value());
@@ -540,14 +545,16 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
             m_ocrElapsedTimer->start();
         }
     });
-    connect(m_ocrController, &OcrController::ocrBatchFinished, this, [this](bool cancelled) {
+    connect(m_ocrController, &OcrController::ocrBatchFinished, this,
+            [this](bool cancelled, int blockCount) {
         m_ocrElapsedTimer->stop();
         if (m_cancelMlAction)
             m_cancelMlAction->setEnabled(false);
         if (m_ocrRevealed) {
-            m_mlProgress->finishWithMessage(cancelled
-                                                ? tr("Text recognition cancelled — no changes saved")
-                                                : tr("Text recognition complete"));
+            // Honest completion: a zero-block run must not claim success — it
+            // says "No text found" (Item C). blockCount is the store's block
+            // total across the batch's pages, reported by the controller.
+            m_mlProgress->finishWithMessage(recognizeCompletionMessage(cancelled, blockCount));
         }
         m_ocrRevealed = false;
     });
@@ -2034,25 +2041,82 @@ void MainWindow::onSmartLasso() {
     activateSamTool(this, m_markupToolbar, AnnotationTool::SmartLasso);
 }
 
+QString MainWindow::recognizeCompletionMessage(bool cancelled, int blockCount) {
+    if (cancelled)
+        return tr("Text recognition cancelled — no changes saved");
+    return blockCount > 0 ? tr("Text recognition complete") : tr("No text found");
+}
+
+std::optional<std::vector<int>> resolveRecognizePages(const IDocument &doc) {
+    // A one-page document offers no page-range choice, so the dialog would
+    // only add a click. Resolve straight to the current (only) page —
+    // behaviour-equivalent to RecognizeTextDialog::resolvedPages() for a
+    // single-page doc. Multi-page docs defer to the dialog (nullopt).
+    if (doc.pageCount() == 1)
+        return std::vector<int>{doc.currentPage()};
+    return std::nullopt;
+}
+
+void MainWindow::maybeKickSearchOcr(IDocument *doc, const QString &query) {
+    if (!doc || query.isEmpty() || !m_ocrController)
+        return;
+    // Only images need this: PDFs search their native text layer, and the
+    // menu-driven Recognize flow covers explicit multi-page runs.
+    if (!dynamic_cast<ImageDocument *>(doc))
+        return;
+    if (!doc->supportsSelectableText())
+        return;
+    auto *store = doc->selectableText();
+    if (!store || store->hasResults(0))
+        return; // already OCR'd — setSearchQuery already searched it
+    if (m_searchOcrKicked.contains(doc))
+        return; // already kicked for this doc; don't churn on each keystroke
+    // Only claim the once-per-doc guard when the model is actually ready
+    // to run. If the first search races the model download, submitting now
+    // would silently no-op (resolve before the reveal delay) yet still burn
+    // the guard — and the guard is never reset until the doc closes, so
+    // search-driven OCR would never retry even after the model lands.
+    // Bailing without inserting lets the next keystroke re-try once the
+    // model is present. The menu path remains the place that offers the
+    // model download; this path never prompts, so there is nothing to do
+    // here while the model is absent.
+    if (!m_ocrController->modelReady())
+        return;
+    m_searchOcrKicked.insert(doc);
+    // Same mechanism the Recognize Text menu uses.
+    m_ocrController->submitUserPages(doc, {0}, /*forceRerun=*/false);
+}
+
 void MainWindow::onRecognizeText() {
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsSelectableText())
         return;
 
-    // Show the parameter-supply dialog. The dialog itself does not
-    // run OCR — results stream into the document's
-    // SelectableTextStore via OcrController, and the user reads them
-    // in-place via SelectableTextLayer.
-    // Language options: shipped manifest currently has only the
-    // Latin recognizer. We pass an empty list so the dialog hides
-    // the row; once the CJK recognizer is on the manifest, expand
-    // this list and the row appears automatically.
-    QStringList languageOptions;
-    RecognizeTextDialog dialog(doc->pageCount(), doc->currentPage(), doc->hasTextLayer(),
-                               languageOptions, this);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-    const std::vector<int> pages = dialog.resolvedPages();
+    // Single-page documents (every image, single-page PDFs) offer no
+    // page-range choice, so skip the dialog entirely and resolve to the
+    // current page. Multi-page docs still get the picker. forceRerun is
+    // false on the skipped path — there is no dialog control to set it.
+    std::vector<int> pages;
+    bool forceRerun = false;
+    if (const auto resolved = resolveRecognizePages(*doc)) {
+        pages = *resolved;
+    } else {
+        // Show the parameter-supply dialog. The dialog itself does not
+        // run OCR — results stream into the document's
+        // SelectableTextStore via OcrController, and the user reads them
+        // in-place via SelectableTextLayer.
+        // Language options: shipped manifest currently has only the
+        // Latin recognizer. We pass an empty list so the dialog hides
+        // the row; once the CJK recognizer is on the manifest, expand
+        // this list and the row appears automatically.
+        QStringList languageOptions;
+        RecognizeTextDialog dialog(doc->pageCount(), doc->currentPage(), doc->hasTextLayer(),
+                                   languageOptions, this);
+        if (dialog.exec() != QDialog::Accepted)
+            return;
+        pages = dialog.resolvedPages();
+        forceRerun = dialog.forceRerun();
+    }
     if (pages.empty())
         return;
 
@@ -2066,8 +2130,9 @@ void MainWindow::onRecognizeText() {
     if (!ensureOcrModelsReady(this, gateEngine))
         return;
 
-    m_ocrController->submitUserPages(doc, pages, dialog.forceRerun());
-    flashStatus(tr("Recognizing text for %1 page(s)…").arg(pages.size()));
+    const auto pageCount = pages.size();
+    m_ocrController->submitUserPages(doc, std::move(pages), forceRerun);
+    flashStatus(tr("Recognizing text for %1 page(s)…").arg(pageCount));
 }
 
 void MainWindow::onExportAs() {

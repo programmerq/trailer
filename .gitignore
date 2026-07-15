@@ -34,5 +34,11 @@ tests/data/
 # want fresh references to drop into a PR body.
 docs/screenshots/
 
-# G2 UAT evidence screenshots (never committed; live in PR body)
+# G2 UAT evidence screenshots. Working/throwaway captures are never
+# committed — they live only in the session / PR upload flow. Per the
+# 2026-07-15 inline-evidence refinement, the *curated* before/after
+# captures ARE committed under docs/uat/images/ and referenced inline in
+# the PR body (so the merge decision is evidence-visible). Only the
+# throwaway bucket below is ignored; docs/uat/images/ is committable.
 uat-screenshots/
+!docs/uat/images/

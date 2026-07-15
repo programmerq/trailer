@@ -74,6 +74,20 @@ class SelectableTextStore : public QObject {
     // store.
     std::uint64_t contentHashFor(int pageIndex) const;
 
+    // "Attempted-and-empty" memo (ADR G13.1/G13.2 honesty seam). A page
+    // that OCR'd to zero usable blocks deliberately does NOT get a
+    // put() — hasResults() must stay false so the completion status is an
+    // honest "No text found". But without a separate memo the ambient
+    // cache-skip key (hasResults) would never fire for that page, so
+    // onVisiblePageChanged would re-render + re-OCR it on every visit.
+    // markAttempted records the page + the content hash it was OCR'd at;
+    // wasAttempted returns true only while the recorded hash still
+    // matches the current one, so an edited page (new hash) re-OCRs.
+    // This memo is independent of hasResults(): it never makes a page
+    // report selectable text.
+    void markAttempted(int pageIndex, std::uint64_t contentHash);
+    bool wasAttempted(int pageIndex, std::uint64_t contentHash) const;
+
   signals:
     // Emitted whenever the entry for `pageIndex` is added, replaced,
     // or removed. The overlay listens for this and refreshes its
@@ -86,6 +100,11 @@ class SelectableTextStore : public QObject {
 
   private:
     std::unordered_map<int, PageEntry> m_entries;
+    // Attempted-and-empty memo: page index → content hash the page was
+    // last OCR'd at when it yielded no usable blocks. Kept separate from
+    // m_entries so it can never leak into hasResults()/blocks(). Dropped
+    // for a page by invalidate(), and wholesale by clear().
+    std::unordered_map<int, std::uint64_t> m_attempted;
     static const std::vector<OcrEngine::TextBlock> kEmpty;
 };
 

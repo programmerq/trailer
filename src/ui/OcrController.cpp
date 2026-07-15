@@ -86,6 +86,26 @@ void OcrController::onVisiblePageChanged(int page) {
     // next page/document change once the model may have landed.
     if (!modelReady())
         return;
+    // ADR G13.1: eager auto-OCR is for SMALL single-page documents only.
+    // A single-page document whose page pixel area exceeds ~4 MP
+    // (kEagerOcrMaxPixels, 2048×2048) is NOT greedy — auto-OCRing a huge
+    // scan on open would cook the CPU. Such a page falls through to on-
+    // demand recognition (manual Recognize Text at UserAction priority, or
+    // the search kick), both of which run regardless of this gate. Only
+    // the ambient/VisiblePage auto path is affected here.
+    // NOTE: pageSizeHint() reports the image's decoded pixel dimensions
+    // for images — the case this gate targets — and the image is already
+    // decoded on open in the current (non-staged) path. Multi-page docs
+    // are handled by isLargeDoc() above, so this only trims the single-
+    // page eager case; a doc that reports no size hint (area 0) is treated
+    // as small and still auto-OCRs.
+    if (doc->pageCount() == 1) {
+        const QSizeF hint = doc->pageSizeHint(page);
+        const qint64 area =
+            static_cast<qint64>(hint.width()) * static_cast<qint64>(hint.height());
+        if (area > kEagerOcrMaxPixels)
+            return;
+    }
     // Build the list of pages we want OCR'd: the visible page, plus
     // ±1 neighbours if they exist.
     std::vector<int> wanted;
@@ -149,6 +169,7 @@ void OcrController::submitUserPages(IDocument *doc, std::vector<int> pages, bool
     m_batchActive = true;
     m_batchTotal = static_cast<int>(valid.size());
     m_batchCompleted = 0;
+    m_batchPages = valid;
     m_batchCancelled = std::make_shared<std::atomic<bool>>(false);
     emit ocrBatchStarted(m_batchTotal);
 
@@ -179,7 +200,17 @@ void OcrController::onBatchPageResolved(int epoch) {
     if (m_batchCompleted >= m_batchTotal) {
         m_batchActive = false;
         m_revealTimer->stop();
-        emit ocrBatchFinished(/*cancelled=*/false);
+        // Honest completion count: total OCR blocks the batch's pages hold
+        // in the store now (Item C). Zero → the caller reports "No text
+        // found" rather than a false "complete".
+        int blockCount = 0;
+        if (m_doc) {
+            if (auto *store = m_doc->selectableText()) {
+                for (int page : m_batchPages)
+                    blockCount += static_cast<int>(store->blocks(page).size());
+            }
+        }
+        emit ocrBatchFinished(/*cancelled=*/false, blockCount);
     }
 }
 
@@ -219,7 +250,7 @@ void OcrController::cancelActiveBatch() {
         return;
     deactivateBatch();
     cancelBatchTrackedHandles();
-    emit ocrBatchFinished(/*cancelled=*/true);
+    emit ocrBatchFinished(/*cancelled=*/true, /*blockCount=*/0);
 }
 
 bool OcrController::modelReady() const {
@@ -342,6 +373,26 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
     if (source.isNull())
         return SubmitResult::Skipped;
 
+    // Content hash of the rendered page. Computed here on the UI thread so
+    // (a) the attempted-and-empty skip below can compare against the memo,
+    // and (b) the worker doesn't have to recompute it. Hashing is linear
+    // over pixels — cheaper than the render we just did, and far cheaper
+    // than the OCR pass it can let us skip.
+    const std::uint64_t contentHash = hashImageContent(source);
+
+    // Ambient re-OCR skip for a page that already OCR'd to ZERO usable
+    // blocks at this exact content (ADR G13.1/G13.2). Such a page never
+    // gets a put() (hasResults stays false, so the completion status stays
+    // an honest "No text found"), which means hasResults() above can't be
+    // the skip key for it — without this memo onVisiblePageChanged would
+    // re-render + re-OCR every text-less page on every visit. wasAttempted
+    // matches only while the content hash is unchanged; a page edit yields
+    // a new hash and re-OCRs. Force-rerun bypasses (and invalidate() above
+    // has already dropped the memo).
+    if (!forceRerun && store->wasAttempted(page, contentHash)) {
+        return SubmitResult::Cached;
+    }
+
     // Recognized geometry comes back in renderPageForOcr's source-pixel
     // space. For PDFs that raster is at a fixed DPI while the selection
     // layer's docToView works in PDF points, so blocks must be scaled
@@ -388,7 +439,7 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
     const int epoch = batchTracked ? m_batchEpoch : -1;
 
     auto handle = m_app->mlScheduler().submit(priority, label,
-        [engine, recognizer, source, page, storePtr, self, cancelGuard, epoch, ocrScale](CancellationToken &token) {
+        [engine, recognizer, source, page, storePtr, self, cancelGuard, epoch, ocrScale, contentHash](CancellationToken &token) {
             if (token.isCancelled())
                 return;
             // OcrEngine::recognize cooperates with the same token
@@ -413,7 +464,6 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
             QVector<OcrEngine::TextBlock> blocks =
                 recognizer ? recognizer(source, &token) : engine->recognize(source, &token);
             const bool cancelled = token.isCancelled();
-            const std::uint64_t contentHash = hashImageContent(source);
             // Scale block geometry from OCR source pixels into the
             // document's coordinate space (points for PDF, pixels for
             // images → 1.0 no-op). Rounds to the polygon's integer grid;
@@ -444,8 +494,30 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
                     // free.
                     const bool discard =
                         cancelled || (cancelGuard && cancelGuard->load());
-                    if (!discard && storePtr)
-                        storePtr->put(page, contentHash, std::move(out));
+                    // Silent-discard of an empty layer (Item C): a page that
+                    // OCR'd to zero blocks must not leave a "hasResults" entry
+                    // claiming a text layer that has no text. Skip the put()
+                    // so hasResults(page) stays false and the honest "No text
+                    // found" status is truthful. (The models-not-ready path
+                    // above already avoids caching empties for a different
+                    // reason — retry once the model lands.)
+                    if (!discard && storePtr) {
+                        if (!out.empty()) {
+                            storePtr->put(page, contentHash, std::move(out));
+                        } else {
+                            // Text-less page: record an attempted-and-empty
+                            // memo keyed by (page, contentHash) so the ambient
+                            // path's cache-skip (wasAttempted) stops re-OCRing
+                            // this page on every visit, WITHOUT a put() — so
+                            // hasResults(page) stays false and the completion
+                            // status stays an honest "No text found" (ADR
+                            // G13.1/G13.2). An edit changes the hash and re-
+                            // OCRs. Skipped when the model wasn't ready (that
+                            // path returns before this apply step) so an
+                            // absent-model no-op still retries once it lands.
+                            storePtr->markAttempted(page, contentHash);
+                        }
+                    }
                     // Count the page against the batch regardless of
                     // whether we stored it — a discarded page still
                     // resolves the slot. (cancelActiveBatch() has already

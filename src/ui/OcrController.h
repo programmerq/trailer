@@ -124,10 +124,28 @@ class OcrController : public QObject {
     // (>50 pages).
     static constexpr int kLargeDocPageThreshold = 50;
 
+    // Pixel-area ceiling for EAGER auto-OCR on a single-page document
+    // (ADR G13.1). "Small" is a single-page document (images always are)
+    // whose source pixel area is ≤ 4 MP (2048×2048). A single image at or
+    // below this area auto-OCRs in the background on open; a larger single
+    // image is deliberately NOT greedy — auto-OCRing a huge scan on open
+    // would cook the CPU — so it falls to on-demand recognition (manual
+    // Recognize Text at UserAction priority, or the search kick), which
+    // bypass this gate. Exposed for tests. Multi-page docs are governed by
+    // isLargeDoc() instead.
+    static constexpr int kEagerOcrMaxPixels = 2048 * 2048; // 4,194,304 px
+
     // True when the document's page count exceeds the auto-OCR
     // threshold. The MainWindow uses this to decide whether to show
     // the in-status-bar hint chip ("Text isn't selectable here").
     bool isLargeDoc() const;
+
+    // GUI-thread OCR-model readiness check. True when a recognizer can
+    // actually run right now (honours the test override when set). Public
+    // so callers that submit ambient/search-driven OCR can avoid claiming
+    // a once-per-doc guard on a submission that would silently no-op while
+    // the model is still downloading (search-kick retry, FIX 5).
+    bool modelReady() const;
 
   signals:
     // Emitted at the start of a submitUserPages batch with the number
@@ -136,8 +154,11 @@ class OcrController : public QObject {
     // Emitted each time a page's result is resolved on the GUI thread.
     void ocrBatchProgress(int completed, int total);
     // Emitted once the batch ends: cancelled=false on natural
-    // completion, cancelled=true after cancelActiveBatch().
-    void ocrBatchFinished(bool cancelled);
+    // completion, cancelled=true after cancelActiveBatch(). blockCount is
+    // the total number of OCR blocks the batch's pages hold in the store at
+    // completion (0 when cancelled) so callers can report an honest
+    // "No text found" vs "complete" without re-deriving the page list.
+    void ocrBatchFinished(bool cancelled, int blockCount);
     // Emitted when an active batch is torn down SILENTLY — superseded by
     // a fresh batch, or the document was switched/closed. MainWindow
     // drives the widget straight back to idle (no "cancelled — no changes
@@ -190,10 +211,6 @@ class OcrController : public QObject {
     void cancelKey(const PendingKey &key);
     void cancelPagesNotMatching(IDocument *doc, const std::vector<int> &keep);
 
-    // GUI-thread readiness check backing the auto-OCR missing-model
-    // affordance. Honours the test override when set.
-    bool modelReady() const;
-
     // GUI-thread callback invoked when a batch page resolves (stored or
     // discarded). `epoch` identifies the batch that scheduled the page;
     // stragglers from a superseded/torn-down batch carry a stale epoch and
@@ -233,6 +250,12 @@ class OcrController : public QObject {
     bool m_batchActive = false;
     int m_batchTotal = 0;
     int m_batchCompleted = 0;
+    // The batch's in-range pages, captured at start so completion can sum
+    // the store's block count across them for the honest-completion signal
+    // (Item C). Counts cached AND freshly-OCR'd blocks — the honest answer
+    // is "does the recognized page set hold text now", not "how many were
+    // newly stored".
+    std::vector<int> m_batchPages;
     // Monotonic per-batch identity. Bumped when a batch starts; a page's
     // apply lambda captures the value current at submit time and hands it
     // back to onBatchPageResolved(), which ignores any that don't match

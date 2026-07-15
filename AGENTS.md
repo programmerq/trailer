@@ -124,14 +124,22 @@ value/default changes are backed by records in
   each empty / loading / error state reachable from those changed states.
   (Pre-existing states the diff does not touch are out of scope. If a
   state is arguably affected, capture it.)
-- **Evidence:** The screenshots themselves, in the PR body (drag-and-drop
-  upload or `gh pr edit --body-file`; do not commit them to the repo).
+- **Evidence:** The screenshots themselves, referenced in the PR body.
   Where a platform shows **no window** for an affected state — the macOS
   empty state per DESIGN §2.4.2 — the required artifact is a screenshot of
   the dock icon + menu bar plus the open panel on activation, in place of
   a window capture (the G5-style note). This is the per-item roll-up of
   the milestone audit in DESIGN §2.5.3 — satisfying G2 per PR satisfies
   that audit; there is not a second screenshot regime.
+- **Inline committed evidence (2026-07-15 refinement):** Curated UAT
+  evidence is committed under `docs/uat/images/` and referenced **inline**
+  in the PR body (e.g. a `raw.githubusercontent.com` URL pinned to the
+  commit SHA, so the image renders on the PR page) — the merge decision
+  must be evidence-visible, i.e. what the owner merges is what the owner
+  saw, not evidence produced only in a session or attached to chat.
+  Working/throwaway captures are **not** committed — they stay gitignored
+  (`uat-screenshots/`, `docs/screenshots/`); only the curated, referenced
+  images land in `docs/uat/images/`.
 - **Capture method (ruled):** G2 evidence is captured by offscreen
   `QWidget::grab()` / `QQuickWindow::grabWindow` in the test harness under
   `QT_QPA_PLATFORM=offscreen` (the `widget->grab()` hybrid described in

@@ -66,6 +66,12 @@ trailer_add_uat_test(test_uat_instant_alpha_and_smart_lasso
 
 trailer_add_uat_test(test_uat_recognize_text test_uat_recognize_text.cpp)
 
+# Curated before/after grab() evidence for the image OCR pipeline
+# (search-enabled + honest "No text found" + single-image dialog-skip).
+# Writes PNGs to $TRAILER_OCR_EVIDENCE_DIR when set; otherwise just
+# asserts the wired behaviour like any other uat slot.
+trailer_add_uat_test(test_uat_ocr_evidence test_uat_ocr_evidence.cpp)
+
 # ML status-bar affordances (ADR 0002): progress widget, scoped cancel,
 # missing-model in-context hint. Builds a multi-page PDF via QPdfWriter
 # (QtGui) for the OCR batch gates; the OCR itself runs through a test

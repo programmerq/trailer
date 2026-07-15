@@ -8,6 +8,7 @@
 #include <QImage>
 #include <QObject>
 #include <QPointer>
+#include <QRectF>
 #include <QString>
 #include <QStringList>
 #include <memory>
@@ -51,6 +52,33 @@ class ImageDocument : public IDocument {
 
     bool supportsPrint() const override { return !m_image.isNull(); }
     void print(QWidget *dialogParent) override;
+
+    // Search over the image's OCR results (Item A). Unlike PdfDocument —
+    // which searches native PDF text via QPdfSearchModel — an image has no
+    // native text, so search runs a case-insensitive substring scan over
+    // the SelectableTextStore blocks that OCR produced for page 0. Match
+    // rectangles come straight from block geometry and are pushed into the
+    // AnnotationOverlay's search-highlight pass, exactly as PdfDocument
+    // feeds its overlay. Works headlessly (no view) so callers can seed the
+    // store and query without a widget.
+    // Gate search on the same capability that lets the OCR store populate:
+    // an animated GIF or a null image can never gain a searchable text
+    // layer (maybeKickSearchOcr bails on !supportsSelectableText), so
+    // lighting up Find for them would be a dead control.
+    bool supportsSearch() const override { return supportsSelectableText(); }
+    void setSearchQuery(const QString &query) override;
+    void findNext() override;
+    void findPrevious() override;
+    void clearSearch() override;
+    int searchMatchCount() const override {
+        return static_cast<int>(m_searchMatches.size());
+    }
+    int currentSearchMatchIndex() const override {
+        return m_currentMatch < 0 ? -1 : m_currentMatch + 1;
+    }
+    std::vector<int> pagesWithSearchMatches() const override {
+        return m_searchMatches.empty() ? std::vector<int>{} : std::vector<int>{0};
+    }
 
     bool supportsThumbnails() const override { return !m_image.isNull() && !m_animated; }
     QImage renderThumbnail(int pageIndex, QSize targetSize) override;
@@ -137,6 +165,16 @@ class ImageDocument : public IDocument {
     // is a child of the scroll area; QResizeEvents on it correspond
     // exactly to changes in the available drawing area for fit modes.
     void installResizeWatcher();
+    // Rebuild m_searchMatches from the store for the current query, reset
+    // the current-match cursor, and refresh overlay highlights. Connected
+    // to the store's changed() signal so OCR results that land after a
+    // query was typed (on-demand OCR) surface as matches automatically.
+    void recomputeSearchMatches();
+    // Push the current match rectangles into the AnnotationOverlay's
+    // search-highlight pass (no-op without a view), flagging the current
+    // match. Also scrolls the current match into view when a scroll area
+    // exists. Mirrors PdfDocument::refreshSearchHighlights.
+    void refreshSearchHighlights();
     // Fit the image into the scroll viewport on first show. Capped at
     // 100% so small icons don't blow up to fill the window. One-shot
     // — later opens / re-shows keep whatever scale the user picked.
@@ -170,6 +208,21 @@ class ImageDocument : public IDocument {
     enum class UndoSource { Annotation, ImageOp };
     std::vector<UndoSource> m_undoLog;
     std::vector<UndoSource> m_redoLog;
+    // Item A image-search state. The query, the doc-space (pixel) match
+    // rectangles in reading order, and the 0-based current-match cursor
+    // (-1 when there is no match). Backed by the OCR store, not a parallel
+    // text store.
+    QString m_searchQuery;
+    std::vector<QRectF> m_searchMatches;
+    int m_currentMatch = -1;
+    // The store->changed() → recomputeSearchMatches() connection. Its
+    // lambda captures `this` and touches the search-state members above,
+    // which are declared AFTER m_selectableText and therefore destroyed
+    // BEFORE it — so an emission racing destruction could touch freed
+    // members. We disconnect it explicitly in ~ImageDocument (see the
+    // dtor) before any member teardown to make the ordering safe by
+    // intent rather than by declaration accident.
+    QMetaObject::Connection m_searchOcrConnection;
     double m_scale = 1.0;
     // Tracks the user's intent (Fit-page, Fit-width, Actual, custom
     // factor) so the persistence layer can round-trip the mode and
