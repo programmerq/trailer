@@ -52,7 +52,6 @@
 #include <QComboBox>
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QDoubleSpinBox>
 #include <QDateTime>
 #include <QDir>
 #include <QFileDialog>

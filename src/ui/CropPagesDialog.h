@@ -17,7 +17,8 @@ namespace trailer {
 // the multi-page dialog takes when the box is left unchecked). This keeps
 // the dialog honest about the choices it actually offers (PHILOSOPHY →
 // *How Trailer reduces friction*; sibling of the Recognize-Text
-// page-range friction).
+// page-range friction). Ratified in
+// docs/decision-records/0012-crop-single-page-apply-all-checkbox.md.
 //
 // Behaviour for a multi-page document is unchanged: the checkbox is shown,
 // checked by default, and applyToAllPages() reflects it.

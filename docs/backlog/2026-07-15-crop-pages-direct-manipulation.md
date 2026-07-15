@@ -34,7 +34,8 @@ should say why.
 
 This is the annoyed-end-user sibling of the Recognize-Text page-range
 friction. It is a UX enhancement, not a correctness bug — the single-page
-checkbox-noise fix (audit 2026-07-15, Fix B) is a separate, landed change.
+checkbox-noise fix (audit 2026-07-15, Fix B) is a separate, landed change,
+recorded in `docs/decision-records/0012-crop-single-page-apply-all-checkbox.md`.
 
 ## Provenance
 
