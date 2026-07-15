@@ -73,9 +73,11 @@ the same screenshot-capture surface (G3 "no silent null").
 
 **(a) Pre-permission explainer + graceful denial — implemented (code).**
 - A shared helper `src/platform/ScreenCapturePermission.{h,cpp}` factors the
-  logic. A pure, platform-agnostic gate `consumeScreenCaptureExplainer(Settings&)`
-  returns true on first use and false thereafter, persisting a `[first_use]`
-  flag (`screen_capture_explainer`) so the explainer shows **once** and survives
+  logic. A pure, platform-agnostic query `shouldShowScreenCaptureExplainer(Settings&)`
+  reports whether to show (true while unacknowledged) without mutating anything,
+  and `acknowledgeScreenCaptureExplainer(Settings&)` persists the `[first_use]`
+  flag (`screen_capture_explainer`) only when the user proceeds — so cancelling
+  the explainer re-shows it next time, and continuing suppresses it across
   relaunch. A macOS-only, `#ifdef Q_OS_MACOS`-guarded
   `maybeShowScreenCaptureExplainer(Settings&, QWidget*)` shows the one-time modal
   explaining that macOS calls this "Screen Recording" even for a still

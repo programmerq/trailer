@@ -9,23 +9,26 @@
 
 namespace trailer {
 
-bool consumeScreenCaptureExplainer(Settings &settings) {
+bool shouldShowScreenCaptureExplainer(Settings &settings) {
     const QString key = QString::fromLatin1(kScreenCaptureExplainerKey);
-    if (settings.firstUseAcknowledged(key)) {
-        return false;
-    }
-    // Record + persist immediately so the explainer shows exactly once even
-    // if the app never reaches its normal aboutToQuit save (crash, force
-    // quit). Settings setters mutate in-memory only, so save() explicitly.
+    // Pure query: no mutation. The flag is set only once the user proceeds
+    // (acknowledgeScreenCaptureExplainer), so a cancelled explainer re-appears.
+    return !settings.firstUseAcknowledged(key);
+}
+
+void acknowledgeScreenCaptureExplainer(Settings &settings) {
+    const QString key = QString::fromLatin1(kScreenCaptureExplainerKey);
+    // Record + persist so the explainer stays suppressed even if the app never
+    // reaches its normal aboutToQuit save (crash, force quit). Settings setters
+    // mutate in-memory only, so save() explicitly.
     settings.setFirstUseAcknowledged(key, true);
     settings.save();
-    return true;
 }
 
 #ifdef Q_OS_MACOS
 bool maybeShowScreenCaptureExplainer(Settings &settings, QWidget *parent) {
-    if (!consumeScreenCaptureExplainer(settings)) {
-        // Already shown on a previous use — proceed straight to capture.
+    if (!shouldShowScreenCaptureExplainer(settings)) {
+        // Already acknowledged on a previous use — proceed straight to capture.
         return true;
     }
 
@@ -44,7 +47,13 @@ bool maybeShowScreenCaptureExplainer(Settings &settings, QWidget *parent) {
     box.addButton(QMessageBox::Cancel);
     box.setDefaultButton(proceed);
     box.exec();
-    return box.clickedButton() == proceed;
+    const bool didProceed = box.clickedButton() == proceed;
+    if (didProceed) {
+        // Only burn the "shown" flag when the user actually continues into the
+        // capture; a cancel leaves it unset so the explainer re-appears next time.
+        acknowledgeScreenCaptureExplainer(settings);
+    }
+    return didProceed;
 }
 #endif
 

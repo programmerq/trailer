@@ -284,6 +284,10 @@ if(APPLE)
         # rather than CMAKE_OSX_DEPLOYMENT_TARGET, which may be unset on a bare
         # `cmake` invocation on a Mac and would hand actool an empty argument.
         set(TRAILER_ICON_MIN_MACOS "11.0")
+        # The icon is wired via the hardcoded CFBundleIconName=AppIcon in
+        # resources/macos/Info.plist.in, so actool only needs to compile the
+        # .xcassets into Assets.car in Resources/ — no partial Info.plist to
+        # merge (the --output-partial-info-plist output was never consumed).
         add_custom_command(TARGET trailer POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E make_directory
                     "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources"
@@ -292,13 +296,10 @@ if(APPLE)
                     --minimum-deployment-target "${TRAILER_ICON_MIN_MACOS}"
                     --platform macosx
                     --target-device mac
-                    --output-partial-info-plist
-                        "${CMAKE_BINARY_DIR}/actool-AppIcon-partial.plist"
                     --compile "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources"
                     "${TRAILER_XCASSETS}"
             BYPRODUCTS
                 "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources/Assets.car"
-                "${CMAKE_BINARY_DIR}/actool-AppIcon-partial.plist"
             COMMENT "Compiling Assets.xcassets -> Assets.car (AppIcon light/dark) via actool"
             VERBATIM
         )
