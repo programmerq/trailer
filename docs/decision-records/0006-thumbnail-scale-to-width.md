@@ -89,6 +89,23 @@ duplicating the comment.
   logical-box ratio, so absent a real page size the row height matches the old
   behaviour rather than collapsing.
 
+### (5) Thumbnail pixmap-cache budget = 256 MB
+
+- **Where:** `src/ui/ThumbnailModel.cpp` (`kThumbCacheBudgetKB`, applied to the
+  `QCache<int, QPixmap> m_cache` via `setMaxCost` in the constructor).
+- **What it is:** the total cost budget of the rendered-thumbnail LRU cache, in
+  kilobytes (each entry's cost is its byte size / 1024). The cache was
+  previously an **unbounded** `QHash<int, QPixmap>`, only ever `clear()`ed
+  wholesale. With the viewport-driven render size (`m_size = {w, w*2}`, `w`
+  clamped `[48,600]`) a single 600-px-wide page on a 2× display is ~8–11 MB, so
+  a 200–500 page deck scrolled at a wide sidebar could hold gigabytes resident
+  — a real memory regression this change closes. `QCache` gives cost-based LRU
+  eviction; 256 MB caps residency while keeping a few hundred small thumbnails
+  hot.
+- **Range tried / symptom to change:** raise if thumbnails re-render visibly on
+  scroll-back at a wide sidebar; lower if resident memory balloons on very
+  large decks.
+
 ## Personas debate
 
 - **Office non-technical user:** Benefits directly — thumbnails become large
@@ -132,11 +149,23 @@ margin; and (b) each row's `visualRect(index).height()` ≈ `round(availW /
 pageAspect) + 2×kThumbVerticalPadding` (±3 px), with portrait rows taller than
 landscape rows. Proven by the UAT
 `uat_thumb_010_scaleToWidthAndAspectRows`
-(`tests/uat/test_uat_thumbnail_sidebar.cpp`), which authors a 6-page A4
-portrait/landscape deck, reads ground-truth aspect from
-`QPdfDocument::pagePointSize`, and asserts both the per-row height oracle and a
-pixel width-scan on a portrait row at viewport widths ~180 and ~340. G2 evidence
-PNGs are emitted via `QWidget::grab()` under `QT_QPA_PLATFORM=offscreen`.
+(`tests/uat/test_uat_thumbnail_sidebar.cpp`), which authors a 6-page deck of A4
+portrait pages interleaved with **extreme ~2.5:1 panoramic landscape** pages
+(800×320 pt — deliberately far from A4-landscape's ~1.4:1 so the fitted
+landscape height is unambiguously clear of the legacy fixed 108 px row at both
+widths), reads ground-truth aspect from `QPdfDocument::pagePointSize`, and
+asserts, at the two dock widths 200 and 360 (**viewport ~180 and ~340**, availW
+~168 and ~328): the per-row height oracle (±3 px); a hard, non-skippable pixel
+width-scan on a portrait row scrolled into view; an explicit
+`|landscapeH − 108| > 3` anti-regression guard; that the debounced re-render
+produces a **crisper** (wider device-pixel) pixmap at the wider width; and —
+via a `modelAboutToBeReset` spy across both resizes — that the resize
+re-render never resets the model (the in-place `dataChanged` mechanism that
+preserves selection/row identity). A companion case,
+`uat_thumb_020_imageDocAspectRow`, opens a wide 1600×400 PNG and asserts the
+single image-doc thumbnail row tracks the image's 4:1 pixel aspect (a short
+row), exercising the new `ImageDocument::pageSizeHint`. G2 evidence PNGs are
+emitted via `QWidget::grab()` under `QT_QPA_PLATFORM=offscreen`.
 
 ## Arbiter verdict + rationale
 
