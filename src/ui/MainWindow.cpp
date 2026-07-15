@@ -2071,11 +2071,19 @@ void MainWindow::maybeKickSearchOcr(IDocument *doc, const QString &query) {
         return; // already OCR'd — setSearchQuery already searched it
     if (m_searchOcrKicked.contains(doc))
         return; // already kicked for this doc; don't churn on each keystroke
+    // Only claim the once-per-doc guard when the model is actually ready
+    // to run. If the first search races the model download, submitting now
+    // would silently no-op (resolve before the reveal delay) yet still burn
+    // the guard — and the guard is never reset until the doc closes, so
+    // search-driven OCR would never retry even after the model lands.
+    // Bailing without inserting lets the next keystroke re-try once the
+    // model is present. The menu path remains the place that offers the
+    // model download; this path never prompts, so there is nothing to do
+    // here while the model is absent.
+    if (!m_ocrController->modelReady())
+        return;
     m_searchOcrKicked.insert(doc);
-    // Same mechanism the Recognize Text menu uses. When the model is
-    // absent the batch silently no-ops (resolves before the reveal delay,
-    // so no progress flash and no download modal); the menu path remains
-    // the place that offers the model download.
+    // Same mechanism the Recognize Text menu uses.
     m_ocrController->submitUserPages(doc, {0}, /*forceRerun=*/false);
 }
 
