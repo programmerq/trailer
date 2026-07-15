@@ -2039,6 +2039,16 @@ void MainWindow::onSmartLasso() {
     activateSamTool(this, m_markupToolbar, AnnotationTool::SmartLasso);
 }
 
+std::optional<std::vector<int>> resolveRecognizePages(const IDocument &doc) {
+    // A one-page document offers no page-range choice, so the dialog would
+    // only add a click. Resolve straight to the current (only) page —
+    // behaviour-equivalent to RecognizeTextDialog::resolvedPages() for a
+    // single-page doc. Multi-page docs defer to the dialog (nullopt).
+    if (doc.pageCount() == 1)
+        return std::vector<int>{doc.currentPage()};
+    return std::nullopt;
+}
+
 void MainWindow::maybeKickSearchOcr(IDocument *doc, const QString &query) {
     if (!doc || query.isEmpty() || !m_ocrController)
         return;
@@ -2066,20 +2076,31 @@ void MainWindow::onRecognizeText() {
     if (!doc || !doc->supportsSelectableText())
         return;
 
-    // Show the parameter-supply dialog. The dialog itself does not
-    // run OCR — results stream into the document's
-    // SelectableTextStore via OcrController, and the user reads them
-    // in-place via SelectableTextLayer.
-    // Language options: shipped manifest currently has only the
-    // Latin recognizer. We pass an empty list so the dialog hides
-    // the row; once the CJK recognizer is on the manifest, expand
-    // this list and the row appears automatically.
-    QStringList languageOptions;
-    RecognizeTextDialog dialog(doc->pageCount(), doc->currentPage(), doc->hasTextLayer(),
-                               languageOptions, this);
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-    const std::vector<int> pages = dialog.resolvedPages();
+    // Single-page documents (every image, single-page PDFs) offer no
+    // page-range choice, so skip the dialog entirely and resolve to the
+    // current page. Multi-page docs still get the picker. forceRerun is
+    // false on the skipped path — there is no dialog control to set it.
+    std::vector<int> pages;
+    bool forceRerun = false;
+    if (const auto resolved = resolveRecognizePages(*doc)) {
+        pages = *resolved;
+    } else {
+        // Show the parameter-supply dialog. The dialog itself does not
+        // run OCR — results stream into the document's
+        // SelectableTextStore via OcrController, and the user reads them
+        // in-place via SelectableTextLayer.
+        // Language options: shipped manifest currently has only the
+        // Latin recognizer. We pass an empty list so the dialog hides
+        // the row; once the CJK recognizer is on the manifest, expand
+        // this list and the row appears automatically.
+        QStringList languageOptions;
+        RecognizeTextDialog dialog(doc->pageCount(), doc->currentPage(), doc->hasTextLayer(),
+                                   languageOptions, this);
+        if (dialog.exec() != QDialog::Accepted)
+            return;
+        pages = dialog.resolvedPages();
+        forceRerun = dialog.forceRerun();
+    }
     if (pages.empty())
         return;
 
@@ -2093,7 +2114,7 @@ void MainWindow::onRecognizeText() {
     if (!ensureOcrModelsReady(this, gateEngine))
         return;
 
-    m_ocrController->submitUserPages(doc, pages, dialog.forceRerun());
+    m_ocrController->submitUserPages(doc, pages, forceRerun);
     flashStatus(tr("Recognizing text for %1 page(s)…").arg(pages.size()));
 }
 

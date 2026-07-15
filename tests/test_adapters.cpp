@@ -5,6 +5,7 @@
 #include "document/PdfAdapter.h"
 #include "document/PdfEditor.h"
 #include "document/SelectableTextStore.h"
+#include "ui/MainWindow.h"
 #include "ui/SelectableTextLayer.h"
 
 #include <QImage>
@@ -110,6 +111,8 @@ class TestAdapters : public QObject {
     void imageDocumentSearchFindsOcrText();
     void imageDocumentSearchIsCaseInsensitive();
     void imageDocumentEmptyStoreSearchNoMatches();
+    // Item B — single-page Recognize skips the page-range dialog.
+    void recognizeTextSkipsDialogForSinglePage();
 };
 
 namespace {
@@ -1988,6 +1991,39 @@ void TestAdapters::imageDocumentEmptyStoreSearchNoMatches() {
     doc->findNext();     // must not crash
     doc->findPrevious(); // must not crash
     QVERIFY(doc->pagesWithSearchMatches().empty());
+}
+
+// Item B — the Recognize Text page resolution skips the dialog for a
+// single-page document (there is nothing to choose) and defers to the
+// dialog for multi-page documents.
+void TestAdapters::recognizeTextSkipsDialogForSinglePage() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    // Single-page image → resolves to {currentPage} without a dialog.
+    auto img = openBlankImage(dir, QStringLiteral("singlepage.png"));
+    QVERIFY(img != nullptr);
+    QCOMPARE(img->pageCount(), 1);
+    const auto resolved = resolveRecognizePages(*img);
+    QVERIFY2(resolved.has_value(), "single-page doc must resolve without a dialog");
+    QCOMPARE(*resolved, (std::vector<int>{img->currentPage()}));
+
+    // Multi-page PDF → nullopt, i.e. defer to the dialog.
+    const QString pdfPath = dir.filePath(QStringLiteral("multipage.pdf"));
+    {
+        QPdfWriter writer(pdfPath);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter p(&writer);
+        p.drawText(QRect(100, 100, 400, 100), Qt::AlignLeft, "one");
+        writer.newPage();
+        p.drawText(QRect(100, 100, 400, 100), Qt::AlignLeft, "two");
+        p.end();
+    }
+    PdfDocument pdf(pdfPath);
+    QVERIFY(pdf.isValid());
+    QCOMPARE(pdf.pageCount(), 2);
+    QVERIFY2(!resolveRecognizePages(pdf).has_value(),
+             "multi-page doc must defer to the dialog");
 }
 
 QTEST_MAIN(TestAdapters)

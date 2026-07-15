@@ -10,6 +10,8 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <optional>
+#include <vector>
 
 class QCloseEvent;
 class QTimer;
@@ -36,6 +38,14 @@ class Sidebar;
 class MlProgressWidget;
 class OcrController;
 class SamController;
+
+// Resolve the pages to OCR for a Recognize Text request when the choice is
+// unambiguous, so a dialog offering no real choice can be skipped. Returns
+// the single-page set {currentPage} for a one-page document; returns
+// nullopt for multi-page documents, signalling the caller to present
+// RecognizeTextDialog for a page-range pick. Free function (no MainWindow
+// instance) so it is unit-testable headlessly.
+std::optional<std::vector<int>> resolveRecognizePages(const IDocument &doc);
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
