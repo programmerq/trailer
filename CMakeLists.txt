@@ -299,8 +299,10 @@ if(APPLE)
                     --target-device mac
                     --compile "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources"
                     "${TRAILER_XCASSETS}"
-            BYPRODUCTS
-                "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources/Assets.car"
+            # NB: no BYPRODUCTS here -- target-context genexes
+            # ($<TARGET_BUNDLE_CONTENT_DIR:...>) are not valid in BYPRODUCTS/OUTPUT
+            # (no head target) and break CMake generate. actool still writes
+            # Assets.car via the COMMAND above.
             COMMENT "Compiling Assets.xcassets -> Assets.car (AppIcon light/dark) via actool"
             VERBATIM
         )
