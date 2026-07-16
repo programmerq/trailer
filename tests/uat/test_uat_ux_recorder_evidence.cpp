@@ -15,7 +15,7 @@
 //
 //   ux_ev_10_recChipNormal    -> ux-recorder-rec-chip.png
 //   ux_ev_20_recordingMenu    -> ux-recorder-menu.png
-//   ux_ev_30_recChipDegraded  -> ux-recorder-rec-chip-degraded.png
+//   ux_ev_30_recChipDegraded  -> ux-recorder-rec-chip-no-screen.png
 //
 // The degraded amber state is forced through the recorder's public
 // reportStreamDegraded() seam, so all three states are real offscreen
@@ -192,7 +192,7 @@ void TestUatUxRecorderEvidence::ux_ev_30_recChipDegraded() {
 
     QCOMPARE(chip->text(), QStringLiteral("● REC · no screen"));
 
-    saveShot(mw->statusBar(), QStringLiteral("ux-recorder-rec-chip-degraded.png"));
+    saveShot(mw->statusBar(), QStringLiteral("ux-recorder-rec-chip-no-screen.png"));
 }
 
 // Custom main: sandbox HOME before Application is constructed so
