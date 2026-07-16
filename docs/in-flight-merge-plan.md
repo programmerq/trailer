@@ -95,7 +95,7 @@ entries from this branch. The most-likely-to-bite, in merge-order:
    legacy-load round-trip. **Broken if** opening a file from a
    pre-branch `recent.json` re-orders the most-recent list or loses
    the `displayName`/`openedAt` fields.
-3. **`m_lastUndoSource` heuristic gets brittler.** Wave 2 D added
+3. **Last-undo-source heuristic gets brittler.** Wave 2 D added
    compound annotation undo: a 60-frame drag now collapses to one
    undo frame. PdfCommand still pushes one frame per page op. The
    `MainWindow::updateUndoRedoActions` heuristic that picks which
@@ -103,6 +103,8 @@ entries from this branch. The most-likely-to-bite, in merge-order:
    stacks; interleaved gestures (rotate → drag → rotate) now expose
    the cross-stack ordering bug more clearly. This is roadmap-tracked
    as the unified-log work; nothing on the branch needs to change.
+   *(Post-merge note: the unified chronological log has since landed
+   and retired the heuristic — see DESIGN.md §9.1.)*
 4. **Raw `IDocument*` lifetime contract is now load-bearing.** Five
    sites on the branch key by raw doc pointer:
    `MainWindow::m_backgroundCandidateDocs`,

@@ -9,10 +9,10 @@ on:
 jobs:
   uat:
     name: UAT (manual)
-    runs-on: ubuntu-24.04
+    runs-on: trailer-k8s
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Build UAT image
         run: docker build -t trailer-uat -f docker/uat/Dockerfile .

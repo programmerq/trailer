@@ -2,9 +2,11 @@
 
 #include "AppPaths.h"
 
+#include <QDebug>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QString>
 #include <QTextStream>
 
 #include <toml++/toml.h>
@@ -13,6 +15,48 @@
 #include <string>
 
 namespace trailer {
+
+std::optional<Settings::Volatility> Settings::volatilityOf(QAnyStringView key) {
+    // The live-vs-restart registry. EVERY persisted key must appear here
+    // (exact dotted path) or be covered by a prefix rule below; the
+    // registry-completeness test (tests/test_settings_volatility.cpp)
+    // walks a saved settings.toml and asserts every leaf key resolves.
+    // All current keys are Live — the machinery only bites once a
+    // RestartRequired key is introduced. See docs/CONVENTIONS.md §15.
+    struct Entry {
+        QLatin1StringView key;
+        Volatility volatility;
+    };
+    static constexpr Entry kRegistry[] = {
+        {SettingsKeys::Theme, Volatility::Live},
+        {SettingsKeys::OpenFilesIn, Volatility::Live},
+        {SettingsKeys::LastSaveDir, Volatility::Live},
+        {SettingsKeys::AutoSave, Volatility::Live},
+        {SettingsKeys::RecentMax, Volatility::Live},
+        {SettingsKeys::RestorePreviousWindows, Volatility::Live},
+        {SettingsKeys::SessionOpenFiles, Volatility::Live},
+        {SettingsKeys::MlRecognizeTextInBackground, Volatility::Live},
+        {SettingsKeys::MlPreloadSegmentationOnToolActivation, Volatility::Live},
+        {SettingsKeys::MlRunOnBattery, Volatility::Live},
+        // Test seam (never persisted); see SettingsKeys::RestartProbe.
+        {SettingsKeys::RestartProbe, Volatility::RestartRequired},
+    };
+
+    // A single QString materialisation keeps the exact-match and prefix
+    // comparisons simple regardless of the caller's view encoding.
+    const QString k = key.toString();
+    for (const auto &entry : kRegistry) {
+        if (k == entry.key) {
+            return entry.volatility;
+        }
+    }
+    // Dynamic key groups classified by prefix (arbitrary leaf names).
+    if (k.startsWith(SettingsKeys::FirstUsePrefix)) {
+        return Volatility::Live;
+    }
+    qWarning() << "Settings::volatilityOf: persisted key not registered:" << k;
+    return std::nullopt;
+}
 
 namespace {
 

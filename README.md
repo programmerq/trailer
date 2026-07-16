@@ -19,7 +19,7 @@ what shipped when, [ROADMAP.md](ROADMAP.md) for what's coming, and
 ## Requirements
 
 - CMake 3.24+
-- Qt 6.5+ (Core, Gui, Widgets, Test, **Pdf**, **PdfWidgets**, **PrintSupport**)
+- Qt 6.6+ (Core, Gui, Widgets, Test, **Pdf**, **PdfWidgets**, **PrintSupport**)
 - [qpdf](https://qpdf.sourceforge.io/) 11+ (lossless PDF page editing)
 - A C++20 compiler (MSVC 2022, GCC 11+, or Clang 14+)
 
@@ -105,7 +105,7 @@ make test-uat       # build + unit + UAT
    Qt 6.10.3 (not 6.11.x) because aqtinstall 3.3.0 doesn't yet
    handle the toolchain-suffixed directory layout Qt 6.11+ uses on
    `download.qt.io`. Linux/macOS CI is on 6.11.0; Windows is on
-   6.10.3 until aqt gains 6.11 support. The CMake floor is 6.5.
+   6.10.3 until aqt gains 6.11 support. The CMake floor is 6.6.
 
 3. Build + test:
 
@@ -258,6 +258,21 @@ auto-update channel (Sparkle 2 is the leading candidate) is
 tracked separately in [ROADMAP.md](ROADMAP.md) — those signatures
 protect the update channel itself and don't require Apple
 enrollment.
+
+**Dev builds.** For pre-merge dogfooding, the on-demand
+`.github/workflows/dev-build.yml` workflow (`workflow_dispatch`, or a
+`dev-build` PR label) produces the same unsigned per-OS portable
+artifacts uploaded to the run instead of a Release — the
+`build_linux` / `build_windows` / `build_macos` inputs select which
+OSes to build. These are versioned `X.Y.Z-dev.N` (bumped via
+`scripts/bump-version.sh dev-bump`), a SemVer prerelease that can never
+be tagged or published: `release-autotag.yml` **unconditionally**
+refuses to tag any `-dev` / `-rc` version, and `release.yml` never tags
+or publishes at all. On a `pull_request`, `release.yml`'s precheck
+additionally skips the heavy build jobs for such a version — but a
+manual `workflow_dispatch` of `release.yml` on a `-dev.N` VERSION still
+builds artifacts; it just never tags or publishes them. See
+[RELEASING.md](RELEASING.md#dev-builds).
 
 ### Recovering from a missing prior build
 

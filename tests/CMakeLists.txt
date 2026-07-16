@@ -37,8 +37,10 @@ function(trailer_add_test name source)
 endfunction()
 
 trailer_add_test(test_settings   test_settings.cpp)
+trailer_add_test(test_settings_volatility test_settings_volatility.cpp)
 trailer_add_test(test_recent     test_recent.cpp)
 trailer_add_test(test_document_type_defaults test_document_type_defaults.cpp)
+trailer_add_test(test_content_aware_defaults test_content_aware_defaults.cpp)
 trailer_add_test(test_app_paths  test_app_paths.cpp)
 trailer_add_test(test_registry   test_registry.cpp)
 trailer_add_test(test_adapters   test_adapters.cpp)
@@ -47,6 +49,8 @@ trailer_add_test(test_annotation_store test_annotation_store.cpp)
 trailer_add_test(test_form_toolbar test_form_toolbar.cpp)
 trailer_add_test(test_icon_resources test_icon_resources.cpp)
 trailer_add_test(test_markup_toolbar test_markup_toolbar.cpp)
+trailer_add_test(test_dark_icon_contrast test_dark_icon_contrast.cpp)
+trailer_add_test(test_crop_pages_dialog test_crop_pages_dialog.cpp)
 trailer_add_test(test_cards test_cards.cpp)
 trailer_add_test(test_signatures test_signatures.cpp)
 trailer_add_test(test_image_filter test_image_filter.cpp)
@@ -62,6 +66,30 @@ trailer_add_test(test_selectable_text_layer test_selectable_text_layer.cpp)
 trailer_add_test(test_cancellation_token test_cancellation_token.cpp)
 trailer_add_test(test_power_source test_power_source.cpp)
 trailer_add_test(test_ml_scheduler test_ml_scheduler.cpp)
+trailer_add_test(test_ml_progress_widget test_ml_progress_widget.cpp)
+trailer_add_test(test_empty_state_widget test_empty_state_widget.cpp)
+trailer_add_test(test_preferences test_preferences.cpp)
+trailer_add_test(test_macos_launch test_macos_launch.cpp)
+trailer_add_test(test_screen_capture_permission test_screen_capture_permission.cpp)
+
+# Structural, CI-safe performance tests. These assert ordering / counts /
+# thread facts (never wall-clock time) and read the checked-in reference
+# corpus at docs/perf/corpus/. TRAILER_PERF_CORPUS_DIR points each test
+# at that directory (CMAKE_CURRENT_SOURCE_DIR here is <repo>/tests).
+function(trailer_add_perf_test name source)
+    trailer_add_test(${name} ${source})
+    target_compile_definitions(${name} PRIVATE
+        "TRAILER_PERF_CORPUS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../docs/perf/corpus\"")
+    # Tag the structural perf tier with a ctest label so CI can target it
+    # (e.g. `ctest --label-exclude perf` on the Wine runner, which can't
+    # meet the threading/paint assumptions these tests make).
+    set_tests_properties(${name} PROPERTIES LABELS "perf")
+endfunction()
+
+trailer_add_perf_test(test_perf_render_ordering test_perf_render_ordering.cpp)
+trailer_add_perf_test(test_perf_gui_thread_io   test_perf_gui_thread_io.cpp)
+trailer_add_perf_test(test_perf_paint_budget    test_perf_paint_budget.cpp)
+trailer_add_perf_test(test_perf_lazy_open       test_perf_lazy_open.cpp)
 
 # The facade test runs in EVERY configuration — it is the guard that
 # the uxrecord:: no-ops stay safe when the recorder is compiled out

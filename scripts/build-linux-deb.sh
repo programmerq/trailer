@@ -1,16 +1,24 @@
 #!/usr/bin/env bash
-# Build a Linux DEB package for Trailer using Docker.
+# Build a Linux DEB package for Trailer.
 #
 # Usage:
-#   scripts/build-linux-deb.sh              # build image if needed, package inside it
+#   scripts/build-linux-deb.sh              # build inside Docker (ubuntu:22.04 + aqt Qt)
 #   scripts/build-linux-deb.sh --rebuild    # force a clean image rebuild first
+#   scripts/build-linux-deb.sh --no-docker  # build directly on this host (no Docker)
 #
 # Output: dist/trailer_<version>-1_amd64.deb (version derived from CMakeLists.txt)
 #
-# Requires Docker. The Docker image installs Qt 6.8.0 via aqtinstall
-# (including the qtpdf module) — Qt is not available in standard Ubuntu
-# repos at this version. The build runs inside ubuntu:22.04 to match the
-# target distribution's libc and system libraries.
+# Two build paths:
+#
+#   Docker path (default): installs Qt via aqtinstall inside ubuntu:22.04 to
+#   match the target distribution's libc. Requires Docker. Kept for local dev.
+#
+#   Host path (--no-docker, or auto-selected when Docker is absent): runs the
+#   inner packaging logic directly on the Linux runner, mirroring how the
+#   `windows-cross` release job cross-builds host-side without Docker. Expects
+#   a Qt install (QT_PREFIX, default /opt/qt/6.11.0/gcc_64) and, optionally, a
+#   prebuilt onnxruntime (ORT_PREFIX, default /opt/onnxruntime-1.25.0) present
+#   on the runner.
 #
 # Not wired into GitHub Actions — invoke manually.
 
@@ -20,18 +28,52 @@ REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 IMAGE=trailer-linux-deb-build
 DIST_DIR="$REPO_ROOT/dist"
 
-# Derive version from CMakeLists.txt so it stays in sync with the project.
-PROJECT_VERSION=$(grep -E '^\s*VERSION [0-9]+\.[0-9]+\.[0-9]+' "$REPO_ROOT/CMakeLists.txt" \
-    | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+# Host-path defaults (overridable via env). These point at the toolchain the
+# self-hosted Linux runner ships; the Docker path ignores them.
+HOST_QT_PREFIX="${QT_PREFIX:-/opt/qt/6.11.0/gcc_64}"
+HOST_ORT_PREFIX="${ORT_PREFIX:-/opt/onnxruntime-1.25.0}"
+
+# Derive version from the VERSION file (the project's single source of truth;
+# CMakeLists.txt reads the same file into project(VERSION ...)).
+PROJECT_VERSION=$(grep -oE '[0-9]+\.[0-9]+\.[0-9]+' "$REPO_ROOT/VERSION" | head -1)
 if [[ -z "$PROJECT_VERSION" ]]; then
-    echo "ERROR: could not extract project version from $REPO_ROOT/CMakeLists.txt" >&2
+    echo "ERROR: could not extract project version from $REPO_ROOT/VERSION" >&2
     exit 1
 fi
 PKG_VERSION="${PROJECT_VERSION}-1"
 
+# ── Host (no-Docker) build path ─────────────────────────────────────────────
+run_host_build() {
+    echo "==> Building DEB directly on host (no Docker)"
+    echo "    Qt prefix:  $HOST_QT_PREFIX"
+    echo "    ORT prefix: $HOST_ORT_PREFIX"
+    if [[ ! -d "$HOST_QT_PREFIX" ]]; then
+        echo "ERROR: Qt not found at $HOST_QT_PREFIX (set QT_PREFIX to override)." >&2
+        exit 1
+    fi
+    mkdir -p "$DIST_DIR"
+    SRC="$REPO_ROOT" \
+    OUTPUT_DIR="$DIST_DIR" \
+    QT_PREFIX="$HOST_QT_PREFIX" \
+    ORT_PREFIX="$HOST_ORT_PREFIX" \
+    BUILD_DIR="${BUILD_DIR:-/tmp/trailer-deb-build}" \
+    STAGING="${STAGING:-/tmp/trailer-deb-staging}" \
+        bash "$REPO_ROOT/scripts/build-linux-deb-inner.sh"
+    echo
+    echo "==> Success!"
+    echo "    Package: $DIST_DIR/trailer_${PKG_VERSION}_amd64.deb"
+    exit 0
+}
+
+if [[ "${1:-}" == "--no-docker" ]]; then
+    run_host_build
+fi
+
+# Auto-fall back to the host path when Docker is unavailable (e.g. the
+# self-hosted runner pods have no Docker daemon).
 if ! command -v docker >/dev/null 2>&1; then
-    echo "docker not found. Install Docker to use this script." >&2
-    exit 127
+    echo "docker not found — falling back to host build (pass --no-docker to force)." >&2
+    run_host_build
 fi
 
 build_image() {

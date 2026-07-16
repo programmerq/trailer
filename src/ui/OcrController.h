@@ -1,18 +1,26 @@
 #pragma once
 
 #include "ml/MlScheduler.h"
+#include "ml/OcrEngine.h"
 
+#include <QImage>
 #include <QObject>
+#include <QVector>
 
+#include <atomic>
+#include <functional>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <vector>
+
+class QTimer;
 
 namespace trailer {
 
 class Application;
+class CancellationToken;
 class IDocument;
-class OcrEngine;
 class SelectableTextStore;
 
 // Coordinates OCR submissions for the active document of a single
@@ -67,7 +75,45 @@ class OcrController : public QObject {
     // cache is invalidated for those pages before submission so a doc
     // that "has a text layer in a watermark only" can be re-OCR'd
     // even though hasTextLayer() returns true.
+    //
+    // This is the batch that drives the status-bar progress widget
+    // (ADR 0002): it emits ocrBatchStarted / ocrBatchProgress /
+    // ocrBatchFinished and, after the reveal delay, ocrBatchShouldReveal.
     void submitUserPages(IDocument *doc, std::vector<int> pages, bool forceRerun);
+
+    // Cancel the active UserAction batch (ADR 0002 §2). Flips every
+    // outstanding BATCH-TRACKED token so in-flight pages discard their
+    // partial result and not-yet-started pages never run, stops the
+    // completion count, and emits ocrBatchFinished(true). Idempotent — a
+    // no-op when no batch is active. Ambient auto-OCR (visible-page ±1)
+    // is deliberately NOT affected — only batch-tracked handles are
+    // cancelled.
+    void cancelActiveBatch();
+
+    // Re-derive the missing-model in-context hint for the current
+    // document/page, including the doc==null and non-OCR-document cases
+    // (which emit autoOcrModelMissing(false) so a stale hint hides on a
+    // document switch or close). ADR 0002 §3. Cheap; MainWindow calls it
+    // on every current-document change.
+    void refreshModelHint();
+
+    // Reveal-delay threshold (ADR 0002 G2). A batch that finishes before
+    // this elapses never reveals the progress widget. Settable so tests
+    // can drive it to 0 (reveal immediately) or a large value (never)
+    // without wall-clock waiting.
+    void setProgressRevealDelayMs(int ms) { m_revealDelayMs = ms; }
+    int progressRevealDelayMs() const { return m_revealDelayMs; }
+
+    // Test seams (no-ops in production). setRecognizerForTesting swaps
+    // the per-page recognition step so tests can drive deterministic
+    // results and hold pages mid-flight without real ONNX models; when
+    // set, the worker's isModelReady() gate is bypassed. setModelReady-
+    // ForTesting forces the GUI-thread readiness check used by the
+    // auto-OCR missing-model affordance.
+    using RecognizeFn =
+        std::function<QVector<OcrEngine::TextBlock>(const QImage &, const CancellationToken *)>;
+    void setRecognizerForTesting(RecognizeFn fn) { m_recognizer = std::move(fn); }
+    void setModelReadyForTesting(std::optional<bool> ready) { m_modelReadyOverride = ready; }
 
     // Cancel everything we have in flight. Used on window close /
     // doc replace.
@@ -78,10 +124,58 @@ class OcrController : public QObject {
     // (>50 pages).
     static constexpr int kLargeDocPageThreshold = 50;
 
+    // Pixel-area ceiling for EAGER auto-OCR on a single-page document
+    // (ADR G13.1). "Small" is a single-page document (images always are)
+    // whose source pixel area is ≤ 4 MP (2048×2048). A single image at or
+    // below this area auto-OCRs in the background on open; a larger single
+    // image is deliberately NOT greedy — auto-OCRing a huge scan on open
+    // would cook the CPU — so it falls to on-demand recognition (manual
+    // Recognize Text at UserAction priority, or the search kick), which
+    // bypass this gate. Exposed for tests. Multi-page docs are governed by
+    // isLargeDoc() instead.
+    static constexpr int kEagerOcrMaxPixels = 2048 * 2048; // 4,194,304 px
+
     // True when the document's page count exceeds the auto-OCR
     // threshold. The MainWindow uses this to decide whether to show
     // the in-status-bar hint chip ("Text isn't selectable here").
     bool isLargeDoc() const;
+
+    // GUI-thread OCR-model readiness check. True when a recognizer can
+    // actually run right now (honours the test override when set). Public
+    // so callers that submit ambient/search-driven OCR can avoid claiming
+    // a once-per-doc guard on a submission that would silently no-op while
+    // the model is still downloading (search-kick retry, FIX 5).
+    bool modelReady() const;
+
+  signals:
+    // Emitted at the start of a submitUserPages batch with the number
+    // of pages that will be OCR'd (ADR 0002 G1).
+    void ocrBatchStarted(int total);
+    // Emitted each time a page's result is resolved on the GUI thread.
+    void ocrBatchProgress(int completed, int total);
+    // Emitted once the batch ends: cancelled=false on natural
+    // completion, cancelled=true after cancelActiveBatch(). blockCount is
+    // the total number of OCR blocks the batch's pages hold in the store at
+    // completion (0 when cancelled) so callers can report an honest
+    // "No text found" vs "complete" without re-deriving the page list.
+    void ocrBatchFinished(bool cancelled, int blockCount);
+    // Emitted when an active batch is torn down SILENTLY — superseded by
+    // a fresh batch, or the document was switched/closed. MainWindow
+    // drives the widget straight back to idle (no "cancelled — no changes
+    // saved" terminal message) and disables the scoped cancel action.
+    // Distinct from ocrBatchFinished so a supersede/teardown never flashes
+    // the misleading cancel message (ADR 0002 review items 2/7).
+    void ocrBatchAborted();
+    // Emitted after the reveal delay iff the batch is still running
+    // (ADR 0002 G2). MainWindow reveals the progress widget here, not on
+    // ocrBatchStarted, so sub-threshold batches never flicker it.
+    void ocrBatchShouldReveal();
+
+    // State-driven auto-OCR readiness signal (ADR 0002 §3). true when
+    // the visible document would auto-OCR but the language model is not
+    // installed; false otherwise. Re-derived on every document/page
+    // change so the in-context hint is persistent, not fire-once.
+    void autoOcrModelMissing(bool missing);
 
   private:
     // Submission state tracked per (doc, page) so duplicate enqueues
@@ -93,15 +187,49 @@ class OcrController : public QObject {
             return doc == o.doc && page == o.page;
         }
     };
+    // Value stored per pending key: the scheduler task id plus whether the
+    // submission is part of a user-action batch. batchTracked lets
+    // cancelActiveBatch() cancel ONLY batch handles and leave ambient
+    // (visible-page ±1) submissions running (ADR 0002 review item 3).
+    struct PendingEntry {
+        MlTaskId id = 0;
+        bool batchTracked = false;
+    };
     struct PendingKeyHash {
         size_t operator()(const PendingKey &k) const noexcept {
             return std::hash<IDocument *>()(k.doc) ^ (std::hash<int>()(k.page) << 1);
         }
     };
 
-    void submitPage(IDocument *doc, int page, MlPriority priority, bool forceRerun);
+    // Outcome of a single submitPage() call. Used by the batch driver to
+    // decide whether a completion callback is still coming (Submitted)
+    // or the page must be counted done immediately (Cached / Skipped).
+    enum class SubmitResult { Submitted, Cached, Skipped };
+
+    SubmitResult submitPage(IDocument *doc, int page, MlPriority priority, bool forceRerun,
+                            bool batchTracked);
     void cancelKey(const PendingKey &key);
     void cancelPagesNotMatching(IDocument *doc, const std::vector<int> &keep);
+
+    // GUI-thread callback invoked when a batch page resolves (stored or
+    // discarded). `epoch` identifies the batch that scheduled the page;
+    // stragglers from a superseded/torn-down batch carry a stale epoch and
+    // are ignored so they can't inflate the CURRENT batch's counter (ADR
+    // 0002 review item 1).
+    void onBatchPageResolved(int epoch);
+
+    // Silent teardown of the active-batch bookkeeping: deactivate, stop
+    // the reveal timer, flip the apply guard, and bump the batch epoch so
+    // in-flight stragglers are orphaned. Emits nothing and does not touch
+    // ambient handles — callers decide what signal (if any) to emit.
+    void deactivateBatch();
+
+    // Cancel and forget every batch-tracked pending handle, leaving
+    // ambient submissions in m_pending untouched.
+    void cancelBatchTrackedHandles();
+
+    // Recompute and emit autoOcrModelMissing() for the visible page.
+    void evaluateAutoOcrModel(IDocument *doc, int page);
 
     Application *m_app;
     // IDocument isn't a QObject, so we can't use QPointer here. The
@@ -116,7 +244,52 @@ class OcrController : public QObject {
     // when the controller frees; the shared_ptr defers OcrEngine
     // destruction until the lambda exits.
     std::shared_ptr<OcrEngine> m_engine;
-    std::unordered_map<PendingKey, MlTaskId, PendingKeyHash> m_pending;
+    std::unordered_map<PendingKey, PendingEntry, PendingKeyHash> m_pending;
+
+    // --- UserAction batch tracking (ADR 0002) ---
+    bool m_batchActive = false;
+    int m_batchTotal = 0;
+    int m_batchCompleted = 0;
+    // The batch's in-range pages, captured at start so completion can sum
+    // the store's block count across them for the honest-completion signal
+    // (Item C). Counts cached AND freshly-OCR'd blocks — the honest answer
+    // is "does the recognized page set hold text now", not "how many were
+    // newly stored".
+    std::vector<int> m_batchPages;
+    // Monotonic per-batch identity. Bumped when a batch starts; a page's
+    // apply lambda captures the value current at submit time and hands it
+    // back to onBatchPageResolved(), which ignores any that don't match
+    // the live batch. Guards against a superseded batch's late workers
+    // inflating the new batch's completion count (ADR 0002 review item 1).
+    int m_batchEpoch = 0;
+    // Shared with each page's GUI-thread apply step. Flipped by
+    // cancelActiveBatch(); the apply step checks it (both run on the GUI
+    // thread, so no locking) and discards the interrupted page's blocks
+    // rather than persisting a half-recognised page.
+    std::shared_ptr<std::atomic<bool>> m_batchCancelled;
+    QTimer *m_revealTimer = nullptr;
+    // PHILOSOPHY: hand-tuned values stay hand-tuned. Reveal delay is the
+    // grace period before an in-flight batch surfaces the progress widget
+    // (ADR 0002 §1 "~1s"; B5's floor is "<1s: no looped animation"). The
+    // range considered was 600–1200ms: below ~800ms fast batches flicker
+    // the widget for work that's already done; above ~1200ms a genuinely
+    // slow batch feels unacknowledged. 1000ms sits in the middle and
+    // matches the ADR. Bump it only if users report the widget flashing on
+    // trivially fast batches (raise) or feeling unresponsive on slow ones
+    // (lower); it is settable per-run for tests.
+    int m_revealDelayMs = 1000;
+    // Set true at the very top of the destructor so cancelAll() knows not
+    // to emit ocrBatchAborted() into a half-destroyed MainWindow (its
+    // status-bar children may already be gone).
+    bool m_destroying = false;
+    // Last value emitted through autoOcrModelMissing(). Cached so the
+    // signal fires only on a real state change, not on every page/document
+    // re-derivation (ADR 0002 review item 9).
+    std::optional<bool> m_lastModelMissing;
+
+    // Test seams (see setters above).
+    RecognizeFn m_recognizer;
+    std::optional<bool> m_modelReadyOverride;
 };
 
 } // namespace trailer

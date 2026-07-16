@@ -79,6 +79,11 @@ class Application : public QApplication {
     // QPointer entries can be null (a destruction is queued); the
     // Window menu filters those out before showing the list.
     QList<MainWindow *> windows() const;
+    // Count of live (non-null) MainWindows. Used by the empty-state
+    // window model to decide whether closing the last document should
+    // close the window (other windows exist) or persist it as an
+    // empty-state window (this is the last window).
+    int windowCount() const;
 #ifdef Q_OS_MACOS
     QMenuBar *noWindowMenuBar() const { return m_noWindowMenuBar.data(); }
 #endif

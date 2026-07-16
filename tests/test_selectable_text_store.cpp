@@ -44,6 +44,7 @@ class TestSelectableTextStore : public QObject {
     void signalsFireOnChanges();
     void hashIsStableAndUnique();
     void hashContentSurvivesFormatConversion();
+    void attemptedMemoTracksHashAndClears();
 };
 
 void TestSelectableTextStore::emptyStoreHasNoResults() {
@@ -151,6 +152,50 @@ void TestSelectableTextStore::hashContentSurvivesFormatConversion() {
     const QImage rgb = makeTestImage(32, 32, QColor(20, 40, 60));
     const QImage rgba = rgb.convertToFormat(QImage::Format_ARGB32);
     QCOMPARE(hashImageContent(rgb), hashImageContent(rgba));
+}
+
+void TestSelectableTextStore::attemptedMemoTracksHashAndClears() {
+    // The attempted-and-empty memo (ADR G13.1/G13.2) lets the ambient OCR
+    // path skip re-OCRing a text-less page without ever making it report a
+    // text layer. It is keyed by (page, contentHash) and is independent of
+    // hasResults().
+    SelectableTextStore store;
+    QVERIFY(!store.wasAttempted(0, 0xABCULL));
+
+    store.markAttempted(0, 0xABCULL);
+    // Memo hits only for the recorded hash — an edited page (new hash)
+    // re-OCRs.
+    QVERIFY(store.wasAttempted(0, 0xABCULL));
+    QVERIFY(!store.wasAttempted(0, 0xDEFULL));
+    // Honesty: the memo must NOT masquerade as results.
+    QVERIFY(!store.hasResults(0));
+    QCOMPARE(store.blocks(0).size(), size_t(0));
+    QCOMPARE(store.contentHashFor(0), uint64_t(0));
+    // Other pages are unaffected.
+    QVERIFY(!store.wasAttempted(1, 0xABCULL));
+
+    // invalidate(page) drops the memo so a force-rerun / edit re-OCRs.
+    store.invalidate(0);
+    QVERIFY(!store.wasAttempted(0, 0xABCULL));
+
+    // clear() drops every memo.
+    store.markAttempted(2, 0x111ULL);
+    store.markAttempted(3, 0x222ULL);
+    store.clear();
+    QVERIFY(!store.wasAttempted(2, 0x111ULL));
+    QVERIFY(!store.wasAttempted(3, 0x222ULL));
+
+    // A real put() for a page and its attempted memo are independent:
+    // putting results does not require the memo, and hasResults stays the
+    // authoritative "has a text layer" signal.
+    store.markAttempted(4, 0x333ULL);
+    store.put(4, 0x444ULL,
+              {makeBlock("real", QPolygon({{0, 0}, {10, 0}, {10, 10}, {0, 10}}))});
+    QVERIFY(store.hasResults(4));
+    // invalidate clears both the results entry and the memo.
+    store.invalidate(4);
+    QVERIFY(!store.hasResults(4));
+    QVERIFY(!store.wasAttempted(4, 0x333ULL));
 }
 
 QTEST_MAIN(TestSelectableTextStore)

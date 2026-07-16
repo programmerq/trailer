@@ -1,7 +1,9 @@
 #include "IconHelper.h"
 
+#include <QAction>
 #include <QApplication>
 #include <QFile>
+#include <QMenu>
 #include <QPainter>
 #include <QPalette>
 #include <QPixmap>
@@ -12,26 +14,42 @@ namespace trailer {
 
 namespace {
 
-// Render one SVG resource into the QIcon for the given mode/state at
-// every size we plausibly need. Pixmaps are tinted to `color` via
-// CompositionMode_SourceIn so the original SVG paint colour doesn't
-// matter — only its alpha channel does.
+// Recolour a copy of `base` to `color` via CompositionMode_SourceIn
+// (keeps base's alpha, replaces its RGB) and return it.
+QPixmap tinted(const QPixmap& base, const QColor& color) {
+    QPixmap pm = base;
+    QPainter p(&pm);
+    p.setCompositionMode(QPainter::CompositionMode_SourceIn);
+    p.fillRect(pm.rect(), color);
+    p.end();
+    return pm;
+}
+
+// Render one SVG resource into the QIcon at every size we plausibly
+// need. Pixmaps are tinted to `color` via SourceIn so the original SVG
+// paint colour doesn't matter — only its alpha channel does. If
+// `disabledColor` is valid, a QIcon::Disabled pixmap is added at the
+// same `state` from the SAME rendered base — a cheap recolour, not a
+// second SVG render, so honest disabled contrast (see the header note)
+// costs one extra fillRect per size, not a doubled render pass.
 void addRenderedSvg(QIcon& icon, const QString& resource,
                     const QColor& color,
-                    QIcon::Mode mode, QIcon::State state) {
+                    QIcon::Mode mode, QIcon::State state,
+                    const QColor& disabledColor = QColor()) {
     QSvgRenderer renderer(resource);
     if (!renderer.isValid()) {
         return;
     }
     for (int size : {16, 18, 24, 32, 36, 48, 64}) {
-        QPixmap pm(size, size);
-        pm.fill(Qt::transparent);
-        QPainter p(&pm);
+        QPixmap base(size, size);
+        base.fill(Qt::transparent);
+        QPainter p(&base);
         renderer.render(&p, QRectF(0, 0, size, size));
-        p.setCompositionMode(QPainter::CompositionMode_SourceIn);
-        p.fillRect(pm.rect(), color);
         p.end();
-        icon.addPixmap(pm, mode, state);
+        icon.addPixmap(tinted(base, color), mode, state);
+        if (disabledColor.isValid()) {
+            icon.addPixmap(tinted(base, disabledColor), QIcon::Disabled, state);
+        }
     }
 }
 
@@ -49,9 +67,18 @@ QString filledSiblingPath(const QString& resource) {
 
 }  // namespace
 
-QIcon themedActionIcon(const QString& resource, const QColor& color) {
+QIcon themedActionIcon(const QString& resource, const QColor& color,
+                       const QColor& disabledColor) {
     QIcon icon;
-    addRenderedSvg(icon, resource, color, QIcon::Normal, QIcon::Off);
+    // Explicit Disabled pixmaps are load-bearing: without them Qt asks
+    // the style to synthesise the disabled look from the Normal pixmap,
+    // and for these solid-tinted alpha glyphs the synthesised fade is
+    // imperceptible — under a dark palette a disabled icon-only button
+    // is pixel-identical to its enabled self, so the greyed state lies
+    // (Gate G3 spirit: a control's state must read honestly). Rendering
+    // the glyph in the palette's disabled foreground makes the dim
+    // explicit and matches the disabled-text convention everywhere else.
+    addRenderedSvg(icon, resource, color, QIcon::Normal, QIcon::Off, disabledColor);
     if (icon.isNull()) {
         // The base SVG didn't render — return early so we don't
         // attach a checked-state pixmap to an otherwise empty icon.
@@ -64,14 +91,28 @@ QIcon themedActionIcon(const QString& resource, const QColor& color) {
     // variant SVGs; toolbars just pass the base resource.
     const QString filled = filledSiblingPath(resource);
     if (!filled.isEmpty() && QFile::exists(filled)) {
-        addRenderedSvg(icon, filled, color, QIcon::Normal, QIcon::On);
+        addRenderedSvg(icon, filled, color, QIcon::Normal, QIcon::On, disabledColor);
     }
     return icon;
 }
 
 QIcon themedActionIcon(const QString& resource, const QWidget* widget) {
     const QPalette pal = widget ? widget->palette() : QApplication::palette();
-    return themedActionIcon(resource, pal.color(QPalette::WindowText));
+    return themedActionIcon(resource, pal.color(QPalette::WindowText),
+                            pal.color(QPalette::Disabled, QPalette::WindowText));
+}
+
+QAction* makeDisabledAction(QMenu* menu, const QString& text,
+                            const QString& whyTooltip) {
+    QAction* action = menu->addAction(text);
+    action->setToolTip(whyTooltip);
+    action->setEnabled(false);
+    // Couple the tooltip to the one thing that makes it visible. Setting
+    // this per-menu is idempotent, so calling it once per disabled action
+    // is harmless — but it means no disabled+explained action can ever be
+    // attached to a menu that would swallow its tooltip.
+    menu->setToolTipsVisible(true);
+    return action;
 }
 
 }  // namespace trailer

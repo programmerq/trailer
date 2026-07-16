@@ -22,6 +22,9 @@
 #include "document/PdfEditor.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
+#include "ui/Sidebar.h"
+#include "settings/DocumentTypeDefaults.h"
+#include "recent/RecentFiles.h"
 
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFWriter.hh>
@@ -31,6 +34,7 @@
 #include <QFileInfo>
 #include <QMenu>
 #include <QMenuBar>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -160,6 +164,7 @@ class TestUatForms : public QObject {
     void uat_frm_040_fillFormsAutoEnabledOnFillablePdf();
     void uat_frm_041_fillFormsRespectsExplicitToggleOff();
     void uat_frm_050_tabMovesBetweenFieldsInReadingOrder();
+    void uat_frm_060_formForcesSidebarHiddenOverridingTypeDefault();
 
   private:
     QTemporaryDir m_scratch;
@@ -191,7 +196,10 @@ void TestUatForms::uat_frm_010_formFieldsReportedOnOpen() {
     IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
 
-    QVERIFY(doc->supportsFormFilling());
+    // Since PR #63 the qpdf parse behind supportsFormFilling() runs on a
+    // background worker, so form detection resolves a moment after open. Pump
+    // the event loop until it lands (QTRY passes immediately once resolved).
+    QTRY_VERIFY(doc->supportsFormFilling());
 
     const auto fields = doc->formFields();
     QCOMPARE(static_cast<int>(fields.size()), 3);
@@ -228,7 +236,8 @@ void TestUatForms::uat_frm_020_setFormFillingActiveShowsFields() {
     QVERIFY(dv);
     IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
-    QVERIFY(doc->supportsFormFilling());
+    // Async form detection (PR #63): pump until it resolves.
+    QTRY_VERIFY(doc->supportsFormFilling());
 
     // Toggle on then off — must not crash on either transition.
     doc->setFormFillingActive(true);
@@ -259,7 +268,8 @@ void TestUatForms::uat_frm_030_fillTextFieldPersistsAcrossSave() {
         QVERIFY(dv);
         IDocument *doc = dv->currentDocument();
         QVERIFY(doc);
-        QVERIFY(doc->supportsFormFilling());
+        // Async form detection (PR #63): pump until it resolves.
+        QTRY_VERIFY(doc->supportsFormFilling());
 
         // Find the "fullname" text field.
         const auto fields = doc->formFields();
@@ -292,7 +302,8 @@ void TestUatForms::uat_frm_030_fillTextFieldPersistsAcrossSave() {
         QVERIFY(dv);
         IDocument *doc = dv->currentDocument();
         QVERIFY(doc);
-        QVERIFY(doc->supportsFormFilling());
+        // Async form detection (PR #63): pump until it resolves.
+        QTRY_VERIFY(doc->supportsFormFilling());
 
         const auto fields = doc->formFields();
         const FormField *tf = nullptr;
@@ -342,9 +353,12 @@ void TestUatForms::uat_frm_040_fillFormsAutoEnabledOnFillablePdf() {
 
     QAction *fillForms = findFillFormsAction(mw);
     QVERIFY2(fillForms, "Tools > Fill Forms action not found");
+    // Enable + auto-enable fire when async form detection completes (PR #63),
+    // a moment after open — pump until it lands.
+    QTRY_VERIFY2(fillForms->isChecked(),
+                 "Fill Forms must be auto-enabled the first time a fillable "
+                 "PDF becomes the current document");
     QVERIFY2(fillForms->isEnabled(), "Fill Forms must be enabled for a fillable PDF");
-    QVERIFY2(fillForms->isChecked(), "Fill Forms must be auto-enabled the first time a fillable "
-                                     "PDF becomes the current document");
 }
 
 // UAT-FRM-041 — If the user explicitly toggles Fill Forms off for a
@@ -364,7 +378,9 @@ void TestUatForms::uat_frm_041_fillFormsRespectsExplicitToggleOff() {
 
     QAction *fillForms = findFillFormsAction(mw);
     QVERIFY(fillForms);
-    QVERIFY(fillForms->isChecked());
+    // Auto-enable fires when async form detection completes (PR #63) — pump
+    // until it lands before exercising the explicit toggle-off.
+    QTRY_VERIFY(fillForms->isChecked());
 
     // User explicitly toggles off.
     fillForms->trigger();
@@ -408,7 +424,8 @@ void TestUatForms::uat_frm_050_tabMovesBetweenFieldsInReadingOrder() {
     QVERIFY(dv);
     auto *doc = dv->currentDocument();
     QVERIFY(doc);
-    QVERIFY(doc->supportsFormFilling());
+    // Async form detection (PR #63): pump until it resolves.
+    QTRY_VERIFY(doc->supportsFormFilling());
 
     // Force the form overlay to populate by toggling form-filling on.
     // (UAT-FRM-040 makes this happen automatically, but be explicit so
@@ -454,6 +471,60 @@ void TestUatForms::uat_frm_050_tabMovesBetweenFieldsInReadingOrder() {
             break;
     }
     QVERIFY2(visited.size() >= 3, "Tab focus chain did not visit all form-field widgets");
+}
+
+// UAT-VWR-055 (content-aware first-open defaults, forms branch).
+//
+// A form PDF (>= 3 fillable fields, < 20 pages) with no saved per-file
+// state forces the sidebar hidden for a clean filling view. To prove the
+// heuristic actively *overrides* state (rather than passing only because
+// the global default already hides the sidebar), we first seed a per-type
+// PDF default that opens the thumbnail sidebar — content-aware must still
+// win and leave it hidden. The form-filling toolbar surfaces separately
+// and is unaffected.
+void TestUatForms::uat_frm_060_formForcesSidebarHiddenOverridingTypeDefault() {
+    QVERIFY(m_scratch.isValid());
+    const QString path = writeFormPdf(m_scratch.filePath(QStringLiteral("frm060.pdf")));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    // Per-type default that would otherwise open the page-thumbnail
+    // sidebar for any PDF with no per-file state. This mutates the
+    // process-wide per-type defaults, which are shared across every test
+    // slot (they run against one Application), so capture the prior value
+    // and restore it on scope exit — including any early QVERIFY return —
+    // to keep later slots order-independent.
+    const DocumentTypeDefault priorPdfDefault =
+        app->documentTypeDefaults().forType(DocumentType::Pdf);
+    const auto restorePdfDefault = qScopeGuard([&] {
+        app->documentTypeDefaults().setForType(DocumentType::Pdf, priorPdfDefault);
+    });
+
+    DocumentTypeDefault def;
+    def.sidebarMode = SidebarMode::Pages;
+    QVERIFY2(def.hasState(), "seeded per-type default must report state");
+    app->documentTypeDefaults().setForType(DocumentType::Pdf, def);
+
+    app->openFiles({path});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    // Precondition: the fixture is recognised as a 3-field form. Form detection
+    // is async since PR #63, so pump until it resolves; the content-aware
+    // sidebar decision is re-evaluated on the same capabilities signal.
+    QTRY_VERIFY2(doc->supportsFormFilling(), "fixture must be a fillable form");
+    QCOMPARE(static_cast<int>(doc->formFields().size()), 3);
+
+    // The form heuristic wins over the seeded per-type "show thumbnails".
+    auto *sidebar = mw->findChild<Sidebar *>();
+    QVERIFY2(sidebar, "MainWindow should host a Sidebar");
+    QTRY_COMPARE(static_cast<int>(sidebar->mode()), static_cast<int>(Sidebar::Mode::Hidden));
 }
 
 // Custom main: create Application (not just QApplication) so

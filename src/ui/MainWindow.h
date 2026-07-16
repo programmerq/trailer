@@ -8,7 +8,10 @@
 #include <QSet>
 #include <QStringList>
 #include <cstdint>
+#include <functional>
 #include <memory>
+#include <optional>
+#include <vector>
 
 class QCloseEvent;
 class QTimer;
@@ -16,6 +19,7 @@ class QTimer;
 class QAction;
 class QLabel;
 class QMenu;
+class QStackedWidget;
 class QToolButton;
 
 namespace trailer {
@@ -23,6 +27,7 @@ namespace trailer {
 class AnimationBar;
 class Application;
 class DocumentView;
+class EmptyStateWidget;
 class Inspector;
 class FormToolbar;
 class Magnifier;
@@ -30,8 +35,17 @@ class MarkupToolbar;
 class SearchBar;
 class Sidebar;
 
+class MlProgressWidget;
 class OcrController;
 class SamController;
+
+// Resolve the pages to OCR for a Recognize Text request when the choice is
+// unambiguous, so a dialog offering no real choice can be skipped. Returns
+// the single-page set {currentPage} for a one-page document; returns
+// nullopt for multi-page documents, signalling the caller to present
+// RecognizeTextDialog for a page-range pick. Free function (no MainWindow
+// instance) so it is unit-testable headlessly.
+std::optional<std::vector<int>> resolveRecognizePages(const IDocument &doc);
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
@@ -58,6 +72,46 @@ class MainWindow : public QMainWindow {
     void flashError(const QString &message);
     void flashSuccess(const QString &message);
     void flashStatus(const QString &message);
+
+    // Test-only seam for the unsaved-changes close prompt. The offscreen
+    // UAT harness cannot click a real modal, so it forces the outcome of
+    // confirmCloseDirtyDoc() to Save / Discard / Cancel; Prompt (the
+    // default) shows the real QMessageBox in a headed session. See
+    // confirmCloseDirtyDoc().
+    enum class CloseResponse { Prompt, Save, Discard, Cancel };
+    void setCloseResponseForTesting(CloseResponse r) { m_closeResponseForTesting = r; }
+    // Test-only seam for the Save-As destination. When non-empty,
+    // chooseSaveAsPath() returns this instead of showing the native file
+    // dialog, letting the harness drive the untitled-document Save flow.
+    void setSaveAsPathForTesting(const QString &path) { m_saveAsPathForTesting = path; }
+
+    // Test seam (ADR 0002 review item 13; no-op in production). When set,
+    // replaces the ensureOcrModelsReady() call made when the user activates
+    // the missing-model in-context hint link, so a test can prove the
+    // click→download-consent routing without spawning a real modal or a
+    // network download. Returns whether the model is (now) ready.
+    void setOcrModelDownloadHookForTesting(std::function<bool()> hook) {
+        m_ocrModelDownloadHook = std::move(hook);
+    }
+
+    // Test-only introspection for the pointer-keyed large-doc notice /
+    // pageHasText caches (Copilot review #58). Both are keyed by the raw
+    // IDocument* and must be purged when a document closes so a recycled
+    // address can't inherit a prior dismissal or a stale probe hit. These
+    // let a UAT prove the documentAboutToBeRemoved hook drops the entry.
+    bool isLargeDocOcrHintDismissedForTesting(const IDocument *doc) const {
+        return m_largeDocOcrHintDismissed.contains(const_cast<IDocument *>(doc));
+    }
+    bool pageHasTextCacheHasDocForTesting(const IDocument *doc) const {
+        return m_pageHasTextCacheDoc == doc;
+    }
+
+    // Honest terminal message for a finished Recognize Text batch. Cancelled
+    // batches report the no-changes-saved message; otherwise the message is
+    // truthful about whether any text was actually recognized — a zero-block
+    // run says "No text found" rather than falsely claiming completion.
+    // Static + public so it is unit-testable without a MainWindow instance.
+    static QString recognizeCompletionMessage(bool cancelled, int blockCount);
 
   public slots:
     void rebuildRecentMenu();
@@ -102,11 +156,20 @@ class MainWindow : public QMainWindow {
 
   private slots:
     void onOpen();
+    // Handle DocumentView::allTabsClosed under the empty-state window
+    // model: close this window if other windows exist (avoid empty-
+    // window pile-up), otherwise persist it and show the empty state.
+    void onAllTabsClosed();
+    // Swap the central stack between the document page and the empty
+    // state based on whether any document is open.
+    void updateEmptyState();
     // Wipe every Trailer-managed file under AppPaths::*. Used by
     // Tools → Reset Trailer Settings…  for the "is this stale
     // state from an older build?" diagnostic. Asks for explicit
     // confirmation because this is destructive.
     void onResetTrailerSettings();
+    // Open the unified Preferences dialog (Edit → Preferences…).
+    void onOpenPreferences();
     void onSave();
     void onSaveAs();
     void onRotateLeft();
@@ -120,6 +183,7 @@ class MainWindow : public QMainWindow {
     void onSmartLasso();
     void onRecognizeText();
     void onExportAs();
+    void onCopyPageAsImage();
     void onExportPasswordProtected();
     void onReduceFileSize();
     void onTakeScreenshot();
@@ -137,6 +201,17 @@ class MainWindow : public QMainWindow {
     // don't have an anchor) falls back to the cursor position.
     void onSignHere(const QPoint &anchorGlobalPos = QPoint());
     void onCurrentDocumentChanged(IDocument *doc);
+    // Forms-toolbar enable/populate for `doc`. Extracted from
+    // onCurrentDocumentChanged so it can run both at open and when the
+    // document's async form detection completes (PR #63: the qpdf parse that
+    // answers supportsFormFilling() runs on a background worker, so forms are
+    // not known at open).
+    void refreshFormCapabilities(IDocument *doc);
+    // Slot fired by IDocument::capabilityNotifier() when async capability
+    // detection completes; re-runs refreshFormCapabilities for the current
+    // document. Must be a member function — not a lambda — so the
+    // Qt::UniqueConnection flag in the connect() call actually takes effect.
+    void onDocumentCapabilitiesChanged();
     // Invoked whenever the active document's annotation store mutates
     // (add / remove / update / undo / redo). Refreshes the window
     // title, dirty marker, and Undo/Redo action state. Must be a
@@ -181,10 +256,27 @@ class MainWindow : public QMainWindow {
     // thread for QPdfDocument reload); image saves run synchronously
     // because they are fast.
     void saveDocumentAsync(IDocument *doc, const QString &targetPath);
+    // Run the Save-As dialog for `doc` and return the chosen destination
+    // path, or an empty string if the user cancelled. Shared by onSaveAs()
+    // and the unsaved-changes close prompt so both offer the same dialog.
+    QString chooseSaveAsPath(IDocument *doc);
+    // Prompt (or, under a forced test response, decide) whether to close
+    // a dirty document. Returns true to proceed with closing this doc,
+    // false to abort (Cancel, or a Save that failed / was cancelled).
+    // Reuses chooseSaveAsPath for untitled docs exactly as closeEvent
+    // does. Shared by closeEvent's window-close walk and the
+    // DocumentView::documentCloseRequested tab-close veto so both paths
+    // behave identically.
+    bool confirmCloseDirtyDoc(IDocument *doc);
     void syncViewModeActions(IDocument *doc);
     void showSearchBar();
     void hideSearchBar();
     void updateTitleForDocument(IDocument *doc);
+    // Re-derive the large-doc "Recognize text" notice visibility (ADR
+    // 0006). Called from onCurrentDocumentChanged and the m_ocrPagePoll
+    // tick so the notice is guarded by a real per-page text check and
+    // self-clears once the page gains text / OCR results / is dismissed.
+    void updateLargeDocOcrHint();
     void updateUndoRedoActions(IDocument *doc);
     int selectedPageForEdit(IDocument *doc) const;
     // Size the window to fit the first document opened. Clamped to a
@@ -218,6 +310,21 @@ class MainWindow : public QMainWindow {
 
     Application *m_app;
     DocumentView *m_documentView = nullptr;
+    // Forced outcome for the unsaved-changes close prompt. Prompt (the
+    // default) shows the real modal; the UAT harness overrides it to
+    // drive Save / Discard / Cancel deterministically. See
+    // setCloseResponseForTesting / confirmCloseDirtyDoc.
+    CloseResponse m_closeResponseForTesting = CloseResponse::Prompt;
+    // Forced Save-As destination for tests; empty means "show the real
+    // file dialog". See setSaveAsPathForTesting / chooseSaveAsPath.
+    QString m_saveAsPathForTesting;
+    // Empty-state window model: the central column is a QStackedWidget
+    // with two pages — the document page (document view + animation bar)
+    // and the empty-state welcome surface. updateEmptyState() swaps
+    // between them based on documentCount().
+    EmptyStateWidget *m_emptyState = nullptr;
+    QStackedWidget *m_centerStack = nullptr;
+    QWidget *m_documentPage = nullptr;
     AnimationBar *m_animationBar = nullptr;
     Inspector *m_inspector = nullptr;
     Magnifier *m_magnifier = nullptr;
@@ -272,6 +379,12 @@ class MainWindow : public QMainWindow {
     // restored on focus. Tracked per-document so a tab switch
     // doesn't bounce the user back to the saved page mid-session.
     QSet<const IDocument *> m_restoredViewStateDocs;
+    // First-open documents whose content-aware sidebar decision was deferred
+    // because form detection had not yet completed (async since PR #63).
+    // onDocumentCapabilitiesChanged re-evaluates and removes them once the
+    // AcroForm answer lands. Pointers may dangle after close, which is
+    // harmless: entries are removed on close and never dereferenced stale.
+    QSet<const IDocument *> m_contentAwareFormSidebarPending;
     // One-shot guard for applyInitialWindowSize. True after the
     // first opened doc has driven a resize so opening additional
     // tabs in the same window doesn't bounce the geometry around.
@@ -290,6 +403,7 @@ class MainWindow : public QMainWindow {
     QAction *m_findNextAction = nullptr;
     QAction *m_findPreviousAction = nullptr;
     QAction *m_selectAllAction = nullptr;
+    QAction *m_copyPageAction = nullptr;
     QAction *m_undoAction = nullptr;
     QAction *m_redoAction = nullptr;
 
@@ -328,6 +442,36 @@ class MainWindow : public QMainWindow {
     // happening" affordance for the user.
     QLabel *m_mlIndicator = nullptr;
 
+    // ADR 0002 status-bar affordances. m_mlProgress is the richer
+    // progress+cancel widget for foreground ML ops (OCR batches;
+    // background removal can adopt it later). m_cancelMlAction is the
+    // ⌘. keyboard cancel, enabled only while a foreground cancellable op
+    // is running. m_ocrModelMissingHint is the non-modal in-context
+    // "install language pack" prompt shown when auto-OCR can't run
+    // because the language model is absent. The m_ocr* scalars coordinate
+    // the reveal delay: progress is buffered until the widget reveals so
+    // sub-threshold batches never flicker it.
+    MlProgressWidget *m_mlProgress = nullptr;
+    QAction *m_cancelMlAction = nullptr;
+    QLabel *m_ocrModelMissingHint = nullptr;
+    int m_ocrPendingTotal = 0;
+    int m_ocrPendingCompleted = 0;
+    bool m_ocrRevealed = false;
+    // ADR 0002 §1 elapsed-time reassurance. While an INDETERMINATE reveal
+    // is showing, this 1s timer ticks and feeds setElapsedSeconds() so a
+    // slow single-page op appends "· Ns" past 10s. Stopped on finish/idle.
+    QTimer *m_ocrElapsedTimer = nullptr;
+    int m_ocrElapsedSecs = 0;
+    // ADR 0002 §3 page-change re-derivation. IDocument exposes no page-
+    // changed signal, so — mirroring Sidebar's m_pageSyncTimer — poll the
+    // current page and notify the controller only when it changes, so the
+    // missing-model hint re-derives when scrolling between text and scanned
+    // pages. m_lastOcrPage is the last page pushed to the controller.
+    QTimer *m_ocrPagePoll = nullptr;
+    int m_lastOcrPage = -1;
+    // Test seam for the missing-model hint's download-consent routing.
+    std::function<bool()> m_ocrModelDownloadHook;
+
     // Auto-OCR pump. Owns an OcrEngine and tracks the in-flight
     // submissions for the current document; signals from the document
     // view feed visible-page changes into it. The controller is
@@ -344,6 +488,18 @@ class MainWindow : public QMainWindow {
     // Shown only when the active doc is large + non-OCR'd; hidden
     // otherwise so the status bar stays clean.
     QWidget *m_largeDocOcrHint = nullptr;
+    // Per-document dismissal for the large-doc recognize notice (ADR
+    // 0006). Keyed by IDocument* so a notice dismissed on doc A stays
+    // hidden when the user tab-switches away and back, independently of
+    // other documents. Pointers are used only for identity membership,
+    // never dereferenced.
+    QSet<IDocument *> m_largeDocOcrHintDismissed;
+    // Single-entry cache for the pageHasText() probe, which re-extracts
+    // the full page text and is polled ~7Hz by m_ocrPagePoll. Only re-
+    // probed when the (document, page) changes.
+    IDocument *m_pageHasTextCacheDoc = nullptr;
+    int m_pageHasTextCachePage = -1;
+    bool m_pageHasTextCacheValue = false;
 
     // Decoration applied to the Remove Background menu entry when the
     // current image is a strong candidate for background removal. The
@@ -358,6 +514,18 @@ class MainWindow : public QMainWindow {
     // them if the doc closes mid-compute. Maps to the MlScheduler task
     // id returned by submit(); zero means no in-flight job.
     QHash<const IDocument *, std::uint64_t> m_pendingCandidateJobs;
+    // Item A on-demand search OCR: images whose page 0 we have already
+    // asked to OCR because the user typed a search query while the OCR
+    // store was still empty. Guards against re-submitting (and thus
+    // cancel/restarting) the same page on every keystroke. Pointers are
+    // identity-only; entries are purged when the document closes.
+    QSet<IDocument *> m_searchOcrKicked;
+    // Kick page-0 OCR for an image the user is searching before it has any
+    // OCR results, so Find works even without a prior manual Recognize run.
+    // No-op for non-images (PDFs search native text), empty queries, and
+    // pages that already have results. Uses the same OcrController path the
+    // menu uses; when the model is absent it silently no-ops (no modal).
+    void maybeKickSearchOcr(IDocument *doc, const QString &query);
 };
 
 } // namespace trailer

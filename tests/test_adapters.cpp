@@ -3,6 +3,10 @@
 #include "document/DocumentRegistry.h"
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
+#include "document/PdfEditor.h"
+#include "document/SelectableTextStore.h"
+#include "ui/MainWindow.h"
+#include "ui/SelectableTextLayer.h"
 
 #include <QImage>
 #include <QKeyEvent>
@@ -17,7 +21,37 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <algorithm>
+
 using namespace trailer;
+
+namespace {
+
+// Bounding box of the "dark" (text) pixels in a white-background render.
+// Used to locate where glyphs actually landed, independent of any text-
+// layer geometry, so selection alignment can be checked against the real
+// raster.
+QRect darkPixelBBox(const QImage &imgIn) {
+    const QImage img = imgIn.convertToFormat(QImage::Format_ARGB32);
+    int minX = img.width(), minY = img.height(), maxX = -1, maxY = -1;
+    for (int y = 0; y < img.height(); ++y) {
+        for (int x = 0; x < img.width(); ++x) {
+            const QRgb px = img.pixel(x, y);
+            // "Dark enough to be ink": any channel well below white.
+            if (qRed(px) < 128 && qGreen(px) < 128 && qBlue(px) < 128) {
+                minX = std::min(minX, x);
+                minY = std::min(minY, y);
+                maxX = std::max(maxX, x);
+                maxY = std::max(maxY, y);
+            }
+        }
+    }
+    if (maxX < 0)
+        return {};
+    return QRect(QPoint(minX, minY), QPoint(maxX, maxY));
+}
+
+} // namespace
 
 class TestAdapters : public QObject {
     Q_OBJECT
@@ -32,11 +66,21 @@ class TestAdapters : public QObject {
     void pdfDocumentAdvertisesCapabilities();
     void pdfDocumentRendersThumbnailsForValidFile();
     void pdfDocumentAcceptsSearchQueryWithoutView();
+    void pdfDocumentPageHasTextDistinguishesTextFromBlankPage();
+    void pdfDocumentNativeTextLayerFeedsSelectableStore();
+    void pdfDocumentNativeTextDragSelectsRealString();
+    void pdfDocumentNativeTextAlignsWithRenderedGlyphs();
+    void pdfDocumentNativeTextMultiLineOrdering();
     void printSupportReflectsValidity();
     void pdfDocumentRotationMarksDirtyAndSaveClears();
     void pdfDocumentDeletePagesRemovesAndMarksDirty();
     void pdfDocumentMovePageReorders();
     void pdfDocumentInterleavedUndoIsChronological();
+    void pdfDocumentUndoAllPastOldCapRegimeIsExact();
+    void pdfDocumentSmallCapEvictionKeepsLogAndStoreInLockstep();
+    void pdfDocumentUndoRedoSurviveForcedLogDesync();
+    void pdfDocumentSaveReloadRebuildsUndoLogFromRetainedStacks();
+    void pdfAnnotationUndoAfterInWindowEditPreservesLoadedAnnotations();
     void imageDocumentRotateSwapsDimensionsAndMarksDirty();
     void imageDocumentFlipHorizontalMarksDirty();
     void imageDocumentResizeChangesPixelSize();
@@ -47,7 +91,12 @@ class TestAdapters : public QObject {
     void imageDocumentExportsImageAsSinglePagePdf();
     void imageDocumentUndoRestoresPriorState();
     void imageDocumentSaveFlattensAnnotationsIntoPixels();
-    void imageDocumentAnnotationUndoTakesPrecedenceOverImageUndo();
+    void imageDocumentUndoPopsMostRecentAcrossDomains();
+    void imageDocumentInterleavedUndoIsChronological();
+    void imageDocumentUndoRedoSurviveForcedLogDesync();
+    void imageDocumentUndoAllPastOldCapRegimeIsExact();
+    void imageDocumentPixelCapEvictionKeepsLogInLockstep();
+    void imageDocumentSmallCapAnnotationEvictionKeepsLogInLockstep();
     void imageDocumentFitModeStartsCustom();
     void imageDocumentZoomFitPageEntersFitInViewMode();
     void imageDocumentZoomFitWidthEntersFitToWidthMode();
@@ -57,7 +106,43 @@ class TestAdapters : public QObject {
     void pdfViewReflowsOnResizeInFitInView();
     void pdfDownArrowStepsPageImmediatelyInFitMode();
     void imageDocumentResizeEventTriggersRefit();
+    // Item A — image documents become searchable via their OCR store.
+    void imageDocumentSupportsSearch();
+    void imageDocumentSearchFindsOcrText();
+    void imageDocumentSearchIsCaseInsensitive();
+    void imageDocumentEmptyStoreSearchNoMatches();
+    // Item B — single-page Recognize skips the page-range dialog.
+    void recognizeTextSkipsDialogForSinglePage();
+    // Item C — honest completion feedback.
+    void ocrBatchWithZeroBlocksReportsNoTextFound();
 };
+
+namespace {
+// Open a freshly-written white PNG through the adapter. Shared by the
+// Item A image-search tests, which seed the returned document's
+// SelectableTextStore directly (no OCR run needed).
+std::unique_ptr<IDocument> openBlankImage(QTemporaryDir &dir, const QString &name) {
+    const QString path = dir.filePath(name);
+    QImage img(64, 64, QImage::Format_ARGB32);
+    img.fill(Qt::white);
+    img.save(path, "PNG");
+    ImageAdapter adapter;
+    return adapter.open(path);
+}
+
+// Seed two OCR blocks into a store on page 0 so search has something to
+// hit. "Hello World" and "Foobar" both contain 'o', which the multi-
+// match advance test relies on.
+void seedOcrBlocks(SelectableTextStore *store) {
+    OcrEngine::TextBlock a;
+    a.text = QStringLiteral("Hello World");
+    a.polygon = QPolygon(QRect(10, 10, 80, 20));
+    OcrEngine::TextBlock b;
+    b.text = QStringLiteral("Foobar");
+    b.polygon = QPolygon(QRect(10, 40, 80, 20));
+    store->put(0, 1ULL, {a, b});
+}
+} // namespace
 
 void TestAdapters::pdfAdapterAdvertisesPdfExtension() {
     PdfAdapter adapter;
@@ -224,6 +309,273 @@ void TestAdapters::pdfDocumentAcceptsSearchQueryWithoutView() {
     missing.setSearchQuery("anything");
     missing.findNext();
     missing.clearSearch();
+}
+
+// R2/backlog 2026-07-13: pageHasText() is a real per-page probe — true
+// for a born-digital page, false for a text-less (blank/scanned) page.
+// This is the guard that keeps the Recognize-text notice off text-layer
+// docs, distinct from the coarse hasTextLayer() capability stub.
+void TestAdapters::pdfDocumentPageHasTextDistinguishesTextFromBlankPage() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("mixed.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        // Page 0: real text. Page 1: no drawText at all — a text-less
+        // page, the closest fixture to an image-only scan.
+        painter.drawText(QRect(100, 100, 800, 200), Qt::AlignLeft, "Born digital page");
+        writer.newPage();
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    QCOMPARE(doc.pageCount(), 2);
+    // hasTextLayer() stays the coarse capability stub (true for any valid
+    // PDF) — we must not have perturbed it.
+    QVERIFY(doc.hasTextLayer());
+    QVERIFY2(doc.pageHasText(0), "Page with drawn text must report pageHasText() true");
+    QVERIFY2(!doc.pageHasText(1), "Blank/text-less page must report pageHasText() false");
+    // Out-of-range and invalid docs are false, never a crash.
+    QVERIFY(!doc.pageHasText(-1));
+    QVERIFY(!doc.pageHasText(99));
+
+    PdfDocument missing("/tmp/definitely-not-a-real-file.pdf");
+    QVERIFY(!missing.isValid());
+    QVERIFY(!missing.pageHasText(0));
+}
+
+// R1: the native PDF text layer feeds SelectableTextStore for born-
+// digital pages — so selection has something to hit-test even though no
+// OCR ever ran. ingestNativeTextLayer() populates the store; it must not
+// clobber existing (OCR) results.
+void TestAdapters::pdfDocumentNativeTextLayerFeedsSelectableStore() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("native.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 900, 120), Qt::AlignLeft, "Selectable native line");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    auto *store = doc.selectableText();
+    QVERIFY(store);
+    QVERIFY2(!store->hasResults(0), "Store starts empty before ingestion");
+
+    doc.ingestNativeTextLayer(0);
+    QVERIFY2(store->hasResults(0), "Native ingestion must populate the store for a text page");
+    const auto &blocks = store->blocks(0);
+    QVERIFY(!blocks.empty());
+    // The joined native text carries the drawn string.
+    QStringList parts;
+    for (const auto &b : blocks)
+        parts << b.text;
+    const QString joined = parts.join(QLatin1Char(' '));
+    QVERIFY2(joined.contains(QStringLiteral("Selectable")),
+             qPrintable(QStringLiteral("native text missing expected word, got: ") + joined));
+    // Geometry is real (point-space), not a degenerate rect.
+    QVERIFY(!blocks.front().polygon.boundingRect().isEmpty());
+
+    // Re-ingest must NOT clobber: seed a distinct "OCR" entry, re-run,
+    // and confirm the stored blocks are the OCR ones (hasResults short-
+    // circuits so real recognition output always wins).
+    OcrEngine::TextBlock ocr;
+    ocr.text = QStringLiteral("OCR-SENTINEL");
+    ocr.polygon = QPolygon({{0, 0}, {10, 0}, {10, 10}, {0, 10}});
+    store->put(0, 12345ULL, {ocr});
+    doc.ingestNativeTextLayer(0);
+    QCOMPARE(store->blocks(0).size(), static_cast<size_t>(1));
+    QCOMPARE(store->blocks(0).front().text, QStringLiteral("OCR-SENTINEL"));
+
+    // A text-less page stays empty after an ingest attempt.
+    doc.ingestNativeTextLayer(1);
+    QVERIFY(!store->hasResults(1));
+}
+
+// R1 end-to-end: with the native blocks in the store, a drag over the
+// text region through a SelectableTextLayer yields the real native
+// string (find already worked; this closes the selection gap).
+void TestAdapters::pdfDocumentNativeTextDragSelectsRealString() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("dragnative.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 900, 120), Qt::AlignLeft, "Draggable words");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    doc.ingestNativeTextLayer(0);
+    auto *store = doc.selectableText();
+    QVERIFY(store && store->hasResults(0));
+    const auto &blocks = store->blocks(0);
+    QVERIFY(!blocks.empty());
+    const QRect region = blocks.front().polygon.boundingRect();
+    QVERIFY(!region.isEmpty());
+
+    // Identity docToView mapping: the layer's block coords are already in
+    // the point space this test drags in (same space the adapter's real
+    // docToView multiplies by zoom).
+    SelectableTextLayer layer;
+    layer.resize(1200, 1600);
+    layer.setStore(store);
+    layer.setCurrentPage(0);
+    layer.setDocToView([](QPointF p, int) { return p; });
+
+    // Drag across the whole region — snaps to the block, exactly like the
+    // OCR path.
+    const QString selected =
+        layer.simulateDragForTest(QPointF(region.left() + 1, region.top() + 1),
+                                  QPointF(region.right() - 1, region.bottom() - 1));
+    QVERIFY2(!selected.isEmpty(), "Drag over native text must yield a non-empty selection");
+    QVERIFY2(selected.contains(QStringLiteral("Draggable")),
+             qPrintable(QStringLiteral("selection missing expected word, got: ") + selected));
+    // The selection equals what Ctrl+C would copy (selectedText() is the
+    // clipboard source).
+    QCOMPARE(layer.selectedBlockCount(), static_cast<int>(blocks.size()));
+}
+
+// R1 real-view alignment (reviewer M1): drive selection through the REAL
+// adapter docToView (points→view: origin + p*zoom, as in
+// PdfAdapter.cpp) and assert the block lands on the actual rendered
+// glyphs — not just that the wiring works under an identity mapping.
+void TestAdapters::pdfDocumentNativeTextAlignsWithRenderedGlyphs() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("align.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::Letter));
+        QPainter painter(&writer);
+        QFont f;
+        f.setPixelSize(48);
+        painter.setFont(f);
+        painter.drawText(QRect(120, 160, 1600, 120), Qt::AlignLeft, "AlignmentProbe");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    doc.ingestNativeTextLayer(0);
+    auto *store = doc.selectableText();
+    QVERIFY(store && store->hasResults(0));
+    const auto &blocks = store->blocks(0);
+    QVERIFY(!blocks.empty());
+    const QRectF blockPts = blocks.front().polygon.boundingRect();
+
+    // renderPageForOcr renders at 144 DPI = exactly 2× PDF points, so with
+    // zoom = 2 and origin = 0 the OCR raster IS the view space. This lets
+    // us locate the glyphs independently (dark pixels) and compare against
+    // the block mapped through the real docToView.
+    const double zoom = 2.0;
+    const QPointF origin(0.0, 0.0);
+    auto docToView = [origin, zoom](QPointF p) {
+        return QPointF(origin.x() + p.x() * zoom, origin.y() + p.y() * zoom);
+    };
+    const QRectF blockView(docToView(blockPts.topLeft()), docToView(blockPts.bottomRight()));
+
+    const QImage raster = doc.renderPageForOcr(0);
+    QVERIFY(!raster.isNull());
+    const QRect glyphPx = darkPixelBBox(raster);
+    QVERIFY2(!glyphPx.isEmpty(), "rendered page must contain ink");
+
+    // The block, mapped through the real docToView, must overlap the
+    // actual glyphs and cover most of them (proves point-space alignment,
+    // not a 2×-off placement).
+    QVERIFY2(blockView.intersects(QRectF(glyphPx)),
+             "native block (via real docToView) must overlap the rendered glyphs");
+    const QRectF inter = blockView.intersected(QRectF(glyphPx));
+    const double coverage =
+        (inter.width() * inter.height()) / (glyphPx.width() * glyphPx.height());
+    QVERIFY2(coverage > 0.6,
+             qPrintable(QStringLiteral("block/glyph overlap too small: %1 (blockView %2, glyphPx %3)")
+                            .arg(coverage)
+                            .arg(QStringLiteral("%1,%2 %3x%4")
+                                     .arg(blockView.x()).arg(blockView.y())
+                                     .arg(blockView.width()).arg(blockView.height()))
+                            .arg(QStringLiteral("%1,%2 %3x%4")
+                                     .arg(glyphPx.x()).arg(glyphPx.y())
+                                     .arg(glyphPx.width()).arg(glyphPx.height()))));
+
+    // And a real drag in VIEW space over the glyph region selects the
+    // block: this exercises SelectableTextLayer's docToView-fed hit-test
+    // end-to-end.
+    SelectableTextLayer layer;
+    layer.resize(raster.width() + 4, raster.height() + 4);
+    layer.setStore(store);
+    layer.setCurrentPage(0);
+    layer.setDocToView([docToView](QPointF p, int) { return docToView(p); });
+    const QString selected =
+        layer.simulateDragForTest(QPointF(glyphPx.left() + 1, glyphPx.top() + 1),
+                                  QPointF(glyphPx.right() - 1, glyphPx.bottom() - 1));
+    QVERIFY2(selected.contains(QStringLiteral("Alignment")),
+             qPrintable(QStringLiteral("view-space drag over glyphs missed the block, got: ") +
+                        selected));
+}
+
+// R1 multi-line (reviewer #6): a two-line page produces per-line blocks in
+// reading order with vertically ordered, non-overlapping rects — proving
+// the getAllText index → getSelectionAtIndex per-line mapping on real
+// multi-line content, not just a single line.
+void TestAdapters::pdfDocumentNativeTextMultiLineOrdering() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("multiline.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::Letter));
+        // Resolution 72 → device units are PDF points, so the two lines
+        // are ~150pt apart and Qt keeps them as distinct text lines (at the
+        // default 1200 DPI the same pixel gap collapses to ~10pt and Qt
+        // merges them into one line).
+        writer.setResolution(72);
+        QPainter painter(&writer);
+        QFont f;
+        f.setPixelSize(24);
+        painter.setFont(f);
+        painter.drawText(QRect(72, 100, 400, 40), Qt::AlignLeft, "First line alpha");
+        painter.drawText(QRect(72, 250, 400, 40), Qt::AlignLeft, "Second line beta");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    doc.ingestNativeTextLayer(0);
+    const auto &blocks = doc.selectableText()->blocks(0);
+    QVERIFY2(blocks.size() >= 2,
+             qPrintable(QStringLiteral("expected >=2 line blocks, got %1").arg(blocks.size())));
+
+    // Locate the alpha/beta lines regardless of block index order.
+    int alphaIdx = -1, betaIdx = -1;
+    for (size_t i = 0; i < blocks.size(); ++i) {
+        if (blocks[i].text.contains(QStringLiteral("alpha")))
+            alphaIdx = static_cast<int>(i);
+        if (blocks[i].text.contains(QStringLiteral("beta")))
+            betaIdx = static_cast<int>(i);
+    }
+    QVERIFY2(alphaIdx >= 0, "first line ('alpha') must be its own block");
+    QVERIFY2(betaIdx >= 0, "second line ('beta') must be its own block");
+    QVERIFY2(alphaIdx != betaIdx, "the two lines must be distinct blocks");
+
+    const QRect alphaR = blocks[static_cast<size_t>(alphaIdx)].polygon.boundingRect();
+    const QRect betaR = blocks[static_cast<size_t>(betaIdx)].polygon.boundingRect();
+    // The first line sits above the second, and their rects don't overlap
+    // vertically (each line mapped to its own geometry, no bleed).
+    QVERIFY2(alphaR.center().y() < betaR.center().y(),
+             "first line must render above the second");
+    QVERIFY2(alphaR.bottom() <= betaR.top(),
+             "line rects must not overlap vertically");
 }
 
 void TestAdapters::printSupportReflectsValidity() {
@@ -508,7 +860,11 @@ void TestAdapters::imageDocumentSaveFlattensAnnotationsIntoPixels() {
              "expected unstroked interior to remain the original blue");
 }
 
-void TestAdapters::imageDocumentAnnotationUndoTakesPrecedenceOverImageUndo() {
+// rotate → annotate → undo×2 pops in reverse-chronological order: the
+// annotation (most recent) first, then the rotate. There is no
+// domain-precedence rule — the unified log simply pops the newest
+// entry regardless of which stack it lives on.
+void TestAdapters::imageDocumentUndoPopsMostRecentAcrossDomains() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = writeTinyPng(dir.filePath("p.png"), 40, 20);
@@ -534,6 +890,274 @@ void TestAdapters::imageDocumentAnnotationUndoTakesPrecedenceOverImageUndo() {
     QVERIFY(doc.canUndo());
     doc.undo();
     QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+}
+
+// ImageDocument now shares PdfDocument's unified chronological log:
+// interleaved annotation + pixel ops must undo in strict reverse
+// order. The old dispatch drained ALL annotation undo first, so
+// annotate → rotate → annotate undid both annotations before the
+// rotate — a state the user never passed through.
+void TestAdapters::imageDocumentInterleavedUndoIsChronological() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("chrono.png"), 40, 20);
+
+    ImageDocument doc(path);
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store != nullptr);
+
+    // #1 annotation → #2 rotate (pixel op) → #3 annotation
+    Annotation a1;
+    a1.page = 0;
+    a1.type = AnnotationType::Rectangle;
+    a1.bounds = QRectF(2, 2, 10, 8);
+    store->add(a1);
+    doc.rotatePage(0, 90);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+    Annotation a2;
+    a2.page = 0;
+    a2.type = AnnotationType::Ellipse;
+    a2.bounds = QRectF(4, 4, 8, 6);
+    store->add(a2);
+    QCOMPARE(store->count(), 2);
+
+    QVERIFY(doc.canUndo());
+    QVERIFY(!doc.canRedo());
+
+    // Reverse-chronological: #3, then #2, then #1.
+    QVERIFY(doc.undo()); // reverse #3 (annotation)
+    QCOMPARE(store->count(), 1);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+
+    QVERIFY(doc.undo()); // reverse #2 (rotate) — NOT another annotation
+    QCOMPARE(store->count(), 1);
+    QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+
+    QVERIFY(doc.undo()); // reverse #1 (annotation)
+    QCOMPARE(store->count(), 0);
+    QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+
+    QVERIFY(!doc.canUndo());
+    QVERIFY(doc.canRedo());
+
+    // Redo replays forward: #1, #2, #3.
+    QVERIFY(doc.redo());
+    QCOMPARE(store->count(), 1);
+    QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+    QVERIFY(doc.redo());
+    QCOMPARE(store->count(), 1);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+    QVERIFY(doc.redo());
+    QCOMPARE(store->count(), 2);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+
+    QVERIFY(doc.canUndo());
+    QVERIFY(!doc.canRedo());
+}
+
+// Image mirror of pdfDocumentUndoRedoSurviveForcedLogDesync's
+// annotation branches: ImageDocument::undo()/redo() carry the same
+// warn + drop-orphan + return-false guards, forced the same cheap way
+// (AnnotationStore::clearHistory() empties the store's stacks but
+// deliberately not the document's log). The pixel branches have no
+// seam; the annotation branches pin the pattern.
+void TestAdapters::imageDocumentUndoRedoSurviveForcedLogDesync() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("desync.png"), 40, 20);
+
+    // Undo branch: log holds an Annotation entry, store history empty.
+    {
+        ImageDocument doc(path);
+        Annotation a;
+        a.page = 0;
+        a.type = AnnotationType::Rectangle;
+        a.bounds = QRectF(5, 5, 20, 10);
+        doc.annotations()->add(a);
+        QVERIFY(doc.canUndo());
+        doc.annotations()->clearHistory();
+        QTest::ignoreMessage(QtWarningMsg,
+                             "ImageDocument::undo: log expects an annotation frame but the "
+                             "AnnotationStore history is empty; dropping the orphaned entry");
+        QVERIFY2(!doc.undo(), "undo() must refuse when the store cannot deliver the frame");
+        // The orphaned entry was dropped — the log no longer over-promises.
+        QVERIFY(!doc.canUndo());
+        // The annotation itself is untouched — the guard is a no-op,
+        // not a partial mutation.
+        QCOMPARE(doc.annotations()->count(), 1);
+    }
+
+    // Redo branch: undo a real annotation first so the redo log is
+    // populated, then clear the store's stacks underneath it.
+    {
+        ImageDocument doc(path);
+        Annotation a;
+        a.page = 0;
+        a.type = AnnotationType::Rectangle;
+        a.bounds = QRectF(5, 5, 20, 10);
+        doc.annotations()->add(a);
+        QVERIFY(doc.undo());
+        QVERIFY(doc.canRedo());
+        doc.annotations()->clearHistory();
+        QTest::ignoreMessage(QtWarningMsg,
+                             "ImageDocument::redo: log expects an annotation frame but the "
+                             "AnnotationStore redo history is empty; dropping the orphaned entry");
+        QVERIFY2(!doc.redo(), "redo() must refuse on a log/store desync");
+        QVERIFY(!doc.canRedo());
+        QCOMPARE(doc.annotations()->count(), 0);
+    }
+}
+
+// Mirror of pdfDocumentUndoAllPastOldCapRegimeIsExact for images: 70
+// annotation edits + 1 rotate, undo-all must be exactly 71 real
+// presses (no silent no-ops), redo-all exactly 71 (no phantoms).
+void TestAdapters::imageDocumentUndoAllPastOldCapRegimeIsExact() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("overcap.png"), 40, 20);
+
+    ImageDocument doc(path);
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store != nullptr);
+
+    for (int i = 0; i < 70; ++i) {
+        Annotation a;
+        a.page = 0;
+        a.type = AnnotationType::Rectangle;
+        a.bounds = QRectF(i % 30, i % 10, 6, 4);
+        store->add(a);
+    }
+    QCOMPARE(store->count(), 70);
+    doc.rotatePage(0, 90);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+
+    int undos = 0;
+    while (doc.canUndo()) {
+        QVERIFY2(doc.undo(), "undo() returned false while canUndo() was true");
+        ++undos;
+        QVERIFY2(undos <= 71, "undo log offered more entries than operations performed");
+    }
+    QCOMPARE(undos, 71);
+    QCOMPARE(store->count(), 0);
+    QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+    QVERIFY(!doc.canUndo());
+    QVERIFY2(!doc.undo(), "undo() must refuse once canUndo() is false");
+
+    int redos = 0;
+    while (doc.canRedo()) {
+        QVERIFY2(doc.redo(), "redo() returned false while canRedo() was true");
+        ++redos;
+        QVERIFY2(redos <= undos, "phantom redo entries beyond the number of undos");
+    }
+    QCOMPARE(redos, 71);
+    QCOMPARE(store->count(), 70);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+    QVERIFY(!doc.canRedo());
+}
+
+// The pixel snapshot stack has its own cap (kMaxUndoSteps = 32 in
+// ImageAdapter.cpp — full QImage copies are much heavier than
+// annotation frames). Past it, eviction must stay in lockstep with
+// the chronological log exactly like the annotation domain: 35 crops
+// after 1 annotation leaves 32 + 1 = 33 real undos, no more offered,
+// none a silent no-op.
+void TestAdapters::imageDocumentPixelCapEvictionKeepsLogInLockstep() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("pixcap.png"), 300, 100);
+
+    ImageDocument doc(path);
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store != nullptr);
+
+    Annotation a;
+    a.page = 0;
+    a.type = AnnotationType::Rectangle;
+    a.bounds = QRectF(5, 5, 20, 10);
+    store->add(a);
+
+    // Each crop narrows the image by one pixel so every step (and the
+    // exact undo depth) is observable in the width.
+    for (int i = 0; i < 35; ++i) {
+        const int w = doc.imagePixelSize().width();
+        QVERIFY(doc.cropToRect(0, 0, w - 1, 100));
+    }
+    QCOMPARE(doc.imagePixelSize(), QSize(265, 100));
+
+    // Undoable: 32 retained crop snapshots + the annotation = 33.
+    int undos = 0;
+    while (doc.canUndo()) {
+        QVERIFY2(doc.undo(), "undo() returned false while canUndo() was true");
+        ++undos;
+        QVERIFY2(undos <= 33, "log offered more undos than the snapshot stack retains");
+    }
+    QCOMPARE(undos, 33);
+    // The 3 oldest crops fell off the capped stack — deliberately
+    // unreachable, so the width lands at 300 - 3, not 300.
+    QCOMPARE(doc.imagePixelSize(), QSize(297, 100));
+    QCOMPARE(store->count(), 0);
+    QVERIFY(!doc.canUndo());
+    QVERIFY2(!doc.undo(), "undo() must refuse once canUndo() is false");
+
+    int redos = 0;
+    while (doc.canRedo()) {
+        QVERIFY2(doc.redo(), "redo() returned false while canRedo() was true");
+        ++redos;
+        QVERIFY2(redos <= undos, "phantom redo entries beyond the number of undos");
+    }
+    QCOMPARE(redos, 33);
+    QCOMPARE(doc.imagePixelSize(), QSize(265, 100));
+    QCOMPARE(store->count(), 1);
+    QVERIFY(!doc.canRedo());
+}
+
+// Annotation-domain eviction sync on an image document, at a small
+// injected cap (mirror of the PdfDocument small-cap test): the oldest
+// pixel op must stay reachable while excess annotation frames evict
+// from both the store and the log.
+void TestAdapters::imageDocumentSmallCapAnnotationEvictionKeepsLogInLockstep() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("smallcap.png"), 40, 20);
+
+    ImageDocument doc(path);
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store != nullptr);
+    store->setMaxUndoDepth(5);
+
+    doc.rotatePage(0, 90);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+    for (int i = 0; i < 10; ++i) {
+        Annotation a;
+        a.page = 0;
+        a.type = AnnotationType::Rectangle;
+        a.bounds = QRectF(i, i, 6, 4);
+        store->add(a);
+    }
+    QCOMPARE(store->count(), 10);
+
+    // Undoable: 5 retained annotation frames + the rotate = 6.
+    int undos = 0;
+    while (doc.canUndo()) {
+        QVERIFY2(doc.undo(), "undo() returned false while canUndo() was true");
+        ++undos;
+        QVERIFY2(undos <= 6, "log offered more undos than the store retains");
+    }
+    QCOMPARE(undos, 6);
+    QCOMPARE(store->count(), 5);
+    QCOMPARE(doc.imagePixelSize(), QSize(40, 20));
+    QVERIFY(!doc.canUndo());
+
+    int redos = 0;
+    while (doc.canRedo()) {
+        QVERIFY2(doc.redo(), "redo() returned false while canRedo() was true");
+        ++redos;
+        QVERIFY2(redos <= undos, "phantom redo entries beyond the number of undos");
+    }
+    QCOMPARE(redos, 6);
+    QCOMPARE(store->count(), 10);
+    QCOMPARE(doc.imagePixelSize(), QSize(20, 40));
+    QVERIFY(!doc.canRedo());
 }
 
 void TestAdapters::imageDocumentFitModeStartsCustom() {
@@ -913,6 +1537,507 @@ void TestAdapters::pdfDocumentInterleavedUndoIsChronological() {
 
     QVERIFY(doc.canUndo());
     QVERIFY(!doc.canRedo());
+}
+
+// Regression guard for the cap-desync bug: AnnotationStore bounds its
+// history while the unified chronological log used to grow without
+// bound, so after more annotation edits than the (old, 64-frame) cap
+// an undo-all silently no-opped the excess and pushed phantom redo
+// entries. 70 edits + 1 rotate exercises the old >64 regime; every
+// offered undo/redo must be real and the counts must balance exactly.
+void TestAdapters::pdfDocumentUndoAllPastOldCapRegimeIsExact() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("overcap.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, "over-cap");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store != nullptr);
+    const QSize portrait = doc.contentSizeHint();
+    QVERIFY2(portrait.height() > portrait.width(), "A4 fixture should start portrait");
+
+    // 70 annotation edits, then one page rotate (the most recent op).
+    for (int i = 0; i < 70; ++i) {
+        Annotation a;
+        a.page = 0;
+        a.type = AnnotationType::Rectangle;
+        a.bounds = QRectF(i, i, 20, 10);
+        store->add(a);
+    }
+    QCOMPARE(store->count(), 70);
+    doc.rotatePage(0, 90);
+    const QSize landscape = doc.contentSizeHint();
+    QVERIFY2(landscape.width() > landscape.height(),
+             "rotate 90 should present the page landscape");
+
+    // Undo-all: while canUndo() reports true every press must actually
+    // revert something — a false return here is the silent-no-op bug.
+    int undos = 0;
+    while (doc.canUndo()) {
+        QVERIFY2(doc.undo(), "undo() returned false while canUndo() was true");
+        ++undos;
+        QVERIFY2(undos <= 71, "undo log offered more entries than operations performed");
+    }
+    QCOMPARE(undos, 71);
+    QCOMPARE(store->count(), 0);
+    QCOMPARE(doc.contentSizeHint(), portrait);
+    QVERIFY(!doc.canUndo());
+    QVERIFY2(!doc.undo(), "undo() must refuse (return false) once canUndo() is false");
+    QCOMPARE(store->count(), 0);
+
+    // Redo-all: exactly as many redos as undos performed — any extra
+    // claimed entry is a phantom.
+    int redos = 0;
+    while (doc.canRedo()) {
+        QVERIFY2(doc.redo(), "redo() returned false while canRedo() was true");
+        ++redos;
+        QVERIFY2(redos <= undos, "phantom redo entries beyond the number of undos");
+    }
+    QCOMPARE(redos, 71);
+    QCOMPARE(store->count(), 70);
+    QCOMPARE(doc.contentSizeHint(), landscape);
+    QVERIFY(!doc.canRedo());
+    QVERIFY2(!doc.redo(), "redo() must refuse (return false) once canRedo() is false");
+}
+
+// Proves the eviction-sync mechanism at an arbitrary cap: with the
+// store's depth cap shrunk to 5 (test seam), edits past the cap must
+// evict from BOTH the store and the document's chronological log, so
+// canUndo() never over-promises. The oldest page op must stay
+// reachable — eviction removes the oldest entry of the matching
+// domain, not the oldest entry overall.
+void TestAdapters::pdfDocumentSmallCapEvictionKeepsLogAndStoreInLockstep() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("smallcap.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, "small-cap");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store != nullptr);
+    store->setMaxUndoDepth(5);
+    const QSize portrait = doc.contentSizeHint();
+
+    // Chronologically first: a rotate. Then 10 annotation edits — 5
+    // more than the store can retain, forcing 5 evictions.
+    doc.rotatePage(0, 90);
+    for (int i = 0; i < 10; ++i) {
+        Annotation a;
+        a.page = 0;
+        a.type = AnnotationType::Rectangle;
+        a.bounds = QRectF(i, i, 20, 10);
+        store->add(a);
+    }
+    QCOMPARE(store->count(), 10);
+
+    // Undoable: 5 retained annotation frames + the rotate = 6.
+    int undos = 0;
+    while (doc.canUndo()) {
+        QVERIFY2(doc.undo(), "undo() returned false while canUndo() was true");
+        ++undos;
+        QVERIFY2(undos <= 6, "log offered more undos than the store retains");
+    }
+    QCOMPARE(undos, 6);
+    // The 5 oldest annotations fell off the capped history — they are
+    // deliberately unreachable, not silently skipped.
+    QCOMPARE(store->count(), 5);
+    QCOMPARE(doc.contentSizeHint(), portrait);
+    QVERIFY(!doc.canUndo());
+    QVERIFY2(!doc.undo(), "undo() must refuse once canUndo() is false");
+
+    int redos = 0;
+    while (doc.canRedo()) {
+        QVERIFY2(doc.redo(), "redo() returned false while canRedo() was true");
+        ++redos;
+        QVERIFY2(redos <= undos, "phantom redo entries beyond the number of undos");
+    }
+    QCOMPARE(redos, 6);
+    QCOMPARE(store->count(), 10);
+    QVERIFY(!doc.canRedo());
+}
+
+// The undo dispatch used to guard the "log names a PdfCommand but the
+// command stack is empty" desync with Q_ASSERT only — compiled out
+// under NDEBUG (RelWithDebInfo and Release both define it), leaving
+// .back() on an empty vector: UB. The guards are now runtime checks:
+// warn, drop the orphaned log entry, return false, never crash. There
+// is no production path to this state, so it is forced through test
+// seams: corruptPdfCommandStacksForTesting() for the command branch
+// and AnnotationStore::clearHistory() for the annotation branch.
+void TestAdapters::pdfDocumentUndoRedoSurviveForcedLogDesync() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("desync.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, "desync");
+        painter.end();
+    }
+
+    // Undo branch: log holds a PdfCommand entry, command stack empty.
+    {
+        PdfDocument doc(path);
+        QVERIFY(doc.isValid());
+        doc.rotatePage(0, 90);
+        QVERIFY(doc.canUndo());
+        doc.corruptPdfCommandStacksForTesting();
+        QTest::ignoreMessage(QtWarningMsg,
+                             "PdfDocument::undo: log expects a PdfCommand but the command "
+                             "stack is empty; dropping the orphaned entry");
+        QVERIFY2(!doc.undo(), "undo() must refuse on a log/stack desync");
+        // The orphaned entry was dropped — the log no longer over-promises.
+        QVERIFY(!doc.canUndo());
+        QVERIFY(!doc.canRedo());
+    }
+
+    // Redo branch: undo a real rotate first so the redo log is
+    // populated, then drop the command stacks underneath it.
+    {
+        PdfDocument doc(path);
+        QVERIFY(doc.isValid());
+        doc.rotatePage(0, 90);
+        QVERIFY(doc.undo());
+        QVERIFY(doc.canRedo());
+        doc.corruptPdfCommandStacksForTesting();
+        QTest::ignoreMessage(QtWarningMsg,
+                             "PdfDocument::redo: log expects a PdfCommand but the command "
+                             "stack is empty; dropping the orphaned entry");
+        QVERIFY2(!doc.redo(), "redo() must refuse on a log/stack desync");
+        QVERIFY(!doc.canRedo());
+    }
+
+    // Annotation branch: clearHistory() empties the store's stacks but
+    // deliberately not the document's log — a corrupted sequence the
+    // guard must absorb the same way.
+    {
+        PdfDocument doc(path);
+        QVERIFY(doc.isValid());
+        Annotation a;
+        a.page = 0;
+        a.type = AnnotationType::Rectangle;
+        a.bounds = QRectF(5, 5, 20, 10);
+        doc.annotations()->add(a);
+        QVERIFY(doc.canUndo());
+        doc.annotations()->clearHistory();
+        QTest::ignoreMessage(QtWarningMsg,
+                             "PdfDocument::undo: log expects an annotation frame but the "
+                             "AnnotationStore history is empty; dropping the orphaned entry");
+        QVERIFY2(!doc.undo(), "undo() must refuse when the store cannot deliver the frame");
+        QVERIFY(!doc.canUndo());
+        // The annotation itself is untouched — the guard is a no-op,
+        // not a partial mutation.
+        QCOMPARE(doc.annotations()->count(), 1);
+    }
+}
+
+// Pins the one hand-maintained sync point of the 1:1 log/stack
+// invariant: PdfDocument::saveCommitOnUi() reloads annotations from
+// the saved file under m_suppressUndoLog (the re-read must not mint
+// user undo steps), clears the store's history, and rebuilds the
+// unified log from the RETAINED qpdf command stacks
+// (m_undoLog.assign(m_pdfUndoStack.size(), PdfCommand)). After
+// save + reload, undo must offer exactly the surviving page commands
+// — every press real, no orphaned annotation entries — and redo must
+// replay them.
+void TestAdapters::pdfDocumentSaveReloadRebuildsUndoLogFromRetainedStacks() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("savereload.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, "save-reload");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store != nullptr);
+    const QSize portrait = doc.contentSizeHint();
+    QVERIFY2(portrait.height() > portrait.width(), "A4 fixture should start portrait");
+
+    // One qpdf command + one annotation edit before saving.
+    doc.rotatePage(0, 90);
+    const QSize landscape = doc.contentSizeHint();
+    QVERIFY(landscape.width() > landscape.height());
+    Annotation a;
+    a.page = 0;
+    a.type = AnnotationType::Rectangle;
+    a.bounds = QRectF(10, 10, 40, 30);
+    store->add(a);
+    QCOMPARE(store->count(), 1);
+
+    QVERIFY(doc.save());
+    QVERIFY(!doc.isDirty());
+    // The reload re-read the annotation from the saved file...
+    QCOMPARE(store->count(), 1);
+    // ...but under suppression: the store's history is cleared, the
+    // qpdf command stack is retained, so the rebuilt log offers
+    // exactly ONE undo (the rotate) — no orphaned annotation entry
+    // that undo() would have to warn about and refuse.
+    int undos = 0;
+    while (doc.canUndo()) {
+        QVERIFY2(doc.undo(), "undo() returned false while canUndo() was true — the "
+                             "rebuilt log does not match the rebuilt stacks");
+        ++undos;
+        QVERIFY2(undos <= 1, "rebuilt log offered more undos than retained pdf commands");
+    }
+    QCOMPARE(undos, 1);
+    QCOMPARE(doc.contentSizeHint(), portrait);
+    // The reloaded annotation is not an undo step; it survives.
+    QCOMPARE(store->count(), 1);
+    QVERIFY2(!doc.undo(), "undo() must refuse once canUndo() is false");
+
+    // Redo replays the undone page command through the same rebuilt
+    // bookkeeping.
+    int redos = 0;
+    while (doc.canRedo()) {
+        QVERIFY2(doc.redo(), "redo() returned false while canRedo() was true");
+        ++redos;
+        QVERIFY2(redos <= undos, "phantom redo entries beyond the number of undos");
+    }
+    QCOMPARE(redos, 1);
+    QCOMPARE(doc.contentSizeHint(), landscape);
+    QCOMPARE(store->count(), 1);
+    QVERIFY(!doc.canRedo());
+}
+
+// BLOCKER B1 regression guard: data loss on undo after an edit made during
+// the asynchronous annotation-load window.
+//
+// The sweep now loads off-thread; commitAnnotations() populates the store via
+// addBatch() (no undo frame). AnnotationStore undo is SNAPSHOT-based: an add()
+// snapshots the WHOLE vector before appending. The interleaving that loses
+// data:
+//   1. annotations() kicks the async load; the store is still empty.
+//   2. During the load window the user draws — add() snapshots the EMPTY
+//      pre-draw state, then appends the user annotation.
+//   3. The load completes — addBatch APPENDS the file's annotations, no frame.
+//   4. Undo restores the empty snapshot → every ORIGINAL file annotation is
+//      wiped (and lost on the next save).
+//
+// This test opens a genuinely annotated PDF, edits DURING the load window, lets
+// the load commit, then undoes — and asserts the original file annotations
+// survive while only the user's draw is reverted. Against 7a53ad9 (no pre-edit
+// baseline commit) step 4 wipes them and this FAILS; the fix (AnnotationStore
+// pre-edit hook forcing the loaded baseline to commit before the first user
+// edit snapshots) makes it pass.
+void TestAdapters::pdfAnnotationUndoAfterInWindowEditPreservesLoadedAnnotations() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    // Build a base PDF, then stamp two real /Annots into it via PdfEditor so
+    // the off-thread sweep has something to load.
+    const QString base = dir.filePath("base.pdf");
+    {
+        QPdfWriter writer(base);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, "annotated");
+        painter.end();
+    }
+    const QString annotated = dir.filePath("annotated.pdf");
+    {
+        PdfEditor editor;
+        QVERIFY(editor.load(base));
+        std::vector<Annotation> anns;
+        Annotation rect;
+        rect.page = 0;
+        rect.type = AnnotationType::Rectangle;
+        rect.bounds = QRectF(50, 60, 120, 80);
+        anns.push_back(rect);
+        Annotation ell;
+        ell.page = 0;
+        ell.type = AnnotationType::Ellipse;
+        ell.bounds = QRectF(100, 100, 80, 40);
+        anns.push_back(ell);
+        QVERIFY(editor.writeAnnotations(anns));
+        QVERIFY(editor.save(annotated));
+    }
+
+    PdfDocument doc(annotated);
+    QVERIFY(doc.isValid());
+
+    AnnotationStore *store = doc.annotations(); // kicks the async load
+    QVERIFY(store != nullptr);
+    // The off-thread sweep has not committed yet — store is empty and the
+    // history hooks are already wired, so the edit below is tracked.
+    QVERIFY(store->isEmpty());
+
+    // The user draws BEFORE the async commit lands.
+    Annotation user;
+    user.page = 0;
+    user.type = AnnotationType::Arrow;
+    user.bounds = QRectF(5, 5, 10, 10);
+    user.points = {QPointF(5, 5), QPointF(15, 15)};
+    const int userId = store->add(user);
+    QVERIFY(userId > 0);
+
+    // Let the off-thread load commit (with the fix the pre-edit hook already
+    // forced this synchronously inside add(); QTRY covers both timings).
+    QTRY_COMPARE(store->count(), 3); // 2 loaded + 1 user
+
+    // Undo the user's draw. The two ORIGINAL file annotations must survive —
+    // undoing back to the loaded baseline, not to an empty pre-load snapshot.
+    QVERIFY(doc.canUndo());
+    QVERIFY(doc.undo());
+    QCOMPARE(store->count(), 2);
+    QVERIFY2(store->find(userId) == nullptr, "the user's drawn annotation must be reverted");
+
+    int rects = 0, ells = 0;
+    for (const Annotation &a : store->annotations()) {
+        if (a.type == AnnotationType::Rectangle)
+            ++rects;
+        else if (a.type == AnnotationType::Ellipse)
+            ++ells;
+    }
+    QCOMPARE(rects, 1);
+    QCOMPARE(ells, 1);
+}
+
+// Item A — an ImageDocument advertises search once the OCR-store bridge
+// exists, so MainWindow's Find enablement (gated on supportsSearch())
+// lights up for images.
+void TestAdapters::imageDocumentSupportsSearch() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto doc = openBlankImage(dir, QStringLiteral("supportssearch.png"));
+    QVERIFY(doc != nullptr);
+    QVERIFY2(doc->supportsSearch(),
+             "ImageDocument must advertise search so Find is enabled for images");
+}
+
+// Item A — case-insensitive substring search over the OCR store's blocks
+// yields a match count and cycles current-match via findNext/findPrevious.
+void TestAdapters::imageDocumentSearchFindsOcrText() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto doc = openBlankImage(dir, QStringLiteral("findocr.png"));
+    QVERIFY(doc != nullptr);
+    auto *store = doc->selectableText();
+    QVERIFY(store);
+    seedOcrBlocks(store);
+
+    // A query hitting a single block.
+    doc->setSearchQuery(QStringLiteral("world"));
+    QCOMPARE(doc->searchMatchCount(), 1);
+    QCOMPARE(doc->currentSearchMatchIndex(), 1);
+    QCOMPARE(doc->pagesWithSearchMatches(), (std::vector<int>{0}));
+
+    // A query hitting both blocks — findNext/findPrevious cycle through them.
+    doc->setSearchQuery(QStringLiteral("o"));
+    QCOMPARE(doc->searchMatchCount(), 2);
+    QCOMPARE(doc->currentSearchMatchIndex(), 1);
+    doc->findNext();
+    QCOMPARE(doc->currentSearchMatchIndex(), 2);
+    doc->findNext(); // wraps
+    QCOMPARE(doc->currentSearchMatchIndex(), 1);
+    doc->findPrevious(); // wraps back
+    QCOMPARE(doc->currentSearchMatchIndex(), 2);
+
+    // Clearing the search drops all matches.
+    doc->clearSearch();
+    QCOMPARE(doc->searchMatchCount(), 0);
+    QCOMPARE(doc->currentSearchMatchIndex(), -1);
+    QVERIFY(doc->pagesWithSearchMatches().empty());
+}
+
+// Item A — search matching ignores case in both directions.
+void TestAdapters::imageDocumentSearchIsCaseInsensitive() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto doc = openBlankImage(dir, QStringLiteral("caseins.png"));
+    QVERIFY(doc != nullptr);
+    auto *store = doc->selectableText();
+    QVERIFY(store);
+    seedOcrBlocks(store);
+
+    doc->setSearchQuery(QStringLiteral("HELLO"));
+    QCOMPARE(doc->searchMatchCount(), 1);
+    doc->setSearchQuery(QStringLiteral("foObAr"));
+    QCOMPARE(doc->searchMatchCount(), 1);
+}
+
+// Item A — with no OCR results a query yields nothing and the navigation
+// calls are safe no-ops.
+void TestAdapters::imageDocumentEmptyStoreSearchNoMatches() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    auto doc = openBlankImage(dir, QStringLiteral("emptystore.png"));
+    QVERIFY(doc != nullptr);
+    QVERIFY(doc->selectableText());
+    QVERIFY2(!doc->selectableText()->hasResults(0), "store must start empty");
+
+    doc->setSearchQuery(QStringLiteral("anything"));
+    QCOMPARE(doc->searchMatchCount(), 0);
+    QCOMPARE(doc->currentSearchMatchIndex(), -1);
+    doc->findNext();     // must not crash
+    doc->findPrevious(); // must not crash
+    QVERIFY(doc->pagesWithSearchMatches().empty());
+}
+
+// Item B — the Recognize Text page resolution skips the dialog for a
+// single-page document (there is nothing to choose) and defers to the
+// dialog for multi-page documents.
+void TestAdapters::recognizeTextSkipsDialogForSinglePage() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    // Single-page image → resolves to {currentPage} without a dialog.
+    auto img = openBlankImage(dir, QStringLiteral("singlepage.png"));
+    QVERIFY(img != nullptr);
+    QCOMPARE(img->pageCount(), 1);
+    const auto resolved = resolveRecognizePages(*img);
+    QVERIFY2(resolved.has_value(), "single-page doc must resolve without a dialog");
+    QCOMPARE(*resolved, (std::vector<int>{img->currentPage()}));
+
+    // Multi-page PDF → nullopt, i.e. defer to the dialog.
+    const QString pdfPath = dir.filePath(QStringLiteral("multipage.pdf"));
+    {
+        QPdfWriter writer(pdfPath);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter p(&writer);
+        p.drawText(QRect(100, 100, 400, 100), Qt::AlignLeft, "one");
+        writer.newPage();
+        p.drawText(QRect(100, 100, 400, 100), Qt::AlignLeft, "two");
+        p.end();
+    }
+    PdfDocument pdf(pdfPath);
+    QVERIFY(pdf.isValid());
+    QCOMPARE(pdf.pageCount(), 2);
+    QVERIFY2(!resolveRecognizePages(pdf).has_value(),
+             "multi-page doc must defer to the dialog");
+}
+
+// Item C — the Recognize terminal message is honest: a zero-block run
+// reports "No text found", never a false "complete". Cancelled stays the
+// no-changes-saved message.
+void TestAdapters::ocrBatchWithZeroBlocksReportsNoTextFound() {
+    QCOMPARE(MainWindow::recognizeCompletionMessage(/*cancelled=*/false, /*blockCount=*/0),
+             QStringLiteral("No text found"));
+    QCOMPARE(MainWindow::recognizeCompletionMessage(/*cancelled=*/false, /*blockCount=*/3),
+             QStringLiteral("Text recognition complete"));
+    QCOMPARE(MainWindow::recognizeCompletionMessage(/*cancelled=*/true, /*blockCount=*/0),
+             QStringLiteral("Text recognition cancelled — no changes saved"));
 }
 
 QTEST_MAIN(TestAdapters)

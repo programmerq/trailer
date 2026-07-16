@@ -5,6 +5,7 @@
 
 #include <QImage>
 #include <QSize>
+#include <QSizeF>
 #include <QString>
 #include <QWidget>
 
@@ -17,6 +18,7 @@ namespace trailer {
 
 class AnnotationStore;
 class SelectableTextStore;
+class CapabilityNotifier;
 
 // API: session-only today — `ViewMode` is *not* persisted in
 // `recent.json`, `settings.toml`, or `DocumentTypeDefaults` (only
@@ -108,6 +110,12 @@ class IDocument {
     virtual bool supportsThumbnails() const { return false; }
     virtual int pageCount() const { return 0; }
     virtual QImage renderThumbnail(int /*pageIndex*/, QSize /*targetSize*/) { return {}; }
+    // Natural size of a page WITHOUT rendering it — points for PDF pages,
+    // pixels for raster documents. Used by the sidebar to compute each
+    // thumbnail row's aspect ratio (and thus its height) cheaply, before
+    // the pixmap is rendered. Default empty: adapters that don't support
+    // thumbnails opt out and the sidebar falls back to a legacy aspect.
+    virtual QSizeF pageSizeHint(int /*pageIndex*/) const { return {}; }
     virtual int currentPage() const { return 0; }
     virtual void goToPage(int /*pageIndex*/) {}
 
@@ -127,6 +135,16 @@ class IDocument {
     // are not offered on bare images where they would do nothing
     // meaningful.
     virtual bool hasTextLayer() const { return false; }
+
+    // True iff `page` carries a real, extractable native text layer
+    // (born-digital PDF text, not a bare scan). Distinct from the
+    // coarse hasTextLayer() capability stub — this performs a per-page
+    // check so callers can tell a text page from an image-only page.
+    // Drives native-text ingestion into SelectableTextStore and the
+    // suppression of the "Recognize text" notice on pages that already
+    // have selectable text. Default false — adapters without a native
+    // text layer (images, stub) opt out.
+    virtual bool pageHasText(int /*page*/) const { return false; }
 
     // Outline / Table of Contents access. Documents that ship with a
     // /Outlines tree (most authored PDFs do) expose it through this
@@ -149,8 +167,12 @@ class IDocument {
     virtual bool isDirty() const { return false; }
     virtual bool canUndo() const { return false; }
     virtual bool canRedo() const { return false; }
-    virtual void undo() {}
-    virtual void redo() {}
+    // Return true iff an operation was actually reverted / reapplied.
+    // A false return with canUndo()/canRedo() still true indicates an
+    // internal history desync — adapters must degrade to a warning +
+    // no-op rather than mutate state they cannot account for.
+    virtual bool undo() { return false; }
+    virtual bool redo() { return false; }
     virtual void rotatePage(int /*pageIndex*/, int /*degreesClockwise*/) {}
     virtual void deletePages(const std::vector<int> & /*pageIndices*/) {}
     virtual void movePage(int /*from*/, int /*to*/) {}
@@ -211,6 +233,13 @@ class IDocument {
     // (persisted on the next save()).
     virtual bool supportsFormFilling() const { return false; }
     virtual std::vector<FormField> formFields() const { return {}; }
+    // Emitter for "a capability that resolves asynchronously is now known".
+    // Returns nullptr for documents whose capabilities are all settled at
+    // open. PdfDocument returns one and fires its capabilitiesChanged()
+    // signal once the background load (qpdf parse + AcroForm detection)
+    // completes, so MainWindow can re-run the forms-toolbar setup a moment
+    // after open instead of blocking the GUI thread on the parse at open.
+    virtual CapabilityNotifier *capabilityNotifier() { return nullptr; }
     virtual bool setFormFieldValue(int /*id*/, const QString & /*value*/) { return false; }
     // Show or hide the interactive form overlay. Callers toggle this
     // when the user enters / leaves form-filling mode.
@@ -257,6 +286,15 @@ class IDocument {
     // signals "this adapter does not support OCR submission" so the
     // scheduler will simply not enqueue work.
     virtual QImage renderPageForOcr(int /*pageIndex*/) const { return {}; }
+    // Uniform scale mapping a renderPageForOcr() source-pixel coordinate
+    // into the document coordinate space that SelectableTextLayer's
+    // docToView expects. PDFs render OCR sources at a fixed DPI while
+    // docToView works in PDF points (72/inch), so PdfDocument returns
+    // points-per-pixel (< 1); image documents render OCR in native pixel
+    // space and docToView is pixel-based, so the default 1.0 is correct.
+    // OcrController multiplies recognized block geometry by this before
+    // storing, so forced OCR on a PDF page lands aligned with selection.
+    virtual double ocrSourceToDocScale(int /*pageIndex*/) const { return 1.0; }
 
     virtual void setAnnotationTool(AnnotationTool /*tool*/) {}
     virtual void setAnnotationStyle(const AnnotationStyle & /*style*/) {}

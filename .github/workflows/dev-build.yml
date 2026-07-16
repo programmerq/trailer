@@ -1,0 +1,285 @@
+# On-demand "dev build" pipeline — produce unsigned, per-OS artifacts
+# from ANY ref so manual/GUI testing can happen BEFORE merge.
+#
+# This is the delivery mechanism for pre-merge verification: it stages
+# the same portable artifacts the Release pipeline ships (portable
+# tarball / zip / .dmg) but uploads them to the workflow RUN instead of
+# a GitHub Release, and it runs on any ref with NO VERSION/precheck gate
+# (the whole point is building code that isn't release-ready yet).
+#
+# It deliberately does NOT edit release.yml — it REUSES release.yml's
+# composite actions (.github/actions/setup-linux-build,
+# .github/actions/setup-windows-cross) and build scripts
+# (scripts/build-windows.sh, scripts/build-macos.sh) so a dev artifact
+# is byte-for-byte the same recipe as the release one, minus the
+# distro-package (.deb/.rpm/.msi) and UAT tiers, which don't affect the
+# portable artifact a tester runs.
+#
+# Triggered by:
+#   - workflow_dispatch: pick any ref/branch/SHA to build, and opt into
+#     the (10x-cost, GitHub-hosted) macOS build per-run.
+#   - pull_request `labeled`: adding the `dev-build` label to a PR
+#     builds its HEAD. Any other label is ignored by the `if:` filter.
+#
+# UNSIGNED: no signing secrets are required or used. scripts/build-macos.sh
+# ad-hoc signs the .app (`codesign --sign -`, no identity), so the .dmg
+# is Gatekeeper-adhoc, not Developer-ID signed — the same posture the
+# Release pipeline ships today.
+
+name: Dev Build
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: git ref/branch/SHA to build
+        required: false
+        type: string
+        default: ''
+      build_linux:
+        description: build the Linux tar.gz artifact
+        required: false
+        type: boolean
+        default: true
+      build_windows:
+        description: build the Windows zip artifact
+        required: false
+        type: boolean
+        default: true
+      build_macos:
+        description: also build the macOS .dmg (10x runner cost)
+        required: false
+        type: boolean
+        default: false
+  pull_request:
+    # `labeled` re-fires the workflow when a label is added to an
+    # existing PR, so a dev-build doesn't require a fresh push after
+    # labeling. The per-job `if:` filters to the `dev-build` label
+    # specifically, so adding any other label is a no-op.
+    types: [labeled]
+
+# Minimal token: dev builds only read the tree + upload artifacts to
+# the run (upload-artifact needs no extra permission).
+permissions:
+  contents: read
+
+# Re-labeling / re-dispatching the same ref supersedes an in-flight
+# run rather than stacking. github.ref is refs/pull/<n>/merge for the
+# PR path and the selected branch for dispatch — one group per PR/ref.
+concurrency:
+  group: dev-build-${{ github.ref }}
+  cancel-in-progress: true
+
+# Match release.yml's caps: the bare `cmake --build … --parallel` steps
+# honor CMAKE_BUILD_PARALLEL_LEVEL, and unbounded parallelism OOMKilled
+# the trailer-k8s pods.
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+  CTEST_PARALLEL_LEVEL: 2
+
+jobs:
+  dev-linux:
+    # Run on manual dispatch when build_linux is checked (default on), or
+    # when the `dev-build` label specifically is added to a PR (any other
+    # label fires `labeled` too but is filtered out here).
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.build_linux) ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'dev-build')
+    name: Linux dev build
+    runs-on: trailer-k8s
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Dispatch: build inputs.ref, or (empty default) the ref the
+          # run was dispatched on. Labeled PR: build the PR HEAD sha.
+          # In GH expressions `A && B || C` yields B when A is true and
+          # B is truthy, else C: pull_request -> head.sha; dispatch ->
+          # inputs.ref ('' means "checkout the triggering ref", which is
+          # actions/checkout's default-ref behavior).
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.ref }}
+
+      - uses: ./.github/actions/setup-linux-build
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          # Share the release job's ccache prefix for warm hits (the
+          # action restores by prefix and saves a fresh per-run entry,
+          # so this reads release's warm cache without clobbering it).
+          key: release-${{ runner.os }}-gcc-linux
+          max-size: 500M
+          update-package-index: true
+
+      - name: Configure
+        # Mirrors release.yml's linux-build. TRAILER_WERROR stays OFF
+        # (Qt / libstdc++ / qpdf system-header warning noise).
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Unit tests
+        # Dev builds exist to GUI-test WIP code, which may legitimately
+        # have red tests. Run the suite for signal (the result is visible
+        # in the run), but continue-on-error so a failure does NOT block
+        # the artifact upload below. Release keeps its tests blocking.
+        continue-on-error: true
+        working-directory: build
+        run: ctest -C Release --output-on-failure --label-exclude uat
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Stage Linux artifact
+        # Same portable tarball shape as release.yml's linux-build on main
+        # today: the first-party LICENSE plus THIRD_PARTY_LICENSES.md,
+        # PHILOSOPHY.md, and README.md. The verbatim third-party license
+        # bundle (`licenses/third-party/`) lives on the unmerged packaging
+        # branch (#61), not on main, so neither release.yml nor this
+        # workflow copies it yet. Once #61 lands, update this step (and the
+        # Windows one below) to also copy licenses/third-party for parity.
+        run: |
+          set -euo pipefail
+          mkdir -p dist/trailer-linux-x86_64
+          cp build/trailer dist/trailer-linux-x86_64/
+          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+             dist/trailer-linux-x86_64/
+          (cd dist && tar -czf trailer-linux-x86_64.tar.gz trailer-linux-x86_64)
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dev-trailer-linux-x86_64
+          path: dist/trailer-linux-x86_64.tar.gz
+          retention-days: 14
+
+  dev-windows:
+    # Run on manual dispatch when build_windows is checked (default on),
+    # or on the `dev-build` label (see dev-linux for the label rationale).
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.build_windows) ||
+      (github.event_name == 'pull_request' && github.event.label.name == 'dev-build')
+    name: Windows dev cross-build (mingw-w64)
+    runs-on: trailer-k8s
+    # Cold Wine/Qt/qpdf provisioning can be slow on the trailer-k8s
+    # Xeons before the caches warm — keep the release job's headroom.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.ref }}
+
+      - uses: ./.github/actions/setup-windows-cross
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          # Share the release windows-cross ccache prefix for warm hits.
+          key: release-windows-cross-mingw
+          max-size: 500M
+          update-package-index: true
+
+      - name: Configure
+        # Identical invocation to release.yml's windows-cross Configure:
+        # the repo mingw toolchain file, the ORT FetchContent-source
+        # override the k8s egress policy forces, and the ccache launcher.
+        run: >-
+          cmake -S . -B build-win -G Ninja
+          -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/toolchain-mingw-w64.cmake"
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_PREFIX_PATH="$QT_WIN_DIR;$QPDF_DIR"
+          -DQT_HOST_PATH="$QT_HOST_DIR"
+          -Dqpdf_DIR="$QPDF_DIR/lib/cmake/qpdf"
+          -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_PREBUILT="$ORT_WIN_DIR"
+        env:
+          PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
+
+      - name: Build
+        run: cmake --build build-win --parallel
+
+      - name: Bundle self-contained trailer.exe
+        # Reuse scripts/build-windows.sh's collect_dlls import-table walk
+        # (--in-container skips its configure branch since build-win/
+        # already exists). imageformats/ is added on top because the
+        # JPEG export plugin loads at runtime and the import walk can't
+        # see runtime-loaded plugins. Mirrors release.yml's current
+        # portable bundle on main (first-party LICENSE + THIRD_PARTY_-
+        # LICENSES.md + PHILOSOPHY.md + README.md); the verbatim
+        # `licenses/third-party/` bundle is on the unmerged #61 branch, so
+        # neither workflow copies it yet — see the dev-linux note.
+        run: |
+          set -euo pipefail
+          BUILD_DIR="$PWD/build-win" \
+          OUT_DIR="$PWD/dist/trailer-windows-x86_64" \
+          QT_DIR="$QT_WIN_DIR" \
+          QT_HOST_DIR="$QT_HOST_DIR" \
+          QPDF_DIR="$QPDF_DIR" \
+            bash scripts/build-windows.sh --in-container
+          mkdir -p dist/trailer-windows-x86_64/imageformats
+          cp "$QT_WIN_DIR"/plugins/imageformats/*.dll dist/trailer-windows-x86_64/imageformats/
+          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+             dist/trailer-windows-x86_64/
+
+      - name: Stage Windows artifact
+        # Same flat, root-level zip release.yml produces (trailer.exe at
+        # the zip root). 7z ships via setup-windows-cross (p7zip-full).
+        run: |
+          set -euo pipefail
+          (cd dist/trailer-windows-x86_64 && 7z a -tzip ../trailer-windows-x86_64.zip .)
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dev-trailer-windows-x86_64
+          path: dist/trailer-windows-x86_64.zip
+          retention-days: 14
+
+  dev-macos:
+    # Opt-in per DISPATCH only. macOS runners cost ~10x, so this never
+    # runs on the label path and requires the build_macos checkbox on a
+    # manual dispatch. (The `&& inputs.build_macos` short-circuits after
+    # the event check, so the label path — where inputs is absent —
+    # never evaluates it.)
+    if: github.event_name == 'workflow_dispatch' && inputs.build_macos == true
+    name: macOS dev .dmg build (Apple Silicon, unsigned)
+    runs-on: macos-14
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # macOS only runs on dispatch, so the ref is always inputs.ref
+          # (or its '' default -> the dispatched ref).
+          ref: ${{ inputs.ref }}
+
+      - name: Install Qt
+        # Same pin as release.yml's macos-build / setup-linux-build so
+        # the dev .app links against identical Qt. Exports $QT_ROOT_DIR
+        # which scripts/build-macos.sh consumes.
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.11.0'
+          modules: 'qtpdf'
+          cache: true
+
+      - name: Install build deps
+        run: brew install ninja
+
+      - name: Build, bundle, and package
+        # scripts/build-macos.sh is the source of truth for the macOS
+        # build (verbatim reuse of release.yml's macos-build step). It
+        # ad-hoc signs the bundle (`codesign --deep --force --sign -`,
+        # no identity) and needs NO signing secrets, so the dev .dmg is
+        # Gatekeeper-adhoc — unsigned in the Developer-ID sense — with
+        # zero extra flags. This is the same posture release ships today.
+        run: scripts/build-macos.sh
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: dev-trailer-macos-arm64
+          path: dist/trailer-macos-arm64.dmg
+          retention-days: 14

@@ -11,6 +11,15 @@
 #       has been pushed.
 #       Example: 0.2.0 → 0.2.1-dev
 #
+#   scripts/bump-version.sh dev-bump   (alias: dev)
+#       Advance the -dev.N counter for a new dev build of the same
+#       target version. Increments an existing -dev.N; promotes a bare
+#       -dev to -dev.0; on a clean release version bumps the patch and
+#       starts a fresh -dev.0.
+#       Examples: 0.3.1-dev.0 → 0.3.1-dev.1
+#                 0.3.1-dev   → 0.3.1-dev.0
+#                 0.3.0       → 0.3.1-dev.0
+#
 #   scripts/bump-version.sh patch   (alias: rc-patch)
 #       Bump the patch component, keeping -dev.
 #       Example: 0.2.0-dev → 0.2.1-dev
@@ -55,17 +64,20 @@ fi
 
 # Parse CURRENT into MAJOR.MINOR.PATCH[-SUFFIX].
 #
-# Accepted shapes (validated below): X.Y.Z, X.Y.Z-dev, X.Y.Z-rcN.
-# Anything else fails loudly rather than silently mangling state.
+# Accepted shapes (validated below): X.Y.Z, X.Y.Z-dev, X.Y.Z-dev.N,
+# X.Y.Z-rcN. Anything else fails loudly rather than silently mangling
+# state.
 parse_version() {
     local v="$1"
-    if ! [[ "$v" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-(dev|rc[0-9]*))?$ ]]; then
-        echo "error: VERSION='$v' is not in MAJOR.MINOR.PATCH[-dev|-rcN] form" >&2
+    if ! [[ "$v" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-(dev(\.[0-9]+)?|rc[0-9]*))?$ ]]; then
+        echo "error: VERSION='$v' is not in MAJOR.MINOR.PATCH[-dev[.N]|-rcN] form" >&2
         exit 1
     fi
     PARSED_MAJOR="${BASH_REMATCH[1]}"
     PARSED_MINOR="${BASH_REMATCH[2]}"
     PARSED_PATCH="${BASH_REMATCH[3]}"
+    # BASH_REMATCH[5] is the suffix without its leading dash, e.g.
+    # 'dev', 'dev.2', 'rc1' (empty for a clean X.Y.Z).
     PARSED_SUFFIX="${BASH_REMATCH[5]:-}"
 }
 
@@ -79,7 +91,7 @@ write_version() {
     echo
     echo "Next steps:"
     case "$new" in
-        *-dev|*-rc*)
+        *-dev*|*-rc*)
             echo "  - Build locally to refresh TrailerVersion.h:"
             echo "      cmake -S . -B build && cmake --build build"
             ;;
@@ -115,6 +127,33 @@ case "$ACTION" in
         fi
         NEW_PATCH=$((PARSED_PATCH + 1))
         write_version "${PARSED_MAJOR}.${PARSED_MINOR}.${NEW_PATCH}-dev"
+        ;;
+
+    dev-bump|dev)
+        case "$PARSED_SUFFIX" in
+            dev.*)
+                # Already an -dev.N counter — advance N.
+                DEV_N="${PARSED_SUFFIX#dev.}"
+                # Force base-10: a leading-zero counter (dev.08 / dev.09)
+                # is otherwise parsed as octal — dev.08 errors and dev.007
+                # silently becomes dev.8.
+                write_version "${PARSED_MAJOR}.${PARSED_MINOR}.${PARSED_PATCH}-dev.$((10#$DEV_N + 1))"
+                ;;
+            dev)
+                # Bare -dev — start the counter at .0.
+                write_version "${PARSED_MAJOR}.${PARSED_MINOR}.${PARSED_PATCH}-dev.0"
+                ;;
+            "")
+                # Clean release — begin dev work on the next patch.
+                NEW_PATCH=$((PARSED_PATCH + 1))
+                write_version "${PARSED_MAJOR}.${PARSED_MINOR}.${NEW_PATCH}-dev.0"
+                ;;
+            *)
+                echo "error: VERSION='$CURRENT' carries an -rc suffix; 'dev-bump' only advances -dev builds." >&2
+                echo "       Use 'release' to finish the rc, or 'set' to move to a -dev version explicitly." >&2
+                exit 1
+                ;;
+        esac
         ;;
 
     patch|rc-patch)

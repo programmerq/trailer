@@ -189,6 +189,35 @@ active view mode.
 Selecting it is impossible; the Continuous/Single actions remain
 functional.
 
+### UAT-VWR-025 — Continuous-mode keyboard scroll steps by a screenful
+
+**Preconditions:** A multi-page PDF is open with `View > Continuous`
+active, and the document is tall enough to need scrolling.
+**Steps:**
+1. Click into the page view to give it keyboard focus.
+2. Press `Down` (`↓`). Then `Space`. Then `Up` (`↑`).
+3. Press `Page Down`, then `Page Up`.
+**Expected:**
+- Each `↓` scrolls down by roughly one viewport height — a screenful,
+  matching Preview / Acrobat — not the tiny line-step
+  `QAbstractScrollArea` uses by default (which would take dozens to
+  hundreds of presses to cross a single page). `Space` does the same
+  as `↓`.
+- `↑` scrolls back up by the same screenful.
+- `Page Down` / `Page Up` are unchanged: they jump to the next /
+  previous page (the Next Page / Previous Page shortcuts), not a
+  screenful scroll.
+- Scrolling stops cleanly at the top and bottom of the document (no
+  wrap, no overscroll). Single-page mode is unaffected — it still
+  advances a whole page per arrow press (UAT-VWR-023).
+
+The automated harness slot `uat_vwr_025_continuousArrowStepsByViewport`
+in `tests/uat/test_uat_viewer.cpp` pins only the `Down` / `Space` / `Up`
+screenful stepping. `Page Down` / `Page Up` remaining the Next /
+Previous Page shortcuts is verified at the MainWindow / manual level: a
+view-only harness can't distinguish the arrow keys falling through from
+the base class applying its own screenful handling.
+
 ---
 
 ## Image view
@@ -352,6 +381,33 @@ fit at 100% are shown at actual size rather than upscaling. Use
   a known gap).
 - The app does not crash.
 
+### UAT-VWR-055 — Content-aware first-open sidebar default
+
+**Preconditions:** A document the app has never seen before, with no
+saved per-file view state on record.
+**Steps:**
+1. Open a long PDF (≥ 20 pages).
+2. Separately, open a form PDF (≥ 3 fillable AcroForm fields) of fewer
+   than 20 pages.
+**Expected:**
+- The long document opens with the `Pages` (thumbnail) sidebar showing,
+  ready to navigate — even if the per-type "last PDF" default had the
+  sidebar hidden.
+- The form opens with the sidebar **hidden** for a clean filling view
+  (the form-filling toolbar surfaces separately), even if the per-type
+  default had the sidebar open.
+- A long form (both ≥ 20 pages and ≥ 3 fields) is treated as long:
+  thumbnails win, because paging through it is the priority.
+- These heuristics run only on first open with no saved per-file state;
+  any explicit choice the user has made for this exact file is restored
+  as-is and always wins. Thresholds: ≥ 20 pages, ≥ 3 fields.
+
+Pinned by `tests/test_content_aware_defaults.cpp` (the decision matrix),
+plus integration slots `uat_pdf_080_longDocOpensThumbnailSidebar`
+(`tests/uat/test_uat_pdf_pages.cpp`) and
+`uat_frm_060_formForcesSidebarHiddenOverridingTypeDefault`
+(`tests/uat/test_uat_forms.cpp`).
+
 ---
 
 ## Search (Edit > Find)
@@ -435,6 +491,36 @@ fit at 100% are shown at actual size rather than upscaling. Use
 - Either the action is disabled (current behaviour if a doc doesn't
   support search), or the bar opens but finds nothing. The app must not
   crash. (OCR-based image search is deferred to Phase 6.)
+
+### UAT-VWR-068 — Search seeds the first match at or after the current page
+
+**Preconditions:** A multi-page PDF whose keyword appears on several
+distinct, known pages is open. (ADR 0006, accepted — Option B.)
+**Steps:**
+1. Navigate to a middle page `k`.
+2. `Edit > Find…` and type the keyword.
+**Expected:**
+- The initially-selected match is the **first** match whose page is
+  `>= k` (position-aware seed, `>=` not `>`, so a match sitting on page
+  `k` itself is the seed).
+- If the viewport is past the last match's page, the seed **wraps** to
+  the first match in the document (index 0).
+- The seed lands correctly on the asynchronous large-doc populate path,
+  not just the synchronous/cached one — the final seed after the model
+  fully populates is the at/after-page match, never a provisional
+  earlier-page seed frozen mid-stream.
+
+### UAT-VWR-069 — Position-aware seed preserves whole-document coverage
+
+**Preconditions:** As UAT-VWR-068, seeded from a middle page.
+**Steps:**
+1. Seed the search from a middle page (seed lands on a later page).
+2. Walk backward with Find Previous.
+**Expected:**
+- The match total `Y` still spans the whole document — matches before
+  the current page are still present and counted, not filtered out.
+- Find Previous from the seed reaches the earlier-page matches, so
+  coverage is unchanged; only the initial seed index moved.
 
 ---
 

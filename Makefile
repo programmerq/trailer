@@ -16,7 +16,7 @@
 .PHONY: help release release-macos release-windows release-windows-native \
         release-uat test test-uat install-windows-deps clean-release \
         screenshots-windows \
-        bump-release bump-post-release bump-patch bump-minor bump-major \
+        bump-release bump-post-release bump-dev bump-patch bump-minor bump-major \
         release-notes show-changelog
 
 # `uname` exists on Linux, macOS, Git Bash, and MSYS. PowerShell-only
@@ -45,6 +45,7 @@ help:
 	@echo ""
 	@echo "  make bump-release              strip -dev/-rc suffix (use before tagging)"
 	@echo "  make bump-post-release         bump patch + add -dev (use after tagging)"
+	@echo "  make bump-dev                  advance the -dev.N counter for a new dev build"
 	@echo "  make bump-patch                bump patch, keep -dev"
 	@echo "  make bump-minor                bump minor (reset patch), keep -dev"
 	@echo "  make bump-major                bump major (reset minor + patch), keep -dev"
@@ -134,6 +135,9 @@ bump-release:
 
 bump-post-release:
 	scripts/bump-version.sh post-release
+
+bump-dev:
+	scripts/bump-version.sh dev-bump
 
 bump-patch:
 	scripts/bump-version.sh patch

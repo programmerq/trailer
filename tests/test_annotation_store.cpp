@@ -23,6 +23,7 @@ class TestAnnotationStore : public QObject {
     void compoundWithoutMutationsLeavesUndoStackUntouched();
     void compoundNestedBeginEndBehavesAsSingle();
     void compoundAbortLeavesStoreSaneOnNextMutation();
+    void setMaxUndoDepthTrimsExistingFramesInLockstep();
     void undoIsFastForLargeStore();
 };
 
@@ -300,6 +301,42 @@ void TestAnnotationStore::compoundAbortLeavesStoreSaneOnNextMutation() {
     QCOMPARE(store.find(id)->bounds, QRectF(5, 5, 10, 10));
     store.undo();
     QCOMPARE(store.find(id)->bounds, QRectF(0, 0, 10, 10));
+}
+
+// setMaxUndoDepth() must enforce the cap it sets, whenever it is
+// called: lowering the cap below the current stack size trims the
+// oldest frames immediately, emitting historyEvicted() once per
+// dropped frame so an owner mirroring the store into a chronological
+// log stays in lockstep. (Pre-fix, the setter never trimmed and
+// pushHistory() evicted at most one frame per push, so an oversized
+// stack never converged to the cap.)
+void TestAnnotationStore::setMaxUndoDepthTrimsExistingFramesInLockstep() {
+    AnnotationStore store;
+    for (int i = 0; i < 10; ++i) {
+        store.add(makeRect(0, QRectF(double(i), 0, 5, 5)));
+    }
+    QCOMPARE(store.count(), 10);
+
+    QSignalSpy evictedSpy(&store, &AnnotationStore::historyEvicted);
+    store.setMaxUndoDepth(4);
+    // 10 frames, cap 4 → 6 dropped, each announced.
+    QCOMPARE(evictedSpy.count(), 6);
+
+    // Exactly 4 undos remain; the oldest reachable state has the 6
+    // evicted-frame annotations still present.
+    int undos = 0;
+    while (store.canUndo()) {
+        store.undo();
+        ++undos;
+        QVERIFY2(undos <= 4, "cap not enforced: more frames than maxUndoDepth survived");
+    }
+    QCOMPARE(undos, 4);
+    QCOMPARE(store.count(), 6);
+
+    // A depth of 0 clamps to 1 (documented on the seam) rather than
+    // producing an unusable zero-frame history.
+    store.setMaxUndoDepth(0);
+    QCOMPARE(store.maxUndoDepth(), size_t{1});
 }
 
 // Perf sanity for Workstream E.1 — undo on a large store must not be

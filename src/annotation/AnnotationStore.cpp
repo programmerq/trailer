@@ -15,6 +15,21 @@ int AnnotationStore::add(Annotation annotation) {
     return m_annotations.back().id;
 }
 
+void AnnotationStore::addBatch(std::vector<Annotation> items) {
+    // Append every entry with a freshly-assigned id, then emit a SINGLE
+    // changed(). No pushHistory(): the bulk populate is not a user edit
+    // (see the header contract). changed() is emitted unconditionally —
+    // even for an empty batch — so consumers that were showing a
+    // "loading" / empty state get exactly one refresh when the deferred
+    // load commits.
+    m_annotations.reserve(m_annotations.size() + items.size());
+    for (Annotation &a : items) {
+        a.id = m_nextId++;
+        m_annotations.push_back(std::move(a));
+    }
+    emit changed();
+}
+
 bool AnnotationStore::remove(int id) {
     auto it = std::find_if(m_annotations.begin(), m_annotations.end(),
                            [id](const Annotation &a) { return a.id == id; });
@@ -80,6 +95,19 @@ void AnnotationStore::clear() {
 }
 
 void AnnotationStore::pushHistory() {
+    // Pre-edit hook: give the owner a chance to flush any deferred baseline
+    // into the store BEFORE this edit's snapshot is captured, so undo reverts
+    // to the complete pre-edit state (see setPreEditHook). Runs at the very
+    // top — before the compound early-return and before the snapshot push —
+    // so even the first mutation of a compound gesture snapshots on top of the
+    // committed baseline. Guarded against re-entrancy: the hook commits its
+    // baseline via addBatch() (which pushes no history), so it cannot recurse
+    // here, but the guard makes that invariant explicit and safe.
+    if (m_preEditHook && !m_inPreEditHook) {
+        m_inPreEditHook = true;
+        m_preEditHook();
+        m_inPreEditHook = false;
+    }
     // While a compound gesture is in flight, callers (e.g. the drag
     // path in mouseMoveEvent) mutate the store every frame. We only
     // want one undo frame for the whole gesture, captured from the
@@ -93,11 +121,36 @@ void AnnotationStore::pushHistory() {
         // pre-state is the right thing to revert to.
     }
     m_undoStack.push_back({m_annotations, m_nextId});
-    if (m_undoStack.size() > kMaxUndo) {
+    // `while`, not `if`: setMaxUndoDepth() trims eagerly, but keeping
+    // the loop here makes the cap invariant hold regardless of when a
+    // cap change lands relative to pushes — a push can never leave the
+    // stack above m_maxUndoDepth.
+    size_t evicted = 0;
+    while (m_undoStack.size() > m_maxUndoDepth) {
         m_undoStack.erase(m_undoStack.begin());
+        ++evicted;
     }
     m_redoStack.clear();
+    // Eviction is announced BEFORE the push — once per dropped frame,
+    // oldest first — so an owner mirroring the store into a
+    // chronological log first drops its oldest annotation entries,
+    // then appends the new one: the log's annotation count equals
+    // m_undoStack.size() again once both signals return.
+    while (evicted-- > 0)
+        emit historyEvicted();
     emit historyPushed();
+}
+
+void AnnotationStore::setMaxUndoDepth(size_t depth) {
+    m_maxUndoDepth = std::max<size_t>(1, depth);
+    // Enforce the new cap immediately: a cap lowered below the current
+    // stack size trims the oldest frames now, announcing each drop so
+    // an owner mirroring this store into a chronological log stays in
+    // lockstep (same contract as eviction during pushHistory()).
+    while (m_undoStack.size() > m_maxUndoDepth) {
+        m_undoStack.erase(m_undoStack.begin());
+        emit historyEvicted();
+    }
 }
 
 void AnnotationStore::undo() {

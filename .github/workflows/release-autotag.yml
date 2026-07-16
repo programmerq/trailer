@@ -39,10 +39,10 @@ jobs:
     if: |
       github.event.pull_request.merged == true &&
       contains(github.event.pull_request.labels.*.name, 'release-candidate')
-    runs-on: ubuntu-24.04
+    runs-on: trailer-k8s
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           # Check out the PR HEAD specifically — that's the SHA the
           # Release workflow built artifacts against, and the SHA we
@@ -65,7 +65,7 @@ jobs:
           # Defence in depth: precheck rejected -dev/-rc PRs before
           # the heavy build ran, but a maintainer who force-merged
           # past CI could still get here.
-          if echo "$VERSION" | grep -qE -- '-dev$|-rc[0-9]*$'; then
+          if echo "$VERSION" | grep -qE -- '-dev(\.[0-9]+)?$|-rc[0-9]*$'; then
             echo "::error::VERSION='$VERSION' carries a dev/rc suffix; refusing to tag."
             exit 1
           fi

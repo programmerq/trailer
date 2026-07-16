@@ -1,0 +1,122 @@
+# Build + publish the custom ARC runner image.
+#
+# Builds docker/runner/Dockerfile (the trailer-k8s runner image with the
+# full Linux + Windows-cross toolchain baked in) and pushes it to
+# ghcr.io/programmerq/trailer-runner. Switching the ARC runner-set onto
+# this image is a one-line change documented in
+# docs/ci/custom-runner-image.md.
+#
+# IMPORTANT: this job runs on ubuntu-latest (a GitHub-HOSTED runner),
+# NOT trailer-k8s. Building a Docker image needs a Docker daemon, which
+# the k8s pods deliberately lack (that's the whole reason the build/test
+# jobs run dockerless). A GitHub-hosted runner has Docker available.
+
+name: Build runner image
+
+on:
+  # Rebuild when the image recipe or this workflow changes on main.
+  push:
+    branches: [main]
+    paths:
+      - 'docker/runner/**'
+      - '.github/workflows/build-runner-image.yml'
+  # Validate the image still builds on PRs that touch the recipe, before
+  # it lands on main (build-only — see the pr-validate job below).
+  pull_request:
+    paths:
+      - 'docker/runner/**'
+      - '.github/workflows/build-runner-image.yml'
+  # Manual rebuilds (e.g. to pull fresh apt package versions).
+  workflow_dispatch:
+  # Weekly rebuild so the baked toolchain + base image pick up security
+  # updates without waiting for a recipe change. Mondays 06:00 UTC.
+  schedule:
+    - cron: '0 6 * * 1'
+
+# Don't stack redundant image builds for the same ref: a newer push/PR
+# update supersedes an in-flight run.
+concurrency:
+  group: build-runner-image-${{ github.ref }}
+  cancel-in-progress: true
+
+# Least privilege: read the repo to get the Dockerfile, write packages
+# to push the image to GHCR. Nothing else.
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  build-and-push:
+    name: Build + push trailer-runner image
+    # Publish only on the real triggers (push-to-main / manual / weekly).
+    # PRs use the build-only pr-validate job below — never push.
+    if: github.event_name != 'pull_request'
+    # GitHub-hosted (has Docker); the trailer-k8s pods can't build images.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Compute date tag
+        # Scripts can't embed the current date, so derive it at build
+        # time and expose it as a step output the tags list references.
+        id: meta
+        run: echo "date=$(date -u +%Y%m%d)" >> "$GITHUB_OUTPUT"
+
+      - name: Build + push
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/runner/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/programmerq/trailer-runner:latest
+            ghcr.io/programmerq/trailer-runner:${{ steps.meta.outputs.date }}
+
+  pr-validate:
+    name: Build-only validation (PR)
+    # PR gate: prove the recipe still builds and the baked tooling works,
+    # without logging in or pushing anything to GHCR.
+    if: github.event_name == 'pull_request'
+    # GitHub-hosted (has Docker), same as the publish job above.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # No packages:write here — this job never touches the registry.
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build (no push, load into local Docker)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: docker/runner/Dockerfile
+          push: false
+          # Load the built image into the runner's Docker so the verify
+          # step below can `docker run` it.
+          load: true
+          tags: trailer-runner:pr-validate
+
+      - name: Verify baked-in GitHub tooling
+        # Assert the tools this PR adds are actually present and runnable
+        # in the built image. `gh` is the primary reason for the image
+        # change; jq/zip are the other additions.
+        run: |
+          docker run --rm trailer-runner:pr-validate gh --version
+          docker run --rm trailer-runner:pr-validate jq --version
+          docker run --rm trailer-runner:pr-validate zip -v
+          docker run --rm trailer-runner:pr-validate shellcheck --version

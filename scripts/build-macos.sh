@@ -369,6 +369,37 @@ fi
 echo "    no external dylib references"
 
 # ---------------------------------------------------------------------
+# Verify the adaptive app icon landed (ADR 0009 Option A). Cheap
+# build-integration check that runs only here / on the macos-14 runner:
+#   - Contents/Resources/Assets.car exists (actool's POST_BUILD step in
+#     CMakeLists.txt produced it during `cmake --build`),
+#   - Info.plist declares CFBundleIconName=AppIcon (the key that makes
+#     macOS read the catalog), and
+#   - assetutil --info confirms the compiled catalog carries an AppIcon.
+# The visual light/dark Dock swap is a separate real-Mac verification
+# (the surface is native Dock/Finder chrome; `grab()` can't see it).
+# ---------------------------------------------------------------------
+echo "==> Verifying adaptive app icon (Assets.car + CFBundleIconName)"
+ASSETS_CAR="$APP_PATH/Contents/Resources/Assets.car"
+if [[ ! -f "$ASSETS_CAR" ]]; then
+    echo "ERROR: $ASSETS_CAR missing — the actool step did not produce" >&2
+    echo "       Assets.car. Check the APPLE-guarded actool POST_BUILD" >&2
+    echo "       command in CMakeLists.txt and that Xcode/actool is present." >&2
+    exit 1
+fi
+ICON_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconName" \
+            "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)
+if [[ "$ICON_NAME" != "AppIcon" ]]; then
+    echo "ERROR: Info.plist CFBundleIconName is '$ICON_NAME', expected 'AppIcon'." >&2
+    exit 1
+fi
+if ! assetutil --info "$ASSETS_CAR" | grep -qi "AppIcon"; then
+    echo "ERROR: assetutil --info does not mention AppIcon in $ASSETS_CAR." >&2
+    exit 1
+fi
+echo "    Assets.car present; CFBundleIconName=$ICON_NAME; assetutil confirms AppIcon"
+
+# ---------------------------------------------------------------------
 # Package as DMG.
 #
 # Filename is fixed (trailer-macos-arm64.dmg) so CI's
@@ -387,6 +418,25 @@ trap 'rm -rf "$STAGING_DIR"' EXIT
 # into a drag-target Finder window. UDZO = compressed, read-only.
 cp -R "$APP_PATH" "$STAGING_DIR/"
 ln -s /Applications "$STAGING_DIR/Applications"
+
+# Bundle the first-party + third-party license texts alongside the .app so
+# the .dmg satisfies each dependency's redistribution terms (mirrors what the
+# .deb / .rpm ship under share/doc/trailer/ and the .msi under licenses\).
+# Placed in the DMG staging dir only — this runs AFTER codesign, so it does
+# not disturb the .app's sealed Resources. Guarded so a missing file is not
+# fatal.
+#
+# TODO(phase 2b): if the .app's own Contents/Resources/ should carry these
+# texts too (for an installed-app "About > Licenses" surface), add them before
+# the codesign step rather than here.
+LICENSE_STAGE="$STAGING_DIR/Licenses"
+mkdir -p "$LICENSE_STAGE"
+for _lic in "$REPO_ROOT/LICENSE" "$REPO_ROOT/THIRD_PARTY_LICENSES.md"; do
+    [[ -f "$_lic" ]] && cp "$_lic" "$LICENSE_STAGE/"
+done
+if [[ -d "$REPO_ROOT/licenses/third-party" ]]; then
+    cp -R "$REPO_ROOT/licenses/third-party" "$LICENSE_STAGE/third-party"
+fi
 
 echo "==> Creating DMG"
 hdiutil create \

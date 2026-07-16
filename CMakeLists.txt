@@ -58,7 +58,7 @@ set(CMAKE_AUTOUIC ON)
 
 include(CompilerWarnings)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Core Concurrent Gui Widgets Network Svg Test Pdf PdfWidgets PrintSupport)
+find_package(Qt6 6.6 REQUIRED COMPONENTS Core Concurrent Gui Widgets Network Svg Test Pdf PdfWidgets PrintSupport)
 include(OnnxRuntime)
 # Prefer a CMake package config (e.g. vcpkg on Windows).  Fall back to
 # pkg-config so that Linux/macOS system packages (libqpdf-dev, brew qpdf)
@@ -102,6 +102,7 @@ set(TRAILER_SOURCES
     src/document/IFormatAdapter.h
     src/document/ImageAdapter.cpp
     src/document/ImageAdapter.h
+    src/document/CapabilityNotifier.h
     src/document/PdfAdapter.cpp
     src/document/PdfAdapter.h
     src/document/PdfCommands.cpp
@@ -133,6 +134,8 @@ set(TRAILER_SOURCES
     src/ml/SamSession.h
     src/platform/PowerSource.cpp
     src/platform/PowerSource.h
+    src/platform/ScreenCapturePermission.cpp
+    src/platform/ScreenCapturePermission.h
     src/recent/RecentFiles.cpp
     src/recent/RecentFiles.h
     src/settings/AppPaths.cpp
@@ -146,8 +149,12 @@ set(TRAILER_SOURCES
     src/signatures/SignatureStore.h
     src/ui/DocumentView.cpp
     src/ui/DocumentView.h
+    src/ui/EmptyStateWidget.cpp
+    src/ui/EmptyStateWidget.h
     src/ui/MainWindow.cpp
     src/ui/MainWindow.h
+    src/ui/MlProgressWidget.cpp
+    src/ui/MlProgressWidget.h
     src/ui/ModelManagerDialog.cpp
     src/ui/ModelManagerDialog.h
     src/ui/OcrController.cpp
@@ -156,6 +163,8 @@ set(TRAILER_SOURCES
     src/ui/AnimationBar.h
     src/ui/AnnotationOverlay.cpp
     src/ui/AnnotationOverlay.h
+    src/ui/CropPagesDialog.cpp
+    src/ui/CropPagesDialog.h
     src/ui/FormOverlay.cpp
     src/ui/FormOverlay.h
     src/ui/FormToolbar.cpp
@@ -172,6 +181,8 @@ set(TRAILER_SOURCES
     src/ui/MyCardDialog.h
     src/ui/OcrResultsDialog.cpp
     src/ui/OcrResultsDialog.h
+    src/ui/PreferencesDialog.cpp
+    src/ui/PreferencesDialog.h
     src/ui/SamController.cpp
     src/ui/SamController.h
     src/ui/SearchBar.cpp
@@ -322,11 +333,55 @@ endif()
 
 # Copy the .icns into the macOS bundle's Resources/ directory so Finder/Dock
 # pick it up, and tell Info.plist about the file via MACOSX_BUNDLE_ICON_FILE.
+# This stays as the pre-catalog fallback (CFBundleIconFile) that coexists with
+# the adaptive Assets.car / CFBundleIconName wiring below.
 if(APPLE AND EXISTS "${TRAILER_MACOS_ICON}")
     target_sources(trailer PRIVATE "${TRAILER_MACOS_ICON}")
     set_source_files_properties("${TRAILER_MACOS_ICON}" PROPERTIES
         MACOSX_PACKAGE_LOCATION "Resources"
     )
+endif()
+
+# Adaptive (light/dark) app icon — ADR 0009 Option A. Compile the luminosity
+# Asset Catalog (resources/macos/Assets.xcassets, AppIcon set with light +
+# `luminosity: dark` variants fed by the existing trailer_*/trailer-dark_*
+# PNGs) into Assets.car and drop it into the bundle's Resources/ via actool.
+# Info.plist.in declares CFBundleIconName=AppIcon alongside the legacy
+# CFBundleIconFile so the two coexist.
+#
+# EVERYTHING here is inside `if(APPLE)` and depends on `actool`, which ships
+# only with Xcode — so it is completely inert on Linux/Windows: the Linux
+# `linux-build` and `windows-cross` CI lanes never evaluate any of it, and the
+# .xcassets files are plain data on those platforms. actool is invoked via
+# `xcrun` (a POST_BUILD step on the trailer target) so it runs during
+# `cmake --build`, before macdeployqt in scripts/build-macos.sh.
+if(APPLE)
+    set(TRAILER_XCASSETS "${CMAKE_SOURCE_DIR}/resources/macos/Assets.xcassets")
+    if(EXISTS "${TRAILER_XCASSETS}")
+        # Match the bundle's LSMinimumSystemVersion floor (Info.plist.in: 11.0)
+        # rather than CMAKE_OSX_DEPLOYMENT_TARGET, which may be unset on a bare
+        # `cmake` invocation on a Mac and would hand actool an empty argument.
+        set(TRAILER_ICON_MIN_MACOS "11.0")
+        # The icon is wired via the hardcoded CFBundleIconName=AppIcon in
+        # resources/macos/Info.plist.in, so actool only needs to compile the
+        # .xcassets into Assets.car in Resources/ — no partial Info.plist to
+        # merge (the --output-partial-info-plist output was never consumed).
+        add_custom_command(TARGET trailer POST_BUILD
+            COMMAND "${CMAKE_COMMAND}" -E make_directory
+                    "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources"
+            COMMAND xcrun actool
+                    --app-icon AppIcon
+                    --minimum-deployment-target "${TRAILER_ICON_MIN_MACOS}"
+                    --platform macosx
+                    --target-device mac
+                    --compile "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources"
+                    "${TRAILER_XCASSETS}"
+            BYPRODUCTS
+                "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources/Assets.car"
+            COMMENT "Compiling Assets.xcassets -> Assets.car (AppIcon light/dark) via actool"
+            VERBATIM
+        )
+    endif()
 endif()
 
 set_target_properties(trailer PROPERTIES
@@ -347,6 +402,13 @@ set_target_properties(trailer PROPERTIES
 # Installation rules (used by Linux packaging)
 if(UNIX AND NOT APPLE)
     include(GNUInstallDirs)
+    # GNUInstallDirs derives DOCDIR from the (capitalized) project name, so its
+    # default here is share/doc/Trailer. Force the lowercase package-name
+    # spelling so a naive `cmake --install` (without the packaging scripts'
+    # -DCMAKE_INSTALL_DOCDIR override) still lands the license texts where the
+    # .deb/.rpm expect them. A normal variable set after include() shadows the
+    # cache value for the install() rules below.
+    set(CMAKE_INSTALL_DOCDIR "${CMAKE_INSTALL_DATAROOTDIR}/doc/trailer")
     install(TARGETS trailer DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(FILES platform/linux/trailer.desktop
             DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
@@ -357,6 +419,15 @@ if(UNIX AND NOT APPLE)
                 DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${_size}x${_size}/apps
                 RENAME trailer.png)
     endforeach()
+
+    # License / attribution files. Ship the first-party MIT license, the
+    # third-party dependency summary, and the verbatim upstream license texts
+    # so the packaged artifact satisfies each dependency's redistribution
+    # terms. CMAKE_INSTALL_DOCDIR is pinned to share/doc/trailer just above.
+    install(FILES LICENSE THIRD_PARTY_LICENSES.md
+            DESTINATION ${CMAKE_INSTALL_DOCDIR})
+    install(DIRECTORY licenses/third-party
+            DESTINATION ${CMAKE_INSTALL_DOCDIR}/licenses)
 endif()
 
 # Developer-facing tool: renders every toolbar SVG into a sheet PNG

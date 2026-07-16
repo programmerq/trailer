@@ -15,15 +15,27 @@
 // Output files (under <output-dir>):
 //   01-empty-window.png        empty MainWindow, no document loaded
 //   02-pdf-loaded.png          fixture PDF loaded in the viewer
+//   prefs-<tab>.png            Preferences dialog, one shot per tab
+//                              (General/Files/Machine Learning/Advanced).
+//                              The Machine Learning and Advanced shots
+//                              double as the disabled-control-with-tooltip
+//                              evidence: with no host callbacks wired the
+//                              "Manage models…" and "Reset all…" buttons
+//                              stay disabled and carry their explanatory
+//                              tooltips, and the General tab shows the
+//                              disabled Theme combo + helper label.
 //
 // The window is sized 1280x800 — a desktop-ish ratio that fits the
 // toolbar + sidebar + viewer layout legibly while remaining portable
 // across documentation surfaces.
 
 #include "app/Application.h"
+#include "ui/EmptyStateWidget.h"
 #include "ui/MainWindow.h"
+#include "ui/PreferencesDialog.h"
 
 #include <QDir>
+#include <QTabWidget>
 #include <QElapsedTimer>
 #include <QFileInfo>
 #include <QImage>
@@ -133,6 +145,27 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    // Empty-state window model shots. A freshly-spawned window with no
+    // document shows the EmptyStateWidget welcome surface.
+    if (!grabAndSave(mw, QDir(outDir).filePath(QStringLiteral("empty-state.png")))) {
+        return 1;
+    }
+
+    // Same window with the drag-highlight active, so the reference set
+    // captures the drop-target affordance the user sees mid-drag.
+    if (auto *empty = mw->findChild<trailer::EmptyStateWidget *>()) {
+        empty->setDragHighlighted(true);
+        app.processEvents();
+        if (!grabAndSave(mw, QDir(outDir).filePath(QStringLiteral("empty-state-drag.png")))) {
+            return 1;
+        }
+        empty->setDragHighlighted(false);
+        app.processEvents();
+    } else {
+        std::fprintf(stderr, "EmptyStateWidget not found — cannot grab empty-state-drag.png\n");
+        return 1;
+    }
+
     app.openFiles({fixturePath});
 
     // openFiles may spawn an additional window depending on the
@@ -166,6 +199,47 @@ int main(int argc, char **argv) {
 
     if (!grabAndSave(target, QDir(outDir).filePath(QStringLiteral("02-pdf-loaded.png")))) {
         return 1;
+    }
+
+    // Empty-state window model: a window with a document open shows the
+    // document view (empty state swapped out).
+    if (!grabAndSave(target, QDir(outDir).filePath(QStringLiteral("doc-loaded.png")))) {
+        return 1;
+    }
+
+    // Preferences dialog — one shot per tab. We construct it against the
+    // live Settings and deliberately DO NOT wire the Manage-models /
+    // Reset-all callbacks: that leaves those buttons disabled (with the
+    // explanatory tooltips) so the Machine Learning and Advanced shots
+    // double as the disabled-control evidence, and the General tab shows
+    // the disabled Theme combo + helper label. The dialog is rendered
+    // offscreen via grab(); it is never exec()'d, so this stays headless.
+    {
+        auto *prefs = new trailer::PreferencesDialog(app.settings(), target);
+        prefs->resize(720, 560);
+        prefs->show();
+        app.processEvents();
+        auto *tabs = prefs->findChild<QTabWidget *>(QStringLiteral("tabWidget"));
+        if (!tabs) {
+            std::fprintf(stderr, "Preferences tab widget not found — cannot grab prefs shots\n");
+            delete prefs;
+            return 1;
+        }
+        for (int i = 0; i < tabs->count(); ++i) {
+            tabs->setCurrentIndex(i);
+            app.processEvents();
+            // Slugify the tab label for the filename (lower-case, spaces
+            // to hyphens) so "Machine Learning" → "machine-learning".
+            QString slug = tabs->tabText(i).toLower();
+            slug.replace(QLatin1Char('&'), QString());
+            slug.replace(QLatin1Char(' '), QLatin1Char('-'));
+            const QString file = QStringLiteral("prefs-%1.png").arg(slug);
+            if (!grabAndSave(prefs, QDir(outDir).filePath(file))) {
+                delete prefs;
+                return 1;
+            }
+        }
+        delete prefs;
     }
 
     return 0;

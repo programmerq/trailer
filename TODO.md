@@ -41,7 +41,7 @@ terms of the user-visible behaviour and the proposed fix.
 > entry (`969d46f docs(roadmap): reframe after PR #24 landing +
 > post-#25 HITL`).
 
-### Thumbnail sidebar still wastes vertical space (Workstream C partial)
+### Thumbnail sidebar row height — fixed rows gap under non-portrait pages (diagnosed 2026-06-03)
 
 The 9beff07 / Workstream C work *did* land in PR #24: the logical
 thumbnail size dropped from `128×160` → `80×100`
@@ -51,23 +51,59 @@ the lower-right corner
 ([src/ui/Sidebar.cpp:94-121](src/ui/Sidebar.cpp:94)), and its
 `sizeHint` returns `iconSize.height() + 2*kThumbVerticalPadding`
 (= 108 px) per item
-([src/ui/Sidebar.cpp:61-66](src/ui/Sidebar.cpp:61)). On paper this
-should make each row tight to the thumbnail.
+([src/ui/Sidebar.cpp:61-66](src/ui/Sidebar.cpp:61)).
 
-In live use the rows still render visibly taller than the thumbnail —
-the user observed wide vertical gaps between thumbnails on a typical
-sidebar width, with each row roughly the *pre*-9beff07 height despite
-the new sizing constants. Something between the delegate's `sizeHint`
-and the actual `QListView` layout is keeping rows tall.
+**Diagnosis (corrects the earlier "rows render taller" theory).** A
+throwaway probe logged the delegate's `sizeHint` against the live
+`QListView::visualRect` for a mixed portrait/landscape deck, at both
+1× and 2× device-pixel ratios. Every row, every time:
+`visualRect.height() == sizeHint.height() == 108`. **Qt honours the
+delegate exactly — rows are never taller than the delegate asks for,
+and DPR is not the cause** (the native-render + `setDevicePixelRatio`
+path keeps the logical thumbnail at 80×100 regardless of DPR; only the
+backing pixels scale 80×100 → 160×200 at 2×). The earlier "something keeps
+rows tall / `SizeHintRole` shadowing / DPR rounding" theory is wrong.
 
-**Repro hints:** instrument `ThumbnailDelegate::sizeHint` to log what
-it returns vs what `m_view->visualRect(index).height()` reports back;
-check whether `Qt::SizeHintRole` is being shadowed by another role
-elsewhere; verify on both 1× and 2× displays in case DPR-rounding in
-`KeepAspectRatio` is leaving slack the delegate doesn't reclaim. If
-sizeHint *is* returning 108 and Qt is honouring it, the gap is visual
-noise (DPR rounding, scrollbar reservation) that needs a delegate-
-level fix.
+The real cause of the visible gaps is **a fixed row height meeting a
+variable page aspect.** `sizeHint` always returns
+`iconSize.height() + 8` (= 108) — sized for a *full-height portrait*
+page. Measured painted-thumbnail heights inside that fixed 108 px row:
+
+| page          | thumb height | gap in row    |
+|---------------|--------------|---------------|
+| A4 portrait   | ~100 px      | 8 px (tight)  |
+| A4 landscape  | ~56 px       | **52 px**     |
+
+A typical **portrait** deck is therefore already tight (8 px is just
+the padding); the wasted space only shows up under **landscape / wide /
+mixed-orientation** pages, whose `KeepAspectRatio` fit is width-limited
+and leaves the bottom of the fixed-tall row empty. The original "wide
+gaps on a typical doc" report was either a mixed/landscape deck or
+predates the current `iconHeight+8` `sizeHint`.
+
+Before / after the proposed fix (mixed deck — blue = portrait, orange
+= landscape):
+
+| Before (current) | After (proposed) |
+|------------------|------------------|
+| ![before](docs/uat/images/thumbnail-rowheight-before.png) | ![after](docs/uat/images/thumbnail-rowheight-after-proposed.png) |
+
+**Recommended fix.** Make `ThumbnailDelegate::sizeHint` per-row:
+return `fittedThumbnailHeight(index) + 2*kThumbVerticalPadding`, where
+the fitted height is the page's aspect scaled into the icon box.
+`uniformItemSizes` is already `false`, so variable row heights are
+supported. To get the aspect *without* rendering every page inside
+`sizeHint`, expose a cheap page size / aspect via a model role
+(PDF: `QPdfDocument::pagePointSize`; image: pixel dimensions) and read
+it in the delegate. Portrait rows are unchanged; landscape rows
+collapse to hug the thumbnail — the "after" image above is exactly
+that, prototyped behind a throwaway env toggle.
+
+**Verdict:** the lowest-value Now #3 paper-cut — effectively a
+non-issue for portrait decks, worth doing for mixed-orientation decks.
+Pair the fix with a UAT that pins `visualRect.height()` ≈ the fitted
+thumbnail height for a landscape page (the 52 px gap is the regression
+oracle).
 
 ### Rectangle annotation rough edges
 
@@ -142,7 +178,7 @@ better than the global default by reading the document's contents:
 - **Many pages → start with thumbnail sidebar open.** A document
   with ≥ K pages (suggest ≥ 20) is one the user will want to
   navigate by thumbnail; auto-popping
-  `Sidebar::Mode::Thumbnails` on first open saves a click. Once
+  `Sidebar::Mode::Pages` on first open saves a click. Once
   the user changes it, three-tier persistence carries forward.
 
 Heuristics should run only when no per-file state is on record; any
@@ -452,16 +488,21 @@ items have landed; the commit hash is in the strikethrough line.
   `MovePageCommand`, `InsertPagesCommand`, and `CropPageCommand`
   (the last one batches an N-page crop into a single undoable
   action). `PdfDocument` keeps undo / redo stacks of `PdfCommand`s
-  parallel to the existing AnnotationStore undo log; the unified
-  `IDocument::undo` / `redo` route to the most-recently-touched
-  stack via an `m_lastUndoSource` heuristic.
+  parallel to the AnnotationStore undo log.
 
-  Better-but-bigger follow-up: merge the AnnotationStore log
-  and the PdfCommand stack into one chronological undo list so
+  ~~Better-but-bigger follow-up: merge the AnnotationStore log
+  and the PdfCommand stack into one chronological undo list.~~
+  Done — `IDocument::undo` / `redo` now pop a per-document
+  chronological log of typed entries (one per committed op), so
   multi-action undo always pops the most recent thing the user
-  did, regardless of which subsystem produced it. The
-  `m_lastUndoSource` heuristic gets it right for the common
-  one-action-back case but not for interleaved sequences.
+  did, regardless of which subsystem produced it. `ImageDocument`
+  uses the same structure for its pixel-snapshot stack. Bounded
+  histories evict in lockstep with the log
+  (`AnnotationStore::historyEvicted` for annotations; local sync
+  in `ImageDocument::pushUndoSnapshot` for pixels), and the
+  dispatch guards log/stack desync at runtime (warn + no-op, not
+  a release-inert assert). The interim last-touched-stack
+  heuristic this replaced is gone.
 
   Other small follow-ups in the same area:
   - Annotation re-indexing on delete/move/insert. The undo
@@ -721,17 +762,15 @@ and any future feature where input variety is the whole point.
 
 ### Cross-cutting polish items
 
-- **Designer / non-technical-user review.** The items above came out of
-  one ~15-minute walkthrough. A focused pass that watches a real user
-  drive the app end-to-end (open a file → markup → sign → save) will
-  surface more of these subtle behaviours. Schedule this before any 1.0
-  polish milestone. Watch for:
-  - Any modal dialog that interrupts work on the document.
-  - Tools that appear enabled but do nothing (or the wrong thing) for
-    the active document type.
-  - Any action that requires the user to already know where to look
-    (hidden toolbars, menu-only entry points for common tasks).
-  - Loss of direct manipulation (things the user made but can't then
-    grab, move, or edit).
-  - Feedback that's too loud (popups) or too quiet (no visible change
-    after a successful action).
+- **Designer / non-technical-user review.** Now codified as the
+  reference-user smoke session — see
+  [`docs/smoke-session.md`](docs/smoke-session.md) for the protocol
+  (fresh build, non-maintainer observer, three open-do-close cycles
+  on a text PDF + scanned PDF + photo, observations land in a dated
+  subsection of this file). The original bullets that lived here —
+  modal dialogs that interrupt, controls enabled-but-noop, hidden
+  entry points, lost direct manipulation, too-loud/too-quiet feedback
+  — are now covered as positive rules in PHILOSOPHY's *How Trailer
+  reduces friction* section. The trigger remains: schedule a smoke
+  session before any 1.0 polish milestone, and opportunistically
+  whenever a willing non-maintainer is in the room.

@@ -48,6 +48,15 @@ on:
 permissions:
   contents: read
 
+# Cap build/test parallelism on the self-hosted trailer-k8s pods: the
+# bare `cmake --build … --parallel` steps honor CMAKE_BUILD_PARALLEL_LEVEL
+# when no explicit job count is given, and unbounded parallelism OOMKilled
+# the linux-build pod. Conservative caps for a green first retry; raise
+# once pod memory headroom is known.
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+  CTEST_PARALLEL_LEVEL: 2
+
 jobs:
   precheck:
     # Read VERSION + emit `is-release-ready` flag. Heavy build jobs
@@ -57,7 +66,7 @@ jobs:
     # already-released check still fails red because that's a real
     # duplicate-release bug.
     name: Pre-flight checks
-    runs-on: ubuntu-24.04
+    runs-on: trailer-k8s
     # Run when: (a) manual dispatch, (b) any push to an RC-labeled PR
     # (opened/synchronize/reopened), or (c) the `release-candidate`
     # label specifically being added. Adding any *other* label to an
@@ -76,7 +85,7 @@ jobs:
       version: ${{ steps.read-version.outputs.version }}
       is-release-ready: ${{ steps.read-version.outputs.is-release-ready }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - id: read-version
         name: Read + validate VERSION
         env:
@@ -101,7 +110,7 @@ jobs:
           # progress" — skip heavy build jobs and warn, instead of
           # turning the PR red.
           IS_RELEASE_READY=true
-          if echo "$VERSION" | grep -qE -- '-dev$|-rc[0-9]*$'; then
+          if echo "$VERSION" | grep -qE -- '-dev(\.[0-9]+)?$|-rc[0-9]*$'; then
             if [ "${{ github.event_name }}" = "pull_request" ]; then
               IS_RELEASE_READY=false
               echo "::warning::VERSION='$VERSION' still carries a -dev/-rc suffix; release-candidate heavy build jobs are skipped. Bump VERSION (and re-run cmake locally to regenerate TrailerVersion.h) to trigger the full build."
@@ -132,21 +141,30 @@ jobs:
           fi
 
   linux-build:
-    needs: [precheck]
+    # UAT gates the per-OS build matrix: a UAT failure short-circuits
+    # the release before any expensive artifact is built (see the
+    # release-uat-before-build backlog item). precheck stays in
+    # `needs:` because the `if:` references needs.precheck.outputs.*;
+    # a plain (non-always()) `if:` still requires every listed need to
+    # succeed, so adding `uat` orders this job after it and fails fast.
+    needs: [precheck, uat]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: Linux build
-    runs-on: ubuntu-24.04
+    runs-on: trailer-k8s
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup-linux-build
 
       - name: ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@v1.2.23
         with:
           key: release-${{ runner.os }}-gcc-linux
           max-size: 500M
+          # Custom trailer-runner image ships an empty apt index, so the
+          # action must run `apt-get update` before `apt-get install ccache`.
+          update-package-index: true
 
       - name: Configure
         # TRAILER_WERROR stays OFF: GCC's -Wnull-dereference and -Wcpp
@@ -178,6 +196,10 @@ jobs:
           cp build/trailer dist/trailer-linux-x86_64/
           cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
              dist/trailer-linux-x86_64/
+          # Ship the verbatim upstream dependency license texts alongside
+          # the portable binary so the tarball carries the same third-party
+          # attribution the .deb/.rpm install under share/doc/trailer.
+          cp -r licenses/third-party dist/trailer-linux-x86_64/
           (cd dist && tar -czf trailer-linux-x86_64.tar.gz trailer-linux-x86_64)
 
       - name: Upload Linux artifact
@@ -187,42 +209,197 @@ jobs:
           path: dist/trailer-linux-x86_64.tar.gz
           retention-days: 30
 
+      - name: Install .deb / .rpm build deps
+        # dpkg-deb ships in the base image; rpmbuild (rpm), patchelf,
+        # dpkg-dev, and file are the extras the --no-docker deb/rpm
+        # packagers need. The trailer-runner image ships an empty apt
+        # index so `apt-get update` must run first. This step lives
+        # inside the already release-gated linux-build job (the job's
+        # `if: needs.precheck.outputs.is-release-ready == 'true'`), so it
+        # never runs on a non-release PR.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y rpm patchelf dpkg-dev file
+
+      - name: Build .deb and .rpm packages
+        # Host-side (no-Docker) packagers, mirroring windows-cross's
+        # dockerless style. QT_PREFIX points at the Qt tree
+        # install-qt-action exported (QT_ROOT_DIR); ORT_PREFIX keeps its
+        # /opt/onnxruntime default so cmake resolves the prebuilt ORT the
+        # runner image bakes in.
+        #
+        # The .deb reuses THIS job's already-built cmake tree via
+        # BUILD_DIR=build: the inner script reconfigures (adds
+        # CMAKE_INSTALL_DOCDIR) + runs an incremental `cmake --build`
+        # (a no-op — objects already built) then `cmake --install` into a
+        # staging DESTDIR, so the Qt app is NOT compiled a second time.
+        # The .rpm packager (rpmbuild) builds in its own copied source
+        # tree under RPMBUILD_TOP and can't reuse build/, but ccache
+        # (warm from the Build step, content-keyed so it hits across the
+        # copied tree) keeps that rebuild cheap. The .rpm's fresh cmake
+        # configure re-resolves ORT from ORT_PREFIX rather than
+        # re-downloading via FetchContent.
+        run: |
+          set -euo pipefail
+          QT_PREFIX="$QT_ROOT_DIR" BUILD_DIR="$PWD/build" \
+            bash scripts/build-linux-deb.sh --no-docker
+          QT_PREFIX="$QT_ROOT_DIR" \
+            bash scripts/build-linux-rpm.sh --no-docker
+          ls -la dist/*.deb dist/*.rpm
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: trailer-linux-deb
+          path: dist/trailer_*_amd64.deb
+          retention-days: 30
+
+      - name: Upload .rpm artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: trailer-linux-rpm
+          path: dist/trailer-*.x86_64.rpm
+          retention-days: 30
+
   windows-cross:
-    needs: [precheck]
+    # UAT gates the per-OS build matrix: a UAT failure short-circuits
+    # the release before any expensive artifact is built (see the
+    # release-uat-before-build backlog item). precheck stays in
+    # `needs:` because the `if:` references needs.precheck.outputs.*;
+    # a plain (non-always()) `if:` still requires every listed need to
+    # succeed, so adding `uat` orders this job after it and fails fast.
+    needs: [precheck, uat]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: Windows cross-build (mingw-w64)
-    runs-on: ubuntu-24.04
+    # Runs directly on the self-hosted trailer-k8s pods — NO Docker.
+    # The pods have no Docker daemon, so the previous `docker build …
+    # docker/windows/Dockerfile` approach can't run here; it's folded
+    # onto the same dockerless path CI's `windows-cross-build` job
+    # proved green (setup-windows-cross composite installs the mingw-w64
+    # + Wine + Qt(win64_mingw) + qpdf toolchain on the runner). The only
+    # release-specific difference from CI is the artifact shape: this job
+    # zips the bundled directory into trailer-windows-x86_64.zip because
+    # release-publish.yml's rename step looks for dist/trailer-windows-
+    # x86_64.zip when promoting a build to a GitHub Release.
+    runs-on: trailer-k8s
+    # Wine is slow on the low-power trailer-k8s Xeons and the first cold
+    # run cross-builds qpdf/libjpeg and downloads Qt (~2.6 GB) before the
+    # cache warms — keep the release-job headroom.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
-      - name: Build Windows image
-        # The Dockerfile pins Qt + qpdf + mingw versions so the
-        # produced trailer.exe matches what scripts/build-windows.sh
-        # produces locally on a developer's Linux box.
-        run: docker build -t trailer-windows -f docker/windows/Dockerfile .
+      - uses: ./.github/actions/setup-windows-cross
 
-      - name: Cross-compile trailer.exe
-        # --in-container skips the docker-build branch since we just
-        # built the image; the script then runs the cmake +
-        # collect_dlls passes that produce build-windows/trailer.exe
-        # alongside every transitively-loaded DLL. The result is a
-        # fully self-contained directory — no separate Qt/qpdf install
-        # needed on the user's Windows machine.
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          # Separate key from the native-gcc linux-build job: this is a
+          # different compiler (mingw-w64 g++) targeting Windows.
+          key: release-windows-cross-mingw
+          max-size: 500M
+          # Custom trailer-runner image ships an empty apt index, so the
+          # action must run `apt-get update` before `apt-get install ccache`.
+          update-package-index: true
+
+      - name: Configure
+        # Same invocation as scripts/build-windows.sh (reusing the
+        # repo's cmake/toolchain-mingw-w64.cmake) plus the two additions
+        # the k8s egress policy forces — the ONNX FetchContent-source
+        # override (the release-asset download 403s through the proxy)
+        # and the ccache launcher. Mirrors CI's windows-cross-build.
+        # TRAILER_WERROR stays OFF (see workflow header).
+        run: >-
+          cmake -S . -B build-win -G Ninja
+          -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/toolchain-mingw-w64.cmake"
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_PREFIX_PATH="$QT_WIN_DIR;$QPDF_DIR"
+          -DQT_HOST_PATH="$QT_HOST_DIR"
+          -Dqpdf_DIR="$QPDF_DIR/lib/cmake/qpdf"
+          -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_PREBUILT="$ORT_WIN_DIR"
+        env:
+          # Pin pkg-config to the mingw sysroot so nothing picks up host
+          # -dev packages and injects -isystem /usr/include into the
+          # mingw compile. Harmless if host libs absent.
+          PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
+
+      - name: Build
+        run: cmake --build build-win --parallel
+
+      - name: Bundle self-contained trailer.exe
+        # Reuse scripts/build-windows.sh's collect_dlls import-table walk
+        # (BFS over the PE import table via objdump). The pre-built
+        # build-win/ already exists, so --in-container skips its
+        # configure branch, runs a no-op incremental build, then copies
+        # trailer.exe + every transitively-loaded DLL + platforms/
+        # qwindows.dll into OUT_DIR. imageformats/ is added on top
+        # (trailer's JPEG export loads qjpeg.dll at runtime; the
+        # import-table walk can't see runtime-loaded plugins).
         run: |
-          docker run --rm -v "$PWD":/work -w /work trailer-windows \
+          set -euo pipefail
+          BUILD_DIR="$PWD/build-win" \
+          OUT_DIR="$PWD/dist/trailer-windows-x86_64" \
+          QT_DIR="$QT_WIN_DIR" \
+          QT_HOST_DIR="$QT_HOST_DIR" \
+          QPDF_DIR="$QPDF_DIR" \
             bash scripts/build-windows.sh --in-container
+          mkdir -p dist/trailer-windows-x86_64/imageformats
+          cp "$QT_WIN_DIR"/plugins/imageformats/*.dll dist/trailer-windows-x86_64/imageformats/
+          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+             dist/trailer-windows-x86_64/
+          # Ship the verbatim upstream dependency license texts inside the
+          # portable zip too, matching what the .msi installs under
+          # licenses\third-party\.
+          cp -r licenses/third-party dist/trailer-windows-x86_64/
+
+      - name: Wine unit tests
+        # Cheap Windows-behaviour insurance before shipping a release:
+        # same `--label-exclude 'uat|perf'` selector CI's windows-cross-
+        # build job runs (26/26 green locally). The UAT tier needs a
+        # windowed platform plugin Wine's offscreen doesn't provide, and
+        # wall-time perf budgets are noise under the Wine emulator — they
+        # run natively on Linux (the project's no-CI-wall-time-gate
+        # ruling). Every test
+        # .exe lands in build-win/ root, so the DLLs it loads must sit
+        # beside it — copy the Bundle step's import-walked DLLs back next
+        # to the exes, then add the two test-only extras the import walk
+        # can't see: Qt6Test.dll (only test binaries link it) and the
+        # runtime-loaded plugin dirs platforms/ + imageformats/.
+        timeout-minutes: 30
+        env:
+          WINEPREFIX: ${{ runner.temp }}/wineprefix
+          WINEDEBUG: -all
+          DISPLAY: ''
+          QT_QPA_PLATFORM: offscreen
+          PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
+        run: |
+          set -euo pipefail
+          wine wineboot --init
+          cmake -S . -B build-win -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/wine
+          cp dist/trailer-windows-x86_64/*.dll build-win/
+          cp "$QT_WIN_DIR/bin/Qt6Test.dll" build-win/
+          mkdir -p build-win/platforms build-win/imageformats
+          cp "$QT_WIN_DIR"/plugins/platforms/qoffscreen.dll \
+             "$QT_WIN_DIR"/plugins/platforms/qminimal.dll \
+             "$QT_WIN_DIR"/plugins/platforms/qwindows.dll build-win/platforms/
+          cp "$QT_WIN_DIR"/plugins/imageformats/*.dll build-win/imageformats/
+          cd build-win
+          ctest -C Release --label-exclude 'uat|perf' --output-on-failure
 
       - name: Stage Windows artifact
+        # Zip the bundled directory into the exact filename
+        # release-publish.yml's rename step expects (dist/trailer-
+        # windows-x86_64.zip). trailer.exe sits at the zip root so
+        # extracting anywhere and running it Just Works, matching the
+        # release notes' Windows instructions. Uses 7z (p7zip-full,
+        # already installed by setup-windows-cross) rather than `zip`,
+        # which isn't in the dep set; `7z a -tzip` from inside the dir
+        # produces the same flat, root-level zip layout.
         run: |
-          # docker writes build-windows/ as root; reclaim ownership
-          # before the host-side cp can write into it.
-          sudo chown -R "$(id -u):$(id -g)" build-windows
-          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
-             build-windows/
-          (cd build-windows && zip -r ../trailer-windows-x86_64.zip .)
-          mkdir -p dist
-          mv trailer-windows-x86_64.zip dist/
+          set -euo pipefail
+          (cd dist/trailer-windows-x86_64 && 7z a -tzip ../trailer-windows-x86_64.zip .)
 
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v7
@@ -231,8 +408,62 @@ jobs:
           path: dist/trailer-windows-x86_64.zip
           retention-days: 30
 
+      - name: Install .msi build deps (wixl / msitools)
+        # wixl and msitools are separate apt packages on Ubuntu noble.
+        # The trailer-runner image ships an empty apt index so
+        # `apt-get update` must run first. This step lives inside the
+        # already release-gated windows-cross job, so it never runs on a
+        # non-release PR.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wixl msitools
+
+      - name: Build Windows .msi
+        # Reuse the mingw cross-build in build-win/ — no second
+        # cross-compile. First re-run the bundler with its DEFAULT OUT_DIR
+        # so build-windows/ holds the clean trailer.exe + DLL +
+        # platforms/qwindows.dll tree that generate-wix-fragment.py walks.
+        # (The earlier Bundle step pointed OUT_DIR at dist/… for the ZIP,
+        # and that tree now also carries LICENSE/README/licenses/… doc
+        # files — wixl must NOT see those as install components, since
+        # generate-wix-fragment.py would emit DirectoryRefs trailer.wxs
+        # never defines and duplicate the license components it already
+        # adds from the repo root.) BUILD_DIR points at the existing
+        # build-win tree so this is an incremental no-op build + a cheap
+        # objdump DLL re-collect, not a recompile. Then
+        # build-windows-msi.sh --no-docker with SKIP_CROSS_BUILD=1 skips
+        # its own cross build and runs wixl over build-windows/.
+        run: |
+          set -euo pipefail
+          BUILD_DIR="$PWD/build-win" \
+          QT_DIR="$QT_WIN_DIR" \
+          QT_HOST_DIR="$QT_HOST_DIR" \
+          QPDF_DIR="$QPDF_DIR" \
+            bash scripts/build-windows.sh --in-container
+          SKIP_CROSS_BUILD=1 bash scripts/build-windows-msi.sh --no-docker
+          ls -la dist/Trailer-*-Windows.msi
+
+      - name: Upload .msi artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: trailer-windows-msi
+          path: dist/Trailer-*-Windows.msi
+          retention-days: 30
+
   macos-build:
-    needs: [precheck]
+    # Gate the expensive GitHub-hosted macOS build behind UAT and the two
+    # self-hosted targets (linux-build + windows-cross) so a flaky-runner
+    # rerun doesn't burn macOS action minutes until UAT passes and the
+    # cheap self-hosted platforms pass. UAT is the primary fail-fast gate
+    # (see the release-uat-before-build backlog item); linux-build and
+    # windows-cross already gate on `uat` too, so listing them here also
+    # transitively orders macos-build after UAT. precheck stays in
+    # `needs:` because the `if:` below references needs.precheck.outputs.*;
+    # a plain (non-always()) `if:` still requires every listed need to
+    # succeed, so adding these jobs is sufficient to order macos-build
+    # after them.
+    needs: [precheck, uat, linux-build, windows-cross]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: macOS .app build (Apple Silicon)
     # macos-14 is Apple Silicon. The artifact is arm64-only because
@@ -243,7 +474,7 @@ jobs:
     runs-on: macos-14
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Qt
         # Keep in lockstep with setup-linux-build's Qt version so CI
@@ -281,10 +512,10 @@ jobs:
     needs: [precheck]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: UAT
-    runs-on: ubuntu-24.04
+    runs-on: trailer-k8s
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Build UAT image
         run: docker build -t trailer-uat -f docker/uat/Dockerfile .
       - name: Run UAT suite
@@ -292,5 +523,7 @@ jobs:
         # + build + ctest -L uat dance with the right Qt platform
         # plugin available.
         run: |
-          docker run --rm -v "$PWD":/work -w /work trailer-uat \
+          docker run --rm -v "$PWD":/work -w /work \
+            -e CMAKE_BUILD_PARALLEL_LEVEL=2 -e CTEST_PARALLEL_LEVEL=2 \
+            trailer-uat \
             bash scripts/run-uat.sh --in-container

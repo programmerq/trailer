@@ -299,15 +299,21 @@ topical tables collects related state under a shared prefix:
   (`recognize_text_in_background`,
   `preload_segmentation_on_tool_activation`, `run_on_battery`).
 
-Settings load on `Application` startup; every mutator calls
-`save()`. Don't introduce a nested table just to group an unrelated
-pair of keys — the tables above each have a clear topical scope
-and a single subsystem that owns them.
+Settings load on `Application` startup. `Settings` is a plain value
+type: setters mutate cached `m_` members and do **not** auto-`save()`.
+Persistence is the caller's job — `PreferencesDialog::accept()` batches
+every changed control and issues a single `save()`, and one-off writers
+(`aboutToQuit` session capture, last-save-dir) call `save()` explicitly.
+Don't introduce a nested table just to group an unrelated pair of keys —
+the tables above each have a clear topical scope and a single subsystem
+that owns them.
 
 **Recipe.** New setting = new top-level key (or new entry under
 the topical table that owns its concern, if one exists), backing
-field on `Settings`, getter + setter that calls `save()`. Grep the
-header to discover all keys; there's no other index.
+field on `Settings`, getter + setter (the setter does not `save()`;
+a caller batches the write). Register the key's volatility (see §15).
+Grep the header to discover all keys; the volatility registry in
+`Settings::volatilityOf` is the one place that must list every key.
 
 **Broken if.** A future setting feels like it needs a *fourth*
 nested table that doesn't fit any of the three existing ones. That's
@@ -528,3 +534,116 @@ one (manifests as "wrong sparkle on Remove Background after a
 fast close-and-reopen"). A `DocumentLifecycle` service that
 generalises this is roadmap-tracked; until it lands, every
 new raw-pointer-keyed cache must hand-subscribe.
+
+---
+
+## 14. Enum switches: no catch-all `default` for domain/mode enums
+
+A `switch` over one of our domain enums (`ViewMode`, `ZoomMode`,
+`DocumentType`, and any future mode/state enum defined in our code)
+MUST enumerate every enumerator explicitly and MUST NOT carry a
+`default:` catch-all. Adding a new enumerator is then a compile
+error at every switch that forgot to handle it — the compiler, not
+code review, keeps the switches exhaustive.
+
+**Anchor files:** `cmake/CompilerWarnings.cmake` (the
+`trailer_set_warnings` function that promotes `-Wswitch` to an
+error), `src/document/IDocument.h` (the `ViewMode` / `ZoomMode` /
+`DocumentType` definitions), `src/document/PdfAdapter.cpp`
+(`applyViewMode`, `applyZoomState`), `src/ui/MainWindow.cpp`
+(`syncViewModeActions`), `src/settings/DocumentTypeDefaults.cpp` and
+`src/recent/RecentFiles.cpp` (`zoomModeKey`),
+`src/document/ImageAdapter.cpp` (`applyZoomState`).
+
+**Pattern.** `trailer_set_warnings` appends `-Werror=switch`
+unconditionally (GCC/Clang; `/we4062` for MSVC) — *not* gated behind
+`TRAILER_WERROR`, so it binds even in the default/CI build where full
+`-Werror` is off. `-Wswitch` (part of `-Wall`) fires only when a
+switch over an enum both omits an enumerator AND has no `default:`.
+Promoting just this one warning to an error makes exhaustive,
+default-less mode switches compiler-enforced without turning on full
+`-Werror`, which stays off because Qt and other third-party headers
+are warning-noisy. A `default:` (or `default: break;`) silences
+`-Wswitch` entirely — which is exactly why it is forbidden for our
+domain enums: it re-opens the silent-swallow hole. Reserve `default:`
+for switches over a genuinely open or non-enum value (a raw `int`, a
+third-party enum you don't own, a bitmask), where a fallback branch
+is legitimate.
+
+**Recipe.** A new switch over one of our enums:
+
+1. Write one `case` per enumerator; no `default:`.
+2. If some cases share behavior, group them
+   (`case A: case B: ...`) rather than reaching for `default:`.
+3. If you need a post-switch fallback (e.g. an unreachable
+   sentinel `return`), put it *after* the closing brace of the
+   switch, not in a `default:` label — the trailing statement does
+   not suppress `-Wswitch`.
+4. Adding an enumerator to the enum: rebuild; the compiler lists
+   every switch that now needs a case.
+
+**Broken if.** A `default:` on a mode/domain-enum switch lets a
+newly added enumerator fall through silently — this is exactly the
+Two-Pages regression that motivated the rule: `applyViewMode` once
+had a catch-all that aliased `ViewMode::TwoPages` onto
+`Continuous`, so the view silently showed a different layout than
+the label promised. With `-Werror=switch` and no `default:`, that
+class of bug is unrepresentable — the build fails until every
+enumerator is handled on purpose.
+
+---
+
+## 15. Every persisted setting is registered live-vs-restart
+
+`Settings` is a plain value type with no signals (§8). A setting
+applies live only because its consumers re-read the getter at use
+time (`Application::openFiles` re-reads `openFilesIn`; auto-save
+re-reads `autoSave`) or because `PreferencesDialog::settingsApplied`
+re-applies it on OK (`recent_max`). A *future* key whose consumer
+reads it once at startup would silently become restart-only, with
+nothing telling the user a restart is needed. This is the
+restart-surprise trap the registry closes.
+
+**Anchor files:** `src/settings/Settings.{h,cpp}`
+(`SettingsKeys`, `Settings::Volatility`, `Settings::volatilityOf`),
+`src/ui/PreferencesDialog.{h,cpp}` (`makeRestartHint`),
+`tests/test_settings_volatility.cpp`.
+
+**Pattern.** Every persisted key has a canonical dotted-path constant
+in the `SettingsKeys` namespace (e.g. `files.recent_max`) and a
+`Volatility` classification (`Live` or `RestartRequired`) in the
+registry backing `Settings::volatilityOf`. Dynamic key groups
+(`first_use.*`) are classified by prefix. `volatilityOf` returns
+`std::nullopt` — and logs — for a key nobody registered. Preferences
+builds every editable row through `PreferencesDialog::makeRestartHint`,
+which appends a muted "Requires restart to take effect" label iff the
+key is `RestartRequired`. Today **every** key is `Live`, so the hint
+never renders and behaviour is unchanged; the machinery is dormant
+until the first `RestartRequired` key.
+
+**Recipe.** Adding a persisted key:
+
+1. Add a `SettingsKeys` constant for its dotted path. Add the section
+   and leaf under its owning TOML table in `load()`/`save()` (these
+   build nested tables from raw literals section-by-section, not from a
+   flat dotted constant), and keep the `SettingsKeys` dotted-path
+   constant byte-identical to that persisted path — `registryCoversEveryPersistedKey`
+   in `tests/test_settings_volatility.cpp` fails if they diverge.
+2. Add a registry entry classifying it `Live` (the default — the
+   consumer re-reads the getter, or OK re-applies it) or
+   `RestartRequired` (the consumer caches it at startup and cannot be
+   re-applied cheaply).
+3. If `RestartRequired`, wire the control's row through
+   `makeRestartHint` (all rows already are) so the hint appears.
+
+**Broken if.** A persisted key is not in the registry.
+`tests/test_settings_volatility.cpp` saves a fully-populated
+`settings.toml`, walks every leaf key it contains, and asserts each
+resolves in `volatilityOf` — so an unregistered key fails the build's
+test stage loudly rather than shipping a silently restart-only
+setting.
+
+One intentional exception: `Settings::load()` still reads the legacy
+`redaction.warning_acknowledged` key, which is deliberately *not* in the
+registry — it is a read-only migration key rewritten under `first_use.`
+on the next `save()` and never queried via `volatilityOf` in production.

@@ -32,26 +32,94 @@ runs:
         cache: true
 
     - name: Install Linux build deps
+      # Auto-detect each dependency before installing so this action
+      # works unchanged on both the stock GitHub/ARC runner image (apt
+      # every run) and a custom image that bakes the toolchain in
+      # (docker/runner/Dockerfile) where every package is already
+      # present and apt is skipped entirely. Each dep is probed with
+      # `dpkg -s` (packages) or `command -v` (tools that may live
+      # outside apt, e.g. cmake in /usr/local); only the missing ones
+      # are installed, and `apt-get update` runs only when there's
+      # something to install.
       shell: bash
       run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          libgl1-mesa-dev \
-          libglu1-mesa-dev \
-          libxkbcommon-dev \
-          libxcb-icccm4 \
-          libxcb-image0 \
-          libxcb-keysyms1 \
-          libxcb-randr0 \
-          libxcb-render-util0 \
-          libxcb-shape0 \
-          libxcb-sync1 \
-          libxcb-xfixes0 \
-          libxcb-xinerama0 \
-          libxcb-xkb1 \
-          libxkbcommon-x11-0 \
-          libcups2-dev \
-          pkg-config \
-          libqpdf-dev \
-          mold \
-          ninja-build
+        set -euo pipefail
+        # Packages Trailer's Linux build needs. Each entry is
+        # "pkg" or "pkg:command" — when a command is given it is
+        # accepted as already-satisfied if `command -v` finds it
+        # (covers tools installed outside apt).
+        # NOTE: libqpdf-dev is intentionally NOT in this generic list —
+        # it's handled by the version-aware block below (a stock jammy
+        # runner's qpdf 10.x satisfies a presence probe but breaks the
+        # link, so presence alone isn't enough). build-essential gives a
+        # stock minimal runner a C++ compiler; the custom runner image
+        # bakes it in, so it's a skip there.
+        deps=(
+          "build-essential:g++"
+          libgl1-mesa-dev
+          libglu1-mesa-dev
+          libxkbcommon-dev
+          libxcb-icccm4
+          libxcb-image0
+          libxcb-keysyms1
+          libxcb-randr0
+          libxcb-render-util0
+          libxcb-shape0
+          libxcb-sync1
+          libxcb-xfixes0
+          libxcb-xinerama0
+          libxcb-xkb1
+          libxkbcommon-x11-0
+          libcups2-dev
+          "pkg-config:pkg-config"
+          "cmake:cmake"
+          "mold:mold"
+          "ninja-build:ninja"
+        )
+        missing=()
+        for entry in "${deps[@]}"; do
+          pkg="${entry%%:*}"
+          cmd=""
+          [ "$entry" != "$pkg" ] && cmd="${entry#*:}"
+          if { [ -n "$cmd" ] && command -v "$cmd" >/dev/null 2>&1; } \
+             || dpkg -s "$pkg" >/dev/null 2>&1; then
+            echo "  preinstalled (skipped): $pkg"
+          else
+            echo "  will install via apt:   $pkg"
+            missing+=("$pkg")
+          fi
+        done
+        # libqpdf-dev, version-aware. A plain presence probe is a footgun
+        # here: jammy's libqpdf-dev IS present but is 10.x, which links
+        # but fails at final link with
+        #   undefined reference to QPDFFormFieldObjectHelper::isChecked()
+        # Trailer's PDF-forms code needs qpdf >= 11 (noble ships 11.9).
+        # So: skip apt ONLY when libqpdf-dev is installed AND its major
+        # version is >= 11. If it's present but < 11, do NOT skip —
+        # queue an install (in case the runner's apt candidate is newer)
+        # AND emit a loud warning, since on a pure-jammy runner the apt
+        # candidate will still be 10.x and the link will fail (fix: use a
+        # noble base image, e.g. docker/runner/Dockerfile, or add a qpdf
+        # >= 11 PPA). If it's absent, just queue it.
+        if dpkg -s libqpdf-dev >/dev/null 2>&1; then
+          qpdf_ver="$(dpkg-query -W -f='${Version}' libqpdf-dev 2>/dev/null || true)"
+          # Strip any epoch ("1:11.9.0" -> "11.9.0") then take the major.
+          qpdf_major="$(printf '%s' "$qpdf_ver" | sed -E 's/^[0-9]+://; s/^([0-9]+).*/\1/')"
+          if [ -n "$qpdf_major" ] && [ "$qpdf_major" -ge 11 ] 2>/dev/null; then
+            echo "  preinstalled (skipped): libqpdf-dev ($qpdf_ver, >= 11 OK)"
+          else
+            echo "::warning::Installed libqpdf-dev is $qpdf_ver (< 11); Trailer's PDF-forms link needs qpdf >= 11 (undefined reference to QPDFFormFieldObjectHelper::isChecked() otherwise). Attempting apt upgrade — if the runner's apt candidate is still < 11 (e.g. a pure Ubuntu 22.04/jammy runner), move to a noble (24.04) base image or add a qpdf >= 11 PPA."
+            echo "  will install via apt:   libqpdf-dev (upgrade from $qpdf_ver)"
+            missing+=(libqpdf-dev)
+          fi
+        else
+          echo "  will install via apt:   libqpdf-dev"
+          missing+=(libqpdf-dev)
+        fi
+        if [ "${#missing[@]}" -eq 0 ]; then
+          echo "All Linux build deps preinstalled — skipping apt-get."
+        else
+          echo "Installing ${#missing[@]} missing dep(s) via apt..."
+          sudo apt-get update
+          sudo apt-get install -y "${missing[@]}"
+        fi

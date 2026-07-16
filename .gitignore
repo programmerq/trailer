@@ -11,7 +11,9 @@ test.pdf
 test-*.pdf
 test-*.png
 test-*.jpg
-.claude/
+.claude/*
+!.claude/settings.json
+!.claude/skills/
 
 # Reviewer-supplied real-world PDFs land in tests/data/ as a
 # personal scratch dir for the developer. They are not committed
@@ -19,6 +21,9 @@ test-*.jpg
 # Top-level *.pdf catches the other casual scratch case too.
 *.pdf
 !resources/**/*.pdf
+# The performance reference corpus is intentionally checked in despite
+# the repo-wide *.pdf ignore (see docs/perf/corpus/README.md).
+!docs/perf/corpus/*.pdf
 tests/data/
 
 # Reference screenshots produced by tools/grab_screenshots. The
@@ -28,3 +33,12 @@ tests/data/
 # (or scripts/build-windows-native.ps1 + grab_screenshots) when you
 # want fresh references to drop into a PR body.
 docs/screenshots/
+
+# G2 UAT evidence screenshots. Working/throwaway captures are never
+# committed — they live only in the session / PR upload flow. Per the
+# 2026-07-15 inline-evidence refinement, the *curated* before/after
+# captures ARE committed under docs/uat/images/ and referenced inline in
+# the PR body (so the merge decision is evidence-visible). Only the
+# throwaway bucket below is ignored; docs/uat/images/ is committable.
+uat-screenshots/
+!docs/uat/images/

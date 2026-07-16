@@ -12,11 +12,26 @@
 
 name: CI
 
+# Least privilege: every job here only checks out the repo and uploads
+# artifacts (which needs no extra token scope), so the workflow's
+# GITHUB_TOKEN gets read-only repository access and nothing else.
+permissions:
+  contents: read
+
 on:
   push:
     branches: [main]
+    # If build-and-test or clang-format ever become *required* checks,
+    # path-skipped PRs would hang on "Expected" — pair this with a
+    # same-name no-op workflow on the inverse paths, or drop paths-ignore.
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
 
 # Cancel an in-progress run when a new commit lands on the same ref —
 # stops PR pushes from queueing up minutes of stale builds.
@@ -24,30 +39,58 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Cap build/test parallelism on the self-hosted trailer-k8s pods: the
+# bare `cmake --build … --parallel` steps honor CMAKE_BUILD_PARALLEL_LEVEL
+# when no explicit job count is given, and unbounded parallelism OOMKilled
+# the release linux-build pod. Conservative caps for a green first retry;
+# raise once pod memory headroom is known.
+env:
+  CMAKE_BUILD_PARALLEL_LEVEL: 2
+  CTEST_PARALLEL_LEVEL: 2
+
 jobs:
+  version-gating:
+    # Fast, dependency-free gate: exercise the real shipped
+    # scripts/test-version-gating.sh, which asserts both the release-
+    # ready gate regex (kept in lockstep with release.yml + release-
+    # autotag.yml) and scripts/bump-version.sh's -dev.N behaviour.
+    # Needs nothing but bash + coreutils, so it stays off the heavy
+    # build path and fails the workflow the moment the regex drifts.
+    name: Version gating
+    runs-on: trailer-k8s
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run version-gating regression tests
+        run: bash scripts/test-version-gating.sh
+
   build-and-test:
     name: Linux build + unit tests
-    runs-on: ubuntu-24.04
-    # Short on purpose — prefer fast fail over patient hang. The
-    # setup-linux-build action installs mold + ninja so the build
-    # uses them by default (~3× faster linking, better parallel job
-    # scheduling than make). ccache hits bring warm runs well under
-    # 5 min; first cold runs land around 12-14 min. Bump if the
-    # post-Qt-bump cold time consistently overshoots.
-    timeout-minutes: 18
+    runs-on: trailer-k8s
+    # Prefer fast fail over patient hang, but the first cold-cache build
+    # on the self-hosted trailer-k8s runners overran 18 min and got
+    # cancelled before ccache was populated. The setup-linux-build action
+    # installs mold + ninja so the build uses them by default (~3× faster
+    # linking, better parallel job scheduling than make). ccache hits
+    # bring warm runs well under 5 min; the first cold run needs headroom
+    # to finish and seed the cache.
+    timeout-minutes: 40
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: ./.github/actions/setup-linux-build
 
       - name: ccache
-        uses: hendrikmuhs/ccache-action@v1.2
+        uses: hendrikmuhs/ccache-action@v1.2.23
         with:
           key: ci-${{ runner.os }}-gcc
           # Cache lives across branches; the action keys by commit and
           # falls back to the closest ancestor, so warm runs skip
           # recompiling unchanged files.
           max-size: 500M
+          # Custom trailer-runner image ships an empty apt index, so the
+          # action must run `apt-get update` before `apt-get install ccache`.
+          update-package-index: true
 
       - name: Configure
         # Warnings-only: TRAILER_WERROR defaults OFF (see workflow
@@ -87,9 +130,149 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
 
+  windows-cross-build:
+    name: Windows cross-build + Wine unit tests
+    # Runs directly on the self-hosted trailer-k8s pods — NO Docker
+    # (the pods have no Docker daemon, so release.yml's Docker-based
+    # windows-cross job can't run here). The setup-windows-cross
+    # composite installs the mingw-w64 + Wine + Qt(win64_mingw) + qpdf
+    # toolchain on the runner instead. Proven end-to-end locally:
+    # trailer.exe cross-links and 26/26 unit tests pass under Wine.
+    runs-on: trailer-k8s
+    # Wine is slow on the low-power trailer-k8s Xeons (~2.5-3 s startup
+    # per test binary; the unit suite runs ~80 s vs ~38 s native). The
+    # first cold run also cross-builds qpdf/libjpeg and downloads Qt
+    # (~2.6 GB) before the cache warms, so give it release-job headroom.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-windows-cross
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          # SEPARATE key from the Linux build-and-test job: this is a
+          # different compiler (mingw-w64 g++) targeting Windows, so its
+          # object cache must not collide with the native gcc one.
+          key: ci-windows-cross-mingw
+          max-size: 500M
+          # Custom trailer-runner image ships an empty apt index, so the
+          # action must run `apt-get update` before `apt-get install ccache`.
+          update-package-index: true
+
+      - name: Configure
+        # Same invocation as scripts/build-windows.sh (reusing the
+        # repo's cmake/toolchain-mingw-w64.cmake) plus two additions the
+        # k8s egress policy forces:
+        #   * -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_PREBUILT overrides
+        #     the ONNX release-asset download (403s through the proxy)
+        #     with the NuGet binaries the composite assembled.
+        #   * ccache launcher, matching the Linux job.
+        # TRAILER_WERROR stays OFF (see workflow header).
+        run: >-
+          cmake -S . -B build-win -G Ninja
+          -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/toolchain-mingw-w64.cmake"
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_PREFIX_PATH="$QT_WIN_DIR;$QPDF_DIR"
+          -DQT_HOST_PATH="$QT_HOST_DIR"
+          -Dqpdf_DIR="$QPDF_DIR/lib/cmake/qpdf"
+          -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_PREBUILT="$ORT_WIN_DIR"
+        env:
+          # Pin pkg-config to the mingw sysroot so nothing picks up host
+          # -dev packages and injects -isystem /usr/include (glibc
+          # headers into a mingw compile). Harmless if host libs absent.
+          PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
+
+      - name: Build
+        run: cmake --build build-win --parallel
+
+      - name: Bundle self-contained trailer.exe
+        # Reuse scripts/build-windows.sh's collect_dlls import-table
+        # walk (BFS over the PE import table via objdump) rather than
+        # reinventing DLL discovery. Pre-configured/built build-win/
+        # already exists, so --in-container skips its configure branch,
+        # runs a no-op incremental build, then copies trailer.exe +
+        # every transitively-loaded DLL + platforms/qwindows.dll into
+        # OUT_DIR. imageformats/ is added on top (trailer's JPEG export
+        # loads qjpeg.dll at runtime; the import-table walk can't see
+        # runtime-loaded plugins).
+        run: |
+          set -euo pipefail
+          BUILD_DIR="$PWD/build-win" \
+          OUT_DIR="$PWD/dist/trailer-windows-x86_64" \
+          QT_DIR="$QT_WIN_DIR" \
+          QT_HOST_DIR="$QT_HOST_DIR" \
+          QPDF_DIR="$QPDF_DIR" \
+            bash scripts/build-windows.sh --in-container
+          mkdir -p dist/trailer-windows-x86_64/imageformats
+          cp "$QT_WIN_DIR"/plugins/imageformats/*.dll dist/trailer-windows-x86_64/imageformats/
+          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+             dist/trailer-windows-x86_64/
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: trailer-windows-x86_64
+          path: dist/trailer-windows-x86_64
+          retention-days: 30
+
+      - name: Wine unit tests
+        # Mirrors the Linux job's selector but also drops the `perf` tier
+        # (`--label-exclude 'uat|perf'`) so this stays a real Windows-
+        # behaviour gate, not a toy: the UAT tier needs a windowed platform
+        # plugin Wine's offscreen doesn't provide, and wall-time perf
+        # budgets are noise under the Wine emulator — they run natively on
+        # Linux (the project's no-CI-wall-time-gate perf ruling).
+        # CMAKE_CROSSCOMPILING_EMULATOR is applied via an incremental
+        # reconfigure (it's baked into CTestTestfile.cmake at generate
+        # time) so ctest launches each .exe under wine.
+        #
+        # Every test .exe lands in build-win/ root, so the DLLs it loads
+        # must sit right beside it — Wine's application-dir search is the
+        # reliable path (WINEPATH proved flaky on the runner). The Bundle
+        # step already walked trailer.exe's import table into the artifact
+        # dir; copy those DLLs back next to the exes, then add the two
+        # test-only extras the import walk can't see: Qt6Test.dll (only
+        # the test binaries link it) and the runtime-loaded plugin dirs
+        # platforms/ + imageformats/ (test_adapters' JPEG-export assertion
+        # needs qjpeg.dll).
+        timeout-minutes: 30
+        env:
+          WINEPREFIX: ${{ runner.temp }}/wineprefix
+          WINEDEBUG: -all
+          DISPLAY: ''
+          QT_QPA_PLATFORM: offscreen
+          # Same mingw-sysroot pin as the Configure step: this
+          # incremental reconfigure re-runs qpdf's pkg_check_modules, so
+          # keep host -dev packages from leaking -isystem /usr/include
+          # into the mingw compile here too.
+          PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
+        run: |
+          set -euo pipefail
+          # One-time headless prefix init in a writable location.
+          wine wineboot --init
+          # Bake the wine emulator into the test commands.
+          cmake -S . -B build-win -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/wine
+          # Runtime DLLs (Qt6*, onnxruntime, qpdf30, mingw runtime, …)
+          # collected next to trailer.exe by the Bundle step.
+          cp dist/trailer-windows-x86_64/*.dll build-win/
+          # Test-only additions the import-table walk misses.
+          cp "$QT_WIN_DIR/bin/Qt6Test.dll" build-win/
+          mkdir -p build-win/platforms build-win/imageformats
+          cp "$QT_WIN_DIR"/plugins/platforms/qoffscreen.dll \
+             "$QT_WIN_DIR"/plugins/platforms/qminimal.dll \
+             "$QT_WIN_DIR"/plugins/platforms/qwindows.dll build-win/platforms/
+          cp "$QT_WIN_DIR"/plugins/imageformats/*.dll build-win/imageformats/
+          cd build-win
+          ctest -C Release --label-exclude 'uat|perf' --output-on-failure
+
+  # disabled 2026-07-09 to conserve Actions usage (2x multiplier); re-enable when needed
   build-and-test-windows:
     name: Windows build + unit tests (MSVC)
     runs-on: windows-2022
+    if: false
     # Native Windows build path. Mirrors what scripts/build-windows-native.ps1
     # does locally: aqtinstall Qt + qpdf MSVC prebuilt + MSVC 2022 +
     # ninja → ctest. This catches Windows-only regressions before
@@ -98,7 +281,7 @@ jobs:
     # like the QTemporaryFile-vs-qpdf write conflict).
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install Qt
         # Pinned to 6.10.3 because aqtinstall 3.3.0 / install-qt-action
@@ -166,14 +349,14 @@ jobs:
 
   clang-format:
     name: clang-format (advisory)
-    runs-on: ubuntu-24.04
+    runs-on: trailer-k8s
     timeout-minutes: 3
     # Advisory only — output goes to the job summary so the diff is
     # visible without bouncing merges. Flip to required once the tree
     # is reliably formatted (post-1.0 / when a pre-commit hook lands).
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Install clang-format
         # Pinned to v14 to match scripts/run-uat.sh and the maintainer's

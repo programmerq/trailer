@@ -8,10 +8,13 @@
 #
 # Output goes to $REPO_ROOT/build-windows/ (gitignored). That
 # directory contains trailer.exe alongside every DLL the binary
-# transitively loads, plus the Qt `platforms/qwindows.dll` plugin. Zip
-# it up and run on Windows.
+# transitively loads (including onnxruntime.dll), plus the Qt
+# `platforms/qwindows.dll` plugin. Zip it up and run on Windows.
 #
-# Not wired into GitHub Actions — invoke manually.
+# Invoked by GitHub Actions (.github/workflows/ci.yml's
+# windows-cross-build job runs this with --in-container directly on the
+# trailer-k8s runner; release.yml runs it inside the Docker image) and
+# runnable manually on any Linux host with the mingw-w64 toolchain.
 
 set -euo pipefail
 
@@ -82,6 +85,25 @@ QT_BIN=${QT_DIR:-/opt/qt/6.10.3/mingw_64}/bin
 QPDF_BIN=${QPDF_DIR:-/opt/qpdf}/bin
 QT_PLUGINS_DIR=${QT_DIR:-/opt/qt/6.10.3/mingw_64}/plugins
 
+# ONNX Runtime's onnxruntime.dll doesn't live in the mingw / Qt / qpdf
+# dirs, so the import-table walk below can't source it from any of
+# them. In CI/local the setup-windows-cross action assembles the NuGet
+# win-x64 binaries at $ORT_WIN_DIR/lib; add that to the search list so
+# collect_dlls finds onnxruntime.dll. (The Docker/release.yml path
+# doesn't set ORT_WIN_DIR — there cmake/OnnxRuntime.cmake's
+# FetchContent + trailer_deploy_onnxruntime POST_BUILD drops the DLL
+# next to the built trailer.exe, which collect_dlls also searches via
+# EXE_DIR below.) Without this, onnxruntime.dll was missing from the
+# shipped dist/ tree — build/ had it via the POST_BUILD copy but the
+# artifact did not, so trailer.exe wouldn't launch on a clean box.
+ORT_BIN=${ORT_WIN_DIR:+${ORT_WIN_DIR}/lib}
+
+# Directory the freshly built trailer.exe lives in, set by run_build.
+# In every context the ORT deploy POST_BUILD copies onnxruntime.dll
+# here, so it's the reliable fallback source when ORT_WIN_DIR is unset
+# (the Docker image path).
+EXE_DIR=""
+
 collect_dlls() {
     # Recursively find every DLL trailer.exe (and the Qt platform
     # plugin) transitively loads, sourcing them from the directories
@@ -101,7 +123,7 @@ collect_dlls() {
         while read -r dll; do
             if [[ -n "${seen[$dll]:-}" ]]; then continue; fi
             local candidate=""
-            for src in "${MINGW_DIRS[@]}" "$QT_BIN" "$QPDF_BIN"; do
+            for src in "${MINGW_DIRS[@]}" "$QT_BIN" "$QPDF_BIN" ${ORT_BIN:+"$ORT_BIN"} ${EXE_DIR:+"$EXE_DIR"}; do
                 if [[ -f "$src/$dll" ]]; then
                     candidate="$src/$dll"
                     break
@@ -153,6 +175,9 @@ run_build() {
         echo "Could not locate trailer.exe under $BUILD_DIR" >&2
         exit 1
     fi
+    # collect_dlls sources onnxruntime.dll from here when ORT_WIN_DIR
+    # isn't set (the ORT deploy POST_BUILD copied it next to the exe).
+    EXE_DIR=$(dirname "$exe")
     cp "$exe" "$OUT_DIR/"
 
     collect_dlls "$OUT_DIR/trailer.exe" "$OUT_DIR"

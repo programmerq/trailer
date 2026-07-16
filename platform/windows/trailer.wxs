@@ -15,7 +15,7 @@
   <Product Id="*"
            Name="Trailer"
            Language="1033"
-           Version="0.1.0"
+           Version="$(var.Version)"
            Manufacturer="Trailer Contributors"
            UpgradeCode="{3FA7A361-D9B2-4F88-B8DC-1F2E9C4A5B30}">
 
@@ -37,9 +37,9 @@
     <!-- Add/Remove Programs metadata -->
     <Property Id="ARPNOREPAIR" Value="1" Secure="yes" />
     <Property Id="ARPNOMODIFY" Value="1" Secure="yes" />
-    <Property Id="ARPURLINFOABOUT" Value="https://example.com/trailer" />     <!-- TODO: real URL -->
-    <Property Id="ARPURLUPDATEINFO" Value="https://example.com/trailer/releases" /> <!-- TODO: real URL -->
-    <Property Id="ARPHELPLINK" Value="https://example.com/trailer/support" /> <!-- TODO: real URL -->
+    <Property Id="ARPURLINFOABOUT" Value="https://github.com/programmerq/trailer" />
+    <Property Id="ARPURLUPDATEINFO" Value="https://github.com/programmerq/trailer/releases" />
+    <Property Id="ARPHELPLINK" Value="https://github.com/programmerq/trailer/issues" />
 
     <!-- ═══════════════════════════════════════════════════
          Directory tree
@@ -351,6 +351,9 @@
       <ComponentRef Id="DesktopShortcutComponent" />
       <ComponentRef Id="CapabilitiesComponent" />
       <ComponentGroupRef Id="DllComponents" />
+      <!-- License / attribution texts (licenses\ subfolder) — emitted by
+           generate-wix-fragment.py alongside DllComponents. -->
+      <ComponentGroupRef Id="LicenseComponents" />
     </Feature>
 
   </Product>

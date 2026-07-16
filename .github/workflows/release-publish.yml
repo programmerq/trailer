@@ -47,14 +47,14 @@ permissions:
 jobs:
   publish:
     name: Attach prior build to GitHub Release
-    runs-on: ubuntu-24.04
+    runs-on: trailer-k8s
     timeout-minutes: 10
     permissions:
       # Required by softprops/action-gh-release to create / update
       # the GitHub Release object and upload assets.
       contents: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Resolve target tag + SHA
         id: target
@@ -132,10 +132,25 @@ jobs:
           # (matching how `--version` and the About dialog print it).
           TAG="${{ steps.target.outputs.tag }}"
           V="${TAG#v}"
+          # The three portable artifacts upload under version-less names;
+          # the native packages embed the version in their filenames
+          # (from the VERSION file), so those src keys interpolate $V.
+          # Every successful Release run builds all six — the package
+          # steps live inside the linux-build / windows-cross jobs, so if
+          # a package build fails the job fails and there is no successful
+          # run for this workflow's find-run (status=success) to promote.
+          # A run that reaches publish therefore always has all six, so
+          # the strict "error if missing" check below stays safe.
+          # Targets use the LOWERCASE trailer- prefix so they match the
+          # `files: dist/trailer-*` glob (the .msi ships as Trailer-… and
+          # is renamed to trailer-… here).
           declare -A renames=(
             [trailer-linux-x86_64.tar.gz]="trailer-${V}-linux-x86_64.tar.gz"
             [trailer-windows-x86_64.zip]="trailer-${V}-windows-x86_64.zip"
             [trailer-macos-arm64.dmg]="trailer-${V}-macos-arm64.dmg"
+            [trailer_${V}-1_amd64.deb]="trailer-${V}-x86_64.deb"
+            [trailer-${V}-1.x86_64.rpm]="trailer-${V}-x86_64.rpm"
+            [Trailer-${V}-Windows.msi]="trailer-${V}-windows-x64.msi"
           )
           for src in "${!renames[@]}"; do
             if [ ! -f "dist/$src" ]; then
@@ -199,26 +214,42 @@ jobs:
 
           ### Windows
 
-          The \`.zip\` contains \`trailer.exe\` alongside every DLL it
-          transitively loads (Qt, qpdf, MinGW runtime) plus the Qt
-          Windows platform plugin. Extract anywhere and run.
+          Two options:
 
-          The \`.msi\` is a signed-by-no-one installer that places
-          Trailer under \`Program Files\`. Smart Screen may warn on
-          first run; click "More info" → "Run anyway".
+          - **Installer (\`.msi\`)** — double-click \`trailer-${V}-windows-x64.msi\`
+            (or \`msiexec /i trailer-${V}-windows-x64.msi\`) to install
+            Trailer, its bundled DLLs, and the upstream license texts into
+            Program Files with a Start-menu entry.
+          - **Portable (\`.zip\`)** — the \`.zip\` contains \`trailer.exe\`
+            alongside every DLL it transitively loads (Qt, qpdf, MinGW
+            runtime) plus the Qt Windows platform plugin. Extract anywhere
+            and run.
+
+          Both are signed-by-no-one, so Smart Screen may warn on first
+          run; click "More info" → "Run anyway".
 
           ### Linux
 
-          The \`.tar.gz\` contains a dynamically-linked binary that
-          expects system Qt 6 + qpdf 11+. On Ubuntu 24.04 (noble):
+          Three options:
 
-              sudo apt install libqt6core6 libqt6gui6 libqt6widgets6 \\
-                               libqt6pdf6 libqt6pdfwidgets6 libqpdf28
+          - **Debian / Ubuntu (\`.deb\`)** — installs a self-contained
+            Trailer (bundled Qt libs, no system-Qt dependency):
 
-          A Debian \`.deb\` and a Fedora 40 \`.rpm\` are also
-          attached; install with \`sudo dpkg -i\` or \`sudo dnf
-          install ./<file>.rpm\`. AppImage / Flatpak distribution is
-          tracked as a separate effort.
+                sudo apt install ./trailer-${V}-x86_64.deb
+                # or: sudo dpkg -i trailer-${V}-x86_64.deb
+
+          - **Fedora / RHEL (\`.rpm\`)**:
+
+                sudo dnf install ./trailer-${V}-x86_64.rpm
+                # or: sudo rpm -i trailer-${V}-x86_64.rpm
+
+          - **Portable (\`.tar.gz\`)** — a dynamically-linked binary that
+            expects system Qt 6 + qpdf 11+. On Ubuntu 24.04 (noble):
+
+                sudo apt install libqt6core6 libqt6gui6 libqt6widgets6 \\
+                                 libqt6pdf6 libqt6pdfwidgets6 libqpdf28
+
+          AppImage / Flatpak distribution remains out of scope for now.
           EOF
 
           echo "body-file=$BODY_FILE" >> "$GITHUB_OUTPUT"

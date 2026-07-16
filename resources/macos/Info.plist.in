@@ -9,6 +9,16 @@
     <string>${MACOSX_BUNDLE_EXECUTABLE_NAME}</string>
     <key>CFBundleIconFile</key>
     <string>${MACOSX_BUNDLE_ICON_FILE}</string>
+    <!--
+        Adaptive (light/dark) app icon — ADR 0009 Option A. Names the
+        AppIcon set compiled from resources/macos/Assets.xcassets into
+        Contents/Resources/Assets.car by actool (see CMakeLists.txt).
+        Coexists with the legacy CFBundleIconFile above: macOS that reads
+        the asset catalog picks up the appearance-adaptive icon, while
+        pre-catalog paths fall back to the static trailer.icns.
+    -->
+    <key>CFBundleIconName</key>
+    <string>AppIcon</string>
     <key>CFBundleIdentifier</key>
     <string>${MACOSX_BUNDLE_GUI_IDENTIFIER}</string>
     <key>CFBundleInfoDictionaryVersion</key>

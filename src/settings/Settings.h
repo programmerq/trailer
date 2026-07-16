@@ -1,10 +1,50 @@
 #pragma once
 
+#include <QAnyStringView>
 #include <QHash>
+#include <QLatin1StringView>
 #include <QString>
 #include <QStringList>
 
+#include <optional>
+
 namespace trailer {
+
+// Canonical dotted key paths for every persisted setting. Both the
+// live-vs-restart registry (Settings::volatilityOf) and the Preferences
+// UI reference these constants to classify a control. load()/save()
+// themselves build nested TOML tables from raw literals rather than
+// these constants; the anti-drift guarantee is instead
+// test_settings_volatility's registryCoversEveryPersistedKey completeness
+// test, which saves a fully-populated file and asserts every persisted
+// key resolves in the registry — so a key's persisted name and its
+// classification cannot drift apart. Nested TOML tables are flattened
+// with '.' (e.g. [ml.scheduler].run_on_battery ->
+// "ml.scheduler.run_on_battery"), matching how that completeness test
+// walks the saved file. See docs/CONVENTIONS.md §15.
+namespace SettingsKeys {
+inline constexpr QLatin1StringView Theme{"general.theme"};
+inline constexpr QLatin1StringView OpenFilesIn{"general.open_files_in"};
+inline constexpr QLatin1StringView LastSaveDir{"general.last_save_dir"};
+inline constexpr QLatin1StringView AutoSave{"files.auto_save"};
+inline constexpr QLatin1StringView RecentMax{"files.recent_max"};
+inline constexpr QLatin1StringView RestorePreviousWindows{"session.restore_previous_windows"};
+inline constexpr QLatin1StringView SessionOpenFiles{"session.open_files"};
+inline constexpr QLatin1StringView MlRecognizeTextInBackground{
+    "ml.scheduler.recognize_text_in_background"};
+inline constexpr QLatin1StringView MlPreloadSegmentationOnToolActivation{
+    "ml.scheduler.preload_segmentation_on_tool_activation"};
+inline constexpr QLatin1StringView MlRunOnBattery{"ml.scheduler.run_on_battery"};
+// Dynamic key group: arbitrary boolean acknowledgements are persisted
+// under the [first_use] table with hand-chosen leaf names, so the
+// registry classifies the whole group by this prefix rather than key
+// by key.
+inline constexpr QLatin1StringView FirstUsePrefix{"first_use."};
+// Test seam: a key that no control ever persists, registered
+// RestartRequired so the restart-hint mechanism can be exercised without
+// reclassifying a real (Live) key. Never written to settings.toml.
+inline constexpr QLatin1StringView RestartProbe{"__test.restart_probe"};
+} // namespace SettingsKeys
 
 // API: these two enums are serialised by their *string* mapping in
 // settings.toml ("new_tab" / "new_window" / "same_window"; "system" /
@@ -27,6 +67,22 @@ enum class Theme {
 
 class Settings {
   public:
+    // Whether a change to a setting takes effect while Trailer is running
+    // (Live) or only after a restart (RestartRequired). Every persisted
+    // key is classified in the registry backing volatilityOf(); a
+    // RestartRequired key surfaces a restart hint in Preferences. Today
+    // every key is Live, so the machinery is dormant until the first
+    // RestartRequired key is added. See docs/CONVENTIONS.md §15.
+    enum class Volatility { Live, RestartRequired };
+
+    // Classify a persisted settings key (a dotted path from
+    // SettingsKeys, e.g. "files.recent_max"). Returns std::nullopt for a
+    // key that is not in the registry — an unregistered persisted key is
+    // exactly the restart-surprise trap, and test_settings_volatility
+    // fails loudly on it. Dynamic key groups (first_use.*) are matched by
+    // prefix.
+    static std::optional<Volatility> volatilityOf(QAnyStringView key);
+
     Settings();
     explicit Settings(QString filePath);
 

@@ -30,6 +30,11 @@ void SelectableTextStore::put(int pageIndex, std::uint64_t contentHash,
 }
 
 void SelectableTextStore::invalidate(int pageIndex) {
+    // Always drop the attempted-and-empty memo for the page so a
+    // force-rerun / edit re-OCRs it (resolves the "force-rerun to empty
+    // leaves a stale skip layer" note). The memo drop alone is not a
+    // "change" worth signalling — only a removed results entry emits.
+    m_attempted.erase(pageIndex);
     auto it = m_entries.find(pageIndex);
     if (it == m_entries.end())
         return;
@@ -39,10 +44,26 @@ void SelectableTextStore::invalidate(int pageIndex) {
 }
 
 void SelectableTextStore::clear() {
-    if (m_entries.empty())
+    const bool hadAttempted = !m_attempted.empty();
+    m_attempted.clear();
+    if (m_entries.empty()) {
+        // Nothing user-visible changed if there were no results, even if
+        // we dropped attempted memos — keep clear()'s existing signal
+        // contract (emit only when a results entry was cleared).
+        (void)hadAttempted;
         return;
+    }
     m_entries.clear();
     emit changed();
+}
+
+void SelectableTextStore::markAttempted(int pageIndex, std::uint64_t contentHash) {
+    m_attempted[pageIndex] = contentHash;
+}
+
+bool SelectableTextStore::wasAttempted(int pageIndex, std::uint64_t contentHash) const {
+    auto it = m_attempted.find(pageIndex);
+    return it != m_attempted.end() && it->second == contentHash;
 }
 
 std::uint64_t SelectableTextStore::contentHashFor(int pageIndex) const {

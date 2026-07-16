@@ -10,14 +10,19 @@
 
 #include "app/Application.h"
 #include "document/IDocument.h"
+#include "platform/Share.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
 
 #include <QAction>
+#include <QClipboard>
+#include <QDir>
 #include <QDockWidget>
+#include <QFile>
 #include <QFileOpenEvent>
 #include <QMenu>
 #include <QMenuBar>
+#include <QMessageBox>
 #include <QPdfWriter>
 #include <QPageSize>
 #include <QImage>
@@ -29,6 +34,8 @@
 #include <QTemporaryFile>
 #include <QToolBar>
 #include <QtTest/QtTest>
+
+#include <memory>
 
 using namespace trailer;
 
@@ -57,6 +64,18 @@ QAction *findMenuAction(QMenuBar *bar, const QString &topText, const QString &it
     return nullptr;
 }
 
+// Walk every QMenu under the menu bar and return the one that hosts the
+// given action. Used to assert the hosting menu has tooltips enabled —
+// a disabled action's tooltip is invisible in the menu unless the menu
+// itself has setToolTipsVisible(true).
+QMenu *menuContainingAction(QMenuBar *bar, QAction *action) {
+    for (QMenu *menu : bar->findChildren<QMenu *>()) {
+        if (menu->actions().contains(action))
+            return menu;
+    }
+    return nullptr;
+}
+
 QStringList topLevelMenuTexts(QMenuBar *bar) {
     QStringList texts;
     for (QAction *a : bar->actions()) {
@@ -64,6 +83,88 @@ QStringList topLevelMenuTexts(QMenuBar *bar) {
             texts << a->text();
     }
     return texts;
+}
+
+// Minimal editable IDocument used by the UAT-FND-014 close-prompt
+// cases. It reports a controllable dirty flag and, on save(), writes a
+// marker payload to its target path and clears dirty — exactly the
+// contract MainWindow's close prompt depends on (save() success +
+// isDirty() flipping to false). Kept in the test so the matrix can be
+// driven deterministically without a real PDF/qpdf round-trip.
+class FakeDoc : public trailer::IDocument {
+  public:
+    FakeDoc(QString path, QString name, QString payload)
+        : m_path(std::move(path)), m_name(std::move(name)), m_payload(std::move(payload)) {}
+
+    QString displayName() const override { return m_name; }
+    QString filePath() const override { return m_path; }
+    QWidget *createView(QWidget *parent) override { return new QWidget(parent); }
+
+    bool supportsEditing() const override { return true; }
+    bool isDirty() const override { return m_dirty; }
+    void setDirty(bool dirty) { m_dirty = dirty; }
+
+    bool save(const QString &newPath = {}) override {
+        const QString target = newPath.isEmpty() ? m_path : newPath;
+        if (target.isEmpty())
+            return false;
+        QFile f(target);
+        if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            return false;
+        f.write(m_payload.toUtf8());
+        f.close();
+        m_path = target;
+        m_dirty = false;
+        ++m_saveCount;
+        return true;
+    }
+
+    int saveCount() const { return m_saveCount; }
+
+  private:
+    QString m_path;
+    QString m_name;
+    QString m_payload;
+    bool m_dirty = false;
+    int m_saveCount = 0;
+};
+
+// Add a FakeDoc to a MainWindow's DocumentView (the same view the close-
+// prompt veto is wired to) and return the raw pointer so the caller can
+// inspect dirty/save state after driving a close.
+FakeDoc *addFakeDoc(MainWindow *mw, const QString &path, const QString &name,
+                    const QString &payload, bool dirty) {
+    auto *dv = mw->findChild<DocumentView *>();
+    auto doc = std::make_unique<FakeDoc>(path, name, payload);
+    doc->setDirty(dirty);
+    FakeDoc *raw = doc.get();
+    dv->addDocument(std::move(doc));
+    QApplication::processEvents();
+    return raw;
+}
+
+// Fire DocumentView's private tab-close slot the same way the tab-bar's
+// close button does (tabCloseRequested → onTabCloseRequested), so the
+// documentCloseRequested veto runs.
+void requestCloseTab(DocumentView *dv, int index) {
+    QMetaObject::invokeMethod(dv, "onTabCloseRequested", Qt::DirectConnection,
+                              Q_ARG(int, index));
+    QApplication::processEvents();
+}
+
+// Directory that persists past the test run (unlike QTemporaryDir) so
+// the G2 evidence PNGs can be collected. Lives under the CTest working
+// directory (the build tree).
+QString screenshotDir() {
+    QDir dir(QDir::current());
+    dir.mkpath(QStringLiteral("uat-screenshots"));
+    return dir.absoluteFilePath(QStringLiteral("uat-screenshots"));
+}
+
+void grabTo(QWidget *w, const QString &name) {
+    const QString path = QDir(screenshotDir()).absoluteFilePath(name);
+    w->grab().save(path, "PNG");
+    qInfo().noquote() << "G2-SCREENSHOT" << path;
 }
 
 QString writeTinyPdf(const QString &path) {
@@ -94,8 +195,21 @@ class TestUatFoundations : public QObject {
     void uat_fnd_020_flashErrorRoutesToStatusBarNotModal();
     void uat_fnd_030_autoSaveWritesDirtyDocsWithPath();
     void uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs();
+    // UAT-FND-014 — closing a dirty tab prompts Save/Discard/Cancel
+    // instead of silently discarding unsaved edits. One slot per row of
+    // the threshold matrix.
+    void uat_fnd_014_closeDirtyTabCancelKeepsDocAndEdits();
+    void uat_fnd_014_closeDirtyTabDiscardDropsDoc();
+    void uat_fnd_014_closeDirtyTabSaveTitledWritesFile();
+    void uat_fnd_014_closeDirtyTabSaveUntitledRoutesThroughSaveAs();
+    void uat_fnd_014_closeDirtyNonLastTabCancelThenDiscard();
+    void uat_fnd_014_closeCleanTabNeverPrompts();
     void uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms();
+    void uat_fnd_041_shareDisabledWithTooltipWhenUnavailable();
+    void uat_fnd_042_twoPagesActionDisabledWithTooltip();
+    void uat_fnd_043_everyMenuWithDisabledTooltipActionRendersTooltips();
     void uat_fnd_050_fileOpenEventOpensWindow();
+    void uat_fnd_070_copyPageAsImageToClipboard();
 
   private:
     QTemporaryDir m_scratch;
@@ -493,11 +607,256 @@ void TestUatFoundations::uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs() {
              "When autoSave setting is off, no save should happen");
 }
 
-// UAT-FND-040 — File → Share is wired up on platforms that have a
-// native share-sheet (macOS via NSSharingServicePicker). Other
-// platforms hide the menu item until xdg-email / WinShare are
-// implemented. This test only checks the action presence; actually
-// firing the picker is platform-modal and not UAT-friendly.
+// UAT-FND-014 — Cancel on the close prompt keeps the dirty document: the
+// tab stays, the doc count is unchanged, and the unsaved edits (dirty
+// flag) survive. No file is written. This is the data-loss guard: the
+// pre-fix code erased the unique_ptr with no prompt.
+void TestUatFoundations::uat_fnd_014_closeDirtyTabCancelKeepsDocAndEdits() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    const QString file = m_scratch.filePath(QStringLiteral("uat_fnd_014_cancel.txt"));
+    QFile seed(file);
+    QVERIFY(seed.open(QIODevice::WriteOnly));
+    seed.write("ORIGINAL");
+    seed.close();
+
+    FakeDoc *doc = addFakeDoc(mw, file, QStringLiteral("cancel-doc"),
+                              QStringLiteral("REWRITTEN"), /*dirty=*/true);
+    QCOMPARE(dv->documentCount(), 1);
+
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+    // Evidence: doc-open-with-dirty-tab state before the close attempt.
+    grabTo(mw, QStringLiteral("fnd014_dirty_tab_open.png"));
+
+    // Evidence: render the Save/Discard/Cancel prompt itself. Offscreen
+    // shows no live modal (the forced-response seam drives the choice),
+    // so we build the identical QMessageBox purely to grab its visual.
+    {
+        QMessageBox box(mw);
+        box.setIcon(QMessageBox::Warning);
+        box.setWindowTitle(QStringLiteral("Unsaved changes"));
+        box.setText(QStringLiteral("Save changes to %1?").arg(doc->displayName()));
+        box.setStandardButtons(QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+        box.setDefaultButton(QMessageBox::Save);
+        box.ensurePolished();
+        box.adjustSize();
+        grabTo(&box, QStringLiteral("fnd014_prompt_save_discard_cancel.png"));
+    }
+
+    requestCloseTab(dv, 0);
+
+    // Cancel must abort the close: doc still present, still dirty.
+    QCOMPARE(dv->documentCount(), 1);
+    QCOMPARE(mw->documentCount(), 1);
+    QCOMPARE(dv->currentDocument(), static_cast<IDocument *>(doc));
+    QVERIFY2(doc->isDirty(), "Cancelling the close must leave edits intact (still dirty)");
+    QCOMPARE(doc->saveCount(), 0);
+
+    // Evidence: the document is still open after Cancel.
+    grabTo(mw, QStringLiteral("fnd014_doc_still_open_after_cancel.png"));
+
+    // On-disk file must be untouched by a Cancel.
+    QFile check(file);
+    QVERIFY(check.open(QIODevice::ReadOnly));
+    QCOMPARE(check.readAll(), QByteArray("ORIGINAL"));
+
+    // Reset the forced-response seam so it can't leak into later slots.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+}
+
+// UAT-FND-014 — Discard drops the dirty document without saving. The tab
+// closes (count 0 → empty state), and the original file on disk is left
+// unchanged.
+void TestUatFoundations::uat_fnd_014_closeDirtyTabDiscardDropsDoc() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    const QString file = m_scratch.filePath(QStringLiteral("uat_fnd_014_discard.txt"));
+    QFile seed(file);
+    QVERIFY(seed.open(QIODevice::WriteOnly));
+    seed.write("ORIGINAL");
+    seed.close();
+
+    FakeDoc *doc = addFakeDoc(mw, file, QStringLiteral("discard-doc"),
+                              QStringLiteral("REWRITTEN"), /*dirty=*/true);
+    QCOMPARE(dv->documentCount(), 1);
+
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
+    requestCloseTab(dv, 0);
+
+    // Discard: the doc is gone.
+    QCOMPARE(dv->documentCount(), 0);
+    QCOMPARE(mw->documentCount(), 0);
+    QCOMPARE(doc->saveCount(), 0);
+
+    // Evidence: empty-state after Discard.
+    grabTo(mw, QStringLiteral("fnd014_empty_state_after_discard.png"));
+
+    // Original file must NOT have been rewritten by a discard.
+    QFile check(file);
+    QVERIFY(check.open(QIODevice::ReadOnly));
+    QCOMPARE(check.readAll(), QByteArray("ORIGINAL"));
+
+    // Reset the forced-response seam so it can't leak into later slots.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+}
+
+// UAT-FND-014 — Save on a titled dirty doc writes the file and closes.
+// The doc reports clean afterwards; the file on disk carries the new
+// payload.
+void TestUatFoundations::uat_fnd_014_closeDirtyTabSaveTitledWritesFile() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    const QString file = m_scratch.filePath(QStringLiteral("uat_fnd_014_save.txt"));
+    QFile seed(file);
+    QVERIFY(seed.open(QIODevice::WriteOnly));
+    seed.write("ORIGINAL");
+    seed.close();
+
+    FakeDoc *doc = addFakeDoc(mw, file, QStringLiteral("save-doc"),
+                              QStringLiteral("REWRITTEN"), /*dirty=*/true);
+    QCOMPARE(dv->documentCount(), 1);
+
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Save);
+    requestCloseTab(dv, 0);
+
+    // Save succeeded → the tab closed.
+    QCOMPARE(dv->documentCount(), 0);
+    QCOMPARE(doc->saveCount(), 1);
+
+    // File on disk carries the new payload.
+    QFile check(file);
+    QVERIFY(check.open(QIODevice::ReadOnly));
+    QCOMPARE(check.readAll(), QByteArray("REWRITTEN"));
+
+    // Reset the forced-response seam so it can't leak into later slots.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+}
+
+// UAT-FND-014 — Save on an UNTITLED dirty doc routes through the Save-As
+// path (chooseSaveAsPath). The harness seeds the destination via
+// setSaveAsPathForTesting; the file is written and the tab closes.
+void TestUatFoundations::uat_fnd_014_closeDirtyTabSaveUntitledRoutesThroughSaveAs() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    const QString target = m_scratch.filePath(QStringLiteral("uat_fnd_014_untitled.txt"));
+    QFile::remove(target);
+
+    // Untitled: empty filePath. Save must route through Save-As.
+    FakeDoc *doc = addFakeDoc(mw, QString(), QStringLiteral("Untitled"),
+                              QStringLiteral("UNTITLED-PAYLOAD"), /*dirty=*/true);
+    QCOMPARE(dv->documentCount(), 1);
+
+    mw->setSaveAsPathForTesting(target);
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Save);
+    requestCloseTab(dv, 0);
+
+    // Save-As routed and wrote → the tab closed.
+    QCOMPARE(dv->documentCount(), 0);
+    QCOMPARE(doc->saveCount(), 1);
+    QVERIFY2(QFileInfo::exists(target),
+             "Untitled Save must route through Save-As and write the chosen path");
+    QFile check(target);
+    QVERIFY(check.open(QIODevice::ReadOnly));
+    QCOMPARE(check.readAll(), QByteArray("UNTITLED-PAYLOAD"));
+
+    mw->setSaveAsPathForTesting(QString());
+    // Reset the forced-response seam so it can't leak into later slots.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+}
+
+// UAT-FND-014 (path c) — closing a NON-last (middle) tab respects the
+// prompt: Cancel keeps both docs; Discard drops only the targeted one
+// and leaves the OTHER intact.
+void TestUatFoundations::uat_fnd_014_closeDirtyNonLastTabCancelThenDiscard() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    const QString fileA = m_scratch.filePath(QStringLiteral("uat_fnd_014_nonlast_a.txt"));
+    const QString fileB = m_scratch.filePath(QStringLiteral("uat_fnd_014_nonlast_b.txt"));
+    FakeDoc *docA = addFakeDoc(mw, fileA, QStringLiteral("doc-A"),
+                               QStringLiteral("A"), /*dirty=*/true);
+    FakeDoc *docB = addFakeDoc(mw, fileB, QStringLiteral("doc-B"),
+                               QStringLiteral("B"), /*dirty=*/false);
+    QCOMPARE(dv->documentCount(), 2);
+
+    // Cancel closing the dirty non-last tab (index 0) → both survive.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+    requestCloseTab(dv, 0);
+    QCOMPARE(dv->documentCount(), 2);
+    QVERIFY(docA->isDirty());
+
+    // Discard closing the same dirty non-last tab → only doc-B remains.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
+    requestCloseTab(dv, 0);
+    QCOMPARE(dv->documentCount(), 1);
+    IDocument *survivor = nullptr;
+    QVERIFY(dv->documentAt(0, &survivor));
+    QCOMPARE(survivor, static_cast<IDocument *>(docB));
+    QCOMPARE(survivor->displayName(), QStringLiteral("doc-B"));
+
+    // Reset the forced-response seam so it can't leak into later slots.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+}
+
+// UAT-FND-014 — a CLEAN document closes with NO prompt. Proven by forcing
+// the response to Cancel: if the prompt were consulted the doc would be
+// vetoed and stay, but because the isDirty() guard short-circuits before
+// confirmCloseDirtyDoc, the clean doc closes regardless.
+void TestUatFoundations::uat_fnd_014_closeCleanTabNeverPrompts() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    const QString file = m_scratch.filePath(QStringLiteral("uat_fnd_014_clean.txt"));
+    FakeDoc *doc = addFakeDoc(mw, file, QStringLiteral("clean-doc"),
+                              QStringLiteral("X"), /*dirty=*/false);
+    QCOMPARE(dv->documentCount(), 1);
+
+    // Force Cancel: a clean doc must ignore it (never prompts) and close.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+    requestCloseTab(dv, 0);
+
+    QCOMPARE(dv->documentCount(), 0);
+    QCOMPARE(doc->saveCount(), 0);
+
+    // Reset the forced-response seam so it can't leak into later slots.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+}
+
+// UAT-FND-040 — File → Share is ALWAYS present in the File menu. On
+// platforms that have a native share-sheet (macOS via
+// NSSharingServicePicker) it is enabled and wired; elsewhere it is
+// present-but-disabled with an explanatory tooltip (owner policy:
+// unavailable capabilities are disabled + explained, never hidden).
+// This test only checks presence; firing the picker is platform-
+// modal and not UAT-friendly.
 void TestUatFoundations::uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms() {
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
@@ -506,13 +865,145 @@ void TestUatFoundations::uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms() 
 
     QAction *shareAction =
         findMenuAction(mw->menuBar(), QStringLiteral("&File"), QStringLiteral("&Share…"));
-#ifdef Q_OS_MACOS
-    QVERIFY2(shareAction, "File → Share… should be present on macOS where the "
-                          "NSSharingServicePicker implementation lives");
-#else
-    QVERIFY2(!shareAction, "File → Share… is hidden on platforms whose ShareService "
-                           "stub returns isAvailable() == false");
-#endif
+    QVERIFY2(shareAction, "File → Share… must always be present in the File menu "
+                          "(disabled + tooltip when unavailable, never hidden)");
+}
+
+// UAT-FND-041 — When ShareService::isAvailable() is false (Linux /
+// Windows stub), the always-present Share action must be shown
+// disabled with a non-empty tooltip that points the user at the real
+// alternative, rather than silently vanishing.
+void TestUatFoundations::uat_fnd_041_shareDisabledWithTooltipWhenUnavailable() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+
+    QAction *shareAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&File"), QStringLiteral("&Share…"));
+    QVERIFY2(shareAction, "File → Share… must always exist");
+
+    if (ShareService::isAvailable()) {
+        QSKIP("ShareService is available on this platform; disabled-state case "
+              "does not apply.");
+    }
+
+    QVERIFY2(!shareAction->isEnabled(),
+             "Share must be disabled when ShareService is unavailable");
+    QVERIFY2(!shareAction->toolTip().isEmpty(),
+             "Disabled Share must carry an explanatory tooltip pointing at the "
+             "alternative");
+
+    // A tooltip is only actually shown in the menu if the hosting menu has
+    // tooltips enabled — otherwise the "disabled + explanation" policy is
+    // only half-delivered (invisible on hover).
+    QMenu *hostMenu = menuContainingAction(mw->menuBar(), shareAction);
+    QVERIFY2(hostMenu, "Could not locate the menu hosting the Share action");
+    QVERIFY2(hostMenu->toolTipsVisible(),
+             "The File menu must call setToolTipsVisible(true) so the disabled "
+             "Share tooltip is actually rendered on hover");
+}
+
+// UAT-FND-042 — View → Two Pages is an unbuilt capability: QPdfView
+// has no facing/two-up layout. Per owner policy the action must be
+// present but disabled with an explanatory tooltip, never silently
+// aliasing another layout.
+void TestUatFoundations::uat_fnd_042_twoPagesActionDisabledWithTooltip() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+
+    QAction *twoPages =
+        findMenuAction(mw->menuBar(), QStringLiteral("&View"), QStringLiteral("Two Pages"));
+    QVERIFY2(twoPages, "View → Two Pages action must be present");
+    QVERIFY2(!twoPages->isEnabled(),
+             "Two Pages must be disabled while a real facing layout is unbuilt");
+    QVERIFY2(!twoPages->toolTip().isEmpty(),
+             "Disabled Two Pages must carry an explanatory tooltip");
+
+    // The tooltip is only visible on hover if the hosting menu enables
+    // tooltips — assert the View menu does so.
+    QMenu *hostMenu = menuContainingAction(mw->menuBar(), twoPages);
+    QVERIFY2(hostMenu, "Could not locate the menu hosting the Two Pages action");
+    QVERIFY2(hostMenu->toolTipsVisible(),
+             "The View menu must call setToolTipsVisible(true) so the disabled "
+             "Two Pages tooltip is actually rendered on hover");
+}
+
+// UAT-FND-043 — Generalized "no lying controls" guard (Gate G3).
+//
+// uat_fnd_041 (Share) and uat_fnd_042 (Two Pages) each pin one specific
+// action: disabled + explanatory tooltip + host menu has toolTipsVisible.
+// The regression they guard against is structural, though — ANY new menu,
+// or an action moved to a menu that forgot setToolTipsVisible(true), would
+// silently swallow its "here's why this is greyed out / where to go
+// instead" tooltip. This test generalizes the pair: it sweeps EVERY menu
+// reachable under the menu bar (top-level menus and their submenus) and,
+// for every disabled action that carries an explanatory tooltip, asserts
+// the hosting menu actually renders tooltips. It is the general invariant;
+// 041/042 remain as named traceability anchors.
+void TestUatFoundations::
+    uat_fnd_043_everyMenuWithDisabledTooltipActionRendersTooltips() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    // Scope: this sweep runs against the no-document window state, which
+    // maximises the number of disabled capability actions (Share on
+    // unsupported platforms, Two Pages, Copy Page as Image, Recognize
+    // Text, …), so the sweep has real work to do. Disabled+explained
+    // actions that surface only with a document open are covered
+    // transitively: their host menus already contain a helper-created
+    // action here, so the per-menu tooltip-rendering invariant this test
+    // asserts already holds for those menus.
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    QApplication::processEvents();
+
+    // QAction::toolTip() falls back to a synthesised label when no tooltip
+    // is set explicitly — Qt strips the mnemonic '&' AND a trailing ellipsis
+    // ("Save &As…" -> "Save As"), so a hand-rolled '&'-strip would mis-flag
+    // ellipsis items. To match Qt's fallback exactly (and stay version-proof)
+    // we ask Qt itself: a throwaway action with the same text and no explicit
+    // tooltip yields precisely that fallback. An action carries a real
+    // *explanation* only when its tooltip differs from that fallback — that is
+    // the G3-relevant set.
+    auto carriesExplanation = [](const QAction *action) {
+        const QString tip = action->toolTip();
+        if (tip.isEmpty())
+            return false;
+        const QAction fallbackProbe(action->text(), nullptr);
+        return tip != fallbackProbe.toolTip();
+    };
+
+    // findChildren<QMenu*> is recursive, so this reaches submenus (Open
+    // Recent, Forms, …) as well as the top-level menus.
+    const QList<QMenu *> menus = mw->menuBar()->findChildren<QMenu *>();
+    QVERIFY2(!menus.isEmpty(), "Expected the menu bar to contain menus");
+
+    int disabledExplainedActions = 0;
+    for (QMenu *menu : menus) {
+        for (QAction *action : menu->actions()) {
+            if (action->isSeparator() || action->menu() != nullptr)
+                continue;
+            if (action->isEnabled() || !carriesExplanation(action))
+                continue;
+            ++disabledExplainedActions;
+            const QString msg =
+                QStringLiteral(
+                    "G3 violation: menu \"%1\" hosts disabled action \"%2\" "
+                    "with explanatory tooltip \"%3\" but does NOT call "
+                    "setToolTipsVisible(true) — the explanation is invisible "
+                    "on hover.")
+                    .arg(menu->title(), action->text(), action->toolTip());
+            QVERIFY2(menu->toolTipsVisible(), qPrintable(msg));
+        }
+    }
+
+    // Guard against the sweep silently passing because it found nothing to
+    // check (e.g. a fixture change that stops surfacing disabled actions).
+    QVERIFY2(disabledExplainedActions > 0,
+             "Expected at least one disabled+explained action to sweep; the "
+             "test would be vacuous otherwise");
 }
 
 // UAT-FND-050 — Synthesize the QFileOpenEvent macOS dispatches when
@@ -548,6 +1039,70 @@ void TestUatFoundations::uat_fnd_050_fileOpenEventOpensWindow() {
     MainWindow* mw = currentMainWindow();
     QVERIFY(mw);
     QCOMPARE(mw->documentCount(), 1);
+}
+
+// UAT-FND-070 — Copy Page as Image puts a rendered page on the clipboard.
+//
+// The end-of-session flow: mark up a page, then copy it to paste into a
+// chat app. Edit > Copy Page as Image renders the current page / image
+// and pushes it to the system clipboard.
+void TestUatFoundations::uat_fnd_070_copyPageAsImageToClipboard() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writeTinyPdf(m_scratch.filePath("uat_fnd_070.pdf"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+
+    QClipboard *clip = QApplication::clipboard();
+    QVERIFY(clip);
+    clip->clear();
+    QVERIFY(clip->image().isNull());
+
+    QAction *copyPage = findMenuAction(mw->menuBar(), QStringLiteral("&Edit"),
+                                       QStringLiteral("Copy Page as &Image"));
+    QVERIFY2(copyPage, "Edit > Copy Page as Image action not found");
+    QVERIFY2(copyPage->isEnabled(), "Copy Page as Image should be enabled for a PDF");
+
+    copyPage->trigger();
+    QApplication::processEvents();
+
+    const QImage copied = clip->image();
+    QVERIFY2(!copied.isNull(), "Copy Page as Image must place an image on the clipboard");
+    QVERIFY(copied.width() > 0 && copied.height() > 0);
+
+    // G3: when the action is unavailable it must be disabled and carry an
+    // explanatory tooltip that is actually visible in the menu — the same
+    // pattern uat_fnd_041 (Share) and uat_fnd_042 (Two Pages) enforce. An
+    // empty-state window (no rasterisable document) is the disabled case.
+    MainWindow *empty = app->ensureFreshWindow();
+    QVERIFY(empty);
+    QApplication::processEvents();
+
+    QAction *disabledCopy = findMenuAction(empty->menuBar(), QStringLiteral("&Edit"),
+                                           QStringLiteral("Copy Page as &Image"));
+    QVERIFY2(disabledCopy, "Edit > Copy Page as Image action not found in empty window");
+    QVERIFY2(!disabledCopy->isEnabled(),
+             "Copy Page as Image must be disabled when no page raster is available");
+    QVERIFY2(!disabledCopy->toolTip().isEmpty(),
+             "Disabled Copy Page as Image must carry an explanatory tooltip");
+    // Qt synthesises a default tooltip equal to the action text with the
+    // mnemonic '&' stripped; the explanatory tooltip must differ from that.
+    QString plainLabel = disabledCopy->text();
+    plainLabel.remove(QLatin1Char('&'));
+    QVERIFY2(disabledCopy->toolTip() != plainLabel,
+             "Disabled Copy Page as Image tooltip must be an explanatory string, "
+             "not Qt's default fallback to the action text");
+
+    QMenu *hostMenu = menuContainingAction(empty->menuBar(), disabledCopy);
+    QVERIFY2(hostMenu, "Could not locate the menu hosting the Copy Page as Image action");
+    QVERIFY2(hostMenu->toolTipsVisible(),
+             "The Edit menu must call setToolTipsVisible(true) so the disabled "
+             "Copy Page as Image tooltip is actually rendered on hover");
 }
 
 // Custom main: we need to set HOME (and XDG vars) before constructing

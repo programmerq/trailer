@@ -67,6 +67,214 @@ rejected, regardless of how cleanly it implements its stated feature.
 If a feature you're asked to implement seems to brush against any of
 these, stop and ask in the PR description before writing code.
 
+## Hard gates — what "Done" requires
+
+The constraints above say what Trailer *won't* do. These gates say what a
+PR must *carry with it* before it can be marked Done. They are pass/fail:
+each has a one-line rule, an objective test the reviewer (or you) can run,
+and the evidence artifact the PR must contain. A PR missing the required
+artifact is Not Done, regardless of how well the code works. These encode
+decisions ratified through the decision-record process (arbiter role per
+record; the owner is the escalation-only override); the reasoning lives in
+[`PHILOSOPHY.md`](PHILOSOPHY.md) and [`DESIGN.md`](DESIGN.md), and
+value/default changes are backed by records in
+[`docs/decision-records/`](docs/decision-records/).
+
+> These gates apply to the work in front of you — a PR that only touches
+> internals and reshapes no user-visible surface trips none of the UX
+> gates. Read each gate's test; if it doesn't apply, say so in the PR and
+> move on. Don't manufacture stub UI or screenshots to satisfy a gate that
+> isn't triggered.
+
+> **Before you push:** run the [`review-before-push`](.claude/skills/review-before-push/SKILL.md)
+> skill — 1-2 local reviewer passes with contrasting personas over the diff,
+> every finding dispositioned (fix / justify / defer-with-record) — before any
+> `git push` or PR. Before escalating open questions to the owner, run the
+> [`decision-brief`](.claude/skills/decision-brief/SKILL.md) skill: self-decide
+> everything the gates and records already derive, escalate only the genuine
+> forks.
+
+### G1 — Threshold declared before work begins
+
+- **Rule:** Every work item states a checkable pass/fail threshold before
+  implementation starts. "Make scrolling smooth" is not a threshold;
+  "scroll-step paints within the budget in `docs/performance-budgets.md`"
+  is.
+- **Test:** The PR description, the linked TODO/issue, or a cited
+  **accepted** decision record records a measurable acceptance line — a
+  number, a behaviour phrased as an observable pass/fail (a state a
+  reviewer can reach and confirm), or a named budget/spec row.
+  **"Concrete"** means expressed as an observable pass/fail, not a quality
+  adjective: "the disabled control shows a tooltip" is concrete;
+  "scrolling feels responsive" is not.
+- **Evidence:** The threshold text, recorded in the PR description or the
+  linked work item, phrased so a reviewer can independently declare pass
+  or fail. See PHILOSOPHY → *Every work item carries a checkable
+  threshold*.
+
+### G2 — UX-Done: screenshots of every affected state
+
+- **Rule:** No PR that adds, removes, or reshapes a user-visible state
+  merges without screenshots of each affected state, compared against the
+  threshold declared under G1.
+- **Test:** For each **affected state** there is a screenshot in the PR
+  body, and a one-line verdict tying it to the declared threshold or the
+  relevant persona lens. An **affected state** is each UI state whose
+  appearance or available controls changed as a result of the diff, plus
+  each empty / loading / error state reachable from those changed states.
+  (Pre-existing states the diff does not touch are out of scope. If a
+  state is arguably affected, capture it.)
+- **Evidence:** The screenshots themselves, referenced in the PR body.
+  Where a platform shows **no window** for an affected state — the macOS
+  empty state per DESIGN §2.4.2 — the required artifact is a screenshot of
+  the dock icon + menu bar plus the open panel on activation, in place of
+  a window capture (the G5-style note). This is the per-item roll-up of
+  the milestone audit in DESIGN §2.5.3 — satisfying G2 per PR satisfies
+  that audit; there is not a second screenshot regime.
+- **Inline committed evidence (2026-07-15 refinement):** Curated UAT
+  evidence is committed under `docs/uat/images/` and referenced **inline**
+  in the PR body (e.g. a `raw.githubusercontent.com` URL pinned to the
+  commit SHA, so the image renders on the PR page) — the merge decision
+  must be evidence-visible, i.e. what the owner merges is what the owner
+  saw, not evidence produced only in a session or attached to chat.
+  Working/throwaway captures are **not** committed — they stay gitignored
+  (`uat-screenshots/`, `docs/screenshots/`); only the curated, referenced
+  images land in `docs/uat/images/`.
+- **Capture method (ruled):** G2 evidence is captured by offscreen
+  `QWidget::grab()` / `QQuickWindow::grabWindow` in the test harness under
+  `QT_QPA_PLATFORM=offscreen` (the `widget->grab()` hybrid described in
+  *Screenshots for UI-visible changes* below) — **not** manual screenshots.
+  Offscreen grabs are the accepted, expected method; a manual screenshot is
+  a fallback only where the state cannot be reached offscreen, and the PR
+  says so. This resolves the former open question; a real event-loop/window
+  render is not required.
+
+### G3 — No lying controls
+
+- **Rule:** A control that is present in the surface but can't act right
+  now is disabled with a `setToolTip(...)` that states **why** it is
+  disabled, and **where to go** when there is a next step (when the
+  format itself can't support the operation and there is nowhere to go,
+  "why" alone suffices). Substituting a *different* behaviour and
+  presenting it as the one the user asked for is forbidden — permanently.
+- **Test:** No code path *introduced or modified by this diff* silently
+  swaps a requested action for a nearest-equivalent. Every
+  surfaced-but-inert control is `setEnabled(false)` + tooltip. (Scope:
+  this applies to controls that *exist* in the surface. It is **not** a
+  mandate to add disabled stubs for roadmap features that have no UI yet.)
+- **Evidence:** For a PR that adds or gates such a control, a screenshot
+  of the disabled state showing the tooltip (rolls into G2). The word
+  "silently" is disambiguated in PHILOSOPHY → *No lying controls*:
+  dropping a failed/low-quality result the user can retry, and the
+  documented PDF round-trip subtype drop (DESIGN §6.3.1), are *drops*,
+  not substitutions, and remain allowed.
+
+### G4 — Platform-native shape, no feature dropped
+
+- **Rule:** Adapt a feature's *shape* to each OS's native command surface;
+  never drop a feature on one OS because that OS shapes it differently.
+- **Test:** The feature is reachable on macOS, Windows, and Linux. If its
+  surface differs per OS (global menu bar vs in-window menu bar vs header
+  bar), that is expected and fine; a feature reachable on one OS and
+  absent on another fails the gate. The concrete, checkable per-OS
+  command-surface reference — menu structure, the unified 1:1 shortcut
+  mapping, command-surface placement, save-model conventions — is
+  [`docs/platform-conventions.md`](docs/platform-conventions.md). See
+  DESIGN §2.1 goal 3, DESIGN §5.4, and PHILOSOPHY → *Platform-native per
+  OS*.
+- **Evidence:** The PR states, per platform, **the shape the feature
+  takes** — which command surface it lives in (global menu bar / in-window
+  menu bar / header bar) — and screenshots it on each platform where it
+  has a visible UI state (rolls into G2). Where only one host is available
+  to the author, note which platforms were verified with a screenshot and
+  which are asserted from the shared code path, naming the shared
+  entry-point `file:line` that guarantees reachability. An assertion of
+  cross-platform parity alone, with no per-OS shape stated, does not pass.
+
+### G5 — Empty state is platform-correct
+
+- **Rule:** First-run / no-document state follows the platform contract
+  in DESIGN §2.4.2: macOS shows **no window** (dock icon + menu bar; open
+  panel on activation); Windows/Linux show an empty window with
+  Open/Recent and a centered drop-target.
+- **Test:** Launch with no file argument on each platform; observe the
+  state matches the §2.4.2 contract for that OS.
+- **Evidence:** Screenshot (or, on macOS, a note that no window appears
+  plus a menu-bar capture) of the empty state per available platform
+  (rolls into G2).
+
+### G6 — Behaviour/threshold changes carry a decision record
+
+- **Rule:** A change to a user-visible default, or to a threshold that
+  changes behaviour, references an **accepted** record (status:
+  `accepted`) in `docs/decision-records/`. A change is to a **user-visible
+  default** if a user could observe different behaviour, output, or
+  appearance *without reading code or logs*; a **pure internal tuning**
+  changes nothing a user could observe and needs only the in-code
+  rationale comment required by PHILOSOPHY → *Hand-tuned values stay
+  hand-tuned*. Only the former triggers this gate.
+- **Test:** The magic constant still carries its in-code comment (what it
+  represents, range tried, symptom to change); if the change is
+  user-visible, an ADR with status `accepted` exists and cites the
+  constant's `file:line` rather than duplicating the comment. A change
+  gated on a still-`proposed` record is **Not Done** until that record is
+  adjudicated to `accepted`.
+- **Evidence:** Link to the accepted ADR in the PR, and the updated
+  in-code rationale in the diff.
+
+### G7 — Preferences pane is a 1.0 gate
+
+- **Rule:** A GUI Preferences/Settings pane (DESIGN §6.13) that a
+  non-technical user can reach and operate is a hard requirement for 1.0.
+- **Test:** Before 1.0 is declared, the settings window in DESIGN §6.13
+  exists and is reachable from the standard platform location (⌘, on
+  macOS; Edit/Tools → Preferences on Windows/Linux); **each pane
+  enumerated in §6.13 is present**, and **each control persists its value
+  across relaunch** (consistent with never-worry-save). "Operate" means a
+  control changes its setting and the setting survives a restart — not
+  merely that the window opens. Verified by launching, changing one
+  control per pane, and confirming the value round-trips after relaunch.
+- **Evidence:** At the 1.0 milestone, a screenshot of the running
+  Preferences window showing the §6.13 panes present, plus the
+  persist-across-relaunch check. Tracked as a release blocker, not a
+  per-PR gate.
+
+### G8 — Accessibility at the dogfood-default milestone
+
+- **Rule:** The accessibility surface (DESIGN §6.12) is scheduled to be
+  in place by the dogfood-default milestone — the point at which Trailer
+  becomes the maintainer's own default app for these files. That milestone
+  is **owner-declared and observable**: it is active once the owner adds a
+  `dogfood-default` marker to the repo (a dated `dogfood-default` entry in
+  [`ROADMAP.md`](ROADMAP.md) / the changelog, or a git tag named
+  `dogfood-default`), so an agent reviewing a PR can objectively tell
+  whether the gate is live. Until that marker exists, **G8 is dormant** —
+  an agent treats it as the per-PR no-regress rule below and nothing more.
+- **Test:** Once the marker exists, run the checklist in
+  [`docs/accessibility-checklist.md`](docs/accessibility-checklist.md)
+  against the running app; every row (WCAG AA contrast, full keyboard
+  operability with visible focus, AT labels on every actionable control,
+  Reduce-Motion honoured, ≥200% text scaling, minimum control target size,
+  no colour-as-sole-signal) must pass.
+- **Evidence:** The completed
+  [`docs/accessibility-checklist.md`](docs/accessibility-checklist.md),
+  run against the running app, attached at the milestone. Not a per-PR
+  gate before the marker exists, but no PR may *regress* an
+  already-shipped accessibility affordance.
+
+### G9 — Frugality budget (proposed)
+
+- **Rule:** Binary size and resident memory stay inside the envelopes in
+  [`docs/performance-budgets.md`](docs/performance-budgets.md); the ML
+  runtime (ONNX + downloaded-on-first-use weights) is the one standing
+  exception, because the weights are not bundled.
+- **Test:** Measured binary size and RSS for the standard flows sit under
+  the budgeted values once those values are ratified.
+- **Evidence:** The measured numbers in the PR when a change plausibly
+  moves them (a new dependency, a bundled asset). **This gate is
+  PROPOSED** — the budget numbers await owner ratification; until then it
+  is advisory, not blocking.
+
 ## Build
 
 ```sh
@@ -74,7 +282,7 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build -j
 ```
 
-Requirements: CMake 3.24+, Qt 6.5+ with `Core Gui Widgets Test Pdf
+Requirements: CMake 3.24+, Qt 6.6+ with `Core Gui Widgets Test Pdf
 PdfWidgets PrintSupport`, qpdf 11+, a C++20 compiler. `qtpdf` is a
 separate module in many Qt distributions — install it explicitly if
 `find_package(Qt6 COMPONENTS Pdf)` fails (see README).
@@ -255,14 +463,17 @@ Drop the PNGs into the PR body via GitHub's drag-and-drop upload (or
 attach via `gh pr edit --body-file`); do not commit screenshots into
 the repo unless they are reference/design artefacts.
 
-**Undo.** Two undo stacks coexist:
+**Undo.** One chronological log per document, two payload stacks:
 - `AnnotationStore` for annotation create/modify/delete.
 - `PdfCommand` (in `src/document/PdfCommands.h`) for page-level qpdf
-  mutations.
+  mutations (pixel snapshots play this role in `ImageDocument`).
 
-The unified `IDocument::undo` / `redo` routes to the most-recently-touched
-stack via an `m_lastUndoSource` heuristic. This is fragile — see TODO.md
-"PDF undo/redo — rotate done, others scoped."
+`IDocument::undo` / `redo` pop the document's chronological log, which
+records one typed entry per committed operation, so the most recent op
+is always reverted first regardless of stack. Bounded histories evict
+in lockstep with the log (`AnnotationStore::historyEvicted`); if you
+add a new undoable domain, wire its eviction the same way or the log
+will over-promise.
 
 **Networking.** Trailer makes exactly one kind of outbound call: ONNX
 model downloads via `ModelDownloader`, gated on explicit user consent
@@ -276,7 +487,8 @@ other path without raising it in the PR first.
 | Understand the product end-to-end | `DESIGN.md` |
 | Know what's off-limits | `PHILOSOPHY.md` |
 | Match an existing code pattern | `docs/CONVENTIONS.md` |
-| Pick up open work | `TODO.md` (HITL section is the live sprint) |
+| Read what a session surfaced (HITL / smoke / audit) or a running deferred-work note | `TODO.md` — the dated, append-mostly session log; the HITL section is the live sprint. Narrative notes, not one-per-item tracking. |
+| Track one concrete, closeable follow-up to done | `docs/backlog/` — one open item per file (`YYYY-MM-DD-<slug>.md`), each with a checkable threshold; see its [`README.md`](docs/backlog/README.md). Close an item by deleting its file in the implementing PR and citing the item id. (For the TODO.md ↔ backlog boundary, see that README's *Relationship to TODO.md*.) |
 | Write a UAT case | `docs/uat/README.md` + a sibling spec file |
 | Write a UAT harness slot | `tests/uat/test_uat_foundations.cpp` is the template |
 | Add a PDF command | `src/document/PdfCommands.h` + `RotatePageCommand` impl |
