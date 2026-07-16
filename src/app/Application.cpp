@@ -112,7 +112,18 @@ Application::UxRecordDecision Application::preflightUxRecording() {
         // Screen Recording (including via B's Open-Settings path on a prior
         // launch) also suppresses the screenshot-import explainer — the two
         // flows share suppression state instead of re-asking independently.
-        acknowledgeScreenCaptureExplainer(m_settings);
+        //
+        // Only acknowledge (which does a disk save()) when the flag isn't
+        // already set — otherwise every recorder launch re-saves settings for
+        // no change. Check the persisted flag directly, NOT
+        // shouldShowScreenCaptureExplainer(): in recorder builds that helper
+        // consults the granted-probe (uxScreenRecordingGranted()), which is
+        // true here by construction, so it would always report "don't show"
+        // and we'd never burn the flag for the non-recorder path's benefit.
+        if (!m_settings.firstUseAcknowledged(
+                QString::fromLatin1(kScreenCaptureExplainerKey))) {
+            acknowledgeScreenCaptureExplainer(m_settings);
+        }
         return UxRecordDecision::Start;
     }
 

@@ -30,6 +30,7 @@ class TestScreenCapturePermission : public QObject {
 #ifdef TRAILER_UX_RECORDER
     void explainerSuppressedWhenRecorderTccGranted();
     void explainerShownWhenRecorderTccNotGranted();
+    void grantedPreflightSuppressesAndPersistsExplainer();
     void cleanup();
 #endif
 };
@@ -147,6 +148,37 @@ void TestScreenCapturePermission::explainerShownWhenRecorderTccNotGranted() {
     acknowledgeScreenCaptureExplainer(s);
     QVERIFY2(!shouldShowScreenCaptureExplainer(s),
              "After acknowledge (still not granted) the explainer suppresses as before");
+}
+
+// Application-level wiring lock (ADR 0014, G14.2). The stubbed cases above
+// drive the probe and the flag independently; this one exercises the exact
+// pair of calls Application makes in sequence — setScreenRecordingGrantedProbe
+// (from the constructor) then acknowledgeScreenCaptureExplainer (from the
+// granted preflightUxRecording() branch) — to pin the integration the unit
+// tests miss. Beyond asserting the explainer is suppressed, it clears the probe
+// afterwards and asserts suppression HOLDS: proving the granted preflight
+// actually persisted the first-use flag (so a later non-recorder build, which
+// has no probe, also stays suppressed) rather than leaning on the live probe
+// alone. That persistence is the whole point of burning the flag when granted.
+void TestScreenCapturePermission::grantedPreflightSuppressesAndPersistsExplainer() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Settings s(dir.filePath("settings.toml"));
+
+    // The two calls Application makes, in order.
+    setScreenRecordingGrantedProbe([] { return true; });
+    acknowledgeScreenCaptureExplainer(s);
+
+    QVERIFY2(!shouldShowScreenCaptureExplainer(s),
+             "With the granted probe set and the explainer acknowledged (the "
+             "granted preflight path), the explainer must be suppressed");
+
+    // Clear the probe: suppression must survive on the persisted flag alone,
+    // which is what lets a non-recorder build share the suppression state.
+    setScreenRecordingGrantedProbe(nullptr);
+    QVERIFY2(!shouldShowScreenCaptureExplainer(s),
+             "After the granted preflight, suppression must persist via the "
+             "first-use flag even once the recorder probe is gone");
 }
 
 // The probe is a process-global seam; reset it after every recorder test so
