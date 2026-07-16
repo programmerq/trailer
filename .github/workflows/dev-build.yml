@@ -134,19 +134,22 @@ jobs:
           QT_QPA_PLATFORM: offscreen
 
       - name: Stage Linux artifact
-        # Same portable tarball shape as release.yml's linux-build on main
-        # today: the first-party LICENSE plus THIRD_PARTY_LICENSES.md,
-        # PHILOSOPHY.md, and README.md. The verbatim third-party license
-        # bundle (`licenses/third-party/`) lives on the unmerged packaging
-        # branch (#61), not on main, so neither release.yml nor this
-        # workflow copies it yet. Once #61 lands, update this step (and the
-        # Windows one below) to also copy licenses/third-party for parity.
+        # Same portable tarball shape as release.yml's linux-build on main:
+        # the first-party LICENSE plus THIRD_PARTY_LICENSES.md, PHILOSOPHY.md,
+        # and README.md, plus the verbatim third-party license bundle
+        # (`licenses/third-party/`). #61 landed on main, so release.yml now
+        # copies licenses/third-party into its portable staging dir — this
+        # step mirrors it (and the Windows one below) for parity.
         run: |
           set -euo pipefail
           mkdir -p dist/trailer-linux-x86_64
           cp build/trailer dist/trailer-linux-x86_64/
           cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
              dist/trailer-linux-x86_64/
+          # Ship the verbatim upstream dependency license texts alongside
+          # the portable binary so the tarball carries the same third-party
+          # attribution the .deb/.rpm install under share/doc/trailer.
+          cp -r licenses/third-party dist/trailer-linux-x86_64/
           (cd dist && tar -czf trailer-linux-x86_64.tar.gz trailer-linux-x86_64)
 
       - name: Upload Linux artifact
@@ -208,9 +211,10 @@ jobs:
         # JPEG export plugin loads at runtime and the import walk can't
         # see runtime-loaded plugins. Mirrors release.yml's current
         # portable bundle on main (first-party LICENSE + THIRD_PARTY_-
-        # LICENSES.md + PHILOSOPHY.md + README.md); the verbatim
-        # `licenses/third-party/` bundle is on the unmerged #61 branch, so
-        # neither workflow copies it yet — see the dev-linux note.
+        # LICENSES.md + PHILOSOPHY.md + README.md + the verbatim
+        # `licenses/third-party/` bundle). #61 landed, so release.yml now
+        # copies licenses/third-party into the zip staging dir — this
+        # mirrors it for parity (see the dev-linux note).
         run: |
           set -euo pipefail
           BUILD_DIR="$PWD/build-win" \
@@ -223,6 +227,10 @@ jobs:
           cp "$QT_WIN_DIR"/plugins/imageformats/*.dll dist/trailer-windows-x86_64/imageformats/
           cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
              dist/trailer-windows-x86_64/
+          # Ship the verbatim upstream dependency license texts inside the
+          # portable zip too, matching what the .msi installs under
+          # licenses\third-party\.
+          cp -r licenses/third-party dist/trailer-windows-x86_64/
 
       - name: Stage Windows artifact
         # Same flat, root-level zip release.yml produces (trailer.exe at
