@@ -1,11 +1,11 @@
-# 0015 — Permissionless still-capture via the ScreenCaptureKit system picker
+# Permissionless still-capture via the ScreenCaptureKit system picker
 
 - **Status:** proposed
 - **Arbiter:** macOS platform-integration lead (owner `programmerq` is the escalation-only override)
 - **Date proposed:** 2026-07-16
 - **Date accepted / superseded:** —
-- **Builds on (companion, near-term):** the tactical Screen-Recording permission decision for the *current* `screencapture` capture path. Its source of record today is `docs/backlog/2026-07-13-macos-screenrecording-services-clarity.md`; a companion ADR is being authored for it, whose number is in flux (0014 is currently claimed by two open branches — see PR body). This record is robust to that ADR's final number and does not require it to be present on `main`.
-- **Separate from:** the UX-recorder permission story, which has (or will have) its own decision record.
+- **Builds on (companion, near-term):** the tactical Screen-Recording permission decision for the *current* `screencapture` capture path. Its source of record today is `docs/backlog/2026-07-13-macos-screenrecording-services-clarity.md`; a companion decision record is being authored for it under the new date+slug scheme. This record is robust to that companion's naming and does not require it to be present on `main`.
+- **Separate from:** the UX-recorder permission story (PR #69's grandfathered ADR 0014).
 
 ## Context
 
@@ -15,7 +15,7 @@ We already invoke that utility. The prompt fires anyway because **TCC attributes
 
 On-device behavior (owner's Retina Mac, fresh TCC reset, 2026-07-16): invoking capture (in the interactive Acquire / Region / Window modes) immediately shows the OS crosshair selection UI with **no** TCC prompt; the Screen Recording prompt fires only when the user click-drags a selection (the actual pixel readback). After **Deny**, subsequent captures still show the full selection UI (including space-bar mode cycling) but silently yield nothing — no re-prompt, even after relaunch — until the permission is manually reset. So the current path's selection UI is permission-free; TCC gates only the pixel readback, and **a denial is indistinguishable from a user-cancel** to Trailer (both return exit 0 with no file). A separate session is fixing that dead-end for the current path; this record is about the strategic backend choice.
 
-macOS offers a sanctioned path where **the user's selection is the consent**: `SCContentSharingPicker` (a system-drawn picker) → `SCContentFilter` → `SCScreenshotManager.captureImage(...)` for a one-shot image. Because the pick happens inside a trusted system process, the model is designed so that no Screen Recording authorization dialog is presented and access is scoped to the picked content (Apple's framing; whether shipping releases are actually prompt-free is what G15.2 verifies on-device) — a portal-style, per-selection grant rather than a standing "record your whole screen forever" grant. This also sidesteps the macOS 15 (Sequoia) recurring re-authorization nag, which by construction targets apps that hold the standing grant ("…requesting to bypass the system private window picker and directly access your screen…").
+macOS offers a sanctioned path where **the user's selection is the consent**: `SCContentSharingPicker` (a system-drawn picker) → `SCContentFilter` → `SCScreenshotManager.captureImage(...)` for a one-shot image. Because the pick happens inside a trusted system process, the model is designed so that no Screen Recording authorization dialog is presented and access is scoped to the picked content (Apple's framing; whether shipping releases are actually prompt-free is what GPSC.2 verifies on-device) — a portal-style, per-selection grant rather than a standing "record your whole screen forever" grant. This also sidesteps the macOS 15 (Sequoia) recurring re-authorization nag, which by construction targets apps that hold the standing grant ("…requesting to bypass the system private window picker and directly access your screen…").
 
 ### External grounding
 
@@ -29,7 +29,7 @@ macOS offers a sanctioned path where **the user's selection is the consent**: `S
 
 ### Deployment-floor reality (load-bearing)
 
-`SCContentSharingPicker` + `SCScreenshotManager` require **macOS 14.0**. The coordinator reports `MACOSX_DEPLOYMENT_TARGET` is being aligned to 14.0 (the real ONNX-dylib floor), but `main` today (`95619cf`) still declares **11.0** (`scripts/build-macos.sh:57`, `docs/packaging-macos.md`, `Info.plist.in` `LSMinimumSystemVersion`). This record therefore gates the picker backend behind `@available(macOS 14.0, *)` and retains the current `screencapture` path as the macOS 11–13 fallback, independent of whether the 14.0 floor lands. Reliability caveat: while these APIs are *available* at 14.0, third-party testing rates the prompt-free picker behavior as only moderately reliable before **14.4** (on top of the first-Sonoma-beta FB12331920 regression). If the G15.2 smoke test shows the prompt-free behavior differs on 14.0–14.3, raise the picker floor to `@available(macOS 14.4, *)` and let Option A cover 11.0–14.3.
+`SCContentSharingPicker` + `SCScreenshotManager` require **macOS 14.0**. The coordinator reports `MACOSX_DEPLOYMENT_TARGET` is being aligned to 14.0 (the real ONNX-dylib floor), but `main` today (`95619cf`) still declares **11.0** (`scripts/build-macos.sh:57`, `docs/packaging-macos.md`, `Info.plist.in` `LSMinimumSystemVersion`). This record therefore gates the picker backend behind `@available(macOS 14.0, *)` and retains the current `screencapture` path as the macOS 11–13 fallback, independent of whether the 14.0 floor lands. Reliability caveat: while these APIs are *available* at 14.0, third-party testing rates the prompt-free picker behavior as only moderately reliable before **14.4** (on top of the first-Sonoma-beta FB12331920 regression). If the GPSC.2 smoke test shows the prompt-free behavior differs on 14.0–14.3, raise the picker floor to `@available(macOS 14.4, *)` and let Option A cover 11.0–14.3.
 
 ## Options
 
@@ -51,7 +51,7 @@ Unranked adversarial lenses. Only objections that name a persona, a step in a re
 
 - **Picker friction (Power migrator).** The picker adds a step and changes muscle memory versus the immediate crosshair. Admissible. Mitigation: within a session a returned `SCContentFilter` can be retained and re-driven through `captureImage` without re-presenting the picker (`allowsChangingSelectedContent` governs re-picking); confidence MODERATE — verify the filter stays valid across captures on-device. The picker is standard system UI users already know from screen-sharing.
 - **Pre-14 users lose the feature (Older careful / Office user on macOS 11–13).** When they invoke Take Screenshot or Acquire from Screenshot on macOS 11–13, the picker API is unavailable and no capture is possible. Admissible. Mitigation: retain Option A as the pre-14 fallback behind `@available(macOS 14.0, *)`; no user loses capture.
-- **FB12331920 regression risk (Older careful user hits a surprise prompt).** Admissible correctness concern. Mitigation: gate adoption on the G15.2 on-device smoke test; keep A as the fallback if the picker path ever prompts.
+- **FB12331920 regression risk (Older careful user hits a surprise prompt).** Admissible correctness concern. Mitigation: gate adoption on the GPSC.2 on-device smoke test; keep A as the fallback if the picker path ever prompts.
 
 ### Rejected as naked preference
 
@@ -60,16 +60,16 @@ Unranked adversarial lenses. Only objections that name a persona, a step in a re
 
 ## Checkable threshold this record would establish
 
-- **G15.1** On macOS 14.0+, a user-initiated still capture completes with **no** "Screen Recording" TCC prompt and **no** entry created under System Settings ▸ Privacy & Security ▸ Screen & System Audio Recording, verified from a fresh TCC state (`tccutil reset ScreenCapture <bundleid>`).
-- **G15.2** A picker-derived `SCContentFilter` drives `SCScreenshotManager.captureImage` **prompt-free** on the oldest supported 14.x (14.0), a mid-cycle 14.x (≥ 14.4), and a clean 15.x machine (guards against the FB12331920-class regression and the 14.0–14.3 reliability risk). This is the one load-bearing on-device check gating adoption.
-- **G15.3** On macOS < 14, capture falls back to the existing `screencapture -i` path with no behavioral regression versus today.
-- **G15.4** On the picker path, a capture outcome is unambiguous: either the user picked a source and an image was produced, or the user dismissed the picker (an explicit cancel). There is no silent deny-equals-cancel dead end.
+- **GPSC.1** On macOS 14.0+, a user-initiated still capture completes with **no** "Screen Recording" TCC prompt and **no** entry created under System Settings ▸ Privacy & Security ▸ Screen & System Audio Recording, verified from a fresh TCC state (`tccutil reset ScreenCapture <bundleid>`).
+- **GPSC.2** A picker-derived `SCContentFilter` drives `SCScreenshotManager.captureImage` **prompt-free** on the oldest supported 14.x (14.0), a mid-cycle 14.x (≥ 14.4), and a clean 15.x machine (guards against the FB12331920-class regression and the 14.0–14.3 reliability risk). This is the one load-bearing on-device check gating adoption.
+- **GPSC.3** On macOS < 14, capture falls back to the existing `screencapture -i` path with no behavioral regression versus today.
+- **GPSC.4** On the picker path, a capture outcome is unambiguous: either the user picked a source and an image was produced, or the user dismissed the picker (an explicit cancel). There is no silent deny-equals-cancel dead end.
 
 ## Arbiter verdict + rationale
 
-Adopt **Option B** as the primary still-capture backend on macOS 14.0+, gated behind a capture-backend selector, with **Option A** (`screencapture -i`) retained as the macOS 11–13 and edge-case fallback. Rationale: B is the only option that meets the owner's actual goal — user-initiated capture with **no standing Screen Recording grant** — and it simultaneously removes the deny dead-end (G15.4) and the Sequoia nag. A is not dropped; it becomes the compatibility fallback, which also de-risks the FB12331920 caveat.
+Adopt **Option B** as the primary still-capture backend on macOS 14.0+, gated behind a capture-backend selector, with **Option A** (`screencapture -i`) retained as the macOS 11–13 and edge-case fallback. Rationale: B is the only option that meets the owner's actual goal — user-initiated capture with **no standing Screen Recording grant** — and it simultaneously removes the deny dead-end (GPSC.4) and the Sequoia nag. A is not dropped; it becomes the compatibility fallback, which also de-risks the FB12331920 caveat.
 
-**Do not implement in this docs-only PR.** The recommendation is unambiguous, but the implementation is a new Objective-C++ capture backend (`SCContentSharingPicker` delegate + `SCScreenshotManager`) whose correctness depends on an on-device smoke test (G15.2) we cannot run in CI — it does not meet the "trivial enough to prototype inline" bar. Per the project's no-hollow-PRs norm, implementation should follow once this decision is **accepted** (owner-gated) and G15.2 passes, landing behind a `capture_backend` flag (`sck-picker` | `screencapture`) so the fallback stays one switch away.
+**Do not implement in this docs-only PR.** The recommendation is unambiguous, but the implementation is a new Objective-C++ capture backend (`SCContentSharingPicker` delegate + `SCScreenshotManager`) whose correctness depends on an on-device smoke test (GPSC.2) we cannot run in CI — it does not meet the "trivial enough to prototype inline" bar. Per the project's no-hollow-PRs norm, implementation should follow once this decision is **accepted** (owner-gated) and GPSC.2 passes, landing behind a `capture_backend` flag (`sck-picker` | `screencapture`) so the fallback stays one switch away.
 
 **Knock-on — the pre-permission explainer.** `src/platform/ScreenCapturePermission.{h,cpp}` exists solely to pre-warn the user before the `screencapture` path trips the "Screen Recording" TCC prompt. On the picker backend there is no such prompt — the picker itself is the consent surface — so **for stills on macOS 14+ the explainer becomes unnecessary and should be retired, not merely reworded.** This intersects the owner's separate "explainer is too verbose" copy work: on the picker path the right answer for stills is to remove the dialog, not shorten it. The explainer stays for the `screencapture` fallback (macOS 11–13), and the UX-recorder keeps its own gate (see below).
 
@@ -77,6 +77,6 @@ Adopt **Option B** as the primary still-capture backend on macOS 14.0+, gated be
 
 ## Evidence required to reopen
 
-- The G15.2 smoke test shows the picker path **does** prompt for Screen Recording or creates a standing grant on shipping 14.x/15.x (FB12331920-style regression) → keep Option A, reopen.
+- The GPSC.2 smoke test shows the picker path **does** prompt for Screen Recording or creates a standing grant on shipping 14.x/15.x (FB12331920-style regression) → keep Option A, reopen.
 - The deployment floor stays < 14.0 indefinitely, making Option B unreachable for the majority of users → reconsider prioritization.
 - UX testing shows the per-capture picker friction is unacceptable and no viable in-session filter reuse exists → reconsider or add an opt-in "remember source" affordance.
