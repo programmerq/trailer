@@ -51,6 +51,15 @@ on:
         required: false
         type: boolean
         default: false
+      enable_recorder:
+        description: >-
+          build with the UX recorder ON (-DTRAILER_ENABLE_UX_RECORDER=ON) —
+          produces a recorder-enabled build for capture testing; default OFF
+          so normal dev builds are unchanged. The macOS artifact is the one
+          that matters; linux/windows build the stub backend.
+        required: false
+        type: boolean
+        default: false
   pull_request:
     # `labeled` re-fires the workflow when a label is added to an
     # existing PR, so a dev-build doesn't require a fresh push after
@@ -113,11 +122,14 @@ jobs:
 
       - name: Configure
         # Mirrors release.yml's linux-build. TRAILER_WERROR stays OFF
-        # (Qt / libstdc++ / qpdf system-header warning noise).
+        # (Qt / libstdc++ / qpdf system-header warning noise). enable_recorder
+        # (dispatch opt-in) builds the stub recorder backend on Linux; empty on
+        # the label path resolves to OFF, so default builds are unchanged.
         run: >-
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DTRAILER_ENABLE_UX_RECORDER=${{ inputs.enable_recorder && 'ON' || 'OFF' }}
 
       - name: Build
         run: cmake --build build --config Release --parallel
@@ -195,6 +207,7 @@ jobs:
           -DQT_HOST_PATH="$QT_HOST_DIR"
           -Dqpdf_DIR="$QPDF_DIR/lib/cmake/qpdf"
           -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_PREBUILT="$ORT_WIN_DIR"
+          -DTRAILER_ENABLE_UX_RECORDER=${{ inputs.enable_recorder && 'ON' || 'OFF' }}
         env:
           PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
 
@@ -275,7 +288,13 @@ jobs:
         # no identity) and needs NO signing secrets, so the dev .dmg is
         # Gatekeeper-adhoc — unsigned in the Developer-ID sense — with
         # zero extra flags. This is the same posture release ships today.
+        #
+        # enable_recorder (dispatch opt-in, default false) flips the recorder
+        # on via the env var build-macos.sh reads. Empty on the label path
+        # (inputs absent) -> recorder OFF, unchanged default behaviour.
         run: scripts/build-macos.sh
+        env:
+          TRAILER_ENABLE_UX_RECORDER: ${{ inputs.enable_recorder }}
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v7
