@@ -33,7 +33,7 @@
 #
 # Configurable via env vars:
 #   QPDF_VERSION                qpdf release tag to build (default 12.3.2)
-#   MACOSX_DEPLOYMENT_TARGET    minimum macOS version (default 11.0)
+#   MACOSX_DEPLOYMENT_TARGET    minimum macOS version (default 14.0)
 #   WERROR                      ON/OFF for -DTRAILER_WERROR (default OFF;
 #                               flip ON to chase regressions locally)
 #   QT_ROOT_DIR / QTDIR         path to Qt install (auto-detects from
@@ -60,7 +60,7 @@ fi
 
 QPDF_VERSION="${QPDF_VERSION:-12.3.2}"
 LIBJPEG_VERSION="${LIBJPEG_VERSION:-3.0.3}"
-MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
+MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
 # WERROR defaults OFF: AppleClang on Qt 6.11 + libc++ also surfaces
 # system-header warnings (-Wdouble-promotion, -Wshorten-64-to-32) that
 # CI's GCC on Qt 6.8 doesn't trip. Pass WERROR=ON to opt back in

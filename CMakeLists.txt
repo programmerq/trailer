@@ -282,10 +282,10 @@ endif()
 if(APPLE AND TRAILER_ADAPTIVE_ICON)
     set(TRAILER_XCASSETS "${CMAKE_SOURCE_DIR}/resources/macos/Assets.xcassets")
     if(EXISTS "${TRAILER_XCASSETS}")
-        # Match the bundle's LSMinimumSystemVersion floor (Info.plist.in: 11.0)
+        # Match the bundle's LSMinimumSystemVersion floor (Info.plist.in: 14.0)
         # rather than CMAKE_OSX_DEPLOYMENT_TARGET, which may be unset on a bare
         # `cmake` invocation on a Mac and would hand actool an empty argument.
-        set(TRAILER_ICON_MIN_MACOS "11.0")
+        set(TRAILER_ICON_MIN_MACOS "14.0")
         # actool REQUIRES --output-partial-info-plist whenever the catalog
         # contains app icons: without it actool emits the notice "Compiling
         # app icons requires passing --output-partial-info-plist [path]" and
