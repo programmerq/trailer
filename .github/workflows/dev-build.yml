@@ -36,6 +36,16 @@ on:
         required: false
         type: string
         default: ''
+      build_linux:
+        description: build the Linux tar.gz artifact
+        required: false
+        type: boolean
+        default: true
+      build_windows:
+        description: build the Windows zip artifact
+        required: false
+        type: boolean
+        default: true
       build_macos:
         description: also build the macOS .dmg (10x runner cost)
         required: false
@@ -69,11 +79,11 @@ env:
 
 jobs:
   dev-linux:
-    # Run on manual dispatch, or when the `dev-build` label specifically
-    # is added to a PR (any other label fires `labeled` too but is
-    # filtered out here).
+    # Run on manual dispatch when build_linux is checked (default on), or
+    # when the `dev-build` label specifically is added to a PR (any other
+    # label fires `labeled` too but is filtered out here).
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && inputs.build_linux) ||
       (github.event_name == 'pull_request' && github.event.label.name == 'dev-build')
     name: Linux dev build
     runs-on: trailer-k8s
@@ -147,8 +157,10 @@ jobs:
           retention-days: 14
 
   dev-windows:
+    # Run on manual dispatch when build_windows is checked (default on),
+    # or on the `dev-build` label (see dev-linux for the label rationale).
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && inputs.build_windows) ||
       (github.event_name == 'pull_request' && github.event.label.name == 'dev-build')
     name: Windows dev cross-build (mingw-w64)
     runs-on: trailer-k8s

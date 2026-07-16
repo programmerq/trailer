@@ -259,6 +259,17 @@ tracked separately in [ROADMAP.md](ROADMAP.md) — those signatures
 protect the update channel itself and don't require Apple
 enrollment.
 
+**Dev builds.** For pre-merge dogfooding, the on-demand
+`.github/workflows/dev-build.yml` workflow (`workflow_dispatch`, or a
+`dev-build` PR label) produces the same unsigned per-OS portable
+artifacts uploaded to the run instead of a Release — the
+`build_linux` / `build_windows` / `build_macos` inputs select which
+OSes to build. These are versioned `X.Y.Z-dev.N` (bumped via
+`scripts/bump-version.sh dev-bump`), a SemVer prerelease the release
+precheck and autotag both treat as **not** release-ready, so a dev
+build can never accidentally tag or publish. See
+[RELEASING.md](RELEASING.md#dev-builds).
+
 ### Recovering from a missing prior build
 
 If a tag is pushed manually and no prior Release run exists for its

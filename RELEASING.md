@@ -24,6 +24,7 @@ The maintainer makes those calls.
 | Draft CHANGELOG entries since `v0.1.0` | `scripts/release-notes.sh v0.1.0..HEAD` |
 | Print a CHANGELOG section | `scripts/extract-changelog.sh 0.2.0` |
 | Post-release bump back to `-dev` | `scripts/bump-version.sh post-release` |
+| Advance the dev-build counter | `scripts/bump-version.sh dev-bump` |
 
 `make help` lists every release-related target with one-line
 descriptions.
@@ -177,6 +178,38 @@ git push
 The `-dev` suffix is the gate that keeps `release.yml` from
 rebuilding heavy artifacts for in-progress work (`precheck` skips
 heavy jobs when `VERSION` carries `-dev`).
+
+---
+
+## Dev builds
+
+`X.Y.Z-dev.N` is a [SemVer](https://semver.org/) prerelease used for
+internal, manual dogfooding of work-in-progress code *before* it is a
+real release. It lets a maintainer hand a tester a portable build
+without cutting a tag.
+
+- The `-dev.N` counter increments (`dev.0`, `dev.1`, …) for each new
+  dev build of the same target version. Advance it with
+  `scripts/bump-version.sh dev-bump`: a clean release version bumps
+  the patch and starts a fresh `-dev.0` (`0.3.0` → `0.3.1-dev.0`), an
+  existing counter increments (`0.3.1-dev.0` → `0.3.1-dev.1`), and a
+  bare `-dev` promotes to `-dev.0`.
+- A `-dev.N` version is **not** release-ready. The `release.yml`
+  precheck and `release-autotag.yml` both treat any `-dev`, `-dev.N`,
+  or `-rc` suffix as not-release-ready, so the heavy build / tag /
+  publish jobs are skipped — a dev build cannot accidentally become a
+  real release.
+- Cutting the real `X.Y.Z` supersedes all its `X.Y.Z-dev.N`
+  predecessors; `scripts/bump-version.sh release` strips the suffix
+  (`0.3.1-dev.3` → `0.3.1`).
+- Dev artifacts come from the on-demand
+  [`dev-build.yml`](.github/workflows/dev-build.yml) workflow
+  (`workflow_dispatch`): unsigned, per-OS portable builds uploaded to
+  the run instead of a Release. The `build_linux` / `build_windows` /
+  `build_macos` booleans pick which OSes to build — e.g. a mac-only
+  dev build sets `build_macos` true and the other two false. (Adding
+  the `dev-build` label to a PR builds Linux + Windows; macOS is
+  dispatch-only because its runners bill at 10×.)
 
 ---
 
