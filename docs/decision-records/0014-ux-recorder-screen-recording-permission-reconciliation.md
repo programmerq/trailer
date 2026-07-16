@@ -1,9 +1,9 @@
 # 0014 — Reconciling the UX-recorder Screen-Recording gate with #59's screenshot-import explainer
 
-- **Status:** proposed
+- **Status:** accepted
 - **Arbiter:** the agent role named for this record; the owner (programmerq) is the escalation-only override.
 - **Date proposed:** 2026-07-16
-- **Date accepted / superseded:** —
+- **Date accepted / superseded:** 2026-07-16 (accepted)
 
 ## Context
 
@@ -227,8 +227,19 @@ intentionally empty.
 
 ## Arbiter verdict + rationale
 
-<Empty while status is `proposed`. Filled when the `feat/ux-recorder`
-implementation of Option B is reviewed against G14.1–G14.4.>
+**Accepted.** The `feat/ux-recorder` implementation of Option B meets all four
+thresholds this record set. G14.2 holds: `shouldShowScreenCaptureExplainer`
+early-returns on the recorder's live-TCC probe and the granted `preflightUxRecording`
+branch burns the shared `screen_capture_explainer` flag, so suppression is shared
+across both flows and persists into a later non-recorder build (pinned by
+`grantedPreflightSuppressesAndPersistsExplainer`). G14.3 holds: the two dialogs are
+re-worded to one truthful voice about still-image-vs-video capture. G14.4 holds: the
+non-recorder path is byte-for-byte #59 — the entire coupling is compiled out under
+`TRAILER_UX_RECORDER` (verified: the branch's shipped-source delta is purely
+additive, zero deletions). B stays authoritative because it alone survives the
+macOS "grant applies to the next launch" trap; A defers rather than re-asking, so
+no user is double-prompted or asked about a permission already granted. Sound,
+honest, and non-regressing to #59 — accepted at arbiter level.
 
 ## Evidence required to reopen
 
