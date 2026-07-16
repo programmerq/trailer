@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>org.trailer.Trailer</id>
+  <id>io.github.programmerq.trailer</id>
   <metadata_license>MIT</metadata_license>
   <project_license>MIT</project_license>
   <name>Trailer</name>
@@ -9,8 +9,7 @@
     <p>Trailer is a fast, cross-platform viewer for PDF documents and images.</p>
     <!-- TODO: Expand description with feature highlights once feature set is stable -->
   </description>
-  <url type="homepage">https://github.com/trailer-app/trailer</url>
-  <!-- TODO: Add real homepage URL -->
+  <url type="homepage">https://github.com/programmerq/trailer</url>
   <launchable type="desktop-id">trailer.desktop</launchable>
   <provides>
     <mediatype>application/pdf</mediatype>

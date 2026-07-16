@@ -321,7 +321,7 @@ echo "==> Bundling Qt frameworks via macdeployqt"
 # signature covers the executable, but the bundle's Info.plist isn't
 # bound and Resources/ aren't sealed, and the signature identifier
 # stays as the binary name ("trailer") instead of the CFBundleIdentifier
-# ("org.trailer.Trailer"). macOS treats that as a non-standard
+# ("io.github.programmerq.trailer"). macOS treats that as a non-standard
 # bundle and behaves oddly with the Dock icon and Gatekeeper.
 #
 # Explicit `codesign --deep --force --sign -` produces a proper adhoc
