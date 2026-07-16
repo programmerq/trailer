@@ -141,6 +141,8 @@ set(TRAILER_SOURCES
     src/ui/AnimationBar.h
     src/ui/AnnotationOverlay.cpp
     src/ui/AnnotationOverlay.h
+    src/ui/CropPagesDialog.cpp
+    src/ui/CropPagesDialog.h
     src/ui/FormOverlay.cpp
     src/ui/FormOverlay.h
     src/ui/FormToolbar.cpp

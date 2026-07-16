@@ -29,7 +29,22 @@ namespace trailer {
 // which gives the markup-toolbar tools their "this is the active
 // tool" outline-to-fill swap without callers having to know about
 // state pairs.
-QIcon themedActionIcon(const QString& resource, const QColor& color);
+//
+// If `disabledColor` is valid, an explicit `QIcon::Disabled` pixmap set
+// is registered tinted to that colour. This is load-bearing for
+// icon-only toolbar buttons: without an explicit Disabled pixmap Qt
+// falls back to the style's generated fade, which does essentially
+// nothing to these solid-tinted monochrome glyphs — under a dark
+// palette a disabled magnifier/zoom/etc. button renders pixel-identical
+// to its enabled self (audit: dark-mode disabled-contrast). An
+// icon-only button has no greyed label to carry the disabled signal, so
+// the glyph itself must dim. Passing the palette's
+// QPalette::Disabled foreground keeps the dim consistent with the
+// disabled text convention used everywhere else. The widget overload
+// supplies this automatically; the colour overload defaults to invalid
+// (no Disabled pixmap) so existing behaviour is unchanged unless asked.
+QIcon themedActionIcon(const QString& resource, const QColor& color,
+                       const QColor& disabledColor = QColor());
 QIcon themedActionIcon(const QString& resource, const QWidget* widget = nullptr);
 
 // Create a menu action for a surfaced-but-inert control and GUARANTEE its
