@@ -20,6 +20,7 @@
 #include <QMimeData>
 #include <QMessageBox>
 #include <QProcess>
+#include <QScreen>
 #include <QSet>
 #include <QStandardPaths>
 #include <QUrl>
@@ -149,8 +150,22 @@ void Application::openFiles(const QStringList &paths) {
     const bool batchedImages = mode == OpenFilesIn::NewWindow && isImageBatch();
     MainWindow *batchTarget = batchedImages ? ensureFreshWindow() : nullptr;
 
+    // Consume a capture dpr staged by a screenshot / clipboard grab (see
+    // setPendingCaptureDpr). Reset immediately so only this batch — never
+    // a subsequent ordinary open — is treated as capture-origin.
+    const double captureDpr = m_pendingCaptureDpr;
+    m_pendingCaptureDpr = 0.0;
+
     for (const QString &path : paths) {
         auto doc = m_registry.open(path);
+
+        if (captureDpr > 0.0) {
+            // Stamp the real screen dpr onto capture-origin images so the
+            // viewer treats device px as logical px / dpr, opens at
+            // logical size, and defaults to pixel-exact Actual Size.
+            if (auto *img = dynamic_cast<ImageDocument *>(doc.get()))
+                img->markCaptureOrigin(captureDpr);
+        }
 
         MainWindow *target = nullptr;
         if (batchTarget) {
@@ -340,6 +355,16 @@ void Application::newFromClipboard() {
     if (!image.isNull()) {
         const QString path = transientImportPath("clipboard", "png");
         if (image.save(path, "PNG")) {
+            // The PNG round-trip drops the devicePixelRatio, so recover it:
+            // prefer the clipboard image's own dpr, else the screen it was
+            // (almost certainly) captured on. Stamped by the openFiles
+            // consumer so a Retina grab opens 1:1 rather than double-size.
+            double dpr = image.devicePixelRatio();
+            if (dpr <= 1.0) {
+                if (auto *scr = QGuiApplication::primaryScreen())
+                    dpr = scr->devicePixelRatio();
+            }
+            setPendingCaptureDpr(dpr);
             openFiles({path});
             return;
         }
@@ -385,6 +410,10 @@ void Application::acquireFromScreenshot() {
                "in System Settings ▸ Privacy & Security ▸ Screen Recording."));
         return;
     }
+    // screencapture writes raw device pixels with no dpr stamp; recover
+    // the screen dpr so a Retina capture opens 1:1 (see openFiles).
+    if (auto *scr = QGuiApplication::primaryScreen())
+        setPendingCaptureDpr(scr->devicePixelRatio());
     openFiles({path});
 }
 #endif
