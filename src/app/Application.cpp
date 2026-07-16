@@ -20,6 +20,7 @@
 #include <QMimeData>
 #include <QMessageBox>
 #include <QProcess>
+#include <QPushButton>
 #include <QSet>
 #include <QStandardPaths>
 #include <QUrl>
@@ -356,36 +357,78 @@ void Application::newFromClipboard() {
 }
 
 void Application::acquireFromScreenshot() {
-    // First use only: explain the "Screen Recording" permission macOS is
-    // about to prompt for. Deferred to first actual use — never at launch.
-    if (!maybeShowScreenCaptureExplainer(m_settings, nullptr)) {
-        // User cancelled the pre-permission explainer — do not capture.
-        return;
-    }
+    // Preflight the live Screen Recording TCC state before touching the OS
+    // selection UI (the screen-capture preflight ADR). This path has NO status
+    // bar, so a denial surfaces as ONE actionable modal (an actionable error,
+    // not narration). shouldShow returns true while UNacknowledged.
+    const bool ack = !shouldShowScreenCaptureExplainer(m_settings);
+    const ScreenCapturePermissionState state = queryScreenCapturePermissionState();
     const QString path = transientImportPath("acquire", "png");
-    QProcess proc;
-    proc.start(QStringLiteral("/usr/sbin/screencapture"),
-               {QStringLiteral("-i"), QStringLiteral("-x"), path});
-    proc.waitForFinished(-1);
-    const QFileInfo info(path);
-    // There is no status bar in the no-window Acquire flow, so surface hints as
-    // brief informational dialogs rather than failing silently.
-    if (proc.exitCode() != 0) {
-        // Non-zero exit means the user cancelled (Esc) — not an error.
-        QMessageBox::information(nullptr, tr("Acquire from Screenshot"),
-                                 tr("Screen capture cancelled."));
+
+    // The native capture block. Returns true only when a real image landed at
+    // `path`. Local lambda so the RequestAccess and Proceed branches share it.
+    auto runCapture = [&]() -> bool {
+        QProcess proc;
+        proc.start(QStringLiteral("/usr/sbin/screencapture"),
+                   {QStringLiteral("-i"), QStringLiteral("-x"), path});
+        proc.waitForFinished(-1);
+        const QFileInfo info(path);
+        if (proc.exitCode() != 0) {
+            // User cancelled the OS selection (Esc) — a no-op, not an error.
+            // Stay silent: no dialog narrating the user's own cancel.
+            return false;
+        }
+        if (!info.exists() || info.size() == 0) {
+            // Exit 0 but no file: a granted user who selected nothing. Silent —
+            // permission is not the problem (we only reach here after Granted or
+            // a successful request), so do not assert a denial.
+            return false;
+        }
+        return true;
+    };
+
+    bool captured = false;
+    switch (decideScreenCaptureFlow(state, ack)) {
+    case ScreenCaptureFlowAction::Proceed:
+        captured = runCapture();
+        break;
+    case ScreenCaptureFlowAction::ShowExplainerFirst:
+        if (!maybeShowScreenCaptureExplainer(m_settings, nullptr))
+            return; // user cancelled the explainer — silent
+        [[fallthrough]]; // acknowledged → drive the OS request below
+    case ScreenCaptureFlowAction::RequestAccess:
+        if (requestScreenCaptureAccess()) {
+            captured = runCapture();
+        } else {
+            showScreenRecordingNeededModal(); // denied — actionable degrade
+            return;
+        }
+        break;
+    case ScreenCaptureFlowAction::DegradeDenied:
+        showScreenRecordingNeededModal();
         return;
     }
-    if (!info.exists() || info.size() == 0) {
-        // Exit 0 but no output — screencapture produced nothing, which can
-        // silently mean Screen Recording permission was denied.
-        QMessageBox::information(
-            nullptr, tr("Acquire from Screenshot"),
-            tr("No image was captured. If you denied Screen Recording, grant it "
-               "in System Settings ▸ Privacy & Security ▸ Screen Recording."));
-        return;
-    }
+    if (!captured)
+        return; // cancelled or empty capture — already handled silently
     openFiles({path});
+}
+
+void Application::showScreenRecordingNeededModal() {
+    // No status bar in the no-window Acquire flow — surface the recoverable
+    // degrade as one actionable modal with a direct route to the setting. This
+    // ask-first modal is the sanctioned pattern (PHILOSOPHY allows popups for
+    // non-self-evident errors).
+    QMessageBox box;
+    box.setIcon(QMessageBox::Warning);
+    box.setWindowTitle(tr("Acquire from Screenshot"));
+    box.setText(screenRecordingNeededMessage());
+    QPushButton *open =
+        box.addButton(tr("Open System Settings"), QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(open);
+    box.exec();
+    if (box.clickedButton() == open)
+        openScreenRecordingSettings(); // best-effort deep link to the pane
 }
 #endif
 

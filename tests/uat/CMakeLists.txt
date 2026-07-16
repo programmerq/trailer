@@ -72,6 +72,14 @@ trailer_add_uat_test(test_uat_recognize_text test_uat_recognize_text.cpp)
 # asserts the wired behaviour like any other uat slot.
 trailer_add_uat_test(test_uat_ocr_evidence test_uat_ocr_evidence.cpp)
 
+# Representative offscreen evidence for the screen-capture permission preflight
+# (the screen-capture preflight ADR). The real explainer/degrade UI is mac-gated
+# and can't render on Linux, so these slots reconstruct widgets with the same
+# strings/buttons and grab them. Writes PNGs to $TRAILER_CAPTURE_EVIDENCE_DIR
+# when set; otherwise just asserts the strings like any other uat slot.
+trailer_add_uat_test(test_uat_capture_permission_evidence
+    test_uat_capture_permission_evidence.cpp)
+
 # ML status-bar affordances (ADR 0002): progress widget, scoped cancel,
 # missing-model in-context hint. Builds a multi-page PDF via QPdfWriter
 # (QtGui) for the OCR batch gates; the OCR itself runs through a test

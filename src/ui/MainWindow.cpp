@@ -2257,50 +2257,84 @@ void MainWindow::onTakeScreenshot() {
     const QString path = screenshotTargetPath();
 
 #ifdef Q_OS_MACOS
-    // First use only: explain that macOS will prompt for "Screen Recording"
-    // permission (its name even for a still screenshot) before we shell to
-    // screencapture. Deferred to first actual use — never at launch.
-    if (!maybeShowScreenCaptureExplainer(m_app->settings(), this)) {
-        // User cancelled the pre-permission explainer — do not capture.
+    // Preflight the live Screen Recording TCC state before touching the OS
+    // selection UI (the screen-capture preflight ADR). Granted → straight to
+    // capture; Undetermined → explainer (first use) then the OS permission
+    // request, which prompts if truly undetermined and no-ops if denied — no
+    // crosshair until granted; Denied → degrade to a recoverable pointer at
+    // System Settings. shouldShow returns true while UNacknowledged, so
+    // acknowledged == !shouldShow.
+    const bool ack = !shouldShowScreenCaptureExplainer(m_app->settings());
+    const ScreenCapturePermissionState state = queryScreenCapturePermissionState();
+
+    // The native capture block. Hides our window so it doesn't occlude the
+    // target, shells to the macOS capture tool for proper DPI handling and
+    // interactive selection, then restores. Returns true only when a real
+    // image landed at `path`. Defined as a local lambda so the RequestAccess
+    // and Proceed branches share it verbatim.
+    auto runCapture = [&]() -> bool {
+        hide();
+        QStringList args;
+        args << "-x"; // silent (no capture sound)
+        switch (mode) {
+        case ShotMode::Screen:
+            break;
+        case ShotMode::Window:
+            args << "-iW";
+            break;
+        case ShotMode::Region:
+            args << "-i"
+                 << "-s";
+            break;
+        }
+        args << path;
+        QProcess proc;
+        proc.start("/usr/sbin/screencapture", args);
+        proc.waitForFinished(-1);
+        show();
+        raise();
+        activateWindow();
+        if (proc.exitCode() != 0) {
+            // User cancelled the OS selection (Esc) — a no-op, not an error.
+            // Stay silent: no dialog or status flash narrating the user's own
+            // cancel (the screen-capture preflight ADR).
+            return false;
+        }
+        if (!QFileInfo(path).exists() || QFileInfo(path).size() == 0) {
+            // Exit 0 but no file: a granted user who selected nothing. Silent —
+            // permission is not the problem here (we only reach this after
+            // Granted or a successful request), so do not assert a denial.
+            return false;
+        }
+        return true;
+    };
+
+    bool captured = false;
+    switch (decideScreenCaptureFlow(state, ack)) {
+    case ScreenCaptureFlowAction::Proceed:
+        captured = runCapture();
+        break;
+    case ScreenCaptureFlowAction::ShowExplainerFirst:
+        if (!maybeShowScreenCaptureExplainer(m_app->settings(), this))
+            return; // user cancelled the explainer — silent
+        [[fallthrough]]; // acknowledged → drive the OS request below
+    case ScreenCaptureFlowAction::RequestAccess:
+        if (requestScreenCaptureAccess()) {
+            captured = runCapture();
+        } else {
+            // Silent no-op request means the permission is denied. Degrade to
+            // the recoverable pointer; the flash text is the recovery route
+            // (no unbidden auto-open of System Settings).
+            flashError(screenRecordingNeededMessage());
+            return;
+        }
+        break;
+    case ScreenCaptureFlowAction::DegradeDenied:
+        flashError(screenRecordingNeededMessage());
         return;
     }
-    // Hide our window so it doesn't occlude the target, then use the native
-    // macOS capture tool for proper DPI handling and interactive selection.
-    hide();
-    QStringList args;
-    args << "-x"; // silent (no capture sound)
-    switch (mode) {
-    case ShotMode::Screen:
-        break;
-    case ShotMode::Window:
-        args << "-iW";
-        break;
-    case ShotMode::Region:
-        args << "-i"
-             << "-s";
-        break;
-    }
-    args << path;
-    QProcess proc;
-    proc.start("/usr/sbin/screencapture", args);
-    proc.waitForFinished(-1);
-    show();
-    raise();
-    activateWindow();
-    if (proc.exitCode() != 0) {
-        // Non-zero exit means the user cancelled (Esc) — not an error.
-        flashStatus(tr("Screen capture cancelled."));
-        return;
-    }
-    if (!QFileInfo(path).exists() || QFileInfo(path).size() == 0) {
-        // Exit 0 but no output — screencapture produced nothing, which can
-        // silently mean Screen Recording permission was denied. Surface a
-        // graceful hint pointing at the permission setting.
-        flashStatus(tr("No image was captured. If you denied Screen Recording, "
-                       "grant it in System Settings ▸ Privacy & Security ▸ "
-                       "Screen Recording."));
-        return;
-    }
+    if (!captured)
+        return; // cancelled or empty capture — already handled silently
 #else
     if (mode != ShotMode::Screen) {
         flashStatus(tr("Window/region capture is not yet supported on this "

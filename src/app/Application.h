@@ -77,6 +77,10 @@ class Application : public QApplication {
     void openFilesFromDialog();
     void newFromClipboard();
     void acquireFromScreenshot();
+    // Shared degrade UI for the no-window Acquire flow: one actionable modal
+    // pointing at System Settings ▸ Screen Recording (the screen-capture
+    // preflight ADR).
+    void showScreenRecordingNeededModal();
 #endif
 
     Settings m_settings;

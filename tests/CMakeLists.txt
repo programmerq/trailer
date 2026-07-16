@@ -71,6 +71,7 @@ trailer_add_test(test_empty_state_widget test_empty_state_widget.cpp)
 trailer_add_test(test_preferences test_preferences.cpp)
 trailer_add_test(test_macos_launch test_macos_launch.cpp)
 trailer_add_test(test_screen_capture_permission test_screen_capture_permission.cpp)
+trailer_add_test(test_screen_capture_flow test_screen_capture_flow.cpp)
 
 # Structural, CI-safe performance tests. These assert ordering / counts /
 # thread facts (never wall-clock time) and read the checked-in reference

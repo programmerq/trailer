@@ -220,6 +220,11 @@ if(APPLE)
     # only frameworks; gated inside the APPLE block so the default
     # link line on Linux / Windows stays free of macOS-isms.
     target_link_libraries(trailer_core PRIVATE "-framework IOKit" "-framework CoreFoundation")
+    # ScreenCapturePermission.cpp calls CGPreflightScreenCaptureAccess and
+    # CGRequestScreenCaptureAccess from CoreGraphics to preflight and request
+    # the Screen Recording TCC state (the screen-capture preflight ADR).
+    # macOS-only; behind if(APPLE) so the Linux/Windows link line stays clean.
+    target_link_libraries(trailer_core PRIVATE "-framework CoreGraphics")
 endif()
 trailer_set_warnings(trailer_core)
 
