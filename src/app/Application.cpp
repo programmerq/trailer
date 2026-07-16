@@ -59,6 +59,15 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
     m_registry.registerAdapter(std::make_unique<PdfAdapter>());
     m_registry.registerAdapter(std::make_unique<ImageAdapter>());
 
+#ifdef TRAILER_UX_RECORDER
+    // ADR 0014: let Mechanism A (the screenshot-import Screen-Recording
+    // explainer in src/platform/) defer to Mechanism B's authoritative live
+    // TCC gate so the two never double-prompt for the same macOS permission.
+    // Injected here (rather than src/platform/ depending on src/uxrecord/) and
+    // compiled out of default builds, which keep A standalone (G14.4).
+    setScreenRecordingGrantedProbe([] { return uxScreenRecordingGranted(); });
+#endif
+
     // Snapshot the open file list at quit. Done via aboutToQuit (not
     // closeEvent on each window) so we capture every window before any
     // is torn down — closeEvent ordering is platform-dependent and a
@@ -98,6 +107,12 @@ Application::UxRecordDecision Application::preflightUxRecording() {
     // this OS) → record straight away, no dialog. Once the user grants
     // it once, they never see this again.
     if (uxScreenRecordingGranted()) {
+        // ADR 0014 (G14.2): the permission is resolved for this session, so
+        // burn Mechanism A's first-use explainer flag too. That way granting
+        // Screen Recording (including via B's Open-Settings path on a prior
+        // launch) also suppresses the screenshot-import explainer — the two
+        // flows share suppression state instead of re-asking independently.
+        acknowledgeScreenCaptureExplainer(m_settings);
         return UxRecordDecision::Start;
     }
 

@@ -27,6 +27,11 @@ class TestScreenCapturePermission : public QObject {
     void cancelReShowsContinueSuppresses();
     void showsUntilAcknowledged();
     void persistsAcrossReload();
+#ifdef TRAILER_UX_RECORDER
+    void explainerSuppressedWhenRecorderTccGranted();
+    void explainerShownWhenRecorderTccNotGranted();
+    void cleanup();
+#endif
 };
 
 // A bare query must never mutate the flag: shouldShow stays true across
@@ -100,6 +105,57 @@ void TestScreenCapturePermission::persistsAcrossReload() {
              "A relaunch (fresh Settings from the same file) must suppress the "
              "explainer that was already acknowledged");
 }
+
+#ifdef TRAILER_UX_RECORDER
+// Recorder builds only (ADR 0014). Mechanism B — the recorder's live macOS
+// Screen Recording TCC gate — is authoritative there, and this first-use
+// explainer (Mechanism A) defers to it via an injected granted-probe
+// (setScreenRecordingGrantedProbe). These cases drive that probe directly so
+// the deference is exercised deterministically, without a live TCC state (the
+// non-mac stub reports granted=true, but injection lets us test BOTH outcomes).
+
+// G14.2: when the live TCC grant reports granted, the explainer must NOT show
+// even on a fresh profile with the screen_capture_explainer flag unset —
+// otherwise the recorder gate and the screenshot explainer double-prompt for
+// the same permission.
+void TestScreenCapturePermission::explainerSuppressedWhenRecorderTccGranted() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Settings s(dir.filePath("settings.toml"));
+
+    // Precondition: with no probe set, a fresh profile would show the explainer.
+    QVERIFY2(shouldShowScreenCaptureExplainer(s),
+             "Fresh profile with no probe set must report show");
+
+    setScreenRecordingGrantedProbe([] { return true; });
+    QVERIFY2(!shouldShowScreenCaptureExplainer(s),
+             "When the live TCC grant reports granted, the explainer must be "
+             "suppressed even with the first-use flag unset");
+}
+
+// The complementary case: when the probe reports NOT granted, the gate falls
+// through to #59's ordinary first-use flag behaviour (shows until acknowledged),
+// so a recorder build that has not yet been granted still gets the explainer.
+void TestScreenCapturePermission::explainerShownWhenRecorderTccNotGranted() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Settings s(dir.filePath("settings.toml"));
+
+    setScreenRecordingGrantedProbe([] { return false; });
+    QVERIFY2(shouldShowScreenCaptureExplainer(s),
+             "A not-granted probe must leave the normal first-use behaviour: show");
+    acknowledgeScreenCaptureExplainer(s);
+    QVERIFY2(!shouldShowScreenCaptureExplainer(s),
+             "After acknowledge (still not granted) the explainer suppresses as before");
+}
+
+// The probe is a process-global seam; reset it after every recorder test so
+// one case never leaks its stubbed grant into another (or into the shared
+// non-recorder cases above, which assume no probe is set).
+void TestScreenCapturePermission::cleanup() {
+    setScreenRecordingGrantedProbe(nullptr);
+}
+#endif
 
 QTEST_MAIN(TestScreenCapturePermission)
 #include "test_screen_capture_permission.moc"
