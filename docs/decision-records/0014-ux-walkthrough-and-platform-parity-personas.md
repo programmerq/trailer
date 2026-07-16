@@ -6,13 +6,19 @@
 - **Date accepted / superseded:** —
 - **Builds on / extends:** the ux-evidence hybrid ruling in
   [`docs/research/2026-07-13-ux-research-agenda.md`](../research/2026-07-13-ux-research-agenda.md)
-  (lines 18–23), which AGENTS.md gate **G2** ("Capture method (ruled)") and
-  ADR-0007 / ADR-0009 cite; and the real-desktop GUI-verification survey
+  (lines 18–23), which is **codified by** AGENTS.md gate **G2** ("UX-Done:
+  screenshots of every affected state" — its "Capture method (ruled)" sub-bullet
+  fixes the offscreen-`grab()` method) and **cited by** ADR-0007 / ADR-0009; and
+  the real-desktop GUI-verification survey
   [`docs/backlog/2026-07-15-gui-verification-capabilities.md`](../backlog/2026-07-15-gui-verification-capabilities.md),
-  which this record **relies on as enabling infrastructure and does not
-  re-solve**. This record adds a *review mode* (goal-directed task execution
-  and platform comparison); it does not change the G2 capture method or the
-  hybrid ruling's offscreen/real-Mac split — it slots inside them.
+  which this record **relies on as enabling infrastructure**. That item only
+  *surveys* candidate capabilities — the Linux offscreen drive-harness and the
+  per-golden-path drive scripts this proposal needs are **not built yet and are
+  currently unowned** — so this record depends on that unbuilt infra rather than
+  re-solving the survey (see §4 and the owner-gated questions in §7). This record
+  adds a *review mode* (goal-directed task execution and platform comparison); it
+  does not change the G2 capture method, and it **extends** the hybrid ruling's
+  real-Mac trigger to cover rendering fidelity (see §4).
 
 ## Context
 
@@ -103,7 +109,7 @@ non-1:1 window = *Aesthetic & minimalist* quality (H8).
 
 **Aggregate.** Class **(b)** is the primary root of **five of seven** findings
 (#2, #3, #4, #6, #7). Class **(a)** is the sole root of #1 (and a contributor to
-#4/#6). Class **(c)** spans #2, #3, #5, #7 secondarily. The dominant, most
+#4/#6). Class **(c)** spans #2, #3, #5, #7 (and #1/#6) secondarily. The dominant, most
 tractable gap is **(b) mode of review** — and it is fixable *inside* the existing
 offscreen substrate for most of the affected surfaces, which is why this record
 targets it first.
@@ -153,10 +159,17 @@ into their output.
 #### (A) Task-scripted walkthrough persona
 
 ```
-You are the TASK-SCRIPTED WALKTHROUGH reviewer for Trailer. You do NOT read the
-diff and you do NOT look at isolated screenshots. You PERFORM golden-path tasks
-end-to-end on the built binary and judge each step against the cognitive-
-walkthrough method (Wharton/Lewis/Polson/Rieman; NN/G).
+You are the TASK-SCRIPTED WALKTHROUGH reviewer for Trailer. This block is the
+JUDGE half only: a separate scripted harness drives the built binary through the
+exact action sequence and captures a screenshot after each step; you consume those
+screenshots and judge each step against the cognitive-walkthrough method
+(Wharton/Lewis/Polson/Rieman; NN/G). You do NOT read the diff, you do NOT choose
+the clicks, and you do NOT look at isolated one-off screenshots.
+
+DEPENDENCY (not yet built): the drive scripts (the exact click/key sequence per
+golden path) and the offscreen capture harness do NOT exist today and are
+currently unowned. Until they are built, this prompt cannot be pasted-and-run
+end-to-end — it is the judge contract those scripts must feed.
 
 PRIMARY GOAL (stable end condition): "Get from an intent to a correctly-rendered,
 correctly-sized result with no dead ends, using only native conventions."
@@ -169,15 +182,36 @@ You are given, per scenario: (a) the goal, (b) the EXACT correct action sequence
 after every step. You did not choose the clicks — the harness drove them; you
 JUDGE the observed result.
 
-GOLDEN PATHS TO WALK (script each step; proceed through the WHOLE task even after
-a failure so you find every problem, not just the first):
-  1. NEW-FROM-CLIPBOARD: copy an image to the clipboard -> invoke new-from-
-     clipboard -> confirm a document opens and is shown at the correct default
-     zoom and window size.
-  2. SCREENSHOT-ACQUIRE: invoke the screenshot/acquire action -> capture ->
-     confirm the captured image opens as a document at correct zoom/size.
-  3. OPEN-IMAGE -> ZOOM -> NAVIGATE: open an image file -> zoom in and out ->
-     step to the next/previous image; confirm zoom feedback and navigation.
+SUCCESS-CRITERIA ORACLE (declare these BEFORE judging — the G1 threshold your
+"correct" verdicts are measured against; never judge "zoom/size looks right" by
+taste). For the exact zoom/size rule, use platform-parity persona (B)'s
+Preview/Acrobat oracle:
+  - Default zoom on open = 1:1 (100%) for an image at or below the viewport, else
+    fit-to-window for a larger image.
+  - Window size on open = sized 1:1 to the image (or the declared sensible default
+    for oversized images), NOT an arbitrary/leftover size.
+  - The current zoom % is visible on screen at all times (H1).
+  - A shortcut resolves to the action the persona's hot path expects.
+
+GOLDEN PATHS TO WALK (each names its STARTING STATE; script each step; proceed
+through the WHOLE task even after a failure so you find every problem, not just
+the first):
+  1. NEW-FROM-CLIPBOARD (start: app open, NO document window / empty state): copy
+     an image to the clipboard -> invoke new-from-clipboard -> confirm a document
+     opens at the oracle default zoom AND the oracle window size.
+  2. SCREENSHOT-ACQUIRE (start: app open, NO document window / empty state):
+     invoke the screenshot/acquire action -> capture -> confirm the captured image
+     opens as a document at the oracle zoom/size.
+  3. OPEN-IMAGE -> ZOOM -> NAVIGATE (start: app open, NO document window): open an
+     image file -> zoom in and out -> step to the next/previous image; confirm the
+     zoom % readout updates (H1) and navigation works.
+  4. NEW/ACQUIRE-WITH-DOCUMENT-OPEN (start: a document ALREADY open in a window):
+     with a document window open, open the File menu and inspect the toolbar ->
+     confirm the New action AND the acquire actions (new-from-clipboard,
+     screenshot-acquire) are STILL present and reachable, not vanished (finding
+     #4). NOTE: golden paths 1 and 2 start from the empty state, so if driven only
+     from there they will PASS while #4 persists — this path exists precisely to
+     drive the empty -> document-open transition that surfaces it.
 
 FOR EACH STEP, answer the four canonical cognitive-walkthrough questions VERBATIM,
 each with PASS or FAIL + one sentence of reasoning against the observed screenshot:
@@ -219,16 +253,26 @@ Nielsen H4 (Consistency & standards):
 different words/actions mean the same thing."
 (https://www.nngroup.com/articles/ten-usability-heuristics/)
 
+PEER REFERENCE INPUT (required to truly close the comparative gap): you should be
+given a CAPTURED reference screenshot of the equivalent Preview.app / Acrobat
+surface for each comparison, and you must compare against the CAPTURED peer, not
+your memory. If NO captured peer reference is provided for a surface, you MUST
+mark that surface's peer convention "LLM-RECALLED (unverified — owner spot-check
+required)" and treat the finding as provisional. Recalled conventions can be
+wrong; never present one as ground truth. Class (c) is only genuinely closed for
+surfaces where the peer was actually captured.
+
 PRIMARY GOAL (stable end condition): "Use Trailer with Preview/Acrobat muscle
 memory intact — every default and shortcut lands where a migrating user expects."
 CONTEXT OF USE: a power migrator with strong muscle memory, macOS + Retina.
 SUCCESS CRITERIA are comparative and measurable, not vibes.
 
-For EACH surface below, state: (1) the Preview/Acrobat convention (what the peer
-does), (2) what Trailer does, (3) MATCH / DEPART, (4) if DEPART, the SEVERITY on
-the verbatim NN/G 0-4 scale (0 = not a problem ... 4 = usability catastrophe;
-justify via frequency x impact x persistence), and (5) the migrating user's
-concrete failure at the step where the departure bites.
+For EACH surface below, state: (1) the Preview/Acrobat convention (from the
+captured reference; mark "LLM-RECALLED (unverified)" if none was provided),
+(2) what Trailer does, (3) MATCH / DEPART, (4) if DEPART, the SEVERITY on the
+verbatim NN/G 0-4 scale (0 = not a problem ... 4 = usability catastrophe; justify
+via frequency x impact x persistence), and (5) the migrating user's concrete
+failure at the step where the departure bites.
 
 SURFACES TO COMPARE (add any UX-touching surface the diff introduces):
   - DEFAULT ZOOM on open: peer opens at 1:1 / fit-to-window. Does Trailer?
@@ -262,8 +306,8 @@ Benchmark evidence agrees: on OSWorld (real-OS, multi-step tasks) the human
 baseline is ~72.4% while state-of-the-art agents reach ~**60% pass@1**, hitting
 human level only with pass@5 (five attempts)
 (<https://arxiv.org/abs/2404.07972>, <https://arxiv.org/pdf/2510.19949>,
-<https://benchmarkingagents.com/osworld/>). ~1 in 4 tasks still fails on a single
-try — not acceptable for a reproducible review gate.
+<https://benchmarkingagents.com/osworld/>). At ~60% pass@1, roughly **~2 in 5
+tasks fail on a single try** — not acceptable for a reproducible review gate.
 
 **Recommended: a SCRIPTED interaction harness with the LLM as JUDGE, not as the
 pixel-clicker.**
@@ -284,16 +328,20 @@ pixel-clicker.**
   discipline ("after each step, take a screenshot and verify the outcome"). It
   never gates.
 
-The enabling infrastructure is the
+The intended enabling infrastructure is the
 [`2026-07-15-gui-verification-capabilities`](../backlog/2026-07-15-gui-verification-capabilities.md)
-survey: its Linux `xvfb`/real-WM-in-container + grab-loop tier is exactly the
-cheap default this harness runs on pre-PR, and its macOS self-hosted / hosted-
-runner tiers are the real-window-server substrate the milestone pass needs. This
-record consumes that survey's output; it does not duplicate it.
+survey: its Linux `xvfb`/real-WM-in-container + grab-loop tier is the intended
+cheap default this harness would run on pre-PR, and its macOS self-hosted /
+hosted-runner tiers are the real-window-server substrate the milestone pass needs.
+**Caveat (readiness):** that item is a *survey*, not built infrastructure — the
+Linux offscreen drive-harness and the per-golden-path click/key drive scripts this
+proposal needs **do not exist yet and are currently unowned**. So the pre-PR skill
+carries a real, unbuilt dependency; adopting the personas is not "free" until that
+harness + scripts are built (see the owner-gated question in §7).
 
 **Reconciliation with the ux-evidence hybrid ruling.** The hybrid ruling
-(`docs/research/2026-07-13-ux-research-agenda.md:18–23`, cited by G2 and
-ADR-0007/0009) splits evidence into: (1) **default tier** — per-change offscreen
+(`docs/research/2026-07-13-ux-research-agenda.md:18–23`, codified by AGENTS.md gate
+G2 and cited by ADR-0007/0009) splits evidence into: (1) **default tier** — per-change offscreen
 `QWidget::grab()` under `QT_QPA_PLATFORM=offscreen`, which "suffices for most
 states"; and (2) **real-Mac tier** — batched passes for **native-chrome / menu /
 icon / permission** surfaces `grab()` structurally cannot observe (Dock, Services
@@ -317,7 +365,7 @@ UX-touching diffs, PLUS a milestone-batch real-Mac task-scripted pass.**
 | Scenario / check | Pre-PR offscreen (`ux-walkthrough`) | Milestone real-Mac tier |
 |---|---|---|
 | Window sizing / geometry on open (#2) — logical-px assertion | ✅ scripted, observable offscreen | ✅ confirm at dpr=2 |
-| Menu "New" IA + label comprehension (#3) | ✅ drive the menu, judge label | — |
+| Menu "New" IA + label comprehension (#3) | ✅ but judged on the **in-window Qt `QMenu`** rendering only (Linux offscreen) | ✅ confirm on the macOS **native global menu bar** (offscreen cannot render it) |
 | New/acquire vanish across doc-open transition (#4) | ✅ open doc, then look for New/acquire | ✅ confirm native menu-bar slice |
 | Missing zoom-level indicator (#5) | ✅ zoom, look for the readout | — |
 | ⌘N bound to new-from-clipboard (#7) | ✅ script ⌘N, assert the resulting document | ✅ confirm no OS-level shortcut clash |
@@ -329,9 +377,13 @@ UX-touching diffs, PLUS a milestone-batch real-Mac task-scripted pass.**
 The split-line is deliberate: **class (b) mode-of-review is fixable pre-PR** for
 every surface the offscreen substrate can render, because the fix is *executing
 the task*, not increasing fidelity. Only class (a) fidelity and the native-chrome
-slice need the real-Mac tier — the same boundary the hybrid ruling already draws,
-now extended along a *flow* axis rather than only a *native-chrome observability*
-axis.
+slice need the real-Mac tier. This is **not** merely the boundary the hybrid
+ruling already draws: that ruling splits on *native-chrome observability*
+(Dock / Services / TCC) and explicitly left HiDPI **rendering fidelity** on the
+"offscreen `grab()` suffices" side — its known blind spot. This record
+**extends** the real-Mac trigger to include rendering fidelity at dpr=2
+(finding #1), closing the gap the ruling left open, in addition to the *flow*
+axis it adds pre-PR.
 
 ### 5. Boundary — what stays impossible without real hardware
 
@@ -390,6 +442,11 @@ Expressed as **agent count + complexity**, not wall-clock:
   this tier is batched/gated, never per-PR) — plus the owner's manual checklist
   above for the class no agent can verify. Complexity is higher (real binary, real
   display, per-step capture) but frequency is low (milestones, not per-PR).
+- **Not counted above:** these figures cover only the persona **judge** passes.
+  They exclude the harness **drive + capture** cost — building and maintaining the
+  drive scripts, the CI minutes to launch the real binary per run, and storing one
+  screenshot per scripted step. That cost lands on the gui-verification track, not
+  the persona budget, and is part of the unbuilt dependency flagged in §4.
 
 ## Personas debate
 
@@ -404,8 +461,11 @@ Per the DESIGN §2.5.2 lenses, on **whether to adopt Option B**:
   harness mechanics so long as the readout gets checked.
 - **Power migrator:** The strongest stake. #2 (1:1 window), #3 (menu IA), #5 (zoom
   %), #7 (⌘N) are all Preview/Acrobat-muscle-memory departures. The parity persona
-  (B) is *her lens made executable and comparative* — the DESIGN power-migrator
-  lens that until now only narrated a Trailer-only screenshot. Strongly favours B.
+  (B) makes her lens executable — and genuinely *comparative* only once a captured
+  peer reference is supplied; without it (B) falls back to LLM-recalled conventions
+  that need owner spot-check. Either way it is a step past the DESIGN
+  power-migrator lens that until now only narrated a Trailer-only screenshot.
+  Strongly favours B.
 - **Occasional user:** Forgets everything between sessions, so relies on
   recognition over recall (#4, H6) and visible feedback. Favours B; the cognitive-
   walkthrough method is literally a learnability instrument for exactly her.
@@ -462,7 +522,9 @@ adopt/defer call and the open questions in §7.>
 
 ## 7. Recommendation summary + open questions for the owner
 
-**Adopt now (no new infra needed — runs on the existing offscreen substrate):**
+**Adopt now (no new *real-Mac* infra needed — BUT requires the Linux offscreen
+drive-harness + golden-path drive/capture scripts to be built first; these do not
+exist yet and are currently unowned):**
 
 - Add the **`ux-walkthrough` skill** invoked pre-PR for UX-touching diffs, running
   the **task-scripted walkthrough** (offscreen-runnable golden paths) + the
@@ -500,6 +562,13 @@ adopt/defer call and the open questions in §7.>
 5. Confirm the offscreen/real-Mac scenario split in §4 — in particular that window
    sizing (#2) is accepted as a *logical-px* pre-PR assertion with a real-Mac
    dpr=2 confirmation, rather than real-Mac only.
+6. Who builds the Linux offscreen **drive-harness + the per-golden-path
+   drive/capture scripts** the pre-PR skill depends on — is that in scope for this
+   record, or a follow-up on the `2026-07-15-gui-verification-capabilities` track?
+   The personas cannot run pre-PR until this exists (see §4 caveat).
+7. Should persona (B) be **required to receive captured Preview/Acrobat reference
+   screenshots** (so class (c) is truly closed), or is LLM-recalled-plus-owner-
+   spot-check acceptable for the first iteration?
 
 ## Evidence required to reopen
 
@@ -510,5 +579,3 @@ or (b) blocks on false positives frequent enough to burden UX-touching PRs — p
 owner sign-off. A change to the offscreen/real-Mac split would additionally
 require superseding evidence against the hybrid ruling in
 `docs/research/2026-07-13-ux-research-agenda.md`.
-</content>
-</invoke>
