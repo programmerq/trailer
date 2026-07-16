@@ -21,7 +21,7 @@
 #   scripts/build-macos.sh --rebuild    # wipe build-macos/ + build-macos-deps/
 #   scripts/build-macos.sh --skip-adaptive-icon
 #                                       # dev build: skip the actool app-icon
-#                                       # compile (default Qt icon), so a host
+#                                       # compile (static non-adaptive .icns icon), so a host
 #                                       # with only the Command Line Tools (no
 #                                       # full Xcode / no actool) still builds a
 #                                       # DMG. Same as TRAILER_SKIP_ADAPTIVE_ICON=1.
@@ -75,8 +75,8 @@ REBUILD=0
 # --skip-adaptive-icon flag or TRAILER_SKIP_ADAPTIVE_ICON=1 in the env (so
 # `TRAILER_SKIP_ADAPTIVE_ICON=1 make release-macos` works with no Makefile
 # change). actool ships ONLY with full Xcode, so this lets a machine with just
-# the Command Line Tools still produce a runnable app/DMG with the default Qt
-# icon. Guarded with :- so it's safe under `set -u`.
+# the Command Line Tools still produce a runnable app/DMG with the static
+# (non-adaptive) .icns icon. Guarded with :- so it's safe under `set -u`.
 SKIP_ADAPTIVE_ICON=0
 if [[ "${TRAILER_SKIP_ADAPTIVE_ICON:-}" == "1" ]]; then
     SKIP_ADAPTIVE_ICON=1
@@ -325,7 +325,7 @@ echo "==> Configuring trailer"
 rm -rf "$BUILD_DIR"
 # When skipping the adaptive icon, turn the actool POST_BUILD step off at
 # the CMake level so the build never invokes actool (the app gets the
-# default Qt icon). Otherwise leave the option at its ON default.
+# static (non-adaptive) .icns icon). Otherwise leave the option at its ON default.
 ADAPTIVE_ICON_FLAG="-DTRAILER_ADAPTIVE_ICON=ON"
 if (( SKIP_ADAPTIVE_ICON )); then
     ADAPTIVE_ICON_FLAG="-DTRAILER_ADAPTIVE_ICON=OFF"
@@ -434,7 +434,7 @@ echo "    no external dylib references"
 # (the surface is native Dock/Finder chrome; `grab()` can't see it).
 # ---------------------------------------------------------------------
 if (( SKIP_ADAPTIVE_ICON )); then
-    echo "⚠️  Adaptive app icon skipped (--skip-adaptive-icon / dev build) — DMG will ship the default Qt icon."
+    echo "⚠️  Adaptive app icon skipped (--skip-adaptive-icon / dev build) — DMG will ship the static (non-adaptive) .icns icon."
 else
     echo "==> Verifying adaptive app icon (Assets.car + CFBundleIconName)"
     ASSETS_CAR="$APP_PATH/Contents/Resources/Assets.car"

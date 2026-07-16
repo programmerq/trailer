@@ -316,7 +316,7 @@ if(APPLE AND TRAILER_ADAPTIVE_ICON)
         )
     endif()
 elseif(APPLE)
-    message(STATUS "TRAILER_ADAPTIVE_ICON=OFF — skipping actool app-icon compile; app will use the default Qt icon")
+    message(STATUS "TRAILER_ADAPTIVE_ICON=OFF — skipping actool app-icon compile; app will use the static (non-adaptive) .icns icon")
 endif()
 
 set_target_properties(trailer PROPERTIES
