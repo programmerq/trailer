@@ -25,6 +25,7 @@ configure_file(
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 option(TRAILER_WERROR "Treat compiler warnings as errors (enabled in CI)" OFF)
+option(TRAILER_ADAPTIVE_ICON "Compile the adaptive light/dark macOS app icon via actool (requires full Xcode)" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -278,7 +279,7 @@ endif()
 # .xcassets files are plain data on those platforms. actool is invoked via
 # `xcrun` (a POST_BUILD step on the trailer target) so it runs during
 # `cmake --build`, before macdeployqt in scripts/build-macos.sh.
-if(APPLE)
+if(APPLE AND TRAILER_ADAPTIVE_ICON)
     set(TRAILER_XCASSETS "${CMAKE_SOURCE_DIR}/resources/macos/Assets.xcassets")
     if(EXISTS "${TRAILER_XCASSETS}")
         # Match the bundle's LSMinimumSystemVersion floor (Info.plist.in: 11.0)
@@ -314,6 +315,8 @@ if(APPLE)
             VERBATIM
         )
     endif()
+elseif(APPLE)
+    message(STATUS "TRAILER_ADAPTIVE_ICON=OFF — skipping actool app-icon compile; app will use the default Qt icon")
 endif()
 
 set_target_properties(trailer PROPERTIES
