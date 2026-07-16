@@ -110,7 +110,7 @@ jobs:
           # progress" — skip heavy build jobs and warn, instead of
           # turning the PR red.
           IS_RELEASE_READY=true
-          if echo "$VERSION" | grep -qE -- '-dev$|-rc[0-9]*$'; then
+          if echo "$VERSION" | grep -qE -- '-dev(\.[0-9]+)?$|-rc[0-9]*$'; then
             if [ "${{ github.event_name }}" = "pull_request" ]; then
               IS_RELEASE_READY=false
               echo "::warning::VERSION='$VERSION' still carries a -dev/-rc suffix; release-candidate heavy build jobs are skipped. Bump VERSION (and re-run cmake locally to regenerate TrailerVersion.h) to trigger the full build."

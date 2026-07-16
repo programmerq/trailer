@@ -65,7 +65,7 @@ jobs:
           # Defence in depth: precheck rejected -dev/-rc PRs before
           # the heavy build ran, but a maintainer who force-merged
           # past CI could still get here.
-          if echo "$VERSION" | grep -qE -- '-dev$|-rc[0-9]*$'; then
+          if echo "$VERSION" | grep -qE -- '-dev(\.[0-9]+)?$|-rc[0-9]*$'; then
             echo "::error::VERSION='$VERSION' carries a dev/rc suffix; refusing to tag."
             exit 1
           fi
