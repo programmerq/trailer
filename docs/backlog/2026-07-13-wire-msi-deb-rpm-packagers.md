@@ -2,10 +2,42 @@
 id: 2026-07-13-wire-msi-deb-rpm-packagers
 title: Wire up the .msi / .deb / .rpm packagers and attach them to GitHub Releases
 priority: TBD
-status: open
+status: done
 source: release 0.3.0 artifact reconciliation 2026-07-13
 created: 2026-07-13
 ---
+
+## Resolved 2026-07-15
+
+**Full close.** All three native packagers are now wired into the release
+pipeline as steps inside the existing `.github/workflows/release.yml` jobs
+(reusing the already-built binaries rather than adding new build jobs):
+
+- **`.deb`** and **`.rpm`** build in the `linux-build` job via
+  `scripts/build-linux-deb.sh --no-docker` / `scripts/build-linux-rpm.sh
+  --no-docker`. The `.deb` reuses the job's cmake tree (`BUILD_DIR=build`,
+  no recompile); the `.rpm` builds host-side on the Ubuntu runner via
+  `rpmbuild` (from the `rpm` apt package) with **no Docker and no Fedora
+  container needed** — which is why this is a full close, not a partial one.
+  Uploaded as artifacts `trailer-linux-deb` / `trailer-linux-rpm`.
+- **`.msi`** builds in the `windows-cross` job via
+  `scripts/build-windows-msi.sh --no-docker SKIP_CROSS_BUILD=1`, reusing the
+  mingw cross-build tree (`wixl`/`msitools` from apt). Uploaded as
+  `trailer-windows-msi`.
+
+`release-publish.yml`'s rename map now promotes the three to versioned,
+lowercase-`trailer-` public filenames (`trailer-<ver>-x86_64.deb` /
+`.rpm`, `trailer-<ver>-windows-x64.msi`) so they match the
+`files: dist/trailer-*` release glob, and the release-body install prose
+again documents `apt/dpkg`, `dnf/rpm`, and `msiexec`/double-click install.
+
+The recurring **CMake `install()` / binary-path-mismatch** nit is addressed
+via the install-rule additions: `cmake --install` (with
+`-DCMAKE_INSTALL_DOCDIR=share/doc/trailer`) now stages the binary + desktop
+/ metainfo / icon files + license texts into the deb/rpm doc dir, so the
+packagers no longer pick the binary up from an ad-hoc path.
+
+AppImage / Flatpak distribution remains separate future work (unchanged).
 
 ## Threshold
 

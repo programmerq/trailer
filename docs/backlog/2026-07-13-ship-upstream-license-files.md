@@ -2,10 +2,40 @@
 id: 2026-07-13-ship-upstream-license-files
 title: Packages must ship upstream LICENSE/NOTICE files for bundled deps (ONNX, qpdf, PaddleOCR, Qt) — legal exposure before first release
 priority: TBD
-status: open
+status: done
 source: recurring nit (history mine, 2026-07-13)
 created: 2026-07-13
 ---
+
+## Resolved 2026-07-15
+
+The vendored upstream license/notice set now lives in-tree under
+`licenses/third-party/` and ships in every distributed artifact:
+
+- ONNX Runtime — MIT (`onnxruntime-LICENSE.txt`)
+- qpdf — Apache-2.0 + its NOTICE (`qpdf-LICENSE.txt`, `qpdf-NOTICE.md`)
+- Qt — LGPL-3.0 / GPL-3.0 (`qt-LGPL-3.0.txt`, `qt-GPL-3.0.txt`)
+- libjpeg-turbo (`libjpeg-turbo-LICENSE.md`)
+- PaddleOCR — Apache-2.0. Note: PaddleOCR ships **no standalone NOTICE**;
+  its Apache attribution lives in the LICENSE header, captured in
+  `paddleocr-LICENSE.txt`.
+- (also tomlplusplus — MIT)
+
+Delivery paths:
+
+- **`.deb` / `.rpm`** — CMake `install()` rules place `LICENSE`,
+  `THIRD_PARTY_LICENSES.md`, and the `licenses/third-party/` set into
+  `share/doc/trailer/` (docdir forced lowercase via
+  `-DCMAKE_INSTALL_DOCDIR=share/doc/trailer`).
+- **`.msi`** — `generate-wix-fragment.py` emits license components that
+  install the same texts under `licenses\` / `licenses\third-party\` in
+  the install directory.
+- **Portable `.tar.gz` / `.zip`** — the release-staging steps now
+  `cp -r licenses/third-party` into the bundle root alongside `LICENSE` /
+  `THIRD_PARTY_LICENSES.md`.
+- **macOS `.dmg`** — an additive license-staging step in
+  `scripts/build-macos.sh` bundles the same texts (**unvalidated** —
+  macOS-only build path not exercised here).
 
 ## Threshold
 

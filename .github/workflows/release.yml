@@ -196,6 +196,10 @@ jobs:
           cp build/trailer dist/trailer-linux-x86_64/
           cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
              dist/trailer-linux-x86_64/
+          # Ship the verbatim upstream dependency license texts alongside
+          # the portable binary so the tarball carries the same third-party
+          # attribution the .deb/.rpm install under share/doc/trailer.
+          cp -r licenses/third-party dist/trailer-linux-x86_64/
           (cd dist && tar -czf trailer-linux-x86_64.tar.gz trailer-linux-x86_64)
 
       - name: Upload Linux artifact
@@ -203,6 +207,59 @@ jobs:
         with:
           name: trailer-linux-x86_64
           path: dist/trailer-linux-x86_64.tar.gz
+          retention-days: 30
+
+      - name: Install .deb / .rpm build deps
+        # dpkg-deb ships in the base image; rpmbuild (rpm), patchelf,
+        # dpkg-dev, and file are the extras the --no-docker deb/rpm
+        # packagers need. The trailer-runner image ships an empty apt
+        # index so `apt-get update` must run first. This step lives
+        # inside the already release-gated linux-build job (the job's
+        # `if: needs.precheck.outputs.is-release-ready == 'true'`), so it
+        # never runs on a non-release PR.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y rpm patchelf dpkg-dev file
+
+      - name: Build .deb and .rpm packages
+        # Host-side (no-Docker) packagers, mirroring windows-cross's
+        # dockerless style. QT_PREFIX points at the Qt tree
+        # install-qt-action exported (QT_ROOT_DIR); ORT_PREFIX keeps its
+        # /opt/onnxruntime default so cmake resolves the prebuilt ORT the
+        # runner image bakes in.
+        #
+        # The .deb reuses THIS job's already-built cmake tree via
+        # BUILD_DIR=build: the inner script reconfigures (adds
+        # CMAKE_INSTALL_DOCDIR) + runs an incremental `cmake --build`
+        # (a no-op — objects already built) then `cmake --install` into a
+        # staging DESTDIR, so the Qt app is NOT compiled a second time.
+        # The .rpm packager (rpmbuild) builds in its own copied source
+        # tree under RPMBUILD_TOP and can't reuse build/, but ccache
+        # (warm from the Build step, content-keyed so it hits across the
+        # copied tree) keeps that rebuild cheap. The .rpm's fresh cmake
+        # configure re-resolves ORT from ORT_PREFIX rather than
+        # re-downloading via FetchContent.
+        run: |
+          set -euo pipefail
+          QT_PREFIX="$QT_ROOT_DIR" BUILD_DIR="$PWD/build" \
+            bash scripts/build-linux-deb.sh --no-docker
+          QT_PREFIX="$QT_ROOT_DIR" \
+            bash scripts/build-linux-rpm.sh --no-docker
+          ls -la dist/*.deb dist/*.rpm
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: trailer-linux-deb
+          path: dist/trailer_*_amd64.deb
+          retention-days: 30
+
+      - name: Upload .rpm artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: trailer-linux-rpm
+          path: dist/trailer-*.x86_64.rpm
           retention-days: 30
 
   windows-cross:
@@ -292,6 +349,10 @@ jobs:
           cp "$QT_WIN_DIR"/plugins/imageformats/*.dll dist/trailer-windows-x86_64/imageformats/
           cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
              dist/trailer-windows-x86_64/
+          # Ship the verbatim upstream dependency license texts inside the
+          # portable zip too, matching what the .msi installs under
+          # licenses\third-party\.
+          cp -r licenses/third-party dist/trailer-windows-x86_64/
 
       - name: Wine unit tests
         # Cheap Windows-behaviour insurance before shipping a release:
@@ -345,6 +406,49 @@ jobs:
         with:
           name: trailer-windows-x86_64
           path: dist/trailer-windows-x86_64.zip
+          retention-days: 30
+
+      - name: Install .msi build deps (wixl / msitools)
+        # wixl and msitools are separate apt packages on Ubuntu noble.
+        # The trailer-runner image ships an empty apt index so
+        # `apt-get update` must run first. This step lives inside the
+        # already release-gated windows-cross job, so it never runs on a
+        # non-release PR.
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y wixl msitools
+
+      - name: Build Windows .msi
+        # Reuse the mingw cross-build in build-win/ — no second
+        # cross-compile. First re-run the bundler with its DEFAULT OUT_DIR
+        # so build-windows/ holds the clean trailer.exe + DLL +
+        # platforms/qwindows.dll tree that generate-wix-fragment.py walks.
+        # (The earlier Bundle step pointed OUT_DIR at dist/… for the ZIP,
+        # and that tree now also carries LICENSE/README/licenses/… doc
+        # files — wixl must NOT see those as install components, since
+        # generate-wix-fragment.py would emit DirectoryRefs trailer.wxs
+        # never defines and duplicate the license components it already
+        # adds from the repo root.) BUILD_DIR points at the existing
+        # build-win tree so this is an incremental no-op build + a cheap
+        # objdump DLL re-collect, not a recompile. Then
+        # build-windows-msi.sh --no-docker with SKIP_CROSS_BUILD=1 skips
+        # its own cross build and runs wixl over build-windows/.
+        run: |
+          set -euo pipefail
+          BUILD_DIR="$PWD/build-win" \
+          QT_DIR="$QT_WIN_DIR" \
+          QT_HOST_DIR="$QT_HOST_DIR" \
+          QPDF_DIR="$QPDF_DIR" \
+            bash scripts/build-windows.sh --in-container
+          SKIP_CROSS_BUILD=1 bash scripts/build-windows-msi.sh --no-docker
+          ls -la dist/Trailer-*-Windows.msi
+
+      - name: Upload .msi artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: trailer-windows-msi
+          path: dist/Trailer-*-Windows.msi
           retention-days: 30
 
   macos-build:

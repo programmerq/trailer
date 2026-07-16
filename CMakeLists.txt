@@ -325,6 +325,13 @@ set_target_properties(trailer PROPERTIES
 # Installation rules (used by Linux packaging)
 if(UNIX AND NOT APPLE)
     include(GNUInstallDirs)
+    # GNUInstallDirs derives DOCDIR from the (capitalized) project name, so its
+    # default here is share/doc/Trailer. Force the lowercase package-name
+    # spelling so a naive `cmake --install` (without the packaging scripts'
+    # -DCMAKE_INSTALL_DOCDIR override) still lands the license texts where the
+    # .deb/.rpm expect them. A normal variable set after include() shadows the
+    # cache value for the install() rules below.
+    set(CMAKE_INSTALL_DOCDIR "${CMAKE_INSTALL_DATAROOTDIR}/doc/trailer")
     install(TARGETS trailer DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(FILES platform/linux/trailer.desktop
             DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
@@ -335,6 +342,15 @@ if(UNIX AND NOT APPLE)
                 DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${_size}x${_size}/apps
                 RENAME trailer.png)
     endforeach()
+
+    # License / attribution files. Ship the first-party MIT license, the
+    # third-party dependency summary, and the verbatim upstream license texts
+    # so the packaged artifact satisfies each dependency's redistribution
+    # terms. CMAKE_INSTALL_DOCDIR is pinned to share/doc/trailer just above.
+    install(FILES LICENSE THIRD_PARTY_LICENSES.md
+            DESTINATION ${CMAKE_INSTALL_DOCDIR})
+    install(DIRECTORY licenses/third-party
+            DESTINATION ${CMAKE_INSTALL_DOCDIR}/licenses)
 endif()
 
 # Developer-facing tool: renders every toolbar SVG into a sheet PNG
