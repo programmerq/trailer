@@ -285,15 +285,22 @@ if(APPLE)
         # rather than CMAKE_OSX_DEPLOYMENT_TARGET, which may be unset on a bare
         # `cmake` invocation on a Mac and would hand actool an empty argument.
         set(TRAILER_ICON_MIN_MACOS "11.0")
-        # The icon is wired via the hardcoded CFBundleIconName=AppIcon in
-        # resources/macos/Info.plist.in, so actool only needs to compile the
-        # .xcassets into Assets.car in Resources/ — no partial Info.plist to
-        # merge (the --output-partial-info-plist output was never consumed).
+        # actool REQUIRES --output-partial-info-plist whenever the catalog
+        # contains app icons: without it actool emits the notice "Compiling
+        # app icons requires passing --output-partial-info-plist [path]" and
+        # refuses to fully compile the AppIcon set, so no Assets.car is
+        # written and scripts/build-macos.sh's verifier fails. We point it at
+        # a throwaway file in the build dir purely to satisfy that contract —
+        # its contents (CFBundleIconName=AppIcon) are NOT merged, because
+        # resources/macos/Info.plist.in already hardcodes CFBundleIconName.
+        set(TRAILER_ICON_PARTIAL_PLIST
+            "${CMAKE_CURRENT_BINARY_DIR}/actool-AppIcon-partial.plist")
         add_custom_command(TARGET trailer POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E make_directory
                     "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources"
             COMMAND xcrun actool
                     --app-icon AppIcon
+                    --output-partial-info-plist "${TRAILER_ICON_PARTIAL_PLIST}"
                     --minimum-deployment-target "${TRAILER_ICON_MIN_MACOS}"
                     --platform macosx
                     --target-device mac
