@@ -194,11 +194,16 @@ without cutting a tag.
   the patch and starts a fresh `-dev.0` (`0.3.0` → `0.3.1-dev.0`), an
   existing counter increments (`0.3.1-dev.0` → `0.3.1-dev.1`), and a
   bare `-dev` promotes to `-dev.0`.
-- A `-dev.N` version is **not** release-ready. The `release.yml`
-  precheck and `release-autotag.yml` both treat any `-dev`, `-dev.N`,
-  or `-rc` suffix as not-release-ready, so the heavy build / tag /
-  publish jobs are skipped — a dev build cannot accidentally become a
-  real release.
+- A `-dev.N` version can never be tagged or published. The hard
+  guarantee is `release-autotag.yml`'s guard, which
+  **unconditionally** refuses to tag any `-dev` / `-dev.N` / `-rc`
+  version — and `release.yml` never tags or publishes at all. As a
+  bonus, on a `pull_request` `release.yml`'s precheck also skips the
+  heavy build jobs for such a version, so a release-candidate PR that
+  hasn't been bumped stays green without burning build minutes. (A
+  manual `workflow_dispatch` of `release.yml` on a `-dev.N` VERSION
+  keeps `is-release-ready=true` and *will* build artifacts — it just
+  can't tag or publish them.)
 - Cutting the real `X.Y.Z` supersedes all its `X.Y.Z-dev.N`
   predecessors; `scripts/bump-version.sh release` strips the suffix
   (`0.3.1-dev.3` → `0.3.1`).

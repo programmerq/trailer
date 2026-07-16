@@ -91,7 +91,7 @@ write_version() {
     echo
     echo "Next steps:"
     case "$new" in
-        *-dev|*-rc*)
+        *-dev*|*-rc*)
             echo "  - Build locally to refresh TrailerVersion.h:"
             echo "      cmake -S . -B build && cmake --build build"
             ;;
@@ -134,7 +134,10 @@ case "$ACTION" in
             dev.*)
                 # Already an -dev.N counter — advance N.
                 DEV_N="${PARSED_SUFFIX#dev.}"
-                write_version "${PARSED_MAJOR}.${PARSED_MINOR}.${PARSED_PATCH}-dev.$((DEV_N + 1))"
+                # Force base-10: a leading-zero counter (dev.08 / dev.09)
+                # is otherwise parsed as octal — dev.08 errors and dev.007
+                # silently becomes dev.8.
+                write_version "${PARSED_MAJOR}.${PARSED_MINOR}.${PARSED_PATCH}-dev.$((10#$DEV_N + 1))"
                 ;;
             dev)
                 # Bare -dev — start the counter at .0.

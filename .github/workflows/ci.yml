@@ -49,6 +49,21 @@ env:
   CTEST_PARALLEL_LEVEL: 2
 
 jobs:
+  version-gating:
+    # Fast, dependency-free gate: exercise the real shipped
+    # scripts/test-version-gating.sh, which asserts both the release-
+    # ready gate regex (kept in lockstep with release.yml + release-
+    # autotag.yml) and scripts/bump-version.sh's -dev.N behaviour.
+    # Needs nothing but bash + coreutils, so it stays off the heavy
+    # build path and fails the workflow the moment the regex drifts.
+    name: Version gating
+    runs-on: trailer-k8s
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v7
+      - name: Run version-gating regression tests
+        run: bash scripts/test-version-gating.sh
+
   build-and-test:
     name: Linux build + unit tests
     runs-on: trailer-k8s

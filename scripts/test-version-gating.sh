@@ -82,6 +82,20 @@ run_bump() { # run_bump START ACTION -> echoes resulting VERSION
     fi
 }
 
+# assert_parse_reject VERSION -> parse_version must refuse the string.
+# `set <value>` runs it through parse_version on write (and CURRENT on
+# read), so a malformed suffix has to exit non-zero.
+assert_parse_reject() {
+    local version="$1"
+    printf '%s\n' "$version" > "$SANDBOX/VERSION"
+    if "$SANDBOX/scripts/bump-version.sh" set "$version" >/dev/null 2>&1; then
+        echo "FAIL: parse accepts malformed '$version'"
+        FAILURES=$((FAILURES + 1))
+    else
+        echo "PASS: parse rejects '$version'"
+    fi
+}
+
 # parse succeeds on -dev.N (any subcommand that only reads is fine; use
 # the no-op-ish 'set' to the same value, which validates on write).
 printf '0.3.1-dev.0\n' > "$SANDBOX/VERSION"
@@ -92,8 +106,25 @@ else
     FAILURES=$((FAILURES + 1))
 fi
 
-assert_eq "dev-bump 0.3.1-dev.0" "$(run_bump 0.3.1-dev.0 dev-bump)" "0.3.1-dev.1"
-assert_eq "release 0.3.1-dev.0"  "$(run_bump 0.3.1-dev.0 release)"  "0.3.1"
+assert_eq "dev-bump 0.3.1-dev.0"      "$(run_bump 0.3.1-dev.0 dev-bump)" "0.3.1-dev.1"
+# Two-digit boundary: the counter must roll .9 -> .10, not wrap or reset.
+assert_eq "dev-bump 0.3.1-dev.9"      "$(run_bump 0.3.1-dev.9 dev-bump)" "0.3.1-dev.10"
+# Leading-zero counter must be treated as base-10 (dev.08 -> dev.9),
+# never as octal (08 is an invalid octal literal and would error).
+assert_eq "dev-bump 0.3.1-dev.08"     "$(run_bump 0.3.1-dev.08 dev-bump)" "0.3.1-dev.9"
+# Bare -dev promotes to the .0 counter.
+assert_eq "dev-bump 0.3.1-dev"        "$(run_bump 0.3.1-dev dev-bump)"   "0.3.1-dev.0"
+# Clean release begins dev work on the next patch at .0.
+assert_eq "dev-bump 0.3.1 (clean)"    "$(run_bump 0.3.1 dev-bump)"       "0.3.2-dev.0"
+assert_eq "release 0.3.1-dev.0"       "$(run_bump 0.3.1-dev.0 release)"  "0.3.1"
+# dev-bump refuses an -rc suffix (non-zero exit -> run_bump reports <error>).
+assert_eq "dev-bump 0.3.1-rc1 errors" "$(run_bump 0.3.1-rc1 dev-bump)"   "<error>"
+
+echo
+echo "== parse_version rejects malformed suffixes =="
+assert_parse_reject "0.3.1-dev."
+assert_parse_reject "0.3.1-devx"
+assert_parse_reject "0.3.1-dev.0.1"
 
 echo
 if [[ "$FAILURES" -eq 0 ]]; then
