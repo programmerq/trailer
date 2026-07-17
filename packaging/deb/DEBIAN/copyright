@@ -1,7 +1,7 @@
 Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: Trailer
 Upstream-Contact: TODO@trailer.example.com
-Source: https://github.com/trailer-app/trailer
+Source: https://github.com/programmerq/trailer
 Comment: Trailer bundles several third-party libraries (ONNX Runtime, qpdf,
  PaddleOCR, Qt, libjpeg-turbo, tomlplusplus, …). Their verbatim upstream
  license texts ship inside this package under

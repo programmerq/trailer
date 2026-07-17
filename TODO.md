@@ -64,6 +64,13 @@ path keeps the logical thumbnail at 80×100 regardless of DPR; only the
 backing pixels scale 80×100 → 160×200 at 2×). The earlier "something keeps
 rows tall / `SizeHintRole` shadowing / DPR rounding" theory is wrong.
 
+> **Update 2026-07-16.** "DPR is not the cause" holds only for *this*
+> fixed-108px-row symptom. A **separate** devicePixelRatio double-scale was
+> later found in the scale-to-width delegate (post-0006): `paint` scaled a
+> dpr-stamped pixmap with `scaledToWidth(availW)`, painting at half the column
+> width on Retina. Fixed via `src/ui/ThumbnailPaint.h::scaleToLogicalWidth`
+> and pinned by `tests/test_thumbnail_paint.cpp`.
+
 The real cause of the visible gaps is **a fixed row height meeting a
 variable page aspect.** `sizeHint` always returns
 `iconSize.height() + 8` (= 108) — sized for a *full-height portrait*

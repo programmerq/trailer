@@ -34,13 +34,22 @@
     <key>CFBundleVersion</key>
     <string>${MACOSX_BUNDLE_BUNDLE_VERSION}</string>
     <key>LSMinimumSystemVersion</key>
-    <string>11.0</string>
+    <string>14.0</string>
     <key>NSHighResolutionCapable</key>
     <true/>
     <key>NSPrincipalClass</key>
     <string>NSApplication</string>
     <key>NSSupportsAutomaticGraphicsSwitching</key>
     <true/>
+
+    <!--
+        Empty in normal builds. Recorder-enabled builds
+        (-DTRAILER_ENABLE_UX_RECORDER=ON) substitute the camera
+        usage-description key here — macOS refuses (kills the
+        process, in fact) any camera-permission request from a
+        bundle without it. See docs/ux-recorder.md.
+    -->
+    ${TRAILER_UX_PLIST_EXTRAS}
 
     <!--
         Declare which document types Trailer opens. Without this,

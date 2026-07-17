@@ -1,14 +1,16 @@
-# NNNN — <short decision title>
+# <short decision title>
 
 <!--
-Copy this file to `NNNN-kebab-title.md`, take the next free number, and fill
-every section. A record with an empty section is not ready to be adjudicated.
+Copy this file to `YYYY-MM-DD-<slug>.md` — the date is the day you first draft
+the record, and `<slug>` is a short kebab-case handle for the decision (see
+`README.md`) — and fill every section. A record with an empty section is not
+ready to be adjudicated.
 See PHILOSOPHY.md → "How design decisions get adjudicated" for the process
 this template encodes (personas as unranked lenses, the admissible-objection
 test, the arbiter, and the proposed → accepted → superseded lifecycle).
 -->
 
-- **Status:** proposed <!-- proposed | accepted | superseded-by NNNN -->
+- **Status:** proposed <!-- proposed | accepted | superseded-by <YYYY-MM-DD-slug> -->
 - **Arbiter:** <the agent role named for this decision; the owner (programmerq) is the escalation-only override>
 - **Date proposed:** <YYYY-MM-DD>
 - **Date accepted / superseded:** <YYYY-MM-DD, or —>

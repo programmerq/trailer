@@ -6,6 +6,13 @@
 #include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
 #include "ui/MainWindow.h"
+#ifdef TRAILER_UX_RECORDER
+#include "uxrecord/UxPlatformCapture.h"
+#include "uxrecord/UxRecorder.h"
+#include <QDesktopServices>
+#include <QPushButton>
+#include <QUrl>
+#endif
 
 #include <QAction>
 #include <QClipboard>
@@ -22,6 +29,7 @@
 #include <QMimeData>
 #include <QMessageBox>
 #include <QProcess>
+#include <QScreen>
 #include <QSet>
 #include <QStandardPaths>
 #include <QUrl>
@@ -29,10 +37,20 @@
 
 namespace trailer {
 
-Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
+void Application::applyIdentity() {
     setApplicationName(QStringLiteral("Trailer"));
     setOrganizationName(QStringLiteral("Trailer"));
+    // organizationDomain is set for Qt identity alignment only (reverses to
+    // io.github.programmerq). It does NOT move any settings path: the sole
+    // QSettings consumer (DocumentTypeDefaults) uses the 2-arg
+    // QSettings(org, app) constructor, which keys off organizationName and
+    // ignores the domain. No settings migration is required on any platform.
+    setOrganizationDomain(QStringLiteral("programmerq.github.io"));
     setApplicationVersion(QStringLiteral(TRAILER_VERSION_STRING));
+}
+
+Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
+    applyIdentity();
 
 #ifdef Q_OS_MACOS
     // macOS keeps a dock icon + global menu bar alive with zero windows, so the
@@ -54,6 +72,15 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
     m_registry.registerAdapter(std::make_unique<PdfAdapter>());
     m_registry.registerAdapter(std::make_unique<ImageAdapter>());
 
+#ifdef TRAILER_UX_RECORDER
+    // ADR 0014: let Mechanism A (the screenshot-import Screen-Recording
+    // explainer in src/platform/) defer to Mechanism B's authoritative live
+    // TCC gate so the two never double-prompt for the same macOS permission.
+    // Injected here (rather than src/platform/ depending on src/uxrecord/) and
+    // compiled out of default builds, which keep A standalone (G14.4).
+    setScreenRecordingGrantedProbe([] { return uxScreenRecordingGranted(); });
+#endif
+
     // Snapshot the open file list at quit. Done via aboutToQuit (not
     // closeEvent on each window) so we capture every window before any
     // is torn down — closeEvent ordering is platform-dependent and a
@@ -66,6 +93,89 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
 }
 
 Application::~Application() = default;
+
+void Application::startUxRecording() {
+#ifdef TRAILER_UX_RECORDER
+    if (m_uxRecorder) {
+        return;
+    }
+    m_uxRecorder = std::make_unique<UxRecorder>();
+    if (!m_uxRecorder->start()) {
+        qWarning("Trailer: UX recording could not be started (see warnings "
+                 "above); continuing without recording.");
+        m_uxRecorder.reset();
+        return;
+    }
+    qInfo("Trailer: UX recording session %s -> %s", qPrintable(m_uxRecorder->sessionId()),
+          qPrintable(m_uxRecorder->sessionDir()));
+#else
+    qWarning("Trailer: this build does not include the UX recorder "
+             "(configure with -DTRAILER_ENABLE_UX_RECORDER=ON).");
+#endif
+}
+
+#ifdef TRAILER_UX_RECORDER
+Application::UxRecordDecision Application::preflightUxRecording() {
+    // Screen Recording already granted (or no ScreenCaptureKit gate on
+    // this OS) → record straight away, no dialog. Once the user grants
+    // it once, they never see this again.
+    if (uxScreenRecordingGranted()) {
+        // ADR 0014 (G14.2): the permission is resolved for this session, so
+        // burn Mechanism A's first-use explainer flag too. That way granting
+        // Screen Recording (including via B's Open-Settings path on a prior
+        // launch) also suppresses the screenshot-import explainer — the two
+        // flows share suppression state instead of re-asking independently.
+        //
+        // Only acknowledge (which does a disk save()) when the flag isn't
+        // already set — otherwise every recorder launch re-saves settings for
+        // no change. Check the persisted flag directly, NOT
+        // shouldShowScreenCaptureExplainer(): in recorder builds that helper
+        // consults the granted-probe (uxScreenRecordingGranted()), which is
+        // true here by construction, so it would always report "don't show"
+        // and we'd never burn the flag for the non-recorder path's benefit.
+        if (!m_settings.firstUseAcknowledged(
+                QString::fromLatin1(kScreenCaptureExplainerKey))) {
+            acknowledgeScreenCaptureExplainer(m_settings);
+        }
+        return UxRecordDecision::Start;
+    }
+
+    // Missing → don't silently start a session that records no screen
+    // frames (the failure mode that wasted a real 6-minute session,
+    // UXR-001). One blocking, actionable dialog instead.
+    QMessageBox box;
+    box.setIcon(QMessageBox::Warning);
+    box.setWindowTitle(tr("UX Recorder — Screen Recording not enabled"));
+    box.setText(tr("Trailer's UX recorder can't capture the screen yet."));
+    box.setInformativeText(
+        tr("macOS only applies a Screen Recording grant to the next launch of an "
+           "app, so recording now would capture your input and camera but no "
+           "screen.\n\nApprove Trailer under Screen Recording, then relaunch — "
+           "with record-by-default, that's just opening another file. Camera and "
+           "input recording are unaffected either way."));
+    auto *settingsButton = box.addButton(tr("Open Settings && Quit"), QMessageBox::AcceptRole);
+    auto *degradedButton = box.addButton(tr("Record Without Screen"), QMessageBox::DestructiveRole);
+    auto *skipButton = box.addButton(tr("Don't Record This Launch"), QMessageBox::RejectRole);
+    box.setDefaultButton(settingsButton);
+    box.exec();
+
+    QObject *clicked = box.clickedButton();
+    if (clicked == settingsButton) {
+        // Register Trailer in the privacy list (so the pane shows a
+        // toggle) and deep-link straight to it, then quit so the next
+        // launch picks up the grant.
+        uxRequestScreenRecording();
+        QDesktopServices::openUrl(QUrl(QStringLiteral(
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture")));
+        return UxRecordDecision::Quit;
+    }
+    if (clicked == skipButton) {
+        return UxRecordDecision::Skip;
+    }
+    Q_UNUSED(degradedButton); // "Record Without Screen" — proceed degraded.
+    return UxRecordDecision::Start;
+}
+#endif
 
 MainWindow *Application::ensureWindow() {
     for (auto &ptr : m_windows) {
@@ -105,6 +215,16 @@ MainWindow *Application::ensureFreshWindow() {
 }
 
 void Application::openFiles(const QStringList &paths) {
+    // Consume a capture dpr staged by a screenshot / clipboard grab (see
+    // setPendingCaptureDpr) up front — BEFORE the empty-paths guard — and
+    // reset it immediately. Doing this at the very top means a staged dpr
+    // can never leak into a later ordinary open even if this particular
+    // call has nothing to open (empty paths) or bails before the loop.
+    // Only this batch — never a subsequent open — is treated as
+    // capture-origin.
+    const double captureDpr = m_pendingCaptureDpr;
+    m_pendingCaptureDpr = 0.0;
+
     if (paths.isEmpty()) {
         return;
     }
@@ -153,6 +273,14 @@ void Application::openFiles(const QStringList &paths) {
 
     for (const QString &path : paths) {
         auto doc = m_registry.open(path);
+
+        if (captureDpr > 0.0) {
+            // Stamp the real screen dpr onto capture-origin images so the
+            // viewer treats device px as logical px / dpr, opens at
+            // logical size, and defaults to pixel-exact Actual Size.
+            if (auto *img = dynamic_cast<ImageDocument *>(doc.get()))
+                img->markCaptureOrigin(captureDpr);
+        }
 
         MainWindow *target = nullptr;
         if (batchTarget) {
@@ -342,6 +470,38 @@ void Application::newFromClipboard() {
     if (!image.isNull()) {
         const QString path = transientImportPath("clipboard", "png");
         if (image.save(path, "PNG")) {
+            // Recover a devicePixelRatio for the paste. The PNG round-trip
+            // (and most clipboard sources) drop the dpr stamp, so we must
+            // decide whether this paste is a HiDPI full-screen grab that
+            // should open 1:1 — WITHOUT shrinking ordinary pastes.
+            //
+            // Conservative heuristic: a blanket "stamp the primary screen's
+            // dpr whenever dpr<=1" was a regression — on Retina it halved the
+            // logical size of EVERY ordinary paste (a copied logo, diagram,
+            // pixel art). Instead:
+            //   1. If the clipboard image already carries dpr > 1.0, honor it.
+            //   2. Else if the raw pixel size EXACTLY equals some connected
+            //      screen's device resolution (size() * devicePixelRatio(),
+            //      i.e. a full-screen grab), stamp THAT screen's dpr.
+            //   3. Else leave it at dpr 1 — an ordinary paste opens at its
+            //      natural logical size (fit-capped as before), no regression.
+            // A region screenshot pasted from the clipboard that doesn't match
+            // a full screen size will open at device size (no worse than
+            // pre-fix), pending owner confirmation on Retina hardware.
+            double dpr = image.devicePixelRatio();
+            if (dpr <= 1.0) {
+                dpr = 1.0;
+                const QSize raw = image.size();
+                for (const QScreen *scr : QGuiApplication::screens()) {
+                    const QSize deviceRes =
+                        (QSizeF(scr->size()) * scr->devicePixelRatio()).toSize();
+                    if (raw == deviceRes) {
+                        dpr = scr->devicePixelRatio();
+                        break;
+                    }
+                }
+            }
+            setPendingCaptureDpr(dpr);
             openFiles({path});
             return;
         }
@@ -413,6 +573,16 @@ void Application::acquireFromScreenshot() {
                "in System Settings ▸ Privacy & Security ▸ Screen Recording."));
         return;
     }
+    // screencapture writes raw device pixels with no dpr stamp; recover
+    // the screen dpr so a Retina capture opens 1:1 (see openFiles). This is
+    // the no-window Acquire flow (no target MainWindow to read a screen
+    // from), so we fall back to the primary screen — mirroring
+    // MainWindow::onTakeScreenshot, which prefers its own window's screen.
+    // Known limitation: an interactive `screencapture -i` on a mixed-DPI
+    // multi-monitor setup can land on a non-primary screen, so the primary
+    // screen's dpr may be wrong; owner to confirm on hardware.
+    if (auto *scr = QGuiApplication::primaryScreen())
+        setPendingCaptureDpr(scr->devicePixelRatio());
     openFiles({path});
 }
 #endif

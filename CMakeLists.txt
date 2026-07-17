@@ -25,6 +25,29 @@ configure_file(
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 option(TRAILER_WERROR "Treat compiler warnings as errors (enabled in CI)" OFF)
+option(TRAILER_ADAPTIVE_ICON "Compile the adaptive light/dark macOS app icon via actool (requires full Xcode)" ON)
+
+# Developer-only UX session recorder (see docs/ux-recorder.md). OFF by
+# default: release artifacts must not link capture frameworks, request
+# recording permissions, or carry recorder UI. When ON, the recorder
+# still does nothing unless the app is launched with --ux-record.
+# Everything it records stays on the local disk — no network code is
+# permitted anywhere in src/uxrecord/ (PHILOSOPHY.md "No telemetry").
+option(TRAILER_ENABLE_UX_RECORDER
+       "Build the local developer UX session recorder (--ux-record)" OFF)
+
+# Extra Info.plist keys injected only into recorder-enabled bundles.
+# NSCameraUsageDescription must be present before AVFoundation may even
+# *ask* for camera access (macOS kills the process otherwise). Default
+# builds get an empty substitution so the shipped plist is unchanged.
+set(TRAILER_UX_PLIST_EXTRAS "")
+if(TRAILER_ENABLE_UX_RECORDER)
+    string(CONCAT TRAILER_UX_PLIST_EXTRAS
+        "<key>NSCameraUsageDescription</key>\n"
+        "    <string>Trailer's developer UX recorder captures your camera "
+        "locally during --ux-record sessions. Nothing is transmitted "
+        "anywhere.</string>")
+endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -179,12 +202,42 @@ set(TRAILER_SOURCES
     src/ui/ThumbnailModel.h
     src/util/TempPath.h
     src/platform/Share.h
+    src/uxrecord/UxRecord.h
 )
 
 # Pure, platform-agnostic capture-backend policy (string<->enum mapping and
 # the backend-selection rule) builds everywhere; only the native probe and
 # the SCContentSharingPicker capture are per-platform, split below.
 list(APPEND TRAILER_SOURCES src/platform/ScreenCaptureBackend.cpp)
+
+# UX recorder sources are only compiled into recorder-enabled builds.
+# src/uxrecord/UxRecord.h (above) is the always-present facade whose
+# functions inline to no-ops when TRAILER_UX_RECORDER is undefined, so
+# call sites in MainWindow/Application need no #ifdef of their own.
+if(TRAILER_ENABLE_UX_RECORDER)
+    list(APPEND TRAILER_SOURCES
+        src/uxrecord/UxEventStream.cpp
+        src/uxrecord/UxEventStream.h
+        src/uxrecord/UxPlatformCapture.h
+        src/uxrecord/UxQtEventCapture.cpp
+        src/uxrecord/UxQtEventCapture.h
+        src/uxrecord/UxRecord.cpp
+        src/uxrecord/UxRecorder.cpp
+        src/uxrecord/UxRecorder.h
+        src/uxrecord/UxTrailerHooks.cpp
+    )
+    if(APPLE)
+        list(APPEND TRAILER_SOURCES src/uxrecord/MacUxPlatformCapture.mm)
+        set_source_files_properties(src/uxrecord/MacUxPlatformCapture.mm
+            PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    else()
+        # Non-macOS recorder builds compile against a stub capture
+        # backend: the Qt-level event stream and session report still
+        # work; screen/camera/global-input capture report themselves
+        # as unavailable in events.jsonl.
+        list(APPEND TRAILER_SOURCES src/uxrecord/StubUxPlatformCapture.cpp)
+    endif()
+endif()
 
 # Per-platform Share-sheet source. macOS uses Objective-C++ to drive
 # NSSharingServicePicker; everything else gets the stub that reports
@@ -247,6 +300,29 @@ if(APPLE)
         "-framework ImageIO"
         "-framework UniformTypeIdentifiers")
 endif()
+if(TRAILER_ENABLE_UX_RECORDER)
+    # PUBLIC so the always-present facade header (src/uxrecord/UxRecord.h)
+    # selects its real declarations in every consumer (app, tools, tests).
+    target_compile_definitions(trailer_core PUBLIC TRAILER_UX_RECORDER)
+    if(APPLE)
+        # Capture frameworks are linked ONLY into recorder builds, so a
+        # default build's binary carries no recording capability at all.
+        target_link_libraries(trailer_core PRIVATE
+            "-framework AVFoundation"
+            "-framework CoreMedia"
+            "-framework CoreVideo"
+            "-framework ImageIO"
+            "-framework CoreGraphics"
+        )
+        # ScreenCaptureKit needs macOS 12.3+ but Trailer's deployment
+        # target is 11.0 (packaging-macos.md). Weak-link so the binary
+        # still loads on older systems; MacUxPlatformCapture.mm guards
+        # every use with @available and records "unsupported" events
+        # instead of capturing frames there.
+        target_link_options(trailer_core PUBLIC
+            "-Wl,-weak_framework,ScreenCaptureKit")
+    endif()
+endif()
 trailer_set_warnings(trailer_core)
 
 set(TRAILER_ICON_DIR "${CMAKE_SOURCE_DIR}/resources/icons")
@@ -306,40 +382,51 @@ endif()
 # .xcassets files are plain data on those platforms. actool is invoked via
 # `xcrun` (a POST_BUILD step on the trailer target) so it runs during
 # `cmake --build`, before macdeployqt in scripts/build-macos.sh.
-if(APPLE)
+if(APPLE AND TRAILER_ADAPTIVE_ICON)
     set(TRAILER_XCASSETS "${CMAKE_SOURCE_DIR}/resources/macos/Assets.xcassets")
     if(EXISTS "${TRAILER_XCASSETS}")
-        # Match the bundle's LSMinimumSystemVersion floor (Info.plist.in: 11.0)
+        # Match the bundle's LSMinimumSystemVersion floor (Info.plist.in: 14.0)
         # rather than CMAKE_OSX_DEPLOYMENT_TARGET, which may be unset on a bare
         # `cmake` invocation on a Mac and would hand actool an empty argument.
-        set(TRAILER_ICON_MIN_MACOS "11.0")
-        # The icon is wired via the hardcoded CFBundleIconName=AppIcon in
-        # resources/macos/Info.plist.in, so actool only needs to compile the
-        # .xcassets into Assets.car in Resources/ — no partial Info.plist to
-        # merge (the --output-partial-info-plist output was never consumed).
+        set(TRAILER_ICON_MIN_MACOS "14.0")
+        # actool REQUIRES --output-partial-info-plist whenever the catalog
+        # contains app icons: without it actool emits the notice "Compiling
+        # app icons requires passing --output-partial-info-plist [path]" and
+        # refuses to fully compile the AppIcon set, so no Assets.car is
+        # written and scripts/build-macos.sh's verifier fails. We point it at
+        # a throwaway file in the build dir purely to satisfy that contract —
+        # its contents (CFBundleIconName=AppIcon) are NOT merged, because
+        # resources/macos/Info.plist.in already hardcodes CFBundleIconName.
+        set(TRAILER_ICON_PARTIAL_PLIST
+            "${CMAKE_CURRENT_BINARY_DIR}/actool-AppIcon-partial.plist")
         add_custom_command(TARGET trailer POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E make_directory
                     "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources"
             COMMAND xcrun actool
                     --app-icon AppIcon
+                    --output-partial-info-plist "${TRAILER_ICON_PARTIAL_PLIST}"
                     --minimum-deployment-target "${TRAILER_ICON_MIN_MACOS}"
                     --platform macosx
                     --target-device mac
                     --compile "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources"
                     "${TRAILER_XCASSETS}"
-            BYPRODUCTS
-                "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources/Assets.car"
+            # NB: no BYPRODUCTS here -- target-context genexes
+            # ($<TARGET_BUNDLE_CONTENT_DIR:...>) are not valid in BYPRODUCTS/OUTPUT
+            # (no head target) and break CMake generate. actool still writes
+            # Assets.car via the COMMAND above.
             COMMENT "Compiling Assets.xcassets -> Assets.car (AppIcon light/dark) via actool"
             VERBATIM
         )
     endif()
+elseif(APPLE)
+    message(STATUS "TRAILER_ADAPTIVE_ICON=OFF — skipping actool app-icon compile; app will use the static (non-adaptive) .icns icon")
 endif()
 
 set_target_properties(trailer PROPERTIES
     WIN32_EXECUTABLE ON
     MACOSX_BUNDLE ON
     MACOSX_BUNDLE_BUNDLE_NAME "Trailer"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "org.trailer.Trailer"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.programmerq.trailer"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_ICON_FILE "trailer.icns"
@@ -363,7 +450,7 @@ if(UNIX AND NOT APPLE)
     install(TARGETS trailer DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(FILES platform/linux/trailer.desktop
             DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-    install(FILES platform/linux/org.trailer.Trailer.metainfo.xml
+    install(FILES platform/linux/io.github.programmerq.trailer.metainfo.xml
             DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
     foreach(_size 16 32 64 128 256 512)
         install(FILES resources/icons/trailer_${_size}.png

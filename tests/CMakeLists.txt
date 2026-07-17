@@ -41,7 +41,9 @@ trailer_add_test(test_settings_volatility test_settings_volatility.cpp)
 trailer_add_test(test_recent     test_recent.cpp)
 trailer_add_test(test_document_type_defaults test_document_type_defaults.cpp)
 trailer_add_test(test_content_aware_defaults test_content_aware_defaults.cpp)
+trailer_add_test(test_thumbnail_paint test_thumbnail_paint.cpp)
 trailer_add_test(test_app_paths  test_app_paths.cpp)
+trailer_add_test(test_application_identity test_application_identity.cpp)
 trailer_add_test(test_registry   test_registry.cpp)
 trailer_add_test(test_adapters   test_adapters.cpp)
 trailer_add_test(test_pdf_editor test_pdf_editor.cpp)
@@ -54,6 +56,7 @@ trailer_add_test(test_crop_pages_dialog test_crop_pages_dialog.cpp)
 trailer_add_test(test_cards test_cards.cpp)
 trailer_add_test(test_signatures test_signatures.cpp)
 trailer_add_test(test_image_filter test_image_filter.cpp)
+trailer_add_test(test_image_scale test_image_scale.cpp)
 trailer_add_test(test_onnx_session test_onnx_session.cpp)
 trailer_add_test(test_model_registry test_model_registry.cpp)
 trailer_add_test(test_background_remover test_background_remover.cpp)
@@ -91,5 +94,17 @@ trailer_add_perf_test(test_perf_render_ordering test_perf_render_ordering.cpp)
 trailer_add_perf_test(test_perf_gui_thread_io   test_perf_gui_thread_io.cpp)
 trailer_add_perf_test(test_perf_paint_budget    test_perf_paint_budget.cpp)
 trailer_add_perf_test(test_perf_lazy_open       test_perf_lazy_open.cpp)
+
+# The facade test runs in EVERY configuration — it is the guard that
+# the uxrecord:: no-ops stay safe when the recorder is compiled out
+# (and when it is compiled in but no --ux-record session is active).
+trailer_add_test(test_ux_record_facade test_ux_record_facade.cpp)
+# The platform-neutral recorder internals only exist in recorder-
+# enabled builds (they are not part of trailer_core otherwise).
+if(TRAILER_ENABLE_UX_RECORDER)
+    trailer_add_test(test_ux_event_stream test_ux_event_stream.cpp)
+    trailer_add_test(test_ux_recorder test_ux_recorder.cpp)
+    trailer_add_test(test_ux_qt_event_capture test_ux_qt_event_capture.cpp)
+endif()
 
 add_subdirectory(uat)

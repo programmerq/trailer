@@ -1,6 +1,7 @@
 #include "Sidebar.h"
 
 #include "ThumbnailModel.h"
+#include "ThumbnailPaint.h"
 #include "annotation/AnnotationStore.h"
 #include "document/IDocument.h"
 #include "recent/RecentFiles.h"
@@ -102,13 +103,18 @@ class ThumbnailDelegate : public QStyledItemDelegate {
         const int x = option.rect.x() + kThumbHorizontalMargin;
         QRect imageRect(x, y, std::max(0, availW), option.rect.height() - 2 * kThumbVerticalPadding);
         if (!pm.isNull() && availW > 0) {
-            // Scale the page to fill the column width (aspect preserved via
-            // scaledToWidth) and left-align it at the margin, so the
+            // Fill the column width and left-align at the margin, so the
             // thumbnail reads as filling the sidebar rather than floating a
-            // small fixed box in its centre.
-            const QPixmap scaled = pm.scaledToWidth(availW, Qt::SmoothTransformation);
+            // small fixed box in its centre. The scaling goes through
+            // scaleToLogicalWidth (see ui/ThumbnailPaint.h), which corrects
+            // for devicePixelRatio so the thumbnail fills the column in
+            // LOGICAL pixels on HiDPI: a raw scaledToWidth(availW) on a
+            // Retina (dpr=2) pixmap would paint at availW/2 -- the
+            // sidebar-slack bug. It is a no-op at dpr=1.
+            const QPixmap scaled = scaleToLogicalWidth(pm, availW);
             painter->drawPixmap(x, y, scaled);
-            imageRect = QRect(x, y, scaled.width(), scaled.height());
+            const QSize drawn = logicalSize(scaled);
+            imageRect = QRect(x, y, drawn.width(), drawn.height());
 
             // Subtle 1 px border around the page so its edge is visible
             // against the sidebar base (and gives UAT a detectable edge).
