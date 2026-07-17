@@ -31,6 +31,7 @@
 #include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "ml/OcrEngine.h"
+#include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
 #include "platform/Share.h"
 #include "settings/AppPaths.h"
@@ -46,6 +47,7 @@
 #include "document/SelectableTextStore.h"
 
 #include <QAction>
+#include <QDebug>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QCheckBox>
@@ -2281,6 +2283,38 @@ void MainWindow::onTakeScreenshot() {
         break;
     }
     args << path;
+
+    // Opt-in ScreenCaptureKit picker backend (macOS 14+). Region mode is a
+    // freeform drag-select the picker can't express, so it always falls back
+    // to screencapture. On a clean pick we're done; on cancel we mirror the
+    // silent-cancel status below; Unavailable/Failed falls through to the
+    // screencapture path so the feature degrades gracefully.
+    const bool freeformRegion = (mode == ShotMode::Region);
+    const auto backend = trailer::effectiveCaptureBackend(
+        m_app->settings().captureBackend(), trailer::screenCaptureKitAvailable(), freeformRegion);
+    if (backend == trailer::CaptureBackend::ScreenCaptureKit) {
+        QString err;
+        const auto r = trailer::captureViaPickerToPng(
+            path, /*wholeDisplay=*/mode == ShotMode::Screen, &err);
+        if (r == trailer::PickerCaptureResult::Ok) {
+            show();
+            raise();
+            activateWindow();
+            m_app->openFiles({path});
+            return;
+        }
+        if (r == trailer::PickerCaptureResult::Cancelled) {
+            show();
+            raise();
+            activateWindow();
+            flashStatus(tr("Screen capture cancelled."));
+            return;
+        }
+        // Unavailable/Failed -> fall through to the screencapture path.
+        qWarning() << "MainWindow: ScreenCaptureKit picker capture failed, falling back to"
+                   << "screencapture:" << err;
+    }
+
     QProcess proc;
     proc.start("/usr/sbin/screencapture", args);
     proc.waitForFinished(-1);

@@ -3,12 +3,14 @@
 #include "TrailerVersion.h"
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
+#include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
 #include "ui/MainWindow.h"
 
 #include <QAction>
 #include <QClipboard>
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QFileOpenEvent>
@@ -363,6 +365,32 @@ void Application::acquireFromScreenshot() {
         return;
     }
     const QString path = transientImportPath("acquire", "png");
+
+    // Opt-in ScreenCaptureKit picker backend (macOS 14+). Acquire's -i is an
+    // any-selection interactive capture, so a picker window/display pick is an
+    // acceptable substitute — treat it as a non-freeform request. On a clean
+    // pick we're done; on cancel we mirror the info-dialog cancel handling
+    // below; Unavailable/Failed falls through to the screencapture path.
+    const auto backend = trailer::effectiveCaptureBackend(
+        m_settings.captureBackend(), trailer::screenCaptureKitAvailable(),
+        /*freeformRegion=*/false);
+    if (backend == trailer::CaptureBackend::ScreenCaptureKit) {
+        QString err;
+        const auto r = trailer::captureViaPickerToPng(path, /*wholeDisplay=*/false, &err);
+        if (r == trailer::PickerCaptureResult::Ok) {
+            openFiles({path});
+            return;
+        }
+        if (r == trailer::PickerCaptureResult::Cancelled) {
+            QMessageBox::information(nullptr, tr("Acquire from Screenshot"),
+                                     tr("Screen capture cancelled."));
+            return;
+        }
+        // Unavailable/Failed -> fall through to the screencapture path.
+        qWarning() << "Application: ScreenCaptureKit picker capture failed, falling back to"
+                   << "screencapture:" << err;
+    }
+
     QProcess proc;
     proc.start(QStringLiteral("/usr/sbin/screencapture"),
                {QStringLiteral("-i"), QStringLiteral("-x"), path});

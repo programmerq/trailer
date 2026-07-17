@@ -181,6 +181,11 @@ set(TRAILER_SOURCES
     src/platform/Share.h
 )
 
+# Pure, platform-agnostic capture-backend policy (string<->enum mapping and
+# the backend-selection rule) builds everywhere; only the native probe and
+# the SCContentSharingPicker capture are per-platform, split below.
+list(APPEND TRAILER_SOURCES src/platform/ScreenCaptureBackend.cpp)
+
 # Per-platform Share-sheet source. macOS uses Objective-C++ to drive
 # NSSharingServicePicker; everything else gets the stub that reports
 # isAvailable() == false so the menu item can hide cleanly.
@@ -188,8 +193,17 @@ if(APPLE)
     list(APPEND TRAILER_SOURCES src/platform/Share.mm)
     set_source_files_properties(src/platform/Share.mm PROPERTIES
         COMPILE_FLAGS "-fobjc-arc")
+    # ScreenCaptureKit picker backend (Apple-only Objective-C++). NOT built
+    # in CI — see the header comment in MacScreenCapture.mm; requires an
+    # on-device build + the GPSC.2 smoke test before its flag default flips.
+    list(APPEND TRAILER_SOURCES src/platform/MacScreenCapture.mm)
+    set_source_files_properties(src/platform/MacScreenCapture.mm PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc")
 else()
     list(APPEND TRAILER_SOURCES src/platform/Share_stub.cpp)
+    # Non-Apple stub: same symbols, screenCaptureKitAvailable() == false so
+    # the picker backend is never selected off-Mac.
+    list(APPEND TRAILER_SOURCES src/platform/MacScreenCapture_stub.cpp)
 endif()
 
 add_library(trailer_core STATIC ${TRAILER_SOURCES} resources/trailer.qrc)
@@ -220,6 +234,18 @@ if(APPLE)
     # only frameworks; gated inside the APPLE block so the default
     # link line on Linux / Windows stays free of macOS-isms.
     target_link_libraries(trailer_core PRIVATE "-framework IOKit" "-framework CoreFoundation")
+    # ScreenCaptureKit picker backend (MacScreenCapture.mm): the picker +
+    # SCScreenshotManager live in ScreenCaptureKit; CoreMedia/CoreGraphics
+    # carry the sample/image types, and ImageIO + UniformTypeIdentifiers do
+    # the CGImage->PNG encode.
+    # NOTE: CoreGraphics also appears in PR #77's diff — de-dupe this
+    # -framework CoreGraphics on rebase so it isn't linked twice.
+    target_link_libraries(trailer_core PRIVATE
+        "-framework ScreenCaptureKit"
+        "-framework CoreMedia"
+        "-framework CoreGraphics"
+        "-framework ImageIO"
+        "-framework UniformTypeIdentifiers")
 endif()
 trailer_set_warnings(trailer_core)
 
