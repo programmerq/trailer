@@ -7,6 +7,7 @@
 
 #include <QImage>
 #include <QObject>
+#include <QPixmap>
 #include <QPointer>
 #include <QRectF>
 #include <QString>
@@ -41,7 +42,11 @@ class ImageDocument : public IDocument {
     void zoomFitWidth() override;
     void zoomFitPage() override;
     QSize contentSizeHint() const override {
-        return m_image.isNull() ? QSize{} : m_image.size();
+        // LOGICAL size (device px / devicePixelRatio) so the window opens
+        // at the size the image occupies on screen at 100%. For a Retina
+        // screenshot (device px stamped dpr=2) this is half the raw px —
+        // avoiding the "open oversized then shrink to fit" behavior.
+        return m_image.isNull() ? QSize{} : m_image.deviceIndependentSize().toSize();
     }
 
     ZoomMode zoomMode() const override { return m_zoomMode; }
@@ -148,7 +153,60 @@ class ImageDocument : public IDocument {
     void reapplyFitMode();
     double scaleFactor() const { return m_scale; }
 
+    // Mark this document as originating from a screen capture
+    // (screenshot or clipboard grab) taken at devicePixelRatio `dpr`.
+    // Stamps that dpr onto the decoded image so the viewer treats it as
+    // logical-size = device/dpr, and flips the initial zoom default to
+    // Actual Size (1:1 pixel-exact) instead of fit-capped-at-100%. No-op
+    // for a null / animated image or dpr <= 0; the dpr stamp itself is
+    // applied only when dpr > 1, so ordinary (non-capture) file opens are
+    // never touched. Called by the screenshot / clipboard capture paths
+    // (see Application / MainWindow) which know the real screen dpr.
+    void markCaptureOrigin(double dpr);
+
+    // --- Test hooks (narrow, offscreen unit tests only) ---
+    // Inject an already-decoded image (with its devicePixelRatio stamp)
+    // directly, bypassing the file reader and the lossy PNG round-trip,
+    // and optionally flag it as capture-origin. Lets HiDPI tests exercise
+    // dpr > 1 without a real Retina display.
+    void setImageForTest(const QImage &img, bool captureOrigin = false);
+    // The pixmap currently handed to the display label (raw device pixels
+    // + its devicePixelRatio stamp). Empty when no view / null pixmap.
+    QPixmap labelPixmapForTest() const;
+    // Force the one-shot initial-zoom decision synchronously (production
+    // schedules it on the event loop after the viewport settles).
+    void triggerInitialZoomForTest() { applyInitialFitZoom(); }
+    // The exact doc<->view transforms the overlay / text layer use, exposed
+    // so a test can assert they invert (docToView(viewToDoc(p)) == p) at
+    // dpr > 1 and non-1.0 scale without needing a real widget/event loop.
+    QPointF docToViewForTest(QPointF p) const { return mapDocToView(p); }
+    QPointF viewToDocForTest(QPointF p) const { return mapViewToDoc(p); }
+
   private:
+    // The image's effective devicePixelRatio, clamped to a positive
+    // value. 1.0 for ordinary opens; the capture dpr (>1) for HiDPI
+    // screenshots / clipboard grabs after markCaptureOrigin stamps it.
+    qreal imageDpr() const {
+        const qreal d = m_image.devicePixelRatio();
+        return d > 0.0 ? d : 1.0;
+    }
+    // Doc<->view coordinate mapping used by the annotation overlay and the
+    // selectable-text layer. Doc coordinates are image DEVICE pixels; the
+    // view draws at the logical size (device / dpr) times the logical zoom,
+    // so the doc->view factor is m_scale / dpr (== m_scale at dpr 1) and
+    // view->doc is its exact inverse. Factored into members (rather than
+    // inlined per-lambda) so both consumers — and the coordinate round-trip
+    // test hooks — share one definition and can't drift apart.
+    QPointF mapDocToView(QPointF p) const {
+        const qreal d = imageDpr();
+        return QPointF(p.x() * m_scale / d, p.y() * m_scale / d);
+    }
+    QPointF mapViewToDoc(QPointF p) const {
+        if (m_scale <= 0.0)
+            return p;
+        const qreal d = imageDpr();
+        return QPointF(p.x() * d / m_scale, p.y() * d / m_scale);
+    }
     void applyScale(double factor);
     void refreshView();
     void pushUndoSnapshot();
@@ -184,6 +242,11 @@ class ImageDocument : public IDocument {
     QImage m_image;
     QPointer<QScrollArea> m_scroll;
     QPointer<QLabel> m_label;
+    // The most recent pixmap built for the display label (raw device
+    // pixels + devicePixelRatio stamp). Retained for test introspection:
+    // QLabel::pixmap() re-derives a logical-size, dpr=1 copy, so it
+    // cannot report the dpr/raw-size we actually handed it.
+    QPixmap m_lastBuiltPixmap;
     QPointer<QMovie> m_movie;
     QPointer<AnnotationOverlay> m_overlay;
     QPointer<SelectableTextLayer> m_textLayer;
@@ -239,6 +302,11 @@ class ImageDocument : public IDocument {
     bool m_dirty = false;
     // One-shot guard for applyInitialFitZoom.
     bool m_initialZoomApplied = false;
+    // True when this document came from a screen capture (screenshot or
+    // clipboard grab). Such docs stamp the capture's devicePixelRatio on
+    // the image and default the initial zoom to Actual Size (1:1) rather
+    // than fit-capped-at-100%. Ordinary file opens leave this false.
+    bool m_captureOrigin = false;
 };
 
 class ImageAdapter : public IFormatAdapter {

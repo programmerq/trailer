@@ -2301,6 +2301,20 @@ void MainWindow::onTakeScreenshot() {
                        "Screen Recording."));
         return;
     }
+    // screencapture writes raw device pixels with no dpr stamp; recover
+    // the target screen's dpr so a Retina capture opens 1:1 pixel-exact.
+    // Prefer this window's screen (the one the user is capturing from),
+    // falling back to the primary screen only when the window reports none
+    // — matching Application::acquireFromScreenshot's primary-screen source.
+    // Known limitation: an interactive `screencapture -i`/`-iW`/`-s` on a
+    // mixed-DPI multi-monitor setup can land on a screen other than this
+    // window's, so the recovered dpr may be wrong; owner to confirm on
+    // hardware.
+    {
+        QScreen *scr = this->screen() ? this->screen() : QGuiApplication::primaryScreen();
+        if (scr)
+            m_app->setPendingCaptureDpr(scr->devicePixelRatio());
+    }
 #else
     if (mode != ShotMode::Screen) {
         flashStatus(tr("Window/region capture is not yet supported on this "
@@ -2314,6 +2328,13 @@ void MainWindow::onTakeScreenshot() {
     if (shot.isNull() || !shot.save(path, "PNG")) {
         flashError(tr("Screenshot failed — could not capture the screen."));
         return;
+    }
+    // grabWindow() stamps the screen dpr on the pixmap, but the PNG save
+    // drops it; recover it so a HiDPI capture opens 1:1 (see openFiles).
+    {
+        const double dpr =
+            shot.devicePixelRatio() > 0.0 ? shot.devicePixelRatio() : screen->devicePixelRatio();
+        m_app->setPendingCaptureDpr(dpr);
     }
 #endif
 
