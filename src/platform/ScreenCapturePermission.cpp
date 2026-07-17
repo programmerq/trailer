@@ -33,19 +33,17 @@ void acknowledgeScreenCaptureExplainer(Settings &settings) {
     settings.save();
 }
 
-ScreenCaptureFlowAction decideScreenCaptureFlow(ScreenCapturePermissionState state,
-                                                bool explainerAcknowledged) {
+ScreenCaptureFlowAction decideScreenCaptureFlow(ScreenCapturePermissionState state) {
     switch (state) {
     case ScreenCapturePermissionState::Granted:
         return ScreenCaptureFlowAction::Proceed;
     case ScreenCapturePermissionState::Denied:
-        return ScreenCaptureFlowAction::DegradeDenied;
     case ScreenCapturePermissionState::Undetermined:
-        // Never asked (or can't tell from denied): show the one-time explainer
-        // first, then drive the OS request. Once acknowledged, go straight to
-        // the request — it prompts if truly undetermined and no-ops if denied.
-        return explainerAcknowledged ? ScreenCaptureFlowAction::RequestAccess
-                                     : ScreenCaptureFlowAction::ShowExplainerFirst;
+        // Not-granted is arbitrated by requestScreenCaptureAccess()
+        // (CGRequestScreenCaptureAccess — prompts when truly undetermined,
+        // silent no-op when denied), so no separate explainer/degrade branch is
+        // needed at decision time. The stills flow no longer shows an explainer.
+        return ScreenCaptureFlowAction::RequestAccess;
     }
     return ScreenCaptureFlowAction::Proceed; // unreachable; keeps the compiler happy
 }
@@ -98,6 +96,11 @@ bool requestScreenCaptureAccess() {
 }
 
 #ifdef Q_OS_MACOS
+// NOTE: the stills capture flow (Take Screenshot / Acquire) no longer calls
+// this — the pre-permission explainer was retired for stills per the
+// capture-permission-preflight ADR / owner decision 2026-07-17; the flow now
+// leans on the OS Screen Recording prompt directly. Retained for the recorder
+// path (PR #69), which may still use the explainer helpers.
 bool maybeShowScreenCaptureExplainer(Settings &settings, QWidget *parent) {
     if (!shouldShowScreenCaptureExplainer(settings)) {
         // Already acknowledged on a previous use — proceed straight to capture.

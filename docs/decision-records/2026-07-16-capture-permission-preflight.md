@@ -159,16 +159,39 @@ of live TCC) and routes through the pure `decideScreenCaptureFlow()` table:
 
 - **Granted → Proceed** — spawn `/usr/sbin/screencapture` straight away. Only a
   Granted preflight ever spawns the capture tool.
-- **Undetermined && !acknowledged → ShowExplainerFirst** — show the one-time
-  pre-permission explainer; on Continue, fall through to RequestAccess.
-- **Undetermined && acknowledged → RequestAccess** — call
-  `CGRequestScreenCaptureAccess()`. It **prompts** when truly undetermined
-  (re-registering the app, e.g. after `tccutil reset`) and is a **silent no-op
-  returning false** when denied. On `true` → capture; on `false` → degrade. No
-  crosshair ever appears on a denial.
-- **Denied → DegradeDenied** — the macOS provider never manufactures this from
-  a sticky bool, but the enumerator is kept for interface completeness and the
-  decision-table unit tests. Degrades with the honest message.
+- **Undetermined → RequestAccess** — call `CGRequestScreenCaptureAccess()`. It
+  **prompts** when truly undetermined (re-registering the app, e.g. after
+  `tccutil reset`) and is a **silent no-op returning false** when denied. On
+  `true` → capture; on `false` → degrade. No crosshair ever appears on a denial.
+- **Denied → RequestAccess** — the macOS provider never manufactures Denied from
+  a sticky bool (the enumerator is kept for interface completeness and the
+  decision-table unit tests), but it too routes through the request, which is a
+  silent no-op → degrade with the honest message.
+
+### Explainer retired for stills (owner decision 2026-07-17)
+
+The stills capture flow **no longer shows a pre-permission explainer modal**; it
+leans on the OS Screen Recording prompt directly (triggered via
+`CGRequestScreenCaptureAccess` on first not-granted use), matching standard app
+behaviour. The decision table therefore collapses from four actions to two —
+`{Proceed, RequestAccess}` — and both not-granted states route to
+`RequestAccess`; the `ShowExplainerFirst` / `DegradeDenied` actions are removed.
+
+- **Rationale.** With the preflight + `CGRequestScreenCaptureAccess` rework the
+  OS prompt already fires at exactly the right moment, so a preceding modal was
+  a popup in front of a popup — the popup-as-last-resort friction PHILOSOPHY
+  argues against. The burden of proof was on **keeping** the explainer, and
+  "Screen Recording sounds scary for a still" is speculative. The only concrete
+  gap the OS dialog leaves is that wording; the chosen mitigation is at most a
+  single **passive status-bar line** — NOT a modal — deferred unless it proves
+  confusing in practice (no speculative UI).
+- **Aligns with PR #72 (permission-less capture)**, which already concluded the
+  explainer is retired for stills once the ScreenCaptureKit picker lands; this
+  record does it now for the shell-out path.
+- **The explainer helper API is retained** (`shouldShowScreenCaptureExplainer`,
+  `acknowledgeScreenCaptureExplainer`, `maybeShowScreenCaptureExplainer`) for
+  the recorder path (#69's ADR-0014) to decide independently — only the stills
+  call sites stopped invoking it.
 
 Both call sites share the exact same decision table, the same message
 (`screenRecordingNeededMessage`), and the same deep link
@@ -236,8 +259,9 @@ tccutil reset ScreenCapture io.github.programmerq.trailer
 ```
 
 1. **Undetermined path.** `tccutil reset ScreenCapture <bundle-id>`, then Take
-   Screenshot → expect the one-time explainer, then the OS permission prompt
-   (undetermined). No crosshair before granting.
+   Screenshot (and, separately, Acquire from Screenshot) → expect the **OS
+   permission prompt directly** (no pre-permission explainer step; the explainer
+   is retired for stills). No crosshair before granting.
 2. **Deny is recoverable, not a dead-end.** At the OS prompt choose *Deny* →
    expect a status-bar flash (windowed) / actionable modal (Acquire) degrade,
    **no crosshair**, and re-invoking Take Screenshot **re-prompts / re-degrades**
@@ -282,6 +306,14 @@ tccutil reset ScreenCapture io.github.programmerq.trailer
   System Settings ▸ Privacy & Security ▸ Screen Recording with an honest,
   relaunch-aware message instead of dead-ending, and re-prompt on the next
   attempt.
+- **No pre-permission explainer for stills** (owner decision 2026-07-17) — both
+  stills sites lean on the OS Screen Recording prompt directly; the decision
+  table is now `{Proceed, RequestAccess}` and the `capture-explainer.png`
+  evidence shot is removed as misleading. The explainer helper API stays in
+  place for the recorder path (#69) to decide separately. The only residual
+  trade-off is the OS prompt's "Screen Recording" wording for a still; the
+  reserved fix is a single passive status-bar line, not a modal, deferred unless
+  it proves confusing.
 - **No sticky marker** — the `screen_capture_attempted` key is gone; the post-
   reset case recovers via the OS request instead of computing a false Denied.
 - **Non-mac is unaffected** — `queryScreenCapturePermissionState` returns

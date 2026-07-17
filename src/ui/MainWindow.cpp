@@ -2259,13 +2259,12 @@ void MainWindow::onTakeScreenshot() {
 #ifdef Q_OS_MACOS
     // Preflight the live Screen Recording TCC state before touching the OS
     // selection UI (the screen-capture preflight ADR). Granted → straight to
-    // capture; Undetermined → explainer (first use) then the OS permission
-    // request, which prompts if truly undetermined and no-ops if denied — no
-    // crosshair until granted; Denied → degrade to a recoverable pointer at
-    // System Settings. shouldShow returns true while UNacknowledged, so
-    // acknowledged == !shouldShow.
-    const bool ack = !shouldShowScreenCaptureExplainer(m_app->settings());
-    const ScreenCapturePermissionState state = queryScreenCapturePermissionState();
+    // capture; otherwise drive the OS permission request, which prompts if
+    // truly undetermined and no-ops if denied — no crosshair until granted, and
+    // on a denial degrade to a recoverable pointer at System Settings. The
+    // pre-permission explainer is retired for stills (owner decision
+    // 2026-07-17); we lean on the OS Screen Recording prompt directly.
+    const ScreenCapturePermissionState st = queryScreenCapturePermissionState();
 
     // The native capture block. Hides our window so it doesn't occlude the
     // target, shells to the macOS capture tool for proper DPI handling and
@@ -2310,14 +2309,10 @@ void MainWindow::onTakeScreenshot() {
     };
 
     bool captured = false;
-    switch (decideScreenCaptureFlow(state, ack)) {
+    switch (decideScreenCaptureFlow(st)) {
     case ScreenCaptureFlowAction::Proceed:
         captured = runCapture();
         break;
-    case ScreenCaptureFlowAction::ShowExplainerFirst:
-        if (!maybeShowScreenCaptureExplainer(m_app->settings(), this))
-            return; // user cancelled the explainer — silent
-        [[fallthrough]]; // acknowledged → drive the OS request below
     case ScreenCaptureFlowAction::RequestAccess:
         if (requestScreenCaptureAccess()) {
             captured = runCapture();
@@ -2329,9 +2324,6 @@ void MainWindow::onTakeScreenshot() {
             return;
         }
         break;
-    case ScreenCaptureFlowAction::DegradeDenied:
-        flashError(screenRecordingNeededMessage());
-        return;
     }
     if (!captured)
         return; // cancelled or empty capture — already handled silently

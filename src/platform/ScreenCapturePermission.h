@@ -29,16 +29,15 @@ inline constexpr char kScreenCaptureExplainerKey[] = "screen_capture_explainer";
 enum class ScreenCapturePermissionState { Granted, Denied, Undetermined };
 
 // The action a call site should take, derived purely from the permission
-// state and whether the first-run explainer has been acknowledged.
-//   Proceed            — run the capture now.
-//   ShowExplainerFirst — show the one-time pre-permission explainer, then
-//                        (if the user continues) drive the OS permission request.
-//   RequestAccess      — drive the OS permission request (prompts when truly
-//                        undetermined, silent no-op when denied), then capture
-//                        only if it reports success.
-//   DegradeDenied      — do NOT launch the OS UI; surface the recoverable
-//                        "needs permission" degrade path instead.
-enum class ScreenCaptureFlowAction { Proceed, ShowExplainerFirst, RequestAccess, DegradeDenied };
+// state. The stills capture flow no longer shows a pre-permission explainer
+// (retired per the capture-permission-preflight ADR / owner decision
+// 2026-07-17), so the decision collapses to two outcomes.
+//   Proceed       — run the capture now (permission is Granted).
+//   RequestAccess — drive the OS permission request (prompts when truly
+//                   undetermined, silent no-op when denied), then capture only
+//                   if it reports success. Every not-granted state maps here;
+//                   CGRequestScreenCaptureAccess arbitrates prompt-vs-degrade.
+enum class ScreenCaptureFlowAction { Proceed, RequestAccess };
 
 // Pure, platform-agnostic first-run gate for the Screen Recording
 // pre-permission explainer. Pure query with NO mutation: returns true while
@@ -56,15 +55,16 @@ bool shouldShowScreenCaptureExplainer(Settings &settings);
 // testable off-Mac.
 void acknowledgeScreenCaptureExplainer(Settings &settings);
 
-// Pure, platform-agnostic decision table mapping (permission state,
-// explainer-acknowledged) → the action a call site should take. NO #ifdef —
-// fully unit-testable off-Mac. Implements exactly:
-//   Granted                         -> Proceed
-//   Denied                          -> DegradeDenied
-//   Undetermined && !acknowledged   -> ShowExplainerFirst
-//   Undetermined &&  acknowledged   -> RequestAccess
-ScreenCaptureFlowAction decideScreenCaptureFlow(ScreenCapturePermissionState state,
-                                                bool explainerAcknowledged);
+// Pure, platform-agnostic decision table mapping permission state → the action
+// a call site should take. NO #ifdef — fully unit-testable off-Mac. Implements
+// exactly:
+//   Granted      -> Proceed
+//   Denied       -> RequestAccess
+//   Undetermined -> RequestAccess
+// Every not-granted state is arbitrated by requestScreenCaptureAccess()
+// (CGRequestScreenCaptureAccess — prompts if undetermined, silent no-op if
+// denied), so no separate explainer/degrade branch is needed at decision time.
+ScreenCaptureFlowAction decideScreenCaptureFlow(ScreenCapturePermissionState state);
 
 // The deep link to the macOS Screen Recording settings pane, and a best-effort
 // opener over QDesktopServices (returns openUrl's bool). Exposed for testing

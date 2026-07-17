@@ -360,8 +360,8 @@ void Application::acquireFromScreenshot() {
     // Preflight the live Screen Recording TCC state before touching the OS
     // selection UI (the screen-capture preflight ADR). This path has NO status
     // bar, so a denial surfaces as ONE actionable modal (an actionable error,
-    // not narration). shouldShow returns true while UNacknowledged.
-    const bool ack = !shouldShowScreenCaptureExplainer(m_settings);
+    // not narration). The pre-permission explainer is retired for stills (owner
+    // decision 2026-07-17); we lean on the OS Screen Recording prompt directly.
     const ScreenCapturePermissionState state = queryScreenCapturePermissionState();
     const QString path = transientImportPath("acquire", "png");
 
@@ -388,14 +388,10 @@ void Application::acquireFromScreenshot() {
     };
 
     bool captured = false;
-    switch (decideScreenCaptureFlow(state, ack)) {
+    switch (decideScreenCaptureFlow(state)) {
     case ScreenCaptureFlowAction::Proceed:
         captured = runCapture();
         break;
-    case ScreenCaptureFlowAction::ShowExplainerFirst:
-        if (!maybeShowScreenCaptureExplainer(m_settings, nullptr))
-            return; // user cancelled the explainer — silent
-        [[fallthrough]]; // acknowledged → drive the OS request below
     case ScreenCaptureFlowAction::RequestAccess:
         if (requestScreenCaptureAccess()) {
             captured = runCapture();
@@ -404,9 +400,6 @@ void Application::acquireFromScreenshot() {
             return;
         }
         break;
-    case ScreenCaptureFlowAction::DegradeDenied:
-        showScreenRecordingNeededModal();
-        return;
     }
     if (!captured)
         return; // cancelled or empty capture — already handled silently

@@ -4,7 +4,7 @@
 // Exercises the pure, platform-agnostic pieces of the screen-capture
 // permission preflight layer that gate the two `screencapture` call sites
 // (MainWindow::onTakeScreenshot, Application::acquireFromScreenshot):
-//   - decideScreenCaptureFlow(): the pure 3-state → 4-action decision table,
+//   - decideScreenCaptureFlow(): the pure 3-state → 2-action decision table,
 //   - screenRecordingSettingsUrlString(): the deep link to the macOS Screen
 //     Recording settings pane,
 //   - screenRecordingNeededMessage(): the shared graceful-degrade string.
@@ -24,9 +24,8 @@ class TestScreenCaptureFlow : public QObject {
     Q_OBJECT
   private slots:
     void grantedProceeds();
-    void deniedDegrades();
-    void undeterminedUnackShowsExplainer();
-    void undeterminedAckRequests();
+    void deniedRequests();
+    void undeterminedRequests();
     void settingsUrlIsScreenCapturePane();
     void neededMessageMentions();
 #ifndef Q_OS_MACOS
@@ -34,35 +33,24 @@ class TestScreenCaptureFlow : public QObject {
 #endif
 };
 
-// Granted always proceeds straight to capture, regardless of whether the
-// first-run explainer has been acknowledged.
+// Granted proceeds straight to capture.
 void TestScreenCaptureFlow::grantedProceeds() {
-    QCOMPARE(decideScreenCaptureFlow(ScreenCapturePermissionState::Granted, false),
-             ScreenCaptureFlowAction::Proceed);
-    QCOMPARE(decideScreenCaptureFlow(ScreenCapturePermissionState::Granted, true),
+    QCOMPARE(decideScreenCaptureFlow(ScreenCapturePermissionState::Granted),
              ScreenCaptureFlowAction::Proceed);
 }
 
-// Denied always degrades gracefully (no OS crosshair), regardless of the
-// explainer flag.
-void TestScreenCaptureFlow::deniedDegrades() {
-    QCOMPARE(decideScreenCaptureFlow(ScreenCapturePermissionState::Denied, false),
-             ScreenCaptureFlowAction::DegradeDenied);
-    QCOMPARE(decideScreenCaptureFlow(ScreenCapturePermissionState::Denied, true),
-             ScreenCaptureFlowAction::DegradeDenied);
+// Denied routes through the OS request (a silent no-op when actually denied, so
+// no crosshair spawns); the explainer is retired for stills.
+void TestScreenCaptureFlow::deniedRequests() {
+    QCOMPARE(decideScreenCaptureFlow(ScreenCapturePermissionState::Denied),
+             ScreenCaptureFlowAction::RequestAccess);
 }
 
-// Undetermined + not-yet-acknowledged → show the explainer before the OS UI.
-void TestScreenCaptureFlow::undeterminedUnackShowsExplainer() {
-    QCOMPARE(decideScreenCaptureFlow(ScreenCapturePermissionState::Undetermined, false),
-             ScreenCaptureFlowAction::ShowExplainerFirst);
-}
-
-// Undetermined + already acknowledged → drive the OS request (which prompts if
-// truly undetermined and no-ops if denied). NOT a bare Proceed: the crosshair
-// must never spawn until the request confirms access.
-void TestScreenCaptureFlow::undeterminedAckRequests() {
-    QCOMPARE(decideScreenCaptureFlow(ScreenCapturePermissionState::Undetermined, true),
+// Undetermined → drive the OS request (which prompts if truly undetermined and
+// no-ops if denied). NOT a bare Proceed: the crosshair must never spawn until
+// the request confirms access. No explainer precedes it.
+void TestScreenCaptureFlow::undeterminedRequests() {
+    QCOMPARE(decideScreenCaptureFlow(ScreenCapturePermissionState::Undetermined),
              ScreenCaptureFlowAction::RequestAccess);
 }
 
