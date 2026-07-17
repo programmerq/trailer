@@ -75,12 +75,12 @@ API_AVAILABLE(macos(14.0))
     // Size the capture to the picked content's native pixel dimensions:
     // contentRect is in points, pointPixelScale converts to backing pixels.
     const CGRect rect = filter.contentRect;
-    const CGFloat scale = filter.pointPixelScale > 0.0f ? filter.pointPixelScale : 1.0f;
-    const NSInteger pxWidth = (NSInteger)llround((double)rect.size.width * scale);
-    const NSInteger pxHeight = (NSInteger)llround((double)rect.size.height * scale);
+    const double scale = filter.pointPixelScale > 0.0f ? static_cast<double>(filter.pointPixelScale) : 1.0;
+    const long long pxWidth = llround(static_cast<double>(rect.size.width) * scale);
+    const long long pxHeight = llround(static_cast<double>(rect.size.height) * scale);
     if (pxWidth > 0 && pxHeight > 0) {
-        config.width = pxWidth;
-        config.height = pxHeight;
+        config.width = static_cast<size_t>(pxWidth);
+        config.height = static_cast<size_t>(pxHeight);
     }
     config.showsCursor = NO;
 
@@ -100,13 +100,13 @@ API_AVAILABLE(macos(14.0))
                                                        ? error.localizedDescription
                                                        : @"ScreenCaptureKit returned no image";
                          strongSelf.resultCode =
-                             (NSInteger)trailer::PickerCaptureResult::Failed;
+                             static_cast<NSInteger>(trailer::PickerCaptureResult::Failed);
                      } else if (TrailerWriteCGImageAsPNG(image, path)) {
-                         strongSelf.resultCode = (NSInteger)trailer::PickerCaptureResult::Ok;
+                         strongSelf.resultCode = static_cast<NSInteger>(trailer::PickerCaptureResult::Ok);
                      } else {
                          strongSelf.errorMessage = @"Failed to encode the captured image as PNG";
                          strongSelf.resultCode =
-                             (NSInteger)trailer::PickerCaptureResult::Failed;
+                             static_cast<NSInteger>(trailer::PickerCaptureResult::Failed);
                      }
                      strongSelf.done = YES;
                  });
@@ -126,7 +126,7 @@ API_AVAILABLE(macos(14.0))
         if (strongSelf == nil || strongSelf.done) {
             return;
         }
-        strongSelf.resultCode = (NSInteger)trailer::PickerCaptureResult::Cancelled;
+        strongSelf.resultCode = static_cast<NSInteger>(trailer::PickerCaptureResult::Cancelled);
         strongSelf.done = YES;
     });
 }
@@ -143,7 +143,7 @@ API_AVAILABLE(macos(14.0))
         }
         strongSelf.errorMessage = error != nil ? error.localizedDescription
                                                 : @"The content picker failed to start";
-        strongSelf.resultCode = (NSInteger)trailer::PickerCaptureResult::Failed;
+        strongSelf.resultCode = static_cast<NSInteger>(trailer::PickerCaptureResult::Failed);
         strongSelf.done = YES;
     });
 }
@@ -184,7 +184,7 @@ PickerCaptureResult captureViaPickerToPng(const QString &outPngPath, bool wholeD
         @autoreleasepool {
             TrailerPickerObserver *observer = [[TrailerPickerObserver alloc] init];
             observer.outPath = outPngPath.toNSString();
-            observer.resultCode = (NSInteger)PickerCaptureResult::Failed;
+            observer.resultCode = static_cast<NSInteger>(PickerCaptureResult::Failed);
 
             SCContentSharingPicker *picker = SCContentSharingPicker.sharedPicker;
 
@@ -197,7 +197,7 @@ PickerCaptureResult captureViaPickerToPng(const QString &outPngPath, bool wholeD
             // The picker path currently takes no Qt window handle, so this is
             // skipped rather than guessed at.
 
-            picker.configuration = config;
+            picker.defaultConfiguration = config;
             [picker addObserver:observer];
             picker.active = YES;
 
@@ -223,7 +223,7 @@ PickerCaptureResult captureViaPickerToPng(const QString &outPngPath, bool wholeD
                                              beforeDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
                 }
                 if (!observer.done && [deadline timeIntervalSinceNow] <= 0) {
-                    observer.resultCode = (NSInteger)PickerCaptureResult::Failed;
+                    observer.resultCode = static_cast<NSInteger>(PickerCaptureResult::Failed);
                     if (errorOut) {
                         *errorOut = QStringLiteral("Timed out waiting for the content picker");
                     }
@@ -236,7 +236,7 @@ PickerCaptureResult captureViaPickerToPng(const QString &outPngPath, bool wholeD
             [picker removeObserver:observer];
             picker.active = NO;
 
-            result = (PickerCaptureResult)observer.resultCode;
+            result = static_cast<PickerCaptureResult>(observer.resultCode);
             if (errorOut != nullptr && observer.errorMessage != nil) {
                 *errorOut = QString::fromNSString(observer.errorMessage);
             }
