@@ -92,7 +92,10 @@ value/default changes are backed by records in
 > `git push` or PR. Before escalating open questions to the owner, run the
 > [`decision-brief`](.claude/skills/decision-brief/SKILL.md) skill: self-decide
 > everything the gates and records already derive, escalate only the genuine
-> forks.
+> forks. When you hand work back — every PR body — lead with its ready-to-merge
+> ask (the specific thing blocking merge, or an explicit "No ask — mergeable
+> as-is") per the [`surface-the-ask`](.claude/skills/surface-the-ask/SKILL.md)
+> skill.
 
 ### G1 — Threshold declared before work begins
 
