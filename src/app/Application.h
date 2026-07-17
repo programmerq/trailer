@@ -24,6 +24,9 @@ class Application : public QApplication {
     Application(int &argc, char **argv);
     ~Application() override;
 
+    // Sets the process-wide Qt identity strings (org/app name, domain, version). Static so tests can assert them without constructing the full application.
+    static void applyIdentity();
+
     void openFiles(const QStringList &paths);
     void clearRecent();
 

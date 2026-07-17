@@ -28,10 +28,20 @@
 
 namespace trailer {
 
-Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
+void Application::applyIdentity() {
     setApplicationName(QStringLiteral("Trailer"));
     setOrganizationName(QStringLiteral("Trailer"));
+    // organizationDomain is set for Qt identity alignment only (reverses to
+    // io.github.programmerq). It does NOT move any settings path: the sole
+    // QSettings consumer (DocumentTypeDefaults) uses the 2-arg
+    // QSettings(org, app) constructor, which keys off organizationName and
+    // ignores the domain. No settings migration is required on any platform.
+    setOrganizationDomain(QStringLiteral("programmerq.github.io"));
     setApplicationVersion(QStringLiteral(TRAILER_VERSION_STRING));
+}
+
+Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
+    applyIdentity();
 
 #ifdef Q_OS_MACOS
     // macOS keeps a dock icon + global menu bar alive with zero windows, so the

@@ -3,7 +3,7 @@ Version:        0.3.0
 Release:        1%{?dist}
 Summary:        Cross-platform PDF and image workbench
 License:        MIT
-URL:            https://github.com/trailer-app/trailer
+URL:            https://github.com/programmerq/trailer
 # TODO: Add real Source0 URL once releases are published
 
 BuildRequires:  cmake >= 3.24
@@ -75,8 +75,8 @@ Supports PDF, PNG, JPEG, BMP, GIF, TIFF, WebP, and portable image formats.
 DESTDIR=%{buildroot} cmake --install %{_builddir}/build-trailer --prefix /usr
 install -Dm644 %{_builddir}/trailer-source/packaging/rpm/trailer.desktop \
     %{buildroot}%{_datadir}/applications/trailer.desktop
-install -Dm644 %{_builddir}/trailer-source/packaging/rpm/org.trailer.Trailer.metainfo.xml \
-    %{buildroot}%{_datadir}/metainfo/org.trailer.Trailer.metainfo.xml
+install -Dm644 %{_builddir}/trailer-source/packaging/rpm/io.github.programmerq.trailer.metainfo.xml \
+    %{buildroot}%{_datadir}/metainfo/io.github.programmerq.trailer.metainfo.xml
 install -Dm644 %{_builddir}/trailer-source/resources/icons/trailer_16.png \
     %{buildroot}%{_datadir}/icons/hicolor/16x16/apps/trailer.png
 install -Dm644 %{_builddir}/trailer-source/resources/icons/trailer_32.png \
@@ -134,7 +134,7 @@ fi
 # xcb platform plugin (staged by scripts/bundle-qt-runtime.sh in %install).
 /opt/trailer
 %{_datadir}/applications/trailer.desktop
-%{_datadir}/metainfo/org.trailer.Trailer.metainfo.xml
+%{_datadir}/metainfo/io.github.programmerq.trailer.metainfo.xml
 %{_datadir}/icons/hicolor/16x16/apps/trailer.png
 %{_datadir}/icons/hicolor/32x32/apps/trailer.png
 %{_datadir}/icons/hicolor/64x64/apps/trailer.png

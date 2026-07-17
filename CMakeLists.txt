@@ -325,7 +325,7 @@ set_target_properties(trailer PROPERTIES
     WIN32_EXECUTABLE ON
     MACOSX_BUNDLE ON
     MACOSX_BUNDLE_BUNDLE_NAME "Trailer"
-    MACOSX_BUNDLE_GUI_IDENTIFIER "org.trailer.Trailer"
+    MACOSX_BUNDLE_GUI_IDENTIFIER "io.github.programmerq.trailer"
     MACOSX_BUNDLE_BUNDLE_VERSION "${PROJECT_VERSION}"
     MACOSX_BUNDLE_SHORT_VERSION_STRING "${PROJECT_VERSION}"
     MACOSX_BUNDLE_ICON_FILE "trailer.icns"
@@ -349,7 +349,7 @@ if(UNIX AND NOT APPLE)
     install(TARGETS trailer DESTINATION ${CMAKE_INSTALL_BINDIR})
     install(FILES platform/linux/trailer.desktop
             DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
-    install(FILES platform/linux/org.trailer.Trailer.metainfo.xml
+    install(FILES platform/linux/io.github.programmerq.trailer.metainfo.xml
             DESTINATION ${CMAKE_INSTALL_DATADIR}/metainfo)
     foreach(_size 16 32 64 128 256 512)
         install(FILES resources/icons/trailer_${_size}.png
