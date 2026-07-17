@@ -162,6 +162,25 @@ product call embedded in the change, or a decision record awaiting acceptance.
 
 If it's a fork, drop the Step 3 Option|Meaning|Impact|Default table in here.
 
+#### Owner-verification asks post a checklist COMMENT
+
+When the blocking ask is **manual / on-device / owner-run verification** (the
+verification flavor of Case A — see the #77 example below), don't bury the steps
+in the PR body. **Post a PR comment containing a Markdown `- [ ]` checklist of
+the exact manual steps** for the owner to run against his local dev build — he
+ticks each box off as he goes. Each box is **one exact, self-contained step:
+what to do plus what a pass looks like**, so he isn't reverse-engineering the
+test. The PR body's Ready-to-merge ask still **names the verification as the ask
+and points to the checklist comment** — the checklist lives in the comment (so
+he can tick it), not in the body. Precedent: PR #59's 12-box "Manual Testing"
+checklist; the owner standardized this on PR #72 ("Comment here with a `[ ]`
+checklist for manual testing with my local dev build. … This is a good thing to
+do for any manual testing requests going forward.").
+
+This rides on a PR that **already carries implementation** — a manual-testing
+checklist is not a substitute for code and does not turn a proposal into a
+reviewable deliverable (Step 4 still gates).
+
 ### Case B — nothing blocks
 
 ```markdown
