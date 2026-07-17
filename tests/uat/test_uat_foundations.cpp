@@ -15,6 +15,7 @@
 #include "ui/MainWindow.h"
 
 #include <QAction>
+#include <QAbstractButton>
 #include <QClipboard>
 #include <QDir>
 #include <QDockWidget>
@@ -199,6 +200,34 @@ QString writeTinyPdf(const QString &path) {
     return path;
 }
 
+// Write an unmistakably NON-blank image (bold, saturated colored content —
+// never white/empty) to `path`. Used for evidence grabs that must show a
+// REAL pasted image inside an "Untitled" document rather than reading as
+// the blank empty-state window.
+QString writeVividImage(const QString &path) {
+    QImage img(480, 320, QImage::Format_ARGB32);
+    img.fill(QColor(0x0f, 0x2a, 0x43)); // deep navy — clearly not blank/white
+    QPainter p(&img);
+    p.setRenderHint(QPainter::Antialiasing, true);
+    p.setPen(Qt::NoPen);
+    p.setBrush(QColor(0xff, 0x8c, 0x1a));
+    p.drawRect(QRect(40, 48, 400, 96));   // orange band
+    p.setBrush(QColor(0x2e, 0xc4, 0x8b));
+    p.drawRect(QRect(40, 184, 400, 92));  // green band
+    p.setBrush(QColor(0xe0, 0x3b, 0x3b));
+    p.drawEllipse(QPoint(240, 160), 58, 58); // red circle
+    p.setPen(QColor(Qt::white));
+    QFont f = p.font();
+    f.setPixelSize(34);
+    f.setBold(true);
+    p.setFont(f);
+    p.drawText(img.rect().adjusted(0, 8, 0, 0), Qt::AlignHCenter | Qt::AlignTop,
+               QStringLiteral("PASTED IMAGE"));
+    p.end();
+    img.save(path, "PNG");
+    return path;
+}
+
 } // namespace
 
 class TestUatFoundations : public QObject {
@@ -235,6 +264,20 @@ class TestUatFoundations : public QObject {
     void uat_fnd_014_closeUntitledTabDiscardDropsDoc();
     void uat_fnd_014_closeUntitledTabSaveRoutesThroughSaveAs();
     void uat_fnd_014_untitledImageDocReportsUntitledAndClearsOnSave();
+    // Peripheral-gap coverage the correctness review flagged: auto-save
+    // skips an untitled doc even when dirty; a failed Save-As on an
+    // untitled close vetoes (keeps the doc); multiple untitled docs each
+    // route through the close prompt. Plus reshaped-prompt / tab-title
+    // grab() evidence for the untitled states.
+    void uat_fnd_014_autoSaveSkipsUntitledDirtyDoc();
+    void uat_fnd_014_closeUntitledSaveFailureVetoesAndKeepsDoc();
+    void uat_fnd_014_multipleUntitledDocsEachPromptOnClose();
+    // The persistent empty-state window (zero documents, ADR 0005) must
+    // NEVER be treated as an untitled/unsaved doc: closing it must not
+    // prompt and must not veto. Guards against a phantom "Untitled"
+    // placeholder document ever being created for the empty state.
+    void uat_fnd_014_emptyStateWindowNeverPromptsOnClose();
+    void uat_fnd_014_untitledCloseReshapeAndTabTitleEvidence();
     void uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms();
     void uat_fnd_041_shareDisabledWithTooltipWhenUnavailable();
     void uat_fnd_042_twoPagesActionDisabledWithTooltip();
@@ -1064,6 +1107,264 @@ void TestUatFoundations::uat_fnd_014_untitledImageDocReportsUntitledAndClearsOnS
     QVERIFY(QFileInfo::exists(chosen));
     QVERIFY2(opened->displayName() != QStringLiteral("Untitled"),
              "After Save-As the title reflects the chosen file, not \"Untitled\"");
+
+    app->settings().setOpenFilesIn(savedMode);
+}
+
+// UAT-FND-014 — auto-save MUST leave an untitled doc alone even when it is
+// dirty. The skip clause `isUntitled()` fires before any write, so no
+// destination is silently chosen for the user (the temp file must never be
+// treated as the save target). Discriminating setup: the doc is dirty AND
+// has a non-empty (temp) path, so neither the !isDirty() nor the empty-path
+// skip applies — only the isUntitled() clause can prevent the save.
+void TestUatFoundations::uat_fnd_014_autoSaveSkipsUntitledDirtyDoc() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->settings().setAutoSave(true);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    // Non-empty temp path (mirrors a transient import) + dirty + untitled.
+    const QString tempPath = m_scratch.filePath(QStringLiteral("trailer-clipboard-autosave.png"));
+    QFile::remove(tempPath);
+    FakeDoc *doc = addFakeDoc(mw, tempPath, QStringLiteral("Untitled"),
+                              QStringLiteral("PASTED"), /*dirty=*/true, /*untitled=*/true);
+    QCOMPARE(dv->documentCount(), 1);
+    QVERIFY2(doc->isDirty(), "Precondition: the doc is dirty");
+    QVERIFY2(doc->isUntitled(), "Precondition: the doc is untitled");
+
+    mw->autoSaveDirtyDocs();
+    QApplication::processEvents();
+
+    QCOMPARE(doc->saveCount(), 0);
+    QVERIFY2(doc->isUntitled(), "Auto-save must not clear untitled");
+    QVERIFY2(doc->isDirty(), "Auto-save must leave the untitled doc dirty (unsaved)");
+    QVERIFY2(!QFileInfo::exists(tempPath),
+             "Auto-save must not write the untitled doc's transient temp file");
+
+    app->settings().setAutoSave(false);
+}
+
+// UAT-FND-014 — Save on an untitled close whose Save-As destination FAILS
+// to write must VETO the close and keep the doc intact. The Save-As path is
+// pre-seeded to an unwritable location (a file under a non-existent
+// directory), so FakeDoc::save() returns false; confirmCloseDirtyDoc must
+// then abort the close rather than lose the pasted content.
+void TestUatFoundations::uat_fnd_014_closeUntitledSaveFailureVetoesAndKeepsDoc() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    const QString tempPath = m_scratch.filePath(QStringLiteral("trailer-clipboard-savefail.png"));
+    QFile::remove(tempPath);
+    // A destination whose parent directory does not exist — QFile::open
+    // (WriteOnly) fails, so FakeDoc::save() returns false.
+    const QString unwritable =
+        m_scratch.filePath(QStringLiteral("no_such_dir/uat_fnd_014_cannot_write.txt"));
+    QFile::remove(unwritable);
+
+    FakeDoc *doc = addFakeDoc(mw, tempPath, QStringLiteral("Untitled"),
+                              QStringLiteral("PASTED"), /*dirty=*/false, /*untitled=*/true);
+    QCOMPARE(dv->documentCount(), 1);
+
+    mw->setSaveAsPathForTesting(unwritable);
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Save);
+    requestCloseTab(dv, 0);
+
+    // Save-As destination failed to write → close vetoed, doc kept intact
+    // and still untitled so the user can retry a good destination.
+    QCOMPARE(dv->documentCount(), 1);
+    QCOMPARE(dv->currentDocument(), static_cast<IDocument *>(doc));
+    QVERIFY2(doc->isUntitled(), "A failed Save-As must leave the doc untitled (unsaved)");
+    QVERIFY2(!QFileInfo::exists(unwritable), "The unwritable destination must not exist");
+    QVERIFY2(!QFileInfo::exists(tempPath),
+             "A failed Save-As must not fall back to overwriting the temp file");
+
+    mw->setSaveAsPathForTesting(QString());
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+}
+
+// UAT-FND-014 — with MULTIPLE untitled docs open, EACH one must route
+// through the close prompt independently: Cancel on a tab vetoes that
+// close (the doc stays), and Discard drops it. Driven per-tab via
+// requestCloseTab (the documentCloseRequested veto).
+//
+// NOTE (headless limitation): the window-level `closeEvent` walk that
+// prompts each dirty/untitled doc in turn (MainWindow.cpp: closeEvent)
+// early-returns event->accept() under QT_QPA_PLATFORM=offscreen/minimal
+// (MainWindow.cpp: the platform guard before the dirty walk), because
+// there is no human to click the modal and UAT init slots call
+// w->close() to tear down windows. So the multi-doc window-close prompt
+// cannot be exercised headlessly; the per-tab close/veto path exercised
+// here (and by the other uat_fnd_014_* slots) is the headless proxy for
+// that gate, one document at a time.
+void TestUatFoundations::uat_fnd_014_multipleUntitledDocsEachPromptOnClose() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    const QString tempA = m_scratch.filePath(QStringLiteral("trailer-clipboard-multi-a.png"));
+    const QString tempB = m_scratch.filePath(QStringLiteral("trailer-clipboard-multi-b.png"));
+    QFile::remove(tempA);
+    QFile::remove(tempB);
+    FakeDoc *docA = addFakeDoc(mw, tempA, QStringLiteral("Untitled"),
+                              QStringLiteral("PASTED-A"), /*dirty=*/false, /*untitled=*/true);
+    FakeDoc *docB = addFakeDoc(mw, tempB, QStringLiteral("Untitled"),
+                              QStringLiteral("PASTED-B"), /*dirty=*/false, /*untitled=*/true);
+    Q_UNUSED(docA);
+    QCOMPARE(dv->documentCount(), 2);
+
+    // Cancel must veto the first untitled tab's close — proving the second
+    // doc's presence doesn't bypass the per-doc prompt.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+    requestCloseTab(dv, 0);
+    QCOMPARE(dv->documentCount(), 2);
+
+    // Discard the first untitled doc: it drops, the second remains and
+    // must STILL be gated (untitled).
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
+    requestCloseTab(dv, 0);
+    QCOMPARE(dv->documentCount(), 1);
+    QVERIFY2(!QFileInfo::exists(tempA), "Discard must not write the first temp file");
+
+    // The remaining doc is the second untitled one; Cancel vetoes it too.
+    IDocument *remaining = dv->currentDocument();
+    QVERIFY(remaining);
+    QVERIFY2(remaining->isUntitled(), "The remaining doc is still untitled and still gated");
+    QCOMPARE(remaining, static_cast<IDocument *>(docB));
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+    requestCloseTab(dv, 0);
+    QCOMPARE(dv->documentCount(), 1);
+
+    // Finally Discard the second untitled doc.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
+    requestCloseTab(dv, 0);
+    QCOMPARE(dv->documentCount(), 0);
+    QVERIFY2(!QFileInfo::exists(tempB), "Discard must not write the second temp file");
+
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+}
+
+// UAT-FND-014 — the persistent EMPTY-STATE window (zero documents; the
+// disabled-toolbar-over-welcome-surface window, ADR 0005) must NEVER be
+// treated as an unsaved / untitled document. The close gate now prompts
+// when isDirty() || isUntitled(), so if anything ever created a phantom
+// "Untitled" placeholder doc for the empty state, closing a brand-new
+// window the user never put content into would nag them (or, armed with
+// Cancel below, be vetoed and become un-closable). This is the negative
+// guard: an empty window has NOTHING for closeEvent's dirty/untitled
+// vector to iterate (documentCount()==0) and exposes NO current document
+// for the tab-close veto, so no prompt can fire and no veto can occur.
+void TestUatFoundations::uat_fnd_014_emptyStateWindowNeverPromptsOnClose() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+
+    // A freshly-ensured window is in the empty state: no phantom/untitled
+    // placeholder document exists. If one did, it would surface here as a
+    // tab (documentCount()>0) or as the current document — and the close
+    // gate would then prompt over it.
+    QCOMPARE(mw->documentCount(), 0);
+    QCOMPARE(dv->documentCount(), 0);
+    QVERIFY2(dv->currentDocument() == nullptr,
+             "The empty-state window must expose NO current document — nothing "
+             "for the close gate to treat as untitled/unsaved.");
+
+    // Arm Cancel — the response that WOULD veto a close if any save prompt
+    // fired — then close the empty-state window. With no document to prompt
+    // for, the close must go through cleanly (not be vetoed). Combined with
+    // the zero-document invariants above, this proves an empty-state close
+    // neither prompts nor vetoes.
+    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+    QVERIFY2(mw->close(),
+             "Closing an empty-state window must not be vetoed by a save prompt.");
+    QApplication::processEvents();
+    // `mw`/`dv` are scheduled for deletion (WA_DeleteOnClose) after close();
+    // do not touch them past this point.
+}
+
+// UAT-FND-014 — G2 / UX-Done evidence for the NEW reshaped untitled states.
+// (1) The close prompt for an UNTITLED doc: title "Unsaved changes", text
+//     "Save changes to Untitled?", a "Save…" (ellipsis) button, and the
+//     informative "If you don't save, this image will be lost." line.
+//     Offscreen shows no live modal (the forced-response seam drives the
+//     choice), so we build the identical QMessageBox purely to grab its
+//     visual — matching the production confirmCloseDirtyDoc untitled branch.
+// (2) The "Untitled" tab / window title with a single untitled doc open.
+// The native Save-As picker itself cannot be grabbed under offscreen; its
+// friendly default filename is verified by the chooseSaveAsPath unit
+// assertions and by owner manual check (manual-fallback allowance §2.5.3).
+void TestUatFoundations::uat_fnd_014_untitledCloseReshapeAndTabTitleEvidence() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    // Reuse one window so the opened doc is easy to locate; restore the
+    // user's open-mode afterwards so this slot doesn't leak state.
+    const OpenFilesIn savedMode = app->settings().openFilesIn();
+    app->settings().setOpenFilesIn(OpenFilesIn::SameWindow);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    // A generous size so the grabbed evidence clearly shows the loaded
+    // image rather than a cramped central area that could read as empty.
+    mw->resize(760, 620);
+
+    // Drive the REAL production entry point the clipboard / screenshot
+    // imports use — openFiles(paths, markUntitled=true) — with a vivid,
+    // unmistakably non-blank image on disk. This produces a real
+    // ImageDocument whose view renders the image, so the evidence grab
+    // shows an ACTUAL pasted image inside an "Untitled" document, never
+    // the blank empty-state window.
+    const QString png = m_scratch.filePath(QStringLiteral("trailer-clipboard-evidence.png"));
+    writeVividImage(png);
+    app->openFiles({png}, /*markUntitled=*/true);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = nullptr;
+    for (int i = 0; i < dv->documentCount(); ++i) {
+        IDocument *d = nullptr;
+        if (dv->documentAt(i, &d) && d && d->isUntitled()) {
+            doc = d;
+            break;
+        }
+    }
+    QVERIFY2(doc, "openFiles(markUntitled=true) must produce an untitled image document");
+    QVERIFY2(doc->isUntitled(), "Precondition: the opened doc is untitled");
+    QCOMPARE(doc->displayName(), QStringLiteral("Untitled"));
+    QApplication::processEvents();
+
+    // (2) The "Untitled" tab / window title state — now with a real,
+    // visibly non-blank image loaded in the untitled document.
+    grabTo(mw, QStringLiteral("fnd014_untitled_tab_title.png"));
+
+    // (1) The reshaped untitled close prompt — mirrors confirmCloseDirtyDoc's
+    // untitled branch exactly.
+    {
+        QMessageBox box(mw);
+        box.setIcon(QMessageBox::Warning);
+        box.setWindowTitle(QStringLiteral("Unsaved changes"));
+        box.setText(QStringLiteral("Save changes to %1?").arg(doc->displayName()));
+        box.setStandardButtons(QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
+        box.setDefaultButton(QMessageBox::Save);
+        if (auto *saveButton = box.button(QMessageBox::Save))
+            saveButton->setText(QStringLiteral("Save…"));
+        box.setInformativeText(QStringLiteral("If you don't save, this image will be lost."));
+        box.ensurePolished();
+        box.adjustSize();
+        grabTo(&box, QStringLiteral("fnd014_untitled_close_prompt.png"));
+    }
 
     app->settings().setOpenFilesIn(savedMode);
 }

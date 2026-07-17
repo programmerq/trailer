@@ -322,7 +322,13 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
         }
 
         target->addDocument(std::move(doc));
-        m_recent.add(path);
+        // Never record a transient import's temp path in Recent Files: the
+        // user never chose that location and the file is subject to OS
+        // cleanup, so a Recent entry pointing at it would dangle. Once the
+        // user Save-As's the untitled doc to a real destination the normal
+        // save flow records that chosen path.
+        if (!markUntitled)
+            m_recent.add(path);
     }
     m_recent.save();
     notifyWindowsRecentChanged();

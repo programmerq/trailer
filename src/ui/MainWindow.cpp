@@ -2243,7 +2243,9 @@ void MainWindow::onExportAs() {
             // workflow people expect from Preview.
             << tr("PDF document (*.pdf)");
     QString selected;
-    const QString suggested = doc->filePath().isEmpty()
+    // Same friendly-base treatment as Save-As: an untitled doc's temp path
+    // is UUID garbage, so seed the Export picker from displayName().
+    const QString suggested = (doc->filePath().isEmpty() || doc->isUntitled())
                                   ? doc->displayName()
                                   : QFileInfo(doc->filePath()).completeBaseName() + ".png";
     const QString path = QFileDialog::getSaveFileName(this, tr("Export As"), suggested,
@@ -2632,7 +2634,14 @@ QString MainWindow::chooseSaveAsPath(IDocument *doc) {
     // not a wholesale rewrite of the original. Plain saves keep the
     // basename so an idempotent re-save doesn't pollute the picker
     // history.
-    const QString basePath = doc->filePath().isEmpty() ? doc->displayName() : doc->filePath();
+    // An untitled transient import's filePath() is an ugly UUID temp path
+    // (trailer-clipboard-…-<uuid>.png); seeding the picker from it would
+    // pre-fill that garbage as the suggested filename. Seed from the
+    // friendly displayName() ("Untitled") instead — the user gets a clean,
+    // editable stem, and the correct extension is still resolved below.
+    const QString basePath = (doc->filePath().isEmpty() || doc->isUntitled())
+                                 ? doc->displayName()
+                                 : doc->filePath();
     QFileInfo bi(basePath);
     const QString stem = bi.completeBaseName().isEmpty() ? basePath : bi.completeBaseName();
     const QString ext = bi.suffix().isEmpty()
@@ -2823,7 +2832,9 @@ void MainWindow::updateTitleForDocument(IDocument *doc) {
     // macOS — the title bar gets a clickable folder icon for "Show
     // in Finder", drag-out, tags, and locked-state toggles. On
     // Linux / Windows it's a no-op outside Qt's internal bookkeeping.
-    setWindowFilePath(doc->filePath());
+    // For an untitled doc, clear it: exposing the transient temp path here
+    // would leak the UUID temp filename through the macOS proxy icon.
+    setWindowFilePath(doc->isUntitled() ? QString() : doc->filePath());
 
     const int idx = m_documentView->currentIndex();
     if (idx >= 0) {
@@ -4172,6 +4183,16 @@ bool MainWindow::confirmCloseDirtyDoc(IDocument *doc) {
         box.setText(tr("Save changes to %1?").arg(doc->displayName()));
         box.setStandardButtons(QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
         box.setDefaultButton(QMessageBox::Save);
+        if (doc->isUntitled()) {
+            // An untitled doc has no destination yet: Save opens a file
+            // picker, so signal that with an ellipsis (only for untitled —
+            // a titled doc writes immediately and keeps plain "Save"). Also
+            // spell out the stakes, since the content lives only in a
+            // transient temp file that would be lost on Discard.
+            if (auto *saveButton = box.button(QMessageBox::Save))
+                saveButton->setText(tr("Save…"));
+            box.setInformativeText(tr("If you don't save, this image will be lost."));
+        }
         answer = box.exec();
         break;
     }
