@@ -31,6 +31,31 @@ macOS offers a sanctioned path where **the user's selection is the consent**: `S
 
 `SCContentSharingPicker` + `SCScreenshotManager` require **macOS 14.0**. The coordinator reports `MACOSX_DEPLOYMENT_TARGET` is being aligned to 14.0 (the real ONNX-dylib floor), but `main` today (`95619cf`) still declares **11.0** (`scripts/build-macos.sh:57`, `docs/packaging-macos.md`, `Info.plist.in` `LSMinimumSystemVersion`). This record therefore gates the picker backend behind `@available(macOS 14.0, *)` and retains the current `screencapture` path as the macOS 11–13 fallback, independent of whether the 14.0 floor lands. Reliability caveat: while these APIs are *available* at 14.0, third-party testing rates the prompt-free picker behavior as only moderately reliable before **14.4** (on top of the first-Sonoma-beta FB12331920 regression). If the GPSC.2 smoke test shows the prompt-free behavior differs on 14.0–14.3, raise the picker floor to `@available(macOS 14.4, *)` and let Option A cover 11.0–14.3.
 
+### Capture flows: today (`screencapture`) → proposed (picker)
+
+Each row is a real flow. "Today" is the shipped `screencapture` path (as observed on the owner's Retina Mac from a fresh TCC reset); "Proposed" is the `SCContentSharingPicker` + `SCScreenshotManager` backend.
+
+1. **Start a Region/Window capture** (Acquire, or Take Screenshot ▸ Region/Window).
+   - Today: the crosshair / window-highlight selection UI appears immediately — no permission prompt yet.
+   - Proposed: the system content picker appears (the familiar "choose what to share" sheet from Zoom/Teams screen-sharing) — no permission prompt.
+2. **First-ever capture — the permission moment.**
+   - Today: the instant the user commits the selection, macOS throws the "Screen Recording" TCC prompt; the verbose explainer dialog is shown just before it to soften the surprise.
+   - Proposed: no prompt, ever — picking a source in the system picker *is* the consent. The explainer becomes unnecessary for stills.
+3. **Grant path.**
+   - Today: user clicks Allow → capture proceeds → image imported. On macOS 15 this standing grant then triggers a recurring re-auth nag (weekly at 15.0, relaxed toward monthly by 15.1).
+   - Proposed: image captured from the picked source → imported. No standing grant, so no re-auth nag.
+4. **Deny path — the dead-end.**
+   - Today: user clicks Don't Allow → `screencapture` exits 0 with no file → indistinguishable from a cancel → Trailer silently does nothing, with no explanation.
+   - Proposed: there is no permission to deny. The only "no image" outcome is the user dismissing the picker — an explicit, self-caused cancel. No dead-end.
+5. **Every capture after a denial (even after relaunch).**
+   - Today: the selection UI still appears (incl. space-bar mode cycling), the user selects, and it silently yields nothing — no re-prompt — until the permission is manually reset in System Settings. A trap the user cannot self-diagnose.
+   - Proposed: unaffected — each capture just shows the picker and works; there is no denied state to get stuck in.
+6. **Take Screenshot ▸ Entire Screen** (non-interactive today).
+   - Today: no selection UI; the whole screen is grabbed non-interactively; still gated by the standing grant.
+   - Proposed: the picker offers a whole-display choice; same standing-grant-free capture.
+
+Net: every flow is at least as good and several are strictly better — the permission prompt disappears, the deny dead-end becomes structurally impossible, and the macOS 15 re-auth nag goes away. The one flow that changes shape is #1–#2: the user picks a source in a system sheet instead of getting an immediate crosshair. That is the single tradeoff, and it is standard, familiar system UI.
+
 ## Options
 
 - **Option A — Status quo.** Keep `/usr/sbin/screencapture -i`; own the standing Screen Recording grant. Prompts once, pays the Sequoia recurring nag, and (today) dead-ends indistinguishably on deny. Works on macOS 11+.
