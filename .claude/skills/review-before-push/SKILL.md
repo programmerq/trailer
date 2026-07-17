@@ -55,6 +55,13 @@ its PR **ready-for-review** as normal — per-item PRs no longer cost hosted
 minutes, and the 2026-07-09/10 batching constraint is retired. Merges to main
 remain the owner's explicit call.
 
+This applies to changes that carry **implementation** (code, tests, or a
+behavior change — a skill or runbook counts). A **proposal / decision-record /
+plan-only** change is *not* a ready-for-review deliverable: don't open a
+docs-only PR for it — request direction inline or keep it draft until the
+implementation lands, per
+[`surface-the-ask`](../surface-the-ask/SKILL.md).
+
 ## Procedure
 
 ### 0. Write the change's tests FIRST
