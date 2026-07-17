@@ -40,10 +40,14 @@ constexpr const char *kExtensions[] = {
     "webp", "ppm", "pgm",  "pbm", "xbm", "xpm",  "ico",
 };
 
-// Step multiplier per zoom-in / zoom-out tap (~10% per step) —
-// matches the rate Preview / Acrobat use. Change if dogfooding
-// finds zoom feels jumpy (lower) or sluggish (higher).
-constexpr double kZoomStep = 1.1;
+// Step multiplier per zoom-in / zoom-out tap (~25% per step) —
+// a coarse, Preview / Acrobat-like ratio that doubles in ~3 taps.
+// The step is geometric, so it's size-independent in ratio terms;
+// raised from 1.1 (10%) because the finer step felt sluggish to
+// click through, especially on large images. Change if dogfooding
+// finds zoom feels jumpy (lower) or sluggish (higher). Keep in sync
+// with PdfAdapter's kZoomStep so the two view types feel identical.
+constexpr double kZoomStep = 1.25;
 
 // Hard zoom bounds. 0.05 (5%) preserves the user's place at a
 // thumbnail-overview scale without letting a typical document

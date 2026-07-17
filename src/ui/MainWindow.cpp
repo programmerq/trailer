@@ -504,6 +504,14 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_largeDocOcrHint = hint;
     refreshMlIndicator();
 
+    // Permanent zoom-% readout. Sits with the other permanent status-bar
+    // widgets; hidden until a zoomable document is active. Driven by
+    // updateZoomIndicator() from the zoom actions and doc-changed path.
+    m_zoomIndicator = new QLabel(this);
+    m_zoomIndicator->setObjectName(QStringLiteral("zoomIndicator"));
+    m_zoomIndicator->setVisible(false);
+    statusBar()->addPermanentWidget(m_zoomIndicator);
+
     // ADR 0002: richer progress+cancel widget for foreground ML ops.
     // Sits next to the ambient m_mlIndicator dot (which stays untouched).
     // OcrController's batch signals drive it; the reveal is delayed so
@@ -1217,6 +1225,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_zoomInAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomIn();
+        updateZoomIndicator();
     });
 
     m_zoomOutAction = viewMenu->addAction(
@@ -1226,6 +1235,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_zoomOutAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomOut();
+        updateZoomIndicator();
     });
 
     // Zoom shortcuts keep the digit row clear for the page-layout
@@ -1243,6 +1253,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_zoomFitPageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomFitPage();
+        updateZoomIndicator();
     });
 
     m_zoomActualAction = viewMenu->addAction(
@@ -1252,6 +1263,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_zoomActualAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomActual();
+        updateZoomIndicator();
     });
 
     m_zoomFitAction = viewMenu->addAction(
@@ -1260,6 +1272,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_zoomFitAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomFitWidth();
+        updateZoomIndicator();
     });
 
     viewMenu->addSeparator();
@@ -2598,6 +2611,19 @@ void MainWindow::updateUndoRedoActions(IDocument *doc) {
     m_redoAction->setEnabled(doc && doc->canRedo());
 }
 
+void MainWindow::updateZoomIndicator() {
+    if (!m_zoomIndicator)
+        return;
+    auto *doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsZoom()) {
+        m_zoomIndicator->setVisible(false);
+        return;
+    }
+    m_zoomIndicator->setText(
+        tr("%1%").arg(qRound(doc->zoomFactor() * 100.0)));
+    m_zoomIndicator->setVisible(true);
+}
+
 void MainWindow::onCopyPageAsImage() {
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsThumbnails())
@@ -2983,6 +3009,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     m_zoomActualAction->setEnabled(hasZoom);
     m_zoomFitAction->setEnabled(hasZoom);
     m_zoomFitPageAction->setEnabled(hasZoom);
+    updateZoomIndicator();
 
     m_magnifierAction->setEnabled(doc != nullptr);
     if (!doc && m_magnifierAction->isChecked()) {
