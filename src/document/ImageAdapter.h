@@ -176,6 +176,11 @@ class ImageDocument : public IDocument {
     // Force the one-shot initial-zoom decision synchronously (production
     // schedules it on the event loop after the viewport settles).
     void triggerInitialZoomForTest() { applyInitialFitZoom(); }
+    // The exact doc<->view transforms the overlay / text layer use, exposed
+    // so a test can assert they invert (docToView(viewToDoc(p)) == p) at
+    // dpr > 1 and non-1.0 scale without needing a real widget/event loop.
+    QPointF docToViewForTest(QPointF p) const { return mapDocToView(p); }
+    QPointF viewToDocForTest(QPointF p) const { return mapViewToDoc(p); }
 
   private:
     // The image's effective devicePixelRatio, clamped to a positive
@@ -184,6 +189,23 @@ class ImageDocument : public IDocument {
     qreal imageDpr() const {
         const qreal d = m_image.devicePixelRatio();
         return d > 0.0 ? d : 1.0;
+    }
+    // Doc<->view coordinate mapping used by the annotation overlay and the
+    // selectable-text layer. Doc coordinates are image DEVICE pixels; the
+    // view draws at the logical size (device / dpr) times the logical zoom,
+    // so the doc->view factor is m_scale / dpr (== m_scale at dpr 1) and
+    // view->doc is its exact inverse. Factored into members (rather than
+    // inlined per-lambda) so both consumers — and the coordinate round-trip
+    // test hooks — share one definition and can't drift apart.
+    QPointF mapDocToView(QPointF p) const {
+        const qreal d = imageDpr();
+        return QPointF(p.x() * m_scale / d, p.y() * m_scale / d);
+    }
+    QPointF mapViewToDoc(QPointF p) const {
+        if (m_scale <= 0.0)
+            return p;
+        const qreal d = imageDpr();
+        return QPointF(p.x() * d / m_scale, p.y() * d / m_scale);
     }
     void applyScale(double factor);
     void refreshView();

@@ -393,11 +393,10 @@ QWidget *ImageDocument::createView(QWidget *parent) {
         auto *textLayer = new SelectableTextLayer(label);
         textLayer->setStore(&m_selectableText);
         // Doc coordinates are image DEVICE pixels; the view draws at the
-        // logical size (device / dpr) times the logical zoom, so the
-        // doc->view factor is m_scale / dpr (== m_scale at dpr 1).
+        // logical size (device / dpr) times the logical zoom (see
+        // mapDocToView / mapViewToDoc for the shared factor).
         textLayer->setDocToView([this](QPointF p, int /*page*/) {
-            const qreal d = imageDpr();
-            return QPointF(p.x() * m_scale / d, p.y() * m_scale / d);
+            return mapDocToView(p);
         });
         textLayer->setPageAtView([](QPointF) { return 0; });
         textLayer->setGeometry(label->rect());
@@ -407,14 +406,10 @@ QWidget *ImageDocument::createView(QWidget *parent) {
         auto *overlay = new AnnotationOverlay(label);
         overlay->setStore(&m_annotations);
         overlay->setDocumentToView([this](QPointF p, int /*page*/) {
-            const qreal d = imageDpr();
-            return QPointF(p.x() * m_scale / d, p.y() * m_scale / d);
+            return mapDocToView(p);
         });
         overlay->setViewToDocument([this](QPointF p, int /*page*/) {
-            if (m_scale <= 0.0)
-                return p;
-            const qreal d = imageDpr();
-            return QPointF(p.x() * d / m_scale, p.y() * d / m_scale);
+            return mapViewToDoc(p);
         });
         overlay->setSourceSampler([this](QRectF docRect, QSize outPx, int /*page*/) -> QImage {
             if (m_image.isNull())

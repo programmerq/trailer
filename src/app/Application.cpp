@@ -104,6 +104,16 @@ MainWindow *Application::ensureFreshWindow() {
 }
 
 void Application::openFiles(const QStringList &paths) {
+    // Consume a capture dpr staged by a screenshot / clipboard grab (see
+    // setPendingCaptureDpr) up front — BEFORE the empty-paths guard — and
+    // reset it immediately. Doing this at the very top means a staged dpr
+    // can never leak into a later ordinary open even if this particular
+    // call has nothing to open (empty paths) or bails before the loop.
+    // Only this batch — never a subsequent open — is treated as
+    // capture-origin.
+    const double captureDpr = m_pendingCaptureDpr;
+    m_pendingCaptureDpr = 0.0;
+
     if (paths.isEmpty()) {
         return;
     }
@@ -149,12 +159,6 @@ void Application::openFiles(const QStringList &paths) {
     };
     const bool batchedImages = mode == OpenFilesIn::NewWindow && isImageBatch();
     MainWindow *batchTarget = batchedImages ? ensureFreshWindow() : nullptr;
-
-    // Consume a capture dpr staged by a screenshot / clipboard grab (see
-    // setPendingCaptureDpr). Reset immediately so only this batch — never
-    // a subsequent ordinary open — is treated as capture-origin.
-    const double captureDpr = m_pendingCaptureDpr;
-    m_pendingCaptureDpr = 0.0;
 
     for (const QString &path : paths) {
         auto doc = m_registry.open(path);
@@ -355,14 +359,36 @@ void Application::newFromClipboard() {
     if (!image.isNull()) {
         const QString path = transientImportPath("clipboard", "png");
         if (image.save(path, "PNG")) {
-            // The PNG round-trip drops the devicePixelRatio, so recover it:
-            // prefer the clipboard image's own dpr, else the screen it was
-            // (almost certainly) captured on. Stamped by the openFiles
-            // consumer so a Retina grab opens 1:1 rather than double-size.
+            // Recover a devicePixelRatio for the paste. The PNG round-trip
+            // (and most clipboard sources) drop the dpr stamp, so we must
+            // decide whether this paste is a HiDPI full-screen grab that
+            // should open 1:1 — WITHOUT shrinking ordinary pastes.
+            //
+            // Conservative heuristic: a blanket "stamp the primary screen's
+            // dpr whenever dpr<=1" was a regression — on Retina it halved the
+            // logical size of EVERY ordinary paste (a copied logo, diagram,
+            // pixel art). Instead:
+            //   1. If the clipboard image already carries dpr > 1.0, honor it.
+            //   2. Else if the raw pixel size EXACTLY equals some connected
+            //      screen's device resolution (size() * devicePixelRatio(),
+            //      i.e. a full-screen grab), stamp THAT screen's dpr.
+            //   3. Else leave it at dpr 1 — an ordinary paste opens at its
+            //      natural logical size (fit-capped as before), no regression.
+            // A region screenshot pasted from the clipboard that doesn't match
+            // a full screen size will open at device size (no worse than
+            // pre-fix), pending owner confirmation on Retina hardware.
             double dpr = image.devicePixelRatio();
             if (dpr <= 1.0) {
-                if (auto *scr = QGuiApplication::primaryScreen())
-                    dpr = scr->devicePixelRatio();
+                dpr = 1.0;
+                const QSize raw = image.size();
+                for (const QScreen *scr : QGuiApplication::screens()) {
+                    const QSize deviceRes =
+                        (QSizeF(scr->size()) * scr->devicePixelRatio()).toSize();
+                    if (raw == deviceRes) {
+                        dpr = scr->devicePixelRatio();
+                        break;
+                    }
+                }
             }
             setPendingCaptureDpr(dpr);
             openFiles({path});
@@ -411,7 +437,13 @@ void Application::acquireFromScreenshot() {
         return;
     }
     // screencapture writes raw device pixels with no dpr stamp; recover
-    // the screen dpr so a Retina capture opens 1:1 (see openFiles).
+    // the screen dpr so a Retina capture opens 1:1 (see openFiles). This is
+    // the no-window Acquire flow (no target MainWindow to read a screen
+    // from), so we fall back to the primary screen — mirroring
+    // MainWindow::onTakeScreenshot, which prefers its own window's screen.
+    // Known limitation: an interactive `screencapture -i` on a mixed-DPI
+    // multi-monitor setup can land on a non-primary screen, so the primary
+    // screen's dpr may be wrong; owner to confirm on hardware.
     if (auto *scr = QGuiApplication::primaryScreen())
         setPendingCaptureDpr(scr->devicePixelRatio());
     openFiles({path});

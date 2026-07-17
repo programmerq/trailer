@@ -2303,6 +2303,13 @@ void MainWindow::onTakeScreenshot() {
     }
     // screencapture writes raw device pixels with no dpr stamp; recover
     // the target screen's dpr so a Retina capture opens 1:1 pixel-exact.
+    // Prefer this window's screen (the one the user is capturing from),
+    // falling back to the primary screen only when the window reports none
+    // — matching Application::acquireFromScreenshot's primary-screen source.
+    // Known limitation: an interactive `screencapture -i`/`-iW`/`-s` on a
+    // mixed-DPI multi-monitor setup can land on a screen other than this
+    // window's, so the recovered dpr may be wrong; owner to confirm on
+    // hardware.
     {
         QScreen *scr = this->screen() ? this->screen() : QGuiApplication::primaryScreen();
         if (scr)
