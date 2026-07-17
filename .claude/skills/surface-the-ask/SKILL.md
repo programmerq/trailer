@@ -112,7 +112,8 @@ whether you should just *ask*. The one-liner to remember:
 The rule in full:
 
 1. **A PR is a reviewable deliverable only if it carries IMPLEMENTATION — code,
-   tests, or a behavior change.** A proposal-only, decision-record-only, or
+   tests, or a behavior change** (a skill or runbook the team will follow counts,
+   even when its diff is text-only). A proposal-only, decision-record-only, or
    plan-only change is **not** a ready-for-review deliverable: there is nothing
    to review yet.
 2. **A decision record merges WITH its implementing PR — never alone.** Same
