@@ -219,13 +219,13 @@ users is to attack it before they do.
 
 - **The decision-record (ADR) lifecycle.** Adjudicated decisions live in
   [`docs/decision-records/`](docs/decision-records/), one file each,
-  numbered, following `TEMPLATE.md`. Status moves
+  named `YYYY-MM-DD-<slug>.md`, following `TEMPLATE.md`. Status moves
   **proposed → accepted → superseded-by**. An *accepted* record is
   settled: you build to it, you don't relitigate it. Reopening an
   accepted record requires **superseding evidence** — a concrete,
   checkable problem (by the same admissible-objection bar) that was not
   on the table when the record was accepted — *plus* owner sign-off. A
-  record that is replaced points forward with `superseded-by: NNNN`; the
+  record that is replaced points forward with `superseded-by: <YYYY-MM-DD-slug>`; the
   old file stays for the audit trail.
 
 - **Every work item carries a checkable threshold, declared first.**

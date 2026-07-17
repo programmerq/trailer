@@ -100,7 +100,7 @@ Gather the passes and analyze them. Each finding gets exactly one disposition:
 - **justify** — record inline (PR body / commit message) why it is acceptable
   as-is. State the reason; don't just wave it off.
 - **defer-with-Decision-Record** — open or append a record in
-  `docs/decision-records/` (copy `TEMPLATE.md`, next free number) capturing
+  `docs/decision-records/` (copy `TEMPLATE.md` to a `YYYY-MM-DD-<slug>.md` file) capturing
   the deferral and its rationale.
 
 ### 4. Gate
