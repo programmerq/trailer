@@ -246,16 +246,17 @@ Design commitments:
 
 ## Manual-verification checklist (real-Mac, owner)
 
-TCC cannot be exercised in CI. The owner must verify on real macOS. Bundle id is
-`org.trailer.Trailer` today; **PR #71** renames it to
-`io.github.programmerq.trailer` — a bundle-id rename resets the TCC grant, so
-re-verify after it lands. Recheck script (run the applicable id):
+TCC cannot be exercised in CI. The owner must verify on real macOS. The current
+bundle id on main is `io.github.programmerq.trailer` (the rename shipped in
+**PR #71**; it was `org.trailer.Trailer` pre-#71). A bundle-id rename resets the
+TCC grant, so anyone who granted against the old id must re-grant. Recheck script
+(use the current id; the pre-#71 id is kept only for reference):
 
 ```sh
-# today
-tccutil reset ScreenCapture org.trailer.Trailer
-# after PR #71's rename
+# current (main, post-#71)
 tccutil reset ScreenCapture io.github.programmerq.trailer
+# pre-#71 (historical, before the rename)
+tccutil reset ScreenCapture org.trailer.Trailer
 ```
 
 1. **Undetermined path.** `tccutil reset ScreenCapture <bundle-id>`, then Take
@@ -288,13 +289,13 @@ tccutil reset ScreenCapture io.github.programmerq.trailer
   shows a crosshair, or an undetermined state the request fails to prompt),
   plus owner sign-off — this would justify moving to the `SCShareableContent`
   3-state API (option C).
-- **Bundle-id caveat:** the TCC grant is keyed to the app bundle id. Trailer is
-  `org.trailer.Trailer` today; **PR #71** renames it to
-  `io.github.programmerq.trailer`. Because a bundle-id change resets the TCC
-  grant, the renamed build will read Undetermined on first run even for users
-  who previously granted — the preflight handles this correctly (re-shows the
-  explainer, lets the OS re-prompt), but it is called out here so the reset is
-  not later mistaken for a regression.
+- **Bundle-id caveat:** the TCC grant is keyed to the app bundle id. The current
+  id on main is `io.github.programmerq.trailer` (renamed from `org.trailer.Trailer`
+  in **PR #71**, now merged). Because a bundle-id change resets the TCC grant, the
+  renamed build reads Undetermined on first run even for users who previously
+  granted against the old id — the preflight handles this correctly (lets the OS
+  re-prompt), but it is called out here so the reset is not later mistaken for a
+  regression.
 
 ## Consequences
 

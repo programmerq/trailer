@@ -61,6 +61,40 @@ constexpr double kZoomMax = 32.0;
 // photo sizes. Bump only if a real edit session runs out of undo.
 constexpr size_t kMaxUndoSteps = 32;
 
+// Scale-to-logical, devicePixelRatio-preserving pixmap build.
+//
+// `logicalScale` is a LOGICAL zoom factor: the drawn logical size is
+// (source logical size) * logicalScale, where the source logical size
+// is its raw device px / its devicePixelRatio. We scale to
+// rawSourcePx * logicalScale device pixels and re-stamp the source dpr,
+// so the pixmap draws at the intended logical size while staying crisp
+// on HiDPI. At logicalScale == 1.0 the source is handed through with no
+// resample at all, so 1 source device px maps 1:1 to 1 screen device px
+// (pixel-exact "Actual Size"). A no-op at dpr == 1.
+//
+// This duplicates the scale-to-logical technique in
+// src/ui/ThumbnailPaint.h (scaleToLogicalWidth, PR #70, currently
+// unmerged); when that PR lands, consider consolidating on the shared
+// helper. See docs/backlog/2026-07-16-hidpi-uat-harness.md.
+QPixmap buildDisplayPixmap(const QImage &img, double logicalScale) {
+    const qreal dpr = img.devicePixelRatio() > 0.0 ? img.devicePixelRatio() : 1.0;
+    QPixmap pm;
+    if (std::abs(logicalScale - 1.0) < 1e-9) {
+        // Actual Size: no resample — device pixels pass straight through.
+        pm = QPixmap::fromImage(img);
+    } else {
+        // Raw device-pixel target = logical target * dpr = raw source px
+        // * logicalScale. KeepAspectRatio guards against off-by-one on
+        // non-uniform rounding.
+        const QSize rawTarget(std::max(1, int(std::lround(img.width() * logicalScale))),
+                              std::max(1, int(std::lround(img.height() * logicalScale))));
+        pm = QPixmap::fromImage(img).scaled(rawTarget, Qt::KeepAspectRatio,
+                                            Qt::SmoothTransformation);
+    }
+    pm.setDevicePixelRatio(dpr);
+    return pm;
+}
+
 Qt::PenStyle toPenStyle(DashStyle d) {
     switch (d) {
     case DashStyle::Solid:
@@ -320,7 +354,8 @@ QWidget *ImageDocument::createView(QWidget *parent) {
             movie->start();
         }
     } else if (!m_image.isNull()) {
-        label->setPixmap(QPixmap::fromImage(m_image));
+        m_lastBuiltPixmap = buildDisplayPixmap(m_image, 1.0);
+        label->setPixmap(m_lastBuiltPixmap);
         label->adjustSize();
     } else {
         label->setText(QObject::tr("Could not decode image:\n%1").arg(m_path));
@@ -357,8 +392,12 @@ QWidget *ImageDocument::createView(QWidget *parent) {
         // changed to no longer claim it unconditionally.
         auto *textLayer = new SelectableTextLayer(label);
         textLayer->setStore(&m_selectableText);
-        textLayer->setDocToView(
-            [this](QPointF p, int /*page*/) { return QPointF(p.x() * m_scale, p.y() * m_scale); });
+        // Doc coordinates are image DEVICE pixels; the view draws at the
+        // logical size (device / dpr) times the logical zoom (see
+        // mapDocToView / mapViewToDoc for the shared factor).
+        textLayer->setDocToView([this](QPointF p, int /*page*/) {
+            return mapDocToView(p);
+        });
         textLayer->setPageAtView([](QPointF) { return 0; });
         textLayer->setGeometry(label->rect());
         textLayer->show();
@@ -366,12 +405,11 @@ QWidget *ImageDocument::createView(QWidget *parent) {
 
         auto *overlay = new AnnotationOverlay(label);
         overlay->setStore(&m_annotations);
-        overlay->setDocumentToView(
-            [this](QPointF p, int /*page*/) { return QPointF(p.x() * m_scale, p.y() * m_scale); });
+        overlay->setDocumentToView([this](QPointF p, int /*page*/) {
+            return mapDocToView(p);
+        });
         overlay->setViewToDocument([this](QPointF p, int /*page*/) {
-            if (m_scale <= 0.0)
-                return p;
-            return QPointF(p.x() / m_scale, p.y() / m_scale);
+            return mapViewToDoc(p);
         });
         overlay->setSourceSampler([this](QRectF docRect, QSize outPx, int /*page*/) -> QImage {
             if (m_image.isNull())
@@ -395,11 +433,12 @@ void ImageDocument::applyScale(double factor) {
     if (!m_label || m_image.isNull()) {
         return;
     }
+    // m_scale is a LOGICAL zoom factor (100% == source logical size ==
+    // device px / dpr). buildDisplayPixmap produces a dpr-stamped pixmap
+    // so the image draws crisp on HiDPI, pixel-exact at 100%.
     m_scale = std::clamp(factor, kZoomMin, kZoomMax);
-    const QSize target = m_image.size() * m_scale;
-    const QPixmap scaled =
-        QPixmap::fromImage(m_image).scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-    m_label->setPixmap(scaled);
+    m_lastBuiltPixmap = buildDisplayPixmap(m_image, m_scale);
+    m_label->setPixmap(m_lastBuiltPixmap);
     m_label->adjustSize();
     if (m_overlay) {
         m_overlay->setGeometry(m_label->rect());
@@ -407,6 +446,30 @@ void ImageDocument::applyScale(double factor) {
     if (m_textLayer) {
         m_textLayer->setGeometry(m_label->rect());
     }
+}
+
+void ImageDocument::markCaptureOrigin(double dpr) {
+    if (m_image.isNull() || m_animated || dpr <= 0.0)
+        return;
+    m_captureOrigin = true;
+    // Only stamp a genuine HiDPI ratio; at dpr == 1 the raw pixels are
+    // already logical, so leave the image untouched (no behavior change
+    // vs an ordinary open beyond the Actual-Size default).
+    if (dpr > 1.0)
+        m_image.setDevicePixelRatio(dpr);
+}
+
+void ImageDocument::setImageForTest(const QImage &img, bool captureOrigin) {
+    m_image = img;
+    m_animated = false;
+    m_captureOrigin = captureOrigin;
+    m_initialZoomApplied = false;
+    m_scale = 1.0;
+    m_zoomMode = ZoomMode::Custom;
+}
+
+QPixmap ImageDocument::labelPixmapForTest() const {
+    return m_lastBuiltPixmap;
 }
 
 void ImageDocument::zoomIn() {
@@ -446,19 +509,21 @@ void ImageDocument::reapplyFitMode() {
         return;
     const int availW = m_scroll->viewport()->width();
     const int availH = m_scroll->viewport()->height();
-    if (availW <= 0 || m_image.width() <= 0)
+    // Fit divides the LOGICAL viewport by the LOGICAL image size (device
+    // px / dpr), so a HiDPI image that fits 1:1 logically fits at 100%
+    // rather than being shrunk by its dpr.
+    const QSizeF logical = m_image.deviceIndependentSize();
+    if (availW <= 0 || logical.width() <= 0.0)
         return;
     if (m_zoomMode == ZoomMode::FitToWidth) {
-        applyScale(static_cast<double>(availW) / static_cast<double>(m_image.width()));
+        applyScale(static_cast<double>(availW) / logical.width());
         return;
     }
     // FitInView: constrain both dimensions.
-    if (availH <= 0 || m_image.height() <= 0)
+    if (availH <= 0 || logical.height() <= 0.0)
         return;
-    const double scaleW =
-        static_cast<double>(availW) / static_cast<double>(m_image.width());
-    const double scaleH =
-        static_cast<double>(availH) / static_cast<double>(m_image.height());
+    const double scaleW = static_cast<double>(availW) / logical.width();
+    const double scaleH = static_cast<double>(availH) / logical.height();
     applyScale(std::min(scaleW, scaleH));
 }
 
@@ -522,10 +587,20 @@ void ImageDocument::applyInitialFitZoom() {
         return;
     if (!m_scroll || !m_label || m_image.isNull())
         return;
+    if (m_captureOrigin) {
+        // Screenshot / clipboard-origin images open at Actual Size (1:1
+        // pixel-exact), matching Preview's default for screen captures.
+        // No viewport measurement needed, so this doesn't wait on layout.
+        m_initialZoomApplied = true;
+        m_zoomMode = ZoomMode::Actual;
+        applyScale(1.0);
+        return;
+    }
     const int availW = m_scroll->viewport()->width();
     const int availH = m_scroll->viewport()->height();
+    const QSizeF logical = m_image.deviceIndependentSize();
     if (availW <= 0 || availH <= 0 ||
-        m_image.width() <= 0 || m_image.height() <= 0) {
+        logical.width() <= 0.0 || logical.height() <= 0.0) {
         // Layout hasn't settled — retry on the next tick. Guard with
         // the alive flag the resize watcher already maintains, so a
         // tab close mid-retry doesn't dereference a freed document.
@@ -539,10 +614,8 @@ void ImageDocument::applyInitialFitZoom() {
         return;
     }
     m_initialZoomApplied = true;
-    const double scaleW =
-        static_cast<double>(availW) / static_cast<double>(m_image.width());
-    const double scaleH =
-        static_cast<double>(availH) / static_cast<double>(m_image.height());
+    const double scaleW = static_cast<double>(availW) / logical.width();
+    const double scaleH = static_cast<double>(availH) / logical.height();
     const double fit = std::min(scaleW, scaleH);
     // Cap at 100%: a 200×100 thumbnail shouldn't blow up to fill the
     // window. Larger images shrink to fit instead.
@@ -841,9 +914,9 @@ void ImageDocument::previewColour(double brightness, double contrast, double sat
     if (!m_label || m_image.isNull() || m_animated)
         return;
     const QImage preview = applyColourTransform(m_image, brightness, contrast, saturation);
-    const QSize target = preview.size() * m_scale;
-    m_label->setPixmap(
-        QPixmap::fromImage(preview).scaled(target, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    // applyColourTransform preserves the source devicePixelRatio, so the
+    // preview scales through the same logical/dpr-aware path as applyScale.
+    m_label->setPixmap(buildDisplayPixmap(preview, m_scale));
 }
 
 void ImageDocument::clearColourPreview() {
@@ -1028,7 +1101,10 @@ void ImageDocument::refreshSearchHighlights() {
     if (m_scroll && m_currentMatch >= 0 &&
         m_currentMatch < static_cast<int>(m_searchMatches.size())) {
         const QRectF r = m_searchMatches[static_cast<size_t>(m_currentMatch)];
-        const QPointF center(r.center().x() * m_scale, r.center().y() * m_scale);
+        // Match rects are in image DEVICE pixels; the view is in logical
+        // coords scaled by m_scale, so map through m_scale / dpr.
+        const qreal d = imageDpr();
+        const QPointF center(r.center().x() * m_scale / d, r.center().y() * m_scale / d);
         m_scroll->ensureVisible(static_cast<int>(center.x()), static_cast<int>(center.y()));
     }
 }

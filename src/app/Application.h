@@ -24,8 +24,20 @@ class Application : public QApplication {
     Application(int &argc, char **argv);
     ~Application() override;
 
+    // Sets the process-wide Qt identity strings (org/app name, domain, version). Static so tests can assert them without constructing the full application.
+    static void applyIdentity();
+
     void openFiles(const QStringList &paths);
     void clearRecent();
+
+    // Set just before a screenshot / clipboard-origin openFiles() call so
+    // the resulting image document is stamped with the real capture
+    // devicePixelRatio (device px / dpr = logical size) and defaults to
+    // Actual Size. Consumed and reset by the next openFiles(); a value <=
+    // 1.0 marks the doc capture-origin (Actual default) without stamping
+    // a HiDPI ratio. Ordinary opens leave this unset (0.0) and are
+    // unaffected.
+    void setPendingCaptureDpr(double dpr) { m_pendingCaptureDpr = dpr; }
 
     // Reopen the documents persisted at the last aboutToQuit. Honours
     // the user's "Restore previous windows on launch" setting. Called
@@ -93,6 +105,9 @@ class Application : public QApplication {
     // QApplication so its destructor blocks on outstanding tasks.
     MlScheduler m_mlScheduler{&m_settings};
     QList<QPointer<MainWindow>> m_windows;
+    // Capture devicePixelRatio staged by a screenshot / clipboard grab,
+    // consumed by the next openFiles(). 0.0 == none (ordinary open).
+    double m_pendingCaptureDpr = 0.0;
 #ifdef Q_OS_MACOS
     QPointer<QMenuBar> m_noWindowMenuBar;
 #endif
