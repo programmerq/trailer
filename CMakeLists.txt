@@ -25,6 +25,7 @@ configure_file(
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 option(TRAILER_WERROR "Treat compiler warnings as errors (enabled in CI)" OFF)
+option(TRAILER_ADAPTIVE_ICON "Compile the adaptive light/dark macOS app icon via actool (requires full Xcode)" ON)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -280,33 +281,44 @@ endif()
 # .xcassets files are plain data on those platforms. actool is invoked via
 # `xcrun` (a POST_BUILD step on the trailer target) so it runs during
 # `cmake --build`, before macdeployqt in scripts/build-macos.sh.
-if(APPLE)
+if(APPLE AND TRAILER_ADAPTIVE_ICON)
     set(TRAILER_XCASSETS "${CMAKE_SOURCE_DIR}/resources/macos/Assets.xcassets")
     if(EXISTS "${TRAILER_XCASSETS}")
-        # Match the bundle's LSMinimumSystemVersion floor (Info.plist.in: 11.0)
+        # Match the bundle's LSMinimumSystemVersion floor (Info.plist.in: 14.0)
         # rather than CMAKE_OSX_DEPLOYMENT_TARGET, which may be unset on a bare
         # `cmake` invocation on a Mac and would hand actool an empty argument.
-        set(TRAILER_ICON_MIN_MACOS "11.0")
-        # The icon is wired via the hardcoded CFBundleIconName=AppIcon in
-        # resources/macos/Info.plist.in, so actool only needs to compile the
-        # .xcassets into Assets.car in Resources/ — no partial Info.plist to
-        # merge (the --output-partial-info-plist output was never consumed).
+        set(TRAILER_ICON_MIN_MACOS "14.0")
+        # actool REQUIRES --output-partial-info-plist whenever the catalog
+        # contains app icons: without it actool emits the notice "Compiling
+        # app icons requires passing --output-partial-info-plist [path]" and
+        # refuses to fully compile the AppIcon set, so no Assets.car is
+        # written and scripts/build-macos.sh's verifier fails. We point it at
+        # a throwaway file in the build dir purely to satisfy that contract —
+        # its contents (CFBundleIconName=AppIcon) are NOT merged, because
+        # resources/macos/Info.plist.in already hardcodes CFBundleIconName.
+        set(TRAILER_ICON_PARTIAL_PLIST
+            "${CMAKE_CURRENT_BINARY_DIR}/actool-AppIcon-partial.plist")
         add_custom_command(TARGET trailer POST_BUILD
             COMMAND "${CMAKE_COMMAND}" -E make_directory
                     "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources"
             COMMAND xcrun actool
                     --app-icon AppIcon
+                    --output-partial-info-plist "${TRAILER_ICON_PARTIAL_PLIST}"
                     --minimum-deployment-target "${TRAILER_ICON_MIN_MACOS}"
                     --platform macosx
                     --target-device mac
                     --compile "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources"
                     "${TRAILER_XCASSETS}"
-            BYPRODUCTS
-                "$<TARGET_BUNDLE_CONTENT_DIR:trailer>/Resources/Assets.car"
+            # NB: no BYPRODUCTS here -- target-context genexes
+            # ($<TARGET_BUNDLE_CONTENT_DIR:...>) are not valid in BYPRODUCTS/OUTPUT
+            # (no head target) and break CMake generate. actool still writes
+            # Assets.car via the COMMAND above.
             COMMENT "Compiling Assets.xcassets -> Assets.car (AppIcon light/dark) via actool"
             VERBATIM
         )
     endif()
+elseif(APPLE)
+    message(STATUS "TRAILER_ADAPTIVE_ICON=OFF — skipping actool app-icon compile; app will use the static (non-adaptive) .icns icon")
 endif()
 
 set_target_properties(trailer PROPERTIES

@@ -74,7 +74,7 @@ full release flow.
 | Variable                   | Default       | Purpose                                                  |
 |----------------------------|---------------|----------------------------------------------------------|
 | `QPDF_VERSION`             | `12.3.2`      | qpdf release tag built from source                       |
-| `MACOSX_DEPLOYMENT_TARGET` | `11.0`        | Min macOS supported (lowest version arm64 runs on)        |
+| `MACOSX_DEPLOYMENT_TARGET` | `14.0`        | Min macOS supported (dependency floor: ONNX Runtime 1.25 arm64 is built for 14.0) |
 | `WERROR`                   | `OFF`         | `-DTRAILER_WERROR=ON/OFF` (CI uses OFF; flip ON locally for stricter checks) |
 | `QT_ROOT_DIR` / `QTDIR`    | auto-detected | Path to Qt install (the dir with `bin/macdeployqt`)      |
 | `BUILD_DIR`                | `build-macos` | Trailer build tree                                       |
