@@ -13,9 +13,12 @@
 #include <QPointer>
 #include <QStringList>
 
+#include <memory>
+
 namespace trailer {
 
 class MainWindow;
+class UxRecorder;
 
 class Application : public QApplication {
     Q_OBJECT
@@ -45,6 +48,31 @@ class Application : public QApplication {
     // Returns true if at least one file was restored — the caller then
     // skips spawning an empty MainWindow.
     bool restorePreviousSession();
+
+    // Begin a local UX recording session. Called from main.cpp before
+    // any window exists so the first window already carries the
+    // recording indicator. Recorder-enabled builds call this on every
+    // launch unless --no-ux-record is passed. In builds configured
+    // without TRAILER_ENABLE_UX_RECORDER this only logs a warning, and
+    // is unreachable in practice because main.cpp compiles the call
+    // out entirely.
+    void startUxRecording();
+
+#ifdef TRAILER_UX_RECORDER
+    // Outcome of the pre-recording permission gate (UXR-001).
+    enum class UxRecordDecision {
+        Start, // record this launch (permissions ok, or "Record Without Screen")
+        Skip,  // run Trailer normally, no session this launch
+        Quit,  // user chose to fix permissions; main.cpp should exit(0)
+    };
+    // macOS only applies a Screen Recording grant to the NEXT launch, so
+    // starting a session without it silently yields zero screen frames.
+    // Before recording, check that grant and — if missing — show one
+    // blocking dialog (open Settings & quit / record without screen /
+    // don't record). Returns Start immediately when the grant is present
+    // (or off macOS). Called from main.cpp; see docs/ux-recorder.md.
+    UxRecordDecision preflightUxRecording();
+#endif
 
     Settings &settings() { return m_settings; }
     RecentFiles &recentFiles() { return m_recent; }
@@ -106,6 +134,12 @@ class Application : public QApplication {
     double m_pendingCaptureDpr = 0.0;
 #ifdef Q_OS_MACOS
     QPointer<QMenuBar> m_noWindowMenuBar;
+#endif
+#ifdef TRAILER_UX_RECORDER
+    // Live for the rest of the process once --ux-record started it;
+    // stop() is driven by aboutToQuit (self-connected) and the
+    // destructor, so teardown is safe in either order.
+    std::unique_ptr<UxRecorder> m_uxRecorder;
 #endif
 };
 

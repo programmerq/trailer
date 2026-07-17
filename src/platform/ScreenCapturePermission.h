@@ -2,6 +2,10 @@
 
 #include <QString>
 
+#ifdef TRAILER_UX_RECORDER
+#include <functional>
+#endif
+
 class QWidget;
 
 namespace trailer {
@@ -28,6 +32,22 @@ bool shouldShowScreenCaptureExplainer(Settings &settings);
 // continues into the capture — never on cancel. Pure state mutation, no UI —
 // testable off-Mac.
 void acknowledgeScreenCaptureExplainer(Settings &settings);
+
+#ifdef TRAILER_UX_RECORDER
+// Recorder builds only (ADR 0014). In these builds Mechanism B — the recorder's
+// live macOS Screen Recording TCC gate in src/uxrecord/ — is the authoritative
+// Screen-Recording surface, and this first-use explainer (Mechanism A) must
+// defer to it so the two flows never double-prompt for the same permission.
+// Rather than have src/platform/ take a hard compile/link dependency on
+// src/uxrecord/, the recorder INJECTS a "is Screen Recording already granted?"
+// probe here at startup (Application wires it to trailer::uxScreenRecordingGranted()).
+// When the probe is set and reports granted, shouldShowScreenCaptureExplainer()
+// suppresses the explainer. The seam also makes the deference deterministically
+// testable without a live TCC state. Pass an empty std::function to clear it.
+// Entirely absent from default builds, which keep A standalone with no new
+// dependency (ADR 0014 consequences / G14.4).
+void setScreenRecordingGrantedProbe(std::function<bool()> probe);
+#endif
 
 #ifdef Q_OS_MACOS
 // macOS-only: if the explainer has not been shown before (per the pure gate

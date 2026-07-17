@@ -99,6 +99,10 @@ QString AppPaths::modelsDir() {
     return joinPath(dataDir(), QStringLiteral("models"));
 }
 
+QString AppPaths::uxSessionsDir() {
+    return joinPath(dataDir(), QStringLiteral("ux-sessions"));
+}
+
 void AppPaths::ensureDirExists(const QString &path) {
     QDir().mkpath(path);
 }
