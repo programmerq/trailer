@@ -5,6 +5,13 @@
 - **Date proposed:** 2026-07-15
 - **Date accepted / superseded:** 2026-07-15
 
+> **Update 2026-07-16:** the macOS deployment floor was raised from `11.0` to
+> `14.0` (real dependency floor: ONNX Runtime 1.25 = 14.0, Qt 6.11 = 13.0). The
+> `--minimum-deployment-target 11.0` example commands and the `min-deployment
+> 11.0` note below are historical and left as originally recorded; the current
+> bundle floor is `14.0` (`resources/macos/Info.plist.in`,
+> `scripts/build-macos.sh`, `CMakeLists.txt` `TRAILER_ICON_MIN_MACOS`).
+
 ## Context
 
 The v0.3.0 real-Mac dogfood pass (2026-07-13) found that Trailer's dark app-icon

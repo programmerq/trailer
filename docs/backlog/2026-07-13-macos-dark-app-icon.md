@@ -65,7 +65,8 @@ Implemented **ADR 0009 Option A** (accepted 2026-07-15) — off-Mac-safe, fully
 - **CMake wiring (inside `if(APPLE)`):** a `xcrun actool` POST_BUILD step on the
   `trailer` target compiles the catalog to `Contents/Resources/Assets.car`
   during `cmake --build` (before macdeployqt). `--minimum-deployment-target 11.0`
-  matches the bundle floor. Verified that a Linux `cmake -S . -B build -G Ninja &&
+  matched the bundle floor (raised to `14.0` on 2026-07-16 — real dependency
+  floor: ONNX Runtime 1.25 = 14.0, Qt 6.11 = 13.0). Verified that a Linux `cmake -S . -B build -G Ninja &&
   cmake --build build` still configures and builds cleanly with all actool logic
   inert.
 - **Info.plist.in:** adds `CFBundleIconName=AppIcon` alongside the existing

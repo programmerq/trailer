@@ -20,6 +20,12 @@
 #   scripts/build-macos.sh                    # incremental: reuse qpdf deps
 #   scripts/build-macos.sh --rebuild          # wipe build-macos/ + build-macos-deps/
 #   scripts/build-macos.sh --enable-ux-recorder  # opt-in recorder build (default OFF)
+#   scripts/build-macos.sh --skip-adaptive-icon
+#                                             # dev build: skip the actool app-icon
+#                                             # compile (static non-adaptive .icns icon), so a host
+#                                             # with only the Command Line Tools (no
+#                                             # full Xcode / no actool) still builds a
+#                                             # DMG. Same as TRAILER_SKIP_ADAPTIVE_ICON=1.
 #   make release                              # convenience wrapper (same thing)
 #
 # Output:
@@ -28,7 +34,7 @@
 #
 # Configurable via env vars:
 #   QPDF_VERSION                qpdf release tag to build (default 12.3.2)
-#   MACOSX_DEPLOYMENT_TARGET    minimum macOS version (default 11.0)
+#   MACOSX_DEPLOYMENT_TARGET    minimum macOS version (default 14.0)
 #   WERROR                      ON/OFF for -DTRAILER_WERROR (default OFF;
 #                               flip ON to chase regressions locally)
 #   TRAILER_ENABLE_UX_RECORDER  1/ON/true to build the local UX recorder into
@@ -59,7 +65,7 @@ fi
 
 QPDF_VERSION="${QPDF_VERSION:-12.3.2}"
 LIBJPEG_VERSION="${LIBJPEG_VERSION:-3.0.3}"
-MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-11.0}"
+MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-14.0}"
 # WERROR defaults OFF: AppleClang on Qt 6.11 + libc++ also surfaces
 # system-header warnings (-Wdouble-promotion, -Wshorten-64-to-32) that
 # CI's GCC on Qt 6.8 doesn't trip. Pass WERROR=ON to opt back in
@@ -79,6 +85,17 @@ case "${TRAILER_ENABLE_UX_RECORDER:-}" in
     1|ON|on|true|TRUE|yes|YES) ENABLE_UX_RECORDER=1 ;;
 esac
 
+# Skip the adaptive light/dark app icon (actool). Enabled by either the
+# --skip-adaptive-icon flag or TRAILER_SKIP_ADAPTIVE_ICON=1 in the env (so
+# `TRAILER_SKIP_ADAPTIVE_ICON=1 make release-macos` works with no Makefile
+# change). actool ships ONLY with full Xcode, so this lets a machine with just
+# the Command Line Tools still produce a runnable app/DMG with the static
+# (non-adaptive) .icns icon. Guarded with :- so it's safe under `set -u`.
+SKIP_ADAPTIVE_ICON=0
+if [[ "${TRAILER_SKIP_ADAPTIVE_ICON:-}" == "1" ]]; then
+    SKIP_ADAPTIVE_ICON=1
+fi
+
 REBUILD=0
 for arg in "$@"; do
     case "$arg" in
@@ -87,6 +104,9 @@ for arg in "$@"; do
             ;;
         --enable-ux-recorder)
             ENABLE_UX_RECORDER=1
+            ;;
+        --skip-adaptive-icon)
+            SKIP_ADAPTIVE_ICON=1
             ;;
         "")
             ;;
@@ -172,6 +192,33 @@ for TOOL in cmake ninja hdiutil curl tar lipo otool; do
         exit 1
     fi
 done
+
+# ---------------------------------------------------------------------
+# Fail-fast preflight for the adaptive app icon.
+#
+# The icon is compiled by a POST_BUILD `xcrun actool` step in
+# CMakeLists.txt. actool ships ONLY with FULL Xcode — the Command Line
+# Tools alone do not carry it — and a stale `xcode-select` (e.g. after a
+# macOS upgrade) can point at a developer dir that has no actool. Without
+# this check the build runs for minutes and then either dies mid-build at
+# `xcrun actool` or, worse, produces no Assets.car and only trips the late
+# "Assets.car missing" verify with a misleading message. Detect it up front
+# and hand the user actool's real fix (or the dev-build opt-out).
+# ---------------------------------------------------------------------
+if (( SKIP_ADAPTIVE_ICON )); then
+    echo "==> Adaptive app icon: SKIPPED (--skip-adaptive-icon / TRAILER_SKIP_ADAPTIVE_ICON=1)"
+elif ! xcrun --find actool >/dev/null 2>&1; then
+    DEVELOPER_DIR_CUR="$(xcode-select -p 2>/dev/null || echo '<unknown>')"
+    cat >&2 <<EOF
+ERROR: actool not found. The adaptive app icon requires FULL Xcode (Command Line Tools alone do not ship actool).
+  Current developer dir: $DEVELOPER_DIR_CUR
+  Fix:  sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+        sudo xcodebuild -license accept
+        xcrun actool --version   # confirm
+  Or, for a local dev build without the polished icon:  ./scripts/build-macos.sh --skip-adaptive-icon
+EOF
+    exit 1
+fi
 
 # ---------------------------------------------------------------------
 # Build libjpeg-turbo as a static arm64 library.
@@ -305,6 +352,13 @@ fi
 # ---------------------------------------------------------------------
 echo "==> Configuring trailer"
 rm -rf "$BUILD_DIR"
+# When skipping the adaptive icon, turn the actool POST_BUILD step off at
+# the CMake level so the build never invokes actool (the app gets the
+# static (non-adaptive) .icns icon). Otherwise leave the option at its ON default.
+ADAPTIVE_ICON_FLAG="-DTRAILER_ADAPTIVE_ICON=ON"
+if (( SKIP_ADAPTIVE_ICON )); then
+    ADAPTIVE_ICON_FLAG="-DTRAILER_ADAPTIVE_ICON=OFF"
+fi
 # CMAKE_PREFIX_PATH must include qpdf-prefix (for find_package(qpdf
 # CONFIG)) and jpeg-prefix (so the linker can resolve libjpeg, which
 # qpdf's patched INTERFACE_LINK_LIBRARIES points at as an absolute
@@ -315,6 +369,7 @@ cmake -S . -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
     -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR;$DEPS_DIR/qpdf-prefix;$DEPS_DIR/jpeg-prefix" \
     -DTRAILER_WERROR="$WERROR" \
+    "$ADAPTIVE_ICON_FLAG" \
     $UX_RECORDER_CMAKE_ARG
 
 echo "==> Building Trailer.app"
@@ -408,25 +463,35 @@ echo "    no external dylib references"
 # The visual light/dark Dock swap is a separate real-Mac verification
 # (the surface is native Dock/Finder chrome; `grab()` can't see it).
 # ---------------------------------------------------------------------
-echo "==> Verifying adaptive app icon (Assets.car + CFBundleIconName)"
-ASSETS_CAR="$APP_PATH/Contents/Resources/Assets.car"
-if [[ ! -f "$ASSETS_CAR" ]]; then
-    echo "ERROR: $ASSETS_CAR missing — the actool step did not produce" >&2
-    echo "       Assets.car. Check the APPLE-guarded actool POST_BUILD" >&2
-    echo "       command in CMakeLists.txt and that Xcode/actool is present." >&2
-    exit 1
+if (( SKIP_ADAPTIVE_ICON )); then
+    echo "⚠️  Adaptive app icon skipped (--skip-adaptive-icon / dev build) — DMG will ship the static (non-adaptive) .icns icon."
+else
+    echo "==> Verifying adaptive app icon (Assets.car + CFBundleIconName)"
+    ASSETS_CAR="$APP_PATH/Contents/Resources/Assets.car"
+    if [[ ! -f "$ASSETS_CAR" ]]; then
+        echo "ERROR: $ASSETS_CAR missing — actool ran but did not emit Assets.car." >&2
+        echo "       (The actool POST_BUILD step needs FULL Xcode and the" >&2
+        echo "       --output-partial-info-plist arg, which is already wired in" >&2
+        echo "       the APPLE-guarded command in CMakeLists.txt.) Ensure full" >&2
+        echo "       Xcode is selected and re-run:" >&2
+        echo "         sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
+        echo "         xcrun actool --version   # confirm" >&2
+        echo "       Or, for a local dev build without the polished icon:" >&2
+        echo "         ./scripts/build-macos.sh --skip-adaptive-icon" >&2
+        exit 1
+    fi
+    ICON_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconName" \
+                "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)
+    if [[ "$ICON_NAME" != "AppIcon" ]]; then
+        echo "ERROR: Info.plist CFBundleIconName is '$ICON_NAME', expected 'AppIcon'." >&2
+        exit 1
+    fi
+    if ! assetutil --info "$ASSETS_CAR" | grep -qi "AppIcon"; then
+        echo "ERROR: assetutil --info does not mention AppIcon in $ASSETS_CAR." >&2
+        exit 1
+    fi
+    echo "    Assets.car present; CFBundleIconName=$ICON_NAME; assetutil confirms AppIcon"
 fi
-ICON_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIconName" \
-            "$APP_PATH/Contents/Info.plist" 2>/dev/null || true)
-if [[ "$ICON_NAME" != "AppIcon" ]]; then
-    echo "ERROR: Info.plist CFBundleIconName is '$ICON_NAME', expected 'AppIcon'." >&2
-    exit 1
-fi
-if ! assetutil --info "$ASSETS_CAR" | grep -qi "AppIcon"; then
-    echo "ERROR: assetutil --info does not mention AppIcon in $ASSETS_CAR." >&2
-    exit 1
-fi
-echo "    Assets.car present; CFBundleIconName=$ICON_NAME; assetutil confirms AppIcon"
 
 # ---------------------------------------------------------------------
 # Package as DMG.
