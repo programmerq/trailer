@@ -121,3 +121,8 @@ if(TRAILER_ENABLE_UX_RECORDER)
     target_compile_definitions(test_uat_ux_recorder_evidence PRIVATE
         "TRAILER_UX_EVIDENCE_DIR=\"${CMAKE_SOURCE_DIR}/docs/evidence/ux-recorder\"")
 endif()
+
+# Zoom-% status indicator UAT. Drives Application + MainWindow with an
+# image document (fixture is a PNG via QImage), so no Qt6::Pdf link is
+# needed.
+trailer_add_uat_test(test_uat_zoom_indicator test_uat_zoom_indicator.cpp)

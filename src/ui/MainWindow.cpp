@@ -3212,6 +3212,14 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
                 m_contentAwareFormSidebarPending.insert(doc);
             }
         }
+
+        // The zoom indicator was populated near the top of this function
+        // from the constructor/hardcoded zoom, but applyZoomState() above
+        // restores a saved per-file/per-type zoom synchronously. Refresh
+        // the readout now so a doc reopened at a non-default zoom shows the
+        // right percent immediately instead of a stale value until the next
+        // zoom action.
+        updateZoomIndicator();
     }
 
     // Markup toolbar is hidden by default — the user surfaces it via
