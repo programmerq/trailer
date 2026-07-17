@@ -221,7 +221,7 @@ MainWindow *Application::ensureFreshWindow() {
     return window;
 }
 
-void Application::openFiles(const QStringList &paths) {
+void Application::openFiles(const QStringList &paths, bool markUntitled) {
     // Consume a capture dpr staged by a screenshot / clipboard grab (see
     // setPendingCaptureDpr) up front — BEFORE the empty-paths guard — and
     // reset it immediately. Doing this at the very top means a staged dpr
@@ -287,6 +287,15 @@ void Application::openFiles(const QStringList &paths) {
             // logical size, and defaults to pixel-exact Actual Size.
             if (auto *img = dynamic_cast<ImageDocument *>(doc.get()))
                 img->markCaptureOrigin(captureDpr);
+        }
+
+        // Transient import (clipboard / screenshot): the doc is backed
+        // only by a temp file the user never chose, so mark it untitled
+        // — it stays clean but must prompt Save-As on close rather than
+        // vanishing silently. Only raster imports use this path today.
+        if (markUntitled) {
+            if (auto *img = dynamic_cast<ImageDocument *>(doc.get()))
+                img->markUntitled();
         }
 
         MainWindow *target = nullptr;
@@ -579,7 +588,8 @@ void Application::newFromClipboard() {
                 }
             }
             setPendingCaptureDpr(dpr);
-            openFiles({path});
+            openFiles({path}, /*markUntitled=*/true);
+            return;
         }
         return;
     }
@@ -674,7 +684,7 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
         return;
 #endif
 
-    openFiles({path});
+    openFiles({path}, /*markUntitled=*/true);
 }
 
 #ifdef Q_OS_MACOS

@@ -39,7 +39,13 @@ class Application : public QApplication {
     // Sets the process-wide Qt identity strings (org/app name, domain, version). Static so tests can assert them without constructing the full application.
     static void applyIdentity();
 
-    void openFiles(const QStringList &paths);
+    // Open `paths` into windows/tabs per the user's open-files-in
+    // preference. When `markUntitled` is true the opened document(s) are
+    // flagged untitled (see IDocument::isUntitled) — used by the macOS
+    // clipboard / screenshot import paths, whose backing file is a
+    // transient temp file the user never chose. Untitled docs prompt
+    // Save-As on close instead of closing silently (ADR-0004).
+    void openFiles(const QStringList &paths, bool markUntitled = false);
     void clearRecent();
 
     // Set just before a screenshot / clipboard-origin openFiles() call so

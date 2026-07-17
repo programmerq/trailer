@@ -338,6 +338,13 @@ void ImageDocument::onAnnotationHistoryEvicted() {
 }
 
 QString ImageDocument::displayName() const {
+    // An untitled document is backed only by an ugly UUID temp filename
+    // (trailer-clipboard-…-<uuid>.png); presenting that in the tab and
+    // the "Save changes to …?" prompt would leak an implementation
+    // detail. Show a clean "Untitled" until the user saves to a real
+    // path (at which point m_untitled clears and the basename shows).
+    if (m_untitled)
+        return QObject::tr("Untitled");
     return QFileInfo(m_path).fileName();
 }
 
@@ -1002,6 +1009,14 @@ bool ImageDocument::save(const QString &newPath) {
     m_annotations.clear();
     m_path = target;
     m_dirty = false;
+    // A save with an explicit destination (Save-As) gives the document a
+    // user-chosen path, so it is no longer untitled. A plain save() with
+    // an empty newPath keeps whatever titled/untitled state it had — but
+    // the UI never routes an untitled doc here without a real path
+    // (MainWindow forces untitled saves through Save-As), so in practice
+    // this only fires on the Save-As that resolves the untitled state.
+    if (!newPath.isEmpty())
+        m_untitled = false;
     // Refresh the baseline to the bytes we just wrote so our own save never
     // looks like an external change.
     captureFileBaseline();

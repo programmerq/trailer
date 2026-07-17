@@ -108,6 +108,13 @@ class ImageDocument : public IDocument {
 
     bool supportsEditing() const override { return !m_image.isNull() && !m_animated; }
     bool isDirty() const override { return m_dirty || !m_annotations.annotations().empty(); }
+    bool isUntitled() const override { return m_untitled; }
+    // Mark this document as untitled — content-bearing but backed only
+    // by a transient temp file, with no user-chosen save location.
+    // Called by the clipboard / screenshot import path in Application so
+    // closing the doc prompts Save-As rather than silently dropping the
+    // pasted content. Cleared on a successful save() to a real path.
+    void markUntitled() { m_untitled = true; }
     // Image-level undo runs across two parallel stacks: the
     // AnnotationStore for in-memory shape edits, and the pixel
     // snapshot stack for raster mutations (rotate / flip / resize /
@@ -301,6 +308,9 @@ class ImageDocument : public IDocument {
     int m_frameCount = 0;
     bool m_animated = false;
     bool m_dirty = false;
+    // See isUntitled() — set for transient clipboard/screenshot imports,
+    // cleared once save() writes to a user-chosen path.
+    bool m_untitled = false;
     // One-shot guard for applyInitialFitZoom.
     bool m_initialZoomApplied = false;
     // True when this document came from a screen capture (screenshot or
