@@ -15,9 +15,12 @@ artifact bundle the judge personas consume. Declared pass/fail:
 
 1. **All four golden paths drive headless.** Each of the four golden paths
    (new-from-clipboard; screenshot-acquire; open-image→zoom→navigate;
-   new/acquire-with-a-document-open) launches the real built binary under a
-   Linux offscreen / `xvfb` display and executes its predetermined click/key
-   sequence to completion with no human input, in CI.
+   new/acquire-with-a-document-open) drives its predetermined click/key sequence
+   to completion with no human input, in CI, on the pre-PR offscreen tier — an
+   **in-process QTest target built from source** under `QT_QPA_PLATFORM=offscreen`
+   (see the two-tier driver split below). The pre-PR tier does not launch or
+   consume the prebuilt per-OS dev-build artifact; driving that shipped artifact
+   is the real-display / real-Mac milestone tier's job.
 2. **A screenshot is captured after every scripted step.** Not one screenshot
    per scenario — one per step, so the walkthrough persona can judge the
    observed result of each action against the four cognitive-walkthrough
@@ -26,10 +29,11 @@ artifact bundle the judge personas consume. Declared pass/fail:
    Screenshot + step label + expected-effect, one bundle per step, in the shape
    the §3(A) task-scripted walkthrough persona is written to consume (that block
    is the JUDGE half; this harness is the DRIVE + CAPTURE half).
-4. **Wired into a runnable `ux-walkthrough` invocation.** The harness is
-   reachable from the `.claude/skills/ux-walkthrough/SKILL.md` flow the decision
-   record's checkable threshold (items 1/3) requires, so "run the walkthrough"
-   produces the bundles rather than being a manual sequence.
+4. **Wired into the `ux-walkthrough` skill invocation.** The harness is reachable
+   from the `ux-walkthrough` skill (a **companion deliverable** — the owner ruled
+   §7 Q2 = separate skill, so `.claude/skills/ux-walkthrough/SKILL.md` is being
+   built alongside this harness, not a blocked external dependency), so "run the
+   walkthrough" produces the bundles rather than being a manual sequence.
 5. **The #4 empty→document-open transition is reproduced.** Golden path 4
    actually drives the empty-state→document-open transition and captures the
    toolbar / File-menu state where the New/acquire actions vanish (finding #4) —
@@ -58,24 +62,33 @@ This harness **sits on top of** the enabling-infra survey
 [`2026-07-15-gui-verification-capabilities`](2026-07-15-gui-verification-capabilities.md),
 which evaluated candidate real-desktop GUI-verification tiers (headless-X + grab
 loops as the cheap Linux default). It does **not** duplicate that survey: it
-consumes the Linux `xvfb` / offscreen-grab tier that item recommends, and its
-dev-build per-OS artifact as input, turning them into a concrete driveable
-harness. The existing per-change offscreen `QWidget::grab()` capture method
-(AGENTS.md gate G2, `QT_QPA_PLATFORM=offscreen`) is the substrate; this adds
-*driving a scripted task through it and capturing between steps*, without
-changing the G2 method.
+extends the existing per-change offscreen `QWidget::grab()` UAT capture suite
+(`tests/uat/`, AGENTS.md gate G2, `QT_QPA_PLATFORM=offscreen`) with QTest
+input-synthesis for the pre-PR tier, and at the milestone tier consumes the
+survey's real-window-server path plus its dev-build per-OS artifact as the shipped
+binary an external driver drives. The offscreen `grab()` capture method is the
+pre-PR substrate; this adds *driving a scripted task through it and capturing
+between steps*, without changing the G2 method.
 
 ### Scope / deliverable
 
-A harness that:
+A harness, delivered in two tiers (see the driver split below):
 
-1. Launches the real built `trailer` binary under a Linux offscreen / `xvfb`
-   display (consuming the dev-build per-OS artifact per the gui-verification
-   survey's delivery mechanism, not rebuilding).
-2. Drives a predetermined click/key sequence for each golden path.
-3. Captures a screenshot after each scripted step.
-4. Emits a per-step artifact bundle — screenshot + step label + expected-effect —
-   that the judge personas consume.
+1. **Pre-PR offscreen tier:** an in-process QTest target **built from source**,
+   driving the app's own widgets under `QT_QPA_PLATFORM=offscreen` — extending the
+   repo's existing offscreen `grab()` UAT capture suite (`tests/uat/`) with QTest
+   input-synthesis. This tier builds a test target; it does **not** consume the
+   prebuilt per-OS dev-build artifact.
+2. **Real-display / real-Mac milestone tier:** an external driver
+   (`xdotool` / `cliclick` / `pyautogui`) driving the **actual shipped dev-build
+   artifact** — this is where "drive the prebuilt binary, don't rebuild" (the
+   gui-verification survey's delivery mechanism) correctly lives, against a real
+   window server.
+
+Both tiers, for each golden path: drive a predetermined click/key sequence,
+capture a screenshot after each scripted step, and emit a per-step artifact
+bundle — screenshot + step label + expected-effect — that the judge personas
+consume.
 
 ### The four golden paths to script
 
@@ -105,22 +118,38 @@ From §3(A) of the decision record. Each names its **starting state** and the
 
 ### Driver options + recommendation
 
-| Driver | In / out of process | Determinism | Fidelity to real input | In toolchain today |
-|---|---|---|---|---|
-| **Qt Test (`QTest`)** | In-process, in the app / test target | High — synthesized events, no window-server timing | Lower — simulated, not real OS input events | Yes (Qt test target already present) |
-| `xdotool` / `pyautogui` / `cliclick` | External, drives a real display | Lower — real event queue, timing / focus flakiness | Higher — real user-level input events | No — new dependency + display |
+The two drivers are not competing for one slot — they map cleanly to the two
+tiers, because they can drive fundamentally different things. QTest is
+**in-process**: it synthesizes events against in-process `QWidget` pointers
+linked into a test executable, so it can only drive a target **built from
+source** — it cannot launch or drive a separately-built binary or consume a
+prebuilt `.tar.gz` / `.dmg`. The external drivers inject real OS input events at
+a real display, so they can drive the **actual shipped artifact**.
 
-**Recommendation: standardise on Qt Test (`QTest`) for the pre-PR offscreen
-harness.** It is in-process and deterministic (it synthesizes events directly
-rather than racing a window-server event queue), it needs no real display so it
-runs on the cheap Linux offscreen tier, and it is already in the toolchain — so
-the harness carries no new external dependency and no display-focus flakiness.
-The external drivers are closer to genuine user input and would matter for the
-milestone real-Mac tier (real event injection against a real window server), but
-their flakiness makes them the wrong default for a reproducible pre-PR gate. This
-is the determinism-vs-fidelity trade-off the record's §7 open question 3 leaves
-to the owner; the recommendation here is Qt Test for the offscreen gate, leaving
-the real-Mac-tier driver as a later / open call.
+| Driver | In / out of process | What it can drive | Determinism | Fidelity to real input | Tier |
+|---|---|---|---|---|---|
+| **Qt Test (`QTest`)** | In-process, linked into a test target | A target **built from source** only (not a prebuilt artifact) | High — synthesized events, no window-server timing | Lower — simulated, not real OS input events | Pre-PR offscreen |
+| `xdotool` / `pyautogui` / `cliclick` | External, drives a real display | The **prebuilt shipped dev-build artifact** | Lower — real event queue, timing / focus flakiness | Higher — real user-level input events | Real-display / real-Mac milestone |
+
+**Recommendation: split by tier.**
+
+- **Pre-PR offscreen tier → Qt Test (`QTest`) driving an in-process target built
+  from source.** It is in-process and deterministic (synthesized events, no
+  window-server race), needs no real display so it runs on the cheap Linux
+  offscreen tier, and it **extends the repo's existing offscreen `grab()` UAT
+  capture suite** (`tests/uat/`, `QT_QPA_PLATFORM=offscreen`, per AGENTS.md) —
+  adding QTest **input-synthesis** (driving clicks / keys) on top of the capture
+  the suite already does. Note this input-synthesis is a new-ish extension of that
+  suite, not clearly already-present, so it is incremental work rather than
+  free. This matches the record's §7 Q3 answer (Qt Test for the offscreen tier).
+- **Real-display / real-Mac milestone tier → an external driver
+  (`xdotool` / `cliclick` / `pyautogui`) driving the shipped dev-build artifact.**
+  Closer to genuine user input against a real window server, which is exactly what
+  the milestone fidelity / native-chrome pass needs; its flakiness is acceptable
+  there but is why it is the wrong default for a reproducible pre-PR gate.
+
+The determinism-vs-fidelity trade-off the record's §7 open question 3 raises is
+therefore resolved *by tier*, not by picking one driver for both.
 
 ### What runs pre-PR (offscreen) vs. what needs the milestone real-Mac tier
 
@@ -149,20 +178,22 @@ chrome).
 
 ### Dependencies / open questions
 
-- **Depends on** the `2026-07-15-gui-verification-capabilities` infra: this
-  harness consumes its Linux `xvfb` / offscreen-grab tier and its dev-build
-  per-OS artifact as input. That item is a *survey*; standing up the concrete
-  tier is its track, not re-solved here.
-- **Feeds** the decision record's checkable threshold (items 1/3): the persona
-  skill cannot be invoked end-to-end until this harness emits the per-step
-  bundles.
-- **Open — driver choice (record §7 Q3).** Qt Test is recommended above for the
-  offscreen gate; the real-Mac-tier driver (external real-input vs. Qt Test) is
-  left to the owner / impl call.
-- **Open — new skill vs. milestone batch (record §7 Q2, Q6).** Whether this
-  harness is wired as a standalone `ux-walkthrough` skill invoked alongside
-  `review-before-push`, or folded into that skill's reviewer set, tracks the
-  record's own §7 open questions; noted here, not pre-decided.
+- **Depends on** the `2026-07-15-gui-verification-capabilities` infra — **for the
+  milestone tier only**: the real-Mac / real-display tier consumes that survey's
+  real-window-server path and its **dev-build per-OS artifact** as the shipped
+  binary an external driver drives ("drive the prebuilt binary, don't rebuild").
+  The **pre-PR offscreen tier does not depend on the prebuilt artifact** — it
+  builds an in-process QTest target from source and extends the existing
+  `tests/uat/` offscreen `grab()` suite. That survey item is a *survey*; standing
+  up the concrete real-window-server tier is its track, not re-solved here.
+- **Co-delivered with** the `ux-walkthrough` skill (owner ruled §7 Q2 = separate
+  skill): the skill is a companion deliverable being built alongside this harness,
+  not a blocked external dependency. The personas cannot be invoked end-to-end
+  until this harness emits the per-step bundles, and the skill wires the two
+  together.
+- **Open — real-Mac-tier driver (record §7 Q3).** The offscreen tier is settled on
+  Qt Test; the specific external driver for the real-Mac tier
+  (`xdotool` vs. `cliclick` vs. `pyautogui`) is left to the owner / impl call.
 
 ### Priority (proposal — owner to triage)
 
