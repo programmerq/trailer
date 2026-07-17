@@ -56,12 +56,16 @@ An accepted record is what a G6-gated change references (see `AGENTS.md`).
 
 ## Grandfathered numbered records
 
-Records that predate this scheme keep their names. Every numbered record already
-merged to `main` — `0001`–`0013` in this directory, the accepted `0014` from
-[#69](https://github.com/programmerq/trailer/pull/69) once it merges, and the
-legacy files under `docs/decisions/` — stays as-is. They are referenced across
-merged PRs, code comments, and memory; renaming them is churn with no benefit.
+Records that predate this scheme keep their names. The numbered records already
+merged to `main` — `0001`–`0013` in this directory and the legacy files under
+`docs/decisions/` — stay as-is. They are referenced across merged PRs, code
+comments, and memory; renaming them is churn with no benefit.
 
-Everything **not yet merged to `main`**, and every **future** record, uses
-`YYYY-MM-DD-<slug>`. Grandfathering is the default; the owner can override any
-individual case at merge review.
+One in-flight record is grandfathered by name as a deliberate exception: the
+accepted `0014` in [#69](https://github.com/programmerq/trailer/pull/69) keeps
+its number when it merges — it is the canonical `0014`, and the other branches
+that collided on `0014` on 2026-07-16 rename to `YYYY-MM-DD-<slug>`.
+
+Every other record **not yet merged to `main`**, and every **future** record,
+uses `YYYY-MM-DD-<slug>`. Grandfathering is the default; the owner can override
+any individual case at merge review.

@@ -225,7 +225,7 @@ users is to attack it before they do.
   accepted record requires **superseding evidence** — a concrete,
   checkable problem (by the same admissible-objection bar) that was not
   on the table when the record was accepted — *plus* owner sign-off. A
-  record that is replaced points forward with `superseded-by: <YYYY-MM-DD-slug>`; the
+  record that is replaced points forward with `superseded-by <YYYY-MM-DD-slug>`; the
   old file stays for the audit trail.
 
 - **Every work item carries a checkable threshold, declared first.**
