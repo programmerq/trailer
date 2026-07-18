@@ -1,6 +1,7 @@
 #include "QuitMenu.h"
 
 #include <QAction>
+#include <QPointer>
 #include <QString>
 
 #import <AppKit/AppKit.h>
@@ -15,7 +16,13 @@
 // scope (outside the C++ namespace) so it is a proper Objective-C class.
 @interface TrailerKeepTrampoline : NSObject {
 @public
-    QAction *action;
+    // QPointer (not a raw QAction*) so the ivar auto-nulls if the owning
+    // window/QAction is destroyed before the trampoline. A menu item can
+    // outlive its bound QAction (secondary windows, teardown ordering), and
+    // a raw pointer would then dangle — trailerTriggerKeep: would call into
+    // freed memory. QPointer closes that use-after-free. Legal here because
+    // this is ObjC++ (.mm): the ivar is a C++ object, default-constructed.
+    QPointer<QAction> action;
 }
 - (void)trailerTriggerKeep:(id)sender;
 @end

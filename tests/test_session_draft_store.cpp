@@ -58,6 +58,10 @@ class TestSessionDraftStore : public QObject {
     // (MAJOR 3a): the store swaps a fully-staged session into place
     // atomically, so a failed new save leaves the prior one intact.
     void failedSaveKeepsPriorSessionIntact();
+    // A failure DURING the promote/swap phase (after staging is fully built)
+    // must also leave the prior session intact — the two-rename swap never
+    // leaves the live session absent from disk in a way that could lose it.
+    void failedSwapKeepsPriorSessionIntact();
 };
 
 void TestSessionDraftStore::untitledDraftRoundTripsByteIdentical() {
@@ -272,6 +276,52 @@ void TestSessionDraftStore::failedSaveKeepsPriorSessionIntact() {
     QVERIFY(!store.save({next})); // the save fails
 
     // The PRIOR session must still be intact and readable — NOT wiped.
+    QVERIFY(store.hasSession());
+    const QList<SessionWindowDescriptor> r = store.restore();
+    QCOMPARE(r.size(), 1);
+    QCOMPARE(r[0].docs.size(), 1);
+    QCOMPARE(r[0].docs[0].bytes, priorBytes);
+}
+
+void TestSessionDraftStore::failedSwapKeepsPriorSessionIntact() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString sub = dir.path() + "/session-drafts";
+    SessionDraftStore store(sub);
+
+    // Write a valid PRIOR session.
+    const QByteArray priorBytes = knownBytes(0x22, 999);
+    SessionWindowDescriptor prior;
+    SessionDocDescriptor pd;
+    pd.kind = SessionDocDescriptor::Kind::Draft;
+    pd.bytes = priorBytes;
+    pd.untitled = true;
+    prior.docs.append(pd);
+    QVERIFY(store.save({prior}));
+    QVERIFY(store.hasSession());
+
+    // Sabotage the SWAP itself (not staging creation): park a regular FILE at
+    // the `.backup` path so `rename(live -> .backup)` — the first step of the
+    // two-rename promote — fails. Staging is fully built by then, so this
+    // exercises the promote phase specifically. The live session is renamed
+    // only if that first rename succeeds, so it must remain untouched here.
+    // (A plain file is not a directory, so save()'s stale-.backup cleanup —
+    // which only removes an existing directory — leaves it in place.)
+    QFile block(sub + ".backup");
+    QVERIFY(block.open(QIODevice::WriteOnly));
+    block.write("x");
+    block.close();
+
+    SessionWindowDescriptor next;
+    SessionDocDescriptor nd;
+    nd.kind = SessionDocDescriptor::Kind::Draft;
+    nd.bytes = knownBytes(0x77, 222);
+    nd.untitled = true;
+    next.docs.append(nd);
+    QVERIFY(!store.save({next})); // the swap fails
+
+    // The PRIOR session must still be intact and readable — NOT lost in the
+    // gap between retiring the old session and publishing the new one.
     QVERIFY(store.hasSession());
     const QList<SessionWindowDescriptor> r = store.restore();
     QCOMPARE(r.size(), 1);

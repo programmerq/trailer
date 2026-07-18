@@ -44,9 +44,23 @@ bool SessionDraftStore::save(const QList<SessionWindowDescriptor> &windows) cons
     // (Contrast the old behaviour, which clear()ed the live store FIRST and
     // so destroyed a good session whenever the new save then failed.)
     const QString staging = m_dir + QLatin1String(".staging");
+    const QString backup = m_dir + QLatin1String(".backup");
     QDir stagingDir(staging);
     if (stagingDir.exists())
         stagingDir.removeRecursively();
+    // Settle any stale .backup left by a prior interrupted swap. If the live
+    // dir is ALSO missing, that .backup is the sole surviving copy of the
+    // previous session (a swap that got as far as live->.backup but then
+    // failed to publish AND failed to restore) — recover it back to live
+    // rather than destroy it. Only when a live session already exists is the
+    // stale .backup genuinely redundant and safe to remove.
+    QDir backupDir(backup);
+    if (backupDir.exists()) {
+        if (!QDir(m_dir).exists())
+            QDir().rename(backup, m_dir); // promote the orphaned prior session
+        else
+            backupDir.removeRecursively();
+    }
     if (!QDir().mkpath(staging))
         return false; // e.g. parent unwritable / a file sits where a dir must go
 
@@ -104,13 +118,27 @@ bool SessionDraftStore::save(const QList<SessionWindowDescriptor> &windows) cons
     if (!manifest.commit())
         return bail();
 
-    // Staging is fully written and validated on disk. Only NOW retire the
-    // previous live session and promote staging into its place.
+    // Staging is fully written and validated on disk. Promote it via a
+    // two-rename swap so the live session is never absent from disk between
+    // two operations that could each fail:
+    //   1. rename live -> .backup   (preserve the prior session)
+    //   2. rename staging -> live   (publish the new session)
+    //   3. delete .backup           (only after step 2 succeeds)
+    // If step 2 fails, restore .backup -> live so the prior session survives
+    // intact. (Contrast the old removeRecursively(live)-then-rename, whose
+    // crash/failure gap could leave BOTH the old and new sessions gone.)
     QDir liveDir(m_dir);
-    if (liveDir.exists() && !liveDir.removeRecursively())
+    const bool hadLive = liveDir.exists();
+    if (hadLive && !QDir().rename(m_dir, backup))
         return bail();
-    if (!QDir().rename(staging, m_dir))
+    if (!QDir().rename(staging, m_dir)) {
+        // Publish failed; put the prior session back where it was.
+        if (hadLive)
+            QDir().rename(backup, m_dir);
         return bail();
+    }
+    if (hadLive)
+        QDir(backup).removeRecursively();
     return true;
 }
 
