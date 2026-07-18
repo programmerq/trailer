@@ -115,16 +115,25 @@ class ImageDocument : public IDocument {
     // closing the doc prompts Save-As rather than silently dropping the
     // pasted content. Cleared on a successful save() to a real path.
     void markUntitled() { m_untitled = true; }
+    // True iff this document originated from a screen capture (screenshot /
+    // clipboard grab). Read by the kept-windows capture path so the flag —
+    // and the Actual-Size zoom default it drives — survives a session
+    // round-trip. See markCaptureOrigin().
+    bool isCaptureOrigin() const { return m_captureOrigin; }
     // Rehydrate this document from a kept-windows draft blob on session
     // restore (macOS "Quit and Keep Windows"; see SessionDraftStore).
     // Replaces the raster with `img`, sets the backing path (`path` empty
     // for a genuinely untitled draft, the on-disk file for a titled-but-
     // dirty one), and restores the untitled / dirty flags so the document
     // presents exactly as it did at quit — an untitled scratch window
-    // comes back untitled, a titled edit comes back dirty. Undo history is
-    // intentionally not restored (the draft captures the resulting bytes,
-    // not the edit log).
-    void restoreFromDraft(const QImage &img, const QString &path, bool untitled, bool dirty);
+    // comes back untitled, a titled edit comes back dirty. `captureOrigin`
+    // re-flags a restored screenshot/clipboard grab so its Actual-Size
+    // zoom default and dpr treatment match the original (the caller stamps
+    // the persisted devicePixelRatio onto `img` before calling, since a PNG
+    // blob does not carry it). Undo history is intentionally not restored
+    // (the draft captures the resulting bytes, not the edit log).
+    void restoreFromDraft(const QImage &img, const QString &path, bool untitled, bool dirty,
+                          bool captureOrigin = false);
     // Image-level undo runs across two parallel stacks: the
     // AnnotationStore for in-memory shape edits, and the pixel
     // snapshot stack for raster mutations (rotate / flip / resize /

@@ -70,6 +70,35 @@ ImageDocument *addUntitledImageWindow(Application *app, const QImage &image,
     return ptr;
 }
 
+// A minimal non-image, dirty document standing in for a PDF with unsaved
+// annotations: dirty, editable, titled, and — crucially — NOT an
+// ImageDocument, so the kept-windows capture cannot draft it losslessly and
+// must fall back to the per-doc prompt (MAJOR 1). save() clears the dirty
+// flag so a Save response resolves it.
+class FakeDirtyPdfDoc : public IDocument {
+  public:
+    explicit FakeDirtyPdfDoc(QString path) : m_path(std::move(path)) {}
+    QString displayName() const override { return QStringLiteral("fake.pdf"); }
+    QString filePath() const override { return m_path; }
+    QWidget *createView(QWidget *parent) override { return new QWidget(parent); }
+    DocumentType documentType() const override { return DocumentType::Pdf; }
+    bool supportsEditing() const override { return true; }
+    bool isDirty() const override { return m_dirty; }
+    bool save(const QString &newPath = {}) override {
+        if (!newPath.isEmpty())
+            m_path = newPath;
+        m_dirty = false;
+        ++m_saveCount;
+        return true;
+    }
+    int saveCount() const { return m_saveCount; }
+
+  private:
+    QString m_path;
+    bool m_dirty = true;
+    int m_saveCount = 0;
+};
+
 void closeAllWindows(Application *app) {
     const auto wins = app->windows();
     for (MainWindow *w : wins) {
@@ -91,6 +120,11 @@ class TestQuitAndKeepWindows : public QObject {
 
     void keepWindowsQuitWritesStoreWithoutPrompt();
     void restoreRehydratesUntitledDraftByteIdentical();
+    void restorePreservesDevicePixelRatioAndCaptureOrigin();
+    void keepWindowsDirtyNonImageCancelAborts();
+    void keepWindowsDirtyNonImageSaveResolves();
+    void keepWindowsFailedSaveDoesNotSilentlyQuit();
+    void keepWindowsUnencodableDocNotSilentlyDropped();
     void normalQuitCancelAborts();
     void normalQuitDiscardProceeds();
     void normalQuitSaveProceeds();
@@ -173,6 +207,144 @@ void TestQuitAndKeepWindows::restoreRehydratesUntitledDraftByteIdentical() {
     QVERIFY(!m_app->sessionDraftStore().hasSession());
 }
 
+void TestQuitAndKeepWindows::restorePreservesDevicePixelRatioAndCaptureOrigin() {
+    // A HiDPI screenshot: dpr 2, capture-origin. A PNG blob does not carry
+    // Qt's dpr, so without the manifest field the restored doc would report
+    // dpr 1 and render double-sized. NOTE: QImage::operator== ignores dpr,
+    // so we assert devicePixelRatio() and isCaptureOrigin() EXPLICITLY.
+    QImage hidpi = makeKnownImage(20, 20, 5);
+    hidpi.setDevicePixelRatio(2.0);
+
+    MainWindow *win = m_app->ensureFreshWindow();
+    auto doc = std::make_unique<ImageDocument>(QString());
+    doc->setImageForTest(hidpi, /*captureOrigin=*/true);
+    doc->markUntitled();
+    ImageDocument *original = doc.get();
+    win->addDocument(std::move(doc));
+    QCOMPARE(original->image().devicePixelRatio(), 2.0);
+    QVERIFY(original->isCaptureOrigin());
+
+    int quitCount = 0;
+    m_app->setPerformQuitForTesting([&] { ++quitCount; });
+    QVERIFY(m_app->requestQuit(QuitMode::KeepWindows));
+    QCOMPARE(quitCount, 1);
+    QVERIFY(m_app->sessionDraftStore().hasSession());
+
+    QVERIFY(m_app->restoreKeptWindows());
+
+    ImageDocument *restored = nullptr;
+    for (MainWindow *w : m_app->windows()) {
+        if (!w)
+            continue;
+        for (int i = 0; i < w->documentCount(); ++i) {
+            IDocument *d = nullptr;
+            if (w->documentAt(i, &d) == 1 && d && d != original)
+                if (auto *img = dynamic_cast<ImageDocument *>(d))
+                    restored = img;
+        }
+    }
+    QVERIFY(restored);
+    // The headline assertions: dpr and capture-origin survived the round-trip.
+    QCOMPARE(restored->image().devicePixelRatio(), 2.0);
+    QVERIFY(restored->isCaptureOrigin());
+}
+
+void TestQuitAndKeepWindows::keepWindowsDirtyNonImageCancelAborts() {
+    // A dirty non-image (PDF-like) doc cannot be drafted losslessly, so
+    // KeepWindows must fall back to the per-doc prompt rather than silently
+    // storing it as a clean path ref (which drops its unsaved edits). With a
+    // Cancel response the whole quit aborts — nothing written, nothing quit.
+    MainWindow *win = m_app->ensureFreshWindow();
+    auto doc = std::make_unique<FakeDirtyPdfDoc>(QStringLiteral("/tmp/does-not-matter.pdf"));
+    win->addDocument(std::move(doc));
+    win->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+
+    int quitCount = 0;
+    m_app->setPerformQuitForTesting([&] { ++quitCount; });
+
+    const bool proceeded = m_app->requestQuit(QuitMode::KeepWindows);
+
+    QVERIFY(!proceeded);                                // prompt Cancel aborted
+    QCOMPARE(quitCount, 0);                             // did NOT silently quit
+    QVERIFY(!m_app->sessionDraftStore().hasSession());  // nothing written
+    QCOMPARE(win->documentCount(), 1);                  // doc kept
+}
+
+void TestQuitAndKeepWindows::keepWindowsDirtyNonImageSaveResolves() {
+    // With a Save response the dirty non-image doc is resolved (saved) before
+    // the quit proceeds — no silent loss, and the quit completes.
+    MainWindow *win = m_app->ensureFreshWindow();
+    auto doc = std::make_unique<FakeDirtyPdfDoc>(QStringLiteral("/tmp/resolved.pdf"));
+    FakeDirtyPdfDoc *ptr = doc.get();
+    win->addDocument(std::move(doc));
+    win->setCloseResponseForTesting(MainWindow::CloseResponse::Save);
+
+    int quitCount = 0;
+    m_app->setPerformQuitForTesting([&] { ++quitCount; });
+
+    QVERIFY(m_app->requestQuit(QuitMode::KeepWindows));
+    QCOMPARE(quitCount, 1);
+    QVERIFY(!ptr->isDirty());            // the prompt's Save resolved the edits
+    QCOMPARE(ptr->saveCount(), 1);       // save() was actually invoked
+}
+
+void TestQuitAndKeepWindows::keepWindowsFailedSaveDoesNotSilentlyQuit() {
+    // MAJOR 3(b): if the draft-store save fails, KeepWindows must NOT silently
+    // performQuit (which would lose the still-unsaved drafts). It falls back
+    // to the Normal prompt; a Cancel there aborts the quit.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    // Park a regular FILE where the store directory's parent must be, so the
+    // atomic save's mkpath(staging) fails no matter the uid.
+    const QString blocker = dir.path() + "/blocker";
+    QFile bf(blocker);
+    QVERIFY(bf.open(QIODevice::WriteOnly));
+    bf.write("x");
+    bf.close();
+    m_app->setSessionDraftStoreDirForTesting(blocker + "/session-drafts");
+
+    MainWindow *win = nullptr;
+    addUntitledImageWindow(m_app, makeKnownImage(), &win); // a draftable doc
+    // The fallback prompt sees a Cancel → the quit aborts.
+    win->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+
+    int quitCount = 0;
+    m_app->setPerformQuitForTesting([&] { ++quitCount; });
+
+    const bool proceeded = m_app->requestQuit(QuitMode::KeepWindows);
+
+    QVERIFY(!proceeded);      // did not silently quit — fell back + aborted
+    QCOMPARE(quitCount, 0);   // performQuit NOT called
+    QCOMPARE(win->documentCount(), 1);
+
+    // Restore the store to a clean sandbox location so cleanup()/other slots
+    // are unaffected by the sabotaged directory.
+    m_app->setSessionDraftStoreDirForTesting(dir.path() + "/clean-drafts");
+    m_app->sessionDraftStore().clear();
+}
+
+void TestQuitAndKeepWindows::keepWindowsUnencodableDocNotSilentlyDropped() {
+    // MINOR 6: a dirty/untitled image doc whose raster is NULL cannot be
+    // PNG-encoded. It must NOT be silently dropped (stored as an empty blob
+    // that restore skips). canDraftForKeep() gates on a non-null image, so
+    // such a doc falls back to the per-doc prompt; a Cancel aborts the quit.
+    MainWindow *win = m_app->ensureFreshWindow();
+    auto doc = std::make_unique<ImageDocument>(QString()); // no image set → null raster
+    doc->markUntitled();
+    win->addDocument(std::move(doc));
+    win->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+
+    int quitCount = 0;
+    m_app->setPerformQuitForTesting([&] { ++quitCount; });
+
+    const bool proceeded = m_app->requestQuit(QuitMode::KeepWindows);
+
+    QVERIFY(!proceeded);                                // prompt Cancel aborted
+    QCOMPARE(quitCount, 0);                             // not silently dropped/quit
+    QVERIFY(!m_app->sessionDraftStore().hasSession());  // nothing written
+    QCOMPARE(win->documentCount(), 1);
+}
+
 void TestQuitAndKeepWindows::normalQuitCancelAborts() {
     MainWindow *win = nullptr;
     addUntitledImageWindow(m_app, makeKnownImage(), &win);
@@ -231,13 +403,18 @@ void TestQuitAndKeepWindows::collectDirtyDocsIsCurrentFirstAndDeduped() {
     auto d2 = std::make_unique<ImageDocument>(QString());
     d2->setImageForTest(makeKnownImage(10, 10, 2));
     d2->markUntitled();
+    IDocument *raw1 = d1.get();
+    IDocument *raw2 = d2.get();
     win->addDocument(std::move(d1));
     win->addDocument(std::move(d2));
 
     const std::vector<IDocument *> dirty = win->collectDirtyDocsForQuit();
     QCOMPARE(static_cast<int>(dirty.size()), 2);
-    // Current-document-first: the most recently added tab is current.
-    QCOMPARE(dirty.front(), win->collectDirtyDocsForQuit().front());
+    // Current-document-first: the most recently added tab (d2) is current, so
+    // it must sort ahead of the earlier one — asserted against the ACTUAL doc
+    // identity, not a second call to the same function (which was tautological).
+    QCOMPARE(dirty.front(), raw2);
+    QCOMPARE(dirty.back(), raw1);
     // No duplicates.
     QVERIFY(dirty[0] != dirty[1]);
 }

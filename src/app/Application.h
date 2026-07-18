@@ -24,6 +24,7 @@ class QWidget;
 namespace trailer {
 
 class MainWindow;
+class IDocument;
 class UxRecorder;
 
 // Screenshot capture mode. Shared by the File → Screenshot submenu
@@ -147,6 +148,13 @@ class Application : public QApplication {
     // Direct access to the draft store (its directory is AppData/session-
     // drafts). Exposed so tests can assert what a quit wrote / clear state.
     SessionDraftStore &sessionDraftStore() { return m_draftStore; }
+    // Repoint the draft store at a throwaway directory. Tests use this to
+    // inject a store whose save() is made to fail (e.g. an unwritable path)
+    // so the failed-save fallback can be exercised without touching the
+    // real AppData location.
+    void setSessionDraftStoreDirForTesting(const QString &dir) {
+        m_draftStore = SessionDraftStore(dir);
+    }
 
     // Begin a local UX recording session. Called from main.cpp before
     // any window exists so the first window already carries the
@@ -221,6 +229,21 @@ class Application : public QApplication {
     // keeps its enabled state + tooltip live. QPointer entries survive
     // the owning menu/window being destroyed.
     void registerClipboardAction(QAction *action);
+    // True iff `doc`'s current content can be captured LOSSLESSLY as a
+    // kept-windows draft blob with no user interaction — i.e. it is an image
+    // document with a non-null raster we can PNG-encode. A dirty/untitled
+    // document for which this is false (a PDF with unsaved annotations, an
+    // image whose raster is null) must NOT be silently persisted as a clean
+    // path reference; requestQuit(KeepWindows) falls back to the ADR-0004
+    // per-document Save/Discard/Cancel prompt for exactly those before
+    // quitting, so their edits are saved or explicitly discarded. See the
+    // decision record (KeepWindows keeps what it can draft, prompts for
+    // anything dirty it cannot).
+    bool canDraftForKeep(IDocument *doc) const;
+    // Run the Normal per-document Save/Discard/Cancel prompt across every
+    // window's dirty/untitled documents. Returns false if any prompt was
+    // Cancelled (or a Save failed) — the caller must then abort the quit.
+    bool promptDirtyDocsForQuit();
 #ifdef Q_OS_MACOS
     void installNoWindowMenuBar();
     void openFilesFromDialog();

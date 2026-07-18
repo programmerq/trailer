@@ -379,9 +379,36 @@ bool Application::requestQuit(QuitMode mode) {
     }
 
     if (effective == QuitMode::KeepWindows) {
-        // No prompt: serialize the open-window set (including unsaved /
-        // untitled bytes) so the next launch restores it, then quit.
-        m_draftStore.save(captureSessionForKeep());
+        // KeepWindows keeps what it can draft and prompts for anything dirty
+        // it cannot (ADR-0004 no-silent-loss floor). An unsaved/untitled
+        // document that is NOT losslessly draftable — a PDF with unsaved
+        // annotations, an image with a null raster — would otherwise be
+        // stored as a clean {kind:"path"} reference and restore with its
+        // edits gone. For exactly those docs we raise the Normal per-doc
+        // Save/Discard/Cancel prompt BEFORE quitting, so their edits are
+        // saved or explicitly discarded; draftable (image) docs are kept
+        // silently with no prompt.
+        for (MainWindow *win : windows()) {
+            if (!win)
+                continue;
+            for (IDocument *doc : win->collectDirtyDocsForQuit()) {
+                if (!canDraftForKeep(doc)) {
+                    if (!win->confirmCloseForQuit(doc))
+                        return false; // Cancel / failed save: keep all, write nothing
+                }
+            }
+        }
+
+        // Serialize the open-window set (including the remaining unsaved /
+        // untitled image bytes) so the next launch restores it. The save is
+        // atomic: a failure leaves any prior valid session intact. If it
+        // fails we must NOT silently quit and lose the still-unsaved drafts —
+        // fall back to the Normal prompt path so nothing is dropped.
+        if (!m_draftStore.save(captureSessionForKeep())) {
+            if (!promptDirtyDocsForQuit())
+                return false; // aborted — keep every document
+            m_draftStore.clear();
+        }
         if (m_performQuit)
             m_performQuit();
         return true;
@@ -390,19 +417,34 @@ bool Application::requestQuit(QuitMode mode) {
     // Normal: prompt to save/name every unsaved or untitled document, one
     // at a time, across every window. Cancel (or a failed save) on any
     // prompt aborts the quit with everything still open and nothing written.
-    for (MainWindow *win : windows()) {
-        if (!win)
-            continue;
-        for (IDocument *doc : win->collectDirtyDocsForQuit()) {
-            if (!win->confirmCloseForQuit(doc))
-                return false; // aborted — keep every document, write nothing
-        }
-    }
+    if (!promptDirtyDocsForQuit())
+        return false; // aborted — keep every document, write nothing
     // Every document resolved (saved or discarded). Drop any stale kept-
     // windows draft so a later launch doesn't resurrect a quit we cleaned.
     m_draftStore.clear();
     if (m_performQuit)
         m_performQuit();
+    return true;
+}
+
+bool Application::canDraftForKeep(IDocument *doc) const {
+    // Losslessly draftable == an image document with a non-null raster we
+    // can PNG-encode byte-for-byte. Everything else (PDF, null-image doc)
+    // is not, and a dirty/untitled one of those must be prompted for rather
+    // than stored as a clean path reference (silent data loss).
+    auto *img = dynamic_cast<ImageDocument *>(doc);
+    return img && !img->image().isNull();
+}
+
+bool Application::promptDirtyDocsForQuit() {
+    for (MainWindow *win : windows()) {
+        if (!win)
+            continue;
+        for (IDocument *doc : win->collectDirtyDocsForQuit()) {
+            if (!win->confirmCloseForQuit(doc))
+                return false; // Cancel / failed save aborts the quit
+        }
+    }
     return true;
 }
 
@@ -419,7 +461,14 @@ QList<SessionWindowDescriptor> Application::captureSessionForKeep() const {
                 continue;
 
             auto *img = dynamic_cast<ImageDocument *>(doc);
-            const bool needsDraft = img && (doc->isUntitled() || doc->isDirty());
+            const bool dirtyOrUntitled = doc->isUntitled() || doc->isDirty();
+            // Only draft a dirty/untitled doc we can capture losslessly.
+            // A dirty non-draftable doc has already been resolved (saved or
+            // discarded) by requestQuit's prompt fallback, so by here it is
+            // either clean-on-disk (→ Path) or was discarded (its edits are
+            // meant to be gone). We never store a still-dirty non-image as a
+            // clean Path silently — that path is unreachable post-prompt.
+            const bool needsDraft = dirtyOrUntitled && canDraftForKeep(doc);
             SessionDocDescriptor dd;
             if (needsDraft) {
                 // Persist the raster's exact bytes so an unsaved/untitled
@@ -427,16 +476,39 @@ QList<SessionWindowDescriptor> Application::captureSessionForKeep() const {
                 // round-trip preserves every pixel.
                 QByteArray bytes;
                 QBuffer buffer(&bytes);
-                buffer.open(QIODevice::WriteOnly);
-                img->image().save(&buffer, "PNG");
+                bool encoded = buffer.open(QIODevice::WriteOnly) &&
+                               img->image().save(&buffer, "PNG");
                 buffer.close();
+                if (!encoded || bytes.isEmpty()) {
+                    // Could not encode a dirty/untitled doc's bytes. Do NOT
+                    // silently drop it — skipping here would lose its content
+                    // with no prompt. canDraftForKeep() gates on a non-null
+                    // image, so in practice this is unreachable; if it ever
+                    // fires, prefer keeping the whole capture honest by
+                    // aborting the draft for this doc via the prompt path.
+                    // (Belt-and-braces: requestQuit already prompted for the
+                    // non-draftable case; a null-image image-doc would have
+                    // failed canDraftForKeep and been prompted too.)
+                    continue;
+                }
                 dd.kind = SessionDocDescriptor::Kind::Draft;
                 dd.bytes = bytes;
                 dd.format = QStringLiteral("png");
                 dd.untitled = doc->isUntitled();
                 dd.originalPath = doc->isUntitled() ? QString() : doc->filePath();
-                dd.displayName = doc->displayName();
+                // Persist the HiDPI restore state: a PNG blob does not carry
+                // Qt's devicePixelRatio, so without this an unsaved Retina
+                // screenshot (dpr 2, capture-origin) restores double-sized.
+                dd.devicePixelRatio = img->image().devicePixelRatio();
+                dd.captureOrigin = img->isCaptureOrigin();
             } else if (!doc->filePath().isEmpty()) {
+                // A titled doc stored as a clean Path ref, reopened from disk.
+                // Reaching here for a dirty non-draftable doc is only possible
+                // AFTER requestQuit's prompt fallback resolved it: a Save left
+                // it clean-on-disk (Path is exact), a Discard means its edits
+                // are intentionally gone (Path reopens the on-disk version).
+                // Non-dirty saved docs land here directly. Either way no
+                // unsaved content is silently lost.
                 dd.kind = SessionDocDescriptor::Kind::Path;
                 dd.path = doc->filePath();
             } else {
@@ -464,9 +536,14 @@ bool Application::restoreKeptWindows() {
                 QImage img;
                 if (!img.loadFromData(dd.bytes, dd.format.toLatin1().constData()))
                     continue;
+                // A PNG blob does not carry Qt's devicePixelRatio, so re-stamp
+                // the persisted dpr before handing the image to the document —
+                // otherwise a Retina screenshot (dpr 2) restores at dpr 1 and
+                // renders double its logical size.
+                img.setDevicePixelRatio(dd.devicePixelRatio > 0.0 ? dd.devicePixelRatio : 1.0);
                 auto imgDoc = std::make_unique<ImageDocument>(QString());
                 imgDoc->restoreFromDraft(img, dd.originalPath, dd.untitled,
-                                         /*dirty=*/!dd.untitled);
+                                         /*dirty=*/!dd.untitled, dd.captureOrigin);
                 doc = std::move(imgDoc);
             } else {
                 if (dd.path.isEmpty() || !QFileInfo::exists(dd.path))

@@ -488,12 +488,18 @@ QPixmap ImageDocument::labelPixmapForTest() const {
 }
 
 void ImageDocument::restoreFromDraft(const QImage &img, const QString &path, bool untitled,
-                                     bool dirty) {
+                                     bool dirty, bool captureOrigin) {
     m_image = img;
     m_animated = false;
     m_path = path;
     m_untitled = untitled;
     m_dirty = dirty;
+    // Re-apply the capture-origin flag so a restored screenshot / clipboard
+    // grab keeps its Actual-Size zoom default. `img` already carries the
+    // persisted devicePixelRatio (the caller stamped it before this call,
+    // since a PNG blob does not round-trip Qt's dpr), so preserve it rather
+    // than letting markCaptureOrigin re-derive one.
+    m_captureOrigin = captureOrigin;
     // A restored draft starts with no undo history — the blob captured the
     // resulting pixels, not the edit log — and must re-run its one-shot
     // initial-fit decision when a view is attached.
