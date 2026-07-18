@@ -60,8 +60,8 @@ class Application : public QApplication {
     //
     // addNewFromClipboardAction: the ⌘N item. Its enabled state tracks
     // the clipboard live (image or openable file URL → enabled; else
-    // disabled + tooltip, never a popup). `captureContext` menus opt into
-    // tooltips for us.
+    // disabled + tooltip, never a popup). Opts the File menu into showing
+    // item tooltips so the disabled-state hint renders.
     QAction *addNewFromClipboardAction(QMenu *fileMenu);
     // addAcquireItems: the Screenshot submenu (Whole Screen / Window /
     // Selected Area), plus disabled Scanner / Camera placeholders.

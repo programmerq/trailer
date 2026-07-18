@@ -1550,7 +1550,9 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     // No shortcut: ⌘⇧3 is OS-reserved on macOS (global capture) and
     // never reaches Trailer — a binding that can't fire is a lying
     // control. File → Screenshot's explicit modes are the discoverable
-    // path (see DR 2026-07-18-file-menu-acquire-ia, Fork D).
+    // path (see DR 2026-07-18-file-menu-acquire-ia, Option A — "delete the
+    // dead ⌘⇧3 binding"; the "Dead ⌘⇧3 removed" checkable threshold,
+    // uat_fmia_006).
     connect(m_screenshotAction, &QAction::triggered, this, &MainWindow::onTakeScreenshot);
 
     toolsMenu->addSeparator();
@@ -2232,9 +2234,9 @@ void MainWindow::onTakeScreenshot() {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Take Screenshot"));
     auto *layout = new QVBoxLayout(&dialog);
-    auto *screenRadio = new QRadioButton(tr("Whole screen"), &dialog);
-    auto *windowRadio = new QRadioButton(tr("Single window (click to select)"), &dialog);
-    auto *regionRadio = new QRadioButton(tr("Region (drag to select)"), &dialog);
+    auto *screenRadio = new QRadioButton(tr("Whole Screen"), &dialog);
+    auto *windowRadio = new QRadioButton(tr("Window (click to select)"), &dialog);
+    auto *regionRadio = new QRadioButton(tr("Selected Area (drag to select)"), &dialog);
     screenRadio->setChecked(true);
     layout->addWidget(screenRadio);
     layout->addWidget(windowRadio);

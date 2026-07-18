@@ -407,26 +407,50 @@ QString transientImportPath(const QString &prefix, const QString &ext) {
         QStringLiteral("trailer-%1-%2-%3.%4").arg(prefix, stamp, suffix, ext));
 }
 
-} // namespace
+// Single source of truth for "what, if anything, on the clipboard can
+// New-from-Clipboard open right now". The enable-gate
+// (clipboardHasOpenableContent) and the action (newFromClipboard) both route
+// through this so they can never disagree: precedence is image FIRST, then
+// existing local-file URLs, then an existing file path pasted as text, and
+// file URLs / text that don't exist on disk are skipped. Without this shared
+// seam a clipboard holding both an image and a stale file:// URL could enable
+// ⌘N (gate saw the image) yet open nothing (action took the dead URL).
+struct ClipboardOpenable {
+    bool hasImage = false;
+    QStringList files;
+    bool any() const { return hasImage || !files.isEmpty(); }
+};
 
-bool Application::clipboardHasOpenableContent() {
+ClipboardOpenable inspectClipboard() {
+    ClipboardOpenable result;
     const QClipboard *clipboard = QGuiApplication::clipboard();
     const QMimeData *data = clipboard->mimeData();
     if (!data)
-        return false;
-    if (data->hasImage() && !clipboard->image().isNull())
-        return true;
+        return result;
+    // Image takes precedence — matches the gate's original ordering.
+    if (data->hasImage() && !clipboard->image().isNull()) {
+        result.hasImage = true;
+        return result;
+    }
     for (const QUrl &url : data->urls()) {
         if (url.isLocalFile()) {
             const QString local = url.toLocalFile();
             if (!local.isEmpty() && QFileInfo::exists(local))
-                return true;
+                result.files.append(local);
         }
     }
+    if (!result.files.isEmpty())
+        return result;
     const QString text = data->text().trimmed();
     if (!text.isEmpty() && QFileInfo::exists(text))
-        return true;
-    return false;
+        result.files.append(text);
+    return result;
+}
+
+} // namespace
+
+bool Application::clipboardHasOpenableContent() {
+    return inspectClipboard().any();
 }
 
 void Application::registerClipboardAction(QAction *action) {
@@ -448,7 +472,7 @@ void Application::refreshClipboardActions() {
         // just says the clipboard is empty (PHILOSOPHY → No popup that
         // just says "no").
         p->setToolTip(ok ? QString()
-                         : tr("Copy an image to the clipboard, then use this to open it."));
+                         : tr("Copy an image or a file to the clipboard, then use this to open it."));
     }
 }
 
@@ -473,7 +497,7 @@ void Application::addAcquireItems(QMenu *fileMenu, QWidget *captureContext) {
     // Screenshot as an explicit-mode submenu. The OS picker hides its
     // mode switch behind an undiscoverable spacebar cycle; surfacing
     // Whole Screen / Window / Selected Area as named items makes the
-    // modes discoverable (see DR 2026-07-18-file-menu-acquire-ia, Fork A).
+    // modes discoverable (see DR 2026-07-18-file-menu-acquire-ia, Option A).
     QMenu *screenshotMenu = fileMenu->addMenu(tr("Screenshot"));
     screenshotMenu->setToolTipsVisible(true);
 
@@ -512,25 +536,15 @@ void Application::addAcquireItems(QMenu *fileMenu, QWidget *captureContext) {
 }
 
 void Application::newFromClipboard() {
-    const QMimeData *data = QGuiApplication::clipboard()->mimeData();
-    if (!data)
-        return;
+    // Route through the same predicate as the enable-gate so the two can't
+    // drift: image FIRST, then existing local files (URLs or a pasted path),
+    // stale/non-existent file URLs skipped.
+    const ClipboardOpenable openable = inspectClipboard();
 
-    QStringList paths;
-    for (const QUrl &url : data->urls()) {
-        if (url.isLocalFile()) {
-            const QString local = url.toLocalFile();
-            if (!local.isEmpty())
-                paths.append(local);
-        }
-    }
-    if (!paths.isEmpty()) {
-        openFiles(paths);
-        return;
-    }
-
-    const QImage image = QGuiApplication::clipboard()->image();
-    if (!image.isNull()) {
+    if (openable.hasImage) {
+        const QImage image = QGuiApplication::clipboard()->image();
+        if (image.isNull())
+            return;
         const QString path = transientImportPath("clipboard", "png");
         if (image.save(path, "PNG")) {
             // Recover a devicePixelRatio for the paste. The PNG round-trip
@@ -566,13 +580,12 @@ void Application::newFromClipboard() {
             }
             setPendingCaptureDpr(dpr);
             openFiles({path});
-            return;
         }
+        return;
     }
 
-    const QString text = data->text().trimmed();
-    if (!text.isEmpty() && QFileInfo::exists(text)) {
-        openFiles({text});
+    if (!openable.files.isEmpty()) {
+        openFiles(openable.files);
         return;
     }
 
@@ -585,6 +598,17 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
     const QString path = transientImportPath("screenshot", "png");
 
 #ifdef Q_OS_MACOS
+    // First use only: explain that macOS will prompt for "Screen Recording"
+    // permission (its name even for a still screenshot) before we shell to
+    // screencapture. Deferred to first actual use — never at launch. The
+    // preflightUxRecording path burns this flag when Screen Recording is
+    // already granted, so this explainer stays suppressed for that flow
+    // (ADR 0014). Match the old per-window / no-window call sites: parent the
+    // dialog to the capture context when we have one, else nullptr.
+    if (!maybeShowScreenCaptureExplainer(m_settings, context)) {
+        // User cancelled the pre-permission explainer — do not capture.
+        return;
+    }
     // Hide our window so it doesn't occlude the target, then use the
     // native macOS capture tool for proper DPI handling and interactive
     // selection.

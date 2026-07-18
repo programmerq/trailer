@@ -142,6 +142,7 @@ class TestUatFileMenuIa : public QObject {
     void uat_fmia_004_scannerAndCameraDisabledWithHonestTooltip();
     void uat_fmia_005_nonImageClipboardDisablesAndNoopsNewFromClipboard();
     void uat_fmia_006_deadCmdShift3BindingRemoved();
+    void uat_fmia_007_clipboardDataChangedAutoRefreshesNewFromClipboard();
 
   private:
     QTemporaryDir m_scratch;
@@ -340,6 +341,38 @@ void TestUatFileMenuIa::uat_fmia_006_deadCmdShift3BindingRemoved() {
                  qPrintable(QStringLiteral("⌘⇧3 must be unbound; still claimed by: %1")
                                 .arg(action->text())));
     }
+}
+
+// (g) The QClipboard::dataChanged → refreshClipboardActions wiring keeps
+// New from Clipboard live WITHOUT any manual refresh. We never call
+// refreshClipboardActions() here: we mutate the clipboard, pump the event
+// loop so the dataChanged signal is delivered, and assert the item's
+// enabled state tracked the change. Deleting the connect() in Application
+// would make this fail (the earlier cases mask it by refreshing by hand).
+void TestUatFileMenuIa::uat_fmia_007_clipboardDataChangedAutoRefreshesNewFromClipboard() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+    QMenuBar *bar = mw->menuBar();
+
+    QAction *newClip = fileItem(bar, QStringLiteral("New from &Clipboard"));
+    QVERIFY2(newClip, "New from Clipboard action not found");
+
+    // Image on the clipboard → auto-refresh must ENABLE it (no manual
+    // refreshClipboardActions() call anywhere in this test).
+    setClipboardImage();
+    QApplication::processEvents();
+    QVERIFY2(newClip->isEnabled(),
+             "dataChanged wiring must auto-enable New from Clipboard when an "
+             "image is copied (no manual refresh)");
+
+    // Plain non-path text → auto-refresh must DISABLE it again.
+    setClipboardPlainText(QStringLiteral("still not an image or a path"));
+    QApplication::processEvents();
+    QVERIFY2(!newClip->isEnabled(),
+             "dataChanged wiring must auto-disable New from Clipboard when the "
+             "clipboard turns to non-openable text (no manual refresh)");
 }
 
 // Custom main: sandbox HOME before Application is constructed so
