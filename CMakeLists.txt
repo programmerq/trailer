@@ -147,6 +147,8 @@ set(TRAILER_SOURCES
     src/settings/AppPaths.h
     src/settings/DocumentTypeDefaults.cpp
     src/settings/DocumentTypeDefaults.h
+    src/settings/SessionDraftStore.cpp
+    src/settings/SessionDraftStore.h
     src/settings/Settings.cpp
     src/settings/Settings.h
     src/signatures/Signature.h
@@ -208,6 +210,7 @@ set(TRAILER_SOURCES
     src/ui/ThumbnailModel.h
     src/util/TempPath.h
     src/platform/Share.h
+    src/platform/QuitMenu.h
     src/uxrecord/UxRecord.h
 )
 
@@ -249,6 +252,18 @@ if(APPLE)
         COMPILE_FLAGS "-fobjc-arc")
 else()
     list(APPEND TRAILER_SOURCES src/platform/Share_stub.cpp)
+endif()
+
+# Per-platform "Quit and Keep Windows" native menu shim. macOS uses
+# Objective-C++ to install the NSMenuItem.alternate in-place Option swap
+# and to read NSQuitAlwaysKeepsWindows; everything else links the no-op
+# stub (the functional QAction + requestQuit + draft store work without it).
+if(APPLE)
+    list(APPEND TRAILER_SOURCES src/platform/QuitMenu.mm)
+    set_source_files_properties(src/platform/QuitMenu.mm PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc")
+else()
+    list(APPEND TRAILER_SOURCES src/platform/QuitMenu_stub.cpp)
 endif()
 
 add_library(trailer_core STATIC ${TRAILER_SOURCES} resources/trailer.qrc)

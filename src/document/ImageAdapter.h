@@ -115,6 +115,16 @@ class ImageDocument : public IDocument {
     // closing the doc prompts Save-As rather than silently dropping the
     // pasted content. Cleared on a successful save() to a real path.
     void markUntitled() { m_untitled = true; }
+    // Rehydrate this document from a kept-windows draft blob on session
+    // restore (macOS "Quit and Keep Windows"; see SessionDraftStore).
+    // Replaces the raster with `img`, sets the backing path (`path` empty
+    // for a genuinely untitled draft, the on-disk file for a titled-but-
+    // dirty one), and restores the untitled / dirty flags so the document
+    // presents exactly as it did at quit — an untitled scratch window
+    // comes back untitled, a titled edit comes back dirty. Undo history is
+    // intentionally not restored (the draft captures the resulting bytes,
+    // not the edit log).
+    void restoreFromDraft(const QImage &img, const QString &path, bool untitled, bool dirty);
     // Image-level undo runs across two parallel stacks: the
     // AnnotationStore for in-memory shape edits, and the pixel
     // snapshot stack for raster mutations (rotate / flip / resize /

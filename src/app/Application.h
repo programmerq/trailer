@@ -5,6 +5,7 @@
 #include "ml/ModelRegistry.h"
 #include "recent/RecentFiles.h"
 #include "settings/DocumentTypeDefaults.h"
+#include "settings/SessionDraftStore.h"
 #include "settings/Settings.h"
 
 #include <QApplication>
@@ -13,6 +14,7 @@
 #include <QPointer>
 #include <QStringList>
 
+#include <functional>
 #include <memory>
 
 class QAction;
@@ -28,6 +30,17 @@ class UxRecorder;
 // (explicit modes) and the Tools → Take Screenshot picker so both drive
 // the one capture backend (Application::captureScreenshot).
 enum class ShotMode { Screen, Window, Region };
+
+// How a quit request should treat the open windows/documents.
+//   Normal      — prompt to save/name every unsaved or untitled document,
+//                 one at a time (ADR-0004 close-save at quit); Cancel on
+//                 any prompt aborts the quit.
+//   KeepWindows — no prompt: serialize the open-window set, including the
+//                 bytes of unsaved/untitled documents, to the draft store
+//                 so the next launch restores them (macOS "Quit and Keep
+//                 Windows", ⌥⌘Q).
+// See docs/decision-records/2026-07-16-quit-and-keep-windows.md.
+enum class QuitMode { Normal, KeepWindows };
 
 class Application : public QApplication {
     Q_OBJECT
@@ -94,7 +107,46 @@ class Application : public QApplication {
     // from main.cpp when the user launches with no CLI file args.
     // Returns true if at least one file was restored — the caller then
     // skips spawning an empty MainWindow.
+    //
+    // A kept-windows draft store (written by requestQuit(KeepWindows))
+    // takes precedence: it is restored and consumed first, so unsaved /
+    // untitled documents come back with their content intact; the
+    // path-list session is the fallback for a plain quit.
     bool restorePreviousSession();
+
+    // Route a quit request through the requested mode (⌘Q → Normal,
+    // ⌥⌘Q → KeepWindows), honouring the OS NSQuitAlwaysKeepsWindows
+    // default so the plain-Quit branch follows the system setting and the
+    // Option alternate offers its complement (decision record D3). Returns
+    // true if the quit proceeded (performQuit was invoked), false if it was
+    // aborted (a Normal prompt was Cancelled) — nothing is written on abort.
+    bool requestQuit(QuitMode mode);
+
+    // Recreate the windows/documents held in the kept-windows draft store,
+    // then consume (clear) it. Draft (unsaved/untitled) documents are
+    // rehydrated from their stored bytes; saved documents reopen from disk.
+    // Returns true if at least one document was restored. Public so a
+    // headless test can drive restore without a real relaunch.
+    bool restoreKeptWindows();
+
+    // Snapshot the current open-window set into draft descriptors for the
+    // KeepWindows path. Unsaved/untitled image documents become draft blobs
+    // (their bytes); saved documents become path references. Public for
+    // headless testing of the capture step.
+    QList<SessionWindowDescriptor> captureSessionForKeep() const;
+
+    // Test seams. performQuit is what requestQuit calls to actually quit —
+    // overridable so a headless test asserts quit-was-called vs aborted
+    // without terminating the test process. The keeps-windows probe feeds
+    // the D3 OS-setting composition; default reads NSQuitAlwaysKeepsWindows
+    // (false off macOS).
+    void setPerformQuitForTesting(std::function<void()> fn) { m_performQuit = std::move(fn); }
+    void setQuitKeepsWindowsProbeForTesting(std::function<bool()> fn) {
+        m_quitKeepsWindowsProbe = std::move(fn);
+    }
+    // Direct access to the draft store (its directory is AppData/session-
+    // drafts). Exposed so tests can assert what a quit wrote / clear state.
+    SessionDraftStore &sessionDraftStore() { return m_draftStore; }
 
     // Begin a local UX recording session. Called from main.cpp before
     // any window exists so the first window already carries the
@@ -188,6 +240,15 @@ class Application : public QApplication {
     // QApplication so its destructor blocks on outstanding tasks.
     MlScheduler m_mlScheduler{&m_settings};
     QList<QPointer<MainWindow>> m_windows;
+    // Kept-windows draft store (macOS "Quit and Keep Windows"). Directory
+    // AppData/session-drafts; written by requestQuit(KeepWindows) and
+    // consumed by restoreKeptWindows() on the next launch.
+    SessionDraftStore m_draftStore;
+    // Test seams — see the *ForTesting setters. m_performQuit defaults to
+    // QCoreApplication::quit; m_quitKeepsWindowsProbe defaults to the
+    // native NSQuitAlwaysKeepsWindows read (false off macOS / unset).
+    std::function<void()> m_performQuit;
+    std::function<bool()> m_quitKeepsWindowsProbe;
     // Capture devicePixelRatio staged by a screenshot / clipboard grab,
     // consumed by the next openFiles(). 0.0 == none (ordinary open).
     double m_pendingCaptureDpr = 0.0;

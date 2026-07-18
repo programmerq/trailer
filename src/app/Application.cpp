@@ -3,6 +3,7 @@
 #include "TrailerVersion.h"
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
+#include "platform/QuitMenu.h"
 #include "platform/ScreenCapturePermission.h"
 #include "ui/MainWindow.h"
 #ifdef TRAILER_UX_RECORDER
@@ -14,6 +15,7 @@
 #endif
 
 #include <QAction>
+#include <QBuffer>
 #include <QClipboard>
 #include <QDateTime>
 #include <QDir>
@@ -64,6 +66,13 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
     // quit-on-last-window-closed (true) is therefore left in place there —
     // disabling it would strand the process with no window and no way to quit
     // or open a file after the last window is torn down via WA_DeleteOnClose.
+
+    // Quit seams (see requestQuit). Default performQuit terminates the app;
+    // the keeps-windows probe reads the OS NSQuitAlwaysKeepsWindows default
+    // (false off macOS). Tests override both to observe quit decisions
+    // without terminating the process.
+    m_performQuit = [] { QCoreApplication::quit(); };
+    m_quitKeepsWindowsProbe = [] { return QuitMenu::osQuitAlwaysKeepsWindows(); };
 
     m_settings.load();
     m_recent.setMaxEntries(m_settings.recentMax());
@@ -356,7 +365,137 @@ void Application::onWindowDestroyed(QObject *window) {
                     m_windows.end());
 }
 
+bool Application::requestQuit(QuitMode mode) {
+    // Decision record D3: honour the OS "keep windows when quitting"
+    // default. When the OS keeps windows, a plain Quit takes the keep path
+    // (nothing to prompt) and the Option alternate offers the complement
+    // (prompt-and-close-clean); when it does not, the mapping is the plain
+    // ⌘Q → prompt, ⌥⌘Q → keep. The default probe returns false off macOS
+    // and when the setting is unset, so the straightforward mapping holds.
+    const bool osKeeps = m_quitKeepsWindowsProbe && m_quitKeepsWindowsProbe();
+    QuitMode effective = mode;
+    if (osKeeps) {
+        effective = (mode == QuitMode::Normal) ? QuitMode::KeepWindows : QuitMode::Normal;
+    }
+
+    if (effective == QuitMode::KeepWindows) {
+        // No prompt: serialize the open-window set (including unsaved /
+        // untitled bytes) so the next launch restores it, then quit.
+        m_draftStore.save(captureSessionForKeep());
+        if (m_performQuit)
+            m_performQuit();
+        return true;
+    }
+
+    // Normal: prompt to save/name every unsaved or untitled document, one
+    // at a time, across every window. Cancel (or a failed save) on any
+    // prompt aborts the quit with everything still open and nothing written.
+    for (MainWindow *win : windows()) {
+        if (!win)
+            continue;
+        for (IDocument *doc : win->collectDirtyDocsForQuit()) {
+            if (!win->confirmCloseForQuit(doc))
+                return false; // aborted — keep every document, write nothing
+        }
+    }
+    // Every document resolved (saved or discarded). Drop any stale kept-
+    // windows draft so a later launch doesn't resurrect a quit we cleaned.
+    m_draftStore.clear();
+    if (m_performQuit)
+        m_performQuit();
+    return true;
+}
+
+QList<SessionWindowDescriptor> Application::captureSessionForKeep() const {
+    QList<SessionWindowDescriptor> out;
+    for (MainWindow *win : windows()) {
+        if (!win)
+            continue;
+        SessionWindowDescriptor wd;
+        const int total = win->documentCount();
+        for (int i = 0; i < total; ++i) {
+            IDocument *doc = nullptr;
+            if (!win->documentAt(i, &doc) || !doc)
+                continue;
+
+            auto *img = dynamic_cast<ImageDocument *>(doc);
+            const bool needsDraft = img && (doc->isUntitled() || doc->isDirty());
+            SessionDocDescriptor dd;
+            if (needsDraft) {
+                // Persist the raster's exact bytes so an unsaved/untitled
+                // window returns byte-for-byte. PNG is lossless, so the
+                // round-trip preserves every pixel.
+                QByteArray bytes;
+                QBuffer buffer(&bytes);
+                buffer.open(QIODevice::WriteOnly);
+                img->image().save(&buffer, "PNG");
+                buffer.close();
+                dd.kind = SessionDocDescriptor::Kind::Draft;
+                dd.bytes = bytes;
+                dd.format = QStringLiteral("png");
+                dd.untitled = doc->isUntitled();
+                dd.originalPath = doc->isUntitled() ? QString() : doc->filePath();
+                dd.displayName = doc->displayName();
+            } else if (!doc->filePath().isEmpty()) {
+                dd.kind = SessionDocDescriptor::Kind::Path;
+                dd.path = doc->filePath();
+            } else {
+                continue; // nothing persistable (e.g. a path-less non-image)
+            }
+            wd.docs.append(dd);
+        }
+        if (!wd.docs.isEmpty())
+            out.append(wd);
+    }
+    return out;
+}
+
+bool Application::restoreKeptWindows() {
+    if (!m_draftStore.hasSession())
+        return false;
+
+    const QList<SessionWindowDescriptor> descriptors = m_draftStore.restore();
+    bool anyOpened = false;
+    for (const SessionWindowDescriptor &wd : descriptors) {
+        MainWindow *win = nullptr;
+        for (const SessionDocDescriptor &dd : wd.docs) {
+            std::unique_ptr<IDocument> doc;
+            if (dd.kind == SessionDocDescriptor::Kind::Draft) {
+                QImage img;
+                if (!img.loadFromData(dd.bytes, dd.format.toLatin1().constData()))
+                    continue;
+                auto imgDoc = std::make_unique<ImageDocument>(QString());
+                imgDoc->restoreFromDraft(img, dd.originalPath, dd.untitled,
+                                         /*dirty=*/!dd.untitled);
+                doc = std::move(imgDoc);
+            } else {
+                if (dd.path.isEmpty() || !QFileInfo::exists(dd.path))
+                    continue;
+                doc = m_registry.open(dd.path);
+                m_recent.add(dd.path);
+            }
+            if (!doc)
+                continue;
+            if (!win)
+                win = ensureFreshWindow();
+            win->addDocument(std::move(doc));
+            anyOpened = true;
+        }
+    }
+    m_recent.save();
+    notifyWindowsRecentChanged();
+
+    // Consume the store on a successful restore so the kept session is a
+    // one-shot — a subsequent launch falls back to the path-list session.
+    m_draftStore.clear();
+    return anyOpened;
+}
+
 bool Application::restorePreviousSession() {
+    // A kept-windows draft store wins: it carries unsaved/untitled content
+    // the path-list session cannot, and is consumed on restore.
+    if (restoreKeptWindows())
+        return true;
     if (!m_settings.restorePreviousWindows())
         return false;
     const QStringList stored = m_settings.sessionOpenFiles();
@@ -728,9 +867,19 @@ void Application::installNoWindowMenuBar() {
     auto *quitAction = fileMenu->addAction(tr("&Quit"));
     quitAction->setShortcut(QKeySequence::Quit);
     quitAction->setMenuRole(QAction::QuitRole);
-    connect(quitAction, &QAction::triggered, this, &QCoreApplication::quit);
+    connect(quitAction, &QAction::triggered, this,
+            [this]() { requestQuit(QuitMode::Normal); });
+
+    // "Quit and Keep Windows" (⌥⌘Q). The functional accelerator works
+    // here even without the native in-place Option swap; QuitMenu installs
+    // that visual alternate on top (a display nicety only).
+    auto *keepAction = fileMenu->addAction(tr("Quit and Keep Windows"));
+    keepAction->setShortcut(QKeySequence(Qt::MetaModifier | Qt::AltModifier | Qt::Key_Q));
+    connect(keepAction, &QAction::triggered, this,
+            [this]() { requestQuit(QuitMode::KeepWindows); });
 
     m_noWindowMenuBar = bar;
+    QuitMenu::installAlternateKeepItem(quitAction, keepAction);
 }
 
 void Application::openFilesFromDialog() {

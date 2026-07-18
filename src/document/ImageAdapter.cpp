@@ -487,6 +487,25 @@ QPixmap ImageDocument::labelPixmapForTest() const {
     return m_lastBuiltPixmap;
 }
 
+void ImageDocument::restoreFromDraft(const QImage &img, const QString &path, bool untitled,
+                                     bool dirty) {
+    m_image = img;
+    m_animated = false;
+    m_path = path;
+    m_untitled = untitled;
+    m_dirty = dirty;
+    // A restored draft starts with no undo history — the blob captured the
+    // resulting pixels, not the edit log — and must re-run its one-shot
+    // initial-fit decision when a view is attached.
+    m_undoStack.clear();
+    m_redoStack.clear();
+    m_undoLog.clear();
+    m_redoLog.clear();
+    m_initialZoomApplied = false;
+    m_scale = 1.0;
+    m_zoomMode = ZoomMode::Custom;
+}
+
 void ImageDocument::zoomIn() {
     // Any explicit zoom step puts the document back into Custom mode —
     // the user is asking for a specific factor, not "track the

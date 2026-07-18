@@ -7,10 +7,10 @@ Refer to it by slug/date, not a number. It follows TEMPLATE.md and the process i
 PHILOSOPHY.md → "How design decisions get adjudicated".
 -->
 
-- **Status:** proposed <!-- proposed | accepted | superseded-by <slug> -->
+- **Status:** accepted <!-- proposed | accepted | superseded-by <slug> -->
 - **Arbiter:** platform-integration (agent role; the owner, programmerq, is the escalation-only override)
 - **Date proposed:** 2026-07-16
-- **Date accepted / superseded:** —
+- **Date accepted / superseded:** 2026-07-17 — the owner approved the three settled choices in-session (app-managed draft store, native `.mm` NSMenuItem.alternate shim, macOS-facing feature), and this record is accepted with the D5 implementation refinement noted below.
 
 ## Context
 
@@ -315,6 +315,29 @@ platform-integration arbiter's recommendation:
   equivalent, and the untitled-bytes draft tier is macOS-only until a concrete
   cross-platform need is named. This is the acceptable honest answer, not a
   deferral of a promised feature.
+
+  **Implementation refinement (2026-07-17).** The *functional* core landed
+  **cross-platform**, while the *native-only* parts stayed macOS-only — a
+  deliberate split that keeps D5's intent (don't invent a new gesture, keep the
+  path-list fallback) while satisfying gate G4 (never drop a feature per-OS) and
+  avoiding data loss:
+  - Cross-platform (compiled + headless-tested on Linux): `QuitMode`,
+    `Application::requestQuit`, the `SessionDraftStore` (byte-exact draft store
+    under `AppPaths::sessionDraftsDir()`), the capture/restore helpers, and the
+    "Quit and Keep Windows" ⌥⌘Q `QAction` on the per-window File menu. Restore
+    consumes the draft store on every platform, so a ⌥⌘Q that writes unsaved
+    bytes is never silently lost.
+  - macOS-only (native `.mm` shim, `src/platform/QuitMenu.mm` +
+    `QuitMenu_stub.cpp`): the in-place `NSMenuItem.alternate` Option swap and the
+    `NSQuitAlwaysKeepsWindows` (D3) composition. Off macOS the stub is inert and
+    the ⌥⌘Q action simply keeps windows with no visual swap.
+  - The path-list session (`restorePreviousWindows` + `sessionOpenFiles`) remains
+    the fallback for saved-only docs and the sole story when no draft store was
+    written. Net effect: unsaved/untitled content now survives ⌥⌘Q on every OS,
+    the native chrome is macOS-only, and nothing that was promised on macOS was
+    dropped. The owner may narrow this to strictly macOS-only in review; the
+    code is structured so gating the menu action behind `Q_OS_MACOS` is a
+    one-line change without touching the tested core.
 
 Which objections drove it: the content-loss objection (office/occasional) decides
 D1 *against* the superficially "more native" Option B; the menu-ambiguity
