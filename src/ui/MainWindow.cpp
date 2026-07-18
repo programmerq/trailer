@@ -34,6 +34,7 @@
 #include "platform/ScreenCapturePermission.h"
 #include "platform/Share.h"
 #include "settings/AppPaths.h"
+#include "uxrecord/UxRecord.h"
 #include "ml/SamSession.h"
 #include "recent/RecentFiles.h"
 #include "MlProgressWidget.h"
@@ -658,6 +659,14 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // Initial central-stack state: a freshly-spawned window holds no
     // document, so show the empty-state welcome surface.
     updateEmptyState();
+
+    // Developer UX recorder (docs/ux-recorder.md). Inline no-op in
+    // default builds and whenever no session is active (e.g. a
+    // recorder build launched with --no-ux-record); otherwise installs
+    // the recording indicator, the Recording menu, and the semantic
+    // instrumentation for this window. Last so every menu/toolbar
+    // action already exists.
+    uxrecord::attachToMainWindow(this);
 }
 
 void MainWindow::autoSaveDirtyDocs() {
@@ -3637,20 +3646,33 @@ void MainWindow::flashError(const QString &message) {
     // their eyes were on the document. The leading glyph differentiates
     // an error from a neutral status without us toggling palette state.
     statusBar()->showMessage(QStringLiteral("⚠ ") + message, 12000);
+    // Every status-bar error is exactly the "failed operation" signal
+    // the UX recorder wants; this is the single chokepoint for them.
+    uxrecord::recordEvent(QStringLiteral("operation_failed"),
+                          QJsonObject{{QStringLiteral("message"), message}});
 }
 
 void MainWindow::flashSuccess(const QString &message) {
     statusBar()->showMessage(QStringLiteral("✓ ") + message, 6000);
+    uxrecord::recordEvent(QStringLiteral("operation_succeeded"),
+                          QJsonObject{{QStringLiteral("message"), message}});
 }
 
 void MainWindow::flashStatus(const QString &message) {
     statusBar()->showMessage(message, 4000);
+    uxrecord::recordEvent(QStringLiteral("status_message"),
+                          QJsonObject{{QStringLiteral("message"), message}});
 }
 
 void MainWindow::addDocument(std::unique_ptr<IDocument> document) {
     if (!document) {
         return;
     }
+    uxrecord::recordEvent(
+        QStringLiteral("document_opened"),
+        QJsonObject{{QStringLiteral("document"), document->filePath()},
+                    {QStringLiteral("display_name"), document->displayName()},
+                    {QStringLiteral("page_count"), document->pageCount()}});
     m_documentView->addDocument(std::move(document));
     // A document is now open — swap the central stack back to the
     // document page (away from the empty state).

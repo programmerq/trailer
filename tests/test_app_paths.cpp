@@ -43,6 +43,8 @@ void TestAppPaths::fileHelpersLiveUnderDirs() {
     QVERIFY(AppPaths::pluginsDir().startsWith(data));
     QVERIFY(AppPaths::logsDir().startsWith(data));
     QVERIFY(AppPaths::modelsDir().startsWith(data));
+    QVERIFY(AppPaths::uxSessionsDir().startsWith(data));
+    QVERIFY(AppPaths::uxSessionsDir().endsWith(QStringLiteral("ux-sessions")));
 }
 
 void TestAppPaths::platformShape() {

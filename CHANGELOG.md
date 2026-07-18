@@ -121,6 +121,20 @@ changes are consolidated into this section.
 
 ### Infrastructure
 
+- **Developer UX session recorder** (maintainer tooling, not a user
+  feature). New compile-time option `TRAILER_ENABLE_UX_RECORDER`
+  (default **OFF** — release artifacts are unaffected). Recorder-enabled
+  builds record every launch to a strictly local directory under the
+  app-data folder (so the build can be set as the default file handler
+  and capture Finder-launched sessions; `--no-ux-record` opts a single
+  launch out): structured JSONL events (input, focus, dialogs, document
+  state, manual frustration markers), ~3 fps screen frames and a
+  face-cam movie on macOS (ScreenCaptureKit / AVFoundation), and an
+  instrumented "Hand Off to Preview" action that follows the fallback
+  workflow across the app switch. macOS surfaces the first-run "approve
+  Screen Recording, then relaunch" step on the recording indicator. No
+  network code anywhere in the feature; nothing is ever transmitted. See
+  `docs/ux-recorder.md`.
 - **Design-criteria hard gates + decision records.** `AGENTS.md`
   gains nine hard gates (G1–G9) with a companion `DESIGN.md` and
   `docs/performance-budgets.md`; recurring design calls are now

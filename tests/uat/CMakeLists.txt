@@ -116,3 +116,16 @@ target_link_libraries(test_uat_sweep PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 # Empty-state window model UAT. Drives Application + MainWindow; PDF
 # fixtures use QPdfWriter (QtGui), so no Qt6::Pdf link is needed.
 trailer_add_uat_test(test_uat_empty_state test_uat_empty_state.cpp)
+
+# UX recorder UI evidence (UXR-002). Recorder-only: the "● REC" chip and
+# "◉ Recording" menu exist solely in TRAILER_ENABLE_UX_RECORDER builds.
+# Writes curated offscreen grab() PNGs to the committed
+# docs/evidence/ux-recorder/ tree (overridable via
+# $TRAILER_UX_EVIDENCE_DIR) so they can be embedded in the PR — the
+# project's UX-Done gate. Drives Application + MainWindow; no Qt PDF.
+if(TRAILER_ENABLE_UX_RECORDER)
+    trailer_add_uat_test(test_uat_ux_recorder_evidence
+        test_uat_ux_recorder_evidence.cpp)
+    target_compile_definitions(test_uat_ux_recorder_evidence PRIVATE
+        "TRAILER_UX_EVIDENCE_DIR=\"${CMAKE_SOURCE_DIR}/docs/evidence/ux-recorder\"")
+endif()

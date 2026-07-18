@@ -31,6 +31,31 @@ int main(int argc, char *argv[]) {
 
     const trailer::CommandLineResult cli = trailer::parseCommandLine(app.arguments());
 
+#ifdef TRAILER_UX_RECORDER
+    // Developer recorder builds (-DTRAILER_ENABLE_UX_RECORDER=ON) record
+    // EVERY launch by default, so the app can be set as the default
+    // handler for a file type and still capture sessions opened straight
+    // from Finder (which pass no CLI args). --no-ux-record opts a single
+    // launch out; --ux-record is accepted but redundant. Started before
+    // the first window exists so every window carries the indicator and
+    // instrumentation. This whole block is compiled out of default
+    // builds — they never record and the flags don't exist.
+    if (!cli.uxNoRecord) {
+        // Gate on relaunch-required permissions first (UXR-001), so a
+        // first run without Screen Recording doesn't silently record a
+        // screenless session. The user can still proceed degraded.
+        switch (app.preflightUxRecording()) {
+        case trailer::Application::UxRecordDecision::Start:
+            app.startUxRecording();
+            break;
+        case trailer::Application::UxRecordDecision::Skip:
+            break;
+        case trailer::Application::UxRecordDecision::Quit:
+            return 0;
+        }
+    }
+#endif
+
     if (cli.paths.isEmpty()) {
         // Workstream I: "quit and keep windows" across every platform.
         // If the user had files open at the last quit AND opted in to

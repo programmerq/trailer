@@ -184,3 +184,13 @@ A documented user-flow failure caused specifically by the new behaviour (e.g. a
 resize that stutters or loses selection despite the debounce/in-place re-render,
 or a page whose aspect renders wrong), or owner sign-off changing one of the
 ratified constants.
+
+## Addendum — 2026-07-16 Retina/devicePixelRatio follow-up
+
+A separate HiDPI regression surfaced in the scale-to-width delegate:
+`ThumbnailDelegate::paint` scaled a dpr-stamped pixmap with
+`QPixmap::scaledToWidth(availW)`, which works in raw device pixels and preserves
+the source dpr — so on a Retina display (dpr=2) it painted at half the column
+width (small thumbnail, tall empty row, low page-number badge). Fixed by scaling
+to logical width via `src/ui/ThumbnailPaint.h::scaleToLogicalWidth` (a no-op at
+dpr=1), pinned by `tests/test_thumbnail_paint.cpp`.

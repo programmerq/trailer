@@ -17,15 +17,16 @@
 # for x86_64 hosts too).
 #
 # Usage:
-#   scripts/build-macos.sh              # incremental: reuse qpdf deps
-#   scripts/build-macos.sh --rebuild    # wipe build-macos/ + build-macos-deps/
+#   scripts/build-macos.sh                    # incremental: reuse qpdf deps
+#   scripts/build-macos.sh --rebuild          # wipe build-macos/ + build-macos-deps/
+#   scripts/build-macos.sh --enable-ux-recorder  # opt-in recorder build (default OFF)
 #   scripts/build-macos.sh --skip-adaptive-icon
-#                                       # dev build: skip the actool app-icon
-#                                       # compile (static non-adaptive .icns icon), so a host
-#                                       # with only the Command Line Tools (no
-#                                       # full Xcode / no actool) still builds a
-#                                       # DMG. Same as TRAILER_SKIP_ADAPTIVE_ICON=1.
-#   make release                        # convenience wrapper (same thing)
+#                                             # dev build: skip the actool app-icon
+#                                             # compile (static non-adaptive .icns icon), so a host
+#                                             # with only the Command Line Tools (no
+#                                             # full Xcode / no actool) still builds a
+#                                             # DMG. Same as TRAILER_SKIP_ADAPTIVE_ICON=1.
+#   make release                              # convenience wrapper (same thing)
 #
 # Output:
 #   build-macos/Trailer.app                 arm64, self-contained
@@ -36,6 +37,10 @@
 #   MACOSX_DEPLOYMENT_TARGET    minimum macOS version (default 14.0)
 #   WERROR                      ON/OFF for -DTRAILER_WERROR (default OFF;
 #                               flip ON to chase regressions locally)
+#   TRAILER_ENABLE_UX_RECORDER  1/ON/true to build the local UX recorder into
+#                               the main app (default OFF). Same effect as the
+#                               --enable-ux-recorder flag; adds the recorder's
+#                               Info.plist usage-description keys via CMake.
 #   QT_ROOT_DIR / QTDIR         path to Qt install (auto-detects from
 #                               install-qt-action's $QT_ROOT_DIR, then
 #                               ~/Qt/6.*/macos, then `brew --prefix qt`)
@@ -70,7 +75,16 @@ BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build-macos}"
 DEPS_DIR="${DEPS_DIR:-$REPO_ROOT/build-macos-deps}"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
 
-REBUILD=0
+# UX recorder opt-in (default OFF). Enabled either by env
+# TRAILER_ENABLE_UX_RECORDER=1 or the --enable-ux-recorder flag; when set it
+# adds -DTRAILER_ENABLE_UX_RECORDER=ON to the MAIN-APP cmake configure only (the
+# libjpeg / qpdf dep configures are untouched). set -u-safe via ${...:-}. Normal
+# dev / release builds pass neither and are byte-for-byte unchanged.
+ENABLE_UX_RECORDER=0
+case "${TRAILER_ENABLE_UX_RECORDER:-}" in
+    1|ON|on|true|TRUE|yes|YES) ENABLE_UX_RECORDER=1 ;;
+esac
+
 # Skip the adaptive light/dark app icon (actool). Enabled by either the
 # --skip-adaptive-icon flag or TRAILER_SKIP_ADAPTIVE_ICON=1 in the env (so
 # `TRAILER_SKIP_ADAPTIVE_ICON=1 make release-macos` works with no Makefile
@@ -81,21 +95,36 @@ SKIP_ADAPTIVE_ICON=0
 if [[ "${TRAILER_SKIP_ADAPTIVE_ICON:-}" == "1" ]]; then
     SKIP_ADAPTIVE_ICON=1
 fi
-for ARG in "$@"; do
-    case "$ARG" in
+
+REBUILD=0
+for arg in "$@"; do
+    case "$arg" in
         --rebuild)
             REBUILD=1
+            ;;
+        --enable-ux-recorder)
+            ENABLE_UX_RECORDER=1
             ;;
         --skip-adaptive-icon)
             SKIP_ADAPTIVE_ICON=1
             ;;
+        "")
+            ;;
         *)
-            echo "Unknown argument: $ARG" >&2
+            echo "Unknown argument: $arg" >&2
             echo "See the header of $0 for usage." >&2
             exit 2
             ;;
     esac
 done
+
+# Assembled once here; empty unless the recorder is opted in, so the configure
+# line below expands to nothing extra in the default case.
+UX_RECORDER_CMAKE_ARG=""
+if (( ENABLE_UX_RECORDER )); then
+    UX_RECORDER_CMAKE_ARG="-DTRAILER_ENABLE_UX_RECORDER=ON"
+    echo "==> UX recorder ENABLED for this build ($UX_RECORDER_CMAKE_ARG)"
+fi
 
 if (( REBUILD )); then
     rm -rf "$BUILD_DIR" "$DEPS_DIR"
@@ -340,7 +369,8 @@ cmake -S . -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_OSX_DEPLOYMENT_TARGET="$MACOSX_DEPLOYMENT_TARGET" \
     -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR;$DEPS_DIR/qpdf-prefix;$DEPS_DIR/jpeg-prefix" \
     -DTRAILER_WERROR="$WERROR" \
-    "$ADAPTIVE_ICON_FLAG"
+    "$ADAPTIVE_ICON_FLAG" \
+    $UX_RECORDER_CMAKE_ARG
 
 echo "==> Building Trailer.app"
 cmake --build "$BUILD_DIR" --parallel

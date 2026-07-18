@@ -41,6 +41,7 @@ trailer_add_test(test_settings_volatility test_settings_volatility.cpp)
 trailer_add_test(test_recent     test_recent.cpp)
 trailer_add_test(test_document_type_defaults test_document_type_defaults.cpp)
 trailer_add_test(test_content_aware_defaults test_content_aware_defaults.cpp)
+trailer_add_test(test_thumbnail_paint test_thumbnail_paint.cpp)
 trailer_add_test(test_app_paths  test_app_paths.cpp)
 trailer_add_test(test_application_identity test_application_identity.cpp)
 trailer_add_test(test_registry   test_registry.cpp)
@@ -93,5 +94,17 @@ trailer_add_perf_test(test_perf_render_ordering test_perf_render_ordering.cpp)
 trailer_add_perf_test(test_perf_gui_thread_io   test_perf_gui_thread_io.cpp)
 trailer_add_perf_test(test_perf_paint_budget    test_perf_paint_budget.cpp)
 trailer_add_perf_test(test_perf_lazy_open       test_perf_lazy_open.cpp)
+
+# The facade test runs in EVERY configuration — it is the guard that
+# the uxrecord:: no-ops stay safe when the recorder is compiled out
+# (and when it is compiled in but no --ux-record session is active).
+trailer_add_test(test_ux_record_facade test_ux_record_facade.cpp)
+# The platform-neutral recorder internals only exist in recorder-
+# enabled builds (they are not part of trailer_core otherwise).
+if(TRAILER_ENABLE_UX_RECORDER)
+    trailer_add_test(test_ux_event_stream test_ux_event_stream.cpp)
+    trailer_add_test(test_ux_recorder test_ux_recorder.cpp)
+    trailer_add_test(test_ux_qt_event_capture test_ux_qt_event_capture.cpp)
+endif()
 
 add_subdirectory(uat)

@@ -27,6 +27,28 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 option(TRAILER_WERROR "Treat compiler warnings as errors (enabled in CI)" OFF)
 option(TRAILER_ADAPTIVE_ICON "Compile the adaptive light/dark macOS app icon via actool (requires full Xcode)" ON)
 
+# Developer-only UX session recorder (see docs/ux-recorder.md). OFF by
+# default: release artifacts must not link capture frameworks, request
+# recording permissions, or carry recorder UI. When ON, the recorder
+# still does nothing unless the app is launched with --ux-record.
+# Everything it records stays on the local disk — no network code is
+# permitted anywhere in src/uxrecord/ (PHILOSOPHY.md "No telemetry").
+option(TRAILER_ENABLE_UX_RECORDER
+       "Build the local developer UX session recorder (--ux-record)" OFF)
+
+# Extra Info.plist keys injected only into recorder-enabled bundles.
+# NSCameraUsageDescription must be present before AVFoundation may even
+# *ask* for camera access (macOS kills the process otherwise). Default
+# builds get an empty substitution so the shipped plist is unchanged.
+set(TRAILER_UX_PLIST_EXTRAS "")
+if(TRAILER_ENABLE_UX_RECORDER)
+    string(CONCAT TRAILER_UX_PLIST_EXTRAS
+        "<key>NSCameraUsageDescription</key>\n"
+        "    <string>Trailer's developer UX recorder captures your camera "
+        "locally during --ux-record sessions. Nothing is transmitted "
+        "anywhere.</string>")
+endif()
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -180,7 +202,37 @@ set(TRAILER_SOURCES
     src/ui/ThumbnailModel.h
     src/util/TempPath.h
     src/platform/Share.h
+    src/uxrecord/UxRecord.h
 )
+
+# UX recorder sources are only compiled into recorder-enabled builds.
+# src/uxrecord/UxRecord.h (above) is the always-present facade whose
+# functions inline to no-ops when TRAILER_UX_RECORDER is undefined, so
+# call sites in MainWindow/Application need no #ifdef of their own.
+if(TRAILER_ENABLE_UX_RECORDER)
+    list(APPEND TRAILER_SOURCES
+        src/uxrecord/UxEventStream.cpp
+        src/uxrecord/UxEventStream.h
+        src/uxrecord/UxPlatformCapture.h
+        src/uxrecord/UxQtEventCapture.cpp
+        src/uxrecord/UxQtEventCapture.h
+        src/uxrecord/UxRecord.cpp
+        src/uxrecord/UxRecorder.cpp
+        src/uxrecord/UxRecorder.h
+        src/uxrecord/UxTrailerHooks.cpp
+    )
+    if(APPLE)
+        list(APPEND TRAILER_SOURCES src/uxrecord/MacUxPlatformCapture.mm)
+        set_source_files_properties(src/uxrecord/MacUxPlatformCapture.mm
+            PROPERTIES COMPILE_FLAGS "-fobjc-arc")
+    else()
+        # Non-macOS recorder builds compile against a stub capture
+        # backend: the Qt-level event stream and session report still
+        # work; screen/camera/global-input capture report themselves
+        # as unavailable in events.jsonl.
+        list(APPEND TRAILER_SOURCES src/uxrecord/StubUxPlatformCapture.cpp)
+    endif()
+endif()
 
 # Per-platform Share-sheet source. macOS uses Objective-C++ to drive
 # NSSharingServicePicker; everything else gets the stub that reports
@@ -226,6 +278,29 @@ if(APPLE)
     # the Screen Recording TCC state (the screen-capture preflight ADR).
     # macOS-only; behind if(APPLE) so the Linux/Windows link line stays clean.
     target_link_libraries(trailer_core PRIVATE "-framework CoreGraphics")
+endif()
+if(TRAILER_ENABLE_UX_RECORDER)
+    # PUBLIC so the always-present facade header (src/uxrecord/UxRecord.h)
+    # selects its real declarations in every consumer (app, tools, tests).
+    target_compile_definitions(trailer_core PUBLIC TRAILER_UX_RECORDER)
+    if(APPLE)
+        # Capture frameworks are linked ONLY into recorder builds, so a
+        # default build's binary carries no recording capability at all.
+        target_link_libraries(trailer_core PRIVATE
+            "-framework AVFoundation"
+            "-framework CoreMedia"
+            "-framework CoreVideo"
+            "-framework ImageIO"
+            "-framework CoreGraphics"
+        )
+        # ScreenCaptureKit needs macOS 12.3+ but Trailer's deployment
+        # target is 11.0 (packaging-macos.md). Weak-link so the binary
+        # still loads on older systems; MacUxPlatformCapture.mm guards
+        # every use with @available and records "unsupported" events
+        # instead of capturing frames there.
+        target_link_options(trailer_core PUBLIC
+            "-Wl,-weak_framework,ScreenCaptureKit")
+    endif()
 endif()
 trailer_set_warnings(trailer_core)
 
