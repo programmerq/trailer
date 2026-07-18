@@ -163,8 +163,9 @@ PdfDocument::PdfDocument(QString path)
     // password and calling unlock(). Everything else (corrupt,
     // missing, unsupported scheme) stays permanently invalid.
     m_needsPassword = (error == QPdfDocument::Error::IncorrectPassword);
-    // Deliberately NOT done here (P0 startup-hang fix,
-    // docs/backlog/2026-07-13-startup-hang-large-pdf.md): the qpdf
+    // Deliberately NOT done here (P0 startup-hang fix; closed by #63,
+    // residual tracked in
+    // docs/backlog/2026-07-15-offthread-pdf-open-placeholder.md): the qpdf
     // processFile parse (m_editor->load) and the all-pages annotation
     // sweep (readAnnotations) both used to run synchronously in this
     // ctor, freezing the GUI thread for minutes on large PDFs. Both now run on

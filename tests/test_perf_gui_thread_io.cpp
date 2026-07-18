@@ -9,8 +9,8 @@
 // CURRENT ARCHITECTURE (the honest reality this test documents):
 // document open is still SYNCHRONOUS on the calling thread —
 // DocumentRegistry::open() → PdfAdapter::open() → the PdfDocument ctor.
-// As of the P0 startup-hang fix
-// (docs/backlog/2026-07-13-startup-hang-large-pdf.md) the two heavy
+// As of the P0 startup-hang fix (closed by #63; residual tracked in
+// docs/backlog/2026-07-15-offthread-pdf-open-placeholder.md) the two heavy
 // whole-document passes — the qpdf PdfEditor::load(processFile) parse and
 // the all-pages readAnnotations() sweep — are now LAZY: they no longer
 // run in the ctor, so they are off the synchronous open path. What
