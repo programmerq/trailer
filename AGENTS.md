@@ -4,7 +4,7 @@ This file is for AI coding agents (Claude Code, Copilot SWE Agent, Cursor,
 and any future tool) working in this repository. Read this first; the
 specifics below save you from rediscovering them every session.
 
-`CLAUDE.md` at the repo root is a symlink to this file.
+`CLAUDE.md` at the repo root imports this file via `@AGENTS.md`, so both surfaces load the same content (chosen over a symlink for Windows-checkout safety).
 
 ---
 
