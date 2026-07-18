@@ -27,13 +27,20 @@ struct SessionDocDescriptor {
     // `bytes` is the exact blob the store round-trips byte-for-byte;
     // `format` names the encoding (e.g. "png"). `untitled` preserves the
     // isUntitled() flag; `originalPath` is the on-disk file a titled-but-
-    // dirty document edits (empty for a genuinely untitled document);
-    // `displayName` is shown in the tab/title until the doc is saved.
+    // dirty document edits (empty for a genuinely untitled document).
+    //
+    // `devicePixelRatio` and `captureOrigin` preserve the HiDPI restore
+    // state: a raster encoding (PNG) does NOT carry Qt's devicePixelRatio,
+    // so an unsaved Retina screenshot (dpr 2.0, capture-origin) would
+    // otherwise restore at dpr 1.0 — double its logical size and losing the
+    // Actual-Size zoom default. We persist both explicitly and re-apply
+    // them on restore. See the #76 HiDPI work + the decision record.
     QByteArray bytes;
     QString format = QStringLiteral("png");
     bool untitled = false;
     QString originalPath;
-    QString displayName;
+    double devicePixelRatio = 1.0;
+    bool captureOrigin = false;
 };
 
 // One kept window: the ordered documents it held at quit.

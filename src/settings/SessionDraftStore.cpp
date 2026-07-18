@@ -36,11 +36,24 @@ QString SessionDraftStore::manifestPath() const {
 }
 
 bool SessionDraftStore::save(const QList<SessionWindowDescriptor> &windows) const {
-    // Start from a clean slate so a previous, larger session can't leave
-    // orphan blobs behind. clear() removes the whole directory; we recreate
-    // it and write the current session.
-    clear();
-    QDir().mkpath(m_dir);
+    // Atomic save (never wipe a valid prior session for a failed new one):
+    // build the entire new session in a sibling STAGING directory and swap
+    // it into place only after every blob + the manifest has been written
+    // and committed. The live directory is untouched until that swap, so a
+    // failure at any point here leaves the previous session fully intact.
+    // (Contrast the old behaviour, which clear()ed the live store FIRST and
+    // so destroyed a good session whenever the new save then failed.)
+    const QString staging = m_dir + QLatin1String(".staging");
+    QDir stagingDir(staging);
+    if (stagingDir.exists())
+        stagingDir.removeRecursively();
+    if (!QDir().mkpath(staging))
+        return false; // e.g. parent unwritable / a file sits where a dir must go
+
+    auto bail = [&]() -> bool {
+        QDir(staging).removeRecursively();
+        return false;
+    };
 
     QJsonArray windowArray;
     int wIdx = 0;
@@ -51,19 +64,20 @@ bool SessionDraftStore::save(const QList<SessionWindowDescriptor> &windows) cons
             QJsonObject docObj;
             if (doc.kind == SessionDocDescriptor::Kind::Draft) {
                 const QString name = blobName(wIdx, dIdx, doc.format);
-                QSaveFile blob(QDir::cleanPath(m_dir + QLatin1Char('/') + name));
+                QSaveFile blob(QDir::cleanPath(staging + QLatin1Char('/') + name));
                 if (!blob.open(QIODevice::WriteOnly))
-                    return false;
+                    return bail();
                 if (blob.write(doc.bytes) != doc.bytes.size())
-                    return false;
+                    return bail();
                 if (!blob.commit())
-                    return false;
+                    return bail();
                 docObj[QStringLiteral("kind")] = QStringLiteral("draft");
                 docObj[QStringLiteral("blob")] = name;
                 docObj[QStringLiteral("format")] = doc.format;
                 docObj[QStringLiteral("untitled")] = doc.untitled;
                 docObj[QStringLiteral("originalPath")] = doc.originalPath;
-                docObj[QStringLiteral("displayName")] = doc.displayName;
+                docObj[QStringLiteral("dpr")] = doc.devicePixelRatio;
+                docObj[QStringLiteral("captureOrigin")] = doc.captureOrigin;
             } else {
                 docObj[QStringLiteral("kind")] = QStringLiteral("path");
                 docObj[QStringLiteral("path")] = doc.path;
@@ -81,13 +95,23 @@ bool SessionDraftStore::save(const QList<SessionWindowDescriptor> &windows) cons
     root[QStringLiteral("version")] = kManifestVersion;
     root[QStringLiteral("windows")] = windowArray;
 
-    QSaveFile manifest(manifestPath());
+    QSaveFile manifest(QDir::cleanPath(staging + QLatin1String("/manifest.json")));
     if (!manifest.open(QIODevice::WriteOnly))
-        return false;
+        return bail();
     const QByteArray json = QJsonDocument(root).toJson(QJsonDocument::Indented);
     if (manifest.write(json) != json.size())
-        return false;
-    return manifest.commit();
+        return bail();
+    if (!manifest.commit())
+        return bail();
+
+    // Staging is fully written and validated on disk. Only NOW retire the
+    // previous live session and promote staging into its place.
+    QDir liveDir(m_dir);
+    if (liveDir.exists() && !liveDir.removeRecursively())
+        return bail();
+    if (!QDir().rename(staging, m_dir))
+        return bail();
+    return true;
 }
 
 QList<SessionWindowDescriptor> SessionDraftStore::restore() const {
@@ -121,8 +145,17 @@ QList<SessionWindowDescriptor> SessionDraftStore::restore() const {
                 dd.format = docObj.value(QStringLiteral("format")).toString(QStringLiteral("png"));
                 dd.untitled = docObj.value(QStringLiteral("untitled")).toBool();
                 dd.originalPath = docObj.value(QStringLiteral("originalPath")).toString();
-                dd.displayName = docObj.value(QStringLiteral("displayName")).toString();
-                const QString name = docObj.value(QStringLiteral("blob")).toString();
+                dd.devicePixelRatio = docObj.value(QStringLiteral("dpr")).toDouble(1.0);
+                dd.captureOrigin = docObj.value(QStringLiteral("captureOrigin")).toBool();
+                // Basename-only guard: the blob name comes from JSON that a
+                // future/foreign build (or a tampered store) could seed with a
+                // traversal payload like "../../etc/passwd". Strip any path
+                // components so the join can only ever address a file directly
+                // inside the store dir.
+                const QString name =
+                    QFileInfo(docObj.value(QStringLiteral("blob")).toString()).fileName();
+                if (name.isEmpty())
+                    continue; // no addressable blob → drop just this doc
                 QFile blob(QDir::cleanPath(m_dir + QLatin1Char('/') + name));
                 if (!blob.open(QIODevice::ReadOnly))
                     continue; // a missing blob drops just that doc, not the session

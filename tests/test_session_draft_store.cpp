@@ -46,9 +46,18 @@ class TestSessionDraftStore : public QObject {
     // hasSession()/clear() lifecycle: empty dir → no session; after save →
     // session; after clear → gone.
     void hasSessionAndClearLifecycle();
-    // A version mismatch in the manifest yields no session (honest-restore:
-    // better to restore nothing than to mis-parse a foreign store).
+    // A version mismatch OR corrupt/truncated JSON in the manifest yields no
+    // session (honest-restore: better to restore nothing than to mis-parse a
+    // foreign or damaged store).
     void unreadableStoreYieldsNoSession();
+    // A draft doc's devicePixelRatio + capture-origin flag survive the
+    // round-trip (MAJOR 2). A PNG blob does not carry Qt's dpr, so the store
+    // must persist it explicitly — asserted directly, NOT via QImage::==.
+    void dprAndCaptureOriginRoundTrip();
+    // A save that fails partway must NOT wipe an existing valid session
+    // (MAJOR 3a): the store swaps a fully-staged session into place
+    // atomically, so a failed new save leaves the prior one intact.
+    void failedSaveKeepsPriorSessionIntact();
 };
 
 void TestSessionDraftStore::untitledDraftRoundTripsByteIdentical() {
@@ -63,7 +72,6 @@ void TestSessionDraftStore::untitledDraftRoundTripsByteIdentical() {
     doc.bytes = payload;
     doc.format = QStringLiteral("png");
     doc.untitled = true;
-    doc.displayName = QStringLiteral("Untitled");
 
     SessionWindowDescriptor win;
     win.docs.append(doc);
@@ -81,7 +89,6 @@ void TestSessionDraftStore::untitledDraftRoundTripsByteIdentical() {
     const SessionDocDescriptor &out = restored[0].docs[0];
     QCOMPARE(out.kind, SessionDocDescriptor::Kind::Draft);
     QVERIFY(out.untitled);
-    QCOMPARE(out.displayName, QStringLiteral("Untitled"));
     // The byte-identity threshold.
     QCOMPARE(out.bytes, payload);
     QCOMPARE(out.bytes.size(), payload.size());
@@ -101,7 +108,6 @@ void TestSessionDraftStore::multiWindowMultiDocRoundTrip() {
     d1.kind = SessionDocDescriptor::Kind::Draft;
     d1.bytes = blobA;
     d1.untitled = true;
-    d1.displayName = QStringLiteral("Untitled");
     w1.docs.append(d1);
     SessionDocDescriptor d2;
     d2.kind = SessionDocDescriptor::Kind::Path;
@@ -115,7 +121,6 @@ void TestSessionDraftStore::multiWindowMultiDocRoundTrip() {
     d3.bytes = blobB;
     d3.untitled = false;
     d3.originalPath = QStringLiteral("/tmp/photos/scan.png");
-    d3.displayName = QStringLiteral("scan.png");
     w2.docs.append(d3);
 
     QVERIFY(store.save({w1, w2}));
@@ -166,19 +171,112 @@ void TestSessionDraftStore::hasSessionAndClearLifecycle() {
 }
 
 void TestSessionDraftStore::unreadableStoreYieldsNoSession() {
+    // Case A: a manifest with a bogus version.
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString sub = dir.path() + "/session-drafts";
+        QDir().mkpath(sub);
+        QFile f(sub + "/manifest.json");
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write("{\"version\": 9999, \"windows\": [{\"docs\": []}]}");
+        f.close();
+
+        SessionDraftStore store(sub);
+        QVERIFY(!store.hasSession());
+        QVERIFY(store.restore().isEmpty());
+    }
+
+    // Case B: corrupt / truncated JSON — the manifest is present but not
+    // parseable. Honest-restore: yield nothing rather than mis-parse. Guards
+    // against a crash-truncated or partially-written manifest.
+    {
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString sub = dir.path() + "/session-drafts";
+        QDir().mkpath(sub);
+        QFile f(sub + "/manifest.json");
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        // Valid opening, then abruptly cut off (as a crash mid-write leaves it).
+        f.write("{\"version\": 1, \"windows\": [{\"docs\": [{\"kind\": \"dra");
+        f.close();
+
+        SessionDraftStore store(sub);
+        QVERIFY(!store.hasSession());
+        QVERIFY(store.restore().isEmpty());
+    }
+}
+
+void TestSessionDraftStore::dprAndCaptureOriginRoundTrip() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    SessionDraftStore store(dir.path() + "/session-drafts");
+
+    SessionDocDescriptor doc;
+    doc.kind = SessionDocDescriptor::Kind::Draft;
+    doc.bytes = knownBytes(0x33, 512);
+    doc.untitled = true;
+    doc.devicePixelRatio = 2.0; // a Retina screenshot
+    doc.captureOrigin = true;
+
+    SessionWindowDescriptor win;
+    win.docs.append(doc);
+    QVERIFY(store.save({win}));
+
+    SessionDraftStore reopened(dir.path() + "/session-drafts");
+    const QList<SessionWindowDescriptor> r = reopened.restore();
+    QCOMPARE(r.size(), 1);
+    QCOMPARE(r[0].docs.size(), 1);
+    const SessionDocDescriptor &out = r[0].docs[0];
+    // Asserted DIRECTLY — QImage::operator== (used by the pixel round-trip
+    // test) ignores devicePixelRatio, so the manifest field is the only
+    // honest witness that dpr survived.
+    QCOMPARE(out.devicePixelRatio, 2.0);
+    QVERIFY(out.captureOrigin);
+    // A default (no-capture) draft round-trips as dpr 1 / not-capture.
+    QCOMPARE(out.bytes, doc.bytes);
+}
+
+void TestSessionDraftStore::failedSaveKeepsPriorSessionIntact() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString sub = dir.path() + "/session-drafts";
-    QDir().mkpath(sub);
-    // Write a manifest with a bogus version.
-    QFile f(sub + "/manifest.json");
-    QVERIFY(f.open(QIODevice::WriteOnly));
-    f.write("{\"version\": 9999, \"windows\": [{\"docs\": []}]}");
-    f.close();
-
     SessionDraftStore store(sub);
-    QVERIFY(!store.hasSession());
-    QVERIFY(store.restore().isEmpty());
+
+    // Write a valid PRIOR session.
+    const QByteArray priorBytes = knownBytes(0x44, 777);
+    SessionWindowDescriptor prior;
+    SessionDocDescriptor pd;
+    pd.kind = SessionDocDescriptor::Kind::Draft;
+    pd.bytes = priorBytes;
+    pd.untitled = true;
+    prior.docs.append(pd);
+    QVERIFY(store.save({prior}));
+    QVERIFY(store.hasSession());
+
+    // Sabotage the NEXT save: park a regular FILE where the staging
+    // directory must be created, so mkpath(staging) fails and save() bails
+    // out before ever touching the live session. (Works regardless of the
+    // test uid — you cannot mkdir underneath a file even as root.)
+    QFile block(sub + ".staging");
+    QVERIFY(block.open(QIODevice::WriteOnly));
+    block.write("x");
+    block.close();
+
+    SessionWindowDescriptor next;
+    SessionDocDescriptor nd;
+    nd.kind = SessionDocDescriptor::Kind::Draft;
+    nd.bytes = knownBytes(0x66, 111);
+    nd.untitled = true;
+    next.docs.append(nd);
+    QVERIFY(!store.save({next})); // the save fails
+
+    // The PRIOR session must still be intact and readable — NOT wiped.
+    QVERIFY(store.hasSession());
+    const QList<SessionWindowDescriptor> r = store.restore();
+    QCOMPARE(r.size(), 1);
+    QCOMPARE(r[0].docs.size(), 1);
+    QCOMPARE(r[0].docs[0].bytes, priorBytes);
 }
 
 QTEST_GUILESS_MAIN(TestSessionDraftStore)
