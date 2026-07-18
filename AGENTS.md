@@ -458,10 +458,12 @@ passes against the live app — see the `HITL round N` commits and the
 
 **Screenshots for UI-visible changes.** When a PR adds, removes, or
 visibly reshapes a dialog, menu, toolbar, table, or other on-screen
-element, include screenshots (and/or short captures) in the PR body so
-reviewers can see the change without building. Skip screenshots for
-non-visual changes (build, refactors with identical UI, internals).
-Capture options:
+element, include screenshots (and/or short captures) so reviewers can
+see the change without building — this is gated by **G2** above, which
+is the binding authority. A change to *existing* UI requires the inline
+**before/after** pair described there. Skip screenshots for non-visual
+changes (build, refactors with identical UI, internals). Capture
+options:
 
 - Build the app and grab the running window (preferred when the
   change is reachable from a normal flow).
@@ -470,9 +472,13 @@ Capture options:
   without a real display. The `tests/uat/` harness uses the same
   pattern.
 
-Drop the PNGs into the PR body via GitHub's drag-and-drop upload (or
-attach via `gh pr edit --body-file`); do not commit screenshots into
-the repo unless they are reference/design artefacts.
+Per G2, the curated evidence (and the before/after pair) is
+**committed** under `docs/uat/images/` and referenced **inline** via
+commit-SHA-pinned `raw.githubusercontent.com` URLs, so it renders on
+the PR page. Working/throwaway captures stay gitignored
+(`uat-screenshots/`, `docs/screenshots/`) and are not committed.
+Drag-and-drop attachments and comment-only screenshots do **not**
+satisfy G2 — see that section for the full rule.
 
 **Undo.** One chronological log per document, two payload stacks:
 - `AnnotationStore` for annotation create/modify/delete.
