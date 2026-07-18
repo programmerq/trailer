@@ -598,17 +598,11 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
     const QString path = transientImportPath("screenshot", "png");
 
 #ifdef Q_OS_MACOS
-    // First use only: explain that macOS will prompt for "Screen Recording"
-    // permission (its name even for a still screenshot) before we shell to
-    // screencapture. Deferred to first actual use — never at launch. The
-    // preflightUxRecording path burns this flag when Screen Recording is
-    // already granted, so this explainer stays suppressed for that flow
-    // (ADR 0014). Match the old per-window / no-window call sites: parent the
-    // dialog to the capture context when we have one, else nullptr.
-    if (!maybeShowScreenCaptureExplainer(m_settings, context)) {
-        // User cancelled the pre-permission explainer — do not capture.
-        return;
-    }
+    // Capture-permission behavior is intentionally owned by PR #77 (preflight +
+    // graceful denial-degrade — docs/decision-records/2026-07-16-capture-permission-preflight.md);
+    // per the owner decision recorded there, the stills path deliberately does
+    // NOT reintroduce a first-use Screen-Recording explainer and goes straight
+    // to the OS Screen-Recording prompt.
     // Hide our window so it doesn't occlude the target, then use the
     // native macOS capture tool for proper DPI handling and interactive
     // selection.
