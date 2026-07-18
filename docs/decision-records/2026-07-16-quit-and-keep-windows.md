@@ -339,6 +339,18 @@ platform-integration arbiter's recommendation:
     code is structured so gating the menu action behind `Q_OS_MACOS` is a
     one-line change without touching the tested core.
 
+  **Correctness refinement (2026-07-18).** KeepWindows keeps what it can draft
+  losslessly and prompts for anything dirty it cannot — it never persists a
+  dirty/untitled document as a clean path reference. Only image documents with a
+  non-null raster are draftable (their exact bytes + `devicePixelRatio` +
+  capture-origin flag are stored and re-applied on restore); a dirty
+  non-draftable document (e.g. a PDF with unsaved annotations) falls back to the
+  Normal per-doc Save/Discard/Cancel prompt before quitting, so its edits are
+  saved or explicitly discarded rather than silently lost. This preserves the
+  ADR-0004 no-silent-loss floor for the ⌥⌘Q path. The draft-store save is also
+  atomic (a failed new save never wipes a prior valid session), and a failed
+  save falls back to the Normal prompt rather than silently quitting.
+
 Which objections drove it: the content-loss objection (office/occasional) decides
 D1 *against* the superficially "more native" Option B; the menu-ambiguity
 objection (older-careful/migrator) decides D2 for the shim; the cross-app-
