@@ -34,18 +34,56 @@ namespace {
 
 // Locate the "Quit Trailer" NSMenuItem in the application (first) menu.
 // Qt drives QAction(QuitRole) onto that item, but exposes no handle to it,
-// so we walk the native NSApp main menu. Matching by AppKit's own
-// terminate: selector is more robust than matching a localized title.
+// so we walk the native NSApp main menu.
+//
+// Primary match: AppKit's own terminate: selector. Defensive fallbacks (a
+// selector mismatch would otherwise make the whole alternate-item swap a
+// silent no-op — dead ⌥⌘Q with no error): also accept a menu item whose
+// title contains "Quit", and as a last resort the application (first) menu's
+// last enabled item, which is where AppKit conventionally places Quit.
+//
+// MANUAL-VERIFY (owner, real Mac): confirm Qt's QuitRole item on the
+// installed Qt version actually carries @selector(terminate:). If Qt ever
+// routes Quit through a different selector/target, the primary match stops
+// firing and we rely on the title/position fallback below — verify the swap
+// still lands on the real Quit row. See the decision record's manual gate.
 NSMenuItem *findQuitItem() {
     NSMenu *mainMenu = [NSApp mainMenu];
     if (!mainMenu)
         return nil;
+
+    // Pass 1: exact selector match (most robust when it holds).
     for (NSMenuItem *top in [mainMenu itemArray]) {
         NSMenu *submenu = [top submenu];
         if (!submenu)
             continue;
         for (NSMenuItem *item in [submenu itemArray]) {
             if ([item action] == @selector(terminate:))
+                return item;
+        }
+    }
+
+    // Pass 2: title-contains-"Quit" fallback (any submenu). Guards against a
+    // Qt version whose QuitRole item uses a non-terminate: selector.
+    for (NSMenuItem *top in [mainMenu itemArray]) {
+        NSMenu *submenu = [top submenu];
+        if (!submenu)
+            continue;
+        for (NSMenuItem *item in [submenu itemArray]) {
+            NSString *title = [item title];
+            if (title && [title rangeOfString:@"Quit"].location != NSNotFound)
+                return item;
+        }
+    }
+
+    // Pass 3: positional fallback — the application (first) menu's last
+    // enabled, non-separator item, AppKit's conventional slot for Quit.
+    NSArray<NSMenuItem *> *top = [mainMenu itemArray];
+    if ([top count] > 0) {
+        NSMenu *appMenu = [[top objectAtIndex:0] submenu];
+        for (NSInteger i = (NSInteger)[[appMenu itemArray] count] - 1; i >= 0; --i) {
+            NSMenuItem *item = [[appMenu itemArray] objectAtIndex:(NSUInteger)i];
+            if (![item isSeparatorItem] && [item isEnabled])
                 return item;
         }
     }
@@ -95,11 +133,20 @@ void QuitMenu::installAlternateKeepItem(QAction *quitAction, QAction *keepAction
     [keepItem setTag:kKeepItemTag];
 
     // Retain the trampoline for the process lifetime (the menu item does
-    // not retain its target). One is enough — the sentinel-tag guard above
-    // means we only reach here once.
-    static TrailerKeepTrampoline *trampoline = nil;
-    trampoline = [[TrailerKeepTrampoline alloc] init];
+    // not retain its target under ARC). installAlternateKeepItem runs once
+    // per NSMenu — MainWindow::buildMenus AND installNoWindowMenuBar each
+    // build a DISTINCT menu — so a single `static` slot is WRONG: the second
+    // call would overwrite it, ARC would release the first trampoline while
+    // its menu item still (unsafely) referenced it, and ⌥⌘Q on the earlier
+    // menu would go dead (or crash). Retain ONE trampoline PER menu item by
+    // parking every trampoline in a process-lifetime array so none is ever
+    // deallocated while its item is alive.
+    static NSMutableArray *keepTrampolines = nil;
+    if (!keepTrampolines)
+        keepTrampolines = [[NSMutableArray alloc] init];
+    TrailerKeepTrampoline *trampoline = [[TrailerKeepTrampoline alloc] init];
     trampoline->action = keepAction;
+    [keepTrampolines addObject:trampoline];
     [keepItem setTarget:trampoline];
 
     [menu insertItem:keepItem atIndex:(quitIndex + 1)];
