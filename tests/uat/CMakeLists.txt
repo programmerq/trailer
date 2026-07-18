@@ -121,3 +121,9 @@ if(TRAILER_ENABLE_UX_RECORDER)
     target_compile_definitions(test_uat_ux_recorder_evidence PRIVATE
         "TRAILER_UX_EVIDENCE_DIR=\"${CMAKE_SOURCE_DIR}/docs/evidence/ux-recorder\"")
 endif()
+
+# File-menu information-architecture UAT (create/acquire group present with a
+# document open; ⌘N = New-from-Clipboard; Screenshot submenu; Scanner/Camera
+# disabled+tooltip; dropped ⌘⇧3). Also emits the File-menu AFTER screenshots
+# for the PR. Drives Application + MainWindow; no Qt PDF link needed.
+trailer_add_uat_test(test_uat_file_menu_ia test_uat_file_menu_ia.cpp)

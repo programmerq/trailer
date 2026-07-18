@@ -692,15 +692,25 @@ void MainWindow::autoSaveDirtyDocs() {
 
 void MainWindow::buildMenus() {
     auto *fileMenu = menuBar()->addMenu(tr("&File"));
-    // The disabled Share… item's tooltip is made visible by
-    // makeDisabledAction() at its creation below (it calls
-    // fileMenu->setToolTipsVisible(true)), so no explicit call is needed here.
+    // Menu-item tooltips (disabled New-from-Clipboard / Scanner / Camera, and
+    // the disabled Share… item below) only render when the menu opts in.
+    fileMenu->setToolTipsVisible(true);
+
+    // Shared create/acquire group. These used to live ONLY in the macOS
+    // no-window menu bar and vanished the moment a document window became
+    // key; carrying them here keeps New-from-Clipboard and the acquire
+    // sources reachable with a window open, on every platform.
+    m_app->addNewFromClipboardAction(fileMenu);
 
     auto *openAction = fileMenu->addAction(tr("&Open…"));
     openAction->setShortcut(QKeySequence::Open);
     connect(openAction, &QAction::triggered, this, &MainWindow::onOpen);
 
     m_recentMenu = fileMenu->addMenu(tr("Open &Recent"));
+    fileMenu->addSeparator();
+
+    // Screenshot (explicit-mode submenu) + Scanner / Camera placeholders.
+    m_app->addAcquireItems(fileMenu, this);
     fileMenu->addSeparator();
 
     m_saveAction = fileMenu->addAction(tr("&Save"));
@@ -1537,7 +1547,10 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     toolsMenu->addSeparator();
 
     m_screenshotAction = toolsMenu->addAction(tr("&Take Screenshot"));
-    m_screenshotAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_3));
+    // No shortcut: ⌘⇧3 is OS-reserved on macOS (global capture) and
+    // never reaches Trailer — a binding that can't fire is a lying
+    // control. File → Screenshot's explicit modes are the discoverable
+    // path (see DR 2026-07-18-file-menu-acquire-ia, Fork D).
     connect(m_screenshotAction, &QAction::triggered, this, &MainWindow::onTakeScreenshot);
 
     toolsMenu->addSeparator();
@@ -2215,18 +2228,6 @@ void MainWindow::onCropImage() {
     updateTitleForDocument(doc);
 }
 
-namespace {
-
-QString screenshotTargetPath() {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
-    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"));
-    return QDir(dir).filePath(QStringLiteral("trailer-screenshot-%1.png").arg(stamp));
-}
-
-enum class ShotMode { Screen, Window, Region };
-
-} // namespace
-
 void MainWindow::onTakeScreenshot() {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Take Screenshot"));
@@ -2263,91 +2264,9 @@ void MainWindow::onTakeScreenshot() {
     else if (regionRadio->isChecked())
         mode = ShotMode::Region;
 
-    const QString path = screenshotTargetPath();
-
-#ifdef Q_OS_MACOS
-    // First use only: explain that macOS will prompt for "Screen Recording"
-    // permission (its name even for a still screenshot) before we shell to
-    // screencapture. Deferred to first actual use — never at launch.
-    if (!maybeShowScreenCaptureExplainer(m_app->settings(), this)) {
-        // User cancelled the pre-permission explainer — do not capture.
-        return;
-    }
-    // Hide our window so it doesn't occlude the target, then use the native
-    // macOS capture tool for proper DPI handling and interactive selection.
-    hide();
-    QStringList args;
-    args << "-x"; // silent (no capture sound)
-    switch (mode) {
-    case ShotMode::Screen:
-        break;
-    case ShotMode::Window:
-        args << "-iW";
-        break;
-    case ShotMode::Region:
-        args << "-i"
-             << "-s";
-        break;
-    }
-    args << path;
-    QProcess proc;
-    proc.start("/usr/sbin/screencapture", args);
-    proc.waitForFinished(-1);
-    show();
-    raise();
-    activateWindow();
-    if (proc.exitCode() != 0) {
-        // Non-zero exit means the user cancelled (Esc) — not an error.
-        flashStatus(tr("Screen capture cancelled."));
-        return;
-    }
-    if (!QFileInfo(path).exists() || QFileInfo(path).size() == 0) {
-        // Exit 0 but no output — screencapture produced nothing, which can
-        // silently mean Screen Recording permission was denied. Surface a
-        // graceful hint pointing at the permission setting.
-        flashStatus(tr("No image was captured. If you denied Screen Recording, "
-                       "grant it in System Settings ▸ Privacy & Security ▸ "
-                       "Screen Recording."));
-        return;
-    }
-    // screencapture writes raw device pixels with no dpr stamp; recover
-    // the target screen's dpr so a Retina capture opens 1:1 pixel-exact.
-    // Prefer this window's screen (the one the user is capturing from),
-    // falling back to the primary screen only when the window reports none
-    // — matching Application::acquireFromScreenshot's primary-screen source.
-    // Known limitation: an interactive `screencapture -i`/`-iW`/`-s` on a
-    // mixed-DPI multi-monitor setup can land on a screen other than this
-    // window's, so the recovered dpr may be wrong; owner to confirm on
-    // hardware.
-    {
-        QScreen *scr = this->screen() ? this->screen() : QGuiApplication::primaryScreen();
-        if (scr)
-            m_app->setPendingCaptureDpr(scr->devicePixelRatio());
-    }
-#else
-    if (mode != ShotMode::Screen) {
-        flashStatus(tr("Window/region capture is not yet supported on this "
-                       "platform."));
-        return;
-    }
-    QScreen *screen = QGuiApplication::primaryScreen();
-    if (!screen)
-        return;
-    const QPixmap shot = screen->grabWindow(0);
-    if (shot.isNull() || !shot.save(path, "PNG")) {
-        flashError(tr("Screenshot failed — could not capture the screen."));
-        return;
-    }
-    // grabWindow() stamps the screen dpr on the pixmap, but the PNG save
-    // drops it; recover it so a HiDPI capture opens 1:1 (see openFiles).
-    {
-        const double dpr =
-            shot.devicePixelRatio() > 0.0 ? shot.devicePixelRatio() : screen->devicePixelRatio();
-        m_app->setPendingCaptureDpr(dpr);
-    }
-#endif
-
-    m_app->openFiles({path});
+    // Same capture backend as File → Screenshot (Application owns it so
+    // both the per-window menu and the macOS no-window bar share it).
+    m_app->captureScreenshot(mode, this);
 }
 
 void MainWindow::onSave() {
