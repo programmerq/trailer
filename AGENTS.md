@@ -143,6 +143,14 @@ value/default changes are backed by records in
   Working/throwaway captures are **not** committed — they stay gitignored
   (`uat-screenshots/`, `docs/screenshots/`); only the curated, referenced
   images land in `docs/uat/images/`.
+- **Before/after pair for UI changes (2026-07-18):** Any PR with a
+  user-visible UI change MUST embed an inline **before/after** screenshot
+  pair in the PR body — the *same* document / window / state shown in both
+  shots — committed under `docs/uat/images/` and referenced by
+  **commit-SHA-pinned raw URLs** (`raw.githubusercontent.com`, not
+  attachment / asset URLs). An **after-only** screenshot, or a screenshot
+  posted **only in a PR comment**, does **not** satisfy this gate (precedent:
+  PR #80 shipped with an after-only screenshot in a comment).
 - **Capture method (ruled):** G2 evidence is captured by offscreen
   `QWidget::grab()` / `QQuickWindow::grabWindow` in the test harness under
   `QT_QPA_PLATFORM=offscreen` (the `widget->grab()` hybrid described in

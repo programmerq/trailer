@@ -147,6 +147,12 @@ Case B, open ready-for-review.
 
 Every PR body carries, **as its first section**, exactly one of these two.
 
+> **Any user-visible UI change (both cases):** the PR is only reviewable once
+> its inline **before/after** screenshot pair is in the PR body (committed under
+> `docs/uat/images/`, SHA-pinned raw URLs per AGENTS.md G2) — an after-only or
+> comment-only shot means the UI PR is **not** ready-for-review. This is part of
+> the reviewable-deliverable gate (Step 4) for UI work, not a separate ask.
+
 ### Case A — something blocks merge
 
 Use when merge needs an owner decision: owner verification the CI can't do, a

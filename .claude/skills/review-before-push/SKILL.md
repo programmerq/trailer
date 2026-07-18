@@ -137,5 +137,6 @@ curated, referenced images are committed.
 - [ ] Every finding dispositioned: fix / justify / defer-with-Decision-Record.
 - [ ] All "fix" items applied; "justify" reasons written down; "defer" records opened.
 - [ ] UI change: curated UAT evidence committed under `docs/uat/images/` and referenced inline in the PR body (throwaway captures left gitignored).
+- [ ] UI change: reviewer confirmed an inline **before/after** screenshot pair (same state in both shots) is present in the PR body before approving the push — an after-only or comment-only shot does not pass (AGENTS.md G2).
 - [ ] PR body leads with its ready-to-merge ask (blocking ask, or "No ask — mergeable as-is") per [`surface-the-ask`](../surface-the-ask/SKILL.md).
 - [ ] ONLY NOW: push / open PR.
