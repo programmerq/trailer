@@ -1775,8 +1775,30 @@ bool PdfDocument::recoverFrom(const QString &sidecarPath) {
         std::make_unique<ScopedTempFile>(QStringLiteral("trailer-recovered-XXXXXX.pdf"));
     if (!recoveryCopy->isValid())
         return false;
-    if (!QFile::copy(sidecarPath, recoveryCopy->path()))
-        return false;
+    // Manual truncating byte-copy rather than QFile::copy: makeUniqueTempPath
+    // reserves-then-removes the destination, but on Windows a QTemporaryFile's
+    // handle can outlive close() so the reserved file may still exist when we
+    // get here — QFile::copy refuses to overwrite an existing destination and
+    // fails. Opening the destination WriteOnly|Truncate overwrites regardless,
+    // on every platform, and touches no non-Qt writer / rename / delete-of-open
+    // path.
+    {
+        QFile src(sidecarPath);
+        QFile dst(recoveryCopy->path());
+        if (!src.open(QIODevice::ReadOnly) ||
+            !dst.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            return false;
+        constexpr qint64 kChunk = 1 << 20; // 1 MiB
+        while (!src.atEnd()) {
+            const QByteArray chunk = src.read(kChunk);
+            if (chunk.isEmpty())
+                break;
+            if (dst.write(chunk) != chunk.size())
+                return false;
+        }
+        dst.close();
+        src.close();
+    }
     const QString content = recoveryCopy->path();
 
     m_doc->close();

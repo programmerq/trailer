@@ -48,9 +48,7 @@ QByteArray sha256Of(const QString &path) {
     QFile f(path);
     if (!f.open(QIODevice::ReadOnly))
         return {};
-    QCryptographicHash h(QCryptographicHash::Sha256);
-    h.addData(&f);
-    return h.result();
+    return QCryptographicHash::hash(f.readAll(), QCryptographicHash::Sha256);
 }
 
 // A freehand stroke, built the way AnnotationOverlay commits an Ink gesture
