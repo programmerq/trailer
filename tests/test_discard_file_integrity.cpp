@@ -28,6 +28,7 @@
 #include "document/PdfEditor.h"
 #include "document/RecoveryStore.h"
 
+#include <QApplication>
 #include <QByteArray>
 #include <QCryptographicHash>
 #include <QCoreApplication>
@@ -36,6 +37,7 @@
 #include <QPainter>
 #include <QPdfWriter>
 #include <QTemporaryDir>
+#include <QThreadPool>
 #include <QtTest/QtTest>
 
 #include <cstdio>
@@ -88,6 +90,7 @@ class TestDiscardFileIntegrity : public QObject {
     Q_OBJECT
   private slots:
     void initTestCase();
+    void cleanupTestCase();
     void discardAfterAutoSaveLeavesSourceFileByteIdentical();
     void explicitSaveWritesBackingFile();
     void reopenRecoveryRestoresAnnotationDirtyButSourcePristine();
@@ -99,6 +102,15 @@ void TestDiscardFileIntegrity::initTestCase() {
     // Make stderr unbuffered so CHK() checkpoints are not lost on a hard crash.
     std::setvbuf(stderr, nullptr, _IONBF, 0);
     CHK("initTestCase");
+}
+
+void TestDiscardFileIntegrity::cleanupTestCase() {
+    CHK("cleanupTestCase:enter");
+    // Drain any lingering QtConcurrent background annotation-sweep tasks before
+    // teardown, so no worker thread is mid-flight when statics/thread-pool are
+    // destroyed at process exit.
+    QThreadPool::globalInstance()->waitForDone();
+    CHK("cleanupTestCase:after-waitForDone");
 }
 
 // INVARIANT (2): auto-save must not write the source, and an explicit Discard
@@ -346,5 +358,20 @@ void TestDiscardFileIntegrity::recoveredDocSurvivesAnotherAutoSaveTickThenExplic
     CHK("case5:done");
 }
 
-QTEST_MAIN(TestDiscardFileIntegrity)
+// Custom main (instead of QTEST_MAIN) to checkpoint the teardown path: the
+// Wine crash occurs AFTER all test cases complete (every case printed :done),
+// so it is in qExec teardown / static destruction, not a test body.
+int main(int argc, char *argv[]) {
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
+    QApplication app(argc, argv);
+    CHK("main:before-qExec");
+    TestDiscardFileIntegrity tc;
+    const int rc = QTest::qExec(&tc, argc, argv);
+    std::fprintf(stderr, "[chk] main:after-qExec rc=%d\n", rc);
+    std::fflush(stderr);
+    QThreadPool::globalInstance()->waitForDone();
+    CHK("main:after-waitForDone");
+    CHK("main:returning");
+    return rc;
+}
 #include "test_discard_file_integrity.moc"
