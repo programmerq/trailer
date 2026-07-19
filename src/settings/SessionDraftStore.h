@@ -1,5 +1,7 @@
 #pragma once
 
+#include "annotation/Annotation.h"
+
 #include <QByteArray>
 #include <QList>
 #include <QString>
@@ -13,15 +15,26 @@ namespace trailer {
 // document is stored as a DRAFT: the document's raw encoded BYTES (PNG for
 // image documents) live in a blob file beside the manifest, so its content
 // survives a relaunch byte-for-byte even though it was never saved to a
-// user-chosen file. See docs/decision-records/2026-07-16-quit-and-keep-windows.md
-// (D1 → app-managed draft store).
+// user-chosen file. A PDF with unsaved ANNOTATIONS (no structural page
+// edits) is stored as an ANNOTATED_PATH: the on-disk file plus a JSON
+// payload of its unsaved annotations, so on restore the file reopens and
+// the annotations re-apply as individually editable objects, still dirty.
+// See docs/decision-records/2026-07-16-quit-and-keep-windows.md
+// (D1 → app-managed draft store; PDF annotation-persistence refinement).
 struct SessionDocDescriptor {
-    enum class Kind { Path, Draft };
+    enum class Kind { Path, Draft, AnnotatedPath };
 
     Kind kind = Kind::Path;
 
     // Kind::Path — the on-disk file to reopen.
+    // Kind::AnnotatedPath — the on-disk file to reopen before re-applying
+    // the unsaved `annotations` below (marked dirty on restore).
     QString path;
+
+    // Kind::AnnotatedPath — the document's UNSAVED annotations, serialized
+    // to the manifest as JSON and restored as editable objects. Empty for
+    // every other kind.
+    QList<Annotation> annotations;
 
     // Kind::Draft — the encoded document bytes plus restore metadata.
     // `bytes` is the exact blob the store round-trips byte-for-byte;

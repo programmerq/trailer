@@ -23,13 +23,22 @@
 // exercisable offscreen; they are covered by the record's owner-manual
 // gate (clause 7).
 
+#include "annotation/Annotation.h"
+#include "annotation/AnnotationJson.h"
 #include "app/Application.h"
 #include "document/ImageAdapter.h"
+#include "document/PdfAdapter.h"
 #include "ui/MainWindow.h"
 
+#include <QColor>
 #include <QDir>
 #include <QImage>
+#include <QJsonObject>
 #include <QKeySequence>
+#include <QPainter>
+#include <QPageSize>
+#include <QPdfWriter>
+#include <QRectF>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -99,6 +108,62 @@ class FakeDirtyPdfDoc : public IDocument {
     int m_saveCount = 0;
 };
 
+// Write a minimal valid one-page PDF to `path` so a real PdfDocument can
+// open it. Mirrors the QPdfWriter fixture pattern in test_adapters.cpp /
+// test_pdf_editor.cpp — cheaper than shipping a binary PDF fixture.
+QString writeTinyPdf(const QString &path) {
+    QPdfWriter writer(path);
+    writer.setPageSize(QPageSize(QPageSize::A4));
+    QPainter painter(&writer);
+    painter.drawText(QRect(100, 100, 800, 200), Qt::AlignCenter, QStringLiteral("Keep me"));
+    painter.end();
+    return path;
+}
+
+// A fully-populated Annotation so a lossy JSON round-trip is caught: every
+// field carries a distinctive non-default value.
+Annotation makeRichAnnotation() {
+    Annotation a;
+    a.id = 7;
+    a.page = 2;
+    a.type = AnnotationType::Ink;
+    a.bounds = QRectF(1.5, 2.5, 30.0, 40.0);
+    a.points = {QPointF(1.0, 2.0), QPointF(3.5, 4.25), QPointF(9.0, 8.0)};
+    a.pressures = {0.1f, 0.5f, 0.9f};
+    a.quads = {QRectF(0.0, 0.0, 5.0, 6.0), QRectF(7.0, 8.0, 9.0, 10.0)};
+    a.text = QStringLiteral("hello é world");
+    a.imagePath = QStringLiteral("/tmp/sig.png");
+    a.style.stroke = QColor(10, 20, 30, 200);
+    a.style.fill = QColor(40, 50, 60, 128);
+    a.style.strokeWidth = 3.75;
+    a.style.fontPointSize = 18;
+    a.style.dash = DashStyle::Dotted;
+    a.style.fontFamily = QStringLiteral("Georgia");
+    a.style.fontWeight = 75;
+    a.style.zoomFactor = 4.5;
+    return a;
+}
+
+// Open a REAL one-page PDF from `path` into a new window and give it an
+// unsaved annotation so it is annotation-dirty (isDirty(), NOT structural).
+// Returns the raw doc pointer (owned by the window).
+PdfDocument *addAnnotationDirtyPdfWindow(Application *app, const QString &path,
+                                         MainWindow **outWin = nullptr) {
+    MainWindow *win = app->ensureFreshWindow();
+    auto doc = std::make_unique<PdfDocument>(path);
+    PdfDocument *ptr = doc.get();
+    Annotation a;
+    a.type = AnnotationType::Rectangle;
+    a.page = 0;
+    a.bounds = QRectF(10.0, 12.0, 40.0, 22.0);
+    a.style.stroke = QColor(200, 30, 30);
+    ptr->annotations()->add(a); // the changed hook marks the doc dirty
+    win->addDocument(std::move(doc));
+    if (outWin)
+        *outWin = win;
+    return ptr;
+}
+
 void closeAllWindows(Application *app) {
     const auto wins = app->windows();
     for (MainWindow *w : wins) {
@@ -130,7 +195,12 @@ class TestQuitAndKeepWindows : public QObject {
     void normalQuitSaveProceeds();
     void collectDirtyDocsIsCurrentFirstAndDeduped();
     void keepWindowsActionHasShortcutAndRoutes();
-    void osKeepsWindowsFlipsQuitBranches();
+    void osProbeDoesNotFlipExplicitQuitCommands();
+    void keepWindowsAnnotationDirtyPdfNeverPrompts();
+    void keepWindowsAnnotationDirtyPdfRestoresEditableAndDirty();
+    void structuralPdfFallsBackToPromptUnderKeep();
+    void annotationJsonRoundTripsAllFields();
+    void keepWindowsDirtyTitledImageRestoresDirtyWithPath();
 
   private:
     Application *m_app = nullptr;
@@ -437,30 +507,214 @@ void TestQuitAndKeepWindows::keepWindowsActionHasShortcutAndRoutes() {
     QVERIFY(m_app->sessionDraftStore().hasSession()); // KeepWindows path ran
 }
 
-void TestQuitAndKeepWindows::osKeepsWindowsFlipsQuitBranches() {
-    MainWindow *win = nullptr;
-    addUntitledImageWindow(m_app, makeKnownImage(), &win);
-    // If the OS keeps windows, a plain Quit takes the KEEP path (no prompt).
-    m_app->setQuitKeepsWindowsProbeForTesting([] { return true; });
-    // A Cancel response would abort a Normal prompt — so if this proceeds
-    // without abort, it proves the request was routed to the keep path.
-    win->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+void TestQuitAndKeepWindows::osProbeDoesNotFlipExplicitQuitCommands() {
+    // Decoupling regression (owner finding, 2026-07-19): the explicit ⌘Q /
+    // ⌥⌘Q commands are NOT flipped by the OS NSQuitAlwaysKeepsWindows probe.
+    // Whatever the probe reports, KeepWindows (⌥⌘Q) NEVER prompts and Normal
+    // (⌘Q) ALWAYS prompts for a dirty document. Assert BOTH probe states.
+    for (bool probe : {false, true}) {
+        // --- ⌥⌘Q (KeepWindows): never prompts, whatever the probe says. ---
+        MainWindow *keepWin = nullptr;
+        addUntitledImageWindow(m_app, makeKnownImage(), &keepWin);
+        m_app->setQuitKeepsWindowsProbeForTesting([probe] { return probe; });
+        // A Cancel response would abort IF a prompt were raised — it must not be.
+        keepWin->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+        int keepQuit = 0;
+        m_app->setPerformQuitForTesting([&] { ++keepQuit; });
+        QVERIFY(m_app->requestQuit(QuitMode::KeepWindows)); // no prompt → proceeds
+        QCOMPARE(keepQuit, 1);
+        QVERIFY(m_app->sessionDraftStore().hasSession());
+        m_app->sessionDraftStore().clear();
+        closeAllWindows(m_app);
 
-    int quitCount = 0;
-    m_app->setPerformQuitForTesting([&] { ++quitCount; });
-    QVERIFY(m_app->requestQuit(QuitMode::Normal)); // keep path, no prompt
-    QCOMPARE(quitCount, 1);
+        // --- ⌘Q (Normal): always prompts; Cancel aborts, whatever the probe. ---
+        MainWindow *normWin = nullptr;
+        addUntitledImageWindow(m_app, makeKnownImage(), &normWin);
+        m_app->setQuitKeepsWindowsProbeForTesting([probe] { return probe; });
+        normWin->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+        int normQuit = 0;
+        m_app->setPerformQuitForTesting([&] { ++normQuit; });
+        QVERIFY(!m_app->requestQuit(QuitMode::Normal)); // prompt Cancel aborts
+        QCOMPARE(normQuit, 0);
+        QVERIFY(!m_app->sessionDraftStore().hasSession()); // nothing written
+        closeAllWindows(m_app);
+    }
+}
+
+void TestQuitAndKeepWindows::keepWindowsAnnotationDirtyPdfNeverPrompts() {
+    // The owner's headline case: a PDF with UNSAVED ANNOTATIONS must ride ⌥⌘Q
+    // with NO prompt — regardless of the OS probe — and be captured for
+    // restore (not resolved away by a Save/Discard prompt).
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/annotated.pdf";
+    writeTinyPdf(path);
+
+    for (bool probe : {false, true}) {
+        MainWindow *win = nullptr;
+        PdfDocument *pdf = addAnnotationDirtyPdfWindow(m_app, path, &win);
+        QVERIFY(pdf->isDirty());               // annotation edit made it dirty
+        QVERIFY(!pdf->hasStructuralEdits());    // …and it is annotation-only
+        // A Cancel would abort IF a prompt were raised — it must not be.
+        win->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+        m_app->setQuitKeepsWindowsProbeForTesting([probe] { return probe; });
+
+        int quitCount = 0;
+        m_app->setPerformQuitForTesting([&] { ++quitCount; });
+        QVERIFY(m_app->requestQuit(QuitMode::KeepWindows)); // no prompt → proceeds
+        QCOMPARE(quitCount, 1);
+        QVERIFY(m_app->sessionDraftStore().hasSession());   // captured, not prompted
+        m_app->sessionDraftStore().clear();
+        closeAllWindows(m_app);
+    }
+}
+
+void TestQuitAndKeepWindows::keepWindowsAnnotationDirtyPdfRestoresEditableAndDirty() {
+    // Round-trip: an annotation-dirty PDF kept via ⌥⌘Q returns from the store
+    // reopened from its ORIGINAL path, with the unsaved annotation re-applied
+    // as an editable object and the document STILL DIRTY (not saved/discarded).
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/annotated.pdf";
+    writeTinyPdf(path);
+
+    PdfDocument *original = addAnnotationDirtyPdfWindow(m_app, path);
+    const int originalCount = original->annotations()->count();
+    QVERIFY(originalCount >= 1);
+
+    m_app->setPerformQuitForTesting([] {});
+    QVERIFY(m_app->requestQuit(QuitMode::KeepWindows));
     QVERIFY(m_app->sessionDraftStore().hasSession());
 
-    // And the Option alternate (KeepWindows request) offers the COMPLEMENT
-    // under the OS setting: prompt-and-close-clean, so Cancel aborts it.
-    m_app->sessionDraftStore().clear();
+    QVERIFY(m_app->restoreKeptWindows());
+
+    PdfDocument *restored = nullptr;
+    for (MainWindow *w : m_app->windows()) {
+        if (!w)
+            continue;
+        for (int i = 0; i < w->documentCount(); ++i) {
+            IDocument *d = nullptr;
+            if (w->documentAt(i, &d) == 1 && d && d != original)
+                if (auto *p = dynamic_cast<PdfDocument *>(d))
+                    restored = p;
+        }
+    }
+    QVERIFY(restored);
+    QCOMPARE(restored->filePath(), path);                 // reopened from disk
+    QVERIFY(restored->isDirty());                          // returned STILL DIRTY
+    QCOMPARE(restored->annotations()->count(), originalCount); // annotation kept
+    // Editable: the restored annotation carries its geometry (not flattened
+    // into page content), so the store holds it as a live object.
+    const std::vector<Annotation> &anns = restored->annotations()->annotations();
+    QVERIFY(!anns.empty());
+    QCOMPARE(anns.front().type, AnnotationType::Rectangle);
+    QCOMPARE(anns.front().bounds, QRectF(10.0, 12.0, 40.0, 22.0));
+    // The store is a one-shot: consumed after a successful restore.
+    QVERIFY(!m_app->sessionDraftStore().hasSession());
+}
+
+void TestQuitAndKeepWindows::structuralPdfFallsBackToPromptUnderKeep() {
+    // Flagged residual (Part 3): a PDF with STRUCTURAL edits (rotate/delete/
+    // crop) cannot be reconstructed from the annotation JSON, and this pass
+    // does not implement a full-document draft blob. To honour the ADR-0004
+    // no-silent-loss floor, such a doc falls back to the per-doc prompt even
+    // under ⌥⌘Q. Cancel there aborts — nothing is silently lost or written.
+    // See docs/backlog/2026-07-19-structural-pdf-keep-fidelity.md.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/structural.pdf";
+    writeTinyPdf(path);
+
+    MainWindow *win = m_app->ensureFreshWindow();
+    auto doc = std::make_unique<PdfDocument>(path);
+    PdfDocument *pdf = doc.get();
+    win->addDocument(std::move(doc));
+    pdf->rotatePage(0, 90); // a structural (qpdf page-graph) edit
+    QVERIFY(pdf->isDirty());
+    QVERIFY(pdf->hasStructuralEdits());
+
     win->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
-    int quitCount2 = 0;
-    m_app->setPerformQuitForTesting([&] { ++quitCount2; });
-    QVERIFY(!m_app->requestQuit(QuitMode::KeepWindows)); // aborted (prompt)
-    QCOMPARE(quitCount2, 0);
+    int quitCount = 0;
+    m_app->setPerformQuitForTesting([&] { ++quitCount; });
+
+    const bool proceeded = m_app->requestQuit(QuitMode::KeepWindows);
+
+    QVERIFY(!proceeded);                               // prompt Cancel aborted
+    QCOMPARE(quitCount, 0);                            // did NOT silently quit
     QVERIFY(!m_app->sessionDraftStore().hasSession()); // nothing written
+    QCOMPARE(win->documentCount(), 1);                 // doc kept
+}
+
+void TestQuitAndKeepWindows::annotationJsonRoundTripsAllFields() {
+    // The serializer underpinning PDF annotation persistence must preserve
+    // EVERY field so a restored annotation is byte-faithful and editable.
+    const Annotation a = makeRichAnnotation();
+    const Annotation b = annotationFromJson(annotationToJson(a));
+
+    QCOMPARE(b.id, a.id);
+    QCOMPARE(b.page, a.page);
+    QCOMPARE(b.type, a.type);
+    QCOMPARE(b.bounds, a.bounds);
+    QCOMPARE(b.points, a.points);
+    QCOMPARE(b.pressures, a.pressures);
+    QCOMPARE(b.quads, a.quads);
+    QCOMPARE(b.text, a.text);
+    QCOMPARE(b.imagePath, a.imagePath);
+    QCOMPARE(b.style.stroke, a.style.stroke);
+    QCOMPARE(b.style.fill, a.style.fill);
+    QCOMPARE(b.style.strokeWidth, a.style.strokeWidth);
+    QCOMPARE(b.style.fontPointSize, a.style.fontPointSize);
+    QCOMPARE(b.style.dash, a.style.dash);
+    QCOMPARE(b.style.fontFamily, a.style.fontFamily);
+    QCOMPARE(b.style.fontWeight, a.style.fontWeight);
+    QCOMPARE(b.style.zoomFactor, a.style.zoomFactor);
+}
+
+void TestQuitAndKeepWindows::keepWindowsDirtyTitledImageRestoresDirtyWithPath() {
+    // Part 4: a dirty TITLED image kept via ⌥⌘Q returns with its ORIGINAL
+    // path preserved and the document still dirty (its unsaved raster edits
+    // survive byte-for-byte). Complements the untitled-draft round-trip.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/titled.png";
+    const QImage known = makeKnownImage(21, 13, 4);
+    QVERIFY(known.save(path, "PNG"));
+
+    MainWindow *win = m_app->ensureFreshWindow();
+    auto doc = std::make_unique<ImageDocument>(path);
+    doc->setImageForTest(known);
+    ImageDocument *original = doc.get();
+    win->addDocument(std::move(doc));
+    // A real (titled) raster edit makes the doc dirty without clearing its
+    // path. Capture the post-edit pixels as the expected round-trip result.
+    original->flipHorizontal();
+    const QImage expected = original->image();
+    QVERIFY(!original->isUntitled());
+    QVERIFY(original->isDirty());
+
+    m_app->setPerformQuitForTesting([] {});
+    QVERIFY(m_app->requestQuit(QuitMode::KeepWindows));
+    QVERIFY(m_app->sessionDraftStore().hasSession());
+
+    QVERIFY(m_app->restoreKeptWindows());
+
+    ImageDocument *restored = nullptr;
+    for (MainWindow *w : m_app->windows()) {
+        if (!w)
+            continue;
+        for (int i = 0; i < w->documentCount(); ++i) {
+            IDocument *d = nullptr;
+            if (w->documentAt(i, &d) == 1 && d && d != original)
+                if (auto *img = dynamic_cast<ImageDocument *>(d))
+                    restored = img;
+        }
+    }
+    QVERIFY(restored);
+    QVERIFY(!restored->isUntitled());
+    QCOMPARE(restored->filePath(), path);  // original path preserved
+    QVERIFY(restored->isDirty());          // returned still dirty
+    QCOMPARE(restored->image().convertToFormat(QImage::Format_ARGB32),
+             expected.convertToFormat(QImage::Format_ARGB32));
 }
 
 // Custom main: sandbox HOME/XDG before Application is constructed so the

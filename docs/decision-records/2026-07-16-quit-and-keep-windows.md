@@ -289,7 +289,11 @@ platform-integration arbiter's recommendation:
   shim), so non-macOS builds link the stub and macOS gets the real swap. Pure-Qt
   (D2-B) is rejected: it yields the two-ambiguous-rows / dead-`⌥⌘Q` failures.
 - **D3 → Option A (honour the OS `NSQuitAlwaysKeepsWindows` default; the menu
-  offers the complement).** Driven by the power-migrator cross-app-consistency
+  offers the complement).** **SUPERSEDED for the explicit menu commands by the
+  Command-decoupling refinement (2026-07-19) below** — ⌘Q always prompts and
+  ⌥⌘Q always keeps-no-prompt, and the OS setting no longer flips them (it
+  governs only macOS's own auto-restoration). The original rationale is kept
+  for the record. Driven by the power-migrator cross-app-consistency
   objection. The system setting decides the **default** branch of `⌘Q`
   (keep-windows when `NSQuitAlwaysKeepsWindows` is set / "Close windows…"
   unchecked; prompt-and-close-clean otherwise), and the Option-swap always offers
@@ -350,6 +354,48 @@ platform-integration arbiter's recommendation:
   ADR-0004 no-silent-loss floor for the ⌥⌘Q path. The draft-store save is also
   atomic (a failed new save never wipes a prior valid session), and a failed
   save falls back to the Normal prompt rather than silently quitting.
+
+  **Command-decoupling + PDF-annotation refinement (2026-07-19, owner
+  real-Mac finding).** Testing on a real Mac with "Close windows when
+  quitting" **off** (`NSQuitAlwaysKeepsWindows` true) showed BOTH ⌘Q and ⌥⌘Q
+  prompting for an unsaved document, and a dirty PDF prompting on both — two
+  regressions against the owner-decided shape. Two corrections, which
+  **supersede the D3 verdict's "the OS setting decides which branch ⌘Q
+  performs / the Option-swap offers the complement" wording** for the explicit
+  menu commands:
+
+  1. **The explicit ⌘Q / ⌥⌘Q commands are NOT swapped by
+     `NSQuitAlwaysKeepsWindows`.** That OS setting governs only macOS's own
+     automatic window auto-restoration; it does not change what the two
+     Trailer commands do. The mapping is now fixed and honest: **⌘Q always
+     prompts** (the ADR-0004 per-doc Save/Discard/Cancel flow) and **⌥⌘Q
+     always keeps and NEVER prompts**. `Application::requestQuit` no longer
+     consults the OS probe to flip the mode (the probe seam is retained for
+     the native chrome and the decoupling regression test only). This removes
+     the "⌥⌘Q prompted" regression: with the OS setting on, the old D3
+     mode-swap turned ⌥⌘Q into the prompt branch — exactly the failure the
+     owner hit.
+  2. **PDFs with unsaved ANNOTATIONS are kept without a prompt.** Previously
+     only image documents were losslessly draftable, so a dirty PDF fell back
+     to the ⌘Q-style prompt under both commands. Now an annotation-only-dirty
+     PDF is captured as its on-disk path plus a JSON payload of the unsaved
+     annotations (`SessionDocDescriptor::Kind::AnnotatedPath`) and, on
+     restore, reopens from disk with the annotations re-applied as
+     **individually editable** objects and the document **still dirty**
+     (`PdfDocument::restoreAnnotationsFromDraft`) — never flattened into page
+     content. Because Trailer is primarily an annotation tool, editability of
+     restored annotations is a hard requirement.
+
+  **Residual (flagged, no silent loss).** A PDF whose dirtiness includes
+  **structural** page-graph edits (rotate / delete / move / insert / crop —
+  `PdfDocument::hasStructuralEdits()`) cannot be reconstructed from the
+  annotation JSON, and this pass does not yet write a full-document draft
+  blob for it. To keep the ADR-0004 no-silent-loss floor, exactly those PDFs
+  still fall back to the per-doc prompt under ⌥⌘Q. This is the one remaining
+  case where ⌥⌘Q prompts; it is tracked in
+  `docs/backlog/2026-07-19-structural-pdf-keep-fidelity.md` for a full-blob
+  keep. The common cases the owner cares about — unsaved/untitled images and
+  annotation-dirty PDFs — keep with no prompt.
 
 Which objections drove it: the content-loss objection (office/occasional) decides
 D1 *against* the superficially "more native" Option B; the menu-ambiguity

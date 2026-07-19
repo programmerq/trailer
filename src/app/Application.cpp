@@ -366,19 +366,17 @@ void Application::onWindowDestroyed(QObject *window) {
 }
 
 bool Application::requestQuit(QuitMode mode) {
-    // Decision record D3: honour the OS "keep windows when quitting"
-    // default. When the OS keeps windows, a plain Quit takes the keep path
-    // (nothing to prompt) and the Option alternate offers the complement
-    // (prompt-and-close-clean); when it does not, the mapping is the plain
-    // ⌘Q → prompt, ⌥⌘Q → keep. The default probe returns false off macOS
-    // and when the setting is unset, so the straightforward mapping holds.
-    const bool osKeeps = m_quitKeepsWindowsProbe && m_quitKeepsWindowsProbe();
-    QuitMode effective = mode;
-    if (osKeeps) {
-        effective = (mode == QuitMode::Normal) ? QuitMode::KeepWindows : QuitMode::Normal;
-    }
-
-    if (effective == QuitMode::KeepWindows) {
+    // Decision-record refinement (2026-07-19): the EXPLICIT menu commands are
+    // decoupled from the OS `NSQuitAlwaysKeepsWindows` setting. That setting
+    // governs only macOS's own automatic window auto-restoration; it does NOT
+    // flip what ⌘Q / ⌥⌘Q do here. So the mapping is fixed and honest:
+    //   QuitMode::KeepWindows (⌥⌘Q) — ALWAYS keeps, NEVER prompts.
+    //   QuitMode::Normal      (⌘Q)  — ALWAYS runs the per-doc Save/Discard/
+    //                                 Cancel prompt.
+    // (The m_quitKeepsWindowsProbe seam is retained — it still feeds the
+    // native macOS chrome and the decoupling regression test — but it no
+    // longer changes which branch an explicit command takes.)
+    if (mode == QuitMode::KeepWindows) {
         // KeepWindows keeps what it can draft and prompts for anything dirty
         // it cannot (ADR-0004 no-silent-loss floor). An unsaved/untitled
         // document that is NOT losslessly draftable — a PDF with unsaved
@@ -428,12 +426,28 @@ bool Application::requestQuit(QuitMode mode) {
 }
 
 bool Application::canDraftForKeep(IDocument *doc) const {
-    // Losslessly draftable == an image document with a non-null raster we
-    // can PNG-encode byte-for-byte. Everything else (PDF, null-image doc)
-    // is not, and a dirty/untitled one of those must be prompted for rather
-    // than stored as a clean path reference (silent data loss).
-    auto *img = dynamic_cast<ImageDocument *>(doc);
-    return img && !img->image().isNull();
+    // "Draftable" == the kept-windows capture can persist this document's
+    // unsaved state with NO user interaction, so ⌥⌘Q keeps it silently
+    // instead of falling back to the ADR-0004 per-doc prompt.
+    //
+    //  * Image doc with a non-null raster — captured byte-for-byte as PNG.
+    //  * PDF whose dirtiness is ANNOTATION-ONLY and which has an on-disk
+    //    path — captured as its original path plus a JSON payload of the
+    //    unsaved annotations, re-applied editable + dirty on restore
+    //    (restoreAnnotationsFromDraft).
+    //
+    // A structurally-edited PDF (rotate/delete/crop — hasStructuralEdits())
+    // is deliberately NOT draftable: the annotation JSON cannot reconstruct
+    // qpdf page-graph edits, and this pass does not implement a full-document
+    // draft blob for it. To honour the ADR-0004 no-silent-loss floor those
+    // fall back to the per-doc prompt (a narrow, flagged residual — see
+    // docs/backlog/2026-07-19-structural-pdf-keep-fidelity.md). A pathless
+    // PDF likewise cannot be reopened from disk, so it is not draftable.
+    if (auto *img = dynamic_cast<ImageDocument *>(doc))
+        return !img->image().isNull();
+    if (auto *pdf = dynamic_cast<PdfDocument *>(doc))
+        return pdf->isDirty() && !pdf->hasStructuralEdits() && !pdf->filePath().isEmpty();
+    return false;
 }
 
 bool Application::promptDirtyDocsForQuit() {
@@ -461,16 +475,29 @@ QList<SessionWindowDescriptor> Application::captureSessionForKeep() const {
                 continue;
 
             auto *img = dynamic_cast<ImageDocument *>(doc);
+            auto *pdf = dynamic_cast<PdfDocument *>(doc);
             const bool dirtyOrUntitled = doc->isUntitled() || doc->isDirty();
-            // Only draft a dirty/untitled doc we can capture losslessly.
+            // Only draft a dirty/untitled doc we can capture without a prompt.
             // A dirty non-draftable doc has already been resolved (saved or
             // discarded) by requestQuit's prompt fallback, so by here it is
             // either clean-on-disk (→ Path) or was discarded (its edits are
-            // meant to be gone). We never store a still-dirty non-image as a
-            // clean Path silently — that path is unreachable post-prompt.
-            const bool needsDraft = dirtyOrUntitled && canDraftForKeep(doc);
+            // meant to be gone). We never store a still-dirty doc we cannot
+            // capture as a clean Path silently — that path is unreachable
+            // post-prompt.
+            const bool needsImageDraft = dirtyOrUntitled && img && canDraftForKeep(doc);
+            // A PDF whose dirtiness is annotation-only is captured as its
+            // on-disk path plus the unsaved annotations (re-applied editable
+            // + dirty on restore). Structural-edited PDFs failed
+            // canDraftForKeep and were resolved by the prompt fallback above.
+            const bool needsPdfAnnotationDraft =
+                dirtyOrUntitled && pdf && !img && canDraftForKeep(doc);
             SessionDocDescriptor dd;
-            if (needsDraft) {
+            if (needsPdfAnnotationDraft) {
+                dd.kind = SessionDocDescriptor::Kind::AnnotatedPath;
+                dd.path = doc->filePath();
+                const std::vector<Annotation> &live = pdf->annotations()->annotations();
+                dd.annotations = QList<Annotation>(live.begin(), live.end());
+            } else if (needsImageDraft) {
                 // Persist the raster's exact bytes so an unsaved/untitled
                 // window returns byte-for-byte. PNG is lossless, so the
                 // round-trip preserves every pixel.
@@ -545,6 +572,17 @@ bool Application::restoreKeptWindows() {
                 imgDoc->restoreFromDraft(img, dd.originalPath, dd.untitled,
                                          /*dirty=*/!dd.untitled, dd.captureOrigin);
                 doc = std::move(imgDoc);
+            } else if (dd.kind == SessionDocDescriptor::Kind::AnnotatedPath) {
+                // A PDF reopened from disk with its unsaved annotations
+                // re-applied as editable objects and marked dirty — so it
+                // returns exactly as it was at ⌥⌘Q: same file, same edits,
+                // still unsaved. If the file is gone we drop just this doc.
+                if (dd.path.isEmpty() || !QFileInfo::exists(dd.path))
+                    continue;
+                doc = m_registry.open(dd.path);
+                if (auto *pdf = dynamic_cast<PdfDocument *>(doc.get()))
+                    pdf->restoreAnnotationsFromDraft(dd.annotations, /*dirty=*/true);
+                m_recent.add(dd.path);
             } else {
                 if (dd.path.isEmpty() || !QFileInfo::exists(dd.path))
                     continue;

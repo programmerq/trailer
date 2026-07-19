@@ -1,6 +1,7 @@
 #include "SessionDraftStore.h"
 
 #include "AppPaths.h"
+#include "annotation/AnnotationJson.h"
 
 #include <QDir>
 #include <QFile>
@@ -92,6 +93,14 @@ bool SessionDraftStore::save(const QList<SessionWindowDescriptor> &windows) cons
                 docObj[QStringLiteral("originalPath")] = doc.originalPath;
                 docObj[QStringLiteral("dpr")] = doc.devicePixelRatio;
                 docObj[QStringLiteral("captureOrigin")] = doc.captureOrigin;
+            } else if (doc.kind == SessionDocDescriptor::Kind::AnnotatedPath) {
+                // A PDF (or other non-image) reopened from disk with its
+                // unsaved annotations re-applied editable. The annotations
+                // live inline in the manifest as JSON — small, structured,
+                // and human-inspectable, unlike an opaque blob.
+                docObj[QStringLiteral("kind")] = QStringLiteral("annotated-path");
+                docObj[QStringLiteral("path")] = doc.path;
+                docObj[QStringLiteral("annotations")] = annotationsToJsonArray(doc.annotations);
             } else {
                 docObj[QStringLiteral("kind")] = QStringLiteral("path");
                 docObj[QStringLiteral("path")] = doc.path;
@@ -189,6 +198,11 @@ QList<SessionWindowDescriptor> SessionDraftStore::restore() const {
                     continue; // a missing blob drops just that doc, not the session
                 dd.bytes = blob.readAll();
                 blob.close();
+            } else if (kind == QLatin1String("annotated-path")) {
+                dd.kind = SessionDocDescriptor::Kind::AnnotatedPath;
+                dd.path = docObj.value(QStringLiteral("path")).toString();
+                dd.annotations =
+                    annotationsFromJsonArray(docObj.value(QStringLiteral("annotations")).toArray());
             } else {
                 dd.kind = SessionDocDescriptor::Kind::Path;
                 dd.path = docObj.value(QStringLiteral("path")).toString();

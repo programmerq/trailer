@@ -359,6 +359,29 @@ void PdfDocument::commitAnnotations(std::vector<Annotation> loaded) {
     m_suppressUndoLog = false;
 }
 
+void PdfDocument::restoreAnnotationsFromDraft(const QList<Annotation> &annotations, bool dirty) {
+    if (!m_valid)
+        return;
+    ensureAnnotationHooksWired();
+    // The draft carried the COMPLETE in-memory annotation set (on-disk +
+    // unsaved) captured at ⌥⌘Q. Mark the sweep as already satisfied so a
+    // later annotations()/view-attach does NOT run the background sweep and
+    // re-append the on-disk subset on top (which would duplicate every
+    // saved annotation). Both flags are the "already loaded" guards
+    // startBackgroundLoad()/ensureAnnotationsLoadedSync() consult.
+    m_annotationsLoaded = true;
+    m_backgroundLoadStarted = true;
+    // Batch-populate under the suppress guard so the populate itself neither
+    // trips the dirty flag nor logs an undo frame (same contract as the
+    // deferred load's commit). We then set the modified flag explicitly so
+    // the document returns exactly as dirty as it was at quit.
+    std::vector<Annotation> items(annotations.begin(), annotations.end());
+    m_suppressUndoLog = true;
+    m_annotations.addBatch(std::move(items));
+    m_suppressUndoLog = false;
+    m_annotationsModified = dirty;
+}
+
 void PdfDocument::ensureAnnotationsLoadedSync() {
     if (m_annotationsLoaded || !m_valid)
         return;

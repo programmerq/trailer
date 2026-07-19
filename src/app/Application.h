@@ -115,12 +115,14 @@ class Application : public QApplication {
     // path-list session is the fallback for a plain quit.
     bool restorePreviousSession();
 
-    // Route a quit request through the requested mode (⌘Q → Normal,
-    // ⌥⌘Q → KeepWindows), honouring the OS NSQuitAlwaysKeepsWindows
-    // default so the plain-Quit branch follows the system setting and the
-    // Option alternate offers its complement (decision record D3). Returns
-    // true if the quit proceeded (performQuit was invoked), false if it was
-    // aborted (a Normal prompt was Cancelled) — nothing is written on abort.
+    // Route a quit request through the requested mode. The explicit menu
+    // commands map fixedly: ⌘Q → Normal (ALWAYS runs the per-doc prompt),
+    // ⌥⌘Q → KeepWindows (ALWAYS keeps, NEVER prompts). The OS
+    // NSQuitAlwaysKeepsWindows setting no longer flips this — it governs
+    // only macOS's own window auto-restoration, not what these commands do
+    // (decision-record refinement 2026-07-19). Returns true if the quit
+    // proceeded (performQuit was invoked), false if it was aborted (a Normal
+    // prompt was Cancelled) — nothing is written on abort.
     bool requestQuit(QuitMode mode);
 
     // Recreate the windows/documents held in the kept-windows draft store,

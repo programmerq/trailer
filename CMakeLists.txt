@@ -87,6 +87,8 @@ FetchContent_MakeAvailable(tomlplusplus)
 
 set(TRAILER_SOURCES
     src/annotation/Annotation.h
+    src/annotation/AnnotationJson.cpp
+    src/annotation/AnnotationJson.h
     src/annotation/AnnotationStore.cpp
     src/annotation/AnnotationStore.h
     src/app/Application.cpp
