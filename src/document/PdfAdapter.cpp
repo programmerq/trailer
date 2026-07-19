@@ -45,7 +45,11 @@
 namespace trailer {
 
 namespace {
-constexpr double kZoomStep = 1.1;
+// ~25% per zoom-in / zoom-out tap. Kept in sync with ImageAdapter's
+// kZoomStep so image and PDF zooming feel identical; raised from 1.1
+// (10%) as the finer step felt too sluggish. See ImageAdapter.cpp for
+// the fuller rationale.
+constexpr double kZoomStep = 1.25;
 constexpr double kZoomMin = 0.10;
 constexpr double kZoomMax = 16.0;
 // DPI at which pages are rasterised for OCR (renderPageForOcr). A 144-DPI

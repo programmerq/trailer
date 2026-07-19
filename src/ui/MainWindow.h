@@ -278,6 +278,14 @@ class MainWindow : public QMainWindow {
     // self-clears once the page gains text / OCR results / is dismissed.
     void updateLargeDocOcrHint();
     void updateUndoRedoActions(IDocument *doc);
+    // Refresh the status-bar zoom-% readout from the current document's
+    // zoomFactor(). Pushed from the zoom call sites and the doc-changed
+    // path because IDocument is not a QObject, so there's no
+    // zoomFactorChanged signal to subscribe to. Known limitation:
+    // resize-driven refits change the scale inside the document without
+    // notifying us, so the number won't live-tick during a window drag in
+    // a fit mode until the next explicit zoom action.
+    void updateZoomIndicator();
     int selectedPageForEdit(IDocument *doc) const;
     // Size the window to fit the first document opened. Clamped to a
     // 1100×750 floor and a 90%-of-screen ceiling so very small docs
@@ -441,6 +449,12 @@ class MainWindow : public QMainWindow {
     // no modal — this is the canonical "background ML work is
     // happening" affordance for the user.
     QLabel *m_mlIndicator = nullptr;
+
+    // Permanent status-bar readout of the current zoom level (e.g.
+    // "120%"). Hidden when the active document doesn't support zoom.
+    // Updated via updateZoomIndicator() from the zoom actions and the
+    // doc-changed path.
+    QLabel *m_zoomIndicator = nullptr;
 
     // ADR 0002 status-bar affordances. m_mlProgress is the richer
     // progress+cancel widget for foreground ML ops (OCR batches;
