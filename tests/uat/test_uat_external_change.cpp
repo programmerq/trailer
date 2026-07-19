@@ -74,6 +74,24 @@ class TestUatExternalChange : public QObject {
     }
 
   private slots:
+    // The default open mode is NewWindow, so every slot's openFiles() spawns a
+    // fresh frame. Without closing the previous slot's window first,
+    // currentMainWindow() (which returns the oldest MainWindow in
+    // topLevelWidgets) resolves to a stale window whose current document and
+    // external-change monitor belong to an earlier slot — the same isolation
+    // that test_uat_recognize_text's init() enforces. Our slots leave the
+    // document dirty (a rotate makes the conflict realistic), so force Discard
+    // on close to avoid the unsaved-changes modal blocking headlessly.
+    void init() {
+        for (auto *w : QApplication::topLevelWidgets()) {
+            if (auto *mw = qobject_cast<MainWindow *>(w)) {
+                mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
+                mw->close();
+            }
+        }
+        QApplication::processEvents();
+    }
+
     // UAT-EXT-001: dirty doc + external change -> non-modal conflict banner
     // with Reload + Keep mine, and a DISABLED Compare placeholder (G3). Emits
     // the G2 before/after evidence pair.
