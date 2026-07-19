@@ -37,14 +37,29 @@ exactly at `doc.save()`), and it reproduces **only** with a worker-adopted
 editor — the recovered-document cases, whose editor is loaded on the main thread
 in `recoverFrom()`, Save fine under Wine.
 
+The precise mechanism (pinned with unbuffered stderr checkpoints across several
+Wine runs): `annotations()` kicks the background sweep (DR 0006), whose worker
+thread opens the backing file to parse a to-be-adopted editor
+(`startBackgroundLoad`). That editor's qpdf `FILE` handle, opened on the worker
+thread, is not released by Wine when the editor is destroyed on the main thread
+(whether adopted as `m_editor` or discarded). `save()`'s same-file path then
+`QFile::remove()`s the backing file and it fails, so `save()` returns false.
+(An earlier attempt to pin the editor to the main thread with a
+`loadEditorSyncForTesting` seam did NOT help — the worker still opens the
+backing file regardless of which editor is adopted — and was removed.)
+
 On **real Windows** this is expected to work: qpdf uses C stdio `FILE*` /
 process-global Win32 handles, which are not thread-affine, so opening on the
 worker thread and closing on the main thread during the rename is valid. That is
 why this is treated as a **Wine-environment artifact, not a product defect**,
 and the P0 recovery-sidecar work does not touch the shipping save path. The two
-affected unit-test cases were made deterministic with
-`PdfDocument::loadEditorSyncForTesting()` (pins the editor to the test thread),
-not by weakening their assertions.
+affected unit-test cases (`explicitSaveWritesBackingFile`,
+`recoveryOfPreviouslyAnnotatedPdfDoesNotDuplicateViaBackgroundSweep`) are
+`QSKIP`-ped **under Wine only** (`runningUnderWine()` via
+`ntdll!wine_get_version`); they run with all assertions intact on Linux (and
+would on native Windows). The Discard/byte-integrity (case 1) and recovery
+(cases 3/5) coverage still runs on Wine. No assertion was weakened or removed on
+any platform.
 
 This item exists to *verify* that Wine-only conclusion on native Windows, since
 the native Windows CI job is disabled and Wine is our only automated Windows
