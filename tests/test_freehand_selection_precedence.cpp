@@ -46,6 +46,7 @@ class TestFreehandSelectionPrecedence : public QObject {
   private slots:
     void inkPressOnExistingAnnotationStartsNewStroke();
     void selectToolStillSelectsOnClick();
+    void boundedToolStillSelectsOnClick();
 };
 
 // With Ink active, pressing INSIDE an existing Ink annotation's bounds
@@ -127,6 +128,42 @@ void TestFreehandSelectionPrecedence::selectToolStillSelectsOnClick() {
 
     QCOMPARE(overlay.selectedAnnotationId(), id);
     // A pure click (no drag) must not create anything.
+    QCOMPARE(store.count(), 1);
+}
+
+// Guard against an over-broad carve-out. The Bug 3 fix skips the
+// select/move hijack ONLY for the free-form Ink tool; the BOUNDED shape
+// tools (Rectangle/Ellipse/Line/Arrow) must still select an existing
+// annotation on click, per UAT-ANN-128. If a future change widened the
+// carve-out (e.g. `m_tool != Select` or excluding Arrow), this fails.
+void TestFreehandSelectionPrecedence::boundedToolStillSelectsOnClick() {
+    QWidget host;
+    host.resize(800, 600);
+    AnnotationStore store;
+    AnnotationOverlay overlay(&host);
+    overlay.setGeometry(host.rect());
+    overlay.setStore(&store);
+    overlay.setDocumentToView([](QPointF p, int) { return p; });
+    overlay.setViewToDocument([](QPointF v, int) { return v; });
+    overlay.setPageAtViewPoint([](QPointF) { return 0; });
+
+    // Seed a committed Rectangle spanning (100,100)-(200,200).
+    Annotation rect;
+    rect.type = AnnotationType::Rectangle;
+    rect.page = 0;
+    rect.bounds = QRectF(100, 100, 100, 100);
+    store.add(rect);
+    const int id = store.annotations().back().id;
+
+    // Rectangle tool active, click inside the existing rectangle.
+    overlay.setActiveTool(AnnotationTool::Rectangle);
+    QCOMPARE(overlay.selectedAnnotationId(), 0);
+    sendMouse(&overlay, QEvent::MouseButtonPress, QPointF(140, 140), Qt::LeftButton);
+    sendMouse(&overlay, QEvent::MouseButtonRelease, QPointF(140, 140), Qt::LeftButton);
+    QApplication::processEvents();
+
+    // The existing rectangle is selected; no new overlapping shape.
+    QCOMPARE(overlay.selectedAnnotationId(), id);
     QCOMPARE(store.count(), 1);
 }
 

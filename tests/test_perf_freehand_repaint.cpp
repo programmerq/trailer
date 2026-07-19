@@ -11,10 +11,12 @@
 // The fix clips the mid-drag update() to the newly-added stroke segment.
 // This test asserts the DETERMINISTIC structural proxy the fix targets:
 // the dirty-region area delivered to paintEvent per mouse-move stays
-// under a fixed budget that is a small fraction of the widget area, and
-// crucially does NOT grow as the stroke gets longer. Before the fix each
-// mid-drag paint covered the full 900x700 widget (630000 px^2); after,
-// each covers only a small segment neighbourhood.
+// under a FIXED budget that is a small fraction of the widget area, over
+// a long stroke. Because the budget is a per-move constant independent of
+// how many samples precede it, a repaint whose cost scaled with stroke
+// length (as the pre-fix full-widget repaint did) would blow past it.
+// Before the fix each mid-drag paint covered the full 900x700 widget
+// (630000 px^2); after, each covers only a small segment neighbourhood.
 //
 // Structural + deterministic: it counts painted pixel AREA (from the
 // QPaintEvent region), never wall-clock time. Runs offscreen.

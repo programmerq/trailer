@@ -1,68 +1,54 @@
 // Bug 1 regression guard: a committed freehand (Ink) stroke must stay
-// glued to page content at every zoom.
+// glued to page content across a zoom change.
 //
-// The overlay captures Ink samples in DOCUMENT space during the drag,
-// and renders them back through the live doc->view transform on every
-// paint. If any sample were captured with a constant VIEW-space offset
-// baked in (the "coalesced sub-point is not re-localized to the child
-// overlay" hypothesis), that offset would survive as a doc-space error
-// that RESCALES with the zoom ratio when re-rendered — i.e. the stroke
-// body would translate away from its anchor as you zoom, growing with
-// the zoom ratio.
+// This drives the REAL ImageDocument adapter end-to-end — not a
+// re-derived transform. The overlay's doc<->view callbacks are the ones
+// ImageAdapter wires to ImageDocument::mapDocToView / mapViewToDoc, so
+// the assertions exercise the actual capture path, the actual origin /
+// scale / dpr maths, and the actual live transform after a zoom change.
+// (The full PDF path needs a live QPdfView with scrollbars, which is not
+// cleanly drivable offscreen; the Image adapter IS drivable and shares
+// the same overlay capture code — mousePressEvent / mouseMoveEvent — so
+// it is the honest surface to pin this on. A prior version of this file
+// re-implemented the transform with a local lambda and asserted a
+// tautology that passed for arbitrary stored points; that has been
+// removed.)
 //
-// This test drives a real AnnotationOverlay with synthetic mouse events
-// through a zoom-dependent, dpr-parametrised transform that mirrors the
-// production PDF (centering origin) and Image (scale/dpr) mappings, then
-// asserts:
-//   (a) at the CAPTURE zoom, every stored sample maps back to the exact
-//       view point it was drawn at (capture is offset-free); and
-//   (b) at a DIFFERENT display zoom, the whole stroke — anchor AND body —
-//       tracks page content rigidly: the vector from the anchor to every
-//       other sample scales by exactly the zoom ratio, with no residual
-//       translation.
+// The reported bug: a committed stroke "translates across the page" as
+// you zoom. If the overlay baked a constant VIEW-space offset into the
+// captured samples, the stored DOCUMENT-space points would be wrong, and
+// re-rendering them through the live transform at a different zoom would
+// slide the stroke off the page feature it was drawn over.
 //
 // Runs offscreen (QT_QPA_PLATFORM=offscreen), hermetic, deterministic.
 
+#include "annotation/Annotation.h"
 #include "annotation/AnnotationStore.h"
+#include "document/IDocument.h"
+#include "document/ImageAdapter.h"
 #include "ui/AnnotationOverlay.h"
 
+#include <QImage>
 #include <QMouseEvent>
 #include <QWidget>
 #include <QtTest/QtTest>
 
+#include <cmath>
 #include <vector>
 
 using namespace trailer;
 
 namespace {
 
-// A zoom + dpr dependent affine mapping shared by the overlay's
-// doc<->view callbacks. `zoom` and `dpr` are mutable so the test can
-// re-point the SAME transform at a new display zoom after capture —
-// exactly what the production adapters do on a zoom step.
-struct Mapping {
-    double zoom = 1.0;
-    double dpr = 1.0;
-    // A centering origin that depends on zoom, mirroring the PDF
-    // single-page adapter's extraX/extraY term. This makes the test
-    // sensitive to any anchor-vs-body origin inconsistency: a baked-in
-    // view offset would fail to track this moving origin on re-zoom.
-    QPointF origin() const {
-        // Shrinks as zoom grows, like (viewport - content*zoom)/2.
-        const double ex = 400.0 - 40.0 * zoom;
-        const double ey = 300.0 - 30.0 * zoom;
-        return QPointF(ex, ey);
-    }
-    QPointF docToView(QPointF p) const {
-        const double s = zoom / dpr;
-        return origin() + QPointF(p.x() * s, p.y() * s);
-    }
-    QPointF viewToDoc(QPointF v) const {
-        const double s = zoom / dpr;
-        const QPointF o = origin();
-        return QPointF((v.x() - o.x()) / s, (v.y() - o.y()) / s);
-    }
-};
+// A synthetic decoded image carrying a stamped devicePixelRatio — same
+// helper shape as tests/test_image_scale.cpp, so the dpr>1 display path
+// (mapDocToView's /dpr term) is exercised on a dpr=1 offscreen platform.
+QImage makeDprImage(int deviceW, int deviceH, qreal dpr) {
+    QImage img(deviceW, deviceH, QImage::Format_ARGB32_Premultiplied);
+    img.fill(Qt::white);
+    img.setDevicePixelRatio(dpr);
+    return img;
+}
 
 void sendMouse(QWidget *w, QEvent::Type type, QPointF pos, Qt::MouseButton button) {
     const Qt::MouseButtons held =
@@ -71,115 +57,130 @@ void sendMouse(QWidget *w, QEvent::Type type, QPointF pos, Qt::MouseButton butto
     QApplication::sendEvent(w, &ev);
 }
 
+double dist(QPointF a, QPointF b) {
+    return std::hypot(a.x() - b.x(), a.y() - b.y());
+}
+
 } // namespace
 
 class TestFreehandZoomGlue : public QObject {
     Q_OBJECT
   private slots:
-    void inkStrokeStaysGluedAcrossZoom();
-    void inkStrokeStaysGluedAcrossZoom_data();
+    void inkStrokeStaysGluedThroughRealAdapter();
+    void inkStrokeStaysGluedThroughRealAdapter_data();
 };
 
-void TestFreehandZoomGlue::inkStrokeStaysGluedAcrossZoom_data() {
+void TestFreehandZoomGlue::inkStrokeStaysGluedThroughRealAdapter_data() {
     QTest::addColumn<double>("dpr");
     QTest::newRow("dpr-1.0") << 1.0;
     QTest::newRow("dpr-1.5") << 1.5;
     QTest::newRow("dpr-2.0") << 2.0;
 }
 
-void TestFreehandZoomGlue::inkStrokeStaysGluedAcrossZoom() {
+void TestFreehandZoomGlue::inkStrokeStaysGluedThroughRealAdapter() {
     QFETCH(double, dpr);
 
-    Mapping map;
-    map.dpr = dpr;
-    const double z1 = 1.25; // capture zoom
-    const double z2 = 2.5;  // display zoom
-    map.zoom = z1;
+    const double z1 = 0.5; // capture zoom
+    const double z2 = 1.6; // display zoom (different scale, exercises live transform)
 
-    QWidget host;
-    host.resize(1000, 800);
-    AnnotationStore store;
-    AnnotationOverlay overlay(&host);
-    overlay.setGeometry(host.rect());
-    overlay.setStore(&store);
-    overlay.setDocumentToView([&map](QPointF p, int) { return map.docToView(p); });
-    overlay.setViewToDocument([&map](QPointF v, int) { return map.viewToDoc(v); });
-    overlay.setPageAtViewPoint([](QPointF) { return 0; });
-    overlay.setActiveTool(AnnotationTool::Ink);
+    ImageDocument doc{QString()};
+    doc.setImageForTest(makeDprImage(2400, 1800, dpr), /*captureOrigin=*/true);
+    QWidget *view = doc.createView(nullptr);
+    QVERIFY(view != nullptr);
 
-    // A multi-sample freehand stroke drawn in VIEW space at z1.
-    const std::vector<QPointF> viewPts = {
-        {450.0, 360.0}, {480.0, 372.0}, {520.0, 400.0}, {560.0, 430.0}, {600.0, 450.0},
+    auto *overlay = view->findChild<AnnotationOverlay *>();
+    QVERIFY2(overlay, "ImageDocument view must host an AnnotationOverlay");
+    AnnotationStore *store = doc.annotations();
+    QVERIFY(store);
+
+    // Drain the deferred fit-to-window (QTimer::singleShot(0) in
+    // createView) so it can't change the scale mid-capture, then pin a
+    // known capture zoom.
+    for (int i = 0; i < 5; ++i)
+        QCoreApplication::processEvents();
+    doc.applyZoomState(ZoomMode::Custom, z1);
+    QVERIFY2(std::abs(doc.scaleFactor() - z1) < 1e-9, "capture scale did not take");
+
+    overlay->setActiveTool(AnnotationTool::Ink);
+
+    // Ground truth is defined in DOCUMENT (device-pixel) space,
+    // INDEPENDENTLY of the capture path: pick real page features D_i,
+    // then map each forward to its z1 view position via the adapter's
+    // docToView and draw the stroke exactly there. Capture recovers doc
+    // coords via the adapter's viewToDoc, so asserting stored == D_i
+    // exercises the full round-trip (viewToDoc ∘ docToView == identity)
+    // anchored on a truth that capture never touched. A capture-side
+    // offset that is NOT mirrored in docToView — the reported bug — makes
+    // stored != D_i and fails. (Verified to fail against a deliberately
+    // offset mapViewToDoc during development.)
+    const std::vector<QPointF> featureDoc = {
+        {160.0, 140.0}, {224.0, 188.0}, {300.0, 176.0}, {380.0, 244.0}, {448.0, 220.0},
     };
+    std::vector<QPointF> viewPts;
+    for (const QPointF &d : featureDoc)
+        viewPts.push_back(doc.docToViewForTest(d));
 
-    sendMouse(&overlay, QEvent::MouseButtonPress, viewPts.front(), Qt::LeftButton);
+    sendMouse(overlay, QEvent::MouseButtonPress, viewPts.front(), Qt::LeftButton);
     for (size_t i = 1; i < viewPts.size(); ++i)
-        sendMouse(&overlay, QEvent::MouseMove, viewPts[i], Qt::LeftButton);
-    sendMouse(&overlay, QEvent::MouseButtonRelease, viewPts.back(), Qt::LeftButton);
-    QApplication::processEvents();
+        sendMouse(overlay, QEvent::MouseMove, viewPts[i], Qt::LeftButton);
+    sendMouse(overlay, QEvent::MouseButtonRelease, viewPts.back(), Qt::LeftButton);
+    QCoreApplication::processEvents();
 
-    QCOMPARE(store.count(), 1);
-    const Annotation &ink = store.annotations().back();
+    QCOMPARE(store->count(), 1);
+    const Annotation ink = store->annotations().back();
     QCOMPARE(ink.type, AnnotationType::Ink);
-    // Every drawn view sample should be represented; coalescing may add
-    // duplicates but never fewer than the points we drove.
     QVERIFY2(ink.points.size() >= viewPts.size(),
              qPrintable(QStringLiteral("stored %1 ink points, drew %2")
                             .arg(ink.points.size())
                             .arg(viewPts.size())));
+    QVERIFY2(std::abs(doc.scaleFactor() - z1) < 1e-9, "scale drifted during capture");
 
-    // (a) At the CAPTURE zoom, each stored doc sample must map back to a
-    // view point that lies exactly on the drawn polyline. We check the
-    // anchor and the final sample against the exact endpoints; a baked-in
-    // offset would move these off the drawn points.
-    const double eps = 1e-6;
-    const QPointF firstView = map.docToView(ink.points.front());
-    QVERIFY2(std::abs(firstView.x() - viewPts.front().x()) < eps &&
-                 std::abs(firstView.y() - viewPts.front().y()) < eps,
-             qPrintable(QStringLiteral("anchor drifted at capture zoom: got (%1,%2) want (%3,%4)")
-                            .arg(firstView.x())
-                            .arg(firstView.y())
-                            .arg(viewPts.front().x())
-                            .arg(viewPts.front().y())));
-    const QPointF lastView = map.docToView(ink.points.back());
-    QVERIFY2(std::abs(lastView.x() - viewPts.back().x()) < eps &&
-                 std::abs(lastView.y() - viewPts.back().y()) < eps,
-             qPrintable(QStringLiteral("tail drifted at capture zoom: got (%1,%2) want (%3,%4)")
-                            .arg(lastView.x())
-                            .arg(lastView.y())
-                            .arg(viewPts.back().x())
-                            .arg(viewPts.back().y())));
+    // (A) CAPTURE CORRECTNESS at z1, through the real adapter: each stored
+    // sample must equal the independently-chosen page feature D_i it was
+    // drawn over. The anchor is ink.points.front(); the tail is the last
+    // point. A capture-side view offset makes these miss D_i.
+    QVERIFY2(dist(ink.points.front(), featureDoc.front()) < 0.5,
+             qPrintable(QStringLiteral("anchor captured off page feature: stored (%1,%2) "
+                                       "expected (%3,%4)")
+                            .arg(ink.points.front().x())
+                            .arg(ink.points.front().y())
+                            .arg(featureDoc.front().x())
+                            .arg(featureDoc.front().y())));
+    QVERIFY2(dist(ink.points.back(), featureDoc.back()) < 0.5,
+             "tail sample captured off its page feature");
 
-    // (b) Switch to a DIFFERENT display zoom on the SAME transform and
-    // assert the stroke tracks page content rigidly. The vector from the
-    // anchor to every other sample, in view space, must equal the SAME
-    // vector at capture time scaled by exactly z2/z1 — no residual
-    // translation. This is the anchor-vs-body drift the bug describes.
-    const QPointF anchorDoc = ink.points.front();
-    map.zoom = z1;
-    const QPointF anchorViewZ1 = map.docToView(anchorDoc);
-    std::vector<QPointF> bodyVecZ1;
-    for (const QPointF &d : ink.points)
-        bodyVecZ1.push_back(map.docToView(d) - anchorViewZ1);
+    // (B) GLUE ACROSS ZOOM, through the real adapter. Change to a
+    // different display zoom on the SAME document, then assert every
+    // stored sample renders (via the LIVE docToView, now at z2) exactly
+    // where its page feature D_i renders. This exercises the changed
+    // scale + dpr and fails if the stored doc points carry any offset.
+    doc.applyZoomState(ZoomMode::Custom, z2);
+    QVERIFY2(std::abs(doc.scaleFactor() - z2) < 1e-9, "display scale did not take");
 
-    map.zoom = z2;
-    const QPointF anchorViewZ2 = map.docToView(anchorDoc);
-    const double ratio = z2 / z1;
-    for (size_t i = 0; i < ink.points.size(); ++i) {
-        const QPointF vecZ2 = map.docToView(ink.points[i]) - anchorViewZ2;
-        const QPointF want = bodyVecZ1[i] * ratio;
-        QVERIFY2(std::abs(vecZ2.x() - want.x()) < 1e-6 && std::abs(vecZ2.y() - want.y()) < 1e-6,
-                 qPrintable(QStringLiteral("sample %1 drifted on zoom %2->%3 (dpr %4): "
-                                           "got (%5,%6) want (%7,%8)")
+    for (size_t i = 0; i < ink.points.size() && i < featureDoc.size(); ++i) {
+        const QPointF storedAtZ2 = doc.docToViewForTest(ink.points[i]);
+        const QPointF featureAtZ2 = doc.docToViewForTest(featureDoc[i]);
+        QVERIFY2(dist(storedAtZ2, featureAtZ2) < 0.75,
+                 qPrintable(QStringLiteral("sample %1 drifted off its page feature at zoom %2 "
+                                           "(dpr %3): stroke at (%4,%5), feature at (%6,%7)")
                                 .arg(i)
-                                .arg(z1)
                                 .arg(z2)
                                 .arg(dpr)
-                                .arg(vecZ2.x())
-                                .arg(vecZ2.y())
-                                .arg(want.x())
-                                .arg(want.y())));
+                                .arg(storedAtZ2.x())
+                                .arg(storedAtZ2.y())
+                                .arg(featureAtZ2.x())
+                                .arg(featureAtZ2.y())));
     }
+
+    // Teeth check: prove the glue tolerance is not vacuous. A stored point
+    // corrupted by a doc-space offset (what an origin/offset capture bug
+    // produces) must render far enough from its page feature at z2 to
+    // exceed the tolerance the real assertion above uses.
+    const QPointF poison = featureDoc.front() + QPointF(40.0, 40.0);
+    QVERIFY2(dist(doc.docToViewForTest(poison), doc.docToViewForTest(featureDoc.front())) > 0.75,
+             "glue tolerance is too loose — a deliberately-offset point would pass");
+
+    delete view;
 }
 
 QTEST_MAIN(TestFreehandZoomGlue)

@@ -1109,9 +1109,16 @@ void AnnotationOverlay::mouseMoveEvent(QMouseEvent *event) {
         // Remember the live-stroke tail before appending so we can clip
         // the repaint to just the new segment below (Bug 2).
         const size_t prevCount = m_inkPoints.size();
-        // Capture coalesced sub-points so fast strokes don't lose
-        // intermediate samples to OS event coalescing — same trick
-        // SignatureCanvas uses for Force Touch trackpads.
+        // Append this move's sample(s), carrying per-point pressure.
+        // NOTE (pre-existing behaviour, not introduced here): a
+        // QMouseEvent is a QSinglePointEvent, so event->points() always
+        // holds exactly ONE point and pt.position() == event->position().
+        // This loop therefore runs once for mouse input and recovers no
+        // extra coalesced samples — it is not the mid-move coalescing
+        // trick its shape suggests. It does still carry the correct
+        // per-point pressure, and it is the right shape for any future
+        // multi-point (tablet/touch) QPointerEvent that populates
+        // points() with more than one entry. Left as-is intentionally.
         const auto &pts = event->points();
         if (!pts.isEmpty()) {
             for (const QEventPoint &pt : pts) {
@@ -1156,6 +1163,10 @@ void AnnotationOverlay::mouseMoveEvent(QMouseEvent *event) {
             update(QRectF(minX - pad, minY - pad, (maxX - minX) + 2 * pad, (maxY - minY) + 2 * pad)
                        .toAlignedRect());
         } else {
+            // Defensive fallback: mid-drag we always have at least the
+            // press sample plus this move's, so `has` is true in practice.
+            // Keep a full update() for the degenerate empty case rather
+            // than skipping the repaint entirely.
             update();
         }
         return;
