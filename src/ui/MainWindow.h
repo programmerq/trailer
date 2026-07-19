@@ -279,6 +279,10 @@ class MainWindow : public QMainWindow {
     // recreates the file). The adapter-level guard (saveWouldClobber…) is the
     // last line of defense; this surfaces the banner before the write starts.
     bool guardSaveAgainstExternalChange(IDocument *doc);
+    // True iff `doc`'s backing file changed under us in a way a save must not
+    // clobber. Lets the save orchestration distinguish a guard *refusal* from a
+    // real write *failure* so the former routes to the conflict banner (F6).
+    bool externalConflictPending(IDocument *doc) const;
     // Run the Save-As dialog for `doc` and return the chosen destination
     // path, or an empty string if the user cancelled. Shared by onSaveAs()
     // and the unsaved-changes close prompt so both offer the same dialog.

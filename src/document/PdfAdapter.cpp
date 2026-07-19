@@ -1713,6 +1713,9 @@ std::optional<PdfDocument::SaveContext> PdfDocument::saveBeginQpdfPhase(const QS
     // baselined original if it changed under us and this isn't a deliberate
     // "Keep mine" clobber. Runs before any bytes are written so no on-disk
     // data is touched; the caller surfaces the conflict banner.
+    // Capture the force state BEFORE the guard consumes it so the commit
+    // phase can honour a deliberate clobber during its own re-stat (F1).
+    const bool forced = m_forceSaveOverExternalChange;
     if (saveWouldClobberExternalChange(targetPath)) {
         return std::nullopt;
     }
@@ -1734,6 +1737,7 @@ std::optional<PdfDocument::SaveContext> PdfDocument::saveBeginQpdfPhase(const QS
 
     SaveContext ctx;
     ctx.targetPath = targetPath;
+    ctx.forced = forced;
     ctx.sameFile = !m_path.isEmpty() && QFileInfo(targetPath).canonicalFilePath() ==
                                             QFileInfo(m_path).canonicalFilePath();
 
@@ -1761,6 +1765,24 @@ std::optional<PdfDocument::SaveContext> PdfDocument::saveBeginQpdfPhase(const QS
 
 bool PdfDocument::saveCommitOnUi(const SaveContext &ctx) {
     if (ctx.sameFile) {
+        // Commit-time re-stat guard (F1). The begin phase's guard ran on a
+        // worker thread and the destructive remove+rename below can land
+        // several seconds later; an external writer may have replaced the
+        // file in that window. Re-stat against the baseline right before we
+        // touch the on-disk file. If an uncaused external change is now
+        // present and this isn't a deliberate "Keep mine" clobber, abort
+        // WITHOUT removing/renaming — the original on-disk bytes survive and
+        // the staged temp is dropped. The caller re-checks externalChangeState
+        // and routes this to the conflict banner (F6). The baseline is left
+        // untouched so that re-check still sees the conflict.
+        if (!ctx.forced) {
+            const ExternalChangeState st = externalChangeState();
+            if (st == ExternalChangeState::CleanExternalChange ||
+                st == ExternalChangeState::DirtyConflict) {
+                QFile::remove(ctx.writePath);
+                return false;
+            }
+        }
         // Tear down our QPdfDocument's open handle so we can rename
         // over the file on Windows (Linux/macOS don't strictly need
         // this but it matches behaviour).
@@ -1850,19 +1872,30 @@ bool PdfDocument::reloadFromDisk() {
     // mirroring saveCommitOnUi's reload half. A clean-doc reload discards our
     // (empty) edit state; the banner's explicit Reload discards edits the user
     // chose to drop, so there is nothing to preserve either way.
+    //
+    // Stage the new editor BEFORE disturbing the live one so a failed qpdf
+    // parse leaves the current document fully intact (nothing swapped, nothing
+    // closed).
+    auto newEditor = std::make_shared<PdfEditor>();
+    if (!newEditor->load(m_path)) {
+        // The current editor + QPdfDocument are untouched; the view still
+        // shows the previous content.
+        return false;
+    }
+
+    // The editor parsed. Now reload the QPdfDocument, which must close the old
+    // handle first. If that fails, restore a live document from the current
+    // path and keep the existing editor (don't swap in the staged one) so the
+    // view isn't left blank — this mirrors the editor-load-failure restore and
+    // closes the F9 partial-failure gap.
     m_doc->close();
-    m_editor.reset();
-    m_editor = std::make_shared<PdfEditor>();
-    if (!m_editor->load(m_path)) {
-        // Restore a live document so the view isn't left blank.
+    if (m_doc->load(m_path) != QPdfDocument::Error::None) {
         m_doc->load(m_path);
         return false;
     }
+    m_editor = newEditor;
     m_editorLoaded = true;
     m_hasFormFieldsCache.reset();
-
-    if (m_doc->load(m_path) != QPdfDocument::Error::None)
-        return false;
     m_previewFile.reset();
     m_valid = true;
 

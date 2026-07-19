@@ -1,8 +1,13 @@
 #include "document/ExternalChangeState.h"
 #include "document/ImageAdapter.h"
+#include "document/PdfAdapter.h"
 
+#include <QFile>
 #include <QImage>
 #include <QObject>
+#include <QPageSize>
+#include <QPainter>
+#include <QPdfWriter>
 #include <QTemporaryDir>
 #include <QTest>
 
@@ -95,6 +100,63 @@ class TestExternalChangeGuard : public QObject {
         QVERIFY(QFile::exists(other));
     }
 
+    // F1 regression: the PDF two-phase save must ALSO guard at commit time, not
+    // only at begin time. The begin-phase re-stat runs on a worker thread and
+    // the destructive remove+rename in saveCommitOnUi lands seconds later, so
+    // an external write that arrives in that window must abort the commit
+    // WITHOUT clobbering the (now newer) on-disk file. Here we drive the two
+    // phases directly and slip an external overwrite between them: the commit
+    // must refuse (return false) and the externally-written bytes must survive.
+    void pdfCommitGuardBlocksMidFlightExternalChange() {
+        const QString path = writePdf(QStringLiteral("Original"));
+        PdfDocument doc(path);
+        QVERIFY(doc.isValid());
+
+        // Dirty edit so this is a realistic same-file overwrite save.
+        doc.rotatePage(0, 90);
+        QVERIFY(doc.isDirty());
+        QVERIFY(doc.externalChangeState() == ExternalChangeState::NoChange);
+
+        // Phase 1 (worker-safe) succeeds — no external change yet. It stages
+        // the new bytes to a temp file; the target is not touched.
+        auto ctx = doc.saveBeginQpdfPhase(QString());
+        QVERIFY(ctx.has_value());
+
+        // Another program replaces the file AFTER begin but BEFORE commit.
+        // Different byte length, so the classifier's size signal trips even if
+        // the mtime rounds to the same second.
+        const QByteArray external = "%PDF-1.4 externally-rewritten between phases\n";
+        overwriteRawBytes(path, external);
+        QVERIFY(doc.externalChangeState() == ExternalChangeState::DirtyConflict);
+
+        // Phase 2 must ABORT: no remove/rename, the external bytes survive.
+        QCOMPARE(doc.saveCommitOnUi(*ctx), false);
+        QCOMPARE(readAll(path), external);
+    }
+
+    // Counterpart: with the one-shot force flag armed ("Keep mine"), the same
+    // mid-flight external change does NOT block the commit — the deliberate
+    // clobber goes through and the on-disk bytes become ours.
+    void pdfCommitGuardForceClobbersMidFlightExternalChange() {
+        const QString path = writePdf(QStringLiteral("Original"));
+        PdfDocument doc(path);
+        QVERIFY(doc.isValid());
+        doc.rotatePage(0, 90);
+
+        doc.setForceSaveOverExternalChange(true);
+        auto ctx = doc.saveBeginQpdfPhase(QString());
+        QVERIFY(ctx.has_value());
+
+        const QByteArray external = "%PDF-1.4 externally-rewritten between phases\n";
+        overwriteRawBytes(path, external);
+
+        // Forced: commit proceeds despite the external change.
+        QCOMPARE(doc.saveCommitOnUi(*ctx), true);
+        // The on-disk file is now a real PDF we wrote, not the external stub.
+        QVERIFY(readAll(path) != external);
+        QVERIFY(readAll(path).startsWith("%PDF"));
+    }
+
     // A clean reload from disk picks up the new bytes and clears the conflict.
     void reloadFromDiskPicksUpNewContent() {
         const QString path = writeImage(QSize(8, 8), Qt::red);
@@ -122,6 +184,26 @@ class TestExternalChangeGuard : public QObject {
         QImage img(size, QImage::Format_ARGB32);
         img.fill(color);
         [&] { QVERIFY(img.save(path, "PNG")); }();
+    }
+    QString writePdf(const QString &text) {
+        const QString path = m_dir->filePath(QStringLiteral("doc.pdf"));
+        {
+            QPdfWriter writer(path);
+            writer.setPageSize(QPageSize(QPageSize::A4));
+            QPainter painter(&writer);
+            painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter, text);
+            painter.end();
+        }
+        return path;
+    }
+    static void overwriteRawBytes(const QString &path, const QByteArray &bytes) {
+        // Replace the file wholesale with different-length content. The
+        // save-time guard stats mtime/size only (it never parses), so raw
+        // bytes are a faithful stand-in for another program's write.
+        QFile f(path);
+        [&] { QVERIFY(f.open(QIODevice::WriteOnly | QIODevice::Truncate)); }();
+        f.write(bytes);
+        f.close();
     }
     static QByteArray readAll(const QString &path) {
         QFile f(path);

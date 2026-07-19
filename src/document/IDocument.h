@@ -347,13 +347,15 @@ class IDocument {
     // one-shot force flag ("Keep mine") is consumed here so a deliberate
     // clobber goes through exactly once.
     bool saveWouldClobberExternalChange(const QString &targetPath) {
+        // Save-As / first save to a different path: not an overwrite of the
+        // file we baselined. Checked BEFORE the force flag is read so a
+        // Save-As does not consume the one-shot "Keep mine" flag armed for a
+        // same-file clobber (N2).
+        if (targetPath != filePath())
+            return false;
         const bool force = m_forceSaveOverExternalChange;
         m_forceSaveOverExternalChange = false;
         if (force)
-            return false;
-        // Save-As / first save to a different path: not an overwrite of the
-        // file we baselined.
-        if (targetPath != filePath())
             return false;
         const ExternalChangeState st = externalChangeState();
         return st == ExternalChangeState::CleanExternalChange ||
