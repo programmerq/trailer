@@ -34,10 +34,13 @@ menus and modal dialogs are included) via ImageMagick `import` (xwd fallback).
 ## Resilient selectors (and the PR #86 dependency)
 
 The scripts drive the app through **keyboard shortcuts** (`Ctrl+O`, `Ctrl+=`,
-`Ctrl+W`, …) and **menu mnemonics** — never pixel coordinates and never menu
-*label text*. Shortcuts/mnemonics are stable across **PR #86's File-menu
-information-architecture rename**, which moves/renames menu items but keeps
-their `QKeySequence` bindings.
+`Ctrl+W`, …) plus **Qt `objectName`s** for identifying widgets — never pixel
+coordinates and never menu *label text*. Shortcuts are stable across **PR #86's
+File-menu information-architecture rename**, which moves/renames menu items but
+keeps their `QKeySequence` bindings. (A `menu()` mnemonic-driving verb also
+exists in the DSL for future menu-walking, but no golden path uses it today —
+all four drive via shortcuts, so the resilient-selector guarantee rests on
+shortcuts + `objectName`s.)
 
 For any future AT-SPI / QTest tier that wants to target widgets by name, the
 actions the golden paths touch now carry stable `objectName`s (added in
@@ -125,7 +128,11 @@ real-Mac checklist in the skill.
 **Boundary:** window/region capture are disabled on Linux (a G3
 non-lying-control state); the macOS native TCC "Screen Recording" prompt is
 real-Mac only. Whole-screen capture genuinely runs under Xvfb via
-`QScreen::grabWindow(0)`.
+`QScreen::grabWindow(0)` — the path creates `~/Pictures` first, because the
+Linux capture saves to `QStandardPaths::PicturesLocation` and a bare CI
+container has no XDG user dirs (a real desktop always does); with the dir
+present, grab → save → open-as-document runs end-to-end and step 3's assert is
+on the `trailer-screenshot-…` document stem, not a bare `Trailer`.
 
 ### 03 — open-image → zoom → navigate
 | step | screenshot should show | pass |

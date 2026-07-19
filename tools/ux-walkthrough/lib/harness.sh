@@ -23,14 +23,17 @@
 #   teardown                kill the app (also runs on EXIT)
 #
 # DESIGN NOTES
-#  * Selectors are RESILIENT ON PURPOSE. The DSL drives the app through
-#    keyboard SHORTCUTS (Ctrl+O, Ctrl+=, Ctrl+W, …) and menu MNEMONICS, never
-#    pixel coordinates and never menu-item label TEXT. Shortcuts and mnemonics
-#    are stable across the File-menu information-architecture rename in PR #86,
-#    which moves/renames menu items but preserves their QKeySequence bindings.
-#    Where a widget needs a stable handle, the corresponding QAction/QWidget
-#    carries a setObjectName() (see src/ui/MainWindow.cpp) so a future AT-SPI /
-#    QTest tier can target it by name rather than by geometry.
+#  * Selectors are RESILIENT ON PURPOSE. Every golden path drives the app
+#    through keyboard SHORTCUTS (Ctrl+O, Ctrl+=, Ctrl+W, …), never pixel
+#    coordinates and never menu-item label TEXT. Shortcuts are stable across the
+#    File-menu information-architecture rename in PR #86, which moves/renames
+#    menu items but preserves their QKeySequence bindings. Where a widget needs
+#    a stable handle, the corresponding QAction/QWidget carries a
+#    setObjectName() (see src/ui/MainWindow.cpp) so a future AT-SPI / QTest tier
+#    can target it by name rather than by geometry. The menu() verb below drives
+#    a menu by its Alt mnemonic and exists for future menu-walking, but no
+#    golden path currently uses it — the guarantee rests on shortcuts +
+#    objectNames.
 #  * We use a REAL X server (Xvfb), NOT QT_QPA_PLATFORM=offscreen. The whole
 #    point of Tier 1 is real window-manager / menu / focus / modal behaviour —
 #    e.g. the unsaved-changes close prompt is deliberately SKIPPED under the

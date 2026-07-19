@@ -67,20 +67,22 @@ macOS-only surfaces and real-Mac fidelity — this skill still runs in a
   conventions. No live driving needed. Per the Q7 ruling, for v1 its peer
   conventions are **LLM-recalled + owner spot-check** (no captured peer
   reference required yet), so every recalled convention is marked provisional.
-- **Persona (A) task-scripted walkthrough — REDUCED MODE NOW.** Until the
-  harness exists it runs as a **static-screenshot cognitive walkthrough** over
-  the per-state `grab()` screenshots already captured for the diff — it applies
-  the four cognitive-walkthrough questions and the 0–4 severity scale to those
-  states, but **does not drive the binary live**. Its full golden-path
-  **EXECUTION** (real click/key driving, one capture per step, the empty →
-  document-open transition that surfaces finding #4) is **GATED on the
-  drive-harness follow-up**. Do not read the prompt block below as a
-  paste-and-run gate today: the DEPENDENCY note inside it is live, not
-  hypothetical.
+- **Persona (A) task-scripted walkthrough — DRIVEN ON LINUX (Tier 1), REDUCED
+  FLOOR FOR macOS-ONLY SURFACES.** For the offscreen/Linux-observable golden
+  paths, the Tier-1 harness now **drives the real binary** — run
+  `tools/ux-walkthrough/run.sh all`, and feed persona (A) the per-step
+  `NN-*.png` + `NN-*.txt` bundles it emits (real click/key driving, one capture
+  per step, including the empty → document-open transition). Where the harness
+  cannot reach — the **macOS-only surfaces** (the new-from-clipboard menu action
+  and ⌘N binding, the screenshot TCC prompt, HiDPI dpr=2 fidelity) — persona (A)
+  still runs in **reduced static mode** over the `grab()` screenshots, and those
+  items route to the owner real-Mac checklist below. So the prompt block's
+  golden-path EXECUTION is now live on Linux; only its macOS-specific slices
+  remain reduced.
 
-So: **B is live; A judges the screenshots you already have, and its full running
-gate arrives with the harness.** Nobody should think the complete driving gate
-exists today.
+So: **B is live; A is now driven for real on Linux by
+`tools/ux-walkthrough/run.sh`, and stays in reduced static mode only for the
+macOS-only surfaces the Tier-1 harness can't reach.**
 
 ## Reconciliation with the G2 hybrid ruling (offscreen / real-Mac split)
 
@@ -136,14 +138,16 @@ screenshots and judge each step against the cognitive-walkthrough method
 (Wharton/Lewis/Polson/Rieman; NN/G). You do NOT read the diff, you do NOT choose
 the clicks, and you do NOT look at isolated one-off screenshots.
 
-DEPENDENCY (not yet built): the drive scripts (the exact click/key sequence per
-golden path) and the offscreen capture harness do NOT exist today and are
-currently unowned. Until they are built, this prompt cannot be pasted-and-run
-end-to-end — it is the judge contract those scripts must feed. UNTIL THEN, run
-this persona in REDUCED MODE: judge the per-state grab() screenshots the diff
-already produced (no live driving), applying the four questions and severity to
-those observed states; the full golden-path EXECUTION below is gated on the
-drive-harness follow-up.
+DRIVE HARNESS (Tier-1 Linux, LANDED): the drive scripts (the exact click/key
+sequence per golden path) and the capture harness now exist at
+tools/ux-walkthrough/ — run `tools/ux-walkthrough/run.sh all` to drive the real
+binary under a real X server and get the per-step NN-*.png + NN-*.txt bundles
+this prompt consumes. For the offscreen/Linux-observable golden paths this
+prompt is pasted-and-run end-to-end against those bundles. REDUCED MODE remains
+the honest floor ONLY for the macOS-only surfaces the Linux harness cannot reach
+(the new-from-clipboard menu action + ⌘N binding, the screenshot TCC prompt,
+HiDPI dpr=2): for those, judge the per-state grab() screenshots (no live
+driving) and route fidelity/native-chrome items to the owner checklist.
 
 PRIMARY GOAL (stable end condition): "Get from an intent to a correctly-rendered,
 correctly-sized result with no dead ends, using only native conventions."
@@ -283,7 +287,7 @@ than blocking the PR on an unverified recall.
 
 - [ ] Diff is user-visible (menus/toolbars/windows/zoom/shortcuts/dialogs/states/flows). Internal-only → skip.
 - [ ] Ran persona (B) platform-parity over the diff's grab() screenshots (operational now; peer conventions LLM-recalled + owner spot-check for v1).
-- [ ] Ran persona (A) task-scripted walkthrough in reduced/static mode over the per-state grab() screenshots (full golden-path driving gated on the drive-harness follow-up).
+- [ ] Ran persona (A) task-scripted walkthrough: on Linux, drove the real binary via `tools/ux-walkthrough/run.sh all` and judged the per-step bundles; reduced/static mode only for macOS-only surfaces (clipboard action, TCC prompt, HiDPI dpr=2), which route to the owner checklist.
 - [ ] Every finding dispositioned: fix / justify / defer-with-Decision-Record (folded into review-before-push).
 - [ ] Fidelity/native-chrome items (#1, #6-native, #7-clash, Dock/Services/menu-bar) routed to the owner manual milestone checklist, not asserted pre-PR.
 - [ ] Cross-references current: decision record `docs/decision-records/2026-07-16-ux-walkthrough-platform-parity-personas.md` and the Tier-1 drive harness `tools/ux-walkthrough/`.

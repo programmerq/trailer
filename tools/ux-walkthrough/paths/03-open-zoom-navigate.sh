@@ -31,7 +31,9 @@ convert -size 600x420 gradient:teal-yellow \
 # --- Step 1: open the image ------------------------------------------------
 step "opened" "Image opens at oracle default zoom (100% / 1:1), window sized to the image."
 launch "$FIX"
-assert_title "Trailer"
+# Assert on the fixture stem (not bare "Trailer") so this proves the document
+# opened rather than merely that the app is running.
+assert_title "open-source"
 note "oracle: zoom readout should read 100% on open"
 shot
 

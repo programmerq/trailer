@@ -63,6 +63,17 @@ while [ $# -gt 0 ]; do
 done
 [ ${#SELECT[@]} -gt 0 ] || SELECT=(01 02 03 04)
 
+# Dedup while preserving first-seen order, so e.g. `run.sh all 04` runs each
+# path once.
+_seen=""
+_dedup=()
+for _k in "${SELECT[@]}"; do
+    case " $_seen " in *" $_k "*) continue ;; esac
+    _seen="$_seen $_k"
+    _dedup+=("$_k")
+done
+SELECT=("${_dedup[@]}")
+
 # --- preflight -------------------------------------------------------------
 missing=()
 for tool in xvfb-run xdotool import xwd xclip convert openbox; do

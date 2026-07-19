@@ -53,7 +53,9 @@ xclip -selection clipboard -t image/png -o >"$PASTED" 2>/dev/null
 note "read clipboard back to $PASTED ($(wc -c <"$PASTED") bytes) — mirrors Application::newFromClipboard's temp-PNG step"
 teardown           # close the empty window
 launch "$PASTED"   # open the clipboard-derived image, exactly as newFromClipboard would
-assert_title "Trailer"
+# Assert on the fixture stem, not just "Trailer" — the empty state is also
+# titled "Trailer", so a bare "Trailer" match would not prove a document opened.
+assert_title "pasted-from-clipboard"
 note "oracle: default zoom on open should read 100% (1:1) for an at-or-below-viewport image; window sized to the image"
 shot
 

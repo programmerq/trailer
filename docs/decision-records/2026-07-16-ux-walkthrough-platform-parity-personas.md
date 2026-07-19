@@ -553,7 +553,9 @@ ux-evidence hybrid ruling, and the `review-before-push` trigger scope) per the
 6. **Harness is a follow-up (Q6).** Building the Linux offscreen drive-harness +
    the per-golden-path drive/capture scripts is **out of scope of this record**
    and tracked as a follow-up on the gui-verification track:
-   [`docs/backlog/2026-07-17-ux-walkthrough-drive-harness.md`](../backlog/2026-07-17-ux-walkthrough-drive-harness.md).
+   [`tools/ux-walkthrough/`](../../tools/ux-walkthrough/README.md) (the Tier-1
+   Linux harness that closed the follow-up backlog item
+   `2026-07-17-ux-walkthrough-drive-harness`).
    Persona (A)'s full golden-path **execution** (live driving, one capture per
    step, the empty→document-open transition for #4) remains **gated on that
    follow-up**; until it lands, (A) runs in reduced static-screenshot mode.

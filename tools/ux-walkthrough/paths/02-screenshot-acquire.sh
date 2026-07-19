@@ -22,6 +22,15 @@ export PATH_NAME="screenshot-acquire"
 # shellcheck source=../lib/harness.sh
 source "$HARNESS_LIB"
 
+# The Linux capture writes to QStandardPaths::PicturesLocation (~/Pictures).
+# A bare CI container has no XDG user dirs, so that directory doesn't exist and
+# the grab's save() fails silently (a real desktop always has ~/Pictures). This
+# is honest environment normalisation, not faking the feature: with the dir
+# present the whole flow — grabWindow -> save -> openFiles -> document window —
+# genuinely runs headless under Xvfb. Without it, step 3 cannot reach the
+# captured-image-opens state.
+mkdir -p "$HOME/Pictures"
+
 # --- Step 1: empty state ---------------------------------------------------
 step "empty-state" "App open, no document — the state a user invokes Acquire from."
 launch     # no file -> empty state
@@ -39,11 +48,15 @@ shot
 step "captured-image-opens" \
     "Accepting the dialog captures the X screen and opens it as a new document."
 press "Return"         # accept default (Whole screen) -> grabWindow -> openFiles
-_ms_sleep 800
-# The newly-opened document window replaces/adds to the app; re-find it.
-_WIN_ID="$(_find_window)"
-assert_title "Trailer"
-note "oracle: the captured screen opens as a document; zoom readout should be visible"
+_ms_sleep 1200
+# The captured screen opens as a NEW document window titled
+# "trailer-screenshot-<stamp>.png"; find that window specifically and assert on
+# its stem, not a bare "Trailer" (which the empty state also shows).
+_WIN_ID="$(xdotool search --name 'trailer-screenshot' 2>/dev/null | head -1)"
+[ -n "$_WIN_ID" ] || _WIN_ID="$(_find_window)"
+assert_window "trailer-screenshot"
+assert_title "trailer-screenshot"
+note "oracle: the captured screen opened as a document; zoom readout should be visible"
 shot
 
 _log "path complete"
