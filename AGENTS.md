@@ -4,7 +4,7 @@ This file is for AI coding agents (Claude Code, Copilot SWE Agent, Cursor,
 and any future tool) working in this repository. Read this first; the
 specifics below save you from rediscovering them every session.
 
-`CLAUDE.md` at the repo root is a symlink to this file.
+`CLAUDE.md` at the repo root imports this file via `@AGENTS.md`, so both surfaces load the same content (chosen over a symlink for Windows-checkout safety).
 
 ---
 
@@ -92,7 +92,10 @@ value/default changes are backed by records in
 > `git push` or PR. Before escalating open questions to the owner, run the
 > [`decision-brief`](.claude/skills/decision-brief/SKILL.md) skill: self-decide
 > everything the gates and records already derive, escalate only the genuine
-> forks.
+> forks. When you hand work back — every PR body — lead with its ready-to-merge
+> ask (the specific thing blocking merge, or an explicit "No ask — mergeable
+> as-is") per the [`surface-the-ask`](.claude/skills/surface-the-ask/SKILL.md)
+> skill.
 
 ### G1 — Threshold declared before work begins
 
@@ -140,6 +143,14 @@ value/default changes are backed by records in
   Working/throwaway captures are **not** committed — they stay gitignored
   (`uat-screenshots/`, `docs/screenshots/`); only the curated, referenced
   images land in `docs/uat/images/`.
+- **Before/after pair for UI changes (2026-07-18):** Any PR with a
+  user-visible UI change MUST embed an inline **before/after** screenshot
+  pair in the PR body — the *same* document / window / state shown in both
+  shots — committed under `docs/uat/images/` and referenced by
+  **commit-SHA-pinned raw URLs** (`raw.githubusercontent.com`, not
+  attachment / asset URLs). An **after-only** screenshot, or a screenshot
+  posted **only in a PR comment**, does **not** satisfy this gate (precedent:
+  PR #80 shipped with an after-only screenshot in a comment).
 - **Capture method (ruled):** G2 evidence is captured by offscreen
   `QWidget::grab()` / `QQuickWindow::grabWindow` in the test harness under
   `QT_QPA_PLATFORM=offscreen` (the `widget->grab()` hybrid described in
@@ -447,10 +458,12 @@ passes against the live app — see the `HITL round N` commits and the
 
 **Screenshots for UI-visible changes.** When a PR adds, removes, or
 visibly reshapes a dialog, menu, toolbar, table, or other on-screen
-element, include screenshots (and/or short captures) in the PR body so
-reviewers can see the change without building. Skip screenshots for
-non-visual changes (build, refactors with identical UI, internals).
-Capture options:
+element, include screenshots (and/or short captures) so reviewers can
+see the change without building — this is gated by **G2** above, which
+is the binding authority. A change to *existing* UI requires the inline
+**before/after** pair described there. Skip screenshots for non-visual
+changes (build, refactors with identical UI, internals). Capture
+options:
 
 - Build the app and grab the running window (preferred when the
   change is reachable from a normal flow).
@@ -459,9 +472,13 @@ Capture options:
   without a real display. The `tests/uat/` harness uses the same
   pattern.
 
-Drop the PNGs into the PR body via GitHub's drag-and-drop upload (or
-attach via `gh pr edit --body-file`); do not commit screenshots into
-the repo unless they are reference/design artefacts.
+Per G2, the curated evidence (and the before/after pair) is
+**committed** under `docs/uat/images/` and referenced **inline** via
+commit-SHA-pinned `raw.githubusercontent.com` URLs, so it renders on
+the PR page. Working/throwaway captures stay gitignored
+(`uat-screenshots/`, `docs/screenshots/`) and are not committed.
+Drag-and-drop attachments and comment-only screenshots do **not**
+satisfy G2 — see that section for the full rule.
 
 **Undo.** One chronological log per document, two payload stacks:
 - `AnnotationStore` for annotation create/modify/delete.
