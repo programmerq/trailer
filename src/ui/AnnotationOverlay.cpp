@@ -1106,6 +1106,9 @@ void AnnotationOverlay::mouseMoveEvent(QMouseEvent *event) {
         return;
     m_dragCurrentDoc = toDoc(event->position(), m_dragPage);
     if (m_tool == AnnotationTool::Ink) {
+        // Remember the live-stroke tail before appending so we can clip
+        // the repaint to just the new segment below (Bug 2).
+        const size_t prevCount = m_inkPoints.size();
         // Capture coalesced sub-points so fast strokes don't lose
         // intermediate samples to OS event coalescing — same trick
         // SignatureCanvas uses for Force Touch trackpads.
@@ -1119,6 +1122,43 @@ void AnnotationOverlay::mouseMoveEvent(QMouseEvent *event) {
             m_inkPoints.push_back(m_dragCurrentDoc);
             m_inkPressures.push_back(0.0f);
         }
+        // Clip the mid-drag repaint to the newly-added segment. A bare
+        // update() forces an unclipped full-widget paint, which
+        // re-renders every committed annotation + search highlight + the
+        // entire growing in-progress path on EVERY move — cost grows with
+        // both the page's annotation count and the stroke length, so a
+        // long stroke over a busy page crawls. The stroke is append-only,
+        // so older segments already sit in the backing store; only the
+        // new tail needs repainting. paintEvent still redraws the full
+        // preview path, but QPainter clips it to this small region, so
+        // the rendered pixels are identical — just far fewer of them.
+        const size_t from = prevCount > 0 ? prevCount - 1 : 0;
+        double minX = 0, minY = 0, maxX = 0, maxY = 0;
+        bool has = false;
+        for (size_t i = from; i < m_inkPoints.size(); ++i) {
+            const QPointF v = m_docToView(m_inkPoints[i], m_dragPage);
+            if (!has) {
+                minX = maxX = v.x();
+                minY = maxY = v.y();
+                has = true;
+            } else {
+                minX = std::min(minX, v.x());
+                maxX = std::max(maxX, v.x());
+                minY = std::min(minY, v.y());
+                maxY = std::max(maxY, v.y());
+            }
+        }
+        if (has) {
+            // Pad for the pen width (pressure can widen it up to base + 5
+            // px, see the Ink renderer), round caps/joins, and AA, so no
+            // rasterised pixel is clipped out of the dirty rect.
+            const double pad = (m_style.strokeWidth > 0.0 ? m_style.strokeWidth : 1.5) + 8.0;
+            update(QRectF(minX - pad, minY - pad, (maxX - minX) + 2 * pad, (maxY - minY) + 2 * pad)
+                       .toAlignedRect());
+        } else {
+            update();
+        }
+        return;
     }
     update();
 }
