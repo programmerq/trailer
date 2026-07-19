@@ -84,7 +84,8 @@ class PdfDocument : public IDocument {
     // Any valid PDF can be re-encrypted / re-linearized on export; the
     // qpdf editor is loaded lazily by the actual export action, so these
     // capability probes must NOT force the parse (P0 startup-hang fix,
-    // docs/backlog/2026-07-13-startup-hang-large-pdf.md).
+    // closed by #63; residual in
+    // docs/backlog/2026-07-15-offthread-pdf-open-placeholder.md).
     bool supportsPasswordExport() const override { return m_valid; }
     bool exportWithPassword(const QString &destPath, const QString &password) override;
 

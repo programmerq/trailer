@@ -28,8 +28,10 @@ calling (GUI) thread:
   plus per-page `getMediaBox` / `getKey("/Annots")` force whole-document object
   resolution in qpdf.
 
-The user-facing behaviour this produces is the P0 in
-`docs/backlog/2026-07-13-startup-hang-large-pdf.md`: opening a 142 MB text-layer
+The user-facing behaviour this produces is the P0 originally tracked in
+`docs/backlog/2026-07-15-offthread-pdf-open-placeholder.md` (the residual
+successor to the former `2026-07-13-startup-hang-large-pdf` P0, closed by #63):
+opening a 142 MB text-layer
 PDF on the owner's real-Mac dogfood pass hung the whole app for minutes, pinning
 100% of one core, with no first page, no progress, and no cancel path. That
 directly violates the binding structural invariants in
@@ -47,7 +49,8 @@ legitimate to run synchronously on open, what must move off the main thread, and
 how a large-file open is staged so the first page paints before the whole file is
 parsed — **without regressing edit/annotation correctness**. It does not fork the
 backlog item; it ratifies and refines the fix-direction that item already sketches
-(`.../2026-07-13-startup-hang-large-pdf.md:73-78`).
+(`docs/backlog/2026-07-15-offthread-pdf-open-placeholder.md`; formerly the
+`2026-07-13-startup-hang-large-pdf` P0, closed by #63).
 
 **What ships today (so this record is not misread as describing the target):** a
 single synchronous GUI-thread open that does parse #1, parse #2, and the all-pages

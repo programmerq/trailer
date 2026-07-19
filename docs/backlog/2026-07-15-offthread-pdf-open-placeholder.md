@@ -98,8 +98,10 @@ neither blocks this item.
 
 ## Cross-links
 
-- `docs/backlog/2026-07-13-startup-hang-large-pdf.md` — the P0 parent this
-  splits from (proxies #1 and #2 shipped there).
+- The P0 parent this splits from (`2026-07-13-startup-hang-large-pdf`, now
+  deleted) — proxies #1 (off-thread annotation sweep) and #2 (off-thread qpdf
+  parse + AcroForm detection) shipped and were verified-closed via PR #63
+  (merge `852e9e3`); this item carries the surviving residual, proxy #3.
 - `docs/decision-records/0006-defer-offthread-pdf-open.md` — the deferral
   rationale and the residual this item closes.
 - `tests/test_perf_gui_thread_io.cpp` + `tests/perf_iodevice.h` — the

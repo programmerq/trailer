@@ -1,6 +1,7 @@
 // Structural performance test (c): asynchronous document open.
 //
-// P0 regression guard for docs/backlog/2026-07-13-startup-hang-large-pdf.md.
+// P0 regression guard for the startup-hang fix (closed by #63; residual in
+// docs/backlog/2026-07-15-offthread-pdf-open-placeholder.md).
 // Opening a large annotated PDF used to freeze the app: the all-pages
 // annotation sweep (PdfEditor::readAnnotations, ~12s on a 195MB/1M-annotation
 // document) ran synchronously on the GUI thread — first in the PdfDocument

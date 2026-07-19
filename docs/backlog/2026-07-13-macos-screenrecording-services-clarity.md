@@ -25,6 +25,41 @@ Verified on macOS (real hardware): resetting TCC and launching idle raises no
 prompt; invoking Take Screenshot shows the explainer then the OS prompt; the
 Services-menu decision is applied.
 
+## Reconciliation 2026-07-18 (verified against merged main)
+
+Trimmed to what actually remains open. Only merged-on-`main` state is treated as
+closed here; in-flight PRs are cross-referenced, not counted as done.
+
+- **(b) Services submenu — CLOSED.** Resolved as a recorded ruling: **keep** the
+  stock AppKit/Qt Services submenu (no `[NSApp setServicesMenu:nil]` shim). The
+  "Apple developer settings profiler" entry is injected by the owner's installed
+  developer tooling, not registered by Trailer. This decision needs no code and
+  no real-Mac pass; it is settled and not to be re-litigated (see the 2026-07-15
+  resolution note below). This sub-issue no longer gates the item.
+- **(a) core explainer — landed on `main`.** The first-use (never launch-time)
+  pre-permission explainer + basic graceful-denial message shipped:
+  `src/platform/ScreenCapturePermission.{h,cpp}` with
+  `maybeShowScreenCaptureExplainer()` wired at both capture sites
+  (`MainWindow::onTakeScreenshot` and `Application::acquireFromScreenshot`).
+  Code-verified on `main`. Both `screencapture` sites are behind user actions;
+  nothing captures at launch.
+- **(a) deny dead-end hardening — STILL OPEN, in-flight in PR #77** (`fix/
+  capture-permission-flow`, open/unmerged). A reviewer showed the shipped
+  deny-degrade can leave a permanent dead-end (denied state indistinguishable
+  from cancel; app re-launches the crosshair into nothing). #77 reworks this to a
+  3-state preflight (`CGPreflightScreenCaptureAccess` / `CGRequestScreenCaptureAccess`),
+  drops the sticky `screen_capture_attempted` marker, and degrades recoverably.
+  Do not consider this closed until #77 merges.
+- **Real-Mac verification — STILL OPEN** for the (a) permission flow, on a clean
+  TCC state (per the evidence tier).
+- **Picker future — tracked in PR #72** (draft ADR, `adr/permissionless-capture`):
+  the ScreenCaptureKit `SCContentSharingPicker` backend that would remove the
+  permission prompt entirely for stills. Not part of this item's threshold.
+
+**Remaining threshold for this item:** the (a) deny-degrade robustness lands
+(via #77 or successor) AND the real-Mac clean-TCC pass is observed. Sub-issue (b)
+is done.
+
 ## Context
 
 Owner dogfood report, two sub-issues:
