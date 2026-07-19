@@ -188,12 +188,25 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // synchronously before tearing the tab down; we prompt (reusing the
     // same Save/Discard/Cancel flow as closeEvent) only for dirty docs
     // and set *veto when the user aborts. A CLEAN doc is never prompted
-    // — the isDirty() guard keeps never-worry-save and auto-saved docs
-    // (which report isDirty()==false) from nagging when nothing is lost.
+    // — the isDirty() guard keeps never-worry-save from nagging when
+    // nothing is lost. (Note: under the recovery-sidecar model auto-save
+    // no longer clears dirty, so an auto-saved-but-unsaved doc is still
+    // dirty here and correctly routes through confirmCloseDirtyDoc, which
+    // clears its sidecar on Save/Discard.)
     connect(m_documentView, &DocumentView::documentCloseRequested, this,
             [this](IDocument *doc, bool *veto) {
-                if (doc && doc->isDirty())
+                if (doc && doc->isDirty()) {
                     *veto = !confirmCloseDirtyDoc(doc);
+                } else if (doc && !doc->filePath().isEmpty()) {
+                    // Clean tab close: confirmCloseDirtyDoc never runs and the
+                    // window-level closeEvent clean-clear loop doesn't fire for
+                    // a single-tab close, so drop any recovery sidecar left
+                    // from an earlier dirty moment (e.g. edited, auto-
+                    // snapshotted, then undone back to clean). Otherwise a
+                    // stale sidecar would falsely "recover" the undone work on
+                    // next open. Never touches the backing file.
+                    m_app->recoveryStore().clear(doc->filePath());
+                }
             });
     // Flush per-document state keyed by raw IDocument pointer before
     // the document is destroyed. The MlScheduler owns the cancellation
@@ -202,6 +215,8 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     connect(m_documentView, &DocumentView::documentAboutToBeRemoved, this, [this](IDocument *doc) {
         if (!doc)
             return;
+        if (m_docSaveInFlight == doc)
+            m_docSaveInFlight = nullptr; // avoid a dangling compare in autoSaveDirtyDocs
         m_backgroundCandidateDocs.remove(doc);
         m_searchOcrKicked.remove(doc);
         auto it = m_pendingCandidateJobs.find(doc);
@@ -653,11 +668,17 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     });
     m_ocrPagePoll->start();
 
-    // Auto-save loop. Tick every 30 s; each tick saves any document
-    // that is dirty AND has been saved at least once (filePath() is
-    // non-empty). Untitled documents are skipped — auto-save
+    // Auto-save loop. Tick every 30 s; each tick writes a RECOVERY SIDECAR
+    // (not the backing file — see autoSaveDirtyDocs() and DR
+    // 2026-07-19-autosave-recovery-sidecar) for any document that is dirty
+    // AND has an established path. Untitled documents are skipped — auto-save
     // shouldn't pick a destination for the user. The timer respects
     // Settings::autoSave and pauses while the user has it disabled.
+    // 30 s: frequent enough that a crash loses at most ~30 s of markup, rare
+    // enough that snapshotting a large PDF doesn't churn. Range tried: 10 s
+    // (too much snapshot churn on big docs) … 60 s (too much work at risk on
+    // crash). Lower if users report lost work after a crash; raise if
+    // snapshotting stutters interaction on large documents.
     constexpr int kAutoSaveIntervalMs = 30 * 1000;
     m_autoSaveTimer = new QTimer(this);
     m_autoSaveTimer->setInterval(kAutoSaveIntervalMs);
@@ -688,13 +709,32 @@ void MainWindow::autoSaveDirtyDocs() {
             continue;
         if (!doc->isDirty() || doc->filePath().isEmpty())
             continue;
-        if (doc->save()) {
+        // Skip a document whose explicit Save is running on a worker thread:
+        // that worker is mutating the same non-thread-safe qpdf editor
+        // writeRecoverySnapshot would read, and the in-flight Save is about to
+        // persist the work to the backing file anyway.
+        if (doc == m_docSaveInFlight)
+            continue;
+        // Write-side never-worry-save invariant
+        // (docs/decision-records/2026-07-19-autosave-recovery-sidecar.md,
+        // amending ADR 0004): auto-save must NEVER write the user's backing
+        // file. It persists to a recovery sidecar in app-data instead, so no
+        // path except an explicit Save/Save-As touches the source, and an
+        // explicit Discard leaves the on-disk file byte-identical. Crash
+        // safety (never silently lose in-memory work) is met by reopen
+        // restoring from this sidecar.
+        RecoveryStore &store = m_app->recoveryStore();
+        const QString sidecar = store.sidecarPathFor(doc->filePath());
+        if (doc->writeRecoverySnapshot(sidecar)) {
+            store.recordSnapshot(doc->filePath(), sidecar);
             savedAny = true;
         }
     }
     if (savedAny) {
-        updateTitleForDocument(m_documentView->currentDocument());
-        flashSuccess(tr("Auto-saved."));
+        // The document is deliberately still dirty — nothing was written to
+        // the backing file. Signal that recovery is protected, not that the
+        // file was saved.
+        flashSuccess(tr("Recovery snapshot saved."));
     }
 }
 
@@ -2378,6 +2418,19 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
     if (!doc)
         return;
 
+    // The path the doc pointed at before this save (differs from targetPath on
+    // Save-As). An explicit Save/Save-As is the ONLY writer of the backing
+    // file, and it makes any recovery sidecar obsolete — clear the sidecars
+    // for both the prior and target paths on success.
+    const QString priorPath = doc->filePath();
+    auto clearRecovery = [this, priorPath, targetPath]() {
+        RecoveryStore &store = m_app->recoveryStore();
+        if (!priorPath.isEmpty())
+            store.clear(priorPath);
+        if (!targetPath.isEmpty() && targetPath != priorPath)
+            store.clear(targetPath);
+    };
+
     // Image saves are fast (QImage::save encodes a frame). Synchronous
     // is fine — wrapping it adds latency without benefit. PDF saves
     // can be 5-15 s on heavy redactions, so they go through the
@@ -2390,6 +2443,7 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
         }
         m_app->settings().setLastSaveDir(QFileInfo(targetPath).absolutePath());
         m_app->settings().save();
+        clearRecovery();
         updateTitleForDocument(doc);
         flashSuccess(tr("Saved."));
         return;
@@ -2402,10 +2456,15 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
     progress->setAutoReset(false);
 
     using SaveResult = std::optional<PdfDocument::SaveContext>;
+    // Mark this doc as having a save in flight so the 30 s auto-save tick skips
+    // it — the worker below mutates the doc's non-thread-safe qpdf editor and
+    // writeRecoverySnapshot must not touch it concurrently.
+    m_docSaveInFlight = doc;
     auto *watcher = new QFutureWatcher<SaveResult>(this);
     connect(progress, &QProgressDialog::canceled, watcher, &QFutureWatcherBase::cancel);
     connect(watcher, &QFutureWatcher<SaveResult>::finished, this,
-            [this, watcher, progress, pdfDoc, doc, targetPath]() {
+            [this, watcher, progress, pdfDoc, doc, targetPath, clearRecovery]() {
+                m_docSaveInFlight = nullptr;
                 const bool wasCanceled = progress->wasCanceled();
                 progress->close();
                 progress->deleteLater();
@@ -2426,6 +2485,7 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
                 }
                 m_app->settings().setLastSaveDir(QFileInfo(targetPath).absolutePath());
                 m_app->settings().save();
+                clearRecovery();
                 updateTitleForDocument(doc);
                 flashSuccess(tr("Saved."));
             });
@@ -3886,6 +3946,14 @@ void MainWindow::closeEvent(QCloseEvent *event) {
             continue;
         if (doc->filePath().isEmpty())
             continue;
+        // Clean docs need no recovery snapshot: drop any sidecar left over
+        // from an earlier dirty moment (e.g. edits auto-snapshotted, then
+        // undone back to clean, or already saved). Otherwise a stale sidecar
+        // newer than the source would falsely "recover" on next open. Dirty
+        // docs keep their sidecar until confirmCloseDirtyDoc resolves the
+        // close (Save or Discard both clear it there).
+        if (!doc->isDirty())
+            m_app->recoveryStore().clear(doc->filePath());
         RecentEntry state;
         state.currentPage = doc->currentPage();
         state.zoomFactor = doc->zoomFactor();
@@ -4025,7 +4093,13 @@ bool MainWindow::confirmCloseDirtyDoc(IDocument *doc) {
             return false;
         }
     }
-    // Discard, or a successful Save: proceed with closing this doc.
+    // Discard, or a successful Save: proceed with closing this doc. Either way
+    // the recovery sidecar is no longer needed — an explicit Save persisted to
+    // the backing file, and an explicit Discard drops the in-memory edits
+    // (leaving the backing file byte-identical). Delete the sidecar; it never
+    // touches the user's file.
+    if (!doc->filePath().isEmpty())
+        m_app->recoveryStore().clear(doc->filePath());
     return true;
 }
 

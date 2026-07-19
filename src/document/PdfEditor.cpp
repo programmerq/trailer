@@ -1064,6 +1064,50 @@ bool PdfEditor::writeAnnotations(const std::vector<Annotation> &annotations) {
     }
 }
 
+bool PdfEditor::clearManagedAnnotations() {
+    if (!m_valid)
+        return false;
+    // The /Subtype set Trailer owns (mirror of readAnnotations()), plus
+    // /Popup: a popup is an auxiliary window owned by a markup annotation
+    // (typically /Text). Removing the managed markup without its /Popup would
+    // orphan the popup (a /Parent pointing at a now-absent annotation), so we
+    // drop /Popup too. /Widget (form fields) and /Link are intentionally NOT
+    // in this set — they are preserved so a recovery snapshot keeps forms and
+    // links intact.
+    static const std::set<std::string> managed = {
+        "/Ink",  "/Square",    "/Circle",   "/Line",      "/FreeText",
+        "/Text", "/Highlight", "/Underline", "/StrikeOut", "/Popup"};
+    try {
+        auto pages = QPDFPageDocumentHelper(*m_qpdf).getAllPages();
+        for (QPDFPageObjectHelper &page : pages) {
+            QPDFObjectHandle pageObj = page.getObjectHandle();
+            QPDFObjectHandle annots = pageObj.getKey("/Annots");
+            if (!annots.isArray())
+                continue;
+            QPDFObjectHandle kept = QPDFObjectHandle::newArray();
+            const int n = annots.getArrayNItems();
+            for (int i = 0; i < n; ++i) {
+                QPDFObjectHandle entry = annots.getArrayItem(i);
+                std::string st;
+                if (entry.isDictionary()) {
+                    QPDFObjectHandle subtype = entry.getKey("/Subtype");
+                    if (subtype.isName())
+                        st = subtype.getName();
+                }
+                if (managed.count(st) == 0)
+                    kept.appendItem(entry);
+            }
+            if (kept.getArrayNItems() == 0)
+                pageObj.removeKey("/Annots");
+            else
+                pageObj.replaceKey("/Annots", kept);
+        }
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
 namespace {
 
 QColor colourFromArray(QPDFObjectHandle arr) {

@@ -996,6 +996,39 @@ bool ImageDocument::save(const QString &newPath) {
     return true;
 }
 
+bool ImageDocument::writeRecoverySnapshot(const QString &sidecarPath) {
+    // Auto-save calls this instead of save(): never touch the backing file,
+    // never clear the dirty flag. Write the current pixels with annotations
+    // flattened in (the same visual save() would produce) to the sidecar, so
+    // reopen-recovery can restore the in-progress edit. m_image /
+    // m_annotations / m_dirty / m_path are all left untouched.
+    if (m_image.isNull() || m_animated || sidecarPath.isEmpty())
+        return false;
+    const QImage out = flattenAnnotations(m_image, m_annotations.annotations());
+    QByteArray format = QFileInfo(sidecarPath).suffix().toLatin1().toLower();
+    if (format.isEmpty())
+        format = QByteArray("png");
+    QImageWriter writer(sidecarPath, format);
+    return writer.write(out);
+}
+
+bool ImageDocument::recoverFrom(const QString &sidecarPath) {
+    if (sidecarPath.isEmpty() || m_animated)
+        return false;
+    QImage recovered(sidecarPath);
+    if (recovered.isNull())
+        return false;
+    // Keep m_path pointing at the user's real file; adopt the recovered
+    // pixels and mark dirty. The backing file is untouched until an explicit
+    // Save. Any prior annotations were flattened into the snapshot, so the
+    // store starts empty over the recovered raster.
+    m_image = recovered;
+    m_annotations.clear();
+    m_annotations.clearHistory();
+    m_dirty = true;
+    return true;
+}
+
 int ImageDocument::currentFrame() const {
     return m_movie ? m_movie->currentFrameNumber() : 0;
 }

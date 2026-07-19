@@ -165,6 +165,8 @@ class PdfDocument : public IDocument {
     bool cropPages(const std::vector<int> &pageIndices, double leftPts, double topPts,
                    double rightPts, double bottomPts) override;
     bool save(const QString &newPath = {}) override;
+    bool writeRecoverySnapshot(const QString &sidecarPath) override;
+    bool recoverFrom(const QString &sidecarPath) override;
 
     // Two-phase save for off-thread execution. The first phase
     // (saveBeginQpdfPhase) does only thread-safe qpdf work and may
@@ -351,6 +353,15 @@ class PdfDocument : public IDocument {
     // can adopt it here by move (see startBackgroundLoad / adoptBackgroundLoadResult).
     std::shared_ptr<PdfEditor> m_editor;
     std::unique_ptr<ScopedTempFile> m_previewFile;
+    // When the document was restored from a recovery sidecar (recoverFrom),
+    // the live m_editor/m_doc are backed by a PRIVATE copy of the sidecar held
+    // here — never the deterministic sidecar path itself. Otherwise the next
+    // auto-save tick (writeRecoverySnapshot writes the deterministic sidecar
+    // for this backing path) would truncate the very file the live editor/
+    // viewer hold open, corrupting the recovered document. Removed on
+    // destruction; reset on the next Save (which repoints m_editor at the
+    // backing file).
+    std::unique_ptr<ScopedTempFile> m_recoveryBackingFile;
     QPointer<QPdfView> m_view;
     QPointer<AnnotationOverlay> m_overlay;
     QPointer<SelectableTextLayer> m_textLayer;
