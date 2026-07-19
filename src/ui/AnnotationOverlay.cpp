@@ -939,46 +939,55 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent *event) {
     }
     // Hit-test against existing annotations BEFORE the drawing-tool
     // path. A click that lands on an existing annotation routes to
-    // select + prepare-to-move regardless of which tool is active —
-    // otherwise a user with the Arrow tool active who clicks on an
-    // existing arrow would get a new overlapping arrow rather than
-    // selecting the one they aimed at.
+    // select + prepare-to-move — for the Select tool AND for the
+    // bounded shape tools (Rectangle / Ellipse / Line / Arrow), so a
+    // user aiming at an existing shape selects it rather than stacking a
+    // new overlapping one (UAT-ANN-128).
+    //
+    // The one exception is FREE-FORM geometry: the Ink tool. A freehand
+    // stroke that starts on top of an earlier mark must begin a NEW
+    // stroke — like Preview/Acrobat — otherwise the user could never
+    // draw over their own ink (Bug 3). Ink is the only free-form tool;
+    // its press falls straight through to the stroke-capture setup
+    // below regardless of what is underneath.
     //
     // The Select tool keeps a sticky multi-step semantics: first
     // click selects, second click on the same annotation begins the
-    // move drag. A drawing tool short-circuits to immediate
-    // select-and-prepare-to-move; the move only "commits" if the
-    // user actually drags, since the compound is lazy-pushed (see
+    // move drag. A bounded shape tool short-circuits to immediate
+    // select-and-prepare-to-move; the move only "commits" if the user
+    // actually drags, since the compound is lazy-pushed (see
     // AnnotationStore::pushHistory).
-    const int hitId = hitTest(event->position());
-    if (hitId != 0) {
-        const bool wasAlreadySelected = (m_selectedAnnotationId == hitId);
-        if (!wasAlreadySelected) {
-            m_selectedAnnotationId = hitId;
-            emit selectionChanged(hitId);
-        }
-        m_extraSelectedIds.clear();
-        m_pendingSelection.clear();
-        // Prepare a move-drag. For the Select tool we keep the
-        // existing "click twice to drag" affordance (UAT-ANN-120
-        // pins single-click as a pure-select gesture, not a move).
-        // For drawing tools the user's click target was clearly the
-        // annotation, so begin the move immediately.
-        const bool readyToMove = (m_tool != AnnotationTool::Select) || wasAlreadySelected;
-        if (readyToMove && m_store) {
-            if (const Annotation *a = m_store->find(hitId)) {
-                m_movingSelected = true;
-                m_dragPage = a->page;
-                m_moveStartDoc = toDoc(event->position(), a->page);
-                m_moveOriginalBounds = a->bounds;
-                // Begin compound; pushHistory is lazy so a click-
-                // without-drag adds no undo frame.
-                m_store->beginCompound();
+    if (m_tool != AnnotationTool::Ink) {
+        const int hitId = hitTest(event->position());
+        if (hitId != 0) {
+            const bool wasAlreadySelected = (m_selectedAnnotationId == hitId);
+            if (!wasAlreadySelected) {
+                m_selectedAnnotationId = hitId;
+                emit selectionChanged(hitId);
             }
+            m_extraSelectedIds.clear();
+            m_pendingSelection.clear();
+            // Prepare a move-drag. For the Select tool we keep the
+            // existing "click twice to drag" affordance (UAT-ANN-120
+            // pins single-click as a pure-select gesture, not a move).
+            // For bounded shape tools the user's click target was
+            // clearly the annotation, so begin the move immediately.
+            const bool readyToMove = (m_tool != AnnotationTool::Select) || wasAlreadySelected;
+            if (readyToMove && m_store) {
+                if (const Annotation *a = m_store->find(hitId)) {
+                    m_movingSelected = true;
+                    m_dragPage = a->page;
+                    m_moveStartDoc = toDoc(event->position(), a->page);
+                    m_moveOriginalBounds = a->bounds;
+                    // Begin compound; pushHistory is lazy so a click-
+                    // without-drag adds no undo frame.
+                    m_store->beginCompound();
+                }
+            }
+            setFocus(Qt::MouseFocusReason); // accept Delete / arrow keys
+            update();
+            return;
         }
-        setFocus(Qt::MouseFocusReason); // accept Delete / arrow keys
-        update();
-        return;
     }
     // Empty-space click. For Select-tool we clear any annotation
     // selection (the user is starting a fresh text-selection drag),
