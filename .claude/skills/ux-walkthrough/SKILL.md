@@ -39,14 +39,27 @@ peer baseline. This skill closes the dominant **mode-of-review** class pre-PR.
 
 ## Staged capability — read before you run
 
+> **TIER-1 HARNESS NOW LANDED (Linux/Xvfb).** The scripted drive + capture
+> harness the "full vision" below depended on now exists at
+> [`tools/ux-walkthrough/`](../../../tools/ux-walkthrough/README.md). On Linux
+> it drives the **real built binary** through the four golden paths under a real
+> X server + window manager (`xdotool` input, per-step screenshots), emitting
+> the per-step `NN-*.png` + `NN-*.txt` bundles persona (A) consumes — so for the
+> **offscreen-observable golden paths, persona (A) can now be driven for real on
+> Linux** (`tools/ux-walkthrough/run.sh all`), not only in reduced static mode.
+> The macOS/real-Mac fidelity + native-chrome items still stay on the owner
+> checklist below. The reduced-mode text that follows remains the honest floor
+> for surfaces the Tier-1 harness does not cover (e.g. macOS-only actions).
+
 Be honest about what runs **today** versus what is **gated on unbuilt infra**.
 The full vision (a scripted harness that drives the built binary through each
 golden path click-by-click and captures a screenshot per step, with the persona
-as *judge*) depends on a Linux offscreen **drive-harness + per-golden-path
-drive/capture scripts that DO NOT EXIST YET** and are the follow-up backlog item
-[`docs/backlog/2026-07-17-ux-walkthrough-drive-harness.md`](../../../docs/backlog/2026-07-17-ux-walkthrough-drive-harness.md)
-(the Q6 ruling: the harness is a follow-up on the gui-verification track, not in
-scope of the decision record). Until that harness lands, this skill runs in a
+as *judge*) is now realised for the Linux Tier-1 tier by the drive harness at
+[`tools/ux-walkthrough/`](../../../tools/ux-walkthrough/README.md) (it replaced
+the follow-up backlog item `docs/backlog/2026-07-17-ux-walkthrough-drive-harness.md`,
+deleted on close; the Q6 ruling put the harness on the gui-verification track,
+not in scope of the decision record). Where the harness does not yet reach —
+macOS-only surfaces and real-Mac fidelity — this skill still runs in a
 **reduced mode**:
 
 - **Persona (B) platform-parity — OPERATIONAL NOW.** It judges the static
@@ -273,11 +286,11 @@ than blocking the PR on an unverified recall.
 - [ ] Ran persona (A) task-scripted walkthrough in reduced/static mode over the per-state grab() screenshots (full golden-path driving gated on the drive-harness follow-up).
 - [ ] Every finding dispositioned: fix / justify / defer-with-Decision-Record (folded into review-before-push).
 - [ ] Fidelity/native-chrome items (#1, #6-native, #7-clash, Dock/Services/menu-bar) routed to the owner manual milestone checklist, not asserted pre-PR.
-- [ ] Cross-references current: decision record `docs/decision-records/2026-07-16-ux-walkthrough-platform-parity-personas.md` and harness follow-up `docs/backlog/2026-07-17-ux-walkthrough-drive-harness.md`.
+- [ ] Cross-references current: decision record `docs/decision-records/2026-07-16-ux-walkthrough-platform-parity-personas.md` and the Tier-1 drive harness `tools/ux-walkthrough/`.
 
 ## References
 
 - Decision record (accepted): [`docs/decision-records/2026-07-16-ux-walkthrough-platform-parity-personas.md`](../../../docs/decision-records/2026-07-16-ux-walkthrough-platform-parity-personas.md) — full diagnosis, the seven findings, the three failure classes, the offscreen/real-Mac scenario table, and the two persona source blocks.
-- Drive-harness follow-up (Q6, gui-verification track): [`docs/backlog/2026-07-17-ux-walkthrough-drive-harness.md`](../../../docs/backlog/2026-07-17-ux-walkthrough-drive-harness.md) — the Linux offscreen drive-harness + per-golden-path drive/capture scripts persona (A)'s full execution is gated on.
+- Drive harness (Q6, gui-verification track), Tier-1 Linux/Xvfb: [`tools/ux-walkthrough/`](../../../tools/ux-walkthrough/README.md) — drives the real binary through the four golden paths and emits the per-step bundles persona (A) consumes. Closed the follow-up backlog item `docs/backlog/2026-07-17-ux-walkthrough-drive-harness.md`.
 - Enabling-infra survey: [`docs/backlog/2026-07-15-gui-verification-capabilities.md`](../../../docs/backlog/2026-07-15-gui-verification-capabilities.md).
 - Companion gate: [`.claude/skills/review-before-push/SKILL.md`](../review-before-push/SKILL.md) — this skill runs inside its pre-PR round for UX-touching diffs.

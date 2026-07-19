@@ -154,6 +154,33 @@ RUN out=/usr/share/keyrings/githubcli-archive-keyring.gpg \
         shellcheck \
     && rm -rf /var/lib/apt/lists/*
 
+# ux-walkthrough Tier-1 drive harness (tools/ux-walkthrough/): drives the real
+# built binary through the golden paths under a REAL X server + window manager
+# and captures per-step screenshots for the ux-walkthrough judge persona. This
+# is an AGENT-INVOKED pre-PR aid, NOT a blocking CI gate — but the tools must be
+# present on the runner for an agent to invoke it there. In its own layer so it
+# doesn't invalidate the (large, slow) toolchain layer above.
+#   * xvfb            — headless X server (xvfb-run)
+#   * openbox         — lightweight WM; REQUIRED so xdotool can activate/focus
+#                       windows (_NET_ACTIVE_WINDOW) and so modal stacking is
+#                       real — the whole point of driving on xcb vs offscreen
+#   * x11-apps        — xwd (screenshot capture fallback)
+#   * xdotool         — real X input events + window queries
+#   * imagemagick     — import (screenshot) + convert (fixtures)
+#   * xclip           — puts an image on the X clipboard (golden path 1)
+#   * libxcb-cursor0  — Qt 6's xcb platform plugin needs it at runtime (not
+#                       otherwise pulled by the toolchain layer above)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        xvfb \
+        openbox \
+        x11-apps \
+        xdotool \
+        imagemagick \
+        xclip \
+        libxcb-cursor0 \
+    && rm -rf /var/lib/apt/lists/*
+
 # Restore the base image's non-root runner identity and home so the
 # ARC-launched runner process behaves identically to the stock image.
 USER runner
