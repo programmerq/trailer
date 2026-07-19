@@ -114,7 +114,7 @@ class TestUatExternalChange : public QObject {
         QCOMPARE(banner->mode(), FileChangeBanner::Mode::Hidden);
 
         // BEFORE: normal document view (no banner).
-        grabTo(mw, QStringLiteral("external-change-before.png"));
+        grabTo(mw, QStringLiteral("external-change-conflict-banner-before.png"));
 
         // Make an edit (dirty), then simulate another program overwriting the
         // file with different content/size.
@@ -136,7 +136,7 @@ class TestUatExternalChange : public QObject {
 
         QApplication::processEvents();
         // AFTER: same window/state with the conflict banner shown.
-        grabTo(mw, QStringLiteral("external-change-after.png"));
+        grabTo(mw, QStringLiteral("external-change-conflict-banner-after.png"));
     }
 
     // UAT-EXT-002: clean doc + external change -> silent reload, no banner,
@@ -172,6 +172,8 @@ class TestUatExternalChange : public QObject {
         app->openFiles({path});
         MainWindow *mw = currentMainWindow();
         QVERIFY(mw);
+        mw->resize(1000, 700);
+        QApplication::processEvents();
         auto *banner = mw->findChild<FileChangeBanner *>();
         auto *mon = mw->findChild<ExternalChangeMonitor *>();
         mon->setDebounceMsForTest(10);
@@ -184,6 +186,10 @@ class TestUatExternalChange : public QObject {
         QVERIFY(banner->saveEnabled());
         // Buffer is kept — the document still has its content.
         QCOMPARE(doc->pageCount(), 1);
+
+        QApplication::processEvents();
+        // G2 evidence: the deleted-on-disk marker banner (Save recreates).
+        grabTo(mw, QStringLiteral("external-change-deleted-marker.png"));
     }
 
     // UAT-EXT-004: the banner's Reload action reloads from disk and dismisses.
