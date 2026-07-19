@@ -292,6 +292,10 @@ ImageDocument::ImageDocument(QString path) : m_path(std::move(path)) {
             if (!m_searchQuery.isEmpty())
                 recomputeSearchMatches();
         });
+    // Record the on-disk identity we just read so the save-time conflict
+    // guard and the ExternalChangeMonitor can tell a later external write
+    // apart from our own (ADR 2026-07-19).
+    captureFileBaseline();
 }
 
 void ImageDocument::connectAnnotationHistory() {
@@ -984,6 +988,11 @@ bool ImageDocument::save(const QString &newPath) {
     const QString target = newPath.isEmpty() ? m_path : newPath;
     if (target.isEmpty())
         return false;
+    // Save-time conflict guard (ADR 2026-07-19): refuse to overwrite the
+    // baselined original if it changed under us and this isn't a deliberate
+    // "Keep mine" clobber. The caller surfaces the conflict banner.
+    if (saveWouldClobberExternalChange(target))
+        return false;
     const QImage out = flattenAnnotations(m_image, m_annotations.annotations());
     const QByteArray format = QFileInfo(target).suffix().toLatin1().toLower();
     QImageWriter writer(target, format.isEmpty() ? QByteArray("png") : format);
@@ -993,6 +1002,35 @@ bool ImageDocument::save(const QString &newPath) {
     m_annotations.clear();
     m_path = target;
     m_dirty = false;
+    // Refresh the baseline to the bytes we just wrote so our own save never
+    // looks like an external change.
+    captureFileBaseline();
+    return true;
+}
+
+bool ImageDocument::reloadFromDisk() {
+    // Animated images and untitled buffers have nothing to reload in place.
+    if (m_path.isEmpty() || m_animated)
+        return false;
+    QImageReader reader(m_path);
+    reader.setAutoTransform(true);
+    const QImage fresh = reader.read();
+    if (fresh.isNull())
+        return false;
+    m_image = fresh;
+    // A clean-doc reload discards the (empty) edit state; there is nothing to
+    // preserve because reload only runs when the buffer is clean or the user
+    // explicitly chose Reload.
+    m_annotations.clear();
+    m_annotations.clearHistory();
+    m_undoStack.clear();
+    m_redoStack.clear();
+    m_undoLog.clear();
+    m_redoLog.clear();
+    m_selectableText.clear();
+    m_dirty = false;
+    refreshView();
+    captureFileBaseline();
     return true;
 }
 

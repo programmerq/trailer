@@ -179,6 +179,11 @@ PdfDocument::PdfDocument(QString path)
     // inline parse via ensureEditorLoaded() when they need a live editor
     // before the worker has finished. The kept QPdfDocument::load above is the
     // bounded progressive read that already yields pageCount + page-0.
+    //
+    // Record the on-disk identity we opened so the save-time conflict guard
+    // and the ExternalChangeMonitor can distinguish a later external write
+    // from our own (ADR 2026-07-19).
+    captureFileBaseline();
 }
 
 void PdfDocument::ensureEditorLoaded() const {
@@ -1704,6 +1709,14 @@ std::optional<PdfDocument::SaveContext> PdfDocument::saveBeginQpdfPhase(const QS
         return std::nullopt;
     }
 
+    // Save-time conflict guard (ADR 2026-07-19): refuse to overwrite the
+    // baselined original if it changed under us and this isn't a deliberate
+    // "Keep mine" clobber. Runs before any bytes are written so no on-disk
+    // data is touched; the caller surfaces the conflict banner.
+    if (saveWouldClobberExternalChange(targetPath)) {
+        return std::nullopt;
+    }
+
     // Order matters: apply redactions first so their rasterised page
     // image replaces the old content stream before anything else runs.
     // Then flatten signatures so they survive as page content when the
@@ -1819,6 +1832,63 @@ bool PdfDocument::saveCommitOnUi(const SaveContext &ctx) {
     // are retained, so rebuild the unified log to match them.
     m_undoLog.assign(m_pdfUndoStack.size(), UndoSource::PdfCommand);
     m_redoLog.assign(m_pdfRedoStack.size(), UndoSource::PdfCommand);
+    // Refresh the external-change baseline to the bytes we just wrote so our
+    // own save never trips the conflict guard / monitor (ADR 2026-07-19).
+    captureFileBaseline();
+    return true;
+}
+
+bool PdfDocument::reloadFromDisk() {
+    if (m_path.isEmpty() || !QFileInfo::exists(m_path))
+        return false;
+    ensureEditorLoaded();
+
+    const int savedPage = currentPage();
+    const double savedZoom = m_view ? m_view->zoomFactor() : 1.0;
+
+    // Rebuild the qpdf editor and the QPdfDocument from the on-disk bytes,
+    // mirroring saveCommitOnUi's reload half. A clean-doc reload discards our
+    // (empty) edit state; the banner's explicit Reload discards edits the user
+    // chose to drop, so there is nothing to preserve either way.
+    m_doc->close();
+    m_editor.reset();
+    m_editor = std::make_shared<PdfEditor>();
+    if (!m_editor->load(m_path)) {
+        // Restore a live document so the view isn't left blank.
+        m_doc->load(m_path);
+        return false;
+    }
+    m_editorLoaded = true;
+    m_hasFormFieldsCache.reset();
+
+    if (m_doc->load(m_path) != QPdfDocument::Error::None)
+        return false;
+    m_previewFile.reset();
+    m_valid = true;
+
+    if (m_searchModel)
+        m_searchModel->setDocument(m_doc.get());
+    if (m_view) {
+        m_view->setDocument(m_doc.get());
+        if (savedPage >= 0 && savedPage < pageCount())
+            m_view->pageNavigator()->jump(savedPage, QPointF{}, savedZoom);
+    }
+
+    // Drop every edit stack — a reload replaces the document wholesale.
+    m_pdfUndoStack.clear();
+    m_pdfRedoStack.clear();
+    m_undoLog.clear();
+    m_redoLog.clear();
+    m_suppressUndoLog = true;
+    m_annotations.clear();
+    for (Annotation &a : m_editor->readAnnotations())
+        m_annotations.add(std::move(a));
+    m_annotations.clearHistory();
+    m_suppressUndoLog = false;
+    m_annotationsModified = false;
+    m_dirty = false;
+
+    captureFileBaseline();
     return true;
 }
 

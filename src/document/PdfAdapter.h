@@ -165,6 +165,7 @@ class PdfDocument : public IDocument {
     bool cropPages(const std::vector<int> &pageIndices, double leftPts, double topPts,
                    double rightPts, double bottomPts) override;
     bool save(const QString &newPath = {}) override;
+    bool reloadFromDisk() override;
 
     // Two-phase save for off-thread execution. The first phase
     // (saveBeginQpdfPhase) does only thread-safe qpdf work and may

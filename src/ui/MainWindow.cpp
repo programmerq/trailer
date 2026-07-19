@@ -16,8 +16,10 @@
 #include "PreferencesDialog.h"
 #include "SignaturePicker.h"
 #include "SignaturesDialog.h"
+#include "FileChangeBanner.h"
 #include "cards/CardStore.h"
 #include "cards/MyCard.h"
+#include "document/ExternalChangeMonitor.h"
 #include "document/PdfAdapter.h"
 #include "document/PdfEditor.h" // FormField definition for AutoFill
 #include "SearchBar.h"
@@ -248,8 +250,46 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     auto *documentLayout = new QVBoxLayout(m_documentPage);
     documentLayout->setContentsMargins(0, 0, 0, 0);
     documentLayout->setSpacing(0);
+    // Non-modal file-change banner sits ABOVE the document view (ADR
+    // 2026-07-19). Hidden until an external change conflicts with unsaved
+    // edits or the file is deleted; a clean external change reloads silently
+    // and never shows it.
+    m_fileChangeBanner = new FileChangeBanner(m_documentPage);
+    m_fileChangeBanner->hide();
+    documentLayout->addWidget(m_fileChangeBanner);
     documentLayout->addWidget(m_documentView, 1);
     documentLayout->addWidget(m_animationBar);
+
+    connect(m_fileChangeBanner, &FileChangeBanner::reloadRequested, this,
+            &MainWindow::reloadCurrentDocumentFromDisk);
+    connect(m_fileChangeBanner, &FileChangeBanner::keepMineRequested, this, [this]() {
+        auto *doc = m_documentView->currentDocument();
+        if (!doc)
+            return;
+        // Deliberate clobber of the newer on-disk copy: arm the one-shot force
+        // flag, then save over the original.
+        doc->setForceSaveOverExternalChange(true);
+        m_fileChangeBanner->dismiss();
+        saveDocumentAsync(doc, doc->filePath());
+    });
+    connect(m_fileChangeBanner, &FileChangeBanner::saveRequested, this, [this]() {
+        auto *doc = m_documentView->currentDocument();
+        if (!doc || doc->filePath().isEmpty())
+            return;
+        // Deleted-on-disk: Save recreates the file. The adapter guard does not
+        // block a Deleted state, so a plain save writes the buffer back out.
+        m_fileChangeBanner->dismiss();
+        saveDocumentAsync(doc, doc->filePath());
+    });
+
+    // The monitor follows the current document (retargeted in
+    // onCurrentDocumentChanged). Its debounced signals route to the classify-
+    // and-act slots.
+    m_externalChangeMonitor = new ExternalChangeMonitor(this);
+    connect(m_externalChangeMonitor, &ExternalChangeMonitor::externalChange, this,
+            &MainWindow::onExternalFileChanged);
+    connect(m_externalChangeMonitor, &ExternalChangeMonitor::fileDeleted, this,
+            &MainWindow::onExternalFileDeleted);
 
     m_emptyState = new EmptyStateWidget(m_centerStack);
     connect(m_emptyState, &EmptyStateWidget::openRequested, this, &MainWindow::onOpen);
@@ -682,6 +722,13 @@ void MainWindow::autoSaveDirtyDocs() {
         return;
     const int total = m_documentView->documentCount();
     bool savedAny = false;
+    // Mute the monitor for the whole auto-save pass so our own writes don't
+    // self-trigger a reload/banner. The adapter save-guard independently
+    // refuses to clobber a file changed under us, so a conflicting doc is
+    // simply skipped here (save() returns false) — never silently overwritten
+    // (ADR 2026-07-19).
+    if (m_externalChangeMonitor)
+        m_externalChangeMonitor->mute(true);
     for (int i = 0; i < total; ++i) {
         IDocument *doc = nullptr;
         if (!m_documentView->documentAt(i, &doc) || !doc)
@@ -692,6 +739,8 @@ void MainWindow::autoSaveDirtyDocs() {
             savedAny = true;
         }
     }
+    if (m_externalChangeMonitor)
+        m_externalChangeMonitor->mute(false);
     if (savedAny) {
         updateTitleForDocument(m_documentView->currentDocument());
         flashSuccess(tr("Auto-saved."));
@@ -2371,6 +2420,11 @@ void MainWindow::onSave() {
         onSaveAs();
         return;
     }
+    // Save-time conflict guard (ADR 2026-07-19): if the file changed under us,
+    // surface the conflict banner instead of clobbering the newer on-disk
+    // copy. The user resolves it with Reload / Keep mine.
+    if (guardSaveAgainstExternalChange(doc))
+        return;
     saveDocumentAsync(doc, doc->filePath());
 }
 
@@ -2382,9 +2436,22 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
     // is fine — wrapping it adds latency without benefit. PDF saves
     // can be 5-15 s on heavy redactions, so they go through the
     // two-phase split so the UI thread stays responsive.
+    // Mute the external-change monitor across our own write so the resulting
+    // filesystem events don't self-trigger a spurious reload/banner. The
+    // adapter refreshes its baseline on success, so even a stray post-unmute
+    // event classifies as NoChange (ADR 2026-07-19). Only mute when we're
+    // saving the file the monitor is currently watching.
+    const bool muteMonitor =
+        m_externalChangeMonitor && m_externalChangeMonitor->path() == targetPath;
+    if (muteMonitor)
+        m_externalChangeMonitor->mute(true);
+
     auto *pdfDoc = dynamic_cast<PdfDocument *>(doc);
     if (!pdfDoc) {
-        if (!doc->save(targetPath)) {
+        const bool ok = doc->save(targetPath);
+        if (muteMonitor)
+            m_externalChangeMonitor->mute(false);
+        if (!ok) {
             flashError(tr("Save failed — could not write to %1").arg(targetPath));
             return;
         }
@@ -2405,7 +2472,7 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
     auto *watcher = new QFutureWatcher<SaveResult>(this);
     connect(progress, &QProgressDialog::canceled, watcher, &QFutureWatcherBase::cancel);
     connect(watcher, &QFutureWatcher<SaveResult>::finished, this,
-            [this, watcher, progress, pdfDoc, doc, targetPath]() {
+            [this, watcher, progress, pdfDoc, doc, targetPath, muteMonitor]() {
                 const bool wasCanceled = progress->wasCanceled();
                 progress->close();
                 progress->deleteLater();
@@ -2413,6 +2480,10 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
                 if (!wasCanceled)
                     result = watcher->result();
                 watcher->deleteLater();
+                // Unmute now that our write window is closed (baseline was
+                // refreshed inside saveCommitOnUi on success).
+                if (muteMonitor && m_externalChangeMonitor)
+                    m_externalChangeMonitor->mute(false);
                 if (wasCanceled)
                     return;
                 if (!result) {
@@ -2433,6 +2504,95 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
     QFuture<SaveResult> future = QtConcurrent::run(
         [pdfDoc, targetPath]() -> SaveResult { return pdfDoc->saveBeginQpdfPhase(targetPath); });
     watcher->setFuture(future);
+}
+
+void MainWindow::retargetExternalChangeMonitor(IDocument *doc) {
+    if (!m_externalChangeMonitor)
+        return;
+    // A single monitor + banner track the CURRENT document. Switching docs
+    // drops the previous doc's banner and repoints the watcher; untitled docs
+    // (empty path) clear the watch. Known limitation: a conflict raised on a
+    // background tab is re-evaluated when the user returns to it (the monitor
+    // re-points and the save-guard still fires), not shown while it's hidden —
+    // documented in the ADR.
+    if (m_fileChangeBanner)
+        m_fileChangeBanner->dismiss();
+    m_externalChangeMonitor->setPath(doc ? doc->filePath() : QString());
+}
+
+void MainWindow::onExternalFileChanged() {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc)
+        return;
+    switch (doc->externalChangeState()) {
+    case ExternalChangeState::NoChange:
+        // Spurious event (or our own just-refreshed baseline) — ignore.
+        return;
+    case ExternalChangeState::CleanExternalChange:
+        // Nothing unsaved to lose: reload silently (Preview-style), no dialog.
+        reloadCurrentDocumentFromDisk();
+        return;
+    case ExternalChangeState::DirtyConflict:
+        // Never auto-decide with unsaved edits — surface the banner.
+        if (m_fileChangeBanner)
+            m_fileChangeBanner->showConflict();
+        return;
+    case ExternalChangeState::Deleted:
+        onExternalFileDeleted();
+        return;
+    }
+}
+
+void MainWindow::onExternalFileDeleted() {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc || !m_fileChangeBanner)
+        return;
+    // Keep the buffer; the banner's Save recreates the file on disk.
+    m_fileChangeBanner->showDeleted();
+}
+
+void MainWindow::reloadCurrentDocumentFromDisk() {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc)
+        return;
+    // Mute the monitor across the in-place reload so the reload's own reads /
+    // baseline refresh don't loop back as another event.
+    if (m_externalChangeMonitor)
+        m_externalChangeMonitor->mute(true);
+    const bool ok = doc->reloadFromDisk();
+    if (m_externalChangeMonitor)
+        m_externalChangeMonitor->mute(false);
+    if (m_fileChangeBanner)
+        m_fileChangeBanner->dismiss();
+    if (!ok) {
+        flashError(tr("Couldn't reload %1 from disk.").arg(doc->displayName()));
+        return;
+    }
+    // Refresh the surfaces that cache document-derived state.
+    m_sidebar->setDocument(doc);
+    updateTitleForDocument(doc);
+    updateUndoRedoActions(doc);
+    flashStatus(tr("Reloaded — the file changed on disk."));
+}
+
+bool MainWindow::guardSaveAgainstExternalChange(IDocument *doc) {
+    if (!doc || doc->filePath().isEmpty())
+        return false;
+    switch (doc->externalChangeState()) {
+    case ExternalChangeState::CleanExternalChange:
+    case ExternalChangeState::DirtyConflict:
+        // The on-disk copy is newer than our baseline and we didn't cause it:
+        // do NOT clobber. Raise the conflict banner so the user picks Reload
+        // or Keep mine.
+        if (m_fileChangeBanner)
+            m_fileChangeBanner->showConflict();
+        return true;
+    case ExternalChangeState::Deleted:
+        // File gone: Save should recreate it, so don't block. Fall through.
+    case ExternalChangeState::NoChange:
+        return false;
+    }
+    return false;
 }
 
 void MainWindow::onSaveAs() {
@@ -2851,6 +3011,10 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // changes (tab switches, opening into the same window) leave
     // the size alone so the user's adjustments stick.
     applyInitialWindowSize(doc);
+
+    // Follow the new document's file for external changes and drop any banner
+    // that belonged to the doc we're leaving (ADR 2026-07-19).
+    retargetExternalChangeMonitor(doc);
 
     // Update the auto-OCR controller. It cancels in-flight
     // submissions for the previous doc and starts following the
