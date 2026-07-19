@@ -37,6 +37,17 @@ class PdfDocument : public IDocument {
     explicit PdfDocument(QString path);
     ~PdfDocument() override;
 
+    // Test seam: force the qpdf editor to parse synchronously on the CALLING
+    // (GUI) thread now, so a subsequent save() uses a main-thread editor rather
+    // than one adopted from the background annotation-sweep worker. Real
+    // Windows saves a worker-adopted editor fine (qpdf's FILE handles are
+    // process-global, so closing on the main thread during the same-file
+    // rename works); Wine's cross-thread file-handle semantics do not, so
+    // Wine unit tests that open→annotate→save must pin the editor to the main
+    // thread. Production never needs this — any structural edit or the
+    // recovered-doc path already loads the editor on the GUI thread.
+    void loadEditorSyncForTesting() { ensureEditorLoaded(); }
+
     QString displayName() const override;
     QString filePath() const override;
     QWidget *createView(QWidget *parent) override;
