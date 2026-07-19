@@ -65,7 +65,14 @@ never a lying control.
 1. **Clean-doc reload is SILENT.** When the buffer is clean there is nothing to
    lose, so the new content is loaded with **no dialog and no banner** — this
    matches the no-narration-dialogs taste rule; a dialog here would be pure
-   interruption with no decision to make.
+   interruption with no decision to make. **"Silent" is defined precisely as:
+   no modal dialog and no persistent banner.** A subtle, non-modal status-line
+   note (the current implementation flashes *"Reloaded — the file changed on
+   disk."*) is still emitted and is **compliant** — a transient status note is
+   neither an interrupting dialog nor a persistent attention surface, and it
+   keeps the reload from being a jarring unexplained content swap. (N1: this
+   makes the record and the code agree that the status flash is intended, not a
+   silence violation.)
 2. **The save-time mtime conflict guard is IN scope.** The must-have deliverable
    is that a save re-stats the file's mtime/size against the load-time baseline
    *before committing the write*, and refuses to clobber a changed-under-us file
@@ -125,7 +132,14 @@ Evidence):
    the save and surfaces the conflict banner; **no on-disk bytes are
    overwritten** until the user picks Reload or Keep mine.
    (`test_external_change_guard::saveBlockedWhenFileChangedExternally` asserts
-   `save()==false` and the on-disk bytes are byte-for-byte unchanged.)
+   `save()==false` and the on-disk bytes are byte-for-byte unchanged.) For the
+   PDF two-phase save the re-stat runs **twice** — once in the worker-thread
+   begin phase and again on the UI thread in `saveCommitOnUi`, immediately
+   before the destructive remove+rename — so an external write that lands in
+   the multi-second gap between the two phases still aborts the commit with the
+   on-disk bytes intact
+   (`test_external_change_guard::pdfCommitGuardBlocksMidFlightExternalChange`;
+   the forced-clobber counterpart is `pdfCommitGuardForceClobbersMidFlightExternalChange`).
 2. **Clean reload is silent and correct.** A **clean** document whose file
    changes on disk shows the **new content** with **no banner**.
    (`test_uat_external_change::uat_ext_002_cleanChangeReloadsSilently`:
@@ -164,20 +178,44 @@ Reload to take the on-disk copy or Keep mine to overwrite it."*
 (`src/ui/FileChangeBanner.cpp`). It exists so the option is discoverable once a
 diff view lands; it never silently substitutes a different behaviour.
 
-## Known limitation
+## Known limitations
 
-A single monitor + banner track the **current** document. A conflict raised on a
-background tab is re-evaluated when the user returns to it (the monitor
-re-points and the save-guard still fires on any save attempt) rather than shown
-while the tab is hidden. No data-loss path results — the save-guard is the
-backstop regardless of which tab is foreground.
+**Background tabs share one monitor.** A single monitor + banner track the
+**current** document. A change to a background tab's file is not shown while
+that tab is hidden. When the user switches **into** that tab, the now-current
+document is **re-classified immediately** against its baseline (see
+`MainWindow::retargetExternalChangeMonitor`, which re-points the watcher and
+then runs the classify-and-act path), so a pending conflict surfaces — banner
+for a dirty conflict, silent reload for a clean change — on return rather than
+waiting for the next filesystem event. The save-guard still fires on any save
+attempt regardless of which tab is foreground, so no data-loss path results
+either way. (F4: the re-classify-on-return step is what makes this claim
+truthful; without it the conflict would not appear until the next raw FS
+event.)
+
+**Same-size + same-second overwrite is undetectable.** Change detection is
+mtime + size only (`classifyExternalChange`,
+[`src/document/ExternalChangeState.cpp:34`](../../src/document/ExternalChangeState.cpp));
+there is no content hash. On a filesystem with 1-second mtime granularity, an
+external overwrite that lands in the **same wall-clock second** as the
+load-time baseline **and** yields a file of the **exact same byte size** is
+classified `NoChange` and slips past both the watcher and the save-time guard.
+This is an **accepted default**: mtime + size is a cheap, allocation-free stat
+that catches every realistic external edit (content edits almost always change
+the size, and edits more than a second apart change the mtime), whereas hashing
+every file on every save would tax the large-PDF path against the size envelope
+in [`docs/performance-budgets.md`](../performance-budgets.md) for a vanishingly
+rare collision. The residual hole is tracked for an **optional content-hash
+fallback** (consulted only when mtime + size are equal) in backlog item
+`2026-07-19-external-change-same-size-blind-spot`. (F3.)
 
 ## Evidence
 
 - Unit: `tests/test_external_change_state.cpp` (pure classifier + `FileBaseline`
   stat), `tests/test_external_change_monitor.cpp` (debounce / mute / typed-emit
   / re-arm), `tests/test_external_change_guard.cpp` (adapter-level save-guard on
-  a real `ImageDocument`), `tests/test_file_change_banner.cpp` (banner modes +
+  a real `ImageDocument`, plus the PDF two-phase begin→commit guard on a real
+  `PdfDocument`), `tests/test_file_change_banner.cpp` (banner modes +
   G3 disabled-Compare). All green under `ctest -LE uat`.
 - UAT: `tests/uat/test_uat_external_change.cpp` (`UAT-EXT-001..004`), labelled
   `uat`. Emits the G2 before/after evidence pair under

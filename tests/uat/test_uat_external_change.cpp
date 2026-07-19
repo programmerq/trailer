@@ -16,13 +16,16 @@
 
 #include "app/Application.h"
 #include "document/ExternalChangeMonitor.h"
+#include "document/ExternalChangeState.h"
 #include "document/IDocument.h"
 #include "ui/FileChangeBanner.h"
 #include "ui/MainWindow.h"
 
+#include <QAction>
 #include <QDir>
 #include <QFile>
 #include <QImage>
+#include <QKeySequence>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -213,6 +216,57 @@ class TestUatExternalChange : public QObject {
         QApplication::processEvents();
         QCOMPARE(banner->mode(), FileChangeBanner::Mode::Hidden);
         QCOMPARE(doc->imagePixelSize(), QSize(300, 200));
+        QVERIFY(!doc->isDirty());
+    }
+
+    // UAT-EXT-005 (S1): a CLEAN document whose file changed externally, met at
+    // SAVE time (the monitor's reload hasn't run yet — e.g. the tab was hidden,
+    // or the event is still in flight), must NOT raise the misleading "…while
+    // you had unsaved edits" conflict banner. It reloads the on-disk truth
+    // silently instead, and the stale in-memory buffer never clobbers the newer
+    // bytes.
+    void uat_ext_005_cleanChangeOnSaveReloadsSilently() {
+        auto *app = qobject_cast<Application *>(qApp);
+        QVERIFY(app);
+        const QString path =
+            writeImage(m_dir.filePath(QStringLiteral("ext005.png")), QSize(120, 90), Qt::white);
+        app->openFiles({path});
+        MainWindow *mw = currentMainWindow();
+        QVERIFY(mw);
+        QApplication::processEvents();
+
+        auto *banner = mw->findChild<FileChangeBanner *>();
+        auto *mon = mw->findChild<ExternalChangeMonitor *>();
+        QVERIFY(banner);
+        QVERIFY(mon);
+
+        IDocument *doc = currentDoc(mw);
+        QVERIFY(doc);
+        QVERIFY(!doc->isDirty());
+
+        // Mute the monitor so the real filesystem event can't win the race and
+        // reload for us — we want to reach the SAVE-time guard with the change
+        // still pending, exactly the background-tab / in-flight-event case.
+        mon->mute(true);
+        writeImage(path, QSize(200, 150), Qt::magenta);
+        QVERIFY(doc->externalChangeState() == ExternalChangeState::CleanExternalChange);
+
+        // Trigger Save (⌘S / Ctrl+S) via its action so the full onSave path runs.
+        QAction *saveAct = nullptr;
+        for (QAction *a : mw->findChildren<QAction *>()) {
+            if (a->shortcut() == QKeySequence(QKeySequence::Save)) {
+                saveAct = a;
+                break;
+            }
+        }
+        QVERIFY(saveAct);
+        saveAct->trigger();
+        QApplication::processEvents();
+
+        // No conflict banner (the clean case is silent), and the buffer picked
+        // up the new bytes rather than clobbering them with the stale copy.
+        QCOMPARE(banner->mode(), FileChangeBanner::Mode::Hidden);
+        QCOMPARE(doc->imagePixelSize(), QSize(200, 150));
         QVERIFY(!doc->isDirty());
     }
 };
