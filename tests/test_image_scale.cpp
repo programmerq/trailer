@@ -27,6 +27,7 @@
 #include <QApplication>
 #include <QDir>
 #include <QImage>
+#include <QLabel>
 #include <QPixmap>
 #include <QPointF>
 #include <QScrollArea>
@@ -83,6 +84,8 @@ class TestImageScale : public QObject {
     void captureOriginDefaultsToActual_data();
     void captureOriginDefaultsToActual();
     void ordinaryOpenKeepsFit();
+    void smallImageResizeDoesNotUpscale();
+    void readoutMatchesRenderAfterAsyncFit();
     void pngRoundTripStripsDprThenRecovers();
     void pendingCaptureDprConsumedOncePerBatch();
     void coordinateRoundTripInvertsAtDpr2();
@@ -289,6 +292,105 @@ void TestImageScale::ordinaryOpenKeepsFit() {
     delete view;
 }
 
+void TestImageScale::smallImageResizeDoesNotUpscale() {
+    // Primary bug (render): an ordinary open of an image that already
+    // fits must stay at Actual Size (<=100%) and must NOT be re-fit and
+    // upscaled when the viewport later settles. Before the fix the
+    // initial fit parked the mode at FitInView even though the image fit
+    // at 100%, so the resize watcher's reapplyFitMode() upscaled it
+    // (uncapped) past 100% — a 600x420 image blew up to ~194% once the
+    // viewport measured ~1360x815.
+    ImageDocument doc{QString()};
+    doc.setImageForTest(makeDprImage(600, 420, 1.0), /*captureOrigin=*/false);
+    QWidget *view = doc.createView(nullptr);
+    auto *scroll = qobject_cast<QScrollArea *>(view);
+    QVERIFY(scroll != nullptr);
+    scroll->resize(1400, 900);
+    scroll->show();
+    QTest::qWait(30); // let the viewport lay out
+
+    // Initial fit: a 600x420 image fits a ~1400x900 viewport, so it opens
+    // at Actual Size (capped at 100%). This already passes today.
+    doc.triggerInitialZoomForTest();
+    QVERIFY2(std::abs(doc.scaleFactor() - 1.0) < 1e-6,
+             qPrintable(QStringLiteral("initial open should cap at 100%%, got %1")
+                            .arg(doc.scaleFactor())));
+
+    // The viewport settles to its final size and the resize watcher fires
+    // reapplyFitMode(). An ordinary open that already fits must NOT be
+    // upscaled past 100%, and its mode must be Actual (so the watcher
+    // no-ops), not FitInView.
+    scroll->viewport()->resize(1360, 815);
+    doc.reapplyFitMode();
+    QVERIFY2(doc.scaleFactor() <= 1.0 + 1e-6,
+             qPrintable(QStringLiteral("ordinary open must not upscale past 100%% on "
+                                       "resize, got %1")
+                            .arg(doc.scaleFactor())));
+    QCOMPARE(doc.zoomMode(), ZoomMode::Actual);
+
+    delete view;
+}
+
+void TestImageScale::readoutMatchesRenderAfterAsyncFit() {
+    // Secondary bug (readout): the status-bar zoom indicator is set
+    // synchronously when a document opens (reading the pre-fit 100%
+    // scale), but the real scale for a large image is decided by the
+    // ASYNC applyInitialFitZoom that fires on the event loop. The
+    // indicator was frozen at "100%" while the render shrank to fit —
+    // a visible mismatch. After the fix the readout must reflect the
+    // post-fit scale.
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app != nullptr);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString png = dir.path() + "/large_async_fit.png";
+    // A large image that must shrink to fit an ordinary window.
+    QImage big(4000, 3000, QImage::Format_ARGB32);
+    big.fill(qRgb(180, 190, 200));
+    QVERIFY(big.save(png, "PNG"));
+
+    app->openFiles({png});
+    // Pump so the async initial-fit singleShot(0) fires and the viewport
+    // settles. The window was shown by openFiles (ensureFreshWindow).
+    QTest::qWait(200);
+
+    // Locate the freshly-opened large-image document and its window.
+    ImageDocument *doc = nullptr;
+    MainWindow *mw = nullptr;
+    for (MainWindow *w : app->windows()) {
+        if (!w)
+            continue;
+        for (int i = 0; i < w->documentCount(); ++i) {
+            IDocument *d = nullptr;
+            if (w->documentAt(i, &d) == 1 && d) {
+                if (auto *img = dynamic_cast<ImageDocument *>(d)) {
+                    if (img->imagePixelSize() == QSize(4000, 3000)) {
+                        doc = img;
+                        mw = w;
+                    }
+                }
+            }
+        }
+    }
+    QVERIFY(doc != nullptr);
+    QVERIFY(mw != nullptr);
+
+    // The async fit shrank the render below 100%.
+    QVERIFY2(doc->scaleFactor() < 1.0,
+             qPrintable(QStringLiteral("expected shrink-to-fit below 100%%, got %1")
+                            .arg(doc->scaleFactor())));
+
+    auto *indicator = mw->findChild<QLabel *>(QStringLiteral("zoomIndicator"));
+    QVERIFY2(indicator != nullptr, "MainWindow should host a zoomIndicator label");
+    const QString expected =
+        QStringLiteral("%1%").arg(qRound(doc->zoomFactor() * 100.0));
+    QVERIFY2(indicator->text() == expected,
+             qPrintable(QStringLiteral("readout '%1' must match render %2 after async fit")
+                            .arg(indicator->text())
+                            .arg(expected)));
+}
+
 void TestImageScale::pngRoundTripStripsDprThenRecovers() {
     // The seam that made screenshots blurry/oversized: a capture is saved
     // to PNG, and PNG carries no devicePixelRatio metadata, so the reload
@@ -348,7 +450,14 @@ void TestImageScale::pendingCaptureDprConsumedOncePerBatch() {
     // Both are plain PNGs on disk (dpr stripped by the save); the capture
     // distinction comes purely from the staged pending dpr, not the file.
     QVERIFY(makeDprImage(2880, 1800, 2.0).save(capPng, "PNG"));
-    QVERIFY(makeDprImage(640, 480, 1.0).save(ordPng, "PNG"));
+    // The ordinary image is large enough that it must SHRINK to fit an
+    // ordinary window, so a correct (non-capture) open parks FitInView.
+    // If a leaked capture flag wrongly forced Actual Size, the image
+    // would open at 100% instead of shrinking — which the `!= Actual`
+    // assertion below catches. (A small ordinary image that already fits
+    // now legitimately parks Actual@100%, so a large one is needed to
+    // keep this invariant discriminating.)
+    QVERIFY(makeDprImage(4000, 3000, 1.0).save(ordPng, "PNG"));
 
     // Captured open: stage dpr=2, then open.
     app->setPendingCaptureDpr(2.0);
@@ -367,13 +476,15 @@ void TestImageScale::pendingCaptureDprConsumedOncePerBatch() {
     QVERIFY(ordDoc != nullptr);
     QVERIFY(ordDoc != capDoc);
     QCOMPARE(ordDoc->image().devicePixelRatio(), qreal(1.0));
-    // Not capture-origin: the initial zoom is never forced to Actual. (It
-    // resolves to FitInView once the viewport measures; under the offscreen
-    // platform the viewport may be 0, so we assert the invariant that holds
-    // unconditionally — an ordinary open is never Actual by default.)
+    // Not capture-origin: this large image must shrink to fit, so the
+    // initial zoom resolves to FitInView — it is never force-parked at
+    // Actual Size the way a capture-origin open is. (Under the offscreen
+    // platform the viewport may be 0, in which case applyInitialFitZoom
+    // reschedules and the mode stays Custom; either way it is never
+    // Actual, the tell-tale of a leaked capture flag forcing 100%.)
     ordDoc->triggerInitialZoomForTest();
     QVERIFY2(ordDoc->zoomMode() != ZoomMode::Actual,
-             "ordinary open must not default to Actual Size");
+             "a leaked capture flag would force an ordinary open to Actual Size");
 }
 
 void TestImageScale::coordinateRoundTripInvertsAtDpr2() {

@@ -624,9 +624,17 @@ void ImageDocument::applyInitialFitZoom() {
     // Cap at 100%: a 200×100 thumbnail shouldn't blow up to fill the
     // window. Larger images shrink to fit instead.
     applyScale(std::min(1.0, fit));
-    // Park the mode at FitInView so subsequent window resizes refit
-    // (the watcher above calls reapplyFitMode on each viewport resize).
-    m_zoomMode = ZoomMode::FitInView;
+    // Park the mode based on whether the image actually had to shrink.
+    // If it genuinely doesn't fit (fit < 1.0) we keep FitInView so a
+    // later window resize re-fits it (the watcher calls reapplyFitMode
+    // on each viewport resize). But an ordinary open of an image that
+    // already fits was capped at 100% here — parking it FitInView would
+    // let the resize watcher re-fit it UNCAPPED once the viewport
+    // settles, upscaling a small image past 100%. Park it Actual instead
+    // so reapplyFitMode() no-ops (it early-returns for non-fit modes),
+    // leaving the 100% cap intact. The explicit Fit-Page action still
+    // sets FitInView and upscales on resize — that path is untouched.
+    m_zoomMode = (fit < 1.0) ? ZoomMode::FitInView : ZoomMode::Actual;
 }
 
 void ImageDocument::applyZoomState(ZoomMode mode, double factor) {
