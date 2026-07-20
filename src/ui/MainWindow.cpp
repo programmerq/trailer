@@ -766,6 +766,9 @@ void MainWindow::buildMenus() {
     m_app->addNewFromClipboardAction(fileMenu);
 
     auto *openAction = fileMenu->addAction(tr("&Open…"));
+    // Stable objectName selector for the ux-walkthrough drive harness / any
+    // AT-SPI / QTest tier; survives the PR #86 File-menu IA rename.
+    openAction->setObjectName(QStringLiteral("action.file.open"));
     openAction->setShortcut(QKeySequence::Open);
     connect(openAction, &QAction::triggered, this, &MainWindow::onOpen);
 
@@ -777,6 +780,7 @@ void MainWindow::buildMenus() {
     fileMenu->addSeparator();
 
     m_saveAction = fileMenu->addAction(tr("&Save"));
+    m_saveAction->setObjectName(QStringLiteral("action.file.save"));
     m_saveAction->setShortcut(QKeySequence::Save);
     connect(m_saveAction, &QAction::triggered, this, &MainWindow::onSave);
 
@@ -837,6 +841,7 @@ void MainWindow::buildMenus() {
     fileMenu->addSeparator();
 
     auto *closeAction = fileMenu->addAction(tr("&Close Window"));
+    closeAction->setObjectName(QStringLiteral("action.file.close"));
     closeAction->setShortcut(QKeySequence::Close);
     connect(closeAction, &QAction::triggered, this, &QMainWindow::close);
 
@@ -1264,6 +1269,10 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     viewMenu->addSeparator();
 
     m_previousPageAction = viewMenu->addAction(tr("&Previous Page"));
+    // objectName gives the ux-walkthrough drive harness (and any AT-SPI /
+    // QTest tier) a stable selector that survives menu-label / IA renames
+    // such as PR #86's File-menu reshuffle. See tools/ux-walkthrough/.
+    m_previousPageAction->setObjectName(QStringLiteral("action.view.previousPage"));
     m_previousPageAction->setShortcut(QKeySequence(Qt::Key_PageUp));
     connect(m_previousPageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
@@ -1272,6 +1281,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     });
 
     m_nextPageAction = viewMenu->addAction(tr("&Next Page"));
+    m_nextPageAction->setObjectName(QStringLiteral("action.view.nextPage"));
     m_nextPageAction->setShortcut(QKeySequence(Qt::Key_PageDown));
     connect(m_nextPageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
@@ -1283,6 +1293,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
 
     m_zoomInAction = viewMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-in.svg"), this), tr("Zoom &In"));
+    m_zoomInAction->setObjectName(QStringLiteral("action.view.zoomIn"));
     m_zoomInAction->setShortcuts({
         QKeySequence::ZoomIn,
         QKeySequence(Qt::CTRL | Qt::Key_Equal),
@@ -1296,6 +1307,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     m_zoomOutAction = viewMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-out.svg"), this),
         tr("Zoom &Out"));
+    m_zoomOutAction->setObjectName(QStringLiteral("action.view.zoomOut"));
     m_zoomOutAction->setShortcut(QKeySequence::ZoomOut);
     connect(m_zoomOutAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
@@ -1324,6 +1336,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     m_zoomActualAction = viewMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-actual.svg"), this),
         tr("&Actual Size"));
+    m_zoomActualAction->setObjectName(QStringLiteral("action.view.actualSize"));
     m_zoomActualAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
     connect(m_zoomActualAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
@@ -1518,6 +1531,7 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     m_rotateRightAction = toolsMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/page-rotate-right.svg"), this),
         tr("Rotate &Right"));
+    m_rotateRightAction->setObjectName(QStringLiteral("action.tools.rotateRight"));
     m_rotateRightAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
     connect(m_rotateRightAction, &QAction::triggered, this, &MainWindow::onRotateRight);
 
@@ -1615,6 +1629,9 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     toolsMenu->addSeparator();
 
     m_screenshotAction = toolsMenu->addAction(tr("&Take Screenshot"));
+    // Stable objectName selector for the ux-walkthrough drive harness / any
+    // AT-SPI / QTest tier; survives the PR #86 File-menu IA rename.
+    m_screenshotAction->setObjectName(QStringLiteral("action.tools.takeScreenshot"));
     // No shortcut: ⌘⇧3 is OS-reserved on macOS (global capture) and
     // never reaches Trailer — a binding that can't fire is a lying
     // control. File → Screenshot's explicit modes are the discoverable

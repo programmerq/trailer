@@ -34,17 +34,17 @@
 # (github.com/actions/runner). Noble main ships qpdf 11.9.x, so the
 # Linux link is satisfied by the base — no PPA needed.
 #
-# The base is PINNED to a specific released tag + digest below (rather
-# than the moving `:latest`) so a future actions-runner base regression
-# — e.g. a hypothetical move back to an older Ubuntu with qpdf < 11 —
-# can't ship silently via the weekly build-runner-image rebuild. To bump:
-# pick a newer released tag from github.com/actions/runner/releases,
-# confirm its images/Dockerfile still FROMs an *-noble (or newer) base,
-# re-resolve the digest (`docker buildx imagetools inspect
-# ghcr.io/actions/actions-runner:<tag>`), and update both here. Belt-and-
-# suspenders, setup-linux-build.action.yml version-guards libqpdf-dev at
-# runtime and refuses to skip a < 11 install.
-FROM ghcr.io/actions/actions-runner:2.335.1@sha256:08c30b0a7105f64bddfc485d2487a22aa03932a791402393352fdf674bda2c29
+# The base FLOATS to the moving `:latest` tag (no version + digest pin) so
+# every build-runner-image rebuild pulls the newest actions-runner release
+# automatically, with no manual tag/digest bump step. The tradeoff is
+# accepted deliberately: we would rather the image break loudly on an
+# upstream change than sit silently stuck on an old base. If a future
+# actions-runner base regressed — e.g. a hypothetical move back to an older
+# Ubuntu with qpdf < 11 — the build (or the runtime guard) surfaces it
+# instead of a stale pin hiding it. Belt-and-suspenders,
+# setup-linux-build.action.yml version-guards libqpdf-dev at runtime and
+# refuses to skip a < 11 install.
+FROM ghcr.io/actions/actions-runner:latest
 
 # The actions-runner base runs as the non-root `runner` user; switch to
 # root for the system installs and restore `runner` (+ its workdir) at
@@ -152,6 +152,34 @@ RUN out=/usr/share/keyrings/githubcli-archive-keyring.gpg \
         jq \
         zip \
         shellcheck \
+    && rm -rf /var/lib/apt/lists/*
+
+# ux-walkthrough Tier-1 drive harness (tools/ux-walkthrough/): drives the real
+# built binary through the golden paths under a REAL X server + window manager
+# and captures per-step screenshots for the ux-walkthrough judge persona. This
+# is an AGENT-INVOKED pre-PR aid, NOT a blocking CI gate — but the tools must be
+# present on the runner for an agent to invoke it there. In its own layer so it
+# doesn't invalidate the (large, slow) toolchain layer above.
+#   * xvfb            — headless X server (xvfb-run)
+#   * openbox         — lightweight WM; REQUIRED so xdotool can activate/focus
+#                       windows (_NET_ACTIVE_WINDOW) and so modal stacking is
+#                       real — the whole point of driving on xcb vs offscreen
+#   * x11-apps        — xwd (screenshot capture fallback)
+#   * xdotool         — real X input events + window queries
+#   * imagemagick     — import (screenshot) + convert (fixtures)
+#   * xclip           — puts an image on the X clipboard (golden path 1)
+#   * libxcb-cursor0  — REQUIRED: Qt 6's xcb platform plugin fails to load at
+#                       runtime without it (not otherwise pulled by the
+#                       toolchain layer above)
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        xvfb \
+        openbox \
+        x11-apps \
+        xdotool \
+        imagemagick \
+        xclip \
+        libxcb-cursor0 \
     && rm -rf /var/lib/apt/lists/*
 
 # Restore the base image's non-root runner identity and home so the
