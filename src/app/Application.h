@@ -166,6 +166,11 @@ class Application : public QApplication {
 #ifdef Q_OS_MACOS
     void installNoWindowMenuBar();
     void openFilesFromDialog();
+    // Shared degrade UI for the no-window Acquire flow: one actionable modal
+    // pointing at System Settings ▸ Screen Recording (the screen-capture
+    // preflight ADR). The windowed path degrades via MainWindow::flashError
+    // instead; captureScreenshot picks the right one by context.
+    void showScreenRecordingNeededModal();
 #endif
 
     // New-from-Clipboard actions across every File menu (per-window +

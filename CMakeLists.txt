@@ -370,12 +370,17 @@ if(APPLE)
     # only frameworks; gated inside the APPLE block so the default
     # link line on Linux / Windows stays free of macOS-isms.
     target_link_libraries(trailer_core PRIVATE "-framework IOKit" "-framework CoreFoundation")
-    # ScreenCaptureKit picker backend (MacScreenCapture.mm): the picker +
-    # SCScreenshotManager live in ScreenCaptureKit; CoreMedia/CoreGraphics
-    # carry the sample/image types, and ImageIO + UniformTypeIdentifiers do
-    # the CGImage->PNG encode.
-    # NOTE: CoreGraphics also appears in PR #77's diff — de-dupe this
-    # -framework CoreGraphics on rebase so it isn't linked twice.
+    # CoreGraphics serves two macOS capture paths:
+    #   * ScreenCapturePermission.cpp (PR #77) calls CGPreflightScreenCaptureAccess
+    #     and CGRequestScreenCaptureAccess to preflight/request the Screen
+    #     Recording TCC state (the screen-capture preflight ADR).
+    #   * ScreenCaptureKit picker backend (MacScreenCapture.mm, PR #72): the
+    #     picker + SCScreenshotManager live in ScreenCaptureKit; CoreMedia /
+    #     CoreGraphics carry the sample/image types, and ImageIO +
+    #     UniformTypeIdentifiers do the CGImage->PNG encode.
+    # CoreGraphics is listed once here (de-duped on the #77/#72 merge) so it
+    # isn't linked twice. All macOS-only; behind if(APPLE) so the
+    # Linux/Windows link line stays clean.
     target_link_libraries(trailer_core PRIVATE
         "-framework ScreenCaptureKit"
         "-framework CoreMedia"

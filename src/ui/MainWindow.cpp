@@ -2334,10 +2334,13 @@ void MainWindow::onTakeScreenshot() {
     else if (regionRadio->isChecked())
         mode = ShotMode::Region;
 
-    // Same capture backend as File → Screenshot (Application owns it so
-    // both the per-window menu and the macOS no-window bar share it). The
-    // ScreenCaptureKit picker backend lives inside Application::captureScreenshot
-    // so both the per-window menu and the macOS no-window bar share it.
+    // Same capture backend as File → Screenshot (Application owns it so both
+    // the per-window menu and the macOS no-window bar share it). Both the
+    // ScreenCaptureKit picker backend (PR #72) and the screencapture shell-out
+    // live inside Application::captureScreenshot; the permission preflight +
+    // graceful denial-degrade (the screen-capture preflight ADR) gates only the
+    // shell-out path there, and the explainer is retired for stills — we lean
+    // on the OS Screen Recording prompt directly.
     m_app->captureScreenshot(mode, this);
 }
 
