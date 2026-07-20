@@ -271,12 +271,25 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         auto *doc = m_documentView->currentDocument();
         if (!doc)
             return;
-        // Deliberate clobber of the newer on-disk copy: arm the one-shot force
-        // flag, then save over the original. The banner is dismissed only when
-        // saveDocumentAsync confirms the save succeeded, so a failed clobber
-        // leaves the conflict affordance up (F5).
-        doc->setForceSaveOverExternalChange(true);
-        saveDocumentAsync(doc, doc->filePath());
+        // "Keep mine" no longer writes to disk on click (ADR 2026-07-20). It
+        // resolves the conflict in the user's favour WITHOUT a silent write:
+        // the (already-dirty) buffer is kept, and the load-time baseline is
+        // refreshed to the current on-disk identity so the save-time guard now
+        // reads NoChange — i.e. the conflict is cleared and the user's next
+        // EXPLICIT Save overwrites the file cleanly, without re-prompting. The
+        // overwrite thus happens through a visible, user-initiated action
+        // rather than as a side effect of a banner button.
+        //
+        // Contrast with Dismiss, which only hides the banner and leaves the
+        // baseline (and thus the guard) untouched — so the next Save re-detects
+        // the conflict and re-prompts.
+        doc->captureFileBaseline();
+        if (m_fileChangeBanner)
+            m_fileChangeBanner->dismiss();
+        // The buffer is still unsaved relative to disk; keep the "•" marker and
+        // let the user know Save will now overwrite without a further prompt.
+        updateTitleForDocument(doc);
+        flashStatus(tr("Keeping your version — Save will overwrite the file on disk."));
     });
     connect(m_fileChangeBanner, &FileChangeBanner::saveRequested, this, [this]() {
         auto *doc = m_documentView->currentDocument();

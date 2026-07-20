@@ -31,6 +31,28 @@ class TestFileChangeBanner : public QObject {
         QVERIFY(!banner.saveEnabled()); // Save is a Deleted-mode control
     }
 
+    // CF-6: both action labels state their CONSEQUENCE. Reload discards edits;
+    // Keep mine keeps the user's version and the file is overwritten only by a
+    // later explicit Save — the label must NOT claim an immediate overwrite.
+    void conflictLabelsStateConsequences() {
+        FileChangeBanner banner;
+        banner.showConflict();
+        QVERIFY(banner.reloadText().contains(QStringLiteral("discard")));
+        // Keep-mine label names Save as the overwrite path, not an on-click write.
+        QVERIFY(banner.keepMineText().contains(QStringLiteral("Keep mine")));
+        QVERIFY(banner.keepMineText().contains(QStringLiteral("Save")));
+        QVERIFY(banner.keepMineText().contains(QStringLiteral("overwrite")));
+    }
+
+    // CF-6: "Keep mine" is the visually-weighted primary/default action (the
+    // non-destructive-until-save choice); Dismiss is flat/passive.
+    void conflictKeepMineIsWeightedDefault() {
+        FileChangeBanner banner;
+        banner.showConflict();
+        QVERIFY(banner.keepMineIsDefault());
+        QVERIFY(banner.dismissIsFlat());
+    }
+
     // Deleted mode swaps to a Save affordance and hides the conflict buttons.
     void deletedModeOffersSave() {
         FileChangeBanner banner;
