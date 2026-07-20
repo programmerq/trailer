@@ -144,6 +144,25 @@ class PdfDocument : public IDocument {
     void setFormFillingActive(bool active) override;
     void refreshFormView() override;
     bool isDirty() const override { return m_dirty || m_annotationsModified; }
+    // True iff this document carries STRUCTURAL (qpdf page-graph) edits —
+    // rotate / delete / move / insert / crop — as opposed to only unsaved
+    // annotation edits. The kept-windows (⌥⌘Q) capture reconstructs
+    // annotation-only dirtiness by reopening the file and re-applying the
+    // annotations editable (restoreAnnotationsFromDraft), but it CANNOT
+    // reconstruct structural edits from the annotation JSON, so a
+    // structurally-dirty PDF falls back to the per-doc prompt (flagged
+    // residual — see the decision record + docs/backlog).
+    bool hasStructuralEdits() const { return m_dirty; }
+    // Rehydrate this document from a kept-windows draft on session restore:
+    // re-apply `annotations` (the document's unsaved annotations, captured
+    // at ⌥⌘Q) as individually editable objects and, when `dirty`, mark the
+    // document modified so isDirty() reports true (it returned still-unsaved,
+    // exactly as at quit). The file's own on-disk annotations are NOT
+    // separately swept — `annotations` already carries the complete set
+    // (saved + unsaved) captured in memory — so the background sweep is
+    // short-circuited to avoid double-applying the on-disk subset. Undo
+    // history is intentionally not restored.
+    void restoreAnnotationsFromDraft(const QList<Annotation> &annotations, bool dirty);
     // PDF-level undo runs across two parallel stacks: the
     // AnnotationStore for in-memory shape edits, and a separate
     // PdfCommand stack for qpdf-level mutations (rotate / delete /

@@ -108,6 +108,32 @@ class ImageDocument : public IDocument {
 
     bool supportsEditing() const override { return !m_image.isNull() && !m_animated; }
     bool isDirty() const override { return m_dirty || !m_annotations.annotations().empty(); }
+    bool isUntitled() const override { return m_untitled; }
+    // Mark this document as untitled — content-bearing but backed only
+    // by a transient temp file, with no user-chosen save location.
+    // Called by the clipboard / screenshot import path in Application so
+    // closing the doc prompts Save-As rather than silently dropping the
+    // pasted content. Cleared on a successful save() to a real path.
+    void markUntitled() { m_untitled = true; }
+    // True iff this document originated from a screen capture (screenshot /
+    // clipboard grab). Read by the kept-windows capture path so the flag —
+    // and the Actual-Size zoom default it drives — survives a session
+    // round-trip. See markCaptureOrigin().
+    bool isCaptureOrigin() const { return m_captureOrigin; }
+    // Rehydrate this document from a kept-windows draft blob on session
+    // restore (macOS "Quit and Keep Windows"; see SessionDraftStore).
+    // Replaces the raster with `img`, sets the backing path (`path` empty
+    // for a genuinely untitled draft, the on-disk file for a titled-but-
+    // dirty one), and restores the untitled / dirty flags so the document
+    // presents exactly as it did at quit — an untitled scratch window
+    // comes back untitled, a titled edit comes back dirty. `captureOrigin`
+    // re-flags a restored screenshot/clipboard grab so its Actual-Size
+    // zoom default and dpr treatment match the original (the caller stamps
+    // the persisted devicePixelRatio onto `img` before calling, since a PNG
+    // blob does not carry it). Undo history is intentionally not restored
+    // (the draft captures the resulting bytes, not the edit log).
+    void restoreFromDraft(const QImage &img, const QString &path, bool untitled, bool dirty,
+                          bool captureOrigin = false);
     // Image-level undo runs across two parallel stacks: the
     // AnnotationStore for in-memory shape edits, and the pixel
     // snapshot stack for raster mutations (rotate / flip / resize /
@@ -303,6 +329,9 @@ class ImageDocument : public IDocument {
     int m_frameCount = 0;
     bool m_animated = false;
     bool m_dirty = false;
+    // See isUntitled() — set for transient clipboard/screenshot imports,
+    // cleared once save() writes to a user-chosen path.
+    bool m_untitled = false;
     // One-shot guard for applyInitialFitZoom.
     bool m_initialZoomApplied = false;
     // True when this document came from a screen capture (screenshot or
