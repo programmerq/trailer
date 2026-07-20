@@ -1,14 +1,91 @@
 cmake_minimum_required(VERSION 3.24)
 
-# Single source of truth for the human-visible version string. May carry
-# a "-dev" / "-rc" suffix; the CI release-candidate gate rejects such
-# suffixes before a release tag is cut. project(VERSION ...) only
-# accepts numeric MAJOR.MINOR.PATCH, so we strip the suffix for that
-# call but expose the full string to the generated TrailerVersion.h.
-file(READ "${CMAKE_SOURCE_DIR}/VERSION" TRAILER_VERSION_STRING)
-string(STRIP "${TRAILER_VERSION_STRING}" TRAILER_VERSION_STRING)
+# Single source of truth for the human-visible version. VERSION holds
+# only the BASE identity: a bare "X.Y.Z-dev" during development, a clean
+# "X.Y.Z" for a release, or "X.Y.Z-rcN" for a release candidate. The CI
+# release-candidate gate rejects the -dev / -rc suffixes before a release
+# tag is cut.
+#
+# Two derived values come out of this block:
+#   TRAILER_VERSION_NUMERIC  dotted MAJOR.MINOR.PATCH only. Feeds
+#       project(VERSION ...), CFBundleShortVersionString/CFBundleVersion,
+#       and any other format-constrained (dotted-numeric) consumer. It
+#       NEVER carries a suffix or +build-metadata.
+#   TRAILER_VERSION_STRING   the full human-visible string exposed via
+#       the generated TrailerVersion.h (About box / setApplicationVersion).
+#       For a "-dev" base in a git checkout this is self-identifying:
+#       "X.Y.Z-dev+<commit-count>.g<shortsha>[.dirty]", so every dev
+#       artifact is unique and traceable back to a commit with no manual
+#       bump. Releases, RCs, and .git-less source tarballs keep the BASE
+#       string unchanged.
+file(READ "${CMAKE_SOURCE_DIR}/VERSION" TRAILER_VERSION_BASE)
+string(STRIP "${TRAILER_VERSION_BASE}" TRAILER_VERSION_BASE)
 string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" TRAILER_VERSION_NUMERIC
-       "${TRAILER_VERSION_STRING}")
+       "${TRAILER_VERSION_BASE}")
+
+# Default: the full string is the base, unchanged (release / RC / tarball).
+set(TRAILER_VERSION_STRING "${TRAILER_VERSION_BASE}")
+
+# Only a bare "-dev" base opts into git-derived build metadata. A -dev.N
+# counter, -rcN, or clean X.Y.Z is left alone.
+if(TRAILER_VERSION_BASE MATCHES "-dev$" AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
+    find_package(Git QUIET)
+    if(GIT_FOUND)
+        # Every git call is guarded: a shallow/broken/absent repo must
+        # fall back to the BASE string, never hard-error configuration.
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" rev-parse --is-inside-work-tree
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            OUTPUT_VARIABLE _git_inside_wt
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE _git_rc)
+        if(_git_rc EQUAL 0 AND _git_inside_wt STREQUAL "true")
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" rev-list --count HEAD
+                WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+                OUTPUT_VARIABLE _git_count
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET
+                RESULT_VARIABLE _git_count_rc)
+            execute_process(
+                COMMAND "${GIT_EXECUTABLE}" rev-parse --short=8 HEAD
+                WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+                OUTPUT_VARIABLE _git_sha
+                OUTPUT_STRIP_TRAILING_WHITESPACE
+                ERROR_QUIET
+                RESULT_VARIABLE _git_sha_rc)
+            if(_git_count_rc EQUAL 0 AND _git_sha_rc EQUAL 0
+               AND _git_count AND _git_sha)
+                # Dirty working tree → ".dirty" so a build off uncommitted
+                # edits is never confused with the clean commit.
+                execute_process(
+                    COMMAND "${GIT_EXECUTABLE}" status --porcelain
+                    WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+                    OUTPUT_VARIABLE _git_status
+                    OUTPUT_STRIP_TRAILING_WHITESPACE
+                    ERROR_QUIET)
+                set(_git_dirty "")
+                if(NOT _git_status STREQUAL "")
+                    set(_git_dirty ".dirty")
+                endif()
+                set(TRAILER_VERSION_STRING
+                    "${TRAILER_VERSION_BASE}+${_git_count}.g${_git_sha}${_git_dirty}")
+            endif()
+        endif()
+    endif()
+endif()
+
+# Re-run configure when HEAD moves or the index changes so the derived
+# metadata (commit count / sha / dirty) stays fresh across dev builds.
+if(EXISTS "${CMAKE_SOURCE_DIR}/.git/HEAD")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${CMAKE_SOURCE_DIR}/.git/HEAD")
+endif()
+if(EXISTS "${CMAKE_SOURCE_DIR}/.git/index")
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+                 "${CMAKE_SOURCE_DIR}/.git/index")
+endif()
 
 project(Trailer
     VERSION ${TRAILER_VERSION_NUMERIC}
@@ -211,6 +288,11 @@ set(TRAILER_SOURCES
     src/uxrecord/UxRecord.h
 )
 
+# Pure, platform-agnostic capture-backend policy (string<->enum mapping and
+# the backend-selection rule) builds everywhere; only the native probe and
+# the SCContentSharingPicker capture are per-platform, split below.
+list(APPEND TRAILER_SOURCES src/platform/ScreenCaptureBackend.cpp)
+
 # UX recorder sources are only compiled into recorder-enabled builds.
 # src/uxrecord/UxRecord.h (above) is the always-present facade whose
 # functions inline to no-ops when TRAILER_UX_RECORDER is undefined, so
@@ -247,8 +329,17 @@ if(APPLE)
     list(APPEND TRAILER_SOURCES src/platform/Share.mm)
     set_source_files_properties(src/platform/Share.mm PROPERTIES
         COMPILE_FLAGS "-fobjc-arc")
+    # ScreenCaptureKit picker backend (Apple-only Objective-C++). NOT built
+    # in CI — see the header comment in MacScreenCapture.mm; requires an
+    # on-device build + the GPSC.2 smoke test before its flag default flips.
+    list(APPEND TRAILER_SOURCES src/platform/MacScreenCapture.mm)
+    set_source_files_properties(src/platform/MacScreenCapture.mm PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc")
 else()
     list(APPEND TRAILER_SOURCES src/platform/Share_stub.cpp)
+    # Non-Apple stub: same symbols, screenCaptureKitAvailable() == false so
+    # the picker backend is never selected off-Mac.
+    list(APPEND TRAILER_SOURCES src/platform/MacScreenCapture_stub.cpp)
 endif()
 
 add_library(trailer_core STATIC ${TRAILER_SOURCES} resources/trailer.qrc)
@@ -279,11 +370,23 @@ if(APPLE)
     # only frameworks; gated inside the APPLE block so the default
     # link line on Linux / Windows stays free of macOS-isms.
     target_link_libraries(trailer_core PRIVATE "-framework IOKit" "-framework CoreFoundation")
-    # ScreenCapturePermission.cpp calls CGPreflightScreenCaptureAccess and
-    # CGRequestScreenCaptureAccess from CoreGraphics to preflight and request
-    # the Screen Recording TCC state (the screen-capture preflight ADR).
-    # macOS-only; behind if(APPLE) so the Linux/Windows link line stays clean.
-    target_link_libraries(trailer_core PRIVATE "-framework CoreGraphics")
+    # CoreGraphics serves two macOS capture paths:
+    #   * ScreenCapturePermission.cpp (PR #77) calls CGPreflightScreenCaptureAccess
+    #     and CGRequestScreenCaptureAccess to preflight/request the Screen
+    #     Recording TCC state (the screen-capture preflight ADR).
+    #   * ScreenCaptureKit picker backend (MacScreenCapture.mm, PR #72): the
+    #     picker + SCScreenshotManager live in ScreenCaptureKit; CoreMedia /
+    #     CoreGraphics carry the sample/image types, and ImageIO +
+    #     UniformTypeIdentifiers do the CGImage->PNG encode.
+    # CoreGraphics is listed once here (de-duped on the #77/#72 merge) so it
+    # isn't linked twice. All macOS-only; behind if(APPLE) so the
+    # Linux/Windows link line stays clean.
+    target_link_libraries(trailer_core PRIVATE
+        "-framework ScreenCaptureKit"
+        "-framework CoreMedia"
+        "-framework CoreGraphics"
+        "-framework ImageIO"
+        "-framework UniformTypeIdentifiers")
 endif()
 if(TRAILER_ENABLE_UX_RECORDER)
     # PUBLIC so the always-present facade header (src/uxrecord/UxRecord.h)

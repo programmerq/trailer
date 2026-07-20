@@ -3,6 +3,7 @@
 #include "TrailerVersion.h"
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
+#include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
 #include "ui/MainWindow.h"
 #ifdef TRAILER_UX_RECORDER
@@ -16,6 +17,7 @@
 #include <QAction>
 #include <QClipboard>
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QFileOpenEvent>
@@ -599,12 +601,43 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
     const QString path = transientImportPath("screenshot", "png");
 
 #ifdef Q_OS_MACOS
+    // Opt-in ScreenCaptureKit picker backend (macOS 14+). The system picker
+    // selects a window or display, so it substitutes for the interactive
+    // Screen / Window modes but NOT for a freeform Region rectangle — Region
+    // (and any picker Unavailable/Failed) falls through to the screencapture
+    // path below. On a clean pick we're done; a picker cancel is a
+    // self-caused no-op (say nothing, per PHILOSOPHY → No popup that just
+    // says "no").
+    //
+    // The picker uses the system picker itself as the consent surface, so it
+    // is intentionally NOT gated by the Screen-Recording TCC preflight that
+    // guards the screencapture shell-out below (different consent model —
+    // docs/decision-records/2026-07-16-capture-permission-preflight.md).
+    const auto backend = trailer::effectiveCaptureBackend(
+        m_settings.captureBackend(), trailer::screenCaptureKitAvailable(),
+        /*freeformRegion=*/mode == ShotMode::Region);
+    if (backend == trailer::CaptureBackend::ScreenCaptureKit) {
+        QString err;
+        const auto r = trailer::captureViaPickerToPng(
+            path, /*wholeDisplay=*/mode == ShotMode::Screen, &err);
+        if (r == trailer::PickerCaptureResult::Ok) {
+            openFiles({path});
+            return;
+        }
+        if (r == trailer::PickerCaptureResult::Cancelled)
+            return;
+        // Unavailable/Failed -> fall through to the screencapture path.
+        qWarning() << "Application: ScreenCaptureKit picker capture failed, falling back to"
+                   << "screencapture:" << err;
+    }
+
+    // --- screencapture shell-out path (TCC-gated by PR #77) ---
     // Preflight the live Screen Recording TCC state before touching the OS
-    // selection UI (the screen-capture preflight ADR). This is the single
-    // capture backend #86 introduced; both the per-window picker and the
-    // File ▸ Screenshot submenu / macOS no-window bar route through it. The
-    // pre-permission explainer is retired for stills (owner decision
-    // 2026-07-17); we lean on the OS Screen Recording prompt directly.
+    // selection UI (the screen-capture preflight ADR). This gates ONLY the
+    // /usr/sbin/screencapture shell-out; the picker path above is intentionally
+    // ungated (different consent model). The pre-permission explainer is retired
+    // for stills (owner decision 2026-07-17); we lean on the OS Screen Recording
+    // prompt directly.
     const ScreenCapturePermissionState state = queryScreenCapturePermissionState();
 
     // The native capture block. Hides the capture context (if any) so it

@@ -33,6 +33,7 @@
 #include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "ml/OcrEngine.h"
+#include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
 #include "platform/Share.h"
 #include "settings/AppPaths.h"
@@ -49,6 +50,7 @@
 #include "document/SelectableTextStore.h"
 
 #include <QAction>
+#include <QDebug>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QCheckBox>
@@ -2333,10 +2335,12 @@ void MainWindow::onTakeScreenshot() {
         mode = ShotMode::Region;
 
     // Same capture backend as File → Screenshot (Application owns it so both
-    // the per-window menu and the macOS no-window bar share it). The
-    // permission preflight + graceful denial-degrade (the screen-capture
-    // preflight ADR) lives inside captureScreenshot; the explainer is retired
-    // for stills — we lean on the OS Screen Recording prompt directly.
+    // the per-window menu and the macOS no-window bar share it). Both the
+    // ScreenCaptureKit picker backend (PR #72) and the screencapture shell-out
+    // live inside Application::captureScreenshot; the permission preflight +
+    // graceful denial-degrade (the screen-capture preflight ADR) gates only the
+    // shell-out path there, and the explainer is retired for stills — we lean
+    // on the OS Screen Recording prompt directly.
     m_app->captureScreenshot(mode, this);
 }
 

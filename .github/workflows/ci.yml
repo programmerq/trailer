@@ -57,7 +57,7 @@ jobs:
     # Needs nothing but bash + coreutils, so it stays off the heavy
     # build path and fails the workflow the moment the regex drifts.
     name: Version gating
-    runs-on: trailer-k8s
+    runs-on: trailer-small
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v7
@@ -349,8 +349,8 @@ jobs:
 
   clang-format:
     name: clang-format (advisory)
-    runs-on: trailer-k8s
-    timeout-minutes: 3
+    runs-on: trailer-small
+    timeout-minutes: 5
     # Advisory only — output goes to the job summary so the diff is
     # visible without bouncing merges. Flip to required once the tree
     # is reliably formatted (post-1.0 / when a pre-commit hook lands).

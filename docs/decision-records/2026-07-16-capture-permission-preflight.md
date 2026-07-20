@@ -153,6 +153,17 @@ crosshair appears). The `screen_capture_attempted` marker is removed entirely.
 
 ## Decision
 
+> **Scope after the PR #72 merge (2026-07-20).** This preflight gates **only the
+> `/usr/sbin/screencapture` shell-out path**. The ScreenCaptureKit picker
+> backend added by PR #72
+> ([`2026-07-16-permissionless-screen-capture.md`](2026-07-16-permissionless-screen-capture.md))
+> is intentionally **ungated** — the system picker is its own consent surface
+> (a different consent model), so no TCC preflight runs in front of it. In
+> `Application::captureScreenshot`, the picker branch runs first and returns on
+> a clean pick/cancel; a picker fall-through (Unavailable/Failed) or a
+> non-picker backend reaches the shell-out path below, which the preflight
+> wraps.
+
 Before either `screencapture` site launches the OS selection UI, the flow
 consults `queryScreenCapturePermissionState()` (no persisted state, a bare read
 of live TCC) and routes through the pure `decideScreenCaptureFlow()` table:

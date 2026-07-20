@@ -47,7 +47,7 @@ permissions:
 jobs:
   publish:
     name: Attach prior build to GitHub Release
-    runs-on: trailer-k8s
+    runs-on: trailer-small
     timeout-minutes: 10
     permissions:
       # Required by softprops/action-gh-release to create / update
