@@ -13,6 +13,7 @@
 #include "IconHelper.h"
 #include "MarkupToolbar.h"
 #include "MyCardDialog.h"
+#include "PasswordExportDialog.h"
 #include "PreferencesDialog.h"
 #include "SignaturePicker.h"
 #include "SignaturesDialog.h"
@@ -69,7 +70,6 @@
 #include <QImageWriter>
 #include <QKeySequence>
 #include <QLabel>
-#include <QLineEdit>
 #include <QLocale>
 #include <QMenu>
 #include <QMenuBar>
@@ -2769,40 +2769,17 @@ void MainWindow::onExportPasswordProtected() {
         return;
 
     // --- Step 2: pick the password (two matching fields) ---
-    QDialog dialog(this);
-    dialog.setWindowTitle(tr("Set PDF Password"));
-    auto *form = new QFormLayout(&dialog);
-
-    auto *pwEdit = new QLineEdit(&dialog);
-    pwEdit->setEchoMode(QLineEdit::Password);
-    pwEdit->setPlaceholderText(tr("Enter password"));
-
-    auto *confirmEdit = new QLineEdit(&dialog);
-    confirmEdit->setEchoMode(QLineEdit::Password);
-    confirmEdit->setPlaceholderText(tr("Confirm password"));
-
-    form->addRow(tr("Password:"), pwEdit);
-    form->addRow(tr("Confirm:"), confirmEdit);
-
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel, &dialog);
-    form->addRow(buttons);
-    connect(buttons, &QDialogButtonBox::accepted, &dialog, &QDialog::accept);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
-
+    // PasswordExportDialog validates inline: OK stays disabled until both
+    // fields are non-empty and equal, so acceptance guarantees a valid,
+    // non-empty password. The destination chosen in Step 1 is held in
+    // destPath across the whole flow, so a corrected typo never sends the user
+    // back through the Save picker (backlog
+    // 2026-07-15-password-export-inline-validation).
+    PasswordExportDialog dialog(this);
     if (dialog.exec() != QDialog::Accepted)
         return;
 
-    const QString password = pwEdit->text();
-    if (password != confirmEdit->text()) {
-        QMessageBox::warning(this, tr("Password mismatch"),
-                             tr("The passwords do not match. Please try again."));
-        return;
-    }
-    if (password.isEmpty()) {
-        QMessageBox::warning(this, tr("Empty password"),
-                             tr("A password is required to protect the PDF."));
-        return;
-    }
+    const QString password = dialog.password();
 
     // --- Step 3: write the encrypted PDF ---
     if (!doc->exportWithPassword(destPath, password)) {
