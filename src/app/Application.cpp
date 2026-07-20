@@ -496,7 +496,13 @@ QList<SessionWindowDescriptor> Application::captureSessionForKeep() const {
 
             auto *img = dynamic_cast<ImageDocument *>(doc);
             auto *pdf = dynamic_cast<PdfDocument *>(doc);
-            const bool dirtyOrUntitled = doc->isUntitled() || doc->isDirty();
+            // hasUnsavedWork() (not bare isDirty()) so a CLEAN image doc whose
+            // backing file was DELETED underneath (CF-7) is DRAFTED here — its
+            // in-memory raster is the last copy. Without this it would fall to
+            // the else-branch and be stored as a {kind:"path"} reference to a
+            // file that no longer exists, silently losing the raster on
+            // restore. isUntitled() keeps #78's untitled-draft case.
+            const bool dirtyOrUntitled = doc->isUntitled() || doc->hasUnsavedWork();
             // Only draft a dirty/untitled doc we can capture without a prompt.
             // A dirty non-draftable doc has already been resolved (saved or
             // discarded) by requestQuit's prompt fallback, so by here it is
