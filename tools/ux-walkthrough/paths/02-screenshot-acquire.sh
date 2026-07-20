@@ -16,6 +16,24 @@
 # (Tools -> Take Screenshot => Alt+T, then T), which is stable across the
 # File-menu IA rename and needs no pixel geometry.
 #
+# TOOLS vs FILE — the crux, verified against merged code (2026-07-20):
+# there are TWO distinct capture entry points post-#86, and this path drives
+# the correct one on purpose:
+#   * Tools -> "&Take Screenshot" — objectName action.tools.takeScreenshot
+#     (src/ui/MainWindow.cpp buildMenus / onTakeScreenshot). Opens the
+#     "Take Screenshot" capture-MODE DIALOG (whole-screen / window / region),
+#     then routes to Application::captureScreenshot. THIS is the action with a
+#     stable objectName and the modal this path asserts on. #86 did NOT move or
+#     rename it — it only stripped its dead ⌘⇧3 shortcut.
+#   * File -> "Screenshot" submenu (Whole Screen / Window / Selected Area) —
+#     added by #86 via Application::addAcquireItems (src/app/Application.cpp).
+#     This is the DISCOVERABLE acquire surface the DR calls canonical, but its
+#     items carry NO objectName and fire captureScreenshot DIRECTLY with no
+#     dialog. It cannot satisfy this path's "Take Screenshot" modal assertion.
+# So an audit note reading "File -> Screenshot" describes the discoverable
+# submenu; the objectName'd, dialog-bearing action this path targets lives
+# under Tools. We drive Tools deliberately — trust the code.
+#
 # HONEST PLATFORM BOUNDARIES:
 #   * Window/region capture are disabled on Linux (a G3 non-lying-control
 #     state with an explanatory note in the dialog); only whole-screen runs.

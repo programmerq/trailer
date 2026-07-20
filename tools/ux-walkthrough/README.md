@@ -46,6 +46,20 @@ mnemonic — `Alt+T`, then `T`), which is likewise stable across the IA rename a
 uses no pixel geometry. The other three paths drive purely via shortcuts +
 `objectName`s.
 
+**Tools vs File — which capture action path 2 drives (verified 2026-07-20).**
+Post-#86 there are *two* distinct capture entry points, and path 2 targets the
+Tools one deliberately: **Tools → Take Screenshot** (objectName
+`action.tools.takeScreenshot`, `MainWindow::onTakeScreenshot`) opens the
+**"Take Screenshot" capture-mode dialog** and is the action carrying the stable
+`objectName` this path asserts on — #86 did *not* move or rename it, it only
+stripped its dead `⌘⇧3` shortcut. Separately, **File → Screenshot** (the
+`Whole Screen / Window / Selected Area` submenu added by #86 via
+`Application::addAcquireItems`) is the DR's canonical *discoverable* acquire
+surface, but its items carry **no** `objectName` and fire capture **directly
+with no dialog**. An audit note reading "canonical path is File → Screenshot"
+refers to that discoverable submenu; the dialog-bearing, `objectName`'d action
+path 2 exercises lives under **Tools**, so path 2 stays on `menupick t t`.
+
 For any future AT-SPI / QTest tier that wants to target widgets by name, the
 actions the golden paths touch now carry stable `objectName`s (added in
 `src/ui/MainWindow.cpp`): `action.file.open` / `action.file.save` /
@@ -72,7 +86,8 @@ apt-get install xvfb x11-apps xdotool imagemagick xclip libxcb-cursor0 openbox
 - `imagemagick` — `import` (screenshot) and `convert` (fixtures); `x11-apps`
   provides `xwd` as the capture fallback
 - `xclip` — puts an image on the X clipboard for golden path 1
-- `libxcb-cursor0` — Qt 6's `xcb` platform plugin needs it at runtime
+- `libxcb-cursor0` — **required**: Qt 6's `xcb` platform plugin fails to
+  load at runtime without it (not otherwise pulled by the toolchain layer)
 
 These are baked into the CI runner image (`docker/runner/Dockerfile`).
 

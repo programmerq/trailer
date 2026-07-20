@@ -168,8 +168,9 @@ RUN out=/usr/share/keyrings/githubcli-archive-keyring.gpg \
 #   * xdotool         — real X input events + window queries
 #   * imagemagick     — import (screenshot) + convert (fixtures)
 #   * xclip           — puts an image on the X clipboard (golden path 1)
-#   * libxcb-cursor0  — Qt 6's xcb platform plugin needs it at runtime (not
-#                       otherwise pulled by the toolchain layer above)
+#   * libxcb-cursor0  — REQUIRED: Qt 6's xcb platform plugin fails to load at
+#                       runtime without it (not otherwise pulled by the
+#                       toolchain layer above)
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         xvfb \
