@@ -754,6 +754,10 @@ void MainWindow::autoSaveDirtyDocs() {
         IDocument *doc = nullptr;
         if (!m_documentView->documentAt(i, &doc) || !doc)
             continue;
+        // Gate on isDirty(), NOT hasUnsavedWork(): a clean-but-externally-
+        // deleted doc (CF-7) has hasUnsavedWork()==true, but silently
+        // recreating a file the user may have deleted on purpose, on a timer,
+        // is worse than leaving it for the explicit banner-Save.
         if (!doc->isDirty() || doc->filePath().isEmpty())
             continue;
         if (doc->save()) {

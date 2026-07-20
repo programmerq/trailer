@@ -44,6 +44,9 @@ FileChangeBanner::FileChangeBanner(QWidget *parent) : QFrame(parent) {
     // flat/passive since it just hides the banner and decides nothing.
     m_keepMineButton->setDefault(true);
     m_keepMineButton->setAutoDefault(true);
+    // #2d6cdf (hover #245bc0) is a fixed brand accent chosen to read as
+    // white-on-blue over the amber banner in both light and dark themes
+    // (mirroring the amber strip's theme-readability intent above).
     m_keepMineButton->setStyleSheet(QStringLiteral(
         "QPushButton { background-color: #2d6cdf; color: #ffffff; border: none; "
         "border-radius: 4px; padding: 4px 12px; font-weight: 600; }"
