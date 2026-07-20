@@ -35,6 +35,15 @@ enum class AnnotationTool {
     // as the drawing tools.
     InstantAlpha, // single positive prompt; alpha-cut on release
     SmartLasso,   // multi-point prompt; crop-to-object on commit
+    // Direct-manipulation page crop (backlog
+    // 2026-07-15-crop-pages-direct-manipulation). Like the SAM tools
+    // above, this does NOT produce an annotation in AnnotationStore:
+    // it draws a page-anchored crop rectangle with a live dimmed
+    // preview and, on commit (Enter), emits AnnotationOverlay::
+    // cropCommitted(docRect, page) which MainWindow turns into a
+    // CropPageCommand. Appended at the end so existing ordinals are
+    // untouched.
+    CropRect,
 };
 
 // API: do not renumber or remove values. Each value is the canonical

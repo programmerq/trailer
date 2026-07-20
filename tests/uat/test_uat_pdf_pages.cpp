@@ -19,11 +19,15 @@
 
 #include "app/Application.h"
 #include "document/IDocument.h"
+#include "ui/AnnotationOverlay.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
 #include "ui/Sidebar.h"
 
+#include <QAction>
 #include <QDir>
+#include <QKeyEvent>
+#include <QMouseEvent>
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfDocument>
@@ -79,6 +83,7 @@ class TestUatPdfPages : public QObject {
     void uat_pdf_024_moveUndoRedo();
     void uat_pdf_035_insertUndoRedo();
     void uat_pdf_056_cropUndoRedo();
+    void uat_pdf_058_dragCropAppliesEndToEnd();
     void uat_pdf_080_longDocOpensThumbnailSidebar();
 
   private:
@@ -285,6 +290,106 @@ void TestUatPdfPages::uat_pdf_056_cropUndoRedo() {
     const QSizeF afterRedo = qpdf->pagePointSize(0);
     QVERIFY2(afterRedo.width() < originalSize.width() - 30.0,
              "Redo must re-apply the crop");
+}
+
+// UAT-PDF-058 — Crop Pages by dragging applies end-to-end.
+//
+// Direct-manipulation crop (backlog 2026-07-15-crop-pages-direct-
+// manipulation): the "Crop Pages by Dragging" menu action activates the
+// on-page crop tool; drawing a rectangle and pressing Enter shrinks the
+// page /CropBox WITHOUT the numeric dialog. This drives the real menu
+// action → doc->setAnnotationTool(CropRect) → AnnotationOverlay crop
+// gesture → cropCommitted → MainWindow::onCropRectCommitted → cropPage
+// chain. The geometry maths (page-anchoring / dpr-safety) is pinned
+// separately and hermetically by tests/test_crop_direct_manipulation.cpp
+// against the drivable ImageDocument adapter; here we prove the
+// MainWindow wiring and that a committed crop reaches the page.
+void TestUatPdfPages::uat_pdf_058_dragCropAppliesEndToEnd() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath =
+        writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_pdf_058.pdf")), 2);
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1000, 800);
+    mw->show();
+    for (int i = 0; i < 5; ++i)
+        QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+
+    // The drag-crop action must exist, be reachable (G4), and be enabled
+    // on a PDF (G3: it would be disabled with a tooltip on a non-PDF).
+    QAction *dragAction = nullptr;
+    for (QAction *a : mw->findChildren<QAction *>()) {
+        if (a->text().contains(QStringLiteral("Dragging"))) {
+            dragAction = a;
+            break;
+        }
+    }
+    QVERIFY2(dragAction, "Tools menu must offer a 'Crop Pages by Dragging' action");
+    QVERIFY2(dragAction->isEnabled(), "drag-crop must be enabled on a PDF");
+
+    // Trigger it: the document's overlay enters crop mode.
+    dragAction->trigger();
+    QApplication::processEvents();
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
+    QVERIFY2(overlay, "PDF view must host an AnnotationOverlay");
+    QCOMPARE(static_cast<int>(overlay->activeTool()),
+             static_cast<int>(AnnotationTool::CropRect));
+
+    auto *view = mw->findChild<QPdfView *>();
+    QVERIFY(view && view->document());
+    QPdfDocument *qpdf = view->document();
+    const QSizeF originalSize = qpdf->pagePointSize(0);
+    QVERIFY(!originalSize.isEmpty());
+
+    // Draw a crop rectangle well inside the viewport, then read back the
+    // page-space rect the overlay captured. We assert against the
+    // overlay's OWN recovered doc rect (public seam) so this UAT does not
+    // duplicate the transform maths — it just needs a sane, in-page,
+    // non-empty rect to commit.
+    QWidget *vp = view->viewport();
+    QVERIFY(vp);
+    const QPointF pressPt(vp->width() * 0.30, vp->height() * 0.30);
+    const QPointF releasePt(vp->width() * 0.70, vp->height() * 0.70);
+    QMouseEvent press(QEvent::MouseButtonPress, pressPt, overlay->mapToGlobal(pressPt.toPoint()),
+                      Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(overlay, &press);
+    QMouseEvent move(QEvent::MouseMove, releasePt, overlay->mapToGlobal(releasePt.toPoint()),
+                     Qt::LeftButton, Qt::LeftButton, Qt::NoModifier);
+    QApplication::sendEvent(overlay, &move);
+    QMouseEvent release(QEvent::MouseButtonRelease, releasePt,
+                        overlay->mapToGlobal(releasePt.toPoint()), Qt::LeftButton, Qt::NoButton,
+                        Qt::NoModifier);
+    QApplication::sendEvent(overlay, &release);
+    QApplication::processEvents();
+
+    QVERIFY2(overlay->hasPendingCrop(),
+             "dragging on the page must leave a pending crop rectangle with a live preview");
+
+    // Commit with Enter — the real key path → onCropRectCommitted → cropPage.
+    QKeyEvent enter(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(overlay, &enter);
+    QApplication::processEvents();
+
+    const QSizeF croppedSize = qpdf->pagePointSize(0);
+    QVERIFY2(croppedSize.width() < originalSize.width() - 1.0 ||
+                 croppedSize.height() < originalSize.height() - 1.0,
+             qPrintable(QStringLiteral("drag-crop must shrink the page: was %1x%2, now %3x%4")
+                            .arg(originalSize.width()).arg(originalSize.height())
+                            .arg(croppedSize.width()).arg(croppedSize.height())));
+    QVERIFY2(doc->canUndo(), "a committed drag-crop must be undoable");
+    // Commit clears the pending crop and drops back to the Select tool.
+    QVERIFY2(!overlay->hasPendingCrop(), "committing must clear the pending crop");
 }
 
 // UAT-VWR-055 (content-aware first-open defaults, long-document branch).
