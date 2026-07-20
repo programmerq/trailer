@@ -431,6 +431,7 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_ann_126_selectAllThenDeleteRemovesAllInOneUndo();
     void uat_ann_127_dragGeneratesOneUndoStep();
     void uat_ann_128_clickOnAnnotationWithDrawingToolSelects();
+    void uat_ann_129_freehandPressOverInkStartsNewStroke();
     void uat_ann_130_strokeDialogSurvivesStoreMutation();
     void uat_ann_131_toolSwitchesToSelectAfterShapeCommit();
     void uat_ann_140_interleavedUndoIsChronological();
@@ -2501,6 +2502,73 @@ void TestUatSearchAndMarkup::uat_ann_128_clickOnAnnotationWithDrawingToolSelects
 
     QCOMPARE(f.store->count(), 1); // no new annotation created
     QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
+}
+
+// UAT-ANN-129 — With the free-form Ink tool active, a press-drag that
+// starts on top of an existing Ink stroke begins a NEW stroke (like
+// Preview), rather than selecting/moving the one underneath. Ink is the
+// exception to UAT-ANN-128 (bounded tools select on click); otherwise
+// the user could never draw over their own ink.
+void TestUatSearchAndMarkup::uat_ann_129_freehandPressOverInkStartsNewStroke() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_129.pdf")), QStringLiteral("fixture"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    AnnotationStore *store = doc->annotations();
+    QVERIFY(store);
+
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
+    QVERIFY(overlay);
+    overlay->setActiveTool(AnnotationTool::Ink);
+    QCOMPARE(overlay->activeTool(), AnnotationTool::Ink);
+
+    // First freehand stroke (dragOnOverlay sends press + 2 moves +
+    // release, enough for an Ink commit).
+    const int before = store->count();
+    dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
+    QCOMPARE(store->count(), before + 1);
+    const Annotation firstInk = store->annotations().back();
+    QCOMPARE(firstInk.type, AnnotationType::Ink);
+    const int firstId = firstInk.id;
+    const std::vector<QPointF> firstPoints = firstInk.points;
+    // Committing an Ink stroke does not select it.
+    QCOMPARE(overlay->selectedAnnotationId(), 0);
+
+    // Second freehand stroke — STARTS INSIDE the first stroke's drawn
+    // view region (the first drag ran (200,250)->(320,340), so (250,290)
+    // is on it) and drags off to the side.
+    dragOnOverlay(overlay, QPoint(250, 290), QPoint(430, 300));
+
+    // A NEW, distinct Ink annotation is created; the original is neither
+    // selected nor moved.
+    QCOMPARE(store->count(), before + 2);
+    const Annotation secondInk = store->annotations().back();
+    QCOMPARE(secondInk.type, AnnotationType::Ink);
+    QVERIFY2(secondInk.id != firstId, "second stroke must be a distinct annotation");
+    QCOMPARE(overlay->selectedAnnotationId(), 0);
+
+    const Annotation *orig = store->find(firstId);
+    QVERIFY2(orig != nullptr, "original Ink annotation must still exist");
+    QCOMPARE(orig->points.size(), firstPoints.size());
+    for (size_t i = 0; i < firstPoints.size(); ++i) {
+        QVERIFY2(qFuzzyCompare(orig->points[i].x() + 1.0, firstPoints[i].x() + 1.0) &&
+                     qFuzzyCompare(orig->points[i].y() + 1.0, firstPoints[i].y() + 1.0),
+                 "original stroke must be unchanged (not moved)");
+    }
 }
 
 // UAT-ANN-130 — Opening the Inspector's Stroke colour picker on a

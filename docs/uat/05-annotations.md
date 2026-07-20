@@ -745,6 +745,28 @@ drawing tool (e.g. Arrow, Rectangle) is active.
 - A subsequent click-drag on empty space still draws a new shape
   with the active drawing tool.
 
+### UAT-ANN-129 — Freehand (Ink) press over an existing stroke starts a new stroke
+
+**Preconditions:** A document with at least one existing Ink
+annotation. The **Ink** (freehand) tool is active.
+
+**Rationale:** UAT-ANN-128 routes a drawing-tool click onto an existing
+annotation to *select* it. Free-form geometry is the one exception:
+like Preview/Acrobat, a freehand press is always "new mark" — otherwise
+the user could never draw over their own ink. Ink is the only free-form
+tool; the bounded shape tools keep UAT-ANN-128's select-on-click.
+
+**Steps:**
+1. Press-drag a freehand stroke that **starts inside** the bounds of
+   the existing Ink annotation.
+2. Release.
+
+**Expected:**
+- A NEW Ink annotation is created (the store gains one entry).
+- The original Ink annotation is **not** selected and **not** moved —
+  its points are unchanged.
+- No selection ring appears as a result of the press.
+
 ### UAT-ANN-130 — Stroke colour picker survives concurrent store mutation
 
 **Preconditions:** A document with at least one rectangle annotation.
