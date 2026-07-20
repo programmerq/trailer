@@ -100,6 +100,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # Full history so `git rev-list --count HEAD` yields a real
+          # commit count for the git-derived dev version (depth 1 -> 1).
+          fetch-depth: 0
           # Dispatch: build inputs.ref, or (empty default) the ref the
           # run was dispatched on. Labeled PR: build the PR HEAD sha.
           # In GH expressions `A && B || C` yields B when A is true and
@@ -185,6 +188,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # Full history so `git rev-list --count HEAD` yields a real
+          # commit count for the git-derived dev version (depth 1 -> 1).
+          fetch-depth: 0
           ref: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha || inputs.ref }}
 
       - uses: ./.github/actions/setup-windows-cross
@@ -272,6 +278,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          # Full history so `git rev-list --count HEAD` yields a real
+          # commit count for the git-derived dev version (depth 1 -> 1).
+          fetch-depth: 0
           # macOS only runs on dispatch, so the ref is always inputs.ref
           # (or its '' default -> the dispatched ref).
           ref: ${{ inputs.ref }}

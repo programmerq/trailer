@@ -6,9 +6,10 @@
 #
 #   1. The release-ready regex used by release.yml's precheck and
 #      release-autotag.yml. This script keeps a LITERAL COPY of that
-#      regex and asserts its classification of representative versions.
+#      regex and asserts its classification of representative versions,
+#      including git-derived dev strings (X.Y.Z-dev+<count>.g<sha>[.dirty]).
 #      If you change the regex in the workflows, change it here too.
-#   2. bump-version.sh's parse/dev-bump/release behaviour on -dev.N.
+#   2. bump-version.sh's parse/post-release/release behaviour.
 #
 # Exits non-zero on the first failed assertion group; prints a
 # PASS/FAIL summary.
@@ -20,7 +21,7 @@ BUMP="$REPO_ROOT/scripts/bump-version.sh"
 
 # Keep this in lockstep with .github/workflows/release.yml and
 # release-autotag.yml (`grep -qE -- '<this>'`).
-GATE_REGEX='-dev(\.[0-9]+)?$|-rc[0-9]*$'
+GATE_REGEX='-dev(\.[0-9]+)?(\+[0-9A-Za-z.-]+)?$|-rc[0-9]*$'
 
 FAILURES=0
 
@@ -53,16 +54,20 @@ assert_eq() {
 
 echo "== release-ready gate regex =="
 # -dev variants and rc are NOT release-ready (must match).
+assert_gate "0.3.1-dev"   match
+# Legacy -dev.N counter still gated (back-compat).
 assert_gate "0.3.1-dev.0" match
 assert_gate "0.3.1-dev.1" match
-assert_gate "0.3.1-dev"   match
+# Git-derived dev strings must also be gated if they ever reach the guard.
+assert_gate "0.3.1-dev+142.gabc1234"       match
+assert_gate "0.3.1-dev+142.gabc1234.dirty" match
 assert_gate "0.3.1-rc1"   match
 # Clean releases ARE release-ready (must NOT match).
 assert_gate "0.3.0" nomatch
 assert_gate "0.3.1" nomatch
 
 echo
-echo "== bump-version.sh on -dev.N =="
+echo "== bump-version.sh post-release / release =="
 
 # Run bump-version.sh against a throwaway VERSION file by pointing the
 # script at a temp repo root layout (it cd's to its own ../, so we
@@ -96,29 +101,38 @@ assert_parse_reject() {
     fi
 }
 
-# parse succeeds on -dev.N (any subcommand that only reads is fine; use
-# the no-op-ish 'set' to the same value, which validates on write).
-printf '0.3.1-dev.0\n' > "$SANDBOX/VERSION"
-if "$SANDBOX/scripts/bump-version.sh" set 0.3.1-dev.0 >/dev/null 2>&1; then
-    echo "PASS: parse accepts '0.3.1-dev.0'"
+# parse succeeds on the bare -dev base (any subcommand that only reads is
+# fine; use the no-op-ish 'set' to the same value, which validates on
+# write).
+printf '0.3.1-dev\n' > "$SANDBOX/VERSION"
+if "$SANDBOX/scripts/bump-version.sh" set 0.3.1-dev >/dev/null 2>&1; then
+    echo "PASS: parse accepts '0.3.1-dev'"
 else
-    echo "FAIL: parse rejects '0.3.1-dev.0'"
+    echo "FAIL: parse rejects '0.3.1-dev'"
     FAILURES=$((FAILURES + 1))
 fi
 
-assert_eq "dev-bump 0.3.1-dev.0"      "$(run_bump 0.3.1-dev.0 dev-bump)" "0.3.1-dev.1"
-# Two-digit boundary: the counter must roll .9 -> .10, not wrap or reset.
-assert_eq "dev-bump 0.3.1-dev.9"      "$(run_bump 0.3.1-dev.9 dev-bump)" "0.3.1-dev.10"
-# Leading-zero counter must be treated as base-10 (dev.08 -> dev.9),
-# never as octal (08 is an invalid octal literal and would error).
-assert_eq "dev-bump 0.3.1-dev.08"     "$(run_bump 0.3.1-dev.08 dev-bump)" "0.3.1-dev.9"
-# Bare -dev promotes to the .0 counter.
-assert_eq "dev-bump 0.3.1-dev"        "$(run_bump 0.3.1-dev dev-bump)"   "0.3.1-dev.0"
-# Clean release begins dev work on the next patch at .0.
-assert_eq "dev-bump 0.3.1 (clean)"    "$(run_bump 0.3.1 dev-bump)"       "0.3.2-dev.0"
-assert_eq "release 0.3.1-dev.0"       "$(run_bump 0.3.1-dev.0 release)"  "0.3.1"
-# dev-bump refuses an -rc suffix (non-zero exit -> run_bump reports <error>).
-assert_eq "dev-bump 0.3.1-rc1 errors" "$(run_bump 0.3.1-rc1 dev-bump)"   "<error>"
+# post-release bumps the patch and appends the bare -dev base (no manual
+# counter — the full dev string is git-derived at build time).
+assert_eq "post-release 0.3.1"        "$(run_bump 0.3.1 post-release)"   "0.3.2-dev"
+# release strips the bare -dev suffix.
+assert_eq "release 0.3.1-dev"         "$(run_bump 0.3.1-dev release)"    "0.3.1"
+# release also strips a legacy -dev.N counter (back-compat).
+assert_eq "release 0.3.1-dev.3"       "$(run_bump 0.3.1-dev.3 release)"  "0.3.1"
+# dev-bump is retired: it is now a guiding no-op that exits 0 and leaves
+# VERSION untouched (git derives the full dev string at build time).
+assert_eq "dev-bump is a no-op"       "$(run_bump 0.3.1-dev dev-bump)"   "0.3.1-dev"
+
+echo
+echo "== parse_version accepts a git-derived +metadata tail (no choke) =="
+# The VERSION file never carries +metadata, but parse must not choke if a
+# git-derived full string is fed to it.
+if "$SANDBOX/scripts/bump-version.sh" set "0.3.1-dev+142.gabc1234.dirty" >/dev/null 2>&1; then
+    echo "PASS: parse tolerates '0.3.1-dev+142.gabc1234.dirty'"
+else
+    echo "FAIL: parse chokes on '0.3.1-dev+142.gabc1234.dirty'"
+    FAILURES=$((FAILURES + 1))
+fi
 
 echo
 echo "== parse_version rejects malformed suffixes =="

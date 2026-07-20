@@ -54,6 +54,12 @@ A record moves through three states, tracked in its `Status:` line:
 
 An accepted record is what a G6-gated change references (see `AGENTS.md`).
 
+A record does **not** merge on its own: a DR lands **together with its
+implementing PR**, never as a standalone docs-only PR — *code or it doesn't
+happen.* A DR with no accompanying implementation is a proposal, so request
+direction inline rather than opening a PR for it (see
+[`surface-the-ask`](../../.claude/skills/surface-the-ask/SKILL.md)).
+
 ## Grandfathered numbered records
 
 Records that predate this scheme keep their names. The numbered records already

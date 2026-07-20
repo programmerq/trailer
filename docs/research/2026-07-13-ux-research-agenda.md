@@ -110,13 +110,14 @@ without regressing edit/annotation correctness?
   `docs/performance-budgets.md`.
 
 **Decision/gate to produce.** The deterministic structural proxies in
-`2026-07-13-startup-hang-large-pdf` (0 pages walked and editor-parse-count 0
+`2026-07-15-offthread-pdf-open-placeholder` (0 pages walked and editor-parse-count 0
 before first-page paint; no GUI-thread read), retiring the `QSKIP` in
 `tests/test_perf_gui_thread_io.cpp`. If the staging choice (defer qpdf editor
 load vs worker-thread open with a placeholder page) is a real architecture
 debate, capture it in an accepted decision record that cites the budget rows.
 
-**Feeds backlog item(s).** `2026-07-13-startup-hang-large-pdf` (and, on the
+**Feeds backlog item(s).** `2026-07-15-offthread-pdf-open-placeholder` (residual
+successor to the closed `2026-07-13-startup-hang-large-pdf` P0; and, on the
 shared open/search seam, `2026-07-13-search-current-page-seed`).
 
 ---
@@ -139,13 +140,14 @@ into a CMake-built bundle that currently ships a plain `.icns`?
   (actool) in a CMake build.
 
 **Decision/gate to produce.** A decision on Asset Catalog vs Icon Composer,
-recorded either as a G1 threshold in `2026-07-13-macos-dark-app-icon` or, if the
+recorded either as a G1 threshold in `2026-07-17-adaptive-dock-icon-option-b` or, if the
 build-integration choice is contentious, an accepted decision record. Terminus
 gate is the item's real-Mac threshold: dark-mode Dock shows the dark icon, light
 shows light, appearance toggle swaps them (real-Mac tier — `grab()` insufficient
 for Dock chrome).
 
-**Feeds backlog item(s).** `2026-07-13-macos-dark-app-icon`.
+**Feeds backlog item(s).** `2026-07-17-adaptive-dock-icon-option-b` (successor to
+the merged-in `2026-07-13-macos-dark-app-icon` item).
 
 ---
 

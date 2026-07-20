@@ -1,9 +1,9 @@
 # UX-walkthrough + platform-parity review personas for interaction/flow review
 
-- **Status:** proposed <!-- proposed | accepted | superseded-by NNNN -->
+- **Status:** accepted <!-- proposed | accepted | superseded-by <YYYY-MM-DD-slug> -->
 - **Arbiter:** the review-machinery arbiter role named for this record; the owner (programmerq) is the escalation-only override.
 - **Date proposed:** 2026-07-16
-- **Date accepted / superseded:** —
+- **Date accepted / superseded:** 2026-07-17
 - **Builds on / extends:** the ux-evidence hybrid ruling in
   [`docs/research/2026-07-13-ux-research-agenda.md`](../research/2026-07-13-ux-research-agenda.md)
   (lines 18–23), which is **codified by** AGENTS.md gate **G2** ("UX-Done:
@@ -169,7 +169,11 @@ the clicks, and you do NOT look at isolated one-off screenshots.
 DEPENDENCY (not yet built): the drive scripts (the exact click/key sequence per
 golden path) and the offscreen capture harness do NOT exist today and are
 currently unowned. Until they are built, this prompt cannot be pasted-and-run
-end-to-end — it is the judge contract those scripts must feed.
+end-to-end — it is the judge contract those scripts must feed. UNTIL THEN, run
+this persona in REDUCED MODE: judge the per-state grab() screenshots the diff
+already produced (no live driving), applying the four questions and severity to
+those observed states; the full golden-path EXECUTION below is gated on the
+drive-harness follow-up.
 
 PRIMARY GOAL (stable end condition): "Get from an intent to a correctly-rendered,
 correctly-sized result with no dead ends, using only native conventions."
@@ -260,7 +264,10 @@ your memory. If NO captured peer reference is provided for a surface, you MUST
 mark that surface's peer convention "LLM-RECALLED (unverified — owner spot-check
 required)" and treat the finding as provisional. Recalled conventions can be
 wrong; never present one as ground truth. Class (c) is only genuinely closed for
-surfaces where the peer was actually captured.
+surfaces where the peer was actually captured. (v1 ruling (Q7): captured peer
+references are NOT yet required — LLM-recalled + owner spot-check is the accepted
+first iteration, so expect to mark every surface provisional until a peer-capture
+step is added.)
 
 PRIMARY GOAL (stable end condition): "Use Trailer with Preview/Acrobat muscle
 memory intact — every default and shortcut lands where a migrating user expects."
@@ -516,9 +523,57 @@ If accepted, the pass/fail lines an agent or reviewer can independently declare:
 
 ## Arbiter verdict + rationale
 
-<Empty while status is `proposed`. Owner-gated: this record changes gate/persona
-machinery and the review workflow, so it is escalated to the owner for the
-adopt/defer call and the open questions in §7.>
+**Verdict (2026-07-17): ACCEPTED — Option B.** The owner (programmerq) ratified
+the two owner-gated machinery questions in-session; the remaining five were
+derived from already-recorded rulings (the G2 capture-method sub-bullet, the
+ux-evidence hybrid ruling, and the `review-before-push` trigger scope) per the
+`decision-brief` self-decide discipline. Resolutions to the §7 questions:
+
+1. **Adopt (Q1).** Ratified by the owner in-session. Adopt Option B — the two
+   goal-driven personas plus a pre-PR `ux-walkthrough` skill for the
+   offscreen-observable flow/comparison class, plus the milestone real-Mac
+   task-scripted pass for the fidelity/native-chrome class.
+2. **Separate skill (Q2).** Ratified by the owner in-session. `ux-walkthrough`
+   is a **separate** skill invoked alongside `review-before-push`, not a fourth
+   persona folded into that skill's reviewer set.
+3. **Qt Test (Q3).** Standardise the drive harness on **Qt Test** — in-tree,
+   deterministic, no display required — for the offscreen pre-PR tier.
+   Determinism is the priority for a reproducible gate; the real-input drivers
+   (`xdotool`/`pyautogui`/`cliclick`) are reserved for the real-Mac tier where a
+   display exists. Derived from the G2 offscreen capture-method ruling.
+4. **All user-visible diffs (Q4).** The pre-PR pass fires on **every**
+   user-visible / UX-touching diff — not an enumerated surface subset —
+   skipping internal-only diffs, mirroring the existing UX-gate (G2–G5)
+   carve-out and the `review-before-push` trigger scope. The ~2-agent cost (§6)
+   is accepted at that frequency.
+5. **Split confirmed (Q5).** The offscreen/real-Mac scenario split in §4's table
+   is confirmed as written — in particular, window sizing (#2) is accepted as a
+   **logical-px pre-PR assertion** with a real-Mac dpr=2 confirmation, not
+   real-Mac-only. Consistent with the hybrid ruling this record extends.
+6. **Harness is a follow-up (Q6).** Building the Linux offscreen drive-harness +
+   the per-golden-path drive/capture scripts is **out of scope of this record**
+   and tracked as a follow-up on the gui-verification track:
+   [`docs/backlog/2026-07-17-ux-walkthrough-drive-harness.md`](../backlog/2026-07-17-ux-walkthrough-drive-harness.md).
+   Persona (A)'s full golden-path **execution** (live driving, one capture per
+   step, the empty→document-open transition for #4) remains **gated on that
+   follow-up**; until it lands, (A) runs in reduced static-screenshot mode.
+7. **LLM-recalled + owner spot-check for v1 (Q7).** Persona (B) is **not**
+   required to receive captured Preview/Acrobat reference screenshots for the
+   first iteration. Recalled peer conventions are marked provisional
+   ("LLM-RECALLED — owner spot-check required"); a captured-peer step that truly
+   closes class (c) is a later refinement, not a v1 blocker.
+
+**Implementing artifact:** [`.claude/skills/ux-walkthrough/SKILL.md`](../../.claude/skills/ux-walkthrough/SKILL.md).
+It carries both persona blocks from §3, the when-it-fires trigger (Q4), the
+offscreen/real-Mac split and §5 owner manual checklist (Q5), and the
+staged-capability boundary — persona (B) operational now over static `grab()`
+captures, persona (A) in reduced static mode with its full golden-path
+**execution gated on the drive-harness follow-up (Q6)**. Q3 (driver = Qt Test
+for the offscreen tier) is recorded here and deferred to the harness follow-up
+for implementation; the skill deliberately names no driver, since the driver
+lives in that follow-up, not in the judge-side skill. Per the
+review-before-push standing policy, this record's status flips to `accepted`
+because the implementing artifact lands in the same change.
 
 ## 7. Recommendation summary + open questions for the owner
 

@@ -11,6 +11,11 @@ hours for no information gain. This skill forces you to answer everything the
 project's recorded objectives already decide, and to escalate only the genuine
 forks — each in a form answerable with a single word.
 
+Its hand-off-time companion is
+[`surface-the-ask`](../surface-the-ask/SKILL.md): this skill governs questions
+raised **mid-work**; `surface-the-ask` signals, at PR/report time, **what blocks
+the merge**.
+
 ## Rationale (owner feedback)
 
 Per the `proceed-on-clear-defaults` owner feedback (2026-07-10): "These aren't

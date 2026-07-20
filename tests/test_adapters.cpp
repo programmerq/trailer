@@ -22,6 +22,7 @@
 #include <QtTest/QtTest>
 
 #include <algorithm>
+#include <cmath>
 
 using namespace trailer;
 
@@ -101,6 +102,8 @@ class TestAdapters : public QObject {
     void imageDocumentZoomFitPageEntersFitInViewMode();
     void imageDocumentZoomFitWidthEntersFitToWidthMode();
     void imageDocumentExplicitZoomReturnsToCustomMode();
+    void imageDocumentZoomInStepsByQuarter();
+    void pdfDocumentZoomInStepsByQuarter();
     void imageDocumentReapplyFitModeRefitsOnResize();
     void imageDocumentResizeDoesNothingInCustomMode();
     void pdfViewReflowsOnResizeInFitInView();
@@ -1238,6 +1241,51 @@ void TestAdapters::imageDocumentExplicitZoomReturnsToCustomMode() {
     // user expressed "100%" as an intent, distinct from "I picked
     // a custom factor that happens to be 1.0" (which Custom captures).
     QCOMPARE(doc.zoomMode(), ZoomMode::Actual);
+}
+
+void TestAdapters::imageDocumentZoomInStepsByQuarter() {
+    // Guards the zoom-step ratio (kZoomStep). One zoomIn from Actual
+    // Size (1.0) should land at ~1.25 (25% coarser step, up from the
+    // former 10%). Kept in sync with the PDF path below.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = writeTinyPng(dir.filePath("step.png"), 60, 60);
+
+    ImageDocument doc(path);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    QVERIFY(view != nullptr);
+
+    doc.zoomActual();
+    QVERIFY(qFuzzyCompare(doc.scaleFactor(), 1.0));
+    doc.zoomIn();
+    QVERIFY2(std::abs(doc.scaleFactor() - 1.25) < 1e-6,
+             qPrintable(QStringLiteral("expected ~1.25 after one zoomIn, got %1")
+                            .arg(doc.scaleFactor())));
+}
+
+void TestAdapters::pdfDocumentZoomInStepsByQuarter() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("step.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 800, 200), Qt::AlignCenter, "page");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    QVERIFY(view != nullptr);
+
+    doc.zoomActual();
+    QVERIFY(qFuzzyCompare(doc.zoomFactor(), 1.0));
+    doc.zoomIn();
+    QVERIFY2(std::abs(doc.zoomFactor() - 1.25) < 1e-6,
+             qPrintable(QStringLiteral("expected ~1.25 after one zoomIn, got %1")
+                            .arg(doc.zoomFactor())));
 }
 
 void TestAdapters::imageDocumentReapplyFitModeRefitsOnResize() {

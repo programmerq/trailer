@@ -939,46 +939,55 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent *event) {
     }
     // Hit-test against existing annotations BEFORE the drawing-tool
     // path. A click that lands on an existing annotation routes to
-    // select + prepare-to-move regardless of which tool is active —
-    // otherwise a user with the Arrow tool active who clicks on an
-    // existing arrow would get a new overlapping arrow rather than
-    // selecting the one they aimed at.
+    // select + prepare-to-move — for the Select tool AND for the
+    // bounded shape tools (Rectangle / Ellipse / Line / Arrow), so a
+    // user aiming at an existing shape selects it rather than stacking a
+    // new overlapping one (UAT-ANN-128).
+    //
+    // The one exception is FREE-FORM geometry: the Ink tool. A freehand
+    // stroke that starts on top of an earlier mark must begin a NEW
+    // stroke — like Preview/Acrobat — otherwise the user could never
+    // draw over their own ink (Bug 3). Ink is the only free-form tool;
+    // its press falls straight through to the stroke-capture setup
+    // below regardless of what is underneath.
     //
     // The Select tool keeps a sticky multi-step semantics: first
     // click selects, second click on the same annotation begins the
-    // move drag. A drawing tool short-circuits to immediate
-    // select-and-prepare-to-move; the move only "commits" if the
-    // user actually drags, since the compound is lazy-pushed (see
+    // move drag. A bounded shape tool short-circuits to immediate
+    // select-and-prepare-to-move; the move only "commits" if the user
+    // actually drags, since the compound is lazy-pushed (see
     // AnnotationStore::pushHistory).
-    const int hitId = hitTest(event->position());
-    if (hitId != 0) {
-        const bool wasAlreadySelected = (m_selectedAnnotationId == hitId);
-        if (!wasAlreadySelected) {
-            m_selectedAnnotationId = hitId;
-            emit selectionChanged(hitId);
-        }
-        m_extraSelectedIds.clear();
-        m_pendingSelection.clear();
-        // Prepare a move-drag. For the Select tool we keep the
-        // existing "click twice to drag" affordance (UAT-ANN-120
-        // pins single-click as a pure-select gesture, not a move).
-        // For drawing tools the user's click target was clearly the
-        // annotation, so begin the move immediately.
-        const bool readyToMove = (m_tool != AnnotationTool::Select) || wasAlreadySelected;
-        if (readyToMove && m_store) {
-            if (const Annotation *a = m_store->find(hitId)) {
-                m_movingSelected = true;
-                m_dragPage = a->page;
-                m_moveStartDoc = toDoc(event->position(), a->page);
-                m_moveOriginalBounds = a->bounds;
-                // Begin compound; pushHistory is lazy so a click-
-                // without-drag adds no undo frame.
-                m_store->beginCompound();
+    if (m_tool != AnnotationTool::Ink) {
+        const int hitId = hitTest(event->position());
+        if (hitId != 0) {
+            const bool wasAlreadySelected = (m_selectedAnnotationId == hitId);
+            if (!wasAlreadySelected) {
+                m_selectedAnnotationId = hitId;
+                emit selectionChanged(hitId);
             }
+            m_extraSelectedIds.clear();
+            m_pendingSelection.clear();
+            // Prepare a move-drag. For the Select tool we keep the
+            // existing "click twice to drag" affordance (UAT-ANN-120
+            // pins single-click as a pure-select gesture, not a move).
+            // For bounded shape tools the user's click target was
+            // clearly the annotation, so begin the move immediately.
+            const bool readyToMove = (m_tool != AnnotationTool::Select) || wasAlreadySelected;
+            if (readyToMove && m_store) {
+                if (const Annotation *a = m_store->find(hitId)) {
+                    m_movingSelected = true;
+                    m_dragPage = a->page;
+                    m_moveStartDoc = toDoc(event->position(), a->page);
+                    m_moveOriginalBounds = a->bounds;
+                    // Begin compound; pushHistory is lazy so a click-
+                    // without-drag adds no undo frame.
+                    m_store->beginCompound();
+                }
+            }
+            setFocus(Qt::MouseFocusReason); // accept Delete / arrow keys
+            update();
+            return;
         }
-        setFocus(Qt::MouseFocusReason); // accept Delete / arrow keys
-        update();
-        return;
     }
     // Empty-space click. For Select-tool we clear any annotation
     // selection (the user is starting a fresh text-selection drag),
@@ -1097,9 +1106,19 @@ void AnnotationOverlay::mouseMoveEvent(QMouseEvent *event) {
         return;
     m_dragCurrentDoc = toDoc(event->position(), m_dragPage);
     if (m_tool == AnnotationTool::Ink) {
-        // Capture coalesced sub-points so fast strokes don't lose
-        // intermediate samples to OS event coalescing — same trick
-        // SignatureCanvas uses for Force Touch trackpads.
+        // Remember the live-stroke tail before appending so we can clip
+        // the repaint to just the new segment below (Bug 2).
+        const size_t prevCount = m_inkPoints.size();
+        // Append this move's sample(s), carrying per-point pressure.
+        // NOTE (pre-existing behaviour, not introduced here): a
+        // QMouseEvent is a QSinglePointEvent, so event->points() always
+        // holds exactly ONE point and pt.position() == event->position().
+        // This loop therefore runs once for mouse input and recovers no
+        // extra coalesced samples — it is not the mid-move coalescing
+        // trick its shape suggests. It does still carry the correct
+        // per-point pressure, and it is the right shape for any future
+        // multi-point (tablet/touch) QPointerEvent that populates
+        // points() with more than one entry. Left as-is intentionally.
         const auto &pts = event->points();
         if (!pts.isEmpty()) {
             for (const QEventPoint &pt : pts) {
@@ -1110,6 +1129,47 @@ void AnnotationOverlay::mouseMoveEvent(QMouseEvent *event) {
             m_inkPoints.push_back(m_dragCurrentDoc);
             m_inkPressures.push_back(0.0f);
         }
+        // Clip the mid-drag repaint to the newly-added segment. A bare
+        // update() forces an unclipped full-widget paint, which
+        // re-renders every committed annotation + search highlight + the
+        // entire growing in-progress path on EVERY move — cost grows with
+        // both the page's annotation count and the stroke length, so a
+        // long stroke over a busy page crawls. The stroke is append-only,
+        // so older segments already sit in the backing store; only the
+        // new tail needs repainting. paintEvent still redraws the full
+        // preview path, but QPainter clips it to this small region, so
+        // the rendered pixels are identical — just far fewer of them.
+        const size_t from = prevCount > 0 ? prevCount - 1 : 0;
+        double minX = 0, minY = 0, maxX = 0, maxY = 0;
+        bool has = false;
+        for (size_t i = from; i < m_inkPoints.size(); ++i) {
+            const QPointF v = m_docToView(m_inkPoints[i], m_dragPage);
+            if (!has) {
+                minX = maxX = v.x();
+                minY = maxY = v.y();
+                has = true;
+            } else {
+                minX = std::min(minX, v.x());
+                maxX = std::max(maxX, v.x());
+                minY = std::min(minY, v.y());
+                maxY = std::max(maxY, v.y());
+            }
+        }
+        if (has) {
+            // Pad for the pen width (pressure can widen it up to base + 5
+            // px, see the Ink renderer), round caps/joins, and AA, so no
+            // rasterised pixel is clipped out of the dirty rect.
+            const double pad = (m_style.strokeWidth > 0.0 ? m_style.strokeWidth : 1.5) + 8.0;
+            update(QRectF(minX - pad, minY - pad, (maxX - minX) + 2 * pad, (maxY - minY) + 2 * pad)
+                       .toAlignedRect());
+        } else {
+            // Defensive fallback: mid-drag we always have at least the
+            // press sample plus this move's, so `has` is true in practice.
+            // Keep a full update() for the degenerate empty case rather
+            // than skipping the repaint entirely.
+            update();
+        }
+        return;
     }
     update();
 }

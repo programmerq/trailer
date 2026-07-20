@@ -28,6 +28,8 @@ class AnimationBar;
 class Application;
 class DocumentView;
 class EmptyStateWidget;
+class ExternalChangeMonitor;
+class FileChangeBanner;
 class Inspector;
 class FormToolbar;
 class Magnifier;
@@ -256,6 +258,31 @@ class MainWindow : public QMainWindow {
     // thread for QPdfDocument reload); image saves run synchronously
     // because they are fast.
     void saveDocumentAsync(IDocument *doc, const QString &targetPath);
+    // External-file-change plumbing (ADR 2026-07-19).
+    // Point the monitor at `doc`'s file and hide any stale banner; called on
+    // every current-document change.
+    void retargetExternalChangeMonitor(IDocument *doc);
+    // Monitor emitted externalChange: classify the current doc against its
+    // baseline and act — silently reload a clean doc, or raise the conflict
+    // banner for a dirty one.
+    void onExternalFileChanged();
+    // Monitor emitted fileDeleted: raise the deleted banner and keep the
+    // buffer so Save recreates the file.
+    void onExternalFileDeleted();
+    // Reload the current document from disk in place and refresh the view
+    // wiring (search model, sidebar, title). Shared by the silent clean-doc
+    // reload and the banner's explicit Reload action.
+    void reloadCurrentDocumentFromDisk();
+    // Save-time conflict guard: returns true (and raises the banner) when a
+    // save of `doc` would clobber an uncaused external change — the caller
+    // must then abort the save. Deleted-on-disk is NOT blocked (Save
+    // recreates the file). The adapter-level guard (saveWouldClobber…) is the
+    // last line of defense; this surfaces the banner before the write starts.
+    bool guardSaveAgainstExternalChange(IDocument *doc);
+    // True iff `doc`'s backing file changed under us in a way a save must not
+    // clobber. Lets the save orchestration distinguish a guard *refusal* from a
+    // real write *failure* so the former routes to the conflict banner (F6).
+    bool externalConflictPending(IDocument *doc) const;
     // Run the Save-As dialog for `doc` and return the chosen destination
     // path, or an empty string if the user cancelled. Shared by onSaveAs()
     // and the unsaved-changes close prompt so both offer the same dialog.
@@ -278,6 +305,14 @@ class MainWindow : public QMainWindow {
     // self-clears once the page gains text / OCR results / is dismissed.
     void updateLargeDocOcrHint();
     void updateUndoRedoActions(IDocument *doc);
+    // Refresh the status-bar zoom-% readout from the current document's
+    // zoomFactor(). Pushed from the zoom call sites and the doc-changed
+    // path because IDocument is not a QObject, so there's no
+    // zoomFactorChanged signal to subscribe to. Known limitation:
+    // resize-driven refits change the scale inside the document without
+    // notifying us, so the number won't live-tick during a window drag in
+    // a fit mode until the next explicit zoom action.
+    void updateZoomIndicator();
     int selectedPageForEdit(IDocument *doc) const;
     // Size the window to fit the first document opened. Clamped to a
     // 1100×750 floor and a 90%-of-screen ceiling so very small docs
@@ -326,6 +361,13 @@ class MainWindow : public QMainWindow {
     QStackedWidget *m_centerStack = nullptr;
     QWidget *m_documentPage = nullptr;
     AnimationBar *m_animationBar = nullptr;
+    // External-file-change handling (ADR 2026-07-19). The monitor watches the
+    // CURRENT document's file (+ its parent dir) for external modification /
+    // deletion / atomic replacement; the banner is the non-modal conflict
+    // surface shown above the document view. One of each tracks the active
+    // document — see onCurrentDocumentChanged / the on*ExternalFile* slots.
+    ExternalChangeMonitor *m_externalChangeMonitor = nullptr;
+    FileChangeBanner *m_fileChangeBanner = nullptr;
     Inspector *m_inspector = nullptr;
     Magnifier *m_magnifier = nullptr;
     MarkupToolbar *m_markupToolbar = nullptr;
@@ -441,6 +483,12 @@ class MainWindow : public QMainWindow {
     // no modal — this is the canonical "background ML work is
     // happening" affordance for the user.
     QLabel *m_mlIndicator = nullptr;
+
+    // Permanent status-bar readout of the current zoom level (e.g.
+    // "120%"). Hidden when the active document doesn't support zoom.
+    // Updated via updateZoomIndicator() from the zoom actions and the
+    // doc-changed path.
+    QLabel *m_zoomIndicator = nullptr;
 
     // ADR 0002 status-bar affordances. m_mlProgress is the richer
     // progress+cancel widget for foreground ML ops (OCR batches;

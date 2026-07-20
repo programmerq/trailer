@@ -62,8 +62,9 @@ delivery mechanism for all of the above: it produces the unsigned per-OS artifac
 (portable Linux tarball, Windows zip, macOS `.dmg`) from any ref *before* merge,
 which is exactly what these GUI-verification tiers would download and drive. Any
 tier stood up from this survey should consume dev-build's run artifacts as its
-input rather than rebuilding. Cross-links: the packaging / artifact work
-(`2026-07-13-wire-msi-deb-rpm-packagers`, `2026-07-12-ci-artifact-reuse-github-only`)
+input rather than rebuilding. Cross-links: the packaging / artifact work (the
+MSI/DEB/RPM packager wiring completed in PR #61 (`eb5dd00`); GitHub-only CI
+artifact reuse was decided won't-do in PR #57 (`f16b378`))
 and the existing platform-verification items this would automate
 (`2026-07-12-g5-real-app-empty-state-run`, `2026-07-12-macos-reopen-realhw-verify`,
 `2026-07-12-wayland-screenshot-portal` for the Linux-capture fidelity question).

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "annotation/Annotation.h"
+#include "document/ExternalChangeState.h"
 #include "document/PdfEditor.h"
 
 #include <QImage>
@@ -266,6 +267,30 @@ class IDocument {
     }
     virtual bool save(const QString & /*newPath*/ = {}) { return false; }
 
+    // --- External file-change tracking (ADR 2026-07-19) ------------------
+    // Baseline captured at load time (and refreshed after each successful
+    // save) so the save-time conflict guard and the ExternalChangeMonitor
+    // both classify the on-disk state against the same reference. Adapters
+    // call captureFileBaseline() once the file is loaded / written.
+    const FileBaseline &fileBaseline() const { return m_fileBaseline; }
+    void captureFileBaseline() { m_fileBaseline = FileBaseline::fromPath(filePath()); }
+    // Classify the current on-disk state against the baseline + dirty flag.
+    // Pure decision delegated to classifyExternalChange (ExternalChangeState.h).
+    ExternalChangeState externalChangeState() const {
+        return classifyExternalChangeFor(m_fileBaseline, filePath(), isDirty());
+    }
+    // Set by the "Keep mine" force-save path so the next same-file save skips
+    // the conflict guard and clobbers on purpose. Consumed by the adapter's
+    // guard check.
+    void setForceSaveOverExternalChange(bool f) { m_forceSaveOverExternalChange = f; }
+
+    // Re-read the document's content from disk in place, discarding the
+    // in-memory buffer (used for the clean-doc silent auto-reload and the
+    // banner's Reload action). Returns true on a successful reload; false for
+    // adapters that don't support it (StubAdapter) or when the file cannot be
+    // re-read. Refreshes the baseline on success.
+    virtual bool reloadFromDisk() { return false; }
+
     virtual AnnotationStore *annotations() { return nullptr; }
 
     // In-document OCR cache. Returns nullptr for adapters that
@@ -312,6 +337,35 @@ class IDocument {
     virtual void setCurrentFrame(int /*frame*/) {}
     virtual bool isAnimationPlaying() const { return false; }
     virtual void setAnimationPlaying(bool /*playing*/) {}
+
+  protected:
+    // True iff overwriting `targetPath` right now would clobber an uncaused
+    // external change. Consulted by each adapter's save() BEFORE it writes so
+    // no code path can silently overwrite a newer on-disk copy (the ADR-0004
+    // silent-clobber hole). Only guards a same-file overwrite of the
+    // baselined original — a Save-As to a new path is never a clobber. The
+    // one-shot force flag ("Keep mine") is consumed here so a deliberate
+    // clobber goes through exactly once.
+    bool saveWouldClobberExternalChange(const QString &targetPath) {
+        // Save-As / first save to a different path: not an overwrite of the
+        // file we baselined. Checked BEFORE the force flag is read so a
+        // Save-As does not consume the one-shot "Keep mine" flag armed for a
+        // same-file clobber (N2).
+        if (targetPath != filePath())
+            return false;
+        const bool force = m_forceSaveOverExternalChange;
+        m_forceSaveOverExternalChange = false;
+        if (force)
+            return false;
+        const ExternalChangeState st = externalChangeState();
+        return st == ExternalChangeState::CleanExternalChange ||
+               st == ExternalChangeState::DirtyConflict;
+    }
+
+    // Load-time (or last-save) identity of filePath(); see captureFileBaseline.
+    FileBaseline m_fileBaseline;
+    // One-shot "clobber the external change on purpose" flag (Keep mine).
+    bool m_forceSaveOverExternalChange = false;
 };
 
 } // namespace trailer

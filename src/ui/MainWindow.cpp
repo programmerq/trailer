@@ -16,8 +16,10 @@
 #include "PreferencesDialog.h"
 #include "SignaturePicker.h"
 #include "SignaturesDialog.h"
+#include "FileChangeBanner.h"
 #include "cards/CardStore.h"
 #include "cards/MyCard.h"
+#include "document/ExternalChangeMonitor.h"
 #include "document/PdfAdapter.h"
 #include "document/PdfEditor.h" // FormField definition for AutoFill
 #include "SearchBar.h"
@@ -80,6 +82,7 @@
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QScopeGuard>
 #include <QScreen>
 #include <QSlider>
 #include <QSpinBox>
@@ -250,8 +253,49 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     auto *documentLayout = new QVBoxLayout(m_documentPage);
     documentLayout->setContentsMargins(0, 0, 0, 0);
     documentLayout->setSpacing(0);
+    // Non-modal file-change banner sits ABOVE the document view (ADR
+    // 2026-07-19). Hidden until an external change conflicts with unsaved
+    // edits or the file is deleted; a clean external change reloads silently
+    // and never shows it.
+    m_fileChangeBanner = new FileChangeBanner(m_documentPage);
+    m_fileChangeBanner->hide();
+    documentLayout->addWidget(m_fileChangeBanner);
     documentLayout->addWidget(m_documentView, 1);
     documentLayout->addWidget(m_animationBar);
+
+    connect(m_fileChangeBanner, &FileChangeBanner::reloadRequested, this,
+            &MainWindow::reloadCurrentDocumentFromDisk);
+    connect(m_fileChangeBanner, &FileChangeBanner::keepMineRequested, this, [this]() {
+        auto *doc = m_documentView->currentDocument();
+        if (!doc)
+            return;
+        // Deliberate clobber of the newer on-disk copy: arm the one-shot force
+        // flag, then save over the original. The banner is dismissed only when
+        // saveDocumentAsync confirms the save succeeded, so a failed clobber
+        // leaves the conflict affordance up (F5).
+        doc->setForceSaveOverExternalChange(true);
+        saveDocumentAsync(doc, doc->filePath());
+    });
+    connect(m_fileChangeBanner, &FileChangeBanner::saveRequested, this, [this]() {
+        auto *doc = m_documentView->currentDocument();
+        if (!doc || doc->filePath().isEmpty())
+            return;
+        // Deleted-on-disk: Save recreates the file. The adapter guard does not
+        // block a Deleted state, so a plain save writes the buffer back out.
+        // The banner is dismissed only on a confirmed successful save, so if the
+        // recreate fails (e.g. the parent directory is gone too) the deleted
+        // affordance stays up rather than vanishing with no way back (F5).
+        saveDocumentAsync(doc, doc->filePath());
+    });
+
+    // The monitor follows the current document (retargeted in
+    // onCurrentDocumentChanged). Its debounced signals route to the classify-
+    // and-act slots.
+    m_externalChangeMonitor = new ExternalChangeMonitor(this);
+    connect(m_externalChangeMonitor, &ExternalChangeMonitor::externalChange, this,
+            &MainWindow::onExternalFileChanged);
+    connect(m_externalChangeMonitor, &ExternalChangeMonitor::fileDeleted, this,
+            &MainWindow::onExternalFileDeleted);
 
     m_emptyState = new EmptyStateWidget(m_centerStack);
     connect(m_emptyState, &EmptyStateWidget::openRequested, this, &MainWindow::onOpen);
@@ -506,6 +550,14 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_largeDocOcrHint = hint;
     refreshMlIndicator();
 
+    // Permanent zoom-% readout. Sits with the other permanent status-bar
+    // widgets; hidden until a zoomable document is active. Driven by
+    // updateZoomIndicator() from the zoom actions and doc-changed path.
+    m_zoomIndicator = new QLabel(this);
+    m_zoomIndicator->setObjectName(QStringLiteral("zoomIndicator"));
+    m_zoomIndicator->setVisible(false);
+    statusBar()->addPermanentWidget(m_zoomIndicator);
+
     // ADR 0002: richer progress+cancel widget for foreground ML ops.
     // Sits next to the ambient m_mlIndicator dot (which stays untouched).
     // OcrController's batch signals drive it; the reveal is delayed so
@@ -676,6 +728,13 @@ void MainWindow::autoSaveDirtyDocs() {
         return;
     const int total = m_documentView->documentCount();
     bool savedAny = false;
+    // Mute the monitor for the whole auto-save pass so our own writes don't
+    // self-trigger a reload/banner. The adapter save-guard independently
+    // refuses to clobber a file changed under us, so a conflicting doc is
+    // simply skipped here (save() returns false) — never silently overwritten
+    // (ADR 2026-07-19).
+    if (m_externalChangeMonitor)
+        m_externalChangeMonitor->mute(true);
     for (int i = 0; i < total; ++i) {
         IDocument *doc = nullptr;
         if (!m_documentView->documentAt(i, &doc) || !doc)
@@ -686,6 +745,8 @@ void MainWindow::autoSaveDirtyDocs() {
             savedAny = true;
         }
     }
+    if (m_externalChangeMonitor)
+        m_externalChangeMonitor->mute(false);
     if (savedAny) {
         updateTitleForDocument(m_documentView->currentDocument());
         flashSuccess(tr("Auto-saved."));
@@ -694,15 +755,25 @@ void MainWindow::autoSaveDirtyDocs() {
 
 void MainWindow::buildMenus() {
     auto *fileMenu = menuBar()->addMenu(tr("&File"));
-    // The disabled Share… item's tooltip is made visible by
-    // makeDisabledAction() at its creation below (it calls
-    // fileMenu->setToolTipsVisible(true)), so no explicit call is needed here.
+    // Menu-item tooltips (disabled New-from-Clipboard / Scanner / Camera, and
+    // the disabled Share… item below) only render when the menu opts in.
+    fileMenu->setToolTipsVisible(true);
+
+    // Shared create/acquire group. These used to live ONLY in the macOS
+    // no-window menu bar and vanished the moment a document window became
+    // key; carrying them here keeps New-from-Clipboard and the acquire
+    // sources reachable with a window open, on every platform.
+    m_app->addNewFromClipboardAction(fileMenu);
 
     auto *openAction = fileMenu->addAction(tr("&Open…"));
     openAction->setShortcut(QKeySequence::Open);
     connect(openAction, &QAction::triggered, this, &MainWindow::onOpen);
 
     m_recentMenu = fileMenu->addMenu(tr("Open &Recent"));
+    fileMenu->addSeparator();
+
+    // Screenshot (explicit-mode submenu) + Scanner / Camera placeholders.
+    m_app->addAcquireItems(fileMenu, this);
     fileMenu->addSeparator();
 
     m_saveAction = fileMenu->addAction(tr("&Save"));
@@ -1219,6 +1290,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_zoomInAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomIn();
+        updateZoomIndicator();
     });
 
     m_zoomOutAction = viewMenu->addAction(
@@ -1228,6 +1300,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_zoomOutAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomOut();
+        updateZoomIndicator();
     });
 
     // Zoom shortcuts keep the digit row clear for the page-layout
@@ -1245,6 +1318,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_zoomFitPageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomFitPage();
+        updateZoomIndicator();
     });
 
     m_zoomActualAction = viewMenu->addAction(
@@ -1254,6 +1328,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_zoomActualAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomActual();
+        updateZoomIndicator();
     });
 
     m_zoomFitAction = viewMenu->addAction(
@@ -1262,6 +1337,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_zoomFitAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomFitWidth();
+        updateZoomIndicator();
     });
 
     viewMenu->addSeparator();
@@ -1539,7 +1615,12 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     toolsMenu->addSeparator();
 
     m_screenshotAction = toolsMenu->addAction(tr("&Take Screenshot"));
-    m_screenshotAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_3));
+    // No shortcut: ⌘⇧3 is OS-reserved on macOS (global capture) and
+    // never reaches Trailer — a binding that can't fire is a lying
+    // control. File → Screenshot's explicit modes are the discoverable
+    // path (see DR 2026-07-18-file-menu-acquire-ia, Option A — "delete the
+    // dead ⌘⇧3 binding"; the "Dead ⌘⇧3 removed" checkable threshold,
+    // uat_fmia_006).
     connect(m_screenshotAction, &QAction::triggered, this, &MainWindow::onTakeScreenshot);
 
     toolsMenu->addSeparator();
@@ -2217,25 +2298,13 @@ void MainWindow::onCropImage() {
     updateTitleForDocument(doc);
 }
 
-namespace {
-
-QString screenshotTargetPath() {
-    const QString dir = QStandardPaths::writableLocation(QStandardPaths::PicturesLocation);
-    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"));
-    return QDir(dir).filePath(QStringLiteral("trailer-screenshot-%1.png").arg(stamp));
-}
-
-enum class ShotMode { Screen, Window, Region };
-
-} // namespace
-
 void MainWindow::onTakeScreenshot() {
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Take Screenshot"));
     auto *layout = new QVBoxLayout(&dialog);
-    auto *screenRadio = new QRadioButton(tr("Whole screen"), &dialog);
-    auto *windowRadio = new QRadioButton(tr("Single window (click to select)"), &dialog);
-    auto *regionRadio = new QRadioButton(tr("Region (drag to select)"), &dialog);
+    auto *screenRadio = new QRadioButton(tr("Whole Screen"), &dialog);
+    auto *windowRadio = new QRadioButton(tr("Window (click to select)"), &dialog);
+    auto *regionRadio = new QRadioButton(tr("Selected Area (drag to select)"), &dialog);
     screenRadio->setChecked(true);
     layout->addWidget(screenRadio);
     layout->addWidget(windowRadio);
@@ -2265,123 +2334,11 @@ void MainWindow::onTakeScreenshot() {
     else if (regionRadio->isChecked())
         mode = ShotMode::Region;
 
-    const QString path = screenshotTargetPath();
-
-#ifdef Q_OS_MACOS
-    // First use only: explain that macOS will prompt for "Screen Recording"
-    // permission (its name even for a still screenshot) before we shell to
-    // screencapture. Deferred to first actual use — never at launch.
-    if (!maybeShowScreenCaptureExplainer(m_app->settings(), this)) {
-        // User cancelled the pre-permission explainer — do not capture.
-        return;
-    }
-    // Hide our window so it doesn't occlude the target, then use the native
-    // macOS capture tool for proper DPI handling and interactive selection.
-    hide();
-    QStringList args;
-    args << "-x"; // silent (no capture sound)
-    switch (mode) {
-    case ShotMode::Screen:
-        break;
-    case ShotMode::Window:
-        args << "-iW";
-        break;
-    case ShotMode::Region:
-        args << "-i"
-             << "-s";
-        break;
-    }
-    args << path;
-
-    // Opt-in ScreenCaptureKit picker backend (macOS 14+). Region mode is a
-    // freeform drag-select the picker can't express, so it always falls back
-    // to screencapture. On a clean pick we're done; on cancel we mirror the
-    // silent-cancel status below; Unavailable/Failed falls through to the
-    // screencapture path so the feature degrades gracefully.
-    const bool freeformRegion = (mode == ShotMode::Region);
-    const auto backend = trailer::effectiveCaptureBackend(
-        m_app->settings().captureBackend(), trailer::screenCaptureKitAvailable(), freeformRegion);
-    if (backend == trailer::CaptureBackend::ScreenCaptureKit) {
-        QString err;
-        const auto r = trailer::captureViaPickerToPng(
-            path, /*wholeDisplay=*/mode == ShotMode::Screen, &err);
-        if (r == trailer::PickerCaptureResult::Ok) {
-            show();
-            raise();
-            activateWindow();
-            m_app->openFiles({path});
-            return;
-        }
-        if (r == trailer::PickerCaptureResult::Cancelled) {
-            show();
-            raise();
-            activateWindow();
-            flashStatus(tr("Screen capture cancelled."));
-            return;
-        }
-        // Unavailable/Failed -> fall through to the screencapture path.
-        qWarning() << "MainWindow: ScreenCaptureKit picker capture failed, falling back to"
-                   << "screencapture:" << err;
-    }
-
-    QProcess proc;
-    proc.start("/usr/sbin/screencapture", args);
-    proc.waitForFinished(-1);
-    show();
-    raise();
-    activateWindow();
-    if (proc.exitCode() != 0) {
-        // Non-zero exit means the user cancelled (Esc) — not an error.
-        flashStatus(tr("Screen capture cancelled."));
-        return;
-    }
-    if (!QFileInfo(path).exists() || QFileInfo(path).size() == 0) {
-        // Exit 0 but no output — screencapture produced nothing, which can
-        // silently mean Screen Recording permission was denied. Surface a
-        // graceful hint pointing at the permission setting.
-        flashStatus(tr("No image was captured. If you denied Screen Recording, "
-                       "grant it in System Settings ▸ Privacy & Security ▸ "
-                       "Screen Recording."));
-        return;
-    }
-    // screencapture writes raw device pixels with no dpr stamp; recover
-    // the target screen's dpr so a Retina capture opens 1:1 pixel-exact.
-    // Prefer this window's screen (the one the user is capturing from),
-    // falling back to the primary screen only when the window reports none
-    // — matching Application::acquireFromScreenshot's primary-screen source.
-    // Known limitation: an interactive `screencapture -i`/`-iW`/`-s` on a
-    // mixed-DPI multi-monitor setup can land on a screen other than this
-    // window's, so the recovered dpr may be wrong; owner to confirm on
-    // hardware.
-    {
-        QScreen *scr = this->screen() ? this->screen() : QGuiApplication::primaryScreen();
-        if (scr)
-            m_app->setPendingCaptureDpr(scr->devicePixelRatio());
-    }
-#else
-    if (mode != ShotMode::Screen) {
-        flashStatus(tr("Window/region capture is not yet supported on this "
-                       "platform."));
-        return;
-    }
-    QScreen *screen = QGuiApplication::primaryScreen();
-    if (!screen)
-        return;
-    const QPixmap shot = screen->grabWindow(0);
-    if (shot.isNull() || !shot.save(path, "PNG")) {
-        flashError(tr("Screenshot failed — could not capture the screen."));
-        return;
-    }
-    // grabWindow() stamps the screen dpr on the pixmap, but the PNG save
-    // drops it; recover it so a HiDPI capture opens 1:1 (see openFiles).
-    {
-        const double dpr =
-            shot.devicePixelRatio() > 0.0 ? shot.devicePixelRatio() : screen->devicePixelRatio();
-        m_app->setPendingCaptureDpr(dpr);
-    }
-#endif
-
-    m_app->openFiles({path});
+    // Same capture backend as File → Screenshot (Application owns it so
+    // both the per-window menu and the macOS no-window bar share it). The
+    // ScreenCaptureKit picker backend lives inside Application::captureScreenshot
+    // so both the per-window menu and the macOS no-window bar share it.
+    m_app->captureScreenshot(mode, this);
 }
 
 void MainWindow::onSave() {
@@ -2392,6 +2349,11 @@ void MainWindow::onSave() {
         onSaveAs();
         return;
     }
+    // Save-time conflict guard (ADR 2026-07-19): if the file changed under us,
+    // surface the conflict banner instead of clobbering the newer on-disk
+    // copy. The user resolves it with Reload / Keep mine.
+    if (guardSaveAgainstExternalChange(doc))
+        return;
     saveDocumentAsync(doc, doc->filePath());
 }
 
@@ -2403,15 +2365,41 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
     // is fine — wrapping it adds latency without benefit. PDF saves
     // can be 5-15 s on heavy redactions, so they go through the
     // two-phase split so the UI thread stays responsive.
+    // Mute the external-change monitor across our own write so the resulting
+    // filesystem events don't self-trigger a spurious reload/banner. The
+    // adapter refreshes its baseline on success, so even a stray post-unmute
+    // event classifies as NoChange (ADR 2026-07-19). Only mute when we're
+    // saving the file the monitor is currently watching.
+    const bool muteMonitor =
+        m_externalChangeMonitor && m_externalChangeMonitor->path() == targetPath;
+    if (muteMonitor)
+        m_externalChangeMonitor->mute(true);
+
     auto *pdfDoc = dynamic_cast<PdfDocument *>(doc);
     if (!pdfDoc) {
-        if (!doc->save(targetPath)) {
-            flashError(tr("Save failed — could not write to %1").arg(targetPath));
+        const bool ok = doc->save(targetPath);
+        if (muteMonitor)
+            m_externalChangeMonitor->mute(false);
+        if (!ok) {
+            // A false result from an adapter guard trip (an external change
+            // landed after our UI-level check) is a conflict, not a write
+            // failure — route it to the conflict banner rather than a generic
+            // error (F6).
+            if (externalConflictPending(doc)) {
+                if (m_fileChangeBanner)
+                    m_fileChangeBanner->showConflict();
+            } else {
+                flashError(tr("Save failed — could not write to %1").arg(targetPath));
+            }
             return;
         }
         m_app->settings().setLastSaveDir(QFileInfo(targetPath).absolutePath());
         m_app->settings().save();
         updateTitleForDocument(doc);
+        // Dismiss any conflict/deleted banner only now that the save actually
+        // succeeded, so a failed recreate/clobber leaves the affordance up (F5).
+        if (m_fileChangeBanner)
+            m_fileChangeBanner->dismiss();
         flashSuccess(tr("Saved."));
         return;
     }
@@ -2426,10 +2414,21 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
     auto *watcher = new QFutureWatcher<SaveResult>(this);
     connect(progress, &QProgressDialog::canceled, watcher, &QFutureWatcherBase::cancel);
     connect(watcher, &QFutureWatcher<SaveResult>::finished, this,
-            [this, watcher, progress, pdfDoc, doc, targetPath]() {
+            [this, watcher, progress, pdfDoc, doc, targetPath, muteMonitor]() {
                 const bool wasCanceled = progress->wasCanceled();
                 progress->close();
                 progress->deleteLater();
+                // Keep the monitor muted until this whole handler unwinds —
+                // the self-write (rename + baseline refresh inside
+                // saveCommitOnUi) must stay bracketed by the mute, and a
+                // scope-guard releases it on EVERY exit including an exception
+                // out of watcher->result() (F2 / F8a). The baseline is
+                // refreshed on success inside saveCommitOnUi, so a stray
+                // post-unmute event classifies as NoChange.
+                auto unmute = qScopeGuard([this, muteMonitor]() {
+                    if (muteMonitor && m_externalChangeMonitor)
+                        m_externalChangeMonitor->mute(false);
+                });
                 SaveResult result;
                 if (!wasCanceled)
                     result = watcher->result();
@@ -2437,23 +2436,163 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
                 if (wasCanceled)
                     return;
                 if (!result) {
-                    flashError(tr("Save failed — could not write to %1").arg(targetPath));
+                    // The begin phase refused: a clobber-guard trip (external
+                    // change after our UI-level check) is a conflict, not a
+                    // write failure — route it to the banner (F6).
+                    if (externalConflictPending(doc)) {
+                        if (m_fileChangeBanner)
+                            m_fileChangeBanner->showConflict();
+                    } else {
+                        flashError(tr("Save failed — could not write to %1").arg(targetPath));
+                    }
                     return;
                 }
-                // Worker phase succeeded; commit on the UI thread.
+                // Worker phase succeeded; commit on the UI thread. The commit
+                // may itself abort if an external change landed in the
+                // begin→commit window (F1); that abort is also a conflict.
                 if (!pdfDoc->saveCommitOnUi(*result)) {
-                    flashError(tr("Save failed — could not finalise %1").arg(targetPath));
+                    if (externalConflictPending(doc)) {
+                        if (m_fileChangeBanner)
+                            m_fileChangeBanner->showConflict();
+                    } else {
+                        flashError(tr("Save failed — could not finalise %1").arg(targetPath));
+                    }
                     return;
                 }
                 m_app->settings().setLastSaveDir(QFileInfo(targetPath).absolutePath());
                 m_app->settings().save();
                 updateTitleForDocument(doc);
+                // Dismiss the banner only after a confirmed successful commit so
+                // a failed clobber/recreate leaves its affordance up (F5).
+                if (m_fileChangeBanner)
+                    m_fileChangeBanner->dismiss();
                 flashSuccess(tr("Saved."));
             });
 
     QFuture<SaveResult> future = QtConcurrent::run(
         [pdfDoc, targetPath]() -> SaveResult { return pdfDoc->saveBeginQpdfPhase(targetPath); });
     watcher->setFuture(future);
+}
+
+void MainWindow::retargetExternalChangeMonitor(IDocument *doc) {
+    if (!m_externalChangeMonitor)
+        return;
+    // A single monitor + banner track the CURRENT document. Switching docs
+    // drops the previous doc's banner and repoints the watcher; untitled docs
+    // (empty path) clear the watch. Known limitation: a conflict raised on a
+    // background tab is re-evaluated when the user returns to it (the monitor
+    // re-points and the save-guard still fires), not shown while it's hidden —
+    // documented in the ADR.
+    if (m_fileChangeBanner)
+        m_fileChangeBanner->dismiss();
+    m_externalChangeMonitor->setPath(doc ? doc->filePath() : QString());
+
+    // Re-classify the now-current document against its baseline so a change
+    // that landed while this tab was in the background surfaces immediately on
+    // return, instead of waiting for the next filesystem event (F4). Runs the
+    // same classify-and-act path as a live event; onExternalFileChanged reads
+    // currentDocument(), which is already `doc` at this point (DocumentView
+    // emits currentDocumentChanged with the new current document).
+    if (doc && !doc->filePath().isEmpty())
+        onExternalFileChanged();
+}
+
+void MainWindow::onExternalFileChanged() {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc)
+        return;
+    switch (doc->externalChangeState()) {
+    case ExternalChangeState::NoChange:
+        // Spurious event (or our own just-refreshed baseline) — ignore.
+        return;
+    case ExternalChangeState::CleanExternalChange:
+        // Nothing unsaved to lose: reload silently (Preview-style), no dialog.
+        reloadCurrentDocumentFromDisk();
+        return;
+    case ExternalChangeState::DirtyConflict:
+        // Never auto-decide with unsaved edits — surface the banner.
+        if (m_fileChangeBanner)
+            m_fileChangeBanner->showConflict();
+        return;
+    case ExternalChangeState::Deleted:
+        onExternalFileDeleted();
+        return;
+    }
+}
+
+void MainWindow::onExternalFileDeleted() {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc || !m_fileChangeBanner)
+        return;
+    // Keep the buffer; the banner's Save recreates the file on disk.
+    m_fileChangeBanner->showDeleted();
+}
+
+void MainWindow::reloadCurrentDocumentFromDisk() {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc)
+        return;
+    // Mute the monitor across the in-place reload so the reload's own reads /
+    // baseline refresh don't loop back as another event.
+    if (m_externalChangeMonitor)
+        m_externalChangeMonitor->mute(true);
+    const bool ok = doc->reloadFromDisk();
+    if (m_externalChangeMonitor)
+        m_externalChangeMonitor->mute(false);
+    if (m_fileChangeBanner)
+        m_fileChangeBanner->dismiss();
+    if (!ok) {
+        flashError(tr("Couldn't reload %1 from disk.").arg(doc->displayName()));
+        return;
+    }
+    // Refresh the surfaces that cache document-derived state.
+    m_sidebar->setDocument(doc);
+    updateTitleForDocument(doc);
+    updateUndoRedoActions(doc);
+    flashStatus(tr("Reloaded — the file changed on disk."));
+}
+
+bool MainWindow::externalConflictPending(IDocument *doc) const {
+    // True iff the document's backing file changed under us in a way that a
+    // save must not silently clobber. Used to tell a save *failure* (real write
+    // error) apart from a save *refusal* (the adapter/commit guard declined to
+    // overwrite an external change), so the latter routes to the conflict
+    // banner instead of a generic error dialog (F6).
+    if (!doc || doc->filePath().isEmpty())
+        return false;
+    const ExternalChangeState st = doc->externalChangeState();
+    return st == ExternalChangeState::CleanExternalChange ||
+           st == ExternalChangeState::DirtyConflict;
+}
+
+bool MainWindow::guardSaveAgainstExternalChange(IDocument *doc) {
+    if (!doc || doc->filePath().isEmpty())
+        return false;
+    switch (doc->externalChangeState()) {
+    case ExternalChangeState::CleanExternalChange:
+        // Clean buffer, but the file changed under us: our in-memory bytes are
+        // now STALE, so a save would clobber the newer on-disk copy with stale
+        // content. There are no user edits to reconcile, so reload the on-disk
+        // truth SILENTLY (the ratified clean-reload-is-silent choice) rather
+        // than raising the conflict banner — whose "…while you had unsaved
+        // edits" wording would be untrue here (S1). After the reload the buffer
+        // matches disk and is clean, so there is nothing left to save; report
+        // handled so the caller does not proceed to overwrite.
+        reloadCurrentDocumentFromDisk();
+        return true;
+    case ExternalChangeState::DirtyConflict:
+        // Genuine conflict: unsaved edits AND a newer on-disk copy. Never
+        // clobber — raise the conflict banner so the user picks Reload or
+        // Keep mine.
+        if (m_fileChangeBanner)
+            m_fileChangeBanner->showConflict();
+        return true;
+    case ExternalChangeState::Deleted:
+        // File gone: Save should recreate it, so don't block. Fall through.
+    case ExternalChangeState::NoChange:
+        return false;
+    }
+    return false;
 }
 
 void MainWindow::onSaveAs() {
@@ -2630,6 +2769,19 @@ void MainWindow::onReduceFileSize() {
 void MainWindow::updateUndoRedoActions(IDocument *doc) {
     m_undoAction->setEnabled(doc && doc->canUndo());
     m_redoAction->setEnabled(doc && doc->canRedo());
+}
+
+void MainWindow::updateZoomIndicator() {
+    if (!m_zoomIndicator)
+        return;
+    auto *doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsZoom()) {
+        m_zoomIndicator->setVisible(false);
+        return;
+    }
+    m_zoomIndicator->setText(
+        tr("%1%").arg(qRound(doc->zoomFactor() * 100.0)));
+    m_zoomIndicator->setVisible(true);
 }
 
 void MainWindow::onCopyPageAsImage() {
@@ -2860,6 +3012,10 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // the size alone so the user's adjustments stick.
     applyInitialWindowSize(doc);
 
+    // Follow the new document's file for external changes and drop any banner
+    // that belonged to the doc we're leaving (ADR 2026-07-19).
+    retargetExternalChangeMonitor(doc);
+
     // Update the auto-OCR controller. It cancels in-flight
     // submissions for the previous doc and starts following the
     // new one. The visible-page enqueue is driven from the page-
@@ -3017,6 +3173,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     m_zoomActualAction->setEnabled(hasZoom);
     m_zoomFitAction->setEnabled(hasZoom);
     m_zoomFitPageAction->setEnabled(hasZoom);
+    updateZoomIndicator();
 
     m_magnifierAction->setEnabled(doc != nullptr);
     if (!doc && m_magnifierAction->isChecked()) {
@@ -3219,6 +3376,14 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
                 m_contentAwareFormSidebarPending.insert(doc);
             }
         }
+
+        // The zoom indicator was populated near the top of this function
+        // from the constructor/hardcoded zoom, but applyZoomState() above
+        // restores a saved per-file/per-type zoom synchronously. Refresh
+        // the readout now so a doc reopened at a non-default zoom shows the
+        // right percent immediately instead of a stale value until the next
+        // zoom action.
+        updateZoomIndicator();
     }
 
     // Markup toolbar is hidden by default — the user surfaces it via

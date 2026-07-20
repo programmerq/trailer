@@ -40,10 +40,14 @@ constexpr const char *kExtensions[] = {
     "webp", "ppm", "pgm",  "pbm", "xbm", "xpm",  "ico",
 };
 
-// Step multiplier per zoom-in / zoom-out tap (~10% per step) —
-// matches the rate Preview / Acrobat use. Change if dogfooding
-// finds zoom feels jumpy (lower) or sluggish (higher).
-constexpr double kZoomStep = 1.1;
+// Step multiplier per zoom-in / zoom-out tap (~25% per step) —
+// a coarse, Preview / Acrobat-like ratio that doubles in ~3 taps.
+// The step is geometric, so it's size-independent in ratio terms;
+// raised from 1.1 (10%) because the finer step felt sluggish to
+// click through, especially on large images. Change if dogfooding
+// finds zoom feels jumpy (lower) or sluggish (higher). Keep in sync
+// with PdfAdapter's kZoomStep so the two view types feel identical.
+constexpr double kZoomStep = 1.25;
 
 // Hard zoom bounds. 0.05 (5%) preserves the user's place at a
 // thumbnail-overview scale without letting a typical document
@@ -288,6 +292,10 @@ ImageDocument::ImageDocument(QString path) : m_path(std::move(path)) {
             if (!m_searchQuery.isEmpty())
                 recomputeSearchMatches();
         });
+    // Record the on-disk identity we just read so the save-time conflict
+    // guard and the ExternalChangeMonitor can tell a later external write
+    // apart from our own (ADR 2026-07-19).
+    captureFileBaseline();
 }
 
 void ImageDocument::connectAnnotationHistory() {
@@ -980,6 +988,11 @@ bool ImageDocument::save(const QString &newPath) {
     const QString target = newPath.isEmpty() ? m_path : newPath;
     if (target.isEmpty())
         return false;
+    // Save-time conflict guard (ADR 2026-07-19): refuse to overwrite the
+    // baselined original if it changed under us and this isn't a deliberate
+    // "Keep mine" clobber. The caller surfaces the conflict banner.
+    if (saveWouldClobberExternalChange(target))
+        return false;
     const QImage out = flattenAnnotations(m_image, m_annotations.annotations());
     const QByteArray format = QFileInfo(target).suffix().toLatin1().toLower();
     QImageWriter writer(target, format.isEmpty() ? QByteArray("png") : format);
@@ -989,6 +1002,35 @@ bool ImageDocument::save(const QString &newPath) {
     m_annotations.clear();
     m_path = target;
     m_dirty = false;
+    // Refresh the baseline to the bytes we just wrote so our own save never
+    // looks like an external change.
+    captureFileBaseline();
+    return true;
+}
+
+bool ImageDocument::reloadFromDisk() {
+    // Animated images and untitled buffers have nothing to reload in place.
+    if (m_path.isEmpty() || m_animated)
+        return false;
+    QImageReader reader(m_path);
+    reader.setAutoTransform(true);
+    const QImage fresh = reader.read();
+    if (fresh.isNull())
+        return false;
+    m_image = fresh;
+    // A clean-doc reload discards the (empty) edit state; there is nothing to
+    // preserve because reload only runs when the buffer is clean or the user
+    // explicitly chose Reload.
+    m_annotations.clear();
+    m_annotations.clearHistory();
+    m_undoStack.clear();
+    m_redoStack.clear();
+    m_undoLog.clear();
+    m_redoLog.clear();
+    m_selectableText.clear();
+    m_dirty = false;
+    refreshView();
+    captureFileBaseline();
     return true;
 }
 
