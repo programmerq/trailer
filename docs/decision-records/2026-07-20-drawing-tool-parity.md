@@ -30,11 +30,11 @@ What shipped today (before this record): draw-first and sticky were `Ink`-only.
 The two seams:
 
 - Sticky: `isStickyDrawTool(AnnotationTool)` in
-  [`src/ui/MainWindow.cpp:3695`](../../src/ui/MainWindow.cpp) (anonymous
+  [`src/ui/MainWindow.cpp:3704`](../../src/ui/MainWindow.cpp) (anonymous
   namespace above `onAnnotationCommitted`) — returned `tool == Ink`.
 - Press-hijack: the select/move branch guard in
   `AnnotationOverlay::mousePressEvent`
-  ([`src/ui/AnnotationOverlay.cpp:978`](../../src/ui/AnnotationOverlay.cpp)) —
+  ([`src/ui/AnnotationOverlay.cpp:968`](../../src/ui/AnnotationOverlay.cpp)) —
   was `if (m_tool != AnnotationTool::Ink)`, so only Ink fell through to draw.
 
 The open question (PHILOSOPHY → *Platform-native per OS* / Preview parity, and
