@@ -7,6 +7,7 @@
 #include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
 #include "ui/MainWindow.h"
+#include "util/TempPath.h"
 #ifdef TRAILER_UX_RECORDER
 #include "uxrecord/UxPlatformCapture.h"
 #include "uxrecord/UxRecorder.h"
@@ -21,6 +22,7 @@
 #include <QDateTime>
 #include <QDebug>
 #include <QDir>
+#include <QFile>
 #include <QFileInfo>
 #include <QFileOpenEvent>
 #include <QFileDialog>
@@ -399,12 +401,13 @@ bool Application::requestQuit(QuitMode mode) {
     if (mode == QuitMode::KeepWindows) {
         // KeepWindows keeps what it can draft and prompts for anything dirty
         // it cannot (ADR-0004 no-silent-loss floor). An unsaved/untitled
-        // document that is NOT losslessly draftable — a PDF with unsaved
-        // annotations, an image with a null raster — would otherwise be
-        // stored as a clean {kind:"path"} reference and restore with its
-        // edits gone. For exactly those docs we raise the Normal per-doc
-        // Save/Discard/Cancel prompt BEFORE quitting, so their edits are
-        // saved or explicitly discarded; draftable (image) docs are kept
+        // document that is NOT losslessly draftable — a pathless PDF, an image
+        // with a null raster — would otherwise be stored as a clean
+        // {kind:"path"} reference and restore with its edits gone. For exactly
+        // those docs we raise the Normal per-doc Save/Discard/Cancel prompt
+        // BEFORE quitting, so their edits are saved or explicitly discarded.
+        // Draftable docs — images, and PDFs whether annotation-dirty
+        // (AnnotatedPath) or structurally edited (StructuralDraft) — are kept
         // silently with no prompt.
         for (MainWindow *win : windows()) {
             if (!win)
@@ -455,18 +458,22 @@ bool Application::canDraftForKeep(IDocument *doc) const {
     //    path — captured as its original path plus a JSON payload of the
     //    unsaved annotations, re-applied editable + dirty on restore
     //    (restoreAnnotationsFromDraft).
+    //  * PDF with STRUCTURAL page edits (rotate/delete/move/crop/insert —
+    //    hasStructuralEdits()) and an on-disk path — captured as a
+    //    StructuralDraft: the edited-PDF BLOB bytes (writeRecoverySnapshot)
+    //    plus the original path, loaded back into a private editor copy on
+    //    restore (recoverFrom) with Save re-pointed to the original and the
+    //    doc marked dirty. The qpdf command list cannot be serialized (its
+    //    commands hold live in-memory object handles), so we persist the
+    //    edited bytes instead. See
+    //    docs/backlog/2026-07-19-structural-pdf-keep-fidelity.md.
     //
-    // A structurally-edited PDF (rotate/delete/crop — hasStructuralEdits())
-    // is deliberately NOT draftable: the annotation JSON cannot reconstruct
-    // qpdf page-graph edits, and this pass does not implement a full-document
-    // draft blob for it. To honour the ADR-0004 no-silent-loss floor those
-    // fall back to the per-doc prompt (a narrow, flagged residual — see
-    // docs/backlog/2026-07-19-structural-pdf-keep-fidelity.md). A pathless
-    // PDF likewise cannot be reopened from disk, so it is not draftable.
+    // A pathless PDF cannot be reopened from / re-associated to disk, so it is
+    // not draftable and falls back to the per-doc prompt.
     if (auto *img = dynamic_cast<ImageDocument *>(doc))
         return !img->image().isNull();
     if (auto *pdf = dynamic_cast<PdfDocument *>(doc))
-        return pdf->isDirty() && !pdf->hasStructuralEdits() && !pdf->filePath().isEmpty();
+        return pdf->isDirty() && !pdf->filePath().isEmpty();
     return false;
 }
 
@@ -505,14 +512,44 @@ QList<SessionWindowDescriptor> Application::captureSessionForKeep() const {
             // capture as a clean Path silently — that path is unreachable
             // post-prompt.
             const bool needsImageDraft = dirtyOrUntitled && img && canDraftForKeep(doc);
-            // A PDF whose dirtiness is annotation-only is captured as its
-            // on-disk path plus the unsaved annotations (re-applied editable
-            // + dirty on restore). Structural-edited PDFs failed
-            // canDraftForKeep and were resolved by the prompt fallback above.
-            const bool needsPdfAnnotationDraft =
-                dirtyOrUntitled && pdf && !img && canDraftForKeep(doc);
+            // A dirty PDF (with an on-disk path) is captured one of two ways:
+            //  * STRUCTURAL edits present → a StructuralDraft: the edited-PDF
+            //    blob bytes plus the original path (the qpdf command list is
+            //    not serializable, so we persist the bytes).
+            //  * annotation-ONLY dirty → an AnnotatedPath: the on-disk path
+            //    plus the unsaved annotations (re-applied editable + dirty on
+            //    restore).
+            const bool isDraftablePdf = dirtyOrUntitled && pdf && !img && canDraftForKeep(doc);
+            const bool needsPdfStructuralDraft = isDraftablePdf && pdf->hasStructuralEdits();
+            const bool needsPdfAnnotationDraft = isDraftablePdf && !pdf->hasStructuralEdits();
             SessionDocDescriptor dd;
-            if (needsPdfAnnotationDraft) {
+            if (needsPdfStructuralDraft) {
+                // Serialize the live editor graph (structural edits included,
+                // annotations written as editable /Annot by writeRecoverySnapshot)
+                // to a throwaway temp, then read its bytes into the descriptor.
+                // writeRecoverySnapshot does NOT mutate the live document.
+                ScopedTempFile snap(QStringLiteral("trailer-keep-XXXXXX.pdf"));
+                QByteArray bytes;
+                if (snap.isValid() && pdf->writeRecoverySnapshot(snap.path())) {
+                    QFile f(snap.path());
+                    if (f.open(QIODevice::ReadOnly))
+                        bytes = f.readAll();
+                }
+                if (bytes.isEmpty()) {
+                    // Could not snapshot a structurally-edited PDF. Do NOT
+                    // silently drop it (storing a clean Path ref would lose the
+                    // edits with no prompt). canDraftForKeep gated on a valid
+                    // dirty PDF so this is unreachable in practice; if it ever
+                    // fires, skip this doc rather than mis-capture it — the
+                    // atomic store save then reflects the omission and the
+                    // failure path keeps the document open.
+                    continue;
+                }
+                dd.kind = SessionDocDescriptor::Kind::StructuralDraft;
+                dd.bytes = bytes;
+                dd.format = QStringLiteral("pdf");
+                dd.originalPath = doc->filePath();
+            } else if (needsPdfAnnotationDraft) {
                 dd.kind = SessionDocDescriptor::Kind::AnnotatedPath;
                 dd.path = doc->filePath();
                 const std::vector<Annotation> &live = pdf->annotations()->annotations();
@@ -592,6 +629,36 @@ bool Application::restoreKeptWindows() {
                 imgDoc->restoreFromDraft(img, dd.originalPath, dd.untitled,
                                          /*dirty=*/!dd.untitled, dd.captureOrigin);
                 doc = std::move(imgDoc);
+            } else if (dd.kind == SessionDocDescriptor::Kind::StructuralDraft) {
+                // A structurally-edited PDF: reopen the ORIGINAL file (so
+                // m_path points at it and Save re-associates there), then load
+                // the edited blob into a private editor copy via recoverFrom —
+                // which rebuilds the editor from the blob, re-points Save at
+                // m_path (the original), repopulates annotations as editable,
+                // and marks the doc dirty. The original file is never touched.
+                // If the original is gone we drop just this doc.
+                if (dd.originalPath.isEmpty() || !QFileInfo::exists(dd.originalPath))
+                    continue;
+                auto opened = m_registry.open(dd.originalPath);
+                auto *pdf = dynamic_cast<PdfDocument *>(opened.get());
+                if (!pdf)
+                    continue;
+                // Materialize the blob to a temp path for recoverFrom (it makes
+                // its own owned private copy, so this temp is safe to drop).
+                ScopedTempFile blobFile(QStringLiteral("trailer-keep-restore-XXXXXX.pdf"));
+                bool recovered = false;
+                if (blobFile.isValid()) {
+                    QFile f(blobFile.path());
+                    if (f.open(QIODevice::WriteOnly | QIODevice::Truncate) &&
+                        f.write(dd.bytes) == dd.bytes.size()) {
+                        f.close();
+                        recovered = pdf->recoverFrom(blobFile.path());
+                    }
+                }
+                if (!recovered)
+                    continue; // could not rebuild the edited graph → drop this doc
+                doc = std::move(opened);
+                m_recent.add(dd.originalPath);
             } else if (dd.kind == SessionDocDescriptor::Kind::AnnotatedPath) {
                 // A PDF reopened from disk with its unsaved annotations
                 // re-applied as editable objects and marked dirty — so it
