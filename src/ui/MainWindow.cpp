@@ -33,6 +33,7 @@
 #include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "ml/OcrEngine.h"
+#include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
 #include "platform/Share.h"
 #include "settings/AppPaths.h"
@@ -49,6 +50,7 @@
 #include "document/SelectableTextStore.h"
 
 #include <QAction>
+#include <QDebug>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QCheckBox>
@@ -2333,7 +2335,9 @@ void MainWindow::onTakeScreenshot() {
         mode = ShotMode::Region;
 
     // Same capture backend as File → Screenshot (Application owns it so
-    // both the per-window menu and the macOS no-window bar share it).
+    // both the per-window menu and the macOS no-window bar share it). The
+    // ScreenCaptureKit picker backend lives inside Application::captureScreenshot
+    // so both the per-window menu and the macOS no-window bar share it.
     m_app->captureScreenshot(mode, this);
 }
 

@@ -3,6 +3,7 @@
 #include "TrailerVersion.h"
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
+#include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
 #include "ui/MainWindow.h"
 #ifdef TRAILER_UX_RECORDER
@@ -16,6 +17,7 @@
 #include <QAction>
 #include <QClipboard>
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QFileOpenEvent>
@@ -606,6 +608,31 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
     // Hide our window so it doesn't occlude the target, then use the
     // native macOS capture tool for proper DPI handling and interactive
     // selection.
+    // Opt-in ScreenCaptureKit picker backend (macOS 14+). The system picker
+    // selects a window or display, so it substitutes for the interactive
+    // Screen / Window modes but NOT for a freeform Region rectangle — Region
+    // (and any picker Unavailable/Failed) falls through to the screencapture
+    // path below. On a clean pick we're done; a picker cancel is a
+    // self-caused no-op (say nothing, per PHILOSOPHY → No popup that just
+    // says "no").
+    const auto backend = trailer::effectiveCaptureBackend(
+        m_settings.captureBackend(), trailer::screenCaptureKitAvailable(),
+        /*freeformRegion=*/mode == ShotMode::Region);
+    if (backend == trailer::CaptureBackend::ScreenCaptureKit) {
+        QString err;
+        const auto r = trailer::captureViaPickerToPng(
+            path, /*wholeDisplay=*/mode == ShotMode::Screen, &err);
+        if (r == trailer::PickerCaptureResult::Ok) {
+            openFiles({path});
+            return;
+        }
+        if (r == trailer::PickerCaptureResult::Cancelled)
+            return;
+        // Unavailable/Failed -> fall through to the screencapture path.
+        qWarning() << "Application: ScreenCaptureKit picker capture failed, falling back to"
+                   << "screencapture:" << err;
+    }
+
     if (context)
         context->hide();
     QStringList args;
