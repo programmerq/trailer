@@ -24,9 +24,6 @@
 // fails. Real Windows (process-global FILE handles) and Linux release it fine,
 // so this flow runs and is asserted in full on Linux; only the Wine emulator
 // skips it. See docs/backlog/2026-07-19-wine-cross-thread-editor-save.md.
-// The lightweight CHK() checkpoints (unbuffered stderr) are kept to aid future
-// Wine triage, since ctest does not capture this binary's buffered stdout under
-// Wine.
 
 #include "annotation/Annotation.h"
 #include "annotation/AnnotationStore.h"
@@ -35,8 +32,8 @@
 #include "document/RecoveryStore.h"
 
 #include <QByteArray>
-#include <QCryptographicHash>
 #include <QCoreApplication>
+#include <QCryptographicHash>
 #include <QFile>
 #include <QPageSize>
 #include <QPainter>
@@ -44,21 +41,11 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
-#include <cstdio>
-
 #ifdef Q_OS_WIN
 #define WIN32_LEAN_AND_MEAN
 #define NOMINMAX
 #include <windows.h>
 #endif
-
-// Unbuffered stderr checkpoint: flushed immediately so it survives a hard
-// crash under Wine (where buffered QtTest stdout is lost).
-#define CHK(label)                                                                                 \
-    do {                                                                                           \
-        std::fprintf(stderr, "[chk] %s\n", (label));                                               \
-        std::fflush(stderr);                                                                       \
-    } while (0)
 
 using namespace trailer;
 
@@ -67,7 +54,7 @@ namespace {
 // True only when the process runs under the Wine emulator. Canonical detection:
 // Wine exports ntdll!wine_get_version. Real Windows and Linux/macOS return
 // false. Used to QSKIP the two open->annotate->same-file-Save cases under Wine
-// only — see the header note and
+// only — see the file header and
 // docs/backlog/2026-07-19-wine-cross-thread-editor-save.md.
 bool runningUnderWine() {
 #ifdef Q_OS_WIN
@@ -120,7 +107,6 @@ QString writeFixturePdf(const QString &path) {
 class TestDiscardFileIntegrity : public QObject {
     Q_OBJECT
   private slots:
-    void initTestCase();
     void discardAfterAutoSaveLeavesSourceFileByteIdentical();
     void explicitSaveWritesBackingFile();
     void reopenRecoveryRestoresAnnotationDirtyButSourcePristine();
@@ -128,15 +114,9 @@ class TestDiscardFileIntegrity : public QObject {
     void recoveredDocSurvivesAnotherAutoSaveTickThenExplicitSave();
 };
 
-void TestDiscardFileIntegrity::initTestCase() {
-    std::setvbuf(stderr, nullptr, _IONBF, 0);
-    CHK("initTestCase");
-}
-
 // INVARIANT (2): auto-save must not write the source, and an explicit Discard
 // leaves the on-disk file byte-identical.
 void TestDiscardFileIntegrity::discardAfterAutoSaveLeavesSourceFileByteIdentical() {
-    CHK("case1:enter");
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = dir.filePath("source.pdf");
@@ -169,12 +149,10 @@ void TestDiscardFileIntegrity::discardAfterAutoSaveLeavesSourceFileByteIdentical
 
     QVERIFY2(sha256Of(path) == originalDigest, "Explicit Discard changed the on-disk source PDF");
     QVERIFY(!store.pendingRecovery(path).has_value());
-    CHK("case1:done");
 }
 
 // Guard that we did not "fix" the P0 by disabling saving.
 void TestDiscardFileIntegrity::explicitSaveWritesBackingFile() {
-    CHK("case2:enter");
     if (runningUnderWine())
         QSKIP(kWineSameFileSaveSkip);
     QTemporaryDir dir;
@@ -191,9 +169,7 @@ void TestDiscardFileIntegrity::explicitSaveWritesBackingFile() {
     QVERIFY(doc.isDirty());
 
     // Explicit Save (Ctrl/Cmd+S) — the ONLY path allowed to write the backing file.
-    CHK("case2:before-save");
     QVERIFY2(doc.save(), "explicit Save must succeed");
-    CHK("case2:after-save");
     QVERIFY(!doc.isDirty());
     QVERIFY2(sha256Of(path) != originalDigest,
              "explicit Save must write the freehand annotation into the backing file");
@@ -203,12 +179,10 @@ void TestDiscardFileIntegrity::explicitSaveWritesBackingFile() {
     QVERIFY(editor.load(path));
     QVERIFY2(editor.readAnnotations().size() >= 1,
              "explicit Save must persist the freehand annotation into the file");
-    CHK("case2:done");
 }
 
 // INVARIANT (1): a crash after an auto-save tick must not lose in-memory work.
 void TestDiscardFileIntegrity::reopenRecoveryRestoresAnnotationDirtyButSourcePristine() {
-    CHK("case3:enter");
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = dir.filePath("source.pdf");
@@ -247,7 +221,7 @@ void TestDiscardFileIntegrity::reopenRecoveryRestoresAnnotationDirtyButSourcePri
 
     // Saving the recovered doc must carry the recovered stroke EXACTLY ONCE.
     // Recovered docs load the editor on the main thread (recoverFrom), so this
-    // same-file save is Wine-safe — no loadEditorSyncForTesting needed.
+    // same-file save is Wine-safe.
     QVERIFY(reopened.save());
     {
         PdfEditor editor;
@@ -269,14 +243,12 @@ void TestDiscardFileIntegrity::reopenRecoveryRestoresAnnotationDirtyButSourcePri
     store2.clear(path2);
     QVERIFY2(sha256Of(path2) == original2, "Discard after recovery leaves the source pristine");
     QVERIFY(!store2.pendingRecovery(path2).has_value());
-    CHK("case3:done");
 }
 
 // Blocker regression guard: recovering a backing PDF that ALREADY carries a
 // saved annotation must not double it via the view-attach background sweep.
 void TestDiscardFileIntegrity::
     recoveryOfPreviouslyAnnotatedPdfDoesNotDuplicateViaBackgroundSweep() {
-    CHK("case4:enter");
     if (runningUnderWine())
         QSKIP(kWineSameFileSaveSkip);
     QTemporaryDir dir;
@@ -291,9 +263,7 @@ void TestDiscardFileIntegrity::
         PdfDocument doc(path);
         QVERIFY(doc.isValid());
         doc.annotations()->add(makeFreehandStroke()); // A
-        CHK("case4:before-save-A");
         QVERIFY(doc.save());                           // A now saved in the file
-        CHK("case4:after-save-A");
         {
             PdfEditor e;
             QVERIFY(e.load(path));
@@ -318,13 +288,11 @@ void TestDiscardFileIntegrity::
     for (int i = 0; i < 5; ++i)
         QCoreApplication::processEvents();
     QCOMPARE(reopened.annotations()->count(), 2);
-    CHK("case4:done");
 }
 
 // Blocker regression guard: a recovered document must survive a SECOND
 // auto-save tick and a subsequent explicit Save.
 void TestDiscardFileIntegrity::recoveredDocSurvivesAnotherAutoSaveTickThenExplicitSave() {
-    CHK("case5:enter");
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = dir.filePath("source.pdf");
@@ -363,7 +331,6 @@ void TestDiscardFileIntegrity::recoveredDocSurvivesAnotherAutoSaveTickThenExplic
     PdfEditor editor;
     QVERIFY(editor.load(path));
     QCOMPARE(static_cast<int>(editor.readAnnotations().size()), 1);
-    CHK("case5:done");
 }
 
 QTEST_MAIN(TestDiscardFileIntegrity)
