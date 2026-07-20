@@ -165,6 +165,7 @@ class PdfDocument : public IDocument {
     bool cropPages(const std::vector<int> &pageIndices, double leftPts, double topPts,
                    double rightPts, double bottomPts) override;
     bool save(const QString &newPath = {}) override;
+    bool reloadFromDisk() override;
 
     // Two-phase save for off-thread execution. The first phase
     // (saveBeginQpdfPhase) does only thread-safe qpdf work and may
@@ -181,6 +182,11 @@ class PdfDocument : public IDocument {
         QString targetPath; // where they should end up (== writePath
                             // for non-overwrite, != for overwrite)
         bool sameFile = false;
+        // True iff this save was a deliberate "Keep mine" clobber (the
+        // one-shot force flag was armed at begin time). Carried into the
+        // commit phase so the commit-time re-stat guard (F1) lets a forced
+        // clobber through while still blocking an unforced one.
+        bool forced = false;
     };
     // Computes the SaveContext (worker-safe), runs all qpdf
     // operations, and writes to writePath. Returns nullopt on

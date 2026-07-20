@@ -66,6 +66,11 @@ trailer_add_uat_test(test_uat_instant_alpha_and_smart_lasso
 
 trailer_add_uat_test(test_uat_recognize_text test_uat_recognize_text.cpp)
 
+# External file-change handling (ADR 2026-07-19): silent clean-reload, dirty-
+# conflict banner, deleted banner, G3 Compare placeholder. Also emits the G2
+# before/after evidence pair when TRAILER_EXTCHANGE_EVIDENCE_DIR is set.
+trailer_add_uat_test(test_uat_external_change test_uat_external_change.cpp)
+
 # Curated before/after grab() evidence for the image OCR pipeline
 # (search-enabled + honest "No text found" + single-image dialog-skip).
 # Writes PNGs to $TRAILER_OCR_EVIDENCE_DIR when set; otherwise just
