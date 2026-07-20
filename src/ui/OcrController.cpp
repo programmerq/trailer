@@ -73,12 +73,6 @@ void OcrController::onVisiblePageChanged(int page) {
     // edge cases.
     if (doc->hasTextLayer())
         return;
-    if (isLargeDoc()) {
-        // Cancel anything still pending — large docs only get an
-        // explicit user-action submission.
-        cancelPagesNotMatching(doc, {});
-        return;
-    }
     // ADR 0002 §3: on the ambient path, if the language model isn't
     // installed we no longer silently no-op. evaluateAutoOcrModel() above
     // has already surfaced the non-modal in-context hint; skip the
@@ -106,26 +100,43 @@ void OcrController::onVisiblePageChanged(int page) {
         if (area > kEagerOcrMaxPixels)
             return;
     }
-    // Build the list of pages we want OCR'd: the visible page, plus
-    // ±1 neighbours if they exist.
-    std::vector<int> wanted;
-    wanted.push_back(page);
-    if (page - 1 >= 0)
-        wanted.push_back(page - 1);
-    if (page + 1 < doc->pageCount())
-        wanted.push_back(page + 1);
-    // Cancel anything pending for pages we no longer care about.
-    cancelPagesNotMatching(doc, wanted);
-    // Visible page is highest of the auto priorities. Neighbours run
-    // as Prefetch. Ambient submissions are never batch-tracked — they
-    // must not drive the progress widget nor be user-cancellable.
+    // Build the lazy OCR window (ADR 0013 §G13.3): the visible page plus
+    // the ±kLazyWindowRadius pages around it, clamped to the document. This
+    // applies uniformly to small and large/multi-page documents — a large
+    // doc is no longer cancelled down to nothing; it gets the same
+    // recenter-on-jump window so navigating a big document OCRs on demand
+    // instead of never.
+    std::vector<int> window;
+    window.reserve(static_cast<size_t>(2 * kLazyWindowRadius + 1));
+    for (int p = page - kLazyWindowRadius; p <= page + kLazyWindowRadius; ++p) {
+        if (p >= 0 && p < doc->pageCount())
+            window.push_back(p);
+    }
+    // Cancel anything pending for pages outside the new window. On a jump
+    // this recenters OCR: the previous window's speculative pages are
+    // cancelled and the new window's pages submitted (G13.3 assertion ii).
+    cancelPagesNotMatching(doc, window);
+    // Visible page is highest of the auto priorities; the rest of the
+    // window runs as Prefetch (first to be cancelled, and battery-suppressed
+    // when run_on_battery=false — G13.3 assertion iv). Ambient submissions
+    // are never batch-tracked — they must not drive the progress widget nor
+    // be user-cancellable.
     submitPage(doc, page, MlPriority::VisiblePage, /*forceRerun=*/false, /*batchTracked=*/false);
-    if (page - 1 >= 0)
-        submitPage(doc, page - 1, MlPriority::Prefetch, /*forceRerun=*/false,
-                   /*batchTracked=*/false);
-    if (page + 1 < doc->pageCount())
-        submitPage(doc, page + 1, MlPriority::Prefetch, /*forceRerun=*/false,
-                   /*batchTracked=*/false);
+    for (int p : window) {
+        if (p != page)
+            submitPage(doc, p, MlPriority::Prefetch, /*forceRerun=*/false,
+                       /*batchTracked=*/false);
+    }
+}
+
+std::vector<int> OcrController::pendingPagesForTesting() const {
+    std::vector<int> pages;
+    for (const auto &kv : m_pending) {
+        if (kv.first.doc == m_doc)
+            pages.push_back(kv.first.page);
+    }
+    std::sort(pages.begin(), pages.end());
+    return pages;
 }
 
 void OcrController::submitUserPages(IDocument *doc, std::vector<int> pages, bool forceRerun) {
@@ -231,8 +242,8 @@ void OcrController::deactivateBatch() {
 void OcrController::cancelBatchTrackedHandles() {
     // Cancel and forget only batch-tracked scheduler tasks so not-yet-
     // started batch pages never run and in-flight recognition bails at its
-    // next checkpoint. Ambient (visible-page ±1) submissions are left
-    // running (ADR 0002 review item 3).
+    // next checkpoint. Ambient (visible-page ±kLazyWindowRadius) submissions
+    // are left running (ADR 0002 review item 3).
     MlScheduler *sched = m_app ? &m_app->mlScheduler() : nullptr;
     for (auto it = m_pending.begin(); it != m_pending.end();) {
         if (it->second.batchTracked) {
