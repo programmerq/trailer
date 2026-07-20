@@ -45,7 +45,7 @@ help:
 	@echo ""
 	@echo "  make bump-release              strip -dev/-rc suffix (use before tagging)"
 	@echo "  make bump-post-release         bump patch + add -dev (use after tagging)"
-	@echo "  make bump-dev                  advance the -dev.N counter for a new dev build"
+	@echo "  make bump-dev                  (deprecated) dev versions are now derived from git automatically; no manual bump"
 	@echo "  make bump-patch                bump patch, keep -dev"
 	@echo "  make bump-minor                bump minor (reset patch), keep -dev"
 	@echo "  make bump-major                bump major (reset minor + patch), keep -dev"
@@ -136,6 +136,8 @@ bump-release:
 bump-post-release:
 	scripts/bump-version.sh post-release
 
+# Retained for muscle memory: dev versions are git-derived at configure
+# time, so this is a no-op that just prints guidance (see bump-version.sh).
 bump-dev:
 	scripts/bump-version.sh dev-bump
 

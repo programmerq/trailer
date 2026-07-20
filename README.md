@@ -264,14 +264,17 @@ enrollment.
 `dev-build` PR label) produces the same unsigned per-OS portable
 artifacts uploaded to the run instead of a Release — the
 `build_linux` / `build_windows` / `build_macos` inputs select which
-OSes to build. These are versioned `X.Y.Z-dev.N` (bumped via
-`scripts/bump-version.sh dev-bump`), a SemVer prerelease that can never
-be tagged or published: `release-autotag.yml` **unconditionally**
-refuses to tag any `-dev` / `-rc` version, and `release.yml` never tags
-or publishes at all. On a `pull_request`, `release.yml`'s precheck
-additionally skips the heavy build jobs for such a version — but a
-manual `workflow_dispatch` of `release.yml` on a `-dev.N` VERSION still
-builds artifacts; it just never tags or publishes them. See
+OSes to build. These self-identify from git: `VERSION` holds the bare
+base `X.Y.Z-dev` and CMake derives the full string
+`X.Y.Z-dev+<count>.g<sha>[.dirty]` at configure time (no manual dev
+bump — every dev artifact is unique and commit-traceable). It is a
+SemVer prerelease that can never be tagged or published:
+`release-autotag.yml` **unconditionally** refuses to tag any `-dev`
+(bare or with `+build.metadata`) / `-rc` version, and `release.yml`
+never tags or publishes at all. On a `pull_request`, `release.yml`'s
+precheck additionally skips the heavy build jobs for such a version —
+but a manual `workflow_dispatch` of `release.yml` on a `-dev` VERSION
+still builds artifacts; it just never tags or publishes them. See
 [RELEASING.md](RELEASING.md#dev-builds).
 
 ### Recovering from a missing prior build
