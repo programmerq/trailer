@@ -48,6 +48,8 @@ trailer_add_test(test_registry   test_registry.cpp)
 trailer_add_test(test_adapters   test_adapters.cpp)
 trailer_add_test(test_pdf_editor test_pdf_editor.cpp)
 trailer_add_test(test_annotation_store test_annotation_store.cpp)
+trailer_add_test(test_freehand_zoom_glue test_freehand_zoom_glue.cpp)
+trailer_add_test(test_freehand_selection_precedence test_freehand_selection_precedence.cpp)
 trailer_add_test(test_form_toolbar test_form_toolbar.cpp)
 trailer_add_test(test_icon_resources test_icon_resources.cpp)
 trailer_add_test(test_markup_toolbar test_markup_toolbar.cpp)
@@ -97,6 +99,7 @@ trailer_add_perf_test(test_perf_render_ordering test_perf_render_ordering.cpp)
 trailer_add_perf_test(test_perf_gui_thread_io   test_perf_gui_thread_io.cpp)
 trailer_add_perf_test(test_perf_paint_budget    test_perf_paint_budget.cpp)
 trailer_add_perf_test(test_perf_lazy_open       test_perf_lazy_open.cpp)
+trailer_add_perf_test(test_perf_freehand_repaint test_perf_freehand_repaint.cpp)
 
 # The facade test runs in EVERY configuration — it is the guard that
 # the uxrecord:: no-ops stay safe when the recorder is compiled out
