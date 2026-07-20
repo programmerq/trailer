@@ -21,10 +21,13 @@
 // beside the regression guards (NOT the speculative persona / vision
 // tier, which is advisory and lives elsewhere).
 //
-// Knobs covered today (in-process, offscreen-safe): font scale and
-// layout direction. Dark theme needs Settings::theme() wired to
-// QStyleHints::setColorScheme (deferred); per-monitor DPI needs a
-// per-process QT_SCALE_FACTOR matrix rather than an in-process toggle.
+// Knobs covered today: font scale and layout direction (in-process,
+// offscreen-safe), plus devicePixelRatio ∈ {1, 1.5, 2} injected
+// per-process via QT_SCALE_FACTOR by the CMake dpr matrix
+// (tests/uat/CMakeLists.txt, trailer_register_uat_dpr_matrix) — the whole
+// sweep re-runs under each dpr, closing the HiDPI blind spot in
+// docs/backlog/2026-07-16-hidpi-uat-harness.md. Dark theme still needs
+// Settings::theme() wired to QStyleHints::setColorScheme (deferred).
 
 #include "app/Application.h"
 #include "document/IDocument.h"
@@ -39,8 +42,10 @@
 #include <QDir>
 #include <QDockWidget>
 #include <QFont>
+#include <QGuiApplication>
 #include <QLineEdit>
 #include <QPageSize>
+#include <QScreen>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QStringList>
@@ -48,6 +53,8 @@
 #include <QToolButton>
 #include <QWidget>
 #include <QtTest/QtTest>
+
+#include <cmath>
 
 using namespace trailer;
 
@@ -68,6 +75,20 @@ QString writeTinyPdf(const QString &path) {
     p.drawText(100, 100, QStringLiteral("Sweep fixture"));
     p.end();
     return path;
+}
+
+// devicePixelRatio requested for this process via QT_SCALE_FACTOR (the
+// CMake dpr matrix, tests/uat/CMakeLists.txt); 1.0 when unset. See the
+// twin helper in test_uat_thumbnail_sidebar.cpp for the rationale.
+double requestedDpr() {
+    bool ok = false;
+    const double v = qEnvironmentVariable("QT_SCALE_FACTOR").toDouble(&ok);
+    return (ok && v > 0.0) ? v : 1.0;
+}
+
+double screenDpr() {
+    auto *s = QGuiApplication::primaryScreen();
+    return s ? s->devicePixelRatio() : 1.0;
 }
 
 bool isInteractive(QWidget *w) {
@@ -187,6 +208,20 @@ class TestUatSweep : public QObject {
 void TestUatSweep::initTestCase() {
     // Capture the untouched default before any row mutates it.
     m_baselineFont = QApplication::font();
+
+    // Prove the dpr injection took. The CMake matrix runs this shell/toolbar
+    // sweep under QT_SCALE_FACTOR ∈ {1, 1.5, 2}; the layout-collapse oracle
+    // below is only a HiDPI test if the screen truly reports that dpr.
+    // Fail loudly rather than let a {1.5, 2} run silently degrade to dpr = 1.
+    const double wantDpr = requestedDpr();
+    const double gotDpr = screenDpr();
+    qInfo().noquote() << "DPR requested" << wantDpr << "primaryScreen" << gotDpr;
+    QVERIFY2(std::abs(gotDpr - wantDpr) < 0.01,
+             qPrintable(QStringLiteral("dpr injection did not take: "
+                                       "QT_SCALE_FACTOR requested %1 but the "
+                                       "primary screen reports dpr %2")
+                            .arg(wantDpr)
+                            .arg(gotDpr)));
 }
 
 void TestUatSweep::init() {
