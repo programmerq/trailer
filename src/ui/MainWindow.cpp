@@ -195,7 +195,11 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // (which report isDirty()==false) from nagging when nothing is lost.
     connect(m_documentView, &DocumentView::documentCloseRequested, this,
             [this](IDocument *doc, bool *veto) {
-                if (doc && doc->isDirty())
+                // hasUnsavedWork() rather than isDirty() so a CLEAN doc whose
+                // backing file was DELETED on disk (buffer is the last copy —
+                // CF-7) still gets the Save/Discard/Cancel prompt instead of
+                // closing silently.
+                if (doc && doc->hasUnsavedWork())
                     *veto = !confirmCloseDirtyDoc(doc);
             });
     // Flush per-document state keyed by raw IDocument pointer before
@@ -2522,6 +2526,9 @@ void MainWindow::onExternalFileDeleted() {
         return;
     // Keep the buffer; the banner's Save recreates the file on disk.
     m_fileChangeBanner->showDeleted();
+    // Refresh the title/tab so the "•" unsaved marker appears — a deleted
+    // backing file now counts as unsaved work (CF-7), even for a clean doc.
+    updateTitleForDocument(doc);
 }
 
 void MainWindow::reloadCurrentDocumentFromDisk() {
@@ -2804,7 +2811,9 @@ void MainWindow::updateTitleForDocument(IDocument *doc) {
         return;
     }
     const QString name = doc->displayName();
-    const QString marker = doc->isDirty() ? QStringLiteral("• ") : QString();
+    // hasUnsavedWork() so the "•" also shows for a clean doc whose backing file
+    // was deleted on disk (CF-7) — its buffer is the only remaining copy.
+    const QString marker = doc->hasUnsavedWork() ? QStringLiteral("• ") : QString();
     setWindowTitle(tr("%1%2 — Trailer").arg(marker, name));
     // setWindowFilePath bridges to NSWindow::representedFilename on
     // macOS — the title bar gets a clickable folder icon for "Show
@@ -4094,13 +4103,15 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     // sees one prompt — the doc they were just looking at.
     std::vector<IDocument *> dirty;
     dirty.reserve(static_cast<size_t>(total));
+    // hasUnsavedWork() (not isDirty()) so a clean doc whose backing file was
+    // deleted on disk is prompted at window-close too, not just at tab-close.
     if (auto *current = m_documentView->currentDocument()) {
-        if (current->isDirty())
+        if (current->hasUnsavedWork())
             dirty.push_back(current);
     }
     for (int i = 0; i < total; ++i) {
         IDocument *doc = nullptr;
-        if (m_documentView->documentAt(i, &doc) && doc && doc->isDirty() &&
+        if (m_documentView->documentAt(i, &doc) && doc && doc->hasUnsavedWork() &&
             std::find(dirty.begin(), dirty.end(), doc) == dirty.end()) {
             dirty.push_back(doc);
         }

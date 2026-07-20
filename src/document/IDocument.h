@@ -279,6 +279,17 @@ class IDocument {
     ExternalChangeState externalChangeState() const {
         return classifyExternalChangeFor(m_fileBaseline, filePath(), isDirty());
     }
+    // True iff closing the document now would lose content the user cannot get
+    // back — the predicate the close-time save prompt is gated on. This is
+    // isDirty() PLUS one non-edit case (CF-7): the backing file was DELETED on
+    // disk while the doc was open, which makes the in-memory buffer the only
+    // remaining copy even when no edit was ever made. Without this a clean doc
+    // whose file vanished would close with no prompt and drop its buffer
+    // silently — the ADR-0004 no-silent-loss floor extended to a vanished file.
+    // See docs/decision-records/2026-07-20-conflict-banner-keep-mine-semantics.md.
+    bool hasUnsavedWork() const {
+        return isDirty() || externalChangeState() == ExternalChangeState::Deleted;
+    }
     // Set by the "Keep mine" force-save path so the next same-file save skips
     // the conflict guard and clobbers on purpose. Consumed by the adapter's
     // guard check.

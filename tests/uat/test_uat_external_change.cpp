@@ -18,6 +18,7 @@
 #include "document/ExternalChangeMonitor.h"
 #include "document/ExternalChangeState.h"
 #include "document/IDocument.h"
+#include "ui/DocumentView.h"
 #include "ui/FileChangeBanner.h"
 #include "ui/MainWindow.h"
 
@@ -268,6 +269,64 @@ class TestUatExternalChange : public QObject {
         QCOMPARE(banner->mode(), FileChangeBanner::Mode::Hidden);
         QCOMPARE(doc->imagePixelSize(), QSize(200, 150));
         QVERIFY(!doc->isDirty());
+    }
+
+    // UAT-EXT-006 (CF-7): a CLEAN document whose backing file is DELETED on
+    // disk must count as having unsaved work for close purposes — the buffer is
+    // then the ONLY remaining copy, so closing it silently would lose it. After
+    // the delete is detected the doc shows the "•" dirty marker, and invoking
+    // the tab-close request path runs the Save/Discard/Cancel prompt (here
+    // forced to Cancel) which vetoes the close and keeps the document open,
+    // rather than dropping it with no prompt.
+    void uat_ext_006_deletedCleanDocIsUnsavedForClose() {
+        auto *app = qobject_cast<Application *>(qApp);
+        QVERIFY(app);
+        const QString path =
+            writeImage(m_dir.filePath(QStringLiteral("ext006.png")), QSize(120, 90), Qt::white);
+        app->openFiles({path});
+        MainWindow *mw = currentMainWindow();
+        QVERIFY(mw);
+        mw->resize(1000, 700);
+        QApplication::processEvents();
+
+        auto *banner = mw->findChild<FileChangeBanner *>();
+        auto *mon = mw->findChild<ExternalChangeMonitor *>();
+        auto *dv = mw->findChild<DocumentView *>();
+        QVERIFY(banner);
+        QVERIFY(mon);
+        QVERIFY(dv);
+        mon->setDebounceMsForTest(10);
+
+        IDocument *doc = currentDoc(mw);
+        QVERIFY(doc);
+        // The doc is clean (never edited) — this is the crux of CF-7.
+        QVERIFY(!doc->isDirty());
+
+        // Another program deletes the backing file out from under us.
+        QVERIFY(QFile::remove(path));
+        mon->pokeForTest();
+        QTRY_COMPARE_WITH_TIMEOUT(banner->mode(), FileChangeBanner::Mode::Deleted, 2000);
+
+        // CF-7 fix, part 1: the vanished-file doc now advertises unsaved work
+        // and shows the "•" marker even though no edit was ever made.
+        QVERIFY(doc->hasUnsavedWork());
+        QVERIFY(mw->windowTitle().contains(QStringLiteral("• ")));
+
+        // The user dismisses the banner (hides the warning) then closes the tab.
+        banner->dismiss();
+        QApplication::processEvents();
+
+        // CF-7 fix, part 2: closing now runs the unsaved-changes prompt. Force
+        // Cancel so the prompt's veto keeps the doc — pre-fix the close guard
+        // only fired for isDirty() docs, so a clean-but-deleted doc closed with
+        // NO prompt and the buffer (the last copy) was lost silently.
+        mw->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+        const int before = dv->documentCount();
+        QMetaObject::invokeMethod(dv, "onTabCloseRequested", Qt::DirectConnection,
+                                  Q_ARG(int, 0));
+        QApplication::processEvents();
+        // The prompt vetoed the close: the document is still open, not dropped.
+        QCOMPARE(dv->documentCount(), before);
     }
 };
 
