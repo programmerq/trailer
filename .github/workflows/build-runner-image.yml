@@ -51,8 +51,7 @@ jobs:
     # Publish only on the real triggers (push-to-main / manual / weekly).
     # PRs use the build-only pr-validate job below — never push.
     if: github.event_name != 'pull_request'
-    # GitHub-hosted (has Docker); the trailer-k8s pods can't build images.
-    runs-on: ubuntu-latest
+    runs-on: trailer-k8s
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -88,8 +87,7 @@ jobs:
     # PR gate: prove the recipe still builds and the baked tooling works,
     # without logging in or pushing anything to GHCR.
     if: github.event_name == 'pull_request'
-    # GitHub-hosted (has Docker), same as the publish job above.
-    runs-on: ubuntu-latest
+    runs-on: trailer-k8s
     timeout-minutes: 30
     # No packages:write here — this job never touches the registry.
     permissions:
