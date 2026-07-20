@@ -12,13 +12,18 @@
 # skill that consumes the per-step bundles this produces.
 #
 # USAGE
-#   tools/ux-walkthrough/run.sh [all|01|02|03|04 ...] [options]
+#   tools/ux-walkthrough/run.sh [all|01|02|03|04|05|06|07|08|09 ...] [options]
 #
 #   Path selectors (default: all):
 #     01  new-from-clipboard
 #     02  screenshot-acquire
 #     03  open-zoom-navigate
 #     04  close-with-unsaved
+#     05  menu-ia               (File-menu IA + New from Clipboard, #86)
+#     06  external-change       (external file-change flows, #89)
+#     07  draw-zoom             (freehand draw -> zoom -> draw-over, #91)
+#     08  zoom-indicator        (zoom readout / steps / open-at-100%, #76/#80/#88)
+#     09  file-screenshot-direct (File -> Screenshot -> Whole Screen, dialogless, #86)
 #
 #   Options:
 #     --bin PATH     path to the trailer binary (default: <repo>/build/trailer)
@@ -47,21 +52,26 @@ declare -A PATHS=(
     [02]="02-screenshot-acquire"
     [03]="03-open-zoom-navigate"
     [04]="04-close-with-unsaved"
+    [05]="05-menu-ia"
+    [06]="06-external-change"
+    [07]="07-draw-zoom"
+    [08]="08-zoom-indicator"
+    [09]="09-file-screenshot-direct"
 )
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        all) SELECT=(01 02 03 04) ;;
-        01|02|03|04) SELECT+=("$1") ;;
+        all) SELECT=(01 02 03 04 05 06 07 08 09) ;;
+        01|02|03|04|05|06|07|08|09) SELECT+=("$1") ;;
         --bin) TRAILER_BIN="$2"; shift ;;
         --out) OUT_ROOT="$2"; shift ;;
         --geometry) GEOMETRY="$2"; shift ;;
-        -h|--help) sed -n '2,40p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -h|--help) sed -n '2,38p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
         *) echo "unknown argument: $1" >&2; exit 2 ;;
     esac
     shift
 done
-[ ${#SELECT[@]} -gt 0 ] || SELECT=(01 02 03 04)
+[ ${#SELECT[@]} -gt 0 ] || SELECT=(01 02 03 04 05 06 07 08 09)
 
 # Dedup while preserving first-seen order, so e.g. `run.sh all 04` runs each
 # path once.
