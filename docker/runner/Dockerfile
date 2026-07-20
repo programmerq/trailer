@@ -34,17 +34,17 @@
 # (github.com/actions/runner). Noble main ships qpdf 11.9.x, so the
 # Linux link is satisfied by the base — no PPA needed.
 #
-# The base is PINNED to a specific released tag + digest below (rather
-# than the moving `:latest`) so a future actions-runner base regression
-# — e.g. a hypothetical move back to an older Ubuntu with qpdf < 11 —
-# can't ship silently via the weekly build-runner-image rebuild. To bump:
-# pick a newer released tag from github.com/actions/runner/releases,
-# confirm its images/Dockerfile still FROMs an *-noble (or newer) base,
-# re-resolve the digest (`docker buildx imagetools inspect
-# ghcr.io/actions/actions-runner:<tag>`), and update both here. Belt-and-
-# suspenders, setup-linux-build.action.yml version-guards libqpdf-dev at
-# runtime and refuses to skip a < 11 install.
-FROM ghcr.io/actions/actions-runner:2.335.1@sha256:08c30b0a7105f64bddfc485d2487a22aa03932a791402393352fdf674bda2c29
+# The base FLOATS to the moving `:latest` tag (no version + digest pin) so
+# every build-runner-image rebuild pulls the newest actions-runner release
+# automatically, with no manual tag/digest bump step. The tradeoff is
+# accepted deliberately: we would rather the image break loudly on an
+# upstream change than sit silently stuck on an old base. If a future
+# actions-runner base regressed — e.g. a hypothetical move back to an older
+# Ubuntu with qpdf < 11 — the build (or the runtime guard) surfaces it
+# instead of a stale pin hiding it. Belt-and-suspenders,
+# setup-linux-build.action.yml version-guards libqpdf-dev at runtime and
+# refuses to skip a < 11 install.
+FROM ghcr.io/actions/actions-runner:latest
 
 # The actions-runner base runs as the non-root `runner` user; switch to
 # root for the system installs and restore `runner` (+ its workdir) at
