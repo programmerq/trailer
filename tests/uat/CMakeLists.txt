@@ -114,6 +114,14 @@ target_link_libraries(test_uat_sweep PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 # fixtures use QPdfWriter (QtGui), so no Qt6::Pdf link is needed.
 trailer_add_uat_test(test_uat_empty_state test_uat_empty_state.cpp)
 
+# File-menu IA redesign UAT (DR 2026-07-18-file-menu-acquire-ia): ⌘N =
+# New from Clipboard, Screenshot submenu + Scanner/Camera placeholders,
+# acquire group stays present with a document window open, non-image
+# clipboard disables + no-ops New from Clipboard, dead ⌘⇧3 removed.
+# Drives Application + MainWindow; PDF fixture uses QPdfWriter (QtGui),
+# so no Qt6::Pdf link is needed.
+trailer_add_uat_test(test_uat_file_menu_ia test_uat_file_menu_ia.cpp)
+
 # UX recorder UI evidence (UXR-002). Recorder-only: the "● REC" chip and
 # "◉ Recording" menu exist solely in TRAILER_ENABLE_UX_RECORDER builds.
 # Writes curated offscreen grab() PNGs to the committed
