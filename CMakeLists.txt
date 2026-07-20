@@ -181,6 +181,7 @@ set(TRAILER_SOURCES
     src/document/ImageAdapter.cpp
     src/document/ImageAdapter.h
     src/document/CapabilityNotifier.h
+    src/document/PageChangeNotifier.h
     src/document/ExternalChangeMonitor.cpp
     src/document/ExternalChangeMonitor.h
     src/document/ExternalChangeState.cpp

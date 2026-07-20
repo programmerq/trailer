@@ -2,6 +2,7 @@
 
 #include "CapabilityNotifier.h"
 #include "IDocument.h"
+#include "PageChangeNotifier.h"
 #include "IFormatAdapter.h"
 #include "PdfCommands.h"
 #include "PdfEditor.h"
@@ -67,6 +68,11 @@ class PdfDocument : public IDocument {
     QSizeF pageSizeHint(int pageIndex) const override;
     int currentPage() const override;
     void goToPage(int pageIndex) override;
+    // Fires on every navigator page change (keyboard paging, thumbnail jumps,
+    // continuous-scroll page crossings), so the Sidebar page-sync and the
+    // auto-OCR / missing-model hint re-derivation react to a real signal
+    // instead of polling currentPage() on a timer.
+    PageChangeNotifier *pageChangeNotifier() override { return &m_pageChangeNotifier; }
 
     bool supportsSearch() const override { return true; }
     void setSearchQuery(const QString &query) override;
@@ -424,6 +430,10 @@ class PdfDocument : public IDocument {
     // Emitter fired once the background load has adopted the editor + detected
     // the AcroForm, so MainWindow re-runs its forms-toolbar setup (PR #63).
     CapabilityNotifier m_capabilityNotifier;
+    // Emitter fired on every navigator page change so page-driven UI (Sidebar
+    // sync, auto-OCR / missing-model hint) reacts to a signal instead of a
+    // poll timer. Owned by value; its QObject lifetime is bounded by this doc.
+    PageChangeNotifier m_pageChangeNotifier;
     // Watches the unified background-load future (annotation sweep + editor
     // parse + AcroForm detection). Held as a member so its lifetime is bounded
     // by this document: the destructor resets it so a still-pending finished

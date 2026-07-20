@@ -690,29 +690,11 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
             [this](bool missing) { m_ocrModelMissingHint->setVisible(missing); });
 
     // ADR 0002 §3: re-derive auto-OCR / the missing-model hint on PAGE
-    // change, not just document change. IDocument is not a QObject and
-    // exposes no page-changed signal, so — mirroring Sidebar's
-    // m_pageSyncTimer — poll the current page at a light cadence and notify
-    // the controller only when it actually changes (scrolling from a text
-    // page to a scanned page must surface the hint).
-    m_ocrPagePoll = new QTimer(this);
-    m_ocrPagePoll->setInterval(150);
-    connect(m_ocrPagePoll, &QTimer::timeout, this, [this]() {
-        auto *doc = m_documentView->currentDocument();
-        if (!doc || !m_ocrController)
-            return;
-        // Re-derive the large-doc recognize notice every tick so it self-
-        // clears the moment the visible page gains text / OCR results
-        // (ADR 0006). The helper short-circuits on the cheap guards before
-        // it ever probes pageHasText(), so this stays light.
-        updateLargeDocOcrHint();
-        const int page = doc->currentPage();
-        if (page == m_lastOcrPage)
-            return;
-        m_lastOcrPage = page;
-        m_ocrController->onVisiblePageChanged(page);
-    });
-    m_ocrPagePoll->start();
+    // change, not just document change. IDocument is not a QObject, but its
+    // PageChangeNotifier is — onCurrentDocumentChanged() connects the active
+    // document's notifier to onActivePageChanged(), which re-derives the
+    // notice and pushes the visible page to the controller (scrolling from a
+    // text page to a scanned page must surface the hint). No polling timer.
 
     // Auto-save loop. Tick every 30 s; each tick writes a RECOVERY SIDECAR
     // (not the backing file — see autoSaveDirtyDocs() and DR
@@ -3102,12 +3084,13 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
 
     // Update the auto-OCR controller. It cancels in-flight
     // submissions for the previous doc and starts following the
-    // new one. The visible-page enqueue is driven from the page-
-    // tracking timer below once the doc has settled.
+    // new one. The visible-page enqueue below primes it for the
+    // current page; later page changes arrive via the document's
+    // PageChangeNotifier → onActivePageChanged().
     if (m_ocrController) {
         m_ocrController->setDocument(doc);
-        // Sync the page-poll baseline so the poll doesn't re-fire the same
-        // page we push here.
+        // Prime the page baseline so onActivePageChanged() doesn't re-fire
+        // the same page we push here.
         m_lastOcrPage = doc ? doc->currentPage() : -1;
         if (doc && doc->supportsSelectableText()) {
             m_ocrController->onVisiblePageChanged(doc->currentPage());
@@ -3143,6 +3126,23 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
         if (auto *notifier = doc->capabilityNotifier()) {
             connect(notifier, &CapabilityNotifier::capabilitiesChanged, this,
                     &MainWindow::onDocumentCapabilitiesChanged, Qt::UniqueConnection);
+        }
+        // Re-derive auto-OCR / the missing-model hint whenever the current
+        // page changes. Replaces the former 150 ms poll: PdfDocument fires
+        // its PageChangeNotifier from the navigator, covering keyboard paging,
+        // thumbnail jumps, AND continuous-scroll page crossings. Named-slot +
+        // UniqueConnection so repeated tab switches don't stack connections.
+        if (auto *pageNotifier = doc->pageChangeNotifier()) {
+            connect(pageNotifier, &PageChangeNotifier::currentPageChanged, this,
+                    &MainWindow::onActivePageChanged, Qt::UniqueConnection);
+        }
+        // Re-derive the large-doc recognize notice when OCR results land for
+        // any page (the store emits changed() once blocks are stored), so the
+        // notice self-clears the moment the visible page gains text — the
+        // other half of what the old poll re-checked every tick.
+        if (auto *textStore = doc->selectableText()) {
+            connect(textStore, &SelectableTextStore::changed, this,
+                    &MainWindow::updateLargeDocOcrHint, Qt::UniqueConnection);
         }
         // Forward annotation-selection changes from the doc's overlay
         // to the Inspector. The overlay is a child of the doc's view
@@ -3541,8 +3541,8 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // Large-doc OCR hint chip. Dismissal is keyed per-document (ADR
     // 0006), so switching documents does not clear another document's
     // dismissal. Visibility is derived by the shared helper, also re-run
-    // on page change / after OCR by the m_ocrPagePoll tick so the notice
-    // self-clears.
+    // on page change (PageChangeNotifier → onActivePageChanged) and after
+    // OCR (SelectableTextStore::changed) so the notice self-clears.
     updateLargeDocOcrHint();
 
     // Refresh the zoom readout AFTER the document's async initial fit.
@@ -3558,6 +3558,29 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // switch in the interim. (Live update during a window drag remains a
     // documented pre-existing limitation — IDocument is not a QObject.)
     QTimer::singleShot(0, this, [this]() { updateZoomIndicator(); });
+}
+
+void MainWindow::onActivePageChanged(int /*page*/) {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc || !m_ocrController)
+        return;
+    // Re-derive the large-doc recognize notice so it self-clears / re-shows
+    // for the page just landed on (ADR 0006). The helper short-circuits on the
+    // cheap guards before it ever probes pageHasText(), so this stays light.
+    updateLargeDocOcrHint();
+    // Read the page from the CURRENT document rather than trusting the signal's
+    // argument: this slot is connected to each visited document's notifier
+    // (mirroring the CapabilityNotifier wiring), and those connections linger
+    // after a tab switch, so a stray emission from a non-current document must
+    // not push its page index into the controller for the current one. The
+    // navigator updates currentPage() before it emits, so for the live document
+    // this equals the signalled page.
+    const int page = doc->currentPage();
+    if (page == m_lastOcrPage)
+        return;
+    m_lastOcrPage = page;
+    if (doc->supportsSelectableText())
+        m_ocrController->onVisiblePageChanged(page);
 }
 
 void MainWindow::updateLargeDocOcrHint() {

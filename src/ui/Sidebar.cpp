@@ -4,6 +4,7 @@
 #include "ThumbnailPaint.h"
 #include "annotation/AnnotationStore.h"
 #include "document/IDocument.h"
+#include "document/PageChangeNotifier.h"
 #include "recent/RecentFiles.h"
 
 #include <QAbstractItemModel>
@@ -168,7 +169,7 @@ class ThumbnailListView : public QListView {
         // the new column width waits ~120 ms so dragging the splitter
         // doesn't thrash the render cache. Tried 0 ms (re-rendered every
         // intermediate drag width) and 400 ms (visibly late crispness);
-        // 120 ms matches the sidebar's other debounce (m_pageSyncTimer).
+        // 120 ms is the settled resize-debounce interval.
         m_renderTimer.setSingleShot(true);
         m_renderTimer.setInterval(120);
         connect(&m_renderTimer, &QTimer::timeout, this, [this]() {
@@ -334,9 +335,6 @@ Sidebar::Sidebar(QWidget *parent) : QDockWidget(tr("Sidebar"), parent) {
 
     m_stack->setCurrentIndex(m_placeholderIndex);
     setWidget(m_stack);
-
-    m_pageSyncTimer.setInterval(120);
-    connect(&m_pageSyncTimer, &QTimer::timeout, this, &Sidebar::syncSelectionFromDocument);
 }
 
 void Sidebar::setDocument(IDocument *doc) {
@@ -345,9 +343,16 @@ void Sidebar::setDocument(IDocument *doc) {
         m_model->setDocument(doc);
         m_stack->setCurrentIndex(m_tabsIndex);
         syncSelectionFromDocument();
-        m_pageSyncTimer.start();
+        // Follow the document's current page via its real page-changed signal
+        // instead of polling. PdfDocument fires this from the navigator, so
+        // keyboard paging, thumbnail jumps, and continuous-scroll page
+        // crossings all keep the thumbnail selection in sync. UniqueConnection
+        // guards against duplicate connections on repeated setDocument calls.
+        if (auto *notifier = doc->pageChangeNotifier()) {
+            connect(notifier, &PageChangeNotifier::currentPageChanged, this,
+                    &Sidebar::syncSelectionFromDocument, Qt::UniqueConnection);
+        }
     } else {
-        m_pageSyncTimer.stop();
         m_model->setDocument(nullptr);
         // Annotations-only fallback removed with the Annotations
         // tab — nothing to show until the Highlights & Notes mode

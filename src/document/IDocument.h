@@ -20,6 +20,7 @@ namespace trailer {
 class AnnotationStore;
 class SelectableTextStore;
 class CapabilityNotifier;
+class PageChangeNotifier;
 
 // API: session-only today — `ViewMode` is *not* persisted in
 // `recent.json`, `settings.toml`, or `DocumentTypeDefaults` (only
@@ -119,6 +120,14 @@ class IDocument {
     virtual QSizeF pageSizeHint(int /*pageIndex*/) const { return {}; }
     virtual int currentPage() const { return 0; }
     virtual void goToPage(int /*pageIndex*/) {}
+    // Emitter for "the current page changed". Returns nullptr for documents
+    // whose current page never moves after open (single-frame images, the
+    // stub adapter). PdfDocument returns one and fires its
+    // currentPageChanged(int) signal on every navigator page change —
+    // keyboard paging, thumbnail jumps, and continuous-scroll page crossings.
+    // The Sidebar page-sync and MainWindow's auto-OCR / missing-model hint
+    // re-derivation connect to it instead of polling currentPage() on a timer.
+    virtual PageChangeNotifier *pageChangeNotifier() { return nullptr; }
 
     virtual bool supportsSearch() const { return false; }
     virtual void setSearchQuery(const QString & /*query*/) {}
