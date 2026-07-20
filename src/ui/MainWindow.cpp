@@ -3675,9 +3675,9 @@ void MainWindow::onAnnotationSelectionChanged(int id) {
 namespace {
 
 // Sticky-draw tools stay active after committing a stroke, matching
-// Preview: the user draws stroke after stroke without re-arming the
-// tool between each. One-shot tools instead flip back to Select on
-// commit so the freshly-drawn shape can be grabbed to move/resize.
+// Preview: the user draws shape after shape without re-arming the
+// tool between each. Non-sticky tools instead flip back to Select on
+// commit so the freshly-drawn item can be grabbed to move/resize.
 //
 // CF-3 (backlog 2026-07-20-freehand-auto-revert-drawover-noop): the
 // free-form Ink tool auto-reverted after every stroke, so the user's
@@ -3685,15 +3685,33 @@ namespace {
 // is inherently multi-stroke (you sketch, you don't place one mark),
 // so it is sticky.
 //
-// OPEN PARITY QUESTION (owner call, still unresolved from PR #91):
-// whether the bounded shape tools (Rectangle / Ellipse / Line / Arrow)
-// should also become sticky. They are deliberately NOT sticky here —
-// flipping them would change their post-commit behaviour and needs the
-// owner's decision. When that lands, adding the relevant enumerators to
-// this predicate is the entire change; the call site below already
-// honours it uniformly.
+// DRAWING-TOOL PARITY (owner ruling "parity", 2026-07-20; ADR
+// docs/decision-records/2026-07-20-drawing-tool-parity.md): the open
+// question from PR #91 — whether the bounded shape tools should match
+// Ink — was answered "parity". Rectangle / Ellipse / Line / Arrow now
+// join Ink as sticky, alongside the draw-first-on-press half in
+// AnnotationOverlay::mousePressEvent. The two behaviours ship together
+// so the bounded tools feel like Ink end-to-end.
+//
+// Deliberately EXCLUDED (stay one-shot → revert to Select): the
+// text/edit-mode tools (Text / Note / SpeechBubble never reach this
+// path — they open an inline editor and return before emitting
+// annotationCommitted), the text-markup tools (Highlight / Underline /
+// StrikeOut), and the other stamp/region tools (HighlightShape /
+// Redaction / ZoomLens / Signature). None were named in the parity
+// ruling; each places a single item, and reverting to Select keeps the
+// just-placed item immediately grabbable.
 bool isStickyDrawTool(AnnotationTool tool) {
-    return tool == AnnotationTool::Ink;
+    switch (tool) {
+    case AnnotationTool::Ink:       // free-form sketch — inherently multi-stroke (CF-3)
+    case AnnotationTool::Rectangle: // bounded shapes — owner "parity" ruling, 2026-07-20
+    case AnnotationTool::Ellipse:
+    case AnnotationTool::Line:
+    case AnnotationTool::Arrow:
+        return true;
+    default:
+        return false;
+    }
 }
 
 } // namespace
