@@ -6,8 +6,10 @@
 #include "util/TempPath.h"
 
 #include <QApplication>
+#include <QCoreApplication>
 #include <QDir>
 #include <QEvent>
+#include <QEventLoop>
 #include <QFutureWatcher>
 #include <QInputDialog>
 #include <QLineEdit>
@@ -157,33 +159,138 @@ class NavigablePdfView : public QPdfView {
 };
 } // namespace
 
+// Test-only device factory for the background document open (see the header).
+// Read on the GUI thread at startDocOpen() and copied by value into the worker
+// lambda, so the worker never touches this static concurrently with a setter.
+PdfDocument::LoadDeviceFactory PdfDocument::s_loadDeviceFactory;
+
+void PdfDocument::setLoadDeviceFactoryForTesting(LoadDeviceFactory factory) {
+    s_loadDeviceFactory = std::move(factory);
+}
+
 PdfDocument::PdfDocument(QString path)
-    : m_path(std::move(path)), m_doc(std::make_unique<QPdfDocument>()),
-      m_editor(std::make_shared<PdfEditor>()) {
-    const QPdfDocument::Error error = m_doc->load(m_path);
-    m_valid = (error == QPdfDocument::Error::None);
-    // Password-gated PDFs are a special kind of load failure: the
-    // caller (PdfAdapter::open) can recover by prompting for a
-    // password and calling unlock(). Everything else (corrupt,
-    // missing, unsupported scheme) stays permanently invalid.
-    m_needsPassword = (error == QPdfDocument::Error::IncorrectPassword);
-    // Deliberately NOT done here (P0 startup-hang fix; closed by #63,
-    // residual tracked in
-    // docs/backlog/2026-07-15-offthread-pdf-open-placeholder.md): the qpdf
-    // processFile parse (m_editor->load) and the all-pages annotation
-    // sweep (readAnnotations) both used to run synchronously in this
-    // ctor, freezing the GUI thread for minutes on large PDFs. Both now run on
-    // a BACKGROUND worker (startBackgroundLoad()) — the parse + AcroForm
-    // detection AND the sweep — so neither blocks the GUI thread at open
-    // (owner feedback on PR #63); the sync edit/save paths fall back to an
-    // inline parse via ensureEditorLoaded() when they need a live editor
-    // before the worker has finished. The kept QPdfDocument::load above is the
-    // bounded progressive read that already yields pageCount + page-0.
+    : m_path(std::move(path)), m_editor(std::make_shared<PdfEditor>()) {
+    // The residual synchronous open cost — QPdfDocument::load — is the last
+    // whole-file read that used to run on the GUI thread at open (backlog
+    // 2026-07-15-offthread-pdf-open-placeholder; deferred (b) of DR 0006). It
+    // now runs on a worker kicked here. The ctor does NOT block: m_doc stays
+    // null and m_valid/m_needsPassword stay unknown until a consumer forces the
+    // adopt via ensureDocLoaded() (pageCount / needsPassword / createView), at
+    // which point the file reads have already happened off the GUI thread.
     //
+    // The qpdf processFile parse (m_editor->load) and the all-pages annotation
+    // sweep (readAnnotations) also do NOT run here — they run on the separate
+    // startBackgroundLoad() worker (P0 startup-hang fix, #63); the sync
+    // edit/save paths fall back to an inline parse via ensureEditorLoaded().
+    startDocOpen();
     // Record the on-disk identity we opened so the save-time conflict guard
     // and the ExternalChangeMonitor can distinguish a later external write
-    // from our own (ADR 2026-07-19).
+    // from our own (ADR 2026-07-19). Independent of the QPdfDocument load.
     captureFileBaseline();
+}
+
+void PdfDocument::startDocOpen() {
+    if (m_docOpenStarted)
+        return;
+    m_docOpenStarted = true;
+    // Value copies for the worker — it must share NOTHING with this object.
+    const QString path = m_path;
+    LoadDeviceFactory factory = s_loadDeviceFactory; // usually null
+    m_docOpenWatcher = std::make_unique<QFutureWatcher<DocOpenResult>>();
+    // Context = qApp (a GUI-thread QObject that outlives the run); the finished
+    // slot runs on the GUI thread and adopts the result. If this document is
+    // destroyed first, ~PdfDocument resets the watcher, disconnecting the
+    // pending signal before the captured `this` can dangle.
+    QObject::connect(m_docOpenWatcher.get(), &QFutureWatcherBase::finished,
+                     QCoreApplication::instance(), [this]() { onDocOpenFinished(); });
+    m_docOpenWatcher->setFuture(QtConcurrent::run([path, factory]() -> DocOpenResult {
+        DocOpenResult r;
+        // Constructed on the worker thread → worker affinity, so the file
+        // reads QPdfDocument::load performs run OFF the GUI thread. This is the
+        // whole point of the item: the residual open IO no longer lands on the
+        // GUI thread.
+        auto *doc = new QPdfDocument();
+        QPdfDocument::Error error = QPdfDocument::Error::Unknown;
+        if (factory) {
+            // Test seam: load from an injected, instrumented QIODevice so the
+            // perf harness can observe the read thread. The device overload is
+            // event-loop-driven, so pump the worker's own event queue until the
+            // load settles. Parent the device to the document so it lives as
+            // long as QPdfDocument reads from it and moves with it below.
+            QIODevice *dev = factory(path);
+            dev->setParent(doc);
+            doc->load(dev);
+            while (doc->status() == QPdfDocument::Status::Loading)
+                QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+            error = (doc->status() == QPdfDocument::Status::Ready)
+                        ? QPdfDocument::Error::None
+                        : QPdfDocument::Error::Unknown;
+        } else {
+            // Production path: the QString overload is a synchronous bounded
+            // progressive read (yields pageCount + a page-0 render), performed
+            // here on the worker.
+            error = doc->load(path);
+        }
+        // Hand the loaded document back to the GUI thread. moveToThread from the
+        // object's current (worker) thread sets its affinity + that of its
+        // children (the internal device); the target thread need not be pumping.
+        doc->moveToThread(QCoreApplication::instance()->thread());
+        r.doc = doc;
+        r.ok = (error == QPdfDocument::Error::None);
+        // Password-gated PDFs are a recoverable load failure: PdfAdapter::open
+        // prompts and calls unlock(). Everything else stays permanently invalid.
+        r.needsPassword = (error == QPdfDocument::Error::IncorrectPassword);
+        return r;
+    }));
+}
+
+void PdfDocument::onDocOpenFinished() { adoptDocOpenResult(); }
+
+void PdfDocument::adoptDocOpenResult() {
+    if (!m_docOpenWatcher)
+        return; // already drained/adopted (or never started)
+    // Detach + delete via the event loop so we never free the watcher from
+    // inside its own finished emission, and so a later finished signal (after a
+    // sync ensureDocLoaded already drained here) is a no-op via this guard.
+    QFutureWatcher<DocOpenResult> *watcher = m_docOpenWatcher.release();
+    watcher->deleteLater();
+    const DocOpenResult r = watcher->future().result();
+
+    // Adopt the worker's QPdfDocument (already moved to this, the GUI, thread).
+    // m_doc is a unique_ptr; take ownership of the raw pointer directly.
+    m_doc.reset(r.doc);
+    m_valid = r.ok;
+    m_needsPassword = r.needsPassword;
+    m_docLoaded = true;
+
+    // If createView already returned a "Loading…" placeholder container, swap in
+    // the real view now that m_doc exists. In the common interactive path
+    // pageCount()/needsPassword() force this adopt before createView runs, so no
+    // placeholder was created and this is a no-op.
+    if (m_viewContainer && !m_view) {
+        QLayout *layout = m_viewContainer->layout();
+        if (m_placeholder) {
+            layout->removeWidget(m_placeholder);
+            m_placeholder->deleteLater();
+            m_placeholder = nullptr;
+        }
+        layout->addWidget(buildRealView(m_viewContainer));
+    }
+}
+
+void PdfDocument::ensureDocLoaded() {
+    if (m_docLoaded)
+        return;
+    if (!m_docOpenStarted)
+        startDocOpen();
+    if (m_docOpenWatcher) {
+        // waitForFinished() blocks the caller but does NOT spin the event loop,
+        // so it cannot re-enter this object or fire the queued finished slot
+        // mid-wait; the reads still happened on the worker. Mirrors
+        // ensureEditorLoaded()/ensureAnnotationsLoadedSync().
+        m_docOpenWatcher->future().waitForFinished();
+        adoptDocOpenResult();
+    }
 }
 
 void PdfDocument::ensureEditorLoaded() const {
@@ -420,7 +527,15 @@ void PdfDocument::onAnnotationHistoryEvicted() {
     }
 }
 
+bool PdfDocument::needsPassword() const {
+    // The password-needed answer comes from the initial load; force it to
+    // settle so PdfAdapter::open's prompt loop sees a definitive result.
+    const_cast<PdfDocument *>(this)->ensureDocLoaded();
+    return m_needsPassword;
+}
+
 bool PdfDocument::unlock(const QString &password) {
+    ensureDocLoaded(); // m_doc + m_needsPassword must be definitive first
     if (m_valid)
         return true;
     if (!m_needsPassword)
@@ -458,6 +573,26 @@ PdfDocument::~PdfDocument() {
     // tab mid-load must never re-freeze the GUI.
     m_backgroundWatcher.reset();
 
+    // Same for the initial doc-open worker. We must not block teardown on it,
+    // but we also must not leak the QPdfDocument it heap-allocated. We delete
+    // that result directly rather than routing through adoptDocOpenResult (whose
+    // view-building side effect is unwanted during teardown):
+    //   * already finished, not yet adopted → delete its QPdfDocument now, here
+    //     on the GUI thread (correct affinity — the worker moved it here); or
+    //   * still running → schedule that delete on the GUI thread once it
+    //     finishes (the continuation captures only the result by value, not
+    //     this), so a mid-open tab close neither blocks nor leaks.
+    if (m_docOpenWatcher) {
+        if (m_docOpenWatcher->future().isFinished()) {
+            if (!m_docLoaded)
+                delete m_docOpenWatcher->future().result().doc;
+        } else {
+            m_docOpenWatcher->future().then(QCoreApplication::instance(),
+                                            [](DocOpenResult r) { delete r.doc; });
+        }
+        m_docOpenWatcher.reset();
+    }
+
     // QPdfDocument::close() (reached from ~QPdfDocument) synchronously
     // emits currentPageChanged, which createView() wires to a lambda that
     // calls ingestNativeTextLayer() → m_selectableText.put(). The view and
@@ -480,19 +615,51 @@ QString PdfDocument::filePath() const {
     return m_path;
 }
 
+bool PdfDocument::isValid() const {
+    const_cast<PdfDocument *>(this)->ensureDocLoaded();
+    return m_valid;
+}
+
 int PdfDocument::pageCount() const {
+    // Force the deferred off-thread open to settle so the page count is
+    // definitive (the reads already ran on the worker; this only waits).
+    const_cast<PdfDocument *>(this)->ensureDocLoaded();
     return m_valid ? m_doc->pageCount() : 0;
 }
 
 QWidget *PdfDocument::createView(QWidget *parent) {
+    if (m_docLoaded) {
+        // Common path: the deferred off-thread open has already settled
+        // (pageCount()/needsPassword() forced the adopt before the view is
+        // built). Return the real QPdfView directly — no wrapper — so the
+        // long-standing "createView returns the QPdfView" contract holds.
+        return buildRealView(parent);
+    }
+    // Async path: the initial QPdfDocument open is genuinely still in flight
+    // (e.g. createView called without a prior pageCount()). Return a container
+    // showing an honest, self-describing "Loading…" placeholder — not a blank
+    // pane, not fake content (G3: it offers no control that cannot act) — and
+    // swap in the real view when the worker finishes (adoptDocOpenResult →
+    // buildRealView). We deliberately do NOT force ensureDocLoaded() here: that
+    // would re-block the very read the worker just took off the GUI thread.
+    auto *container = new QWidget(parent);
+    auto *layout = new QVBoxLayout(container);
+    layout->setContentsMargins(0, 0, 0, 0);
+    m_viewContainer = container;
+    auto *label = new QLabel(QObject::tr("Loading…"), container);
+    label->setAlignment(Qt::AlignCenter);
+    label->setObjectName(QStringLiteral("pdfLoadingPlaceholder"));
+    layout->addWidget(label);
+    m_placeholder = label;
+    return container;
+}
+
+QWidget *PdfDocument::buildRealView(QWidget *parent) {
     if (!m_valid) {
-        auto *container = new QWidget(parent);
-        auto *layout = new QVBoxLayout(container);
-        auto *label = new QLabel(QObject::tr("Could not open PDF:\n%1").arg(m_path), container);
+        auto *label = new QLabel(QObject::tr("Could not open PDF:\n%1").arg(m_path), parent);
         label->setAlignment(Qt::AlignCenter);
         label->setTextInteractionFlags(Qt::TextSelectableByMouse);
-        layout->addWidget(label);
-        return container;
+        return label;
     }
 
     auto *view = new NavigablePdfView(parent);
@@ -834,6 +1001,9 @@ void PdfDocument::zoomFitPage() {
 }
 
 QSize PdfDocument::contentSizeHint() const {
+    // Used for the initial window sizing; force the deferred open to settle so
+    // the page-0 size is available (the reads already ran on the worker).
+    const_cast<PdfDocument *>(this)->ensureDocLoaded();
     if (!m_valid || !m_doc || m_doc->pageCount() <= 0)
         return {};
     const QSizeF pts = m_doc->pagePointSize(0);
@@ -1430,6 +1600,9 @@ void PdfDocument::print(QWidget *dialogParent) {
 }
 
 bool PdfDocument::reloadViewerFromEditor() {
+    // Any edit-driven reload derefs m_doc; make sure the deferred open has been
+    // adopted first (idempotent — a no-op once loaded).
+    ensureDocLoaded();
     if (!m_editor || !m_editor->isValid()) {
         return false;
     }
@@ -1690,6 +1863,13 @@ void PdfDocument::movePage(int from, int to) {
 }
 
 bool PdfDocument::save(const QString &newPath) {
+    // Synchronous entry point (tests + save-model where blocking is fine): adopt
+    // the deferred open on THIS (GUI/calling) thread so m_valid is definitive
+    // before the qpdf begin-phase guards on it. The async two-phase save
+    // (saveBeginQpdfPhase on a worker) deliberately does NOT call ensureDocLoaded
+    // — it must not touch m_doc/widgets off the GUI thread — and relies on the
+    // invariant that a document is always adopted (viewed) before an async save.
+    ensureDocLoaded();
     auto ctx = saveBeginQpdfPhase(newPath);
     if (!ctx)
         return false;
@@ -1705,6 +1885,7 @@ bool PdfDocument::writeRecoverySnapshot(const QString &sidecarPath) {
     // applyRedactions()/flattenSignatures() are destructive. The live document
     // (m_editor / m_path / m_doc / dirty flags) is left completely untouched;
     // only the sidecar is written.
+    ensureDocLoaded(); // definitive m_valid before the guards below
     ensureEditorLoaded();
     ensureAnnotationsLoadedSync();
     if (!m_valid || !m_editor || !m_editor->isValid() || sidecarPath.isEmpty())
@@ -1751,6 +1932,7 @@ bool PdfDocument::writeRecoverySnapshot(const QString &sidecarPath) {
 bool PdfDocument::recoverFrom(const QString &sidecarPath) {
     if (sidecarPath.isEmpty() || !QFileInfo::exists(sidecarPath))
         return false;
+    ensureDocLoaded(); // definitive m_valid + non-null m_doc before use
     ensureEditorLoaded();
     if (!m_valid || !m_doc)
         return false;
@@ -1936,6 +2118,9 @@ std::optional<PdfDocument::SaveContext> PdfDocument::saveBeginQpdfPhase(const QS
 }
 
 bool PdfDocument::saveCommitOnUi(const SaveContext &ctx) {
+    // The commit half reloads m_doc from the written bytes; make sure the
+    // initial open has been adopted first (idempotent once loaded).
+    ensureDocLoaded();
     if (ctx.sameFile) {
         // Commit-time re-stat guard (F1). The begin phase's guard ran on a
         // worker thread and the destructive remove+rename below can land
@@ -2039,6 +2224,12 @@ bool PdfDocument::saveCommitOnUi(const SaveContext &ctx) {
 bool PdfDocument::reloadFromDisk() {
     if (m_path.isEmpty() || !QFileInfo::exists(m_path))
         return false;
+    // Compose with the file watcher (#89): a reload arriving while the initial
+    // off-thread open is still in flight must SUPERSEDE it, not race it. Drain
+    // and adopt the in-flight open first, then the synchronous reload below
+    // replaces m_doc/m_editor with the fresh on-disk bytes. The retarget then
+    // fires against the final, swapped-in view.
+    ensureDocLoaded();
     ensureEditorLoaded();
 
     const int savedPage = currentPage();
@@ -2102,6 +2293,7 @@ bool PdfDocument::reloadFromDisk() {
 }
 
 std::vector<FormField> PdfDocument::formFields() const {
+    const_cast<PdfDocument *>(this)->ensureDocLoaded(); // definitive m_valid
     ensureEditorLoaded();
     if (!m_valid || !m_editor || !m_editor->isValid())
         return {};
@@ -2151,6 +2343,7 @@ void PdfDocument::refreshFormView() {
 }
 
 bool PdfDocument::exportWithPassword(const QString &destPath, const QString &password) {
+    ensureDocLoaded(); // definitive m_valid before the guards below
     ensureEditorLoaded();
     ensureAnnotationsLoadedSync();
     if (!m_valid || !m_editor || !m_editor->isValid())
@@ -2174,6 +2367,7 @@ bool PdfDocument::exportWithPassword(const QString &destPath, const QString &pas
 }
 
 bool PdfDocument::reduceFileSize(const QString &destPath) {
+    ensureDocLoaded(); // definitive m_valid before the guards below
     ensureEditorLoaded();
     ensureAnnotationsLoadedSync();
     if (!m_valid || !m_editor || !m_editor->isValid())

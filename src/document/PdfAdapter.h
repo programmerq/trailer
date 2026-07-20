@@ -16,6 +16,7 @@
 #include <memory>
 #include <optional>
 
+class QIODevice;
 class QPdfDocument;
 class QPdfSearchModel;
 class QPdfBookmarkModel;
@@ -229,14 +230,26 @@ class PdfDocument : public IDocument {
     void setPendingAnnotationText(const QString &text) override;
     void setPendingSignaturePath(const QString &path) override;
 
-    bool isValid() const { return m_valid; }
+    // Forces the deferred off-thread open to settle so validity is definitive.
+    bool isValid() const;
 
     // Phase 5: password-protected open flow. If load() hits
     // IncorrectPassword, needsPassword() returns true and unlock() can
     // be retried with a password from the user. Stays false for plain
-    // PDFs.
-    bool needsPassword() const { return m_needsPassword; }
+    // PDFs. Forces the deferred off-thread open to settle (ensureDocLoaded)
+    // so the answer is definitive for PdfAdapter::open's prompt loop.
+    bool needsPassword() const;
     bool unlock(const QString &password);
+
+    // Test seam (mirrors setPasswordPrompt): supply a QIODevice the background
+    // document-open loads QPdfDocument from, so the structural perf harness can
+    // observe which thread performs the open's file reads. The factory is
+    // invoked ON THE WORKER THREAD and must return a fresh, unparented,
+    // read-only QIODevice built from `path`; the worker takes ownership
+    // (parents it to the loaded QPdfDocument). Unset (default) loads directly
+    // from the path. Never used in production paths.
+    using LoadDeviceFactory = std::function<QIODevice *(const QString &path)>;
+    static void setLoadDeviceFactoryForTesting(LoadDeviceFactory factory);
 
   private:
     // Test seam only, private + friend-fenced so no production caller
@@ -291,6 +304,49 @@ class PdfDocument : public IDocument {
     };
     void ensureEditorLoaded() const;
     void startBackgroundLoad();
+
+    // --- Off-GUI-thread initial document open (backlog
+    // 2026-07-15-offthread-pdf-open-placeholder; deferred (b) of DR 0006) ---
+    // The residual synchronous open cost is QPdfDocument::load. It now runs on
+    // a worker thread kicked from the ctor: the worker constructs a
+    // QPdfDocument (worker affinity), loads it (its file reads therefore run
+    // OFF the GUI thread), then moveToThread()s it back to the GUI thread and
+    // hands the raw pointer back for adoption. The raw pointer keeps the QFuture
+    // result trivially copyable and lets m_doc (a unique_ptr) adopt it directly.
+    struct DocOpenResult {
+        QPdfDocument *doc = nullptr; // heap-allocated on the worker, moved to
+                                     // the GUI thread; adopted into m_doc
+        // The QPdfDocument::Error is collapsed to two flags here so this header
+        // needs only a forward declaration of QPdfDocument (the enum is nested
+        // and cannot be named on a forward-declared type). The worker computes
+        // them from the real error code (it includes <QPdfDocument>).
+        bool ok = false;            // load succeeded (Error::None)
+        bool needsPassword = false; // load failed with IncorrectPassword
+    };
+    // Kicked once from the ctor. Non-blocking: the reads happen on the worker.
+    void startDocOpen();
+    // Sync-fallback for consumers that need the load's result NOW (pageCount,
+    // needsPassword, createView's real-view build, save/reload paths). Mirrors
+    // ensureEditorLoaded: blocks on the worker via waitForFinished (which does
+    // NOT spin the event loop, so it cannot re-enter/deadlock) and adopts the
+    // result on the calling (GUI) thread. Idempotent. The file reads still
+    // happened on the worker — this only *waits*, it does not read.
+    void ensureDocLoaded();
+    // GUI-thread adoption of the worker's loaded QPdfDocument: take ownership
+    // into m_doc, set m_valid / m_needsPassword, and — if a placeholder view
+    // container is waiting — swap in the real view. Idempotent (the released
+    // watcher makes a second call a no-op).
+    void adoptDocOpenResult();
+    // QFutureWatcher::finished slot for the doc-open future.
+    void onDocOpenFinished();
+    // Builds the real QPdfView (or a "Could not open" label) + overlays as a
+    // child of `parent` and returns it. Called two ways: directly from
+    // createView when the open already settled — the widget is returned as-is,
+    // preserving the long-standing "createView returns the QPdfView" contract —
+    // and from adoptDocOpenResult, which mounts the returned widget into the
+    // placeholder container after the worker finishes. Extracted from the former
+    // createView body.
+    QWidget *buildRealView(QWidget *parent);
     // Drain the in-flight background load (must already be started) and adopt
     // its result on the GUI thread: adopt the parse-only editor as m_editor
     // (unless a sync path already parsed one), cache the AcroForm answer,
@@ -431,6 +487,26 @@ class PdfDocument : public IDocument {
     // only value copies and its own local editors, so it stays safe as it
     // winds down after the watcher is dropped.
     std::unique_ptr<QFutureWatcher<BackgroundLoadResult>> m_backgroundWatcher;
+    // --- Off-GUI-thread initial open state (see startDocOpen) ---
+    // m_docOpenStarted: the ctor kicked the worker (guards a second launch).
+    // m_docLoaded: the worker's result has been adopted into m_doc on the GUI
+    // thread (m_valid/m_needsPassword are then definitive). Until adoption
+    // m_doc is null, so every deref is gated behind ensureDocLoaded()/m_valid.
+    // m_docOpenWatcher is reset in the destructor so a still-pending finished
+    // signal can't fire on a half-destroyed this (the worker lambda captures
+    // only value copies, so it stays self-contained as it winds down).
+    bool m_docOpenStarted = false;
+    bool m_docLoaded = false;
+    std::unique_ptr<QFutureWatcher<DocOpenResult>> m_docOpenWatcher;
+    // Test-only injectable device factory for the background open (see the
+    // public setLoadDeviceFactoryForTesting). Null in production.
+    static LoadDeviceFactory s_loadDeviceFactory;
+    // The container returned by createView. Holds the "Loading…" placeholder
+    // until the open settles, then buildRealView() swaps in the QPdfView. A
+    // QPointer so a container destroyed by its parent (tab close mid-load)
+    // reads back null in the finished slot.
+    QPointer<QWidget> m_viewContainer;
+    QPointer<QWidget> m_placeholder;
     // One-shot guard for applyInitialFitZoom — fit-to-content is
     // applied the first time the viewport has a real size, then never
     // again so the user's zoom choices stick.

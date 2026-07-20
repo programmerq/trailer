@@ -200,3 +200,14 @@ endif()
 # image document (fixture is a PNG via QImage), so no Qt6::Pdf link is
 # needed.
 trailer_add_uat_test(test_uat_zoom_indicator test_uat_zoom_indicator.cpp)
+
+# Off-GUI-thread document open (UAT-VWR-100, backlog
+# 2026-07-15-offthread-pdf-open-placeholder / DR 0006 (b)). Captures the
+# "Loading…" placeholder → real page before/after G2 evidence. Builds a PDF
+# via QPdfWriter and drives PdfDocument + QPdfView directly, so it links Qt PDF.
+#
+# Runs across the HiDPI dpr matrix {1, 1.5, 2}: open-at-logical-size is
+# dpr-sensitive, so the placeholder/page visuals must hold at each dpr.
+trailer_build_uat_exe(test_uat_offthread_open test_uat_offthread_open.cpp)
+target_link_libraries(test_uat_offthread_open PRIVATE Qt6::Pdf Qt6::PdfWidgets)
+trailer_register_uat_dpr_matrix(test_uat_offthread_open)
