@@ -139,6 +139,7 @@ class ImageDocument : public IDocument {
     bool save(const QString &newPath = {}) override;
     bool writeRecoverySnapshot(const QString &sidecarPath) override;
     bool recoverFrom(const QString &sidecarPath) override;
+    bool reloadFromDisk() override;
     int pageCount() const override { return m_image.isNull() ? 0 : 1; }
 
     bool supportsAnimation() const override { return m_animated && m_frameCount > 1; }

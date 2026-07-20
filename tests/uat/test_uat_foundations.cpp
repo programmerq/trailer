@@ -116,10 +116,24 @@ class FakeDoc : public trailer::IDocument {
         m_path = target;
         m_dirty = false;
         ++m_saveCount;
+        // Mirror the save into a caller-owned sink that OUTLIVES this document.
+        // A tab close destroys the FakeDoc synchronously (DocumentView::
+        // onTabCloseRequested erases the owning unique_ptr before this call
+        // returns), so a test that reads saveCount() on the raw pointer AFTER
+        // driving the close is a use-after-free — it read a stale value by luck
+        // until the external-change monitor's post-close retarget started
+        // reusing the freed address. Slots that must observe "saved after
+        // close" install a sink and read that instead.
+        if (m_saveSink)
+            ++(*m_saveSink);
         return true;
     }
 
     int saveCount() const { return m_saveCount; }
+    // Install a save-observation sink that survives this document's
+    // destruction, so a slot can assert "saved exactly once" after the tab
+    // (and thus the FakeDoc) has been torn down without reading freed memory.
+    void observeSavesInto(std::shared_ptr<int> sink) { m_saveSink = std::move(sink); }
 
   private:
     QString m_path;
@@ -127,6 +141,7 @@ class FakeDoc : public trailer::IDocument {
     QString m_payload;
     bool m_dirty = false;
     int m_saveCount = 0;
+    std::shared_ptr<int> m_saveSink;
 };
 
 // Add a FakeDoc to a MainWindow's DocumentView (the same view the close-
@@ -699,12 +714,16 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabDiscardDropsDoc() {
     QCOMPARE(dv->documentCount(), 1);
 
     mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
+    // The close destroys the FakeDoc synchronously; observe saves through a
+    // sink that outlives it rather than reading the freed pointer.
+    auto saveSink = std::make_shared<int>(0);
+    doc->observeSavesInto(saveSink);
     requestCloseTab(dv, 0);
 
     // Discard: the doc is gone.
     QCOMPARE(dv->documentCount(), 0);
     QCOMPARE(mw->documentCount(), 0);
-    QCOMPARE(doc->saveCount(), 0);
+    QCOMPARE(*saveSink, 0); // Discard never saves.
 
     // Evidence: empty-state after Discard.
     grabTo(mw, QStringLiteral("fnd014_empty_state_after_discard.png"));
@@ -740,11 +759,15 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabSaveTitledWritesFile() {
     QCOMPARE(dv->documentCount(), 1);
 
     mw->setCloseResponseForTesting(MainWindow::CloseResponse::Save);
+    // The close destroys the FakeDoc synchronously, so observe the save through
+    // a sink that outlives it rather than reading the freed pointer.
+    auto saveSink = std::make_shared<int>(0);
+    doc->observeSavesInto(saveSink);
     requestCloseTab(dv, 0);
 
     // Save succeeded → the tab closed.
     QCOMPARE(dv->documentCount(), 0);
-    QCOMPARE(doc->saveCount(), 1);
+    QCOMPARE(*saveSink, 1);
 
     // File on disk carries the new payload.
     QFile check(file);
@@ -776,11 +799,16 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabSaveUntitledRoutesThroughSaveA
 
     mw->setSaveAsPathForTesting(target);
     mw->setCloseResponseForTesting(MainWindow::CloseResponse::Save);
+    // Observe the save through a sink that outlives the FakeDoc, which the
+    // close destroys synchronously (reading doc->saveCount() afterwards would
+    // be a use-after-free).
+    auto saveSink = std::make_shared<int>(0);
+    doc->observeSavesInto(saveSink);
     requestCloseTab(dv, 0);
 
     // Save-As routed and wrote → the tab closed.
     QCOMPARE(dv->documentCount(), 0);
-    QCOMPARE(doc->saveCount(), 1);
+    QCOMPARE(*saveSink, 1);
     QVERIFY2(QFileInfo::exists(target),
              "Untitled Save must route through Save-As and write the chosen path");
     QFile check(target);
@@ -849,10 +877,14 @@ void TestUatFoundations::uat_fnd_014_closeCleanTabNeverPrompts() {
 
     // Force Cancel: a clean doc must ignore it (never prompts) and close.
     mw->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+    // The close destroys the FakeDoc synchronously; observe saves through a
+    // sink that outlives it rather than reading the freed pointer.
+    auto saveSink = std::make_shared<int>(0);
+    doc->observeSavesInto(saveSink);
     requestCloseTab(dv, 0);
 
     QCOMPARE(dv->documentCount(), 0);
-    QCOMPARE(doc->saveCount(), 0);
+    QCOMPARE(*saveSink, 0); // A clean close never saves.
 
     // Reset the forced-response seam so it can't leak into later slots.
     mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);

@@ -16,8 +16,10 @@
 #include "PreferencesDialog.h"
 #include "SignaturePicker.h"
 #include "SignaturesDialog.h"
+#include "FileChangeBanner.h"
 #include "cards/CardStore.h"
 #include "cards/MyCard.h"
+#include "document/ExternalChangeMonitor.h"
 #include "document/PdfAdapter.h"
 #include "document/PdfEditor.h" // FormField definition for AutoFill
 #include "SearchBar.h"
@@ -78,6 +80,7 @@
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QScopeGuard>
 #include <QScreen>
 #include <QSlider>
 #include <QSpinBox>
@@ -263,8 +266,49 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     auto *documentLayout = new QVBoxLayout(m_documentPage);
     documentLayout->setContentsMargins(0, 0, 0, 0);
     documentLayout->setSpacing(0);
+    // Non-modal file-change banner sits ABOVE the document view (ADR
+    // 2026-07-19). Hidden until an external change conflicts with unsaved
+    // edits or the file is deleted; a clean external change reloads silently
+    // and never shows it.
+    m_fileChangeBanner = new FileChangeBanner(m_documentPage);
+    m_fileChangeBanner->hide();
+    documentLayout->addWidget(m_fileChangeBanner);
     documentLayout->addWidget(m_documentView, 1);
     documentLayout->addWidget(m_animationBar);
+
+    connect(m_fileChangeBanner, &FileChangeBanner::reloadRequested, this,
+            &MainWindow::reloadCurrentDocumentFromDisk);
+    connect(m_fileChangeBanner, &FileChangeBanner::keepMineRequested, this, [this]() {
+        auto *doc = m_documentView->currentDocument();
+        if (!doc)
+            return;
+        // Deliberate clobber of the newer on-disk copy: arm the one-shot force
+        // flag, then save over the original. The banner is dismissed only when
+        // saveDocumentAsync confirms the save succeeded, so a failed clobber
+        // leaves the conflict affordance up (F5).
+        doc->setForceSaveOverExternalChange(true);
+        saveDocumentAsync(doc, doc->filePath());
+    });
+    connect(m_fileChangeBanner, &FileChangeBanner::saveRequested, this, [this]() {
+        auto *doc = m_documentView->currentDocument();
+        if (!doc || doc->filePath().isEmpty())
+            return;
+        // Deleted-on-disk: Save recreates the file. The adapter guard does not
+        // block a Deleted state, so a plain save writes the buffer back out.
+        // The banner is dismissed only on a confirmed successful save, so if the
+        // recreate fails (e.g. the parent directory is gone too) the deleted
+        // affordance stays up rather than vanishing with no way back (F5).
+        saveDocumentAsync(doc, doc->filePath());
+    });
+
+    // The monitor follows the current document (retargeted in
+    // onCurrentDocumentChanged). Its debounced signals route to the classify-
+    // and-act slots.
+    m_externalChangeMonitor = new ExternalChangeMonitor(this);
+    connect(m_externalChangeMonitor, &ExternalChangeMonitor::externalChange, this,
+            &MainWindow::onExternalFileChanged);
+    connect(m_externalChangeMonitor, &ExternalChangeMonitor::fileDeleted, this,
+            &MainWindow::onExternalFileDeleted);
 
     m_emptyState = new EmptyStateWidget(m_centerStack);
     connect(m_emptyState, &EmptyStateWidget::openRequested, this, &MainWindow::onOpen);
@@ -703,6 +747,17 @@ void MainWindow::autoSaveDirtyDocs() {
         return;
     const int total = m_documentView->documentCount();
     bool savedAny = false;
+    // Mute #89's external-change monitor for the whole auto-save pass. This is
+    // now DEFENSIVE only: under the recovery-sidecar model (DR
+    // 2026-07-19-autosave-recovery-sidecar) auto-save writes ONLY to the
+    // recovery sidecar in app-data (QStandardPaths::AppDataLocation/autosave)
+    // and its scratch temp — never the backing file and never the source
+    // directory the monitor watches (ExternalChangeMonitor watches the source
+    // file + its parent dir) — so an auto-save tick cannot self-trigger a
+    // reload/banner. The mute is retained to preserve #89's invariant that our
+    // own writes never trip the watcher, even if a future save path changes.
+    if (m_externalChangeMonitor)
+        m_externalChangeMonitor->mute(true);
     for (int i = 0; i < total; ++i) {
         IDocument *doc = nullptr;
         if (!m_documentView->documentAt(i, &doc) || !doc)
@@ -730,6 +785,8 @@ void MainWindow::autoSaveDirtyDocs() {
             savedAny = true;
         }
     }
+    if (m_externalChangeMonitor)
+        m_externalChangeMonitor->mute(false);
     if (savedAny) {
         // The document is deliberately still dirty — nothing was written to
         // the backing file. Signal that recovery is protected, not that the
@@ -2411,6 +2468,11 @@ void MainWindow::onSave() {
         onSaveAs();
         return;
     }
+    // Save-time conflict guard (ADR 2026-07-19): if the file changed under us,
+    // surface the conflict banner instead of clobbering the newer on-disk
+    // copy. The user resolves it with Reload / Keep mine.
+    if (guardSaveAgainstExternalChange(doc))
+        return;
     saveDocumentAsync(doc, doc->filePath());
 }
 
@@ -2435,16 +2497,42 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
     // is fine — wrapping it adds latency without benefit. PDF saves
     // can be 5-15 s on heavy redactions, so they go through the
     // two-phase split so the UI thread stays responsive.
+    // Mute the external-change monitor across our own write so the resulting
+    // filesystem events don't self-trigger a spurious reload/banner. The
+    // adapter refreshes its baseline on success, so even a stray post-unmute
+    // event classifies as NoChange (ADR 2026-07-19). Only mute when we're
+    // saving the file the monitor is currently watching.
+    const bool muteMonitor =
+        m_externalChangeMonitor && m_externalChangeMonitor->path() == targetPath;
+    if (muteMonitor)
+        m_externalChangeMonitor->mute(true);
+
     auto *pdfDoc = dynamic_cast<PdfDocument *>(doc);
     if (!pdfDoc) {
-        if (!doc->save(targetPath)) {
-            flashError(tr("Save failed — could not write to %1").arg(targetPath));
+        const bool ok = doc->save(targetPath);
+        if (muteMonitor)
+            m_externalChangeMonitor->mute(false);
+        if (!ok) {
+            // A false result from an adapter guard trip (an external change
+            // landed after our UI-level check) is a conflict, not a write
+            // failure — route it to the conflict banner rather than a generic
+            // error (F6).
+            if (externalConflictPending(doc)) {
+                if (m_fileChangeBanner)
+                    m_fileChangeBanner->showConflict();
+            } else {
+                flashError(tr("Save failed — could not write to %1").arg(targetPath));
+            }
             return;
         }
         m_app->settings().setLastSaveDir(QFileInfo(targetPath).absolutePath());
         m_app->settings().save();
         clearRecovery();
         updateTitleForDocument(doc);
+        // Dismiss any conflict/deleted banner only now that the save actually
+        // succeeded, so a failed recreate/clobber leaves the affordance up (F5).
+        if (m_fileChangeBanner)
+            m_fileChangeBanner->dismiss();
         flashSuccess(tr("Saved."));
         return;
     }
@@ -2463,11 +2551,22 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
     auto *watcher = new QFutureWatcher<SaveResult>(this);
     connect(progress, &QProgressDialog::canceled, watcher, &QFutureWatcherBase::cancel);
     connect(watcher, &QFutureWatcher<SaveResult>::finished, this,
-            [this, watcher, progress, pdfDoc, doc, targetPath, clearRecovery]() {
+            [this, watcher, progress, pdfDoc, doc, targetPath, clearRecovery, muteMonitor]() {
                 m_docSaveInFlight = nullptr;
                 const bool wasCanceled = progress->wasCanceled();
                 progress->close();
                 progress->deleteLater();
+                // Keep the monitor muted until this whole handler unwinds —
+                // the self-write (rename + baseline refresh inside
+                // saveCommitOnUi) must stay bracketed by the mute, and a
+                // scope-guard releases it on EVERY exit including an exception
+                // out of watcher->result() (F2 / F8a). The baseline is
+                // refreshed on success inside saveCommitOnUi, so a stray
+                // post-unmute event classifies as NoChange.
+                auto unmute = qScopeGuard([this, muteMonitor]() {
+                    if (muteMonitor && m_externalChangeMonitor)
+                        m_externalChangeMonitor->mute(false);
+                });
                 SaveResult result;
                 if (!wasCanceled)
                     result = watcher->result();
@@ -2475,24 +2574,164 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
                 if (wasCanceled)
                     return;
                 if (!result) {
-                    flashError(tr("Save failed — could not write to %1").arg(targetPath));
+                    // The begin phase refused: a clobber-guard trip (external
+                    // change after our UI-level check) is a conflict, not a
+                    // write failure — route it to the banner (F6).
+                    if (externalConflictPending(doc)) {
+                        if (m_fileChangeBanner)
+                            m_fileChangeBanner->showConflict();
+                    } else {
+                        flashError(tr("Save failed — could not write to %1").arg(targetPath));
+                    }
                     return;
                 }
-                // Worker phase succeeded; commit on the UI thread.
+                // Worker phase succeeded; commit on the UI thread. The commit
+                // may itself abort if an external change landed in the
+                // begin→commit window (F1); that abort is also a conflict.
                 if (!pdfDoc->saveCommitOnUi(*result)) {
-                    flashError(tr("Save failed — could not finalise %1").arg(targetPath));
+                    if (externalConflictPending(doc)) {
+                        if (m_fileChangeBanner)
+                            m_fileChangeBanner->showConflict();
+                    } else {
+                        flashError(tr("Save failed — could not finalise %1").arg(targetPath));
+                    }
                     return;
                 }
                 m_app->settings().setLastSaveDir(QFileInfo(targetPath).absolutePath());
                 m_app->settings().save();
                 clearRecovery();
                 updateTitleForDocument(doc);
+                // Dismiss the banner only after a confirmed successful commit so
+                // a failed clobber/recreate leaves its affordance up (F5).
+                if (m_fileChangeBanner)
+                    m_fileChangeBanner->dismiss();
                 flashSuccess(tr("Saved."));
             });
 
     QFuture<SaveResult> future = QtConcurrent::run(
         [pdfDoc, targetPath]() -> SaveResult { return pdfDoc->saveBeginQpdfPhase(targetPath); });
     watcher->setFuture(future);
+}
+
+void MainWindow::retargetExternalChangeMonitor(IDocument *doc) {
+    if (!m_externalChangeMonitor)
+        return;
+    // A single monitor + banner track the CURRENT document. Switching docs
+    // drops the previous doc's banner and repoints the watcher; untitled docs
+    // (empty path) clear the watch. Known limitation: a conflict raised on a
+    // background tab is re-evaluated when the user returns to it (the monitor
+    // re-points and the save-guard still fires), not shown while it's hidden —
+    // documented in the ADR.
+    if (m_fileChangeBanner)
+        m_fileChangeBanner->dismiss();
+    m_externalChangeMonitor->setPath(doc ? doc->filePath() : QString());
+
+    // Re-classify the now-current document against its baseline so a change
+    // that landed while this tab was in the background surfaces immediately on
+    // return, instead of waiting for the next filesystem event (F4). Runs the
+    // same classify-and-act path as a live event; onExternalFileChanged reads
+    // currentDocument(), which is already `doc` at this point (DocumentView
+    // emits currentDocumentChanged with the new current document).
+    if (doc && !doc->filePath().isEmpty())
+        onExternalFileChanged();
+}
+
+void MainWindow::onExternalFileChanged() {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc)
+        return;
+    switch (doc->externalChangeState()) {
+    case ExternalChangeState::NoChange:
+        // Spurious event (or our own just-refreshed baseline) — ignore.
+        return;
+    case ExternalChangeState::CleanExternalChange:
+        // Nothing unsaved to lose: reload silently (Preview-style), no dialog.
+        reloadCurrentDocumentFromDisk();
+        return;
+    case ExternalChangeState::DirtyConflict:
+        // Never auto-decide with unsaved edits — surface the banner.
+        if (m_fileChangeBanner)
+            m_fileChangeBanner->showConflict();
+        return;
+    case ExternalChangeState::Deleted:
+        onExternalFileDeleted();
+        return;
+    }
+}
+
+void MainWindow::onExternalFileDeleted() {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc || !m_fileChangeBanner)
+        return;
+    // Keep the buffer; the banner's Save recreates the file on disk.
+    m_fileChangeBanner->showDeleted();
+}
+
+void MainWindow::reloadCurrentDocumentFromDisk() {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc)
+        return;
+    // Mute the monitor across the in-place reload so the reload's own reads /
+    // baseline refresh don't loop back as another event.
+    if (m_externalChangeMonitor)
+        m_externalChangeMonitor->mute(true);
+    const bool ok = doc->reloadFromDisk();
+    if (m_externalChangeMonitor)
+        m_externalChangeMonitor->mute(false);
+    if (m_fileChangeBanner)
+        m_fileChangeBanner->dismiss();
+    if (!ok) {
+        flashError(tr("Couldn't reload %1 from disk.").arg(doc->displayName()));
+        return;
+    }
+    // Refresh the surfaces that cache document-derived state.
+    m_sidebar->setDocument(doc);
+    updateTitleForDocument(doc);
+    updateUndoRedoActions(doc);
+    flashStatus(tr("Reloaded — the file changed on disk."));
+}
+
+bool MainWindow::externalConflictPending(IDocument *doc) const {
+    // True iff the document's backing file changed under us in a way that a
+    // save must not silently clobber. Used to tell a save *failure* (real write
+    // error) apart from a save *refusal* (the adapter/commit guard declined to
+    // overwrite an external change), so the latter routes to the conflict
+    // banner instead of a generic error dialog (F6).
+    if (!doc || doc->filePath().isEmpty())
+        return false;
+    const ExternalChangeState st = doc->externalChangeState();
+    return st == ExternalChangeState::CleanExternalChange ||
+           st == ExternalChangeState::DirtyConflict;
+}
+
+bool MainWindow::guardSaveAgainstExternalChange(IDocument *doc) {
+    if (!doc || doc->filePath().isEmpty())
+        return false;
+    switch (doc->externalChangeState()) {
+    case ExternalChangeState::CleanExternalChange:
+        // Clean buffer, but the file changed under us: our in-memory bytes are
+        // now STALE, so a save would clobber the newer on-disk copy with stale
+        // content. There are no user edits to reconcile, so reload the on-disk
+        // truth SILENTLY (the ratified clean-reload-is-silent choice) rather
+        // than raising the conflict banner — whose "…while you had unsaved
+        // edits" wording would be untrue here (S1). After the reload the buffer
+        // matches disk and is clean, so there is nothing left to save; report
+        // handled so the caller does not proceed to overwrite.
+        reloadCurrentDocumentFromDisk();
+        return true;
+    case ExternalChangeState::DirtyConflict:
+        // Genuine conflict: unsaved edits AND a newer on-disk copy. Never
+        // clobber — raise the conflict banner so the user picks Reload or
+        // Keep mine.
+        if (m_fileChangeBanner)
+            m_fileChangeBanner->showConflict();
+        return true;
+    case ExternalChangeState::Deleted:
+        // File gone: Save should recreate it, so don't block. Fall through.
+    case ExternalChangeState::NoChange:
+        return false;
+    }
+    return false;
 }
 
 void MainWindow::onSaveAs() {
@@ -2911,6 +3150,10 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // changes (tab switches, opening into the same window) leave
     // the size alone so the user's adjustments stick.
     applyInitialWindowSize(doc);
+
+    // Follow the new document's file for external changes and drop any banner
+    // that belonged to the doc we're leaving (ADR 2026-07-19).
+    retargetExternalChangeMonitor(doc);
 
     // Update the auto-OCR controller. It cancels in-flight
     // submissions for the previous doc and starts following the
