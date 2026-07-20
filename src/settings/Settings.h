@@ -1,5 +1,7 @@
 #pragma once
 
+#include "platform/ScreenCaptureBackend.h"
+
 #include <QAnyStringView>
 #include <QHash>
 #include <QLatin1StringView>
@@ -25,6 +27,7 @@ namespace trailer {
 namespace SettingsKeys {
 inline constexpr QLatin1StringView Theme{"general.theme"};
 inline constexpr QLatin1StringView OpenFilesIn{"general.open_files_in"};
+inline constexpr QLatin1StringView CaptureBackend{"general.capture_backend"};
 inline constexpr QLatin1StringView LastSaveDir{"general.last_save_dir"};
 inline constexpr QLatin1StringView AutoSave{"files.auto_save"};
 inline constexpr QLatin1StringView RecentMax{"files.recent_max"};
@@ -94,6 +97,16 @@ class Settings {
 
     OpenFilesIn openFilesIn() const { return m_openFilesIn; }
     void setOpenFilesIn(OpenFilesIn value);
+
+    // Which native still-capture backend the macOS screenshot flow drives.
+    // Persisted as a string under [general].capture_backend. Defaults to
+    // the long-standing Screencapture (/usr/sbin/screencapture) path — the
+    // ScreenCaptureKit picker backend is opt-in and only takes effect on
+    // macOS 14+ once selected AND validated on-device (see ADR 0015).
+    // RestartRequired: the backend is resolved at the capture call site, so
+    // a change is picked up cleanly only on a fresh run.
+    trailer::CaptureBackend captureBackend() const { return m_captureBackend; }
+    void setCaptureBackend(trailer::CaptureBackend value);
 
     bool autoSave() const { return m_autoSave; }
     void setAutoSave(bool value);
@@ -178,6 +191,9 @@ class Settings {
     // ("tabs are mostly in the way"). Tabs remain available as an opt-in
     // by setting open_files_in = "new_tab" in settings.toml.
     OpenFilesIn m_openFilesIn = OpenFilesIn::NewWindow;
+    // Safe default: the existing screencapture path, so runtime behaviour is
+    // unchanged until the picker backend is validated on-device.
+    trailer::CaptureBackend m_captureBackend = trailer::CaptureBackend::Screencapture;
     bool m_autoSave = true;
     int m_recentMax = 50;
     // macOS-style "pick up where you left off" default — on. The

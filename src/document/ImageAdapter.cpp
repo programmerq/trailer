@@ -660,9 +660,17 @@ void ImageDocument::applyInitialFitZoom() {
     // Cap at 100%: a 200×100 thumbnail shouldn't blow up to fill the
     // window. Larger images shrink to fit instead.
     applyScale(std::min(1.0, fit));
-    // Park the mode at FitInView so subsequent window resizes refit
-    // (the watcher above calls reapplyFitMode on each viewport resize).
-    m_zoomMode = ZoomMode::FitInView;
+    // Park the mode based on whether the image actually had to shrink.
+    // If it genuinely doesn't fit (fit < 1.0) we keep FitInView so a
+    // later window resize re-fits it (the watcher calls reapplyFitMode
+    // on each viewport resize). But an ordinary open of an image that
+    // already fits was capped at 100% here — parking it FitInView would
+    // let the resize watcher re-fit it UNCAPPED once the viewport
+    // settles, upscaling a small image past 100%. Park it Actual instead
+    // so reapplyFitMode() no-ops (it early-returns for non-fit modes),
+    // leaving the 100% cap intact. The explicit Fit-Page action still
+    // sets FitInView and upscales on resize — that path is untouched.
+    m_zoomMode = (fit < 1.0) ? ZoomMode::FitInView : ZoomMode::Actual;
 }
 
 void ImageDocument::applyZoomState(ZoomMode mode, double factor) {
@@ -1071,6 +1079,39 @@ bool ImageDocument::reloadFromDisk() {
     m_dirty = false;
     refreshView();
     captureFileBaseline();
+    return true;
+}
+
+bool ImageDocument::writeRecoverySnapshot(const QString &sidecarPath) {
+    // Auto-save calls this instead of save(): never touch the backing file,
+    // never clear the dirty flag. Write the current pixels with annotations
+    // flattened in (the same visual save() would produce) to the sidecar, so
+    // reopen-recovery can restore the in-progress edit. m_image /
+    // m_annotations / m_dirty / m_path are all left untouched.
+    if (m_image.isNull() || m_animated || sidecarPath.isEmpty())
+        return false;
+    const QImage out = flattenAnnotations(m_image, m_annotations.annotations());
+    QByteArray format = QFileInfo(sidecarPath).suffix().toLatin1().toLower();
+    if (format.isEmpty())
+        format = QByteArray("png");
+    QImageWriter writer(sidecarPath, format);
+    return writer.write(out);
+}
+
+bool ImageDocument::recoverFrom(const QString &sidecarPath) {
+    if (sidecarPath.isEmpty() || m_animated)
+        return false;
+    QImage recovered(sidecarPath);
+    if (recovered.isNull())
+        return false;
+    // Keep m_path pointing at the user's real file; adopt the recovered
+    // pixels and mark dirty. The backing file is untouched until an explicit
+    // Save. Any prior annotations were flattened into the snapshot, so the
+    // store starts empty over the recovered raster.
+    m_image = recovered;
+    m_annotations.clear();
+    m_annotations.clearHistory();
+    m_dirty = true;
     return true;
 }
 

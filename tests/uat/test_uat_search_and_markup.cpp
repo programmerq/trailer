@@ -434,6 +434,7 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_ann_129_freehandPressOverInkStartsNewStroke();
     void uat_ann_130_strokeDialogSurvivesStoreMutation();
     void uat_ann_131_toolSwitchesToSelectAfterShapeCommit();
+    void uat_ann_132_freehandStaysStickyAfterStroke();
     void uat_ann_140_interleavedUndoIsChronological();
     void uat_toc_010_outlineDisabledOnPlainPdf();
     void uat_toc_011_outlineExposedForPdfWithBookmarks();
@@ -2743,6 +2744,77 @@ void TestUatSearchAndMarkup::uat_ann_131_toolSwitchesToSelectAfterShapeCommit() 
     // shape they just drew.
     QCOMPARE(markup->activeTool(), AnnotationTool::Select);
     QCOMPARE(overlay->activeTool(), AnnotationTool::Select);
+}
+
+// UAT-ANN-132 — The free-form Freehand (Ink) tool is STICKY: after a
+// stroke commits it stays active (Preview-style), so consecutive
+// strokes all draw. This is the complement of UAT-ANN-131 (bounded
+// shapes flip back to Select on commit) and the regression guard for
+// CF-3 (backlog 2026-07-20-freehand-auto-revert-drawover-noop): the
+// auto-revert made the user's second draw-over drag silently become a
+// rubber-band selection with no feedback.
+//
+// Must drive through the MARKUP TOOLBAR (not overlay->setActiveTool):
+// the auto-revert lives in MainWindow::onAnnotationCommitted, which
+// only fires the flip-back when the toolbar's tool is a non-sticky
+// tool. UAT-ANN-129 sets Ink on the overlay directly and so bypasses
+// this path.
+void TestUatSearchAndMarkup::uat_ann_132_freehandStaysStickyAfterStroke() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_132.pdf")), QStringLiteral("fixture"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    AnnotationStore *store = doc->annotations();
+    QVERIFY(store);
+
+    // Arm the Freehand tool via the toolbar, exactly as a user click
+    // would — this is the realistic path that exercises the revert.
+    auto *markup = mw->findChild<MarkupToolbar *>();
+    QVERIFY(markup);
+    QAction *inkAction = findToolAction(markup, QStringLiteral("Freehand"));
+    QVERIFY(inkAction);
+    inkAction->setChecked(true);
+    QApplication::processEvents();
+    QCOMPARE(markup->activeTool(), AnnotationTool::Ink);
+
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
+    QVERIFY(overlay);
+    QCOMPARE(overlay->activeTool(), AnnotationTool::Ink);
+
+    // First stroke.
+    const int before = store->count();
+    dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
+    QApplication::processEvents();
+    QCOMPARE(store->count(), before + 1);
+    QCOMPARE(store->annotations().back().type, AnnotationType::Ink);
+
+    // STICKY: the toolbar AND overlay both remain on Ink — no revert to
+    // Select. (Pre-fix: onAnnotationCommitted flipped both to Select.)
+    QCOMPARE(markup->activeTool(), AnnotationTool::Ink);
+    QCOMPARE(overlay->activeTool(), AnnotationTool::Ink);
+
+    // A second press-drag therefore draws a SECOND stroke rather than
+    // rubber-band-selecting — the exact silent no-op CF-3 describes.
+    dragOnOverlay(overlay, QPoint(250, 290), QPoint(430, 300));
+    QApplication::processEvents();
+    QCOMPARE(store->count(), before + 2);
+    QCOMPARE(store->annotations().back().type, AnnotationType::Ink);
+    // The second drag drew; it did not select anything.
+    QCOMPARE(overlay->selectedAnnotationId(), 0);
 }
 
 // UAT-ANN-140 — Interleaved page-op + annotation undo is chronological.

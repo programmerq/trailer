@@ -48,6 +48,8 @@ trailer_add_test(test_registry   test_registry.cpp)
 trailer_add_test(test_adapters   test_adapters.cpp)
 trailer_add_test(test_pdf_editor test_pdf_editor.cpp)
 trailer_add_test(test_annotation_store test_annotation_store.cpp)
+trailer_add_test(test_discard_file_integrity test_discard_file_integrity.cpp)
+trailer_add_test(test_recovery_store test_recovery_store.cpp)
 trailer_add_test(test_freehand_zoom_glue test_freehand_zoom_glue.cpp)
 trailer_add_test(test_freehand_selection_precedence test_freehand_selection_precedence.cpp)
 trailer_add_test(test_form_toolbar test_form_toolbar.cpp)
@@ -82,6 +84,8 @@ trailer_add_test(test_macos_launch test_macos_launch.cpp)
 trailer_add_test(test_session_draft_store test_session_draft_store.cpp)
 trailer_add_test(test_quit_and_keep_windows test_quit_and_keep_windows.cpp)
 trailer_add_test(test_screen_capture_permission test_screen_capture_permission.cpp)
+trailer_add_test(test_screen_capture_flow test_screen_capture_flow.cpp)
+trailer_add_test(test_capture_backend test_capture_backend.cpp)
 
 # Structural, CI-safe performance tests. These assert ordering / counts /
 # thread facts (never wall-clock time) and read the checked-in reference

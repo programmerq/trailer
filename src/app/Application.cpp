@@ -4,6 +4,7 @@
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
 #include "platform/QuitMenu.h"
+#include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
 #include "ui/MainWindow.h"
 #ifdef TRAILER_UX_RECORDER
@@ -18,6 +19,7 @@
 #include <QBuffer>
 #include <QClipboard>
 #include <QDateTime>
+#include <QDebug>
 #include <QDir>
 #include <QFileInfo>
 #include <QFileOpenEvent>
@@ -31,6 +33,7 @@
 #include <QMimeData>
 #include <QPixmap>
 #include <QProcess>
+#include <QPushButton>
 #include <QScreen>
 #include <QSet>
 #include <QStandardPaths>
@@ -289,6 +292,23 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
 
     for (const QString &path : paths) {
         auto doc = m_registry.open(path);
+
+        // Reopen-recovery: if a newer auto-save recovery sidecar exists for
+        // this backing file (e.g. the app crashed mid-session before an
+        // explicit Save), silently restore the in-progress edit as a dirty
+        // document. The backing file is not touched — it stays byte-identical
+        // until the user Saves; if they Discard, their file was never
+        // modified. Sidecars live in app-data, so this reads only our own
+        // snapshot, never the user's directory.
+        if (doc && !path.isEmpty()) {
+            if (const auto sidecar = m_recoveryStore.pendingRecovery(path)) {
+                if (!doc->recoverFrom(*sidecar)) {
+                    // Restore failed (corrupt/unreadable snapshot): drop the
+                    // stale sidecar and open the pristine backing file.
+                    m_recoveryStore.clear(path);
+                }
+            }
+        }
 
         if (captureDpr > 0.0) {
             // Stamp the real screen dpr onto capture-origin images so the
@@ -868,55 +888,111 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
     const QString path = transientImportPath("screenshot", "png");
 
 #ifdef Q_OS_MACOS
-    // Capture-permission behavior is intentionally owned by PR #77 (preflight +
-    // graceful denial-degrade — docs/decision-records/2026-07-16-capture-permission-preflight.md);
-    // per the owner decision recorded there, the stills path deliberately does
-    // NOT reintroduce a first-use Screen-Recording explainer and goes straight
-    // to the OS Screen-Recording prompt.
-    // Hide our window so it doesn't occlude the target, then use the
-    // native macOS capture tool for proper DPI handling and interactive
-    // selection.
-    if (context)
-        context->hide();
-    QStringList args;
-    args << QStringLiteral("-x"); // silent (no capture sound)
-    switch (mode) {
-    case ShotMode::Screen:
+    // Opt-in ScreenCaptureKit picker backend (macOS 14+). The system picker
+    // selects a window or display, so it substitutes for the interactive
+    // Screen / Window modes but NOT for a freeform Region rectangle — Region
+    // (and any picker Unavailable/Failed) falls through to the screencapture
+    // path below. On a clean pick we're done; a picker cancel is a
+    // self-caused no-op (say nothing, per PHILOSOPHY → No popup that just
+    // says "no").
+    //
+    // The picker uses the system picker itself as the consent surface, so it
+    // is intentionally NOT gated by the Screen-Recording TCC preflight that
+    // guards the screencapture shell-out below (different consent model —
+    // docs/decision-records/2026-07-16-capture-permission-preflight.md).
+    const auto backend = trailer::effectiveCaptureBackend(
+        m_settings.captureBackend(), trailer::screenCaptureKitAvailable(),
+        /*freeformRegion=*/mode == ShotMode::Region);
+    if (backend == trailer::CaptureBackend::ScreenCaptureKit) {
+        QString err;
+        const auto r = trailer::captureViaPickerToPng(
+            path, /*wholeDisplay=*/mode == ShotMode::Screen, &err);
+        if (r == trailer::PickerCaptureResult::Ok) {
+            openFiles({path});
+            return;
+        }
+        if (r == trailer::PickerCaptureResult::Cancelled)
+            return;
+        // Unavailable/Failed -> fall through to the screencapture path.
+        qWarning() << "Application: ScreenCaptureKit picker capture failed, falling back to"
+                   << "screencapture:" << err;
+    }
+
+    // --- screencapture shell-out path (TCC-gated by PR #77) ---
+    // Preflight the live Screen Recording TCC state before touching the OS
+    // selection UI (the screen-capture preflight ADR). This gates ONLY the
+    // /usr/sbin/screencapture shell-out; the picker path above is intentionally
+    // ungated (different consent model). The pre-permission explainer is retired
+    // for stills (owner decision 2026-07-17); we lean on the OS Screen Recording
+    // prompt directly.
+    const ScreenCapturePermissionState state = queryScreenCapturePermissionState();
+
+    // The native capture block. Hides the capture context (if any) so it
+    // doesn't occlude the target, shells to the macOS capture tool for proper
+    // DPI handling and interactive selection, then restores. Returns true only
+    // when a real image landed at `path`. Local lambda so the RequestAccess and
+    // Proceed branches share it verbatim.
+    auto runCapture = [&]() -> bool {
+        if (context)
+            context->hide();
+        QStringList args;
+        args << QStringLiteral("-x"); // silent (no capture sound)
+        switch (mode) {
+        case ShotMode::Screen:
+            break;
+        case ShotMode::Window:
+            args << QStringLiteral("-iW");
+            break;
+        case ShotMode::Region:
+            args << QStringLiteral("-i") << QStringLiteral("-s");
+            break;
+        }
+        args << path;
+        QProcess proc;
+        proc.start(QStringLiteral("/usr/sbin/screencapture"), args);
+        proc.waitForFinished(-1);
+        if (context) {
+            context->show();
+            context->raise();
+            context->activateWindow();
+        }
+        if (proc.exitCode() != 0) {
+            // User cancelled the OS selection (Esc) — a no-op, not an error.
+            // Stay silent: no dialog narrating the user's own cancel.
+            return false;
+        }
+        const QFileInfo info(path);
+        if (!info.exists() || info.size() == 0) {
+            // Exit 0 but no file: a granted user who selected nothing. Silent —
+            // permission is not the problem (we only reach here after Granted or
+            // a successful request), so do not assert a denial.
+            return false;
+        }
+        return true;
+    };
+
+    bool captured = false;
+    switch (decideScreenCaptureFlow(state)) {
+    case ScreenCaptureFlowAction::Proceed:
+        captured = runCapture();
         break;
-    case ShotMode::Window:
-        args << QStringLiteral("-iW");
+    case ScreenCaptureFlowAction::RequestAccess:
+        if (requestScreenCaptureAccess()) {
+            captured = runCapture();
+        } else {
+            // Denied — actionable degrade. A window context has a status bar,
+            // so flash the recovery route there; the no-window Acquire flow
+            // (nullptr context) has none, so surface the actionable modal.
+            if (auto *mw = qobject_cast<MainWindow *>(context))
+                mw->flashError(screenRecordingNeededMessage());
+            else
+                showScreenRecordingNeededModal();
+            return;
+        }
         break;
-    case ShotMode::Region:
-        args << QStringLiteral("-i") << QStringLiteral("-s");
-        break;
     }
-    args << path;
-    QProcess proc;
-    proc.start(QStringLiteral("/usr/sbin/screencapture"), args);
-    proc.waitForFinished(-1);
-    if (context) {
-        context->show();
-        context->raise();
-        context->activateWindow();
-    }
-    if (proc.exitCode() != 0) {
-        // Non-zero exit means the user cancelled (Esc) — not an error, and
-        // not something to narrate. Say nothing (PHILOSOPHY → No popup that
-        // just says "no").
-        return;
-    }
-    const QFileInfo info(path);
-    if (!info.exists() || info.size() == 0) {
-        // Exit 0 but no output — screencapture produced nothing, which
-        // silently means Screen Recording permission was denied. This hint
-        // is actionable (it tells the user exactly how to fix it), so it
-        // stays — unlike the cancelled-capture narration above.
-        QMessageBox::information(
-            nullptr, tr("Screenshot"),
-            tr("No image was captured. If you denied Screen Recording, grant it "
-               "in System Settings ▸ Privacy & Security ▸ Screen Recording."));
-        return;
-    }
+    if (!captured)
+        return; // cancelled or empty capture — already handled silently
     // screencapture writes raw device pixels with no dpr stamp; recover the
     // screen dpr so a Retina capture opens 1:1 (see openFiles). Prefer the
     // capture context's screen when we have one, else the primary screen.
@@ -942,12 +1018,37 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
     const QPixmap shot = screen->grabWindow(0);
     if (shot.isNull() || !shot.save(path, "PNG"))
         return;
+    // grabWindow() stamps the screen dpr on the pixmap, but the PNG save drops
+    // it; recover it so a HiDPI capture opens 1:1 (see openFiles).
+    {
+        const double dpr =
+            shot.devicePixelRatio() > 0.0 ? shot.devicePixelRatio() : screen->devicePixelRatio();
+        setPendingCaptureDpr(dpr);
+    }
 #endif
 
     openFiles({path}, /*markUntitled=*/true);
 }
 
 #ifdef Q_OS_MACOS
+void Application::showScreenRecordingNeededModal() {
+    // No status bar in the no-window Acquire flow — surface the recoverable
+    // degrade as one actionable modal with a direct route to the setting. This
+    // ask-first modal is the sanctioned pattern (PHILOSOPHY allows popups for
+    // non-self-evident errors).
+    QMessageBox box;
+    box.setIcon(QMessageBox::Warning);
+    box.setWindowTitle(tr("Acquire from Screenshot"));
+    box.setText(screenRecordingNeededMessage());
+    QPushButton *open =
+        box.addButton(tr("Open System Settings"), QMessageBox::AcceptRole);
+    box.addButton(QMessageBox::Cancel);
+    box.setDefaultButton(open);
+    box.exec();
+    if (box.clickedButton() == open)
+        openScreenRecordingSettings(); // best-effort deep link to the pane
+}
+
 void Application::installNoWindowMenuBar() {
     auto *bar = new QMenuBar();
     bar->setNativeMenuBar(true);

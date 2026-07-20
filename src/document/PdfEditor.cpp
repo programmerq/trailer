@@ -248,7 +248,10 @@ bool PdfEditor::extractPages(const std::vector<int> &pageIndices, const QString 
             destHelper.addPage(pages[static_cast<size_t>(idx)], /*first=*/false);
         }
 
-        QPDFWriter writer(dest, destPath.toLocal8Bit().constData());
+        // Named local: QPDFWriter stores the filename pointer and uses it in
+        // write(); a temporary QByteArray would dangle (see saveImpl).
+        const QByteArray destName = destPath.toLocal8Bit();
+        QPDFWriter writer(dest, destName.constData());
         writer.setStaticID(false);
         writer.write();
         return true;
@@ -916,7 +919,10 @@ bool PdfEditor::applyRedactions(const std::vector<Annotation> &annotations) {
         return false;
     const QString snapshotPath = snapshot.path();
     try {
-        QPDFWriter writer(*m_qpdf, snapshotPath.toLocal8Bit().constData());
+        // Named local: QPDFWriter stores the filename pointer and uses it in
+        // write(); a temporary QByteArray would dangle (see saveImpl).
+        const QByteArray snapshotName = snapshotPath.toLocal8Bit();
+        QPDFWriter writer(*m_qpdf, snapshotName.constData());
         writer.setStaticID(false);
         writer.write();
     } catch (const std::exception &) {
@@ -1057,6 +1063,50 @@ bool PdfEditor::writeAnnotations(const std::vector<Annotation> &annotations) {
                 annots.appendItem(item);
             }
             pageObj.replaceKey("/Annots", annots);
+        }
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
+bool PdfEditor::clearManagedAnnotations() {
+    if (!m_valid)
+        return false;
+    // The /Subtype set Trailer owns (mirror of readAnnotations()), plus
+    // /Popup: a popup is an auxiliary window owned by a markup annotation
+    // (typically /Text). Removing the managed markup without its /Popup would
+    // orphan the popup (a /Parent pointing at a now-absent annotation), so we
+    // drop /Popup too. /Widget (form fields) and /Link are intentionally NOT
+    // in this set — they are preserved so a recovery snapshot keeps forms and
+    // links intact.
+    static const std::set<std::string> managed = {
+        "/Ink",  "/Square",    "/Circle",   "/Line",      "/FreeText",
+        "/Text", "/Highlight", "/Underline", "/StrikeOut", "/Popup"};
+    try {
+        auto pages = QPDFPageDocumentHelper(*m_qpdf).getAllPages();
+        for (QPDFPageObjectHelper &page : pages) {
+            QPDFObjectHandle pageObj = page.getObjectHandle();
+            QPDFObjectHandle annots = pageObj.getKey("/Annots");
+            if (!annots.isArray())
+                continue;
+            QPDFObjectHandle kept = QPDFObjectHandle::newArray();
+            const int n = annots.getArrayNItems();
+            for (int i = 0; i < n; ++i) {
+                QPDFObjectHandle entry = annots.getArrayItem(i);
+                std::string st;
+                if (entry.isDictionary()) {
+                    QPDFObjectHandle subtype = entry.getKey("/Subtype");
+                    if (subtype.isName())
+                        st = subtype.getName();
+                }
+                if (managed.count(st) == 0)
+                    kept.appendItem(entry);
+            }
+            if (kept.getArrayNItems() == 0)
+                pageObj.removeKey("/Annots");
+            else
+                pageObj.replaceKey("/Annots", kept);
         }
         return true;
     } catch (const std::exception &) {
@@ -1394,7 +1444,10 @@ bool PdfEditor::saveReduced(const QString &path) {
     if (!m_valid)
         return false;
     try {
-        QPDFWriter writer(*m_qpdf, path.toLocal8Bit().constData());
+        // Named local: QPDFWriter stores the filename pointer and uses it in
+        // write(); a temporary QByteArray would dangle (see saveImpl).
+        const QByteArray filename = path.toLocal8Bit();
+        QPDFWriter writer(*m_qpdf, filename.constData());
         writer.setStaticID(false);
         writer.setLinearization(true);
         writer.setObjectStreamMode(qpdf_o_generate);
@@ -1411,7 +1464,14 @@ bool PdfEditor::saveImpl(const QString &path, const EncryptionOptions *enc) {
     if (!m_valid)
         return false;
     try {
-        QPDFWriter writer(*m_qpdf, path.toLocal8Bit().constData());
+        // Hold the filename bytes in a named local: QPDFWriter stores the
+        // const char* and only dereferences it in write() below, so a
+        // temporary QByteArray (path.toLocal8Bit()) would be freed at the end
+        // of this statement, leaving qpdf a dangling pointer — a heap-use-
+        // after-free that survives by luck on native Linux but crashes under
+        // Wine / any allocator that reuses the freed block before write().
+        const QByteArray filename = path.toLocal8Bit();
+        QPDFWriter writer(*m_qpdf, filename.constData());
         writer.setStaticID(false);
         if (enc) {
             // qpdf expects both passwords as C strings. An empty user

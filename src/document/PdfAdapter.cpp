@@ -1719,6 +1719,178 @@ bool PdfDocument::save(const QString &newPath) {
     return saveCommitOnUi(*ctx);
 }
 
+bool PdfDocument::writeRecoverySnapshot(const QString &sidecarPath) {
+    // Auto-save calls this instead of save(): it must NEVER write the backing
+    // file and must NOT clear the dirty flag. We snapshot the CURRENT editor
+    // graph (structural page edits included) to a throwaway temp, reload it
+    // into a scratch editor, and bake the in-memory annotations into THAT —
+    // never our live m_editor, since writeAnnotations() appends and
+    // applyRedactions()/flattenSignatures() are destructive. The live document
+    // (m_editor / m_path / m_doc / dirty flags) is left completely untouched;
+    // only the sidecar is written.
+    ensureEditorLoaded();
+    ensureAnnotationsLoadedSync();
+    if (!m_valid || !m_editor || !m_editor->isValid() || sidecarPath.isEmpty())
+        return false;
+
+    const QString scratch = makeUniqueTempPath(QStringLiteral("trailer-recovery-XXXXXX.pdf"));
+    if (scratch.isEmpty())
+        return false;
+    struct ScratchGuard {
+        QString path;
+        ~ScratchGuard() {
+            if (!path.isEmpty())
+                QFile::remove(path);
+        }
+    } guard{scratch};
+
+    // m_editor->save() serializes the live editor graph via QPDFWriter::write()
+    // — a read of the QPDF, not a structural mutation — so the live editor is
+    // left intact and usable; all destructive annotation baking happens on the
+    // separate `snap` editor below. (This relies on save() not reordering /
+    // rewriting the live graph in place; if that ever changes, snapshot from a
+    // reloaded copy instead.)
+    if (!m_editor->save(scratch))
+        return false;
+    PdfEditor snap;
+    if (!snap.load(scratch) || !snap.isValid())
+        return false;
+
+    const std::vector<Annotation> anns = m_annotations.annotations();
+    // Strip any managed markup annotations the scratch carried over from the
+    // current graph (forms/links/popups are preserved), so the in-memory
+    // store is the single source of truth and nothing is duplicated.
+    if (!snap.clearManagedAnnotations())
+        return false;
+    if (!snap.applyRedactions(anns))
+        return false;
+    if (!snap.flattenSignatures(anns))
+        return false;
+    if (!snap.writeAnnotations(anns))
+        return false;
+    return snap.save(sidecarPath);
+}
+
+bool PdfDocument::recoverFrom(const QString &sidecarPath) {
+    if (sidecarPath.isEmpty() || !QFileInfo::exists(sidecarPath))
+        return false;
+    ensureEditorLoaded();
+    if (!m_valid || !m_doc)
+        return false;
+
+    // If the deferred annotation sweep is already in flight, drain and discard
+    // it: we are about to replace the annotation store wholesale from the
+    // recovery snapshot, and the sweep reads the BACKING file — letting it
+    // commit afterwards would append the backing file's annotations on top of
+    // the recovered set. (At the normal open-time call site the sweep has not
+    // been kicked yet; this is a defensive drain.)
+    if (m_backgroundLoadStarted && m_backgroundWatcher) {
+        m_backgroundWatcher->future().waitForFinished();
+        m_backgroundWatcher.reset();
+    }
+
+    // Keep pointing Save at the user's real file; load content from the
+    // sidecar. The backing file is not touched here.
+    const QString backing = m_path;
+
+    // Load the live editor/viewer from a PRIVATE copy of the sidecar, never the
+    // sidecar path itself. The sidecar path is deterministic for this backing
+    // file, so it is exactly what the next auto-save tick overwrites — if the
+    // live m_editor/m_doc held that path open, the tick would truncate the file
+    // out from under them (blocker: corrupt recovered doc / unsaveable work).
+    // The private copy is owned for the document's lifetime.
+    auto recoveryCopy =
+        std::make_unique<ScopedTempFile>(QStringLiteral("trailer-recovered-XXXXXX.pdf"));
+    if (!recoveryCopy->isValid())
+        return false;
+    // Manual truncating byte-copy rather than QFile::copy: makeUniqueTempPath
+    // reserves-then-removes the destination, but on Windows a QTemporaryFile's
+    // handle can outlive close() so the reserved file may still exist when we
+    // get here — QFile::copy refuses to overwrite an existing destination and
+    // fails. Opening the destination WriteOnly|Truncate overwrites regardless,
+    // on every platform, and touches no non-Qt writer / rename / delete-of-open
+    // path.
+    {
+        QFile src(sidecarPath);
+        QFile dst(recoveryCopy->path());
+        if (!src.open(QIODevice::ReadOnly) ||
+            !dst.open(QIODevice::WriteOnly | QIODevice::Truncate))
+            return false;
+        constexpr qint64 kChunk = 1 << 20; // 1 MiB
+        while (!src.atEnd()) {
+            const QByteArray chunk = src.read(kChunk);
+            if (chunk.isEmpty())
+                break;
+            if (dst.write(chunk) != chunk.size())
+                return false;
+        }
+        dst.close();
+        src.close();
+    }
+    const QString content = recoveryCopy->path();
+
+    m_doc->close();
+    if (m_doc->load(content) != QPdfDocument::Error::None) {
+        m_doc->load(backing); // fall back to the untouched real file
+        return false;
+    }
+
+    m_editor = std::make_shared<PdfEditor>();
+    if (!m_editor->load(content) || !m_editor->isValid()) {
+        m_doc->close();
+        m_doc->load(backing);
+        m_editor = std::make_shared<PdfEditor>();
+        m_editor->load(backing);
+        return false;
+    }
+    m_recoveryBackingFile = std::move(recoveryCopy);
+    m_editorLoaded = true;
+    m_path = backing;
+    m_hasFormFieldsCache.reset();
+
+    // Repopulate annotations from the recovered content so they are live,
+    // editable objects again. Mirror the save-reload churn guard so this is
+    // not logged as a user edit.
+    m_suppressUndoLog = true;
+    m_annotations.clear();
+    for (Annotation &a : m_editor->readAnnotations()) {
+        m_annotations.add(std::move(a));
+    }
+    m_annotations.clearHistory();
+    m_suppressUndoLog = false;
+
+    // The store is now the single source of truth for markup annotations.
+    // Strip the managed markup annotations from the editor graph (forms/links
+    // survive) so a later explicit Save — which appends the store's set to the
+    // editor's /Annots — does not DUPLICATE the recovered annotations. Without
+    // this, recover + Save writes each recovered stroke twice.
+    m_editor->clearManagedAnnotations();
+
+    // The store is fully populated from the recovery snapshot: mark the
+    // deferred annotation load DONE so the view-attach background sweep
+    // (startBackgroundLoad, kicked from annotations()) short-circuits instead
+    // of reading the backing file and appending its annotations over the
+    // recovered set. This is the blocker guard — without it a previously-
+    // annotated backing PDF would have its saved annotations duplicated on
+    // recovery.
+    m_annotationsLoaded = true;
+    m_backgroundLoadStarted = true;
+
+    if (m_searchModel) {
+        m_searchModel->setDocument(m_doc.get());
+    }
+    if (m_view) {
+        m_view->setDocument(m_doc.get());
+    }
+
+    // The recovered edits are unsaved: mark dirty so they are visible and the
+    // close/Save flow treats them as pending. The source stays byte-identical
+    // until the user explicitly Saves.
+    m_annotationsModified = true;
+    m_dirty = true;
+    return true;
+}
+
 std::optional<PdfDocument::SaveContext> PdfDocument::saveBeginQpdfPhase(const QString &newPath) {
     // Saving flushes pending annotations into the qpdf graph, so both the
     // editor and the (possibly deferred) annotation store must be live.
@@ -1852,6 +2024,10 @@ bool PdfDocument::saveCommitOnUi(const SaveContext &ctx) {
         return false;
     }
     m_previewFile.reset();
+    // A successful Save repoints m_editor/m_doc at the backing file above, so a
+    // private recovery-backing copy (if this doc was restored from a sidecar)
+    // is no longer referenced — release it.
+    m_recoveryBackingFile.reset();
 
     if (m_searchModel) {
         m_searchModel->setDocument(m_doc.get());

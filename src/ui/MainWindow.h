@@ -437,6 +437,14 @@ class MainWindow : public QMainWindow {
     // is open. Honours `Settings::autoSave()`; flipping that off
     // pauses the timer.
     QTimer *m_autoSaveTimer = nullptr;
+    // The document whose explicit Save is running on a QtConcurrent worker
+    // (saveDocumentAsync, PDF path). The worker mutates the document's
+    // non-thread-safe qpdf editor; the auto-save tick must NOT touch the same
+    // editor (writeRecoverySnapshot) concurrently, so it skips this doc while a
+    // save is in flight. Only compared, never dereferenced. Cleared when the
+    // worker's finished slot runs and defensively when the doc is removed.
+    // (IDocument is not a QObject, so this is a raw pointer, not a QPointer.)
+    IDocument *m_docSaveInFlight = nullptr;
     // Documents whose recent-file view state has already been
     // restored on focus. Tracked per-document so a tab switch
     // doesn't bounce the user back to the saved page mid-session.

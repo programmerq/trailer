@@ -280,6 +280,22 @@ class IDocument {
     }
     virtual bool save(const QString & /*newPath*/ = {}) { return false; }
 
+    // Write a crash-recovery SNAPSHOT of the current in-memory state to
+    // `sidecarPath`, WITHOUT touching the backing file and WITHOUT clearing
+    // the dirty flag. This is what auto-save calls instead of save(): the
+    // user's file is never written except by an explicit Save/Save-As. The
+    // snapshot is a self-contained, reopenable document (same format as the
+    // backing file) so recoverFrom() can load it. Returns true on success.
+    // Adapters that have nothing to persist return false (the default).
+    virtual bool writeRecoverySnapshot(const QString & /*sidecarPath*/) { return false; }
+
+    // Reopen-recovery: replace this document's in-memory content with the
+    // content of a recovery snapshot at `sidecarPath`, but KEEP filePath()
+    // pointing at the original backing file and mark the document dirty — the
+    // recovered edits are unsaved, and the backing file stays byte-identical
+    // until the user explicitly Saves. Returns true if content was restored.
+    virtual bool recoverFrom(const QString & /*sidecarPath*/) { return false; }
+
     // --- External file-change tracking (ADR 2026-07-19) ------------------
     // Baseline captured at load time (and refreshed after each successful
     // save) so the save-time conflict guard and the ExternalChangeMonitor

@@ -2,6 +2,10 @@
 
 #include "settings/Settings.h"
 
+#include <QDesktopServices>
+#include <QObject>
+#include <QUrl>
+
 #ifdef TRAILER_UX_RECORDER
 #include <functional>
 #include <utility>
@@ -10,6 +14,10 @@
 #ifdef Q_OS_MACOS
 #include <QMessageBox>
 #include <QPushButton>
+// CGPreflightScreenCaptureAccess is declared here. It is a plain C function,
+// so this translation unit stays plain C++; we only need CoreGraphics linked
+// (see CMakeLists.txt, the if(APPLE) block on trailer_core).
+#include <CoreGraphics/CoreGraphics.h>
 #endif
 
 namespace trailer {
@@ -61,7 +69,74 @@ void acknowledgeScreenCaptureExplainer(Settings &settings) {
     settings.save();
 }
 
+ScreenCaptureFlowAction decideScreenCaptureFlow(ScreenCapturePermissionState state) {
+    switch (state) {
+    case ScreenCapturePermissionState::Granted:
+        return ScreenCaptureFlowAction::Proceed;
+    case ScreenCapturePermissionState::Denied:
+    case ScreenCapturePermissionState::Undetermined:
+        // Not-granted is arbitrated by requestScreenCaptureAccess()
+        // (CGRequestScreenCaptureAccess — prompts when truly undetermined,
+        // silent no-op when denied), so no separate explainer/degrade branch is
+        // needed at decision time. The stills flow no longer shows an explainer.
+        return ScreenCaptureFlowAction::RequestAccess;
+    }
+    return ScreenCaptureFlowAction::Proceed; // unreachable; keeps the compiler happy
+}
+
+QString screenRecordingSettingsUrlString() {
+    return QStringLiteral(
+        "x-apple.systempreferences:com.apple.preference.security"
+        "?Privacy_ScreenCapture");
+}
+
+bool openScreenRecordingSettings() {
+    return QDesktopServices::openUrl(QUrl(screenRecordingSettingsUrlString()));
+}
+
+QString screenRecordingNeededMessage() {
+    return QObject::tr(
+        "Trailer needs Screen Recording permission to capture the screen. "
+        "Enable it in System Settings ▸ Privacy & Security ▸ Screen Recording, "
+        "then reopen Trailer.");
+}
+
+ScreenCapturePermissionState queryScreenCapturePermissionState() {
 #ifdef Q_OS_MACOS
+    // The Granted check is authoritative: CGPreflightScreenCaptureAccess()
+    // reflects the live TCC state (including immediately after a
+    // `tccutil reset ScreenCapture`), without triggering the system prompt.
+    if (CGPreflightScreenCaptureAccess())
+        return ScreenCapturePermissionState::Granted;
+    // CGPreflight cannot distinguish Denied from Undetermined; return
+    // Undetermined and let the request path (CGRequestScreenCaptureAccess)
+    // arbitrate — it prompts the OS when truly undetermined (re-registering the
+    // app, e.g. after `tccutil reset`) and is a silent no-op when actually
+    // denied. Recovery of a newly-granted permission takes effect on next launch.
+    return ScreenCapturePermissionState::Undetermined;
+#else
+    // Non-macOS uses QScreen::grabWindow and needs no TCC permission.
+    return ScreenCapturePermissionState::Granted;
+#endif
+}
+
+bool requestScreenCaptureAccess() {
+#ifdef Q_OS_MACOS
+    // Prompts when undetermined (re-registering the app in TCC), silent no-op
+    // returning false when denied, true when already granted. Never shows the
+    // capture crosshair — that only happens once we shell to screencapture.
+    return CGRequestScreenCaptureAccess();
+#else
+    return true;
+#endif
+}
+
+#ifdef Q_OS_MACOS
+// NOTE: the stills capture flow (Take Screenshot / Acquire) no longer calls
+// this — the pre-permission explainer was retired for stills per the
+// capture-permission-preflight ADR / owner decision 2026-07-17; the flow now
+// leans on the OS Screen Recording prompt directly. Retained for the recorder
+// path (PR #69), which may still use the explainer helpers.
 bool maybeShowScreenCaptureExplainer(Settings &settings, QWidget *parent) {
     if (!shouldShowScreenCaptureExplainer(settings)) {
         // Already acknowledged on a previous use — proceed straight to capture.

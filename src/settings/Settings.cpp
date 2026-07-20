@@ -1,6 +1,7 @@
 #include "Settings.h"
 
 #include "AppPaths.h"
+#include "platform/ScreenCaptureBackend.h"
 
 #include <QDebug>
 #include <QDir>
@@ -30,6 +31,9 @@ std::optional<Settings::Volatility> Settings::volatilityOf(QAnyStringView key) {
     static constexpr Entry kRegistry[] = {
         {SettingsKeys::Theme, Volatility::Live},
         {SettingsKeys::OpenFilesIn, Volatility::Live},
+        // A backend swap is resolved at the capture call site, not hot-
+        // reloaded, so it only takes effect on a fresh run.
+        {SettingsKeys::CaptureBackend, Volatility::RestartRequired},
         {SettingsKeys::LastSaveDir, Volatility::Live},
         {SettingsKeys::AutoSave, Volatility::Live},
         {SettingsKeys::RecentMax, Volatility::Live},
@@ -142,6 +146,9 @@ void Settings::load() {
         if (auto v = (*general)["open_files_in"].value<std::string>()) {
             m_openFilesIn = openFilesInFromString(fromStd(*v));
         }
+        if (auto v = (*general)["capture_backend"].value<std::string>()) {
+            m_captureBackend = captureBackendFromString(fromStd(*v));
+        }
         if (auto v = (*general)["last_save_dir"].value<std::string>()) {
             m_lastSaveDir = fromStd(*v);
         }
@@ -205,6 +212,7 @@ void Settings::save() const {
     toml::table generalTbl{
         {"theme", toStd(themeToString(m_theme))},
         {"open_files_in", toStd(openFilesInToString(m_openFilesIn))},
+        {"capture_backend", toStd(captureBackendToString(m_captureBackend))},
     };
     if (!m_lastSaveDir.isEmpty()) {
         generalTbl.insert("last_save_dir", toStd(m_lastSaveDir));
@@ -260,6 +268,9 @@ void Settings::setTheme(Theme value) {
 }
 void Settings::setOpenFilesIn(OpenFilesIn value) {
     m_openFilesIn = value;
+}
+void Settings::setCaptureBackend(trailer::CaptureBackend value) {
+    m_captureBackend = value;
 }
 void Settings::setAutoSave(bool value) {
     m_autoSave = value;
