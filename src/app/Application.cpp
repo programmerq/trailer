@@ -22,10 +22,12 @@
 #include <QFileDialog>
 #include <QGuiApplication>
 #include <QImage>
+#include <QKeySequence>
 #include <QMenu>
 #include <QMenuBar>
-#include <QMimeData>
 #include <QMessageBox>
+#include <QMimeData>
+#include <QPixmap>
 #include <QProcess>
 #include <QPushButton>
 #include <QScreen>
@@ -33,6 +35,7 @@
 #include <QStandardPaths>
 #include <QUrl>
 #include <QUuid>
+#include <QWindow>
 
 namespace trailer {
 
@@ -85,6 +88,12 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
     // is torn down — closeEvent ordering is platform-dependent and a
     // window that's already deleted has no documents to enumerate.
     connect(this, &QCoreApplication::aboutToQuit, this, &Application::onAboutToQuit);
+
+    // Keep every New-from-Clipboard action's enabled state honest as the
+    // clipboard changes underneath us, so ⌘N is live rather than only
+    // re-checked when a File menu opens.
+    connect(QGuiApplication::clipboard(), &QClipboard::dataChanged, this,
+            &Application::refreshClipboardActions);
 
 #ifdef Q_OS_MACOS
     installNoWindowMenuBar();
@@ -387,9 +396,9 @@ void Application::onAboutToQuit() {
     m_settings.save();
 }
 
-#ifdef Q_OS_MACOS
 namespace {
 
+// Unique temp path for a transient import (clipboard image, screenshot).
 QString transientImportPath(const QString &prefix, const QString &ext) {
     const QString base = QStandardPaths::writableLocation(QStandardPaths::TempLocation);
     const QString stamp =
@@ -399,74 +408,144 @@ QString transientImportPath(const QString &prefix, const QString &ext) {
         QStringLiteral("trailer-%1-%2-%3.%4").arg(prefix, stamp, suffix, ext));
 }
 
-} // namespace
+// Single source of truth for "what, if anything, on the clipboard can
+// New-from-Clipboard open right now". The enable-gate
+// (clipboardHasOpenableContent) and the action (newFromClipboard) both route
+// through this so they can never disagree: precedence is image FIRST, then
+// existing local-file URLs, then an existing file path pasted as text, and
+// file URLs / text that don't exist on disk are skipped. Without this shared
+// seam a clipboard holding both an image and a stale file:// URL could enable
+// ⌘N (gate saw the image) yet open nothing (action took the dead URL).
+struct ClipboardOpenable {
+    bool hasImage = false;
+    QStringList files;
+    bool any() const { return hasImage || !files.isEmpty(); }
+};
 
-void Application::installNoWindowMenuBar() {
-    auto *bar = new QMenuBar();
-    bar->setNativeMenuBar(true);
-
-    auto *fileMenu = bar->addMenu(tr("&File"));
-
-    auto *newAction = fileMenu->addAction(tr("&New"));
-    newAction->setShortcut(QKeySequence::New);
-    connect(newAction, &QAction::triggered, this, [this]() { ensureFreshWindow(); });
-
-    auto *openAction = fileMenu->addAction(tr("&Open…"));
-    openAction->setShortcut(QKeySequence::Open);
-    connect(openAction, &QAction::triggered, this, &Application::openFilesFromDialog);
-
-    auto *newFromClipboardAction = fileMenu->addAction(tr("New from &Clipboard"));
-    connect(newFromClipboardAction, &QAction::triggered, this, &Application::newFromClipboard);
-
-    auto *acquireAction = fileMenu->addAction(tr("&Acquire…"));
-    connect(acquireAction, &QAction::triggered, this, &Application::acquireFromScreenshot);
-
-    fileMenu->addSeparator();
-
-    auto *closeWindowAction = fileMenu->addAction(tr("&Close Window"));
-    closeWindowAction->setShortcut(QKeySequence::Close);
-    connect(closeWindowAction, &QAction::triggered, this, []() {
-        if (auto *w = qobject_cast<MainWindow *>(QApplication::activeWindow())) {
-            w->close();
-        }
-    });
-
-    auto *quitAction = fileMenu->addAction(tr("&Quit"));
-    quitAction->setShortcut(QKeySequence::Quit);
-    quitAction->setMenuRole(QAction::QuitRole);
-    connect(quitAction, &QAction::triggered, this, &QCoreApplication::quit);
-
-    m_noWindowMenuBar = bar;
-}
-
-void Application::openFilesFromDialog() {
-    const QStringList paths = QFileDialog::getOpenFileNames(
-        nullptr, tr("Open files"), QString(),
-        tr("Documents (*.pdf *.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp "
-           "*.gif *.heic *.heif);;All files (*)"));
-    openFiles(paths);
-}
-
-void Application::newFromClipboard() {
-    const QMimeData *data = QGuiApplication::clipboard()->mimeData();
+ClipboardOpenable inspectClipboard() {
+    ClipboardOpenable result;
+    const QClipboard *clipboard = QGuiApplication::clipboard();
+    const QMimeData *data = clipboard->mimeData();
     if (!data)
-        return;
-
-    QStringList paths;
+        return result;
+    // Image takes precedence — matches the gate's original ordering.
+    if (data->hasImage() && !clipboard->image().isNull()) {
+        result.hasImage = true;
+        return result;
+    }
     for (const QUrl &url : data->urls()) {
         if (url.isLocalFile()) {
             const QString local = url.toLocalFile();
-            if (!local.isEmpty())
-                paths.append(local);
+            if (!local.isEmpty() && QFileInfo::exists(local))
+                result.files.append(local);
         }
     }
-    if (!paths.isEmpty()) {
-        openFiles(paths);
-        return;
-    }
+    if (!result.files.isEmpty())
+        return result;
+    const QString text = data->text().trimmed();
+    if (!text.isEmpty() && QFileInfo::exists(text))
+        result.files.append(text);
+    return result;
+}
 
-    const QImage image = QGuiApplication::clipboard()->image();
-    if (!image.isNull()) {
+} // namespace
+
+bool Application::clipboardHasOpenableContent() {
+    return inspectClipboard().any();
+}
+
+void Application::registerClipboardAction(QAction *action) {
+    if (!action)
+        return;
+    m_clipboardActions.append(QPointer<QAction>(action));
+    // Prime the state so the item is honest before its menu first opens.
+    refreshClipboardActions();
+}
+
+void Application::refreshClipboardActions() {
+    const bool ok = clipboardHasOpenableContent();
+    m_clipboardActions.removeIf([](const QPointer<QAction> &p) { return p.isNull(); });
+    for (const QPointer<QAction> &p : m_clipboardActions) {
+        if (!p)
+            continue;
+        p->setEnabled(ok);
+        // Disabled + tooltip is the honest state — never a popup that
+        // just says the clipboard is empty (PHILOSOPHY → No popup that
+        // just says "no").
+        p->setToolTip(ok ? QString()
+                         : tr("Copy an image or a file to the clipboard, then use this to open it."));
+    }
+}
+
+QAction *Application::addNewFromClipboardAction(QMenu *fileMenu) {
+    // Menu-item tooltips only render when the QMenu opts in.
+    fileMenu->setToolTipsVisible(true);
+    auto *action = fileMenu->addAction(tr("New from &Clipboard"));
+    // ⌘N / Ctrl+N. The hottest acquire path: copy an image, ⌘N, see it.
+    // Replaces the former standalone "New" (blank window) binding.
+    action->setShortcut(QKeySequence::New);
+    connect(action, &QAction::triggered, this, &Application::newFromClipboard);
+    registerClipboardAction(action);
+    // Re-check the clipboard whenever this menu is about to show, so the
+    // item is correct even between dataChanged signals.
+    connect(fileMenu, &QMenu::aboutToShow, this, &Application::refreshClipboardActions);
+    return action;
+}
+
+void Application::addAcquireItems(QMenu *fileMenu, QWidget *captureContext) {
+    fileMenu->setToolTipsVisible(true);
+
+    // Screenshot as an explicit-mode submenu. The OS picker hides its
+    // mode switch behind an undiscoverable spacebar cycle; surfacing
+    // Whole Screen / Window / Selected Area as named items makes the
+    // modes discoverable (see DR 2026-07-18-file-menu-acquire-ia, Option A).
+    QMenu *screenshotMenu = fileMenu->addMenu(tr("Screenshot"));
+    screenshotMenu->setToolTipsVisible(true);
+
+    auto *wholeScreen = screenshotMenu->addAction(tr("Whole Screen"));
+    connect(wholeScreen, &QAction::triggered, this,
+            [this, captureContext]() { captureScreenshot(ShotMode::Screen, captureContext); });
+
+    auto *window = screenshotMenu->addAction(tr("Window"));
+    connect(window, &QAction::triggered, this,
+            [this, captureContext]() { captureScreenshot(ShotMode::Window, captureContext); });
+
+    auto *selectedArea = screenshotMenu->addAction(tr("Selected Area"));
+    connect(selectedArea, &QAction::triggered, this,
+            [this, captureContext]() { captureScreenshot(ShotMode::Region, captureContext); });
+
+#ifndef Q_OS_MACOS
+    // Only whole-screen capture is meaningful via the QScreen fallback.
+    // Keep Window / Selected Area visible-but-disabled with an honest
+    // tooltip rather than dropping them (G3 + G4).
+    window->setEnabled(false);
+    window->setToolTip(tr("Window capture isn't available on this platform yet."));
+    selectedArea->setEnabled(false);
+    selectedArea->setToolTip(tr("Selected-area capture isn't available on this platform yet."));
+#endif
+
+    // Placeholders for acquire sources with no backend yet. Present but
+    // disabled + tooltip (G3; do not hide roadmap acquire sources here —
+    // they are peers of Screenshot on the acquire surface).
+    auto *scanner = fileMenu->addAction(tr("Scanner"));
+    scanner->setEnabled(false);
+    scanner->setToolTip(tr("Scanner import isn't available yet."));
+
+    auto *camera = fileMenu->addAction(tr("Camera"));
+    camera->setEnabled(false);
+    camera->setToolTip(tr("Camera import isn't available yet."));
+}
+
+void Application::newFromClipboard() {
+    // Route through the same predicate as the enable-gate so the two can't
+    // drift: image FIRST, then existing local files (URLs or a pasted path),
+    // stale/non-existent file URLs skipped.
+    const ClipboardOpenable openable = inspectClipboard();
+
+    if (openable.hasImage) {
+        const QImage image = QGuiApplication::clipboard()->image();
+        if (image.isNull())
+            return;
         const QString path = transientImportPath("clipboard", "png");
         if (image.save(path, "PNG")) {
             // Recover a devicePixelRatio for the paste. The PNG round-trip
@@ -502,42 +581,67 @@ void Application::newFromClipboard() {
             }
             setPendingCaptureDpr(dpr);
             openFiles({path});
-            return;
         }
-    }
-
-    const QString text = data->text().trimmed();
-    if (!text.isEmpty() && QFileInfo::exists(text)) {
-        openFiles({text});
         return;
     }
 
-    QMessageBox::information(nullptr, tr("New from Clipboard"),
-                             tr("Clipboard does not currently contain an image or file path."));
+    if (!openable.files.isEmpty()) {
+        openFiles(openable.files);
+        return;
+    }
+
+    // Nothing openable on the clipboard. The ⌘N item is disabled in this
+    // state, so reaching here means a programmatic trigger — say nothing
+    // (no narration popup). See PHILOSOPHY → No popup that just says "no".
 }
 
-void Application::acquireFromScreenshot() {
-    // Preflight the live Screen Recording TCC state before touching the OS
-    // selection UI (the screen-capture preflight ADR). This path has NO status
-    // bar, so a denial surfaces as ONE actionable modal (an actionable error,
-    // not narration). The pre-permission explainer is retired for stills (owner
-    // decision 2026-07-17); we lean on the OS Screen Recording prompt directly.
-    const ScreenCapturePermissionState state = queryScreenCapturePermissionState();
-    const QString path = transientImportPath("acquire", "png");
+void Application::captureScreenshot(ShotMode mode, QWidget *context) {
+    const QString path = transientImportPath("screenshot", "png");
 
-    // The native capture block. Returns true only when a real image landed at
-    // `path`. Local lambda so the RequestAccess and Proceed branches share it.
+#ifdef Q_OS_MACOS
+    // Preflight the live Screen Recording TCC state before touching the OS
+    // selection UI (the screen-capture preflight ADR). This is the single
+    // capture backend #86 introduced; both the per-window picker and the
+    // File ▸ Screenshot submenu / macOS no-window bar route through it. The
+    // pre-permission explainer is retired for stills (owner decision
+    // 2026-07-17); we lean on the OS Screen Recording prompt directly.
+    const ScreenCapturePermissionState state = queryScreenCapturePermissionState();
+
+    // The native capture block. Hides the capture context (if any) so it
+    // doesn't occlude the target, shells to the macOS capture tool for proper
+    // DPI handling and interactive selection, then restores. Returns true only
+    // when a real image landed at `path`. Local lambda so the RequestAccess and
+    // Proceed branches share it verbatim.
     auto runCapture = [&]() -> bool {
+        if (context)
+            context->hide();
+        QStringList args;
+        args << QStringLiteral("-x"); // silent (no capture sound)
+        switch (mode) {
+        case ShotMode::Screen:
+            break;
+        case ShotMode::Window:
+            args << QStringLiteral("-iW");
+            break;
+        case ShotMode::Region:
+            args << QStringLiteral("-i") << QStringLiteral("-s");
+            break;
+        }
+        args << path;
         QProcess proc;
-        proc.start(QStringLiteral("/usr/sbin/screencapture"),
-                   {QStringLiteral("-i"), QStringLiteral("-x"), path});
+        proc.start(QStringLiteral("/usr/sbin/screencapture"), args);
         proc.waitForFinished(-1);
-        const QFileInfo info(path);
+        if (context) {
+            context->show();
+            context->raise();
+            context->activateWindow();
+        }
         if (proc.exitCode() != 0) {
             // User cancelled the OS selection (Esc) — a no-op, not an error.
             // Stay silent: no dialog narrating the user's own cancel.
             return false;
         }
+        const QFileInfo info(path);
         if (!info.exists() || info.size() == 0) {
             // Exit 0 but no file: a granted user who selected nothing. Silent —
             // permission is not the problem (we only reach here after Granted or
@@ -556,26 +660,57 @@ void Application::acquireFromScreenshot() {
         if (requestScreenCaptureAccess()) {
             captured = runCapture();
         } else {
-            showScreenRecordingNeededModal(); // denied — actionable degrade
+            // Denied — actionable degrade. A window context has a status bar,
+            // so flash the recovery route there; the no-window Acquire flow
+            // (nullptr context) has none, so surface the actionable modal.
+            if (auto *mw = qobject_cast<MainWindow *>(context))
+                mw->flashError(screenRecordingNeededMessage());
+            else
+                showScreenRecordingNeededModal();
             return;
         }
         break;
     }
     if (!captured)
         return; // cancelled or empty capture — already handled silently
-    // screencapture writes raw device pixels with no dpr stamp; recover
-    // the screen dpr so a Retina capture opens 1:1 (see openFiles). This is
-    // the no-window Acquire flow (no target MainWindow to read a screen
-    // from), so we fall back to the primary screen — mirroring
-    // MainWindow::onTakeScreenshot, which prefers its own window's screen.
+    // screencapture writes raw device pixels with no dpr stamp; recover the
+    // screen dpr so a Retina capture opens 1:1 (see openFiles). Prefer the
+    // capture context's screen when we have one, else the primary screen.
     // Known limitation: an interactive `screencapture -i` on a mixed-DPI
-    // multi-monitor setup can land on a non-primary screen, so the primary
-    // screen's dpr may be wrong; owner to confirm on hardware.
-    if (auto *scr = QGuiApplication::primaryScreen())
-        setPendingCaptureDpr(scr->devicePixelRatio());
+    // multi-monitor setup can land on a non-primary screen, so the recovered
+    // dpr may be wrong; owner to confirm on hardware.
+    QScreen *dprScreen = nullptr;
+    if (context && context->window() && context->window()->windowHandle())
+        dprScreen = context->window()->windowHandle()->screen();
+    if (!dprScreen)
+        dprScreen = QGuiApplication::primaryScreen();
+    if (dprScreen)
+        setPendingCaptureDpr(dprScreen->devicePixelRatio());
+#else
+    // QScreen fallback: only whole-screen capture is supported. The
+    // Window / Selected-Area items are disabled in the UI on this
+    // platform, so `mode` should already be Screen here.
+    if (mode != ShotMode::Screen)
+        return;
+    QScreen *screen = QGuiApplication::primaryScreen();
+    if (!screen)
+        return;
+    const QPixmap shot = screen->grabWindow(0);
+    if (shot.isNull() || !shot.save(path, "PNG"))
+        return;
+    // grabWindow() stamps the screen dpr on the pixmap, but the PNG save drops
+    // it; recover it so a HiDPI capture opens 1:1 (see openFiles).
+    {
+        const double dpr =
+            shot.devicePixelRatio() > 0.0 ? shot.devicePixelRatio() : screen->devicePixelRatio();
+        setPendingCaptureDpr(dpr);
+    }
+#endif
+
     openFiles({path});
 }
 
+#ifdef Q_OS_MACOS
 void Application::showScreenRecordingNeededModal() {
     // No status bar in the no-window Acquire flow — surface the recoverable
     // degrade as one actionable modal with a direct route to the setting. This
@@ -592,6 +727,53 @@ void Application::showScreenRecordingNeededModal() {
     box.exec();
     if (box.clickedButton() == open)
         openScreenRecordingSettings(); // best-effort deep link to the pane
+}
+
+void Application::installNoWindowMenuBar() {
+    auto *bar = new QMenuBar();
+    bar->setNativeMenuBar(true);
+
+    auto *fileMenu = bar->addMenu(tr("&File"));
+    fileMenu->setToolTipsVisible(true);
+
+    // Shared create/acquire group at the top of the File menu — the same
+    // items the per-window MainWindow File menu carries, so create and
+    // acquire stay reachable whether or not a document window is key.
+    addNewFromClipboardAction(fileMenu);
+
+    auto *openAction = fileMenu->addAction(tr("&Open…"));
+    openAction->setShortcut(QKeySequence::Open);
+    connect(openAction, &QAction::triggered, this, &Application::openFilesFromDialog);
+
+    fileMenu->addSeparator();
+
+    // No window to hide during capture in no-window mode → nullptr.
+    addAcquireItems(fileMenu, nullptr);
+
+    fileMenu->addSeparator();
+
+    auto *closeWindowAction = fileMenu->addAction(tr("&Close Window"));
+    closeWindowAction->setShortcut(QKeySequence::Close);
+    connect(closeWindowAction, &QAction::triggered, this, []() {
+        if (auto *w = qobject_cast<MainWindow *>(QApplication::activeWindow())) {
+            w->close();
+        }
+    });
+
+    auto *quitAction = fileMenu->addAction(tr("&Quit"));
+    quitAction->setShortcut(QKeySequence::Quit);
+    quitAction->setMenuRole(QAction::QuitRole);
+    connect(quitAction, &QAction::triggered, this, &QCoreApplication::quit);
+
+    m_noWindowMenuBar = bar;
+}
+
+void Application::openFilesFromDialog() {
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        nullptr, tr("Open files"), QString(),
+        tr("Documents (*.pdf *.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp "
+           "*.gif *.heic *.heif);;All files (*)"));
+    openFiles(paths);
 }
 #endif
 

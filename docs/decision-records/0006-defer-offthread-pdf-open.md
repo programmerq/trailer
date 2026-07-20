@@ -86,8 +86,9 @@
 
 ## Context
 
-Opening a large PDF froze the whole app for minutes
-(`docs/backlog/2026-07-13-startup-hang-large-pdf.md`, P0). The
+Opening a large PDF froze the whole app for minutes (the former
+`2026-07-13-startup-hang-large-pdf` P0, closed by #63; residual now tracked in
+`docs/backlog/2026-07-15-offthread-pdf-open-placeholder.md`). The
 `PdfDocument` constructor ran three synchronous whole-document passes on
 the GUI thread before the view existed
 (`src/document/PdfAdapter.cpp:146-166`):

@@ -104,6 +104,10 @@ set(TRAILER_SOURCES
     src/document/ImageAdapter.cpp
     src/document/ImageAdapter.h
     src/document/CapabilityNotifier.h
+    src/document/ExternalChangeMonitor.cpp
+    src/document/ExternalChangeMonitor.h
+    src/document/ExternalChangeState.cpp
+    src/document/ExternalChangeState.h
     src/document/PdfAdapter.cpp
     src/document/PdfAdapter.h
     src/document/PdfCommands.cpp
@@ -152,6 +156,8 @@ set(TRAILER_SOURCES
     src/ui/DocumentView.h
     src/ui/EmptyStateWidget.cpp
     src/ui/EmptyStateWidget.h
+    src/ui/FileChangeBanner.cpp
+    src/ui/FileChangeBanner.h
     src/ui/MainWindow.cpp
     src/ui/MainWindow.h
     src/ui/MlProgressWidget.cpp

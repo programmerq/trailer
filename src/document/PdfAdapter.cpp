@@ -45,7 +45,11 @@
 namespace trailer {
 
 namespace {
-constexpr double kZoomStep = 1.1;
+// ~25% per zoom-in / zoom-out tap. Kept in sync with ImageAdapter's
+// kZoomStep so image and PDF zooming feel identical; raised from 1.1
+// (10%) as the finer step felt too sluggish. See ImageAdapter.cpp for
+// the fuller rationale.
+constexpr double kZoomStep = 1.25;
 constexpr double kZoomMin = 0.10;
 constexpr double kZoomMax = 16.0;
 // DPI at which pages are rasterised for OCR (renderPageForOcr). A 144-DPI
@@ -163,8 +167,9 @@ PdfDocument::PdfDocument(QString path)
     // password and calling unlock(). Everything else (corrupt,
     // missing, unsupported scheme) stays permanently invalid.
     m_needsPassword = (error == QPdfDocument::Error::IncorrectPassword);
-    // Deliberately NOT done here (P0 startup-hang fix,
-    // docs/backlog/2026-07-13-startup-hang-large-pdf.md): the qpdf
+    // Deliberately NOT done here (P0 startup-hang fix; closed by #63,
+    // residual tracked in
+    // docs/backlog/2026-07-15-offthread-pdf-open-placeholder.md): the qpdf
     // processFile parse (m_editor->load) and the all-pages annotation
     // sweep (readAnnotations) both used to run synchronously in this
     // ctor, freezing the GUI thread for minutes on large PDFs. Both now run on
@@ -174,6 +179,11 @@ PdfDocument::PdfDocument(QString path)
     // inline parse via ensureEditorLoaded() when they need a live editor
     // before the worker has finished. The kept QPdfDocument::load above is the
     // bounded progressive read that already yields pageCount + page-0.
+    //
+    // Record the on-disk identity we opened so the save-time conflict guard
+    // and the ExternalChangeMonitor can distinguish a later external write
+    // from our own (ADR 2026-07-19).
+    captureFileBaseline();
 }
 
 void PdfDocument::ensureEditorLoaded() const {
@@ -1699,6 +1709,17 @@ std::optional<PdfDocument::SaveContext> PdfDocument::saveBeginQpdfPhase(const QS
         return std::nullopt;
     }
 
+    // Save-time conflict guard (ADR 2026-07-19): refuse to overwrite the
+    // baselined original if it changed under us and this isn't a deliberate
+    // "Keep mine" clobber. Runs before any bytes are written so no on-disk
+    // data is touched; the caller surfaces the conflict banner.
+    // Capture the force state BEFORE the guard consumes it so the commit
+    // phase can honour a deliberate clobber during its own re-stat (F1).
+    const bool forced = m_forceSaveOverExternalChange;
+    if (saveWouldClobberExternalChange(targetPath)) {
+        return std::nullopt;
+    }
+
     // Order matters: apply redactions first so their rasterised page
     // image replaces the old content stream before anything else runs.
     // Then flatten signatures so they survive as page content when the
@@ -1716,6 +1737,7 @@ std::optional<PdfDocument::SaveContext> PdfDocument::saveBeginQpdfPhase(const QS
 
     SaveContext ctx;
     ctx.targetPath = targetPath;
+    ctx.forced = forced;
     ctx.sameFile = !m_path.isEmpty() && QFileInfo(targetPath).canonicalFilePath() ==
                                             QFileInfo(m_path).canonicalFilePath();
 
@@ -1743,6 +1765,24 @@ std::optional<PdfDocument::SaveContext> PdfDocument::saveBeginQpdfPhase(const QS
 
 bool PdfDocument::saveCommitOnUi(const SaveContext &ctx) {
     if (ctx.sameFile) {
+        // Commit-time re-stat guard (F1). The begin phase's guard ran on a
+        // worker thread and the destructive remove+rename below can land
+        // several seconds later; an external writer may have replaced the
+        // file in that window. Re-stat against the baseline right before we
+        // touch the on-disk file. If an uncaused external change is now
+        // present and this isn't a deliberate "Keep mine" clobber, abort
+        // WITHOUT removing/renaming — the original on-disk bytes survive and
+        // the staged temp is dropped. The caller re-checks externalChangeState
+        // and routes this to the conflict banner (F6). The baseline is left
+        // untouched so that re-check still sees the conflict.
+        if (!ctx.forced) {
+            const ExternalChangeState st = externalChangeState();
+            if (st == ExternalChangeState::CleanExternalChange ||
+                st == ExternalChangeState::DirtyConflict) {
+                QFile::remove(ctx.writePath);
+                return false;
+            }
+        }
         // Tear down our QPdfDocument's open handle so we can rename
         // over the file on Windows (Linux/macOS don't strictly need
         // this but it matches behaviour).
@@ -1814,6 +1854,74 @@ bool PdfDocument::saveCommitOnUi(const SaveContext &ctx) {
     // are retained, so rebuild the unified log to match them.
     m_undoLog.assign(m_pdfUndoStack.size(), UndoSource::PdfCommand);
     m_redoLog.assign(m_pdfRedoStack.size(), UndoSource::PdfCommand);
+    // Refresh the external-change baseline to the bytes we just wrote so our
+    // own save never trips the conflict guard / monitor (ADR 2026-07-19).
+    captureFileBaseline();
+    return true;
+}
+
+bool PdfDocument::reloadFromDisk() {
+    if (m_path.isEmpty() || !QFileInfo::exists(m_path))
+        return false;
+    ensureEditorLoaded();
+
+    const int savedPage = currentPage();
+    const double savedZoom = m_view ? m_view->zoomFactor() : 1.0;
+
+    // Rebuild the qpdf editor and the QPdfDocument from the on-disk bytes,
+    // mirroring saveCommitOnUi's reload half. A clean-doc reload discards our
+    // (empty) edit state; the banner's explicit Reload discards edits the user
+    // chose to drop, so there is nothing to preserve either way.
+    //
+    // Stage the new editor BEFORE disturbing the live one so a failed qpdf
+    // parse leaves the current document fully intact (nothing swapped, nothing
+    // closed).
+    auto newEditor = std::make_shared<PdfEditor>();
+    if (!newEditor->load(m_path)) {
+        // The current editor + QPdfDocument are untouched; the view still
+        // shows the previous content.
+        return false;
+    }
+
+    // The editor parsed. Now reload the QPdfDocument, which must close the old
+    // handle first. If that fails, restore a live document from the current
+    // path and keep the existing editor (don't swap in the staged one) so the
+    // view isn't left blank — this mirrors the editor-load-failure restore and
+    // closes the F9 partial-failure gap.
+    m_doc->close();
+    if (m_doc->load(m_path) != QPdfDocument::Error::None) {
+        m_doc->load(m_path);
+        return false;
+    }
+    m_editor = newEditor;
+    m_editorLoaded = true;
+    m_hasFormFieldsCache.reset();
+    m_previewFile.reset();
+    m_valid = true;
+
+    if (m_searchModel)
+        m_searchModel->setDocument(m_doc.get());
+    if (m_view) {
+        m_view->setDocument(m_doc.get());
+        if (savedPage >= 0 && savedPage < pageCount())
+            m_view->pageNavigator()->jump(savedPage, QPointF{}, savedZoom);
+    }
+
+    // Drop every edit stack — a reload replaces the document wholesale.
+    m_pdfUndoStack.clear();
+    m_pdfRedoStack.clear();
+    m_undoLog.clear();
+    m_redoLog.clear();
+    m_suppressUndoLog = true;
+    m_annotations.clear();
+    for (Annotation &a : m_editor->readAnnotations())
+        m_annotations.add(std::move(a));
+    m_annotations.clearHistory();
+    m_suppressUndoLog = false;
+    m_annotationsModified = false;
+    m_dirty = false;
+
+    captureFileBaseline();
     return true;
 }
 

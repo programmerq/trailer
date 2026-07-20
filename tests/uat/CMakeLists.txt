@@ -66,6 +66,11 @@ trailer_add_uat_test(test_uat_instant_alpha_and_smart_lasso
 
 trailer_add_uat_test(test_uat_recognize_text test_uat_recognize_text.cpp)
 
+# External file-change handling (ADR 2026-07-19): silent clean-reload, dirty-
+# conflict banner, deleted banner, G3 Compare placeholder. Also emits the G2
+# before/after evidence pair when TRAILER_EXTCHANGE_EVIDENCE_DIR is set.
+trailer_add_uat_test(test_uat_external_change test_uat_external_change.cpp)
+
 # Curated before/after grab() evidence for the image OCR pipeline
 # (search-enabled + honest "No text found" + single-image dialog-skip).
 # Writes PNGs to $TRAILER_OCR_EVIDENCE_DIR when set; otherwise just
@@ -117,6 +122,14 @@ target_link_libraries(test_uat_sweep PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 # fixtures use QPdfWriter (QtGui), so no Qt6::Pdf link is needed.
 trailer_add_uat_test(test_uat_empty_state test_uat_empty_state.cpp)
 
+# File-menu IA redesign UAT (DR 2026-07-18-file-menu-acquire-ia): ⌘N =
+# New from Clipboard, Screenshot submenu + Scanner/Camera placeholders,
+# acquire group stays present with a document window open, non-image
+# clipboard disables + no-ops New from Clipboard, dead ⌘⇧3 removed.
+# Drives Application + MainWindow; PDF fixture uses QPdfWriter (QtGui),
+# so no Qt6::Pdf link is needed.
+trailer_add_uat_test(test_uat_file_menu_ia test_uat_file_menu_ia.cpp)
+
 # UX recorder UI evidence (UXR-002). Recorder-only: the "● REC" chip and
 # "◉ Recording" menu exist solely in TRAILER_ENABLE_UX_RECORDER builds.
 # Writes curated offscreen grab() PNGs to the committed
@@ -129,3 +142,8 @@ if(TRAILER_ENABLE_UX_RECORDER)
     target_compile_definitions(test_uat_ux_recorder_evidence PRIVATE
         "TRAILER_UX_EVIDENCE_DIR=\"${CMAKE_SOURCE_DIR}/docs/evidence/ux-recorder\"")
 endif()
+
+# Zoom-% status indicator UAT. Drives Application + MainWindow with an
+# image document (fixture is a PNG via QImage), so no Qt6::Pdf link is
+# needed.
+trailer_add_uat_test(test_uat_zoom_indicator test_uat_zoom_indicator.cpp)

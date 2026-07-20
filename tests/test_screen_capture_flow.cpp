@@ -2,8 +2,9 @@
 // (the screen-capture preflight ADR, 2026-07-16-capture-permission-preflight.md).
 //
 // Exercises the pure, platform-agnostic pieces of the screen-capture
-// permission preflight layer that gate the two `screencapture` call sites
-// (MainWindow::onTakeScreenshot, Application::acquireFromScreenshot):
+// permission preflight layer that gate the `screencapture` call site
+// (Application::captureScreenshot, reached from MainWindow::onTakeScreenshot
+// and the File ▸ Screenshot submenu / macOS no-window bar):
 //   - decideScreenCaptureFlow(): the pure 3-state → 2-action decision table,
 //   - screenRecordingSettingsUrlString(): the deep link to the macOS Screen
 //     Recording settings pane,

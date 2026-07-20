@@ -15,10 +15,19 @@
 
 #include <memory>
 
+class QAction;
+class QMenu;
+class QWidget;
+
 namespace trailer {
 
 class MainWindow;
 class UxRecorder;
+
+// Screenshot capture mode. Shared by the File → Screenshot submenu
+// (explicit modes) and the Tools → Take Screenshot picker so both drive
+// the one capture backend (Application::captureScreenshot).
+enum class ShotMode { Screen, Window, Region };
 
 class Application : public QApplication {
     Q_OBJECT
@@ -41,6 +50,38 @@ class Application : public QApplication {
     // a HiDPI ratio. Ordinary opens leave this unset (0.0) and are
     // unaffected.
     void setPendingCaptureDpr(double dpr) { m_pendingCaptureDpr = dpr; }
+
+    // Shared "create / acquire" File-menu group. Both the per-window
+    // MainWindow File menu and the macOS no-window menu bar call these
+    // so create/acquire commands stay reachable whether or not a
+    // document window is key (the regression these fix: New /
+    // New-from-Clipboard / Acquire used to live ONLY in the macOS
+    // no-window bar and vanished the moment a window became key).
+    //
+    // addNewFromClipboardAction: the ⌘N item. Its enabled state tracks
+    // the clipboard live (image or openable file URL → enabled; else
+    // disabled + tooltip, never a popup). Opts the File menu into showing
+    // item tooltips so the disabled-state hint renders.
+    QAction *addNewFromClipboardAction(QMenu *fileMenu);
+    // addAcquireItems: the Screenshot submenu (Whole Screen / Window /
+    // Selected Area), plus disabled Scanner / Camera placeholders.
+    // `captureContext` is the window to hide during capture on macOS so
+    // it doesn't occlude the shot; nullptr from the no-window bar.
+    void addAcquireItems(QMenu *fileMenu, QWidget *captureContext);
+
+    // Open whatever the clipboard holds (image → temp PNG; file URL /
+    // path → open directly). No-op when the clipboard has nothing
+    // openable — the ⌘N action is disabled in that state, so this is
+    // only a guard, never a narration popup.
+    void newFromClipboard();
+    // Capture a screenshot in `mode` and open the result. `context` is
+    // hidden during capture on macOS. Returns silently on user-cancel.
+    void captureScreenshot(ShotMode mode, QWidget *context);
+
+    // True when the clipboard currently holds an image or an openable
+    // file (URL or an on-disk path in its text). Drives the ⌘N item's
+    // enabled state.
+    static bool clipboardHasOpenableContent();
 
     // Reopen the documents persisted at the last aboutToQuit. Honours
     // the user's "Restore previous windows on launch" setting. Called
@@ -100,6 +141,12 @@ class Application : public QApplication {
     QMenuBar *noWindowMenuBar() const { return m_noWindowMenuBar.data(); }
 #endif
 
+  public slots:
+    // Re-evaluate the enabled state + tooltip of every registered
+    // New-from-Clipboard action against the current clipboard. Wired to
+    // QClipboard::dataChanged and to each File menu's aboutToShow.
+    void refreshClipboardActions();
+
   protected:
     bool event(QEvent *event) override;
 
@@ -112,16 +159,23 @@ class Application : public QApplication {
 
   private:
     void notifyWindowsRecentChanged();
+    // Track a New-from-Clipboard action so refreshClipboardActions()
+    // keeps its enabled state + tooltip live. QPointer entries survive
+    // the owning menu/window being destroyed.
+    void registerClipboardAction(QAction *action);
 #ifdef Q_OS_MACOS
     void installNoWindowMenuBar();
     void openFilesFromDialog();
-    void newFromClipboard();
-    void acquireFromScreenshot();
     // Shared degrade UI for the no-window Acquire flow: one actionable modal
     // pointing at System Settings ▸ Screen Recording (the screen-capture
-    // preflight ADR).
+    // preflight ADR). The windowed path degrades via MainWindow::flashError
+    // instead; captureScreenshot picks the right one by context.
     void showScreenRecordingNeededModal();
 #endif
+
+    // New-from-Clipboard actions across every File menu (per-window +
+    // the macOS no-window bar). Kept in sync by refreshClipboardActions.
+    QList<QPointer<QAction>> m_clipboardActions;
 
     Settings m_settings;
     RecentFiles m_recent;

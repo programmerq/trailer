@@ -55,6 +55,13 @@ its PR **ready-for-review** as normal — per-item PRs no longer cost hosted
 minutes, and the 2026-07-09/10 batching constraint is retired. Merges to main
 remain the owner's explicit call.
 
+This applies to changes that carry **implementation** (code, tests, or a
+behavior change — a skill or runbook counts). A **proposal / decision-record /
+plan-only** change is *not* a ready-for-review deliverable: don't open a
+docs-only PR for it — request direction inline or keep it draft until the
+implementation lands, per
+[`surface-the-ask`](../surface-the-ask/SKILL.md).
+
 ## Procedure
 
 ### 0. Write the change's tests FIRST
@@ -105,7 +112,10 @@ Gather the passes and analyze them. Each finding gets exactly one disposition:
 
 ### 4. Gate
 Only after **every** finding is dispositioned (fix / justify / defer) may you
-`git push` or open the PR. After pushing/opening, proceed as normal.
+`git push` or open the PR. After pushing/opening, proceed as normal. The PR body
+must lead with its ready-to-merge ask — either the specific thing blocking merge
+or an explicit "No ask — mergeable as-is" line — per
+[`surface-the-ask`](../surface-the-ask/SKILL.md).
 
 ### 5. Inline UAT evidence in the PR (2026-07-15 refinement)
 For any UI / user-visible change, the G2 UAT evidence must be **inline** on the
@@ -127,4 +137,6 @@ curated, referenced images are committed.
 - [ ] Every finding dispositioned: fix / justify / defer-with-Decision-Record.
 - [ ] All "fix" items applied; "justify" reasons written down; "defer" records opened.
 - [ ] UI change: curated UAT evidence committed under `docs/uat/images/` and referenced inline in the PR body (throwaway captures left gitignored).
+- [ ] UI change: reviewer confirmed an inline **before/after** screenshot pair (same state in both shots) is present in the PR body before approving the push — an after-only or comment-only shot does not pass (AGENTS.md G2).
+- [ ] PR body leads with its ready-to-merge ask (blocking ask, or "No ask — mergeable as-is") per [`surface-the-ask`](../surface-the-ask/SKILL.md).
 - [ ] ONLY NOW: push / open PR.

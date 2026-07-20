@@ -17,7 +17,8 @@
 The v0.3.0 real-Mac dogfood pass (2026-07-13) found that Trailer's dark app-icon
 variant never appears on a dark-mode Mac: the Dock and Finder always render the
 light squircle, and toggling the system appearance does not swap it. The feeding
-backlog item is `docs/backlog/2026-07-13-macos-dark-app-icon.md`; the research
+backlog item is `docs/backlog/2026-07-17-adaptive-dock-icon-option-b.md` (which
+subsumes the former `2026-07-13-macos-dark-app-icon` item); the research
 brief is Theme 4 of `docs/research/2026-07-13-ux-research-agenda.md:124-149`. This
 record exists to settle the *mechanism* question that theme raises — what the
 supported way is to ship a light/dark (and macOS 26 Tahoe tinted/clear) adaptive
