@@ -799,8 +799,9 @@ across the modal.
 
 ### UAT-ANN-131 — Toolbar auto-switches to Select after a one-shot shape
 
-**Preconditions:** Markup toolbar visible. Rectangle (or any other
-drawing tool — Ellipse, Line, Arrow, Freehand, etc.) is active.
+**Preconditions:** Markup toolbar visible. A one-shot drawing tool
+(Rectangle, Ellipse, Line, Arrow — but NOT Freehand, see UAT-ANN-132)
+is active.
 
 **Steps:**
 1. Drag on the page to draw a rectangle.
@@ -812,8 +813,38 @@ drawing tool — Ellipse, Line, Arrow, Freehand, etc.) is active.
 - A follow-up click on the just-drawn rectangle selects it (does
   NOT create a second overlapping shape).
 
-**Note:** Sticky-draw mode (keep the active tool checked after
-each commit) would be an opt-in setting; it is not the default.
+**Note:** The one-shot tools (bounded shapes) flip back to Select on
+commit. The free-form Freehand (Ink) tool is the exception — it is
+sticky (UAT-ANN-132). Whether the bounded shapes should also become
+sticky is an open owner decision (parity question from PR #91).
+
+---
+
+### UAT-ANN-132 — Freehand (Ink) is sticky: consecutive strokes all draw
+
+**Preconditions:** Markup toolbar visible. Freehand (Ink) tool armed
+via the toolbar button.
+
+**Steps:**
+1. Drag on the page to draw a first stroke; release.
+2. Drag again (anywhere, including over the first stroke) to draw a
+   second stroke; release.
+
+**Expected:**
+- Both strokes are committed as independent Ink annotations.
+- After the first stroke the toolbar's checked tool STAYS on
+  **Freehand** — it does NOT revert to Select.
+- The second drag therefore draws a new stroke; it does not become a
+  rubber-band selection.
+
+**Why:** Freehand is inherently multi-stroke (you sketch, you don't
+place one mark). Auto-reverting to Select after every stroke (the
+pre-fix CF-3 behaviour, backlog
+`2026-07-20-freehand-auto-revert-drawover-noop`) made the second
+draw-over drag silently select instead of draw, with no feedback.
+This is the Preview-style sticky-draw behaviour; it is the default for
+Freehand only (the bounded shapes still flip to Select per
+UAT-ANN-131).
 
 ---
 

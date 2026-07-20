@@ -3672,6 +3672,32 @@ void MainWindow::onAnnotationSelectionChanged(int id) {
     m_inspector->setAnnotation(doc->annotations(), id);
 }
 
+namespace {
+
+// Sticky-draw tools stay active after committing a stroke, matching
+// Preview: the user draws stroke after stroke without re-arming the
+// tool between each. One-shot tools instead flip back to Select on
+// commit so the freshly-drawn shape can be grabbed to move/resize.
+//
+// CF-3 (backlog 2026-07-20-freehand-auto-revert-drawover-noop): the
+// free-form Ink tool auto-reverted after every stroke, so the user's
+// second draw-over drag silently became a rubber-band selection. Ink
+// is inherently multi-stroke (you sketch, you don't place one mark),
+// so it is sticky.
+//
+// OPEN PARITY QUESTION (owner call, still unresolved from PR #91):
+// whether the bounded shape tools (Rectangle / Ellipse / Line / Arrow)
+// should also become sticky. They are deliberately NOT sticky here —
+// flipping them would change their post-commit behaviour and needs the
+// owner's decision. When that lands, adding the relevant enumerators to
+// this predicate is the entire change; the call site below already
+// honours it uniformly.
+bool isStickyDrawTool(AnnotationTool tool) {
+    return tool == AnnotationTool::Ink;
+}
+
+} // namespace
+
 void MainWindow::onAnnotationCommitted(int /*id*/) {
     // After a shape commit, flip the markup toolbar back to Select so
     // the user can immediately grab the freshly-drawn shape to move /
@@ -3683,6 +3709,12 @@ void MainWindow::onAnnotationCommitted(int /*id*/) {
     // Guard against re-entry from this same handler: setActiveTool is
     // a no-op when the requested tool already matches the current one.
     if (!m_markupToolbar)
+        return;
+    // Sticky-draw tools (Ink today) stay armed so consecutive strokes
+    // all draw — see isStickyDrawTool above (CF-3). Without this, the
+    // toolbar reverts to Select mid-sketch and the next drag becomes a
+    // selection rubber-band instead of a stroke.
+    if (isStickyDrawTool(m_markupToolbar->activeTool()))
         return;
     if (m_markupToolbar->activeTool() == AnnotationTool::Select)
         return;
