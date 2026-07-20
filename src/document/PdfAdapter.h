@@ -144,6 +144,25 @@ class PdfDocument : public IDocument {
     void setFormFillingActive(bool active) override;
     void refreshFormView() override;
     bool isDirty() const override { return m_dirty || m_annotationsModified; }
+    // True iff this document carries STRUCTURAL (qpdf page-graph) edits —
+    // rotate / delete / move / insert / crop — as opposed to only unsaved
+    // annotation edits. The kept-windows (⌥⌘Q) capture reconstructs
+    // annotation-only dirtiness by reopening the file and re-applying the
+    // annotations editable (restoreAnnotationsFromDraft), but it CANNOT
+    // reconstruct structural edits from the annotation JSON, so a
+    // structurally-dirty PDF falls back to the per-doc prompt (flagged
+    // residual — see the decision record + docs/backlog).
+    bool hasStructuralEdits() const { return m_dirty; }
+    // Rehydrate this document from a kept-windows draft on session restore:
+    // re-apply `annotations` (the document's unsaved annotations, captured
+    // at ⌥⌘Q) as individually editable objects and, when `dirty`, mark the
+    // document modified so isDirty() reports true (it returned still-unsaved,
+    // exactly as at quit). The file's own on-disk annotations are NOT
+    // separately swept — `annotations` already carries the complete set
+    // (saved + unsaved) captured in memory — so the background sweep is
+    // short-circuited to avoid double-applying the on-disk subset. Undo
+    // history is intentionally not restored.
+    void restoreAnnotationsFromDraft(const QList<Annotation> &annotations, bool dirty);
     // PDF-level undo runs across two parallel stacks: the
     // AnnotationStore for in-memory shape edits, and a separate
     // PdfCommand stack for qpdf-level mutations (rotate / delete /
@@ -165,6 +184,8 @@ class PdfDocument : public IDocument {
     bool cropPages(const std::vector<int> &pageIndices, double leftPts, double topPts,
                    double rightPts, double bottomPts) override;
     bool save(const QString &newPath = {}) override;
+    bool writeRecoverySnapshot(const QString &sidecarPath) override;
+    bool recoverFrom(const QString &sidecarPath) override;
     bool reloadFromDisk() override;
 
     // Two-phase save for off-thread execution. The first phase
@@ -357,6 +378,15 @@ class PdfDocument : public IDocument {
     // can adopt it here by move (see startBackgroundLoad / adoptBackgroundLoadResult).
     std::shared_ptr<PdfEditor> m_editor;
     std::unique_ptr<ScopedTempFile> m_previewFile;
+    // When the document was restored from a recovery sidecar (recoverFrom),
+    // the live m_editor/m_doc are backed by a PRIVATE copy of the sidecar held
+    // here — never the deterministic sidecar path itself. Otherwise the next
+    // auto-save tick (writeRecoverySnapshot writes the deterministic sidecar
+    // for this backing path) would truncate the very file the live editor/
+    // viewer hold open, corrupting the recovered document. Removed on
+    // destruction; reset on the next Save (which repoints m_editor at the
+    // backing file).
+    std::unique_ptr<ScopedTempFile> m_recoveryBackingFile;
     QPointer<QPdfView> m_view;
     QPointer<AnnotationOverlay> m_overlay;
     QPointer<SelectableTextLayer> m_textLayer;

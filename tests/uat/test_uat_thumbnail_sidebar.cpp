@@ -28,8 +28,10 @@
 #include <QAbstractItemModel>
 #include <QColor>
 #include <QDir>
+#include <QGuiApplication>
 #include <QImage>
 #include <QListView>
+#include <QScreen>
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfDocument>
@@ -61,6 +63,26 @@ MainWindow *currentMainWindow() {
             return mw;
     }
     return nullptr;
+}
+
+// The devicePixelRatio this run was launched under. The CMake dpr matrix
+// (tests/uat/CMakeLists.txt, trailer_register_uat_dpr_matrix) sets
+// QT_SCALE_FACTOR per process; Qt reads it before QGuiApplication and
+// stamps it on every QScreen. Defaults to 1.0 when unset (a plain `ctest`
+// run). The offscreen platform reports dpr = 1 by default, so a value > 1
+// here is the proof the injection actually took — per the backlog
+// threshold, "a passing run at the ambient dpr is not evidence."
+double requestedDpr() {
+    bool ok = false;
+    const double v = qEnvironmentVariable("QT_SCALE_FACTOR").toDouble(&ok);
+    return (ok && v > 0.0) ? v : 1.0;
+}
+
+// The dpr Qt actually realized on the primary screen (what the widget tree
+// and the thumbnail render path see).
+double screenDpr() {
+    auto *s = QGuiApplication::primaryScreen();
+    return s ? s->devicePixelRatio() : 1.0;
 }
 
 // Directory that persists past the test run (mirrors the helper in
@@ -239,6 +261,24 @@ void TestUatThumbnailSidebar::checkAtWidth(MainWindow *mw, Sidebar *sidebar,
     qInfo().noquote() << "PIXMAP portrait device-width" << pPixW << "prev"
                       << m_prevPortraitPixmapW << "dpr"
                       << pPix.devicePixelRatio();
+
+    // dpr-relative crispness oracle: ThumbnailModel renders each thumbnail
+    // at the column width in DEVICE pixels (round(availW * screenDpr)), so a
+    // Retina screen must yield a proportionally larger raw pixmap — that is
+    // what keeps it sharp. A widget that hard-codes a dpr = 1 buffer (the #55
+    // bug class) leaves this at ~availW regardless of dpr. Scaling the
+    // expectation by the live screen dpr keeps the same assertion honest at
+    // 1, 1.5 and 2 rather than baking in a dpr = 1 pixel count.
+    const int expDeviceW = int(std::lround(availW * screenDpr()));
+    QVERIFY2(std::abs(pPixW - expDeviceW) <= 2,
+             qPrintable(QStringLiteral("portrait thumbnail raw width %1 px, "
+                                       "expected ~%2 (availW=%3 * dpr=%4) — a "
+                                       "dpr-blind render would sit at ~availW")
+                            .arg(pPixW)
+                            .arg(expDeviceW)
+                            .arg(availW)
+                            .arg(screenDpr())));
+
     if (m_prevPortraitPixmapW > 0) {
         QVERIFY2(pPixW > m_prevPortraitPixmapW,
                  qPrintable(QStringLiteral("wider sidebar must re-render a "
@@ -309,6 +349,22 @@ void TestUatThumbnailSidebar::checkAtWidth(MainWindow *mw, Sidebar *sidebar,
 // each page's aspect, at two distinct sidebar widths.
 void TestUatThumbnailSidebar::uat_thumb_010_scaleToWidthAndAspectRows() {
     QVERIFY(m_scratch.isValid());
+
+    // Prove the dpr injection took: the CMake matrix runs this binary under
+    // QT_SCALE_FACTOR ∈ {1, 1.5, 2}, and the whole scale-to-width oracle
+    // below is only a HiDPI test if the screen actually reports that dpr.
+    // A silent regression to dpr = 1 (env not plumbed, Qt behaviour change)
+    // would make the {1.5, 2} runs vacuous — fail loudly instead.
+    const double wantDpr = requestedDpr();
+    const double gotDpr = screenDpr();
+    qInfo().noquote() << "DPR requested" << wantDpr << "primaryScreen" << gotDpr;
+    QVERIFY2(std::abs(gotDpr - wantDpr) < 0.01,
+             qPrintable(QStringLiteral("dpr injection did not take: "
+                                       "QT_SCALE_FACTOR requested %1 but the "
+                                       "primary screen reports dpr %2")
+                            .arg(wantDpr)
+                            .arg(gotDpr)));
+
     // 6 pages: 0,2,4 portrait; 1,3,5 landscape.
     const QString pdfPath =
         writeMixedPdf(m_scratch.filePath(QStringLiteral("uat_thumb_010.pdf")), 6);

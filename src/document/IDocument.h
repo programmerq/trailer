@@ -166,6 +166,19 @@ class IDocument {
 
     virtual bool supportsEditing() const { return false; }
     virtual bool isDirty() const { return false; }
+    // True when the document has content but no user-chosen save
+    // location — its only backing is a transient temp file (e.g. a
+    // macOS "New from Clipboard" / "Acquire from screenshot" import
+    // written under QStandardPaths::TempLocation). Such a document is
+    // clean on creation (isDirty()==false) yet must NOT close silently:
+    // the transient file is subject to OS cleanup and the user never
+    // picked a real destination. Closing it therefore prompts
+    // Save-As / Discard / Cancel just like a dirty document, and a Save
+    // routes through Save-As so the user chooses a real filename. Once
+    // saved to a user-chosen path this returns false. Default false —
+    // ordinary opened documents already have a real path. See ADR-0004
+    // (no silent data loss, ever).
+    virtual bool isUntitled() const { return false; }
     virtual bool canUndo() const { return false; }
     virtual bool canRedo() const { return false; }
     // Return true iff an operation was actually reverted / reapplied.
@@ -266,6 +279,22 @@ class IDocument {
         return false;
     }
     virtual bool save(const QString & /*newPath*/ = {}) { return false; }
+
+    // Write a crash-recovery SNAPSHOT of the current in-memory state to
+    // `sidecarPath`, WITHOUT touching the backing file and WITHOUT clearing
+    // the dirty flag. This is what auto-save calls instead of save(): the
+    // user's file is never written except by an explicit Save/Save-As. The
+    // snapshot is a self-contained, reopenable document (same format as the
+    // backing file) so recoverFrom() can load it. Returns true on success.
+    // Adapters that have nothing to persist return false (the default).
+    virtual bool writeRecoverySnapshot(const QString & /*sidecarPath*/) { return false; }
+
+    // Reopen-recovery: replace this document's in-memory content with the
+    // content of a recovery snapshot at `sidecarPath`, but KEEP filePath()
+    // pointing at the original backing file and mark the document dirty — the
+    // recovered edits are unsaved, and the backing file stays byte-identical
+    // until the user explicitly Saves. Returns true if content was restored.
+    virtual bool recoverFrom(const QString & /*sidecarPath*/) { return false; }
 
     // --- External file-change tracking (ADR 2026-07-19) ------------------
     // Baseline captured at load time (and refreshed after each successful

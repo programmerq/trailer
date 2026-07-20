@@ -33,6 +33,8 @@
 #include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "ml/OcrEngine.h"
+#include "platform/QuitMenu.h"
+#include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
 #include "platform/Share.h"
 #include "settings/AppPaths.h"
@@ -49,6 +51,7 @@
 #include "document/SelectableTextStore.h"
 
 #include <QAction>
+#include <QDebug>
 #include <QDragEnterEvent>
 #include <QDropEvent>
 #include <QCheckBox>
@@ -189,18 +192,35 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     connect(m_documentView, &DocumentView::allTabsClosed, this, &MainWindow::onAllTabsClosed);
     // Unsaved-changes veto for tab closes. onTabCloseRequested emits this
     // synchronously before tearing the tab down; we prompt (reusing the
-    // same Save/Discard/Cancel flow as closeEvent) only for dirty docs
-    // and set *veto when the user aborts. A CLEAN doc is never prompted
-    // — the isDirty() guard keeps never-worry-save and auto-saved docs
-    // (which report isDirty()==false) from nagging when nothing is lost.
+    // same Save/Discard/Cancel flow as closeEvent) for dirty docs AND for
+    // untitled docs (content-bearing but backed only by a transient temp
+    // file — clean yet unsaved to any real location, so closing silently
+    // would lose the pasted/acquired content; ADR-0004). A CLEAN, titled
+    // doc is never prompted — that guard keeps never-worry-save and
+    // auto-saved docs from nagging when nothing is lost. (Note: under the
+    // recovery-sidecar model auto-save no longer clears dirty, so an
+    // auto-saved-but-unsaved doc is still dirty here and correctly routes
+    // through confirmCloseDirtyDoc, which clears its sidecar on
+    // Save/Discard.)
     connect(m_documentView, &DocumentView::documentCloseRequested, this,
             [this](IDocument *doc, bool *veto) {
-                // hasUnsavedWork() rather than isDirty() so a CLEAN doc whose
-                // backing file was DELETED on disk (buffer is the last copy —
-                // CF-7) still gets the Save/Discard/Cancel prompt instead of
-                // closing silently.
-                if (doc && doc->hasUnsavedWork())
+                // hasUnsavedWork() (not isDirty()) so a CLEAN doc whose backing
+                // file was DELETED on disk (buffer is the last copy — CF-7)
+                // still gets the Save/Discard/Cancel prompt instead of closing
+                // silently. isUntitled() keeps #78's prompt for a content-bearing
+                // untitled doc backed only by a transient temp file.
+                if (doc && (doc->hasUnsavedWork() || doc->isUntitled())) {
                     *veto = !confirmCloseDirtyDoc(doc);
+                } else if (doc && !doc->filePath().isEmpty()) {
+                    // Clean tab close: confirmCloseDirtyDoc never runs and the
+                    // window-level closeEvent clean-clear loop doesn't fire for
+                    // a single-tab close, so drop any recovery sidecar left
+                    // from an earlier dirty moment (e.g. edited, auto-
+                    // snapshotted, then undone back to clean). Otherwise a
+                    // stale sidecar would falsely "recover" the undone work on
+                    // next open. Never touches the backing file.
+                    m_app->recoveryStore().clear(doc->filePath());
+                }
             });
     // Flush per-document state keyed by raw IDocument pointer before
     // the document is destroyed. The MlScheduler owns the cancellation
@@ -209,6 +229,8 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     connect(m_documentView, &DocumentView::documentAboutToBeRemoved, this, [this](IDocument *doc) {
         if (!doc)
             return;
+        if (m_docSaveInFlight == doc)
+            m_docSaveInFlight = nullptr; // avoid a dangling compare in autoSaveDirtyDocs
         m_backgroundCandidateDocs.remove(doc);
         m_searchOcrKicked.remove(doc);
         auto it = m_pendingCandidateJobs.find(doc);
@@ -714,11 +736,17 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     });
     m_ocrPagePoll->start();
 
-    // Auto-save loop. Tick every 30 s; each tick saves any document
-    // that is dirty AND has been saved at least once (filePath() is
-    // non-empty). Untitled documents are skipped — auto-save
+    // Auto-save loop. Tick every 30 s; each tick writes a RECOVERY SIDECAR
+    // (not the backing file — see autoSaveDirtyDocs() and DR
+    // 2026-07-19-autosave-recovery-sidecar) for any document that is dirty
+    // AND has an established path. Untitled documents are skipped — auto-save
     // shouldn't pick a destination for the user. The timer respects
     // Settings::autoSave and pauses while the user has it disabled.
+    // 30 s: frequent enough that a crash loses at most ~30 s of markup, rare
+    // enough that snapshotting a large PDF doesn't churn. Range tried: 10 s
+    // (too much snapshot churn on big docs) … 60 s (too much work at risk on
+    // crash). Lower if users report lost work after a crash; raise if
+    // snapshotting stutters interaction on large documents.
     constexpr int kAutoSaveIntervalMs = 30 * 1000;
     m_autoSaveTimer = new QTimer(this);
     m_autoSaveTimer->setInterval(kAutoSaveIntervalMs);
@@ -743,11 +771,15 @@ void MainWindow::autoSaveDirtyDocs() {
         return;
     const int total = m_documentView->documentCount();
     bool savedAny = false;
-    // Mute the monitor for the whole auto-save pass so our own writes don't
-    // self-trigger a reload/banner. The adapter save-guard independently
-    // refuses to clobber a file changed under us, so a conflicting doc is
-    // simply skipped here (save() returns false) — never silently overwritten
-    // (ADR 2026-07-19).
+    // Mute #89's external-change monitor for the whole auto-save pass. This is
+    // now DEFENSIVE only: under the recovery-sidecar model (DR
+    // 2026-07-19-autosave-recovery-sidecar) auto-save writes ONLY to the
+    // recovery sidecar in app-data (QStandardPaths::AppDataLocation/autosave)
+    // and its scratch temp — never the backing file and never the source
+    // directory the monitor watches (ExternalChangeMonitor watches the source
+    // file + its parent dir) — so an auto-save tick cannot self-trigger a
+    // reload/banner. The mute is retained to preserve #89's invariant that our
+    // own writes never trip the watcher, even if a future save path changes.
     if (m_externalChangeMonitor)
         m_externalChangeMonitor->mute(true);
     for (int i = 0; i < total; ++i) {
@@ -757,18 +789,43 @@ void MainWindow::autoSaveDirtyDocs() {
         // Gate on isDirty(), NOT hasUnsavedWork(): a clean-but-externally-
         // deleted doc (CF-7) has hasUnsavedWork()==true, but silently
         // recreating a file the user may have deleted on purpose, on a timer,
-        // is worse than leaving it for the explicit banner-Save.
-        if (!doc->isDirty() || doc->filePath().isEmpty())
+        // is worse than leaving it for the explicit banner-Save. This
+        // asymmetry with the close/quit predicates is deliberate.
+        // Also skip docs with no user-chosen path — both a genuinely path-less
+        // doc and an untitled transient import (whose only path is a temp
+        // file). Auto-saving an untitled doc would silently write to the temp
+        // file and could clear its untitled state; the user must pick a real
+        // destination via Save-As, so auto-save leaves it alone.
+        if (!doc->isDirty() || doc->filePath().isEmpty() || doc->isUntitled())
             continue;
-        if (doc->save()) {
+        // Skip a document whose explicit Save is running on a worker thread:
+        // that worker is mutating the same non-thread-safe qpdf editor
+        // writeRecoverySnapshot would read, and the in-flight Save is about to
+        // persist the work to the backing file anyway.
+        if (doc == m_docSaveInFlight)
+            continue;
+        // Write-side never-worry-save invariant
+        // (docs/decision-records/2026-07-19-autosave-recovery-sidecar.md,
+        // amending ADR 0004): auto-save must NEVER write the user's backing
+        // file. It persists to a recovery sidecar in app-data instead, so no
+        // path except an explicit Save/Save-As touches the source, and an
+        // explicit Discard leaves the on-disk file byte-identical. Crash
+        // safety (never silently lose in-memory work) is met by reopen
+        // restoring from this sidecar.
+        RecoveryStore &store = m_app->recoveryStore();
+        const QString sidecar = store.sidecarPathFor(doc->filePath());
+        if (doc->writeRecoverySnapshot(sidecar)) {
+            store.recordSnapshot(doc->filePath(), sidecar);
             savedAny = true;
         }
     }
     if (m_externalChangeMonitor)
         m_externalChangeMonitor->mute(false);
     if (savedAny) {
-        updateTitleForDocument(m_documentView->currentDocument());
-        flashSuccess(tr("Auto-saved."));
+        // The document is deliberately still dirty — nothing was written to
+        // the backing file. Signal that recovery is protected, not that the
+        // file was saved.
+        flashSuccess(tr("Recovery snapshot saved."));
     }
 }
 
@@ -785,6 +842,9 @@ void MainWindow::buildMenus() {
     m_app->addNewFromClipboardAction(fileMenu);
 
     auto *openAction = fileMenu->addAction(tr("&Open…"));
+    // Stable objectName selector for the ux-walkthrough drive harness / any
+    // AT-SPI / QTest tier; survives the PR #86 File-menu IA rename.
+    openAction->setObjectName(QStringLiteral("action.file.open"));
     openAction->setShortcut(QKeySequence::Open);
     connect(openAction, &QAction::triggered, this, &MainWindow::onOpen);
 
@@ -796,6 +856,7 @@ void MainWindow::buildMenus() {
     fileMenu->addSeparator();
 
     m_saveAction = fileMenu->addAction(tr("&Save"));
+    m_saveAction->setObjectName(QStringLiteral("action.file.save"));
     m_saveAction->setShortcut(QKeySequence::Save);
     connect(m_saveAction, &QAction::triggered, this, &MainWindow::onSave);
 
@@ -856,13 +917,26 @@ void MainWindow::buildMenus() {
     fileMenu->addSeparator();
 
     auto *closeAction = fileMenu->addAction(tr("&Close Window"));
+    closeAction->setObjectName(QStringLiteral("action.file.close"));
     closeAction->setShortcut(QKeySequence::Close);
     connect(closeAction, &QAction::triggered, this, &QMainWindow::close);
 
-    auto *quitAction = fileMenu->addAction(tr("&Quit"));
-    quitAction->setShortcut(QKeySequence::Quit);
-    quitAction->setMenuRole(QAction::QuitRole);
-    connect(quitAction, &QAction::triggered, qApp, &QCoreApplication::quit);
+    m_quitAction = fileMenu->addAction(tr("&Quit"));
+    m_quitAction->setShortcut(QKeySequence::Quit);
+    m_quitAction->setMenuRole(QAction::QuitRole);
+    connect(m_quitAction, &QAction::triggered, this,
+            [this]() { m_app->requestQuit(QuitMode::Normal); });
+
+    // "Quit and Keep Windows" (⌥⌘Q). The QAction carries the functional
+    // accelerator on every platform (headless-testable); on macOS QuitMenu
+    // installs the native in-place Option swap on top — a display nicety
+    // that the feature does not depend on.
+    m_quitKeepWindowsAction = fileMenu->addAction(tr("Quit and Keep Windows"));
+    m_quitKeepWindowsAction->setShortcut(
+        QKeySequence(Qt::MetaModifier | Qt::AltModifier | Qt::Key_Q));
+    connect(m_quitKeepWindowsAction, &QAction::triggered, this,
+            [this]() { m_app->requestQuit(QuitMode::KeepWindows); });
+    QuitMenu::installAlternateKeepItem(m_quitAction, m_quitKeepWindowsAction);
 
     auto *editMenu = menuBar()->addMenu(tr("&Edit"));
     buildEditMenu(editMenu);
@@ -1283,6 +1357,10 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     viewMenu->addSeparator();
 
     m_previousPageAction = viewMenu->addAction(tr("&Previous Page"));
+    // objectName gives the ux-walkthrough drive harness (and any AT-SPI /
+    // QTest tier) a stable selector that survives menu-label / IA renames
+    // such as PR #86's File-menu reshuffle. See tools/ux-walkthrough/.
+    m_previousPageAction->setObjectName(QStringLiteral("action.view.previousPage"));
     m_previousPageAction->setShortcut(QKeySequence(Qt::Key_PageUp));
     connect(m_previousPageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
@@ -1291,6 +1369,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     });
 
     m_nextPageAction = viewMenu->addAction(tr("&Next Page"));
+    m_nextPageAction->setObjectName(QStringLiteral("action.view.nextPage"));
     m_nextPageAction->setShortcut(QKeySequence(Qt::Key_PageDown));
     connect(m_nextPageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
@@ -1302,6 +1381,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
 
     m_zoomInAction = viewMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-in.svg"), this), tr("Zoom &In"));
+    m_zoomInAction->setObjectName(QStringLiteral("action.view.zoomIn"));
     m_zoomInAction->setShortcuts({
         QKeySequence::ZoomIn,
         QKeySequence(Qt::CTRL | Qt::Key_Equal),
@@ -1315,6 +1395,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     m_zoomOutAction = viewMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-out.svg"), this),
         tr("Zoom &Out"));
+    m_zoomOutAction->setObjectName(QStringLiteral("action.view.zoomOut"));
     m_zoomOutAction->setShortcut(QKeySequence::ZoomOut);
     connect(m_zoomOutAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
@@ -1343,6 +1424,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     m_zoomActualAction = viewMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-actual.svg"), this),
         tr("&Actual Size"));
+    m_zoomActualAction->setObjectName(QStringLiteral("action.view.actualSize"));
     m_zoomActualAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
     connect(m_zoomActualAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
@@ -1537,6 +1619,7 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     m_rotateRightAction = toolsMenu->addAction(
         themedActionIcon(QStringLiteral(":/icons/actions/page-rotate-right.svg"), this),
         tr("Rotate &Right"));
+    m_rotateRightAction->setObjectName(QStringLiteral("action.tools.rotateRight"));
     m_rotateRightAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
     connect(m_rotateRightAction, &QAction::triggered, this, &MainWindow::onRotateRight);
 
@@ -1634,6 +1717,9 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     toolsMenu->addSeparator();
 
     m_screenshotAction = toolsMenu->addAction(tr("&Take Screenshot"));
+    // Stable objectName selector for the ux-walkthrough drive harness / any
+    // AT-SPI / QTest tier; survives the PR #86 File-menu IA rename.
+    m_screenshotAction->setObjectName(QStringLiteral("action.tools.takeScreenshot"));
     // No shortcut: ⌘⇧3 is OS-reserved on macOS (global capture) and
     // never reaches Trailer — a binding that can't fire is a lying
     // control. File → Screenshot's explicit modes are the discoverable
@@ -2255,7 +2341,9 @@ void MainWindow::onExportAs() {
             // workflow people expect from Preview.
             << tr("PDF document (*.pdf)");
     QString selected;
-    const QString suggested = doc->filePath().isEmpty()
+    // Same friendly-base treatment as Save-As: an untitled doc's temp path
+    // is UUID garbage, so seed the Export picker from displayName().
+    const QString suggested = (doc->filePath().isEmpty() || doc->isUntitled())
                                   ? doc->displayName()
                                   : QFileInfo(doc->filePath()).completeBaseName() + ".png";
     const QString path = QFileDialog::getSaveFileName(this, tr("Export As"), suggested,
@@ -2353,8 +2441,13 @@ void MainWindow::onTakeScreenshot() {
     else if (regionRadio->isChecked())
         mode = ShotMode::Region;
 
-    // Same capture backend as File → Screenshot (Application owns it so
-    // both the per-window menu and the macOS no-window bar share it).
+    // Same capture backend as File → Screenshot (Application owns it so both
+    // the per-window menu and the macOS no-window bar share it). Both the
+    // ScreenCaptureKit picker backend (PR #72) and the screencapture shell-out
+    // live inside Application::captureScreenshot; the permission preflight +
+    // graceful denial-degrade (the screen-capture preflight ADR) gates only the
+    // shell-out path there, and the explainer is retired for stills — we lean
+    // on the OS Screen Recording prompt directly.
     m_app->captureScreenshot(mode, this);
 }
 
@@ -2362,7 +2455,11 @@ void MainWindow::onSave() {
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsEditing())
         return;
-    if (doc->filePath().isEmpty()) {
+    // A path-less doc, or an untitled transient import (whose only path
+    // is a temp file the user never chose), must route through Save-As
+    // so the user picks a real destination rather than overwriting the
+    // temp file (ADR-0004).
+    if (doc->filePath().isEmpty() || doc->isUntitled()) {
         onSaveAs();
         return;
     }
@@ -2377,6 +2474,19 @@ void MainWindow::onSave() {
 void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
     if (!doc)
         return;
+
+    // The path the doc pointed at before this save (differs from targetPath on
+    // Save-As). An explicit Save/Save-As is the ONLY writer of the backing
+    // file, and it makes any recovery sidecar obsolete — clear the sidecars
+    // for both the prior and target paths on success.
+    const QString priorPath = doc->filePath();
+    auto clearRecovery = [this, priorPath, targetPath]() {
+        RecoveryStore &store = m_app->recoveryStore();
+        if (!priorPath.isEmpty())
+            store.clear(priorPath);
+        if (!targetPath.isEmpty() && targetPath != priorPath)
+            store.clear(targetPath);
+    };
 
     // Image saves are fast (QImage::save encodes a frame). Synchronous
     // is fine — wrapping it adds latency without benefit. PDF saves
@@ -2412,6 +2522,7 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
         }
         m_app->settings().setLastSaveDir(QFileInfo(targetPath).absolutePath());
         m_app->settings().save();
+        clearRecovery();
         updateTitleForDocument(doc);
         // Dismiss any conflict/deleted banner only now that the save actually
         // succeeded, so a failed recreate/clobber leaves the affordance up (F5).
@@ -2428,10 +2539,15 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
     progress->setAutoReset(false);
 
     using SaveResult = std::optional<PdfDocument::SaveContext>;
+    // Mark this doc as having a save in flight so the 30 s auto-save tick skips
+    // it — the worker below mutates the doc's non-thread-safe qpdf editor and
+    // writeRecoverySnapshot must not touch it concurrently.
+    m_docSaveInFlight = doc;
     auto *watcher = new QFutureWatcher<SaveResult>(this);
     connect(progress, &QProgressDialog::canceled, watcher, &QFutureWatcherBase::cancel);
     connect(watcher, &QFutureWatcher<SaveResult>::finished, this,
-            [this, watcher, progress, pdfDoc, doc, targetPath, muteMonitor]() {
+            [this, watcher, progress, pdfDoc, doc, targetPath, clearRecovery, muteMonitor]() {
+                m_docSaveInFlight = nullptr;
                 const bool wasCanceled = progress->wasCanceled();
                 progress->close();
                 progress->deleteLater();
@@ -2478,6 +2594,7 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
                 }
                 m_app->settings().setLastSaveDir(QFileInfo(targetPath).absolutePath());
                 m_app->settings().save();
+                clearRecovery();
                 updateTitleForDocument(doc);
                 // Dismiss the banner only after a confirmed successful commit so
                 // a failed clobber/recreate leaves its affordance up (F5).
@@ -2643,7 +2760,14 @@ QString MainWindow::chooseSaveAsPath(IDocument *doc) {
     // not a wholesale rewrite of the original. Plain saves keep the
     // basename so an idempotent re-save doesn't pollute the picker
     // history.
-    const QString basePath = doc->filePath().isEmpty() ? doc->displayName() : doc->filePath();
+    // An untitled transient import's filePath() is an ugly UUID temp path
+    // (trailer-clipboard-…-<uuid>.png); seeding the picker from it would
+    // pre-fill that garbage as the suggested filename. Seed from the
+    // friendly displayName() ("Untitled") instead — the user gets a clean,
+    // editable stem, and the correct extension is still resolved below.
+    const QString basePath = (doc->filePath().isEmpty() || doc->isUntitled())
+                                 ? doc->displayName()
+                                 : doc->filePath();
     QFileInfo bi(basePath);
     const QString stem = bi.completeBaseName().isEmpty() ? basePath : bi.completeBaseName();
     const QString ext = bi.suffix().isEmpty()
@@ -2836,7 +2960,9 @@ void MainWindow::updateTitleForDocument(IDocument *doc) {
     // macOS — the title bar gets a clickable folder icon for "Show
     // in Finder", drag-out, tags, and locked-state toggles. On
     // Linux / Windows it's a no-op outside Qt's internal bookkeeping.
-    setWindowFilePath(doc->filePath());
+    // For an untitled doc, clear it: exposing the transient temp path here
+    // would leak the UUID temp filename through the macOS proxy icon.
+    setWindowFilePath(doc->isUntitled() ? QString() : doc->filePath());
 
     const int idx = m_documentView->currentIndex();
     if (idx >= 0) {
@@ -3482,6 +3608,20 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // on page change / after OCR by the m_ocrPagePoll tick so the notice
     // self-clears.
     updateLargeDocOcrHint();
+
+    // Refresh the zoom readout AFTER the document's async initial fit.
+    // updateZoomIndicator() ran synchronously above, but for a document
+    // whose scale is decided by the ASYNC applyInitialFitZoom (an image
+    // that shrinks to fit, scheduled via QTimer::singleShot(0) during
+    // createView), that synchronous read is the pre-fit value (e.g.
+    // 100%) and disagrees with the render once the fit lands. This
+    // MainWindow singleShot(0) is scheduled after the doc's fit tick, so
+    // it fires later and reads the settled scale. `this` is the timer's
+    // context object, so a window closed before it fires cancels it; the
+    // readout itself re-reads the current document, tolerating a tab
+    // switch in the interim. (Live update during a window drag remains a
+    // documented pre-existing limitation — IDocument is not a QObject.)
+    QTimer::singleShot(0, this, [this]() { updateZoomIndicator(); });
 }
 
 void MainWindow::updateLargeDocOcrHint() {
@@ -3596,6 +3736,32 @@ void MainWindow::onAnnotationSelectionChanged(int id) {
     m_inspector->setAnnotation(doc->annotations(), id);
 }
 
+namespace {
+
+// Sticky-draw tools stay active after committing a stroke, matching
+// Preview: the user draws stroke after stroke without re-arming the
+// tool between each. One-shot tools instead flip back to Select on
+// commit so the freshly-drawn shape can be grabbed to move/resize.
+//
+// CF-3 (backlog 2026-07-20-freehand-auto-revert-drawover-noop): the
+// free-form Ink tool auto-reverted after every stroke, so the user's
+// second draw-over drag silently became a rubber-band selection. Ink
+// is inherently multi-stroke (you sketch, you don't place one mark),
+// so it is sticky.
+//
+// OPEN PARITY QUESTION (owner call, still unresolved from PR #91):
+// whether the bounded shape tools (Rectangle / Ellipse / Line / Arrow)
+// should also become sticky. They are deliberately NOT sticky here —
+// flipping them would change their post-commit behaviour and needs the
+// owner's decision. When that lands, adding the relevant enumerators to
+// this predicate is the entire change; the call site below already
+// honours it uniformly.
+bool isStickyDrawTool(AnnotationTool tool) {
+    return tool == AnnotationTool::Ink;
+}
+
+} // namespace
+
 void MainWindow::onAnnotationCommitted(int /*id*/) {
     // After a shape commit, flip the markup toolbar back to Select so
     // the user can immediately grab the freshly-drawn shape to move /
@@ -3607,6 +3773,12 @@ void MainWindow::onAnnotationCommitted(int /*id*/) {
     // Guard against re-entry from this same handler: setActiveTool is
     // a no-op when the requested tool already matches the current one.
     if (!m_markupToolbar)
+        return;
+    // Sticky-draw tools (Ink today) stay armed so consecutive strokes
+    // all draw — see isStickyDrawTool above (CF-3). Without this, the
+    // toolbar reverts to Select mid-sketch and the next drag becomes a
+    // selection rubber-band instead of a stroke.
+    if (isStickyDrawTool(m_markupToolbar->activeTool()))
         return;
     if (m_markupToolbar->activeTool() == AnnotationTool::Select)
         return;
@@ -4072,6 +4244,14 @@ void MainWindow::closeEvent(QCloseEvent *event) {
             continue;
         if (doc->filePath().isEmpty())
             continue;
+        // Clean docs need no recovery snapshot: drop any sidecar left over
+        // from an earlier dirty moment (e.g. edits auto-snapshotted, then
+        // undone back to clean, or already saved). Otherwise a stale sidecar
+        // newer than the source would falsely "recover" on next open. Dirty
+        // docs keep their sidecar until confirmCloseDirtyDoc resolves the
+        // close (Save or Discard both clear it there).
+        if (!doc->isDirty())
+            m_app->recoveryStore().clear(doc->filePath());
         RecentEntry state;
         state.currentPage = doc->currentPage();
         state.zoomFactor = doc->zoomFactor();
@@ -4118,17 +4298,21 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     // ask Save / Discard / Cancel. Cancel anywhere aborts the close.
     // The order is current-document-first so the user usually only
     // sees one prompt — the doc they were just looking at.
+    // Prompt for dirty docs AND for untitled docs (clean but backed only
+    // by a transient temp file — closing silently would lose the
+    // pasted/acquired content; ADR-0004).
     std::vector<IDocument *> dirty;
     dirty.reserve(static_cast<size_t>(total));
     // hasUnsavedWork() (not isDirty()) so a clean doc whose backing file was
     // deleted on disk is prompted at window-close too, not just at tab-close.
     if (auto *current = m_documentView->currentDocument()) {
-        if (current->hasUnsavedWork())
+        if (current->hasUnsavedWork() || current->isUntitled())
             dirty.push_back(current);
     }
     for (int i = 0; i < total; ++i) {
         IDocument *doc = nullptr;
-        if (m_documentView->documentAt(i, &doc) && doc && doc->hasUnsavedWork() &&
+        if (m_documentView->documentAt(i, &doc) && doc &&
+            (doc->hasUnsavedWork() || doc->isUntitled()) &&
             std::find(dirty.begin(), dirty.end(), doc) == dirty.end()) {
             dirty.push_back(doc);
         }
@@ -4148,6 +4332,33 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         // chose Discard. Drop through and let the close proceed.
     }
     event->accept();
+}
+
+std::vector<IDocument *> MainWindow::collectDirtyDocsForQuit() const {
+    // Mirror closeEvent's dirty-doc walk: current document first (so the
+    // user usually sees just one prompt — the doc they were looking at),
+    // then the rest, de-duplicated. hasUnsavedWork() OR untitled qualifies:
+    // hasUnsavedWork() (= isDirty() || externally-deleted, CF-7) so a clean
+    // doc whose backing file was deleted underneath is prompted on ⌘Q instead
+    // of quitting silently (its buffer is the last copy); an untitled doc is
+    // clean but backed only by a transient temp file, so quitting without a
+    // prompt would likewise lose its content (ADR-0004).
+    std::vector<IDocument *> dirty;
+    const int total = m_documentView->documentCount();
+    dirty.reserve(static_cast<size_t>(total));
+    if (auto *current = m_documentView->currentDocument()) {
+        if (current->hasUnsavedWork() || current->isUntitled())
+            dirty.push_back(current);
+    }
+    for (int i = 0; i < total; ++i) {
+        IDocument *doc = nullptr;
+        if (m_documentView->documentAt(i, &doc) && doc &&
+            (doc->hasUnsavedWork() || doc->isUntitled()) &&
+            std::find(dirty.begin(), dirty.end(), doc) == dirty.end()) {
+            dirty.push_back(doc);
+        }
+    }
+    return dirty;
 }
 
 bool MainWindow::confirmCloseDirtyDoc(IDocument *doc) {
@@ -4183,6 +4394,16 @@ bool MainWindow::confirmCloseDirtyDoc(IDocument *doc) {
         box.setText(tr("Save changes to %1?").arg(doc->displayName()));
         box.setStandardButtons(QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
         box.setDefaultButton(QMessageBox::Save);
+        if (doc->isUntitled()) {
+            // An untitled doc has no destination yet: Save opens a file
+            // picker, so signal that with an ellipsis (only for untitled —
+            // a titled doc writes immediately and keeps plain "Save"). Also
+            // spell out the stakes, since the content lives only in a
+            // transient temp file that would be lost on Discard.
+            if (auto *saveButton = box.button(QMessageBox::Save))
+                saveButton->setText(tr("Save…"));
+            box.setInformativeText(tr("If you don't save, this image will be lost."));
+        }
         answer = box.exec();
         break;
     }
@@ -4192,11 +4413,14 @@ bool MainWindow::confirmCloseDirtyDoc(IDocument *doc) {
         return false;
     if (answer == QMessageBox::Save) {
         bool ok = false;
-        if (doc->filePath().isEmpty()) {
-            // Untitled document: route through the Save-As dialog so the
-            // user picks a destination, then save synchronously (like the
-            // has-path branch below) so the dirty check reflects the real
-            // outcome rather than a still-pending async save.
+        if (doc->filePath().isEmpty() || doc->isUntitled()) {
+            // No user-chosen destination: a genuinely path-less doc, or
+            // an untitled transient import whose only path is a temp
+            // file. Route through the Save-As dialog so the user picks a
+            // real destination — never silently overwrite the temp file
+            // — then save synchronously (like the has-path branch below)
+            // so the dirty check reflects the real outcome rather than a
+            // still-pending async save.
             const QString path = chooseSaveAsPath(doc);
             if (path.isEmpty()) {
                 // The user cancelled Save-As. Honour the cancel: abort the
@@ -4213,7 +4437,13 @@ bool MainWindow::confirmCloseDirtyDoc(IDocument *doc) {
             return false;
         }
     }
-    // Discard, or a successful Save: proceed with closing this doc.
+    // Discard, or a successful Save: proceed with closing this doc. Either way
+    // the recovery sidecar is no longer needed — an explicit Save persisted to
+    // the backing file, and an explicit Discard drops the in-memory edits
+    // (leaving the backing file byte-identical). Delete the sidecar; it never
+    // touches the user's file.
+    if (!doc->filePath().isEmpty())
+        m_app->recoveryStore().clear(doc->filePath());
     return true;
 }
 

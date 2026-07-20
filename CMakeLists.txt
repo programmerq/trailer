@@ -164,6 +164,8 @@ FetchContent_MakeAvailable(tomlplusplus)
 
 set(TRAILER_SOURCES
     src/annotation/Annotation.h
+    src/annotation/AnnotationJson.cpp
+    src/annotation/AnnotationJson.h
     src/annotation/AnnotationStore.cpp
     src/annotation/AnnotationStore.h
     src/app/Application.cpp
@@ -189,6 +191,8 @@ set(TRAILER_SOURCES
     src/document/PdfAdapter.h
     src/document/PdfCommands.cpp
     src/document/PdfCommands.h
+    src/document/RecoveryStore.cpp
+    src/document/RecoveryStore.h
     src/document/PdfEditor.cpp
     src/document/PdfEditor.h
     src/document/SelectableTextStore.cpp
@@ -224,6 +228,8 @@ set(TRAILER_SOURCES
     src/settings/AppPaths.h
     src/settings/DocumentTypeDefaults.cpp
     src/settings/DocumentTypeDefaults.h
+    src/settings/SessionDraftStore.cpp
+    src/settings/SessionDraftStore.h
     src/settings/Settings.cpp
     src/settings/Settings.h
     src/signatures/Signature.h
@@ -285,8 +291,14 @@ set(TRAILER_SOURCES
     src/ui/ThumbnailModel.h
     src/util/TempPath.h
     src/platform/Share.h
+    src/platform/QuitMenu.h
     src/uxrecord/UxRecord.h
 )
+
+# Pure, platform-agnostic capture-backend policy (string<->enum mapping and
+# the backend-selection rule) builds everywhere; only the native probe and
+# the SCContentSharingPicker capture are per-platform, split below.
+list(APPEND TRAILER_SOURCES src/platform/ScreenCaptureBackend.cpp)
 
 # UX recorder sources are only compiled into recorder-enabled builds.
 # src/uxrecord/UxRecord.h (above) is the always-present facade whose
@@ -324,8 +336,29 @@ if(APPLE)
     list(APPEND TRAILER_SOURCES src/platform/Share.mm)
     set_source_files_properties(src/platform/Share.mm PROPERTIES
         COMPILE_FLAGS "-fobjc-arc")
+    # ScreenCaptureKit picker backend (Apple-only Objective-C++). NOT built
+    # in CI — see the header comment in MacScreenCapture.mm; requires an
+    # on-device build + the GPSC.2 smoke test before its flag default flips.
+    list(APPEND TRAILER_SOURCES src/platform/MacScreenCapture.mm)
+    set_source_files_properties(src/platform/MacScreenCapture.mm PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc")
 else()
     list(APPEND TRAILER_SOURCES src/platform/Share_stub.cpp)
+    # Non-Apple stub: same symbols, screenCaptureKitAvailable() == false so
+    # the picker backend is never selected off-Mac.
+    list(APPEND TRAILER_SOURCES src/platform/MacScreenCapture_stub.cpp)
+endif()
+
+# Per-platform "Quit and Keep Windows" native menu shim. macOS uses
+# Objective-C++ to install the NSMenuItem.alternate in-place Option swap
+# and to read NSQuitAlwaysKeepsWindows; everything else links the no-op
+# stub (the functional QAction + requestQuit + draft store work without it).
+if(APPLE)
+    list(APPEND TRAILER_SOURCES src/platform/QuitMenu.mm)
+    set_source_files_properties(src/platform/QuitMenu.mm PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc")
+else()
+    list(APPEND TRAILER_SOURCES src/platform/QuitMenu_stub.cpp)
 endif()
 
 add_library(trailer_core STATIC ${TRAILER_SOURCES} resources/trailer.qrc)
@@ -356,6 +389,23 @@ if(APPLE)
     # only frameworks; gated inside the APPLE block so the default
     # link line on Linux / Windows stays free of macOS-isms.
     target_link_libraries(trailer_core PRIVATE "-framework IOKit" "-framework CoreFoundation")
+    # CoreGraphics serves two macOS capture paths:
+    #   * ScreenCapturePermission.cpp (PR #77) calls CGPreflightScreenCaptureAccess
+    #     and CGRequestScreenCaptureAccess to preflight/request the Screen
+    #     Recording TCC state (the screen-capture preflight ADR).
+    #   * ScreenCaptureKit picker backend (MacScreenCapture.mm, PR #72): the
+    #     picker + SCScreenshotManager live in ScreenCaptureKit; CoreMedia /
+    #     CoreGraphics carry the sample/image types, and ImageIO +
+    #     UniformTypeIdentifiers do the CGImage->PNG encode.
+    # CoreGraphics is listed once here (de-duped on the #77/#72 merge) so it
+    # isn't linked twice. All macOS-only; behind if(APPLE) so the
+    # Linux/Windows link line stays clean.
+    target_link_libraries(trailer_core PRIVATE
+        "-framework ScreenCaptureKit"
+        "-framework CoreMedia"
+        "-framework CoreGraphics"
+        "-framework ImageIO"
+        "-framework UniformTypeIdentifiers")
 endif()
 if(TRAILER_ENABLE_UX_RECORDER)
     # PUBLIC so the always-present facade header (src/uxrecord/UxRecord.h)

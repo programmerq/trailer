@@ -108,6 +108,21 @@ class MainWindow : public QMainWindow {
         return m_pageHasTextCacheDoc == doc;
     }
 
+    // Quit-time support for Application::requestQuit(QuitMode::Normal).
+    // collectDirtyDocsForQuit returns this window's documents that need a
+    // save/name prompt at quit (dirty OR untitled), current-document-first
+    // so the user usually sees only one prompt. confirmCloseForQuit runs
+    // the ADR-0004 Save/Discard/Cancel prompt for one document, returning
+    // false on Cancel or a failed save (Application aborts the quit). Both
+    // reuse the same machinery as the window-close path.
+    std::vector<IDocument *> collectDirtyDocsForQuit() const;
+    bool confirmCloseForQuit(IDocument *doc) { return confirmCloseDirtyDoc(doc); }
+
+    // Test-only: the "Quit and Keep Windows" (⌥⌘Q) action, so a headless
+    // test can assert its shortcut and that triggering it routes to the
+    // KeepWindows quit path without a real menu event.
+    QAction *quitKeepWindowsActionForTesting() const { return m_quitKeepWindowsAction; }
+
     // Honest terminal message for a finished Recognize Text batch. Cancelled
     // batches report the no-changes-saved message; otherwise the message is
     // truthful about whether any text was actually recognized — a zero-block
@@ -384,6 +399,11 @@ class MainWindow : public QMainWindow {
     Sidebar *m_sidebar = nullptr;
     QMenu *m_recentMenu = nullptr;
 
+    QAction *m_quitAction = nullptr;
+    // "Quit and Keep Windows" (⌥⌘Q). Created cross-platform so the model is
+    // headless-testable; on macOS QuitMenu adds the native in-place Option
+    // swap on top. Routes to Application::requestQuit(QuitMode::KeepWindows).
+    QAction *m_quitKeepWindowsAction = nullptr;
     QAction *m_saveAction = nullptr;
     QAction *m_saveAsAction = nullptr;
     QAction *m_rotateLeftAction = nullptr;
@@ -417,6 +437,14 @@ class MainWindow : public QMainWindow {
     // is open. Honours `Settings::autoSave()`; flipping that off
     // pauses the timer.
     QTimer *m_autoSaveTimer = nullptr;
+    // The document whose explicit Save is running on a QtConcurrent worker
+    // (saveDocumentAsync, PDF path). The worker mutates the document's
+    // non-thread-safe qpdf editor; the auto-save tick must NOT touch the same
+    // editor (writeRecoverySnapshot) concurrently, so it skips this doc while a
+    // save is in flight. Only compared, never dereferenced. Cleared when the
+    // worker's finished slot runs and defensively when the doc is removed.
+    // (IDocument is not a QObject, so this is a raw pointer, not a QPointer.)
+    IDocument *m_docSaveInFlight = nullptr;
     // Documents whose recent-file view state has already been
     // restored on focus. Tracked per-document so a tab switch
     // doesn't bounce the user back to the saved page mid-session.

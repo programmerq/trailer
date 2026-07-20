@@ -39,7 +39,7 @@ jobs:
     if: |
       github.event.pull_request.merged == true &&
       contains(github.event.pull_request.labels.*.name, 'release-candidate')
-    runs-on: trailer-k8s
+    runs-on: trailer-small
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7

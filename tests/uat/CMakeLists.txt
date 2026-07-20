@@ -19,15 +19,55 @@ if(WIN32)
     list(APPEND _trailer_uat_env "QT_QPA_FONTDIR=$ENV{SystemRoot}/Fonts")
 endif()
 
-function(trailer_add_uat_test name source)
+# Build a UAT executable (link + warnings) WITHOUT registering a ctest
+# entry, so a caller can add extra link libraries and then choose how the
+# binary is registered (plain, or across the HiDPI dpr matrix below).
+function(trailer_build_uat_exe name source)
     qt_add_executable(${name} ${source})
     target_link_libraries(${name} PRIVATE trailer_core Qt6::Test)
     trailer_set_warnings(${name})
+endfunction()
+
+# Register an already-built UAT binary as a single ctest entry at the
+# platform's ambient devicePixelRatio (dpr = 1 under offscreen).
+function(trailer_register_uat_test name)
     add_test(NAME ${name} COMMAND ${name})
     set_tests_properties(${name} PROPERTIES
         LABELS "uat"
         ENVIRONMENT "${_trailer_uat_env}"
     )
+endfunction()
+
+# Register an already-built UAT binary THREE times, once per injected
+# devicePixelRatio in {1, 1.5, 2}, via a per-process QT_SCALE_FACTOR (read
+# by Qt before QGuiApplication starts, so each fresh ctest process gets the
+# requested screen dpr — the only in-process handle for a realized widget's
+# dpr is QGuiApplication::primaryScreen()->devicePixelRatio(), which the
+# offscreen plugin fixes at startup). This closes the HiDPI blind spot
+# tracked in docs/backlog/2026-07-16-hidpi-uat-harness.md: dpr=1-only runs
+# hid the #55 thumbnail and #76 capture-blur bugs that broke on Retina.
+#
+# All three entries carry the plain `uat` label so they gate at release
+# like the rest of the suite (AGENTS.md "CI cadence"); they carry NO label
+# containing a distinct substring that would exclude them. The dpr tag in
+# the test name uses '_' (1.5 -> 1_5) since ctest names avoid '.'.
+function(trailer_register_uat_dpr_matrix name)
+    foreach(_dpr IN ITEMS 1 1.5 2)
+        string(REPLACE "." "_" _tag "${_dpr}")
+        set(_tname "${name}_dpr${_tag}")
+        add_test(NAME ${_tname} COMMAND ${name})
+        # ENVIRONMENT is a ;-list; append QT_SCALE_FACTOR as one more entry.
+        set_tests_properties(${_tname} PROPERTIES
+            LABELS "uat"
+            ENVIRONMENT "${_trailer_uat_env};QT_SCALE_FACTOR=${_dpr}"
+        )
+    endforeach()
+endfunction()
+
+# Convenience: build + register a plain (ambient-dpr) UAT test.
+function(trailer_add_uat_test name source)
+    trailer_build_uat_exe(${name} ${source})
+    trailer_register_uat_test(${name})
 endfunction()
 
 trailer_add_uat_test(test_uat_foundations test_uat_foundations.cpp)
@@ -77,6 +117,14 @@ trailer_add_uat_test(test_uat_external_change test_uat_external_change.cpp)
 # asserts the wired behaviour like any other uat slot.
 trailer_add_uat_test(test_uat_ocr_evidence test_uat_ocr_evidence.cpp)
 
+# Representative offscreen evidence for the screen-capture permission preflight
+# (the screen-capture preflight ADR). The real explainer/degrade UI is mac-gated
+# and can't render on Linux, so these slots reconstruct widgets with the same
+# strings/buttons and grab them. Writes PNGs to $TRAILER_CAPTURE_EVIDENCE_DIR
+# when set; otherwise just asserts the strings like any other uat slot.
+trailer_add_uat_test(test_uat_capture_permission_evidence
+    test_uat_capture_permission_evidence.cpp)
+
 # ML status-bar affordances (ADR 0002): progress widget, scoped cancel,
 # missing-model in-context hint. Builds a multi-page PDF via QPdfWriter
 # (QtGui) for the OCR batch gates; the OCR itself runs through a test
@@ -89,8 +137,13 @@ target_link_libraries(test_uat_pdf_pages PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 # Sidebar thumbnail sizing (scale-to-width + aspect-fit rows, ADR 0006).
 # Builds a mixed portrait/landscape deck via QPdfWriter and reads back
 # per-page point sizes through QPdfDocument, so it links Qt PDF.
-trailer_add_uat_test(test_uat_thumbnail_sidebar test_uat_thumbnail_sidebar.cpp)
+#
+# Runs across the HiDPI dpr matrix {1, 1.5, 2}: the scale-to-width paint
+# oracle (painted logical width == column width) is exactly the #55 Retina
+# bug this guards, and is invisible at dpr = 1 only.
+trailer_build_uat_exe(test_uat_thumbnail_sidebar test_uat_thumbnail_sidebar.cpp)
 target_link_libraries(test_uat_thumbnail_sidebar PRIVATE Qt6::Pdf Qt6::PdfWidgets)
+trailer_register_uat_dpr_matrix(test_uat_thumbnail_sidebar)
 
 # Unified undo log past the annotation history cap (UAT-UND-150) —
 # the cap is shrunk to 5 via the store's test seam so the 70 edits
@@ -105,10 +158,18 @@ trailer_add_uat_test(test_uat_viewer test_uat_viewer.cpp)
 target_link_libraries(test_uat_viewer PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 
 # Layer-1 config-matrix robustness sweep (font-scale x RTL). Drives the
-# MainWindow shell, so it needs Qt PDF for the document view. Hard
-# oracle + fast, so it carries the plain `uat` label like the rest.
-trailer_add_uat_test(test_uat_sweep test_uat_sweep.cpp)
+# MainWindow shell (incl. the markup toolbar and side docks), so it needs
+# Qt PDF for the document view. Hard oracle + fast, so it carries the plain
+# `uat` label like the rest.
+#
+# Also runs across the HiDPI dpr matrix {1, 1.5, 2}: this is the
+# toolbar/shell-geometry surface the backlog names, and fractional scaling
+# (1.5) is where a control's minimumSizeHint can outrun its allotted box.
+# The former in-file note that "per-monitor DPI needs a per-process
+# QT_SCALE_FACTOR matrix" is now satisfied here.
+trailer_build_uat_exe(test_uat_sweep test_uat_sweep.cpp)
 target_link_libraries(test_uat_sweep PRIVATE Qt6::Pdf Qt6::PdfWidgets)
+trailer_register_uat_dpr_matrix(test_uat_sweep)
 
 # Empty-state window model UAT. Drives Application + MainWindow; PDF
 # fixtures use QPdfWriter (QtGui), so no Qt6::Pdf link is needed.
