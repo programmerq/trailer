@@ -329,6 +329,16 @@ class TestUatExternalChange : public QObject {
         QVERIFY(doc->hasUnsavedWork());
         QVERIFY(mw->windowTitle().contains(QStringLiteral("• ")));
 
+        // The tab bar auto-hides with a single document; force it visible for
+        // the evidence grab so the "•" unsaved marker on the tab is captured
+        // (the OS title bar, which also carries it, is outside a widget grab).
+        dv->setTabBarAutoHide(false);
+        QApplication::processEvents();
+        // G2 evidence: clean doc whose file was deleted now carries the "•"
+        // unsaved marker on its tab, alongside the deleted banner (CF-7).
+        grabTo(mw, QStringLiteral("deleted-clean-doc-dirty-marker.png"));
+        dv->setTabBarAutoHide(true);
+
         // The user dismisses the banner (hides the warning) then closes the tab.
         banner->dismiss();
         QApplication::processEvents();
