@@ -284,6 +284,23 @@ void Application::openFiles(const QStringList &paths) {
     for (const QString &path : paths) {
         auto doc = m_registry.open(path);
 
+        // Reopen-recovery: if a newer auto-save recovery sidecar exists for
+        // this backing file (e.g. the app crashed mid-session before an
+        // explicit Save), silently restore the in-progress edit as a dirty
+        // document. The backing file is not touched — it stays byte-identical
+        // until the user Saves; if they Discard, their file was never
+        // modified. Sidecars live in app-data, so this reads only our own
+        // snapshot, never the user's directory.
+        if (doc && !path.isEmpty()) {
+            if (const auto sidecar = m_recoveryStore.pendingRecovery(path)) {
+                if (!doc->recoverFrom(*sidecar)) {
+                    // Restore failed (corrupt/unreadable snapshot): drop the
+                    // stale sidecar and open the pristine backing file.
+                    m_recoveryStore.clear(path);
+                }
+            }
+        }
+
         if (captureDpr > 0.0) {
             // Stamp the real screen dpr onto capture-origin images so the
             // viewer treats device px as logical px / dpr, opens at

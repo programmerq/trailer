@@ -1,6 +1,7 @@
 #pragma once
 
 #include "document/DocumentRegistry.h"
+#include "document/RecoveryStore.h"
 #include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "recent/RecentFiles.h"
@@ -119,6 +120,7 @@ class Application : public QApplication {
     RecentFiles &recentFiles() { return m_recent; }
     DocumentTypeDefaults &documentTypeDefaults() { return m_typeDefaults; }
     DocumentRegistry &registry() { return m_registry; }
+    RecoveryStore &recoveryStore() { return m_recoveryStore; }
     ModelRegistry &modelRegistry() { return m_modelRegistry; }
     MlScheduler &mlScheduler() { return m_mlScheduler; }
 
@@ -181,6 +183,7 @@ class Application : public QApplication {
     RecentFiles m_recent;
     DocumentTypeDefaults m_typeDefaults;
     DocumentRegistry m_registry;
+    RecoveryStore m_recoveryStore;
     ModelRegistry m_modelRegistry;
     // Single ML task scheduler shared across MainWindows. Holds a
     // worker thread + power-policy watcher; lives as long as the

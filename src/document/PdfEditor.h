@@ -85,6 +85,18 @@ class PdfEditor {
     // visible in readers that don't render annotation appearances.
     bool writeAnnotations(const std::vector<Annotation> &annotations);
 
+    // Remove every Trailer-managed markup annotation from every page's
+    // /Annots array: the /Subtype values readAnnotations()/writeAnnotations()
+    // round-trip (/Ink, /Square, /Circle, /Line, /FreeText, /Text, /Highlight,
+    // /Underline, /StrikeOut) plus their owned /Popup entries (removed too so
+    // no popup is left orphaned with a /Parent pointing at a now-absent
+    // annotation). Non-markup entries — form-field /Widget and /Link — are
+    // left untouched. Used before rewriting the annotation set from an
+    // authoritative in-memory store so managed annotations already present in
+    // the graph are not duplicated. Returns true on success (a document with
+    // no /Annots is success).
+    bool clearManagedAnnotations();
+
     // Flatten every Signature-typed annotation into its page's content
     // stream by embedding the referenced PNG as an image XObject and
     // emitting `q cm Do Q` drawing commands. The annotations themselves

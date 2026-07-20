@@ -208,7 +208,7 @@ class TestUatFoundations : public QObject {
     void uat_fnd_011_macosNoWindowMenuProvidesFileActions();
     void uat_fnd_016_toggleSidebar();
     void uat_fnd_020_flashErrorRoutesToStatusBarNotModal();
-    void uat_fnd_030_autoSaveWritesDirtyDocsWithPath();
+    void uat_fnd_030_autoSaveWritesRecoverySidecarNotBackingFile();
     void uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs();
     // UAT-FND-014 — closing a dirty tab prompts Save/Discard/Cancel
     // instead of silently discarding unsaved edits. One slot per row of
@@ -546,13 +546,24 @@ void TestUatFoundations::uat_fnd_020_flashErrorRoutesToStatusBarNotModal() {
     QVERIFY(mw->statusBar()->currentMessage().contains(QStringLiteral("not supported")));
 }
 
-// UAT-FND-030 — Auto-save writes the file when a document is dirty
-// and has an established path. The 30 s timer's slot is exposed as a
-// public method so the test can trigger it without waiting.
-void TestUatFoundations::uat_fnd_030_autoSaveWritesDirtyDocsWithPath() {
+// UAT-FND-030 — Auto-save writes a RECOVERY SIDECAR, never the backing
+// file. Per the write-side never-worry-save invariant
+// (docs/decision-records/2026-07-19-autosave-recovery-sidecar.md, amending
+// ADR 0004): no path except an explicit Save/Save-As may write the user's
+// file, so an auto-save tick must leave the backing file byte-identical AND
+// leave the document dirty (its edits are still unsaved), while protecting
+// the work in a sidecar so a crash can't lose it. The 30 s timer's slot is
+// exposed as a public method so the test can trigger it without waiting.
+void TestUatFoundations::uat_fnd_030_autoSaveWritesRecoverySidecarNotBackingFile() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writeTinyPdf(m_scratch.filePath("uat_fnd_030.pdf"));
-    const auto sizeBefore = QFileInfo(pdfPath).size();
+
+    auto readAll = [](const QString &p) {
+        QFile f(p);
+        return f.open(QIODevice::ReadOnly) ? f.readAll() : QByteArray();
+    };
+    const QByteArray bytesBefore = readAll(pdfPath);
+    QVERIFY(!bytesBefore.isEmpty());
 
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
@@ -562,18 +573,10 @@ void TestUatFoundations::uat_fnd_030_autoSaveWritesDirtyDocsWithPath() {
 
     MainWindow *mw = currentMainWindow();
     QVERIFY(mw);
-    auto *dv = mw->findChild<QTabWidget *>();
-    QVERIFY(dv);
-
-    // Mutate the active doc so isDirty() reports true. Adding an
-    // empty rectangle annotation through the public API (the same
-    // path the markup toolbar uses) is enough.
-    auto *doc = qobject_cast<MainWindow *>(mw)->findChild<QObject *>();
-    Q_UNUSED(doc);
-    // Use the test-friendly path: rotate the page (mutates state) so
-    // isDirty becomes true via the document's normal write path.
     auto *dvCast = mw->findChild<DocumentView *>();
     QVERIFY(dvCast);
+    // Mutate the active doc so isDirty() reports true (rotate is a normal
+    // editing op that dirties the document).
     if (auto *idoc = dvCast->currentDocument()) {
         idoc->rotatePage(0, 90);
         QVERIFY2(idoc->isDirty(), "rotating a page should make the document dirty");
@@ -583,15 +586,20 @@ void TestUatFoundations::uat_fnd_030_autoSaveWritesDirtyDocsWithPath() {
     mw->autoSaveDirtyDocs();
     QApplication::processEvents();
 
-    // The file on disk should have been rewritten — its size will
-    // typically change after a rotate, but at minimum its mtime
-    // changes. Assert the doc is now clean (auto-save cleared dirty).
-    auto *idocAfter = dvCast->currentDocument();
-    QVERIFY2(idocAfter && !idocAfter->isDirty(),
-             "After autoSaveDirtyDocs() the doc should no longer be dirty");
+    // The backing file must be byte-for-byte unchanged: auto-save never
+    // writes the user's file.
+    QVERIFY2(readAll(pdfPath) == bytesBefore,
+             "auto-save must NOT write the backing file — it stays byte-identical");
 
-    // sizeBefore captured pre-edit; the post-save file is rewritten.
-    Q_UNUSED(sizeBefore);
+    // The document stays dirty: nothing was saved to the file, so the edit is
+    // still unsaved (and the close prompt must still fire for it).
+    auto *idocAfter = dvCast->currentDocument();
+    QVERIFY2(idocAfter && idocAfter->isDirty(),
+             "After auto-save the doc stays dirty — the backing file was not written");
+
+    // The work is protected: a recovery sidecar now exists for this file.
+    QVERIFY2(app->recoveryStore().pendingRecovery(pdfPath).has_value(),
+             "auto-save must leave a recoverable sidecar so a crash can't lose the work");
 }
 
 // UAT-FND-031 — Auto-save MUST NOT pick a destination for the user;

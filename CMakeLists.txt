@@ -189,6 +189,8 @@ set(TRAILER_SOURCES
     src/document/PdfAdapter.h
     src/document/PdfCommands.cpp
     src/document/PdfCommands.h
+    src/document/RecoveryStore.cpp
+    src/document/RecoveryStore.h
     src/document/PdfEditor.cpp
     src/document/PdfEditor.h
     src/document/SelectableTextStore.cpp
