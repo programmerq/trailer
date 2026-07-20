@@ -53,6 +53,7 @@
 #include <QDebug>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QEvent>
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialog>
@@ -318,6 +319,14 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         if (m_app)
             m_app->openFiles(p);
     });
+    // Clicking an inline recent entry opens it through the same flow as
+    // File → Open Recent (rebuildRecentMenu's per-action lambda) so the
+    // two surfaces stay behaviourally identical.
+    connect(m_emptyState, &EmptyStateWidget::openRecentRequested, this,
+            [this](const QString &path) {
+                if (m_app)
+                    m_app->openFiles({path});
+            });
 
     m_centerStack->addWidget(m_documentPage);
     m_centerStack->addWidget(m_emptyState);
@@ -1486,15 +1495,15 @@ void MainWindow::buildWindowMenu(QMenu *windowMenu) {
     connect(minimize, &QAction::triggered, this, &QWidget::showMinimized);
 
     auto *zoom = windowMenu->addAction(tr("&Zoom"));
+    m_maximizeAction = zoom;
     // "Zoom" is the native macOS Window-menu term. On other platforms it
     // collides with the app's content zoom (View → Zoom In/Out) and isn't a
     // platform convention, so relabel to the honest term for what it does
     // (maximize/restore toggle). Behavior is unchanged on all platforms.
     // On macOS the action keeps its creation text ("&Zoom"); only the
-    // non-mac relabel is meaningful.
-#ifndef Q_OS_MACOS
-    zoom->setText(tr("&Maximize"));
-#endif
+    // non-mac relabel is meaningful. On Win/Linux updateMaximizeActionLabel()
+    // then keeps it tracking the live window state ("Maximize" ↔ "Restore").
+    updateMaximizeActionLabel();
     connect(zoom, &QAction::triggered, this, [this]() {
         // macOS "Zoom" toggles between user-sized and the OS's
         // ideal-for-content size. QWidget doesn't expose that
@@ -1531,6 +1540,11 @@ void MainWindow::buildWindowMenu(QMenu *windowMenu) {
 void MainWindow::refreshWindowMenuList() {
     if (!m_windowMenu || !m_windowMenuListSeparator)
         return;
+    // Belt-and-suspenders: retitle the maximize/restore action right
+    // before the menu is shown, so it is correct even if a window-state
+    // change slipped past changeEvent (e.g. a platform that batches the
+    // notification). No-op on macOS.
+    updateMaximizeActionLabel();
     // Drop every action after the sentinel separator and rebuild.
     const auto actions = m_windowMenu->actions();
     bool past = false;
@@ -1555,6 +1569,25 @@ void MainWindow::refreshWindowMenuList() {
             w->activateWindow();
         });
     }
+}
+
+void MainWindow::updateMaximizeActionLabel() {
+#ifndef Q_OS_MACOS
+    // Non-mac: the action is the honest maximize/restore toggle, so its
+    // label must state which way it will act. macOS keeps the static
+    // native "Zoom" term (the platform-native shape) and is skipped.
+    if (m_maximizeAction)
+        m_maximizeAction->setText(isMaximized() ? tr("&Restore") : tr("&Maximize"));
+#endif
+}
+
+void MainWindow::changeEvent(QEvent *event) {
+    QMainWindow::changeEvent(event);
+    // A maximize/restore (or any window-state transition) must retitle the
+    // Window-menu action immediately, not only when the menu next opens,
+    // so a user watching the menu bar sees an honest label.
+    if (event->type() == QEvent::WindowStateChange)
+        updateMaximizeActionLabel();
 }
 
 void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
@@ -3748,6 +3781,14 @@ void MainWindow::rebuildRecentMenu() {
     m_recentMenu->clear();
 
     const auto entries = m_app->recentFiles().entries();
+    // Keep the empty state's inline Open Recent list in lockstep with the
+    // menu: this runs both at window construction and on every recents
+    // change (Application::notifyWindowsRecentChanged), so refreshing here
+    // covers a list that is already on screen. The widget caps and hides
+    // itself when the list is empty.
+    if (m_emptyState)
+        m_emptyState->setRecentEntries(entries);
+
     if (entries.isEmpty()) {
         auto *empty = m_recentMenu->addAction(tr("(Empty)"));
         empty->setEnabled(false);
