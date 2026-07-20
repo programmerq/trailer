@@ -307,15 +307,25 @@ void Application::openFiles(const QStringList &paths) {
         }
     }
 
+    // Consume the reuse candidate at most once, then fall back to a fresh
+    // window. Shared by the image-batch target below and the per-file
+    // NewWindow loop so the consume-once invariant lives in one place and
+    // can't drift between the two call sites.
+    auto takeReuseOrFresh = [&]() -> MainWindow * {
+        if (reuseCandidate) {
+            MainWindow *w = reuseCandidate;
+            reuseCandidate = nullptr;
+            return w;
+        }
+        return ensureFreshWindow();
+    };
+
     // An image batch shares one window (the tab strip) rather than spawning
     // N frames. Reuse the empty launch window as that batch window when one
-    // is available so the batch path no longer orphans it; consume the
-    // candidate so the single-file loop below can't claim it a second time.
-    MainWindow *batchTarget = nullptr;
-    if (batchedImages) {
-        batchTarget = reuseCandidate ? reuseCandidate : ensureFreshWindow();
-        reuseCandidate = nullptr;
-    }
+    // is available so the batch path no longer orphans it; taking the
+    // candidate here consumes it so the single-file loop below can't claim
+    // it a second time.
+    MainWindow *batchTarget = batchedImages ? takeReuseOrFresh() : nullptr;
 
     for (const QString &path : paths) {
         auto doc = m_registry.open(path);
@@ -365,14 +375,9 @@ void Application::openFiles(const QStringList &paths) {
                 // multiple entries we spawn a separate window for
                 // each so the user can arrange them independently.
                 // CF-5: the FIRST file reuses an empty launch window
-                // if one is available; consume the candidate so it's
-                // used at most once, then subsequent files spawn fresh.
-                if (reuseCandidate) {
-                    target = reuseCandidate;
-                    reuseCandidate = nullptr;
-                } else {
-                    target = ensureFreshWindow();
-                }
+                // if one is available (consume-once), then subsequent
+                // files spawn fresh.
+                target = takeReuseOrFresh();
                 break;
             case OpenFilesIn::SameWindow:
             case OpenFilesIn::NewTab:
