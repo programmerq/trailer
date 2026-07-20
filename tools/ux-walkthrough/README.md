@@ -35,12 +35,16 @@ menus and modal dialogs are included) via ImageMagick `import` (xwd fallback).
 
 The scripts drive the app through **keyboard shortcuts** (`Ctrl+O`, `Ctrl+=`,
 `Ctrl+W`, …) plus **Qt `objectName`s** for identifying widgets — never pixel
-coordinates and never menu *label text*. Shortcuts are stable across **PR #86's
-File-menu information-architecture rename**, which moves/renames menu items but
-keeps their `QKeySequence` bindings. (A `menu()` mnemonic-driving verb also
-exists in the DSL for future menu-walking, but no golden path uses it today —
-all four drive via shortcuts, so the resilient-selector guarantee rests on
-shortcuts + `objectName`s.)
+coordinates and never menu *label text*. Most shortcuts are stable across **PR
+#86's File-menu information-architecture rename**, which moves/renames menu items
+but keeps their `QKeySequence` bindings. The one exception is **Tools → Take
+Screenshot**: #86 deliberately *removed* its OS-reserved `⌘⇧3` binding as a lying
+control (DR `2026-07-18-file-menu-acquire-ia`), so that action now has a stable
+`objectName` but no shortcut. Golden path 2 therefore reaches it with the
+`menupick` verb (open the menu by its Alt mnemonic, trigger the item by its own
+mnemonic — `Alt+T`, then `T`), which is likewise stable across the IA rename and
+uses no pixel geometry. The other three paths drive purely via shortcuts +
+`objectName`s.
 
 For any future AT-SPI / QTest tier that wants to target widgets by name, the
 actions the golden paths touch now carry stable `objectName`s (added in
@@ -48,9 +52,11 @@ actions the golden paths touch now carry stable `objectName`s (added in
 `action.file.close`, `action.view.zoomIn` / `.zoomOut` / `.actualSize` /
 `.nextPage` / `.previousPage`, `action.tools.rotateRight` /
 `action.tools.takeScreenshot`, plus the pre-existing `zoomIndicator`.
-**#86 conflict note:** if #86 renames these actions, keep the `objectName`s (or
-re-point the harness at the new ones); the shortcut-based driving keeps working
-regardless.
+**#86 conflict note (resolved):** #86 renamed/moved these File-menu actions and
+removed the `⌘⇧3` screenshot binding; the merge re-attached every `objectName`
+above to its (possibly renamed) action and switched path 2 to `menupick` for the
+now-shortcut-less Take Screenshot. Shortcut-based driving keeps working for the
+other actions, whose bindings #86 preserved.
 
 ## Requirements
 

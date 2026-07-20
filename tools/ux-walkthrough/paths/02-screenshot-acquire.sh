@@ -4,11 +4,17 @@
 # Persona-(A) goal: invoke the screenshot/acquire action and confirm the
 # captured image opens as a document.
 #
-# Linux/Tier-1 reality: Tools -> Take Screenshot (Ctrl+Shift+3,
-# objectName action.tools.takeScreenshot) IS present on Linux. It shows a
+# Linux/Tier-1 reality: Tools -> Take Screenshot (objectName
+# action.tools.takeScreenshot) IS present on Linux. It shows a
 # capture-mode dialog, then whole-screen capture goes through
 # QScreen::grabWindow(0) (src/ui/MainWindow.cpp onTakeScreenshot #else
 # branch) and opens the grab as a document — which works under Xvfb.
+#
+# SELECTOR NOTE: this action carries a stable objectName but NO keyboard
+# shortcut — PR #86 removed the OS-reserved ⌘⇧3 binding as a lying control
+# (DR 2026-07-18-file-menu-acquire-ia). We reach it by menu mnemonic
+# (Tools -> Take Screenshot => Alt+T, then T), which is stable across the
+# File-menu IA rename and needs no pixel geometry.
 #
 # HONEST PLATFORM BOUNDARIES:
 #   * Window/region capture are disabled on Linux (a G3 non-lying-control
@@ -39,7 +45,7 @@ shot
 # --- Step 2: open the capture dialog --------------------------------------
 step "take-screenshot-dialog" \
     "Tools -> Take Screenshot opens the capture-mode dialog (whole-screen; window/region disabled on Linux)."
-press "ctrl+shift+3"   # objectName action.tools.takeScreenshot
+menupick t t           # Tools -> Take Screenshot (objectName action.tools.takeScreenshot; no shortcut post-#86)
 assert_window "Take Screenshot"
 boundary "Window/region modes disabled on Linux (non-lying control + note); macOS TCC prompt -> owner real-Mac checklist."
 shot

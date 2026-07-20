@@ -139,6 +139,23 @@ menu() {
     _settle
 }
 
+# Open a menu-bar menu by its Alt mnemonic and trigger one of its items by the
+# item's own mnemonic letter, in a single focus-stable sequence (activate once,
+# open the menu, then send the item key WITHOUT re-raising the main window — so
+# the open popup keeps its keyboard grab). Used for actions that carry a stable
+# objectName but no keyboard shortcut — e.g. Tools -> Take Screenshot
+# (action.tools.takeScreenshot), whose OS-reserved ⌘⇧3 binding PR #86 removed as
+# a lying control (DR 2026-07-18-file-menu-acquire-ia). Reaching it by mnemonic
+# keeps the selector stable without pixel geometry. Requires the item's mnemonic
+# to be unique within the menu.
+menupick() {
+    activate
+    xdotool key --clearmodifiers "alt+$1"
+    _settle
+    xdotool key --clearmodifiers "$2"
+    _settle
+}
+
 # Begin a numbered step. Records the label + expected effect that the judge
 # persona measures the screenshot against.
 step() {
