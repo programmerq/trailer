@@ -299,6 +299,9 @@ set(TRAILER_SOURCES
 # the backend-selection rule) builds everywhere; only the native probe and
 # the SCContentSharingPicker capture are per-platform, split below.
 list(APPEND TRAILER_SOURCES src/platform/ScreenCaptureBackend.cpp)
+# Pure Linux/Wayland capture-capability policy (no #ifdef, no native calls) —
+# builds and tests everywhere, like ScreenCaptureBackend.cpp above.
+list(APPEND TRAILER_SOURCES src/platform/LinuxCaptureCapability.cpp)
 
 # UX recorder sources are only compiled into recorder-enabled builds.
 # src/uxrecord/UxRecord.h (above) is the always-present facade whose

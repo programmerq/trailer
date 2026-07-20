@@ -33,6 +33,7 @@
 #include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "ml/OcrEngine.h"
+#include "platform/LinuxCaptureCapability.h"
 #include "platform/QuitMenu.h"
 #include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
@@ -2398,9 +2399,26 @@ void MainWindow::onTakeScreenshot() {
 #ifndef Q_OS_MACOS
     windowRadio->setEnabled(false);
     regionRadio->setEnabled(false);
-    auto *note = new QLabel(tr("Only whole-screen capture is supported on this platform. "
-                               "Window and region capture are tracked in TODO.md."),
-                            &dialog);
+    // On a Wayland session (native OR XWayland) grabWindow yields a null/black
+    // pixmap, so even Whole Screen can't act. Gate it consistently with the
+    // File → Screenshot menu (Application::addAcquireItems): disable the
+    // Whole Screen radio (and thus the OK path) and show the honest message
+    // instead of the false "only whole-screen is supported" note. Genuine X11
+    // and offscreen keep Whole Screen enabled and the original note.
+    const bool waylandNoCapture =
+        trailer::linuxCaptureCapability(QGuiApplication::platformName(),
+                                        qEnvironmentVariableIsSet("WAYLAND_DISPLAY"),
+                                        /*portalUsable=*/false) ==
+        trailer::LinuxCaptureCapability::WaylandNoCapture;
+    QLabel *note = nullptr;
+    if (waylandNoCapture) {
+        screenRadio->setEnabled(false);
+        note = new QLabel(trailer::waylandCaptureUnavailableMessage(), &dialog);
+    } else {
+        note = new QLabel(tr("Only whole-screen capture is supported on this platform. "
+                             "Window and region capture are tracked in TODO.md."),
+                          &dialog);
+    }
     note->setWordWrap(true);
     layout->addWidget(note);
 #endif
