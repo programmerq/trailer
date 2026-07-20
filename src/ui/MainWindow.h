@@ -1,6 +1,7 @@
 #pragma once
 
 #include "document/IDocument.h"
+#include "ui/IconHelper.h"
 
 #include <QActionGroup>
 #include <QHash>
@@ -129,6 +130,13 @@ class MainWindow : public QMainWindow {
     // run says "No text found" rather than falsely claiming completion.
     // Static + public so it is unit-testable without a MainWindow instance.
     static QString recognizeCompletionMessage(bool cancelled, int blockCount);
+
+    // Re-tint every themed toolbar/menu icon this window owns (its own
+    // binder plus the markup/form toolbars) from the current palette, and
+    // refresh the dynamic background-removal badge. Called by Application
+    // after a live theme (colour-scheme) change so icons stay legible when
+    // the app switches light↔dark without a restart.
+    void refreshThemedIcons();
 
   public slots:
     void rebuildRecentMenu();
@@ -398,6 +406,10 @@ class MainWindow : public QMainWindow {
     MarkupToolbar *m_markupToolbar = nullptr;
     FormToolbar *m_formToolbar = nullptr;
     SearchBar *m_searchBar = nullptr;
+    // Records the window's themed toolbar/menu icons so refreshThemedIcons()
+    // can re-tint them after a live theme (colour-scheme) change — a palette
+    // swap does not touch the fixed-colour pixmaps themedActionIcon bakes.
+    ThemedIconBinder m_themedIcons;
     // Collapsed-state proxy for the search bar in the main toolbar.
     // Clicking the button expands m_searchBar inline and hides the
     // button; dismissing the bar (Esc, empty query) does the reverse.

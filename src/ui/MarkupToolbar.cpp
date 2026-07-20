@@ -182,12 +182,10 @@ AnnotationStyle MarkupToolbar::style() const {
 
 QAction *MarkupToolbar::makeToolAction(const QString &label, AnnotationTool tool,
                                        const QString &iconResource) {
-    QAction *action = nullptr;
+    QAction *action = addAction(label);
     if (!iconResource.isEmpty()) {
-        const QIcon icon = themedActionIcon(iconResource, this);
-        action = addAction(icon, label);
-    } else {
-        action = addAction(label);
+        // Bind through the binder so the icon re-tints on a live theme change.
+        m_themedIcons.apply(action, iconResource, this);
     }
     action->setToolTip(label);
     action->setCheckable(true);

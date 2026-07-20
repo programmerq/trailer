@@ -2,9 +2,13 @@
 
 #include <QColor>
 #include <QIcon>
+#include <QPointer>
 #include <QString>
 
+#include <vector>
+
 class QWidget;
+class QAbstractButton;
 class QAction;
 class QMenu;
 
@@ -64,5 +68,40 @@ QIcon themedActionIcon(const QString& resource, const QWidget* widget = nullptr)
 // status bar. Returns the QAction* so callers keep full control.
 QAction* makeDisabledAction(QMenu* menu, const QString& text,
                             const QString& whyTooltip);
+
+// Records the (target, resource, tint-source) triples that themedActionIcon
+// bakes into fixed-colour pixmaps, so they can be re-tinted after a *live*
+// theme (colour-scheme) change. themedActionIcon reads the palette once at
+// build time and stamps the glyph pixmaps to that colour; a later palette
+// swap (light↔dark) propagates to widgets automatically but does NOT touch
+// those already-baked icons — an icon tinted for light stays black on a
+// now-dark toolbar. Each themed-icon owner (MainWindow, the toolbars) holds
+// one binder, calls apply() at build time in place of a bare setIcon, and
+// calls refresh() from the theme-change path to re-tint every binding from
+// each target's current palette. Bindings hold QPointers, so a target (or
+// its tint source) destroyed before refresh() is skipped, not dereferenced.
+class ThemedIconBinder {
+  public:
+    // Build a themed icon for `resource` tinted to `tintSource`'s palette,
+    // assign it to `target`, and remember the binding for refresh(). Returns
+    // the icon so call sites that also need it (e.g. to hand to addAction)
+    // can reuse it. A null target is recorded harmlessly and skipped later.
+    QIcon apply(QAction* target, const QString& resource, const QWidget* tintSource);
+    QIcon apply(QAbstractButton* target, const QString& resource, const QWidget* tintSource);
+
+    // Re-tint every live binding from its tint source's current palette.
+    // Idempotent and cheap (a fillRect per cached size); safe to call for
+    // an unchanged theme.
+    void refresh();
+
+  private:
+    struct Binding {
+        QPointer<QAction> action;
+        QPointer<QAbstractButton> button;
+        QString resource;
+        QPointer<const QWidget> tintSource;
+    };
+    std::vector<Binding> m_bindings;
+};
 
 }  // namespace trailer

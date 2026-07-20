@@ -1010,8 +1010,8 @@ void MainWindow::buildMainToolbar() {
     // checked state mirrors back via Sidebar::modeChanged.
     auto *sidebarBtn = new QToolButton(m_mainToolbar);
     sidebarBtn->setText(tr("Sidebar"));
-    sidebarBtn->setIcon(
-        themedActionIcon(QStringLiteral(":/icons/actions/panel-sidebar.svg"), m_mainToolbar));
+    m_themedIcons.apply(sidebarBtn, QStringLiteral(":/icons/actions/panel-sidebar.svg"),
+                        m_mainToolbar);
     sidebarBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
     sidebarBtn->setToolTip(tr("Sidebar"));
     sidebarBtn->setPopupMode(QToolButton::InstantPopup);
@@ -1089,8 +1089,8 @@ void MainWindow::buildMainToolbar() {
     // the toolbar (rather than swapping widgets) preserves the
     // signals and counter state wired up in the constructor.
     m_searchButton = new QToolButton(m_mainToolbar);
-    m_searchButton->setIcon(
-        themedActionIcon(QStringLiteral(":/icons/actions/view-search.svg"), m_mainToolbar));
+    m_themedIcons.apply(m_searchButton, QStringLiteral(":/icons/actions/view-search.svg"),
+                        m_mainToolbar);
     m_searchButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_searchButton->setToolTip(
         tr("Search (%1)").arg(QKeySequence(QKeySequence::Find).toString(QKeySequence::NativeText)));
@@ -1297,15 +1297,15 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
 
     m_markupToolbarAction = m_markupToolbar->toggleViewAction();
     m_markupToolbarAction->setText(tr("Toggle &Markup Toolbar"));
-    m_markupToolbarAction->setIcon(
-        themedActionIcon(QStringLiteral(":/icons/actions/panel-markup.svg"), this));
+    m_themedIcons.apply(m_markupToolbarAction, QStringLiteral(":/icons/actions/panel-markup.svg"),
+                        this);
     m_markupToolbarAction->setShortcut(QKeySequence(tr("Ctrl+Shift+A")));
     viewMenu->addAction(m_markupToolbarAction);
 
     m_formToolbarAction = m_formToolbar->toggleViewAction();
     m_formToolbarAction->setText(tr("Show Form Filling &Toolbar"));
-    m_formToolbarAction->setIcon(
-        themedActionIcon(QStringLiteral(":/icons/actions/panel-form.svg"), this));
+    m_themedIcons.apply(m_formToolbarAction, QStringLiteral(":/icons/actions/panel-form.svg"),
+                        this);
     m_formToolbarAction->setShortcut(QKeySequence(tr("Ctrl+Shift+B")));
     viewMenu->addAction(m_formToolbarAction);
 
@@ -1388,8 +1388,8 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
 
     viewMenu->addSeparator();
 
-    m_zoomInAction = viewMenu->addAction(
-        themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-in.svg"), this), tr("Zoom &In"));
+    m_zoomInAction = viewMenu->addAction(tr("Zoom &In"));
+    m_themedIcons.apply(m_zoomInAction, QStringLiteral(":/icons/actions/view-zoom-in.svg"), this);
     m_zoomInAction->setObjectName(QStringLiteral("action.view.zoomIn"));
     m_zoomInAction->setShortcuts({
         QKeySequence::ZoomIn,
@@ -1401,9 +1401,8 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
         updateZoomIndicator();
     });
 
-    m_zoomOutAction = viewMenu->addAction(
-        themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-out.svg"), this),
-        tr("Zoom &Out"));
+    m_zoomOutAction = viewMenu->addAction(tr("Zoom &Out"));
+    m_themedIcons.apply(m_zoomOutAction, QStringLiteral(":/icons/actions/view-zoom-out.svg"), this);
     m_zoomOutAction->setObjectName(QStringLiteral("action.view.zoomOut"));
     m_zoomOutAction->setShortcut(QKeySequence::ZoomOut);
     connect(m_zoomOutAction, &QAction::triggered, this, [this]() {
@@ -1420,9 +1419,9 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     //   ⌘+ / ⌘- → Zoom In / Out
     // Fit to Width stays in the menu but no longer carries a digit
     // shortcut (⌘2 is now Single Page).
-    m_zoomFitPageAction = viewMenu->addAction(
-        themedActionIcon(QStringLiteral(":/icons/actions/view-fit-page.svg"), this),
-        tr("Fit &Page"));
+    m_zoomFitPageAction = viewMenu->addAction(tr("Fit &Page"));
+    m_themedIcons.apply(m_zoomFitPageAction, QStringLiteral(":/icons/actions/view-fit-page.svg"),
+                        this);
     m_zoomFitPageAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_9));
     connect(m_zoomFitPageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
@@ -1430,9 +1429,9 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
         updateZoomIndicator();
     });
 
-    m_zoomActualAction = viewMenu->addAction(
-        themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-actual.svg"), this),
-        tr("&Actual Size"));
+    m_zoomActualAction = viewMenu->addAction(tr("&Actual Size"));
+    m_themedIcons.apply(m_zoomActualAction, QStringLiteral(":/icons/actions/view-zoom-actual.svg"),
+                        this);
     m_zoomActualAction->setObjectName(QStringLiteral("action.view.actualSize"));
     m_zoomActualAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
     connect(m_zoomActualAction, &QAction::triggered, this, [this]() {
@@ -1441,9 +1440,8 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
         updateZoomIndicator();
     });
 
-    m_zoomFitAction = viewMenu->addAction(
-        themedActionIcon(QStringLiteral(":/icons/actions/view-fit-width.svg"), this),
-        tr("&Fit to Width"));
+    m_zoomFitAction = viewMenu->addAction(tr("&Fit to Width"));
+    m_themedIcons.apply(m_zoomFitAction, QStringLiteral(":/icons/actions/view-fit-width.svg"), this);
     connect(m_zoomFitAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomFitWidth();
@@ -1643,15 +1641,15 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     // toolsMenu->setToolTipsVisible(true) at attach time — so no separate
     // explicit call is needed.
 
-    m_rotateLeftAction = toolsMenu->addAction(
-        themedActionIcon(QStringLiteral(":/icons/actions/page-rotate-left.svg"), this),
-        tr("Rotate &Left"));
+    m_rotateLeftAction = toolsMenu->addAction(tr("Rotate &Left"));
+    m_themedIcons.apply(m_rotateLeftAction, QStringLiteral(":/icons/actions/page-rotate-left.svg"),
+                        this);
     m_rotateLeftAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_L));
     connect(m_rotateLeftAction, &QAction::triggered, this, &MainWindow::onRotateLeft);
 
-    m_rotateRightAction = toolsMenu->addAction(
-        themedActionIcon(QStringLiteral(":/icons/actions/page-rotate-right.svg"), this),
-        tr("Rotate &Right"));
+    m_rotateRightAction = toolsMenu->addAction(tr("Rotate &Right"));
+    m_themedIcons.apply(m_rotateRightAction, QStringLiteral(":/icons/actions/page-rotate-right.svg"),
+                        this);
     m_rotateRightAction->setObjectName(QStringLiteral("action.tools.rotateRight"));
     m_rotateRightAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
     connect(m_rotateRightAction, &QAction::triggered, this, &MainWindow::onRotateRight);
@@ -4174,14 +4172,30 @@ void MainWindow::dropEvent(QDropEvent *event) {
     }
 }
 
+void MainWindow::refreshThemedIcons() {
+    m_themedIcons.refresh();
+    if (m_markupToolbar)
+        m_markupToolbar->refreshThemedIcons();
+    if (m_formToolbar)
+        m_formToolbar->refreshThemedIcons();
+    // The Remove-Background sparkle badge is set/cleared dynamically per
+    // document (updateRemoveBackgroundBadge), so it is not in the binder;
+    // re-run it for the current document so the badge, if showing, re-tints.
+    updateRemoveBackgroundBadge(m_documentView ? m_documentView->currentDocument() : nullptr);
+}
+
 void MainWindow::onOpenPreferences() {
     PreferencesDialog dlg(m_app->settings(), this);
     dlg.setManageModelsCallback([this]() { showModelManagerDialog(this, m_app); });
     dlg.setResetAllCallback([this]() { onResetTrailerSettings(); });
-    // recent_max is consumed once at startup (not read live), so re-apply
-    // it to the live RecentFiles cap when the user saves preferences.
+    // Re-apply the settings that are not read live when the user saves
+    // preferences:
+    //   • recent_max — consumed once at startup, re-applied to the live cap.
+    //   • theme — apply the colour scheme app-wide (every window re-tints)
+    //     so the Theme control takes effect immediately, without a restart.
     connect(&dlg, &PreferencesDialog::settingsApplied, this, [this]() {
         m_app->recentFiles().setMaxEntries(m_app->settings().recentMax());
+        m_app->applyTheme(m_app->settings().theme());
     });
     dlg.exec();
 }

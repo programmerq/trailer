@@ -37,6 +37,7 @@
 #include <QScreen>
 #include <QSet>
 #include <QStandardPaths>
+#include <QStyleHints>
 #include <QUrl>
 #include <QUuid>
 #include <QWindow>
@@ -81,6 +82,15 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
     m_recent.setMaxEntries(m_settings.recentMax());
     m_recent.load();
     m_typeDefaults.load();
+
+    // Apply the persisted theme before any window is built, so the first
+    // window's toolbar icons are tinted for the active colour scheme. For
+    // Theme::System this hands control to Qt (tracks the OS); the
+    // connection below re-tints the icons when the OS appearance flips
+    // while in System mode. See applyTheme / colorSchemeFor.
+    applyTheme(m_settings.theme());
+    connect(styleHints(), &QStyleHints::colorSchemeChanged, this,
+            [this](Qt::ColorScheme) { refreshThemedIconsAllWindows(); });
 
     m_registry.registerAdapter(std::make_unique<PdfAdapter>());
     m_registry.registerAdapter(std::make_unique<ImageAdapter>());
@@ -423,6 +433,22 @@ void Application::clearRecent() {
     m_recent.clear();
     m_recent.save();
     notifyWindowsRecentChanged();
+}
+
+void Application::applyTheme(Theme theme) {
+    // One translation point (colorSchemeFor) maps the persisted enum to Qt's
+    // live colour scheme. setColorScheme swaps the application palette and
+    // propagates PaletteChange to every widget; the explicit re-tint below
+    // handles the themed icons that a palette swap alone leaves stale.
+    styleHints()->setColorScheme(colorSchemeFor(theme));
+    refreshThemedIconsAllWindows();
+}
+
+void Application::refreshThemedIconsAllWindows() {
+    for (auto &ptr : m_windows) {
+        if (ptr)
+            ptr->refreshThemedIcons();
+    }
 }
 
 void Application::notifyWindowsRecentChanged() {

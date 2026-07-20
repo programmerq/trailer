@@ -90,6 +90,14 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
     auto *outer = new QVBoxLayout(this);
     auto *tabs = new QTabWidget(this);
     tabs->setObjectName(QStringLiteral("tabWidget"));
+    // Tabs grow with settings: only add a tab once it has >=1 real, wired,
+    // operable control — never an empty placeholder. Each addTab() below
+    // gates on that (General / Files / Machine Learning / Advanced all
+    // carry live controls today; a Forms tab, for instance, waits until a
+    // Forms setting is wired). The rule is locked by
+    // tests/uat/test_uat_preferences.cpp
+    // (uat_pref_020_everyVisibleTabHasEnabledOperableControl) and noted in
+    // docs/CONVENTIONS.md §15.
 
     // A labelled row whose field control sits next to a compact,
     // right-aligned revert icon so every row shares one right edge.
@@ -145,40 +153,18 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
         m_themeCombo->addItem(tr("System"), static_cast<int>(Theme::System));
         m_themeCombo->addItem(tr("Light"), static_cast<int>(Theme::Light));
         m_themeCombo->addItem(tr("Dark"), static_cast<int>(Theme::Dark));
-        // Honest control: the theme key is persisted but nothing applies
-        // it yet, so the combo is visibly disabled rather than a no-op
-        // that erodes trust (docs/decisions/0004). A disabled widget never
-        // receives ToolTip events, so the explanation also lives in a
-        // visible helper label beneath the combo.
-        m_themeCombo->setEnabled(false);
-        m_themeCombo->setToolTip(
-            tr("Theme selection isn't applied yet (planned for a future release)."));
-
-        // Theme has no reset (it is disabled); reserve the reset-column
-        // width so its right edge lines up with the resettable rows, and
-        // stack a muted helper label underneath.
+        // Live control: the selection is applied app-wide on OK via
+        // Application::applyTheme (System follows the OS; Light/Dark force
+        // the scheme), so the combo is enabled and honest — no "not applied
+        // yet" note. Supersedes docs/decisions/0004 (see
+        // docs/decision-records/2026-07-20-theme-applies-live.md). Theme has
+        // no per-row revert control by design; reserve the reset-column
+        // width so its right edge lines up with the resettable rows below.
         auto *themeField = new QWidget(page);
-        auto *themeCol = new QVBoxLayout(themeField);
-        themeCol->setContentsMargins(0, 0, 0, 0);
-        themeCol->setSpacing(2);
-        auto *themeRow = new QHBoxLayout();
+        auto *themeRow = new QHBoxLayout(themeField);
         themeRow->setContentsMargins(0, 0, 0, 0);
         themeRow->addWidget(m_themeCombo, 1);
         themeRow->addSpacing(kResetButtonSize);
-        themeCol->addLayout(themeRow);
-
-        auto *themeHelp = new QLabel(tr("Not applied yet — planned for a future release."),
-                                     themeField);
-        themeHelp->setObjectName(QStringLiteral("themeHelpLabel"));
-        themeHelp->setWordWrap(true);
-        QFont helpFont = themeHelp->font();
-        helpFont.setPointSizeF(helpFont.pointSizeF() * 0.9);
-        themeHelp->setFont(helpFont);
-        QPalette helpPalette = themeHelp->palette();
-        helpPalette.setColor(QPalette::WindowText,
-                             helpPalette.color(QPalette::Disabled, QPalette::WindowText));
-        themeHelp->setPalette(helpPalette);
-        themeCol->addWidget(themeHelp);
 
         form->addRow(tr("Theme"), themeField);
 
@@ -450,8 +436,10 @@ void PreferencesDialog::applyToSettings() {
 }
 
 void PreferencesDialog::restoreEditableDefaults() {
-    // Theme is disabled and reflects the stored (hand-editable) value —
-    // Restore Defaults must not silently overwrite it.
+    // Theme is now a live editable control, so Restore Defaults resets it to
+    // the default (System) alongside every other control — UI only, nothing
+    // persists until OK.
+    selectComboByData(m_themeCombo, static_cast<int>(m_defaults.theme()));
     selectComboByData(m_openFilesInCombo, static_cast<int>(m_defaults.openFilesIn()));
     m_restoreWindowsCheck->setChecked(m_defaults.restorePreviousWindows());
 
