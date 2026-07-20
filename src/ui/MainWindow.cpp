@@ -3652,6 +3652,14 @@ void MainWindow::onDocumentCapabilitiesChanged() {
             m_sidebar->setMode(*mode);
         }
     }
+    // Staged image open (ADR 0008): an ImageDocument fires this once its
+    // off-thread decode + async initial fit have settled the scale. The zoom
+    // readout was populated synchronously at open from the pre-fit placeholder
+    // value; refresh it now so it matches the on-screen magnification instead
+    // of freezing on a stale percent until the next zoom action. Idempotent
+    // for PDFs (their notifier fires for the forms probe; this just re-reads
+    // the already-correct zoom).
+    updateZoomIndicator();
 }
 
 void MainWindow::onAnnotationSelectionChanged(int id) {

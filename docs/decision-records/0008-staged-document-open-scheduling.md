@@ -1,9 +1,9 @@
 # 0008 — Staged document open: what runs synchronously, what moves off-thread, and how a large file is staged
 
-- **Status:** proposed
+- **Status:** accepted
 - **Arbiter:** the agent role named for this record; the owner (programmerq) is the escalation-only override.
 - **Date proposed:** 2026-07-15
-- **Date accepted / superseded:** —
+- **Date accepted / superseded:** 2026-07-20 (accepted for the **image** path; see the verdict for the scope boundary against the PDF path)
 
 ## Context
 
@@ -221,9 +221,78 @@ hold before this record can be accepted.
 
 ## Arbiter verdict + rationale
 
-Empty while status is `proposed` — the implementing session runs the persona/arbiter
-cycle.
+**Option B, scoped to the IMAGE path.** This verdict adjudicates the staging of an
+**image** document open (still images: PNG / JPEG / BMP / TIFF / WebP / …). The
+**PDF** path is *not* decided here: it was already settled by the accepted record
+`0006-defer-offthread-pdf-open.md` (Option A — lazy editor/annotation loading,
+with the residual `QPdfDocument::load` off-thread read behind a placeholder
+captured as a P2 follow-up). Moving that residual PDF read off the GUI thread is
+the sibling PDF work item, gated by ADR 0006's "Evidence required to reopen"; this
+record does not pre-empt it.
+
+Why **B** for images, and why A and C collapse for this path:
+
+- The three structural proxies in the threshold below are **PDF-shaped** — parse #1
+  (`QPdfDocument`), parse #2 (qpdf `processFile`), and the all-pages `/Annots`
+  sweep. An image open has **none** of that structure: it is a single pure
+  operation, `QImageReader::read()`. There is no "second parse" and no
+  "all-pages sweep" to defer, so **Option A's deferral has no image analog** (its
+  distinguishing move — keep the one read on the GUI thread, defer the *rest* —
+  leaves the *only* heavy pass, the full-pixel decode, on the GUI thread, which is
+  exactly the freeze this staging removes). **Option C (hybrid defer + off-thread)
+  collapses into B** for images, because the "defer" half it adds over B targets a
+  redundant second parse that images do not have.
+- **Option B is the natural and lowest-risk fit for an image decode.** The
+  edit-correctness floor (admissible objection #3) that made B risky for PDF —
+  `QPdfDocument` / qpdf thread-affinity, a half-loaded editor racing the first
+  edit — **does not arise for images**: the worker constructs a *fresh*
+  `QImageReader` from the path and shares nothing with the GUI thread (`QImage` is
+  reentrant, copy-on-write), mirroring the "throwaway instance, shares nothing"
+  discipline ADR 0006 adopted for its annotation sweep. The single piece of shared
+  state — the decoded `m_image` — is adopted **only on the GUI thread** (the
+  `QFutureWatcher::finished` slot, or the blocking `ensureDecoded()` that every
+  pixel-access caller reaches while itself on the UI thread, per the
+  OcrController / ThumbnailModel "render on the calling UI thread" contract), so no
+  edit can observe a half-decoded image.
+- **The honest-placeholder objection (Office / occasional user) is satisfied by
+  construction.** The placeholder is a visible "Loading image…" state sized from a
+  header-only `QImageReader::size()` `contentSizeHint`, not a blank or stub image
+  that could be mistaken for an empty/broken file (G3 — no lying controls). It
+  resolves into the real pixmap on decode completion.
+- **The older-careful-user objection against A** (a deferred heavy pass that later
+  stalls the GUI at first interaction with no feedback) is the decisive one for
+  images: A would relocate the decode freeze from open-time to first-zoom /
+  first-edit time. B removes it outright by decoding proactively off-thread, so
+  there is no "it froze when I clicked."
+
+**Image-path threshold established (replaces the PDF-shaped proxies above for this
+path):** the four pass/fail points in the backlog item
+`docs/backlog/2026-07-15-staged-image-open.md` — (1) no full-pixel
+`QImageReader::read()` on the GUI thread at open (only a header-only `size()` for
+`contentSizeHint`), enforced by an additive image case in
+`tests/test_perf_gui_thread_io.cpp`; (2) an honest "Loading image…" placeholder
+painted immediately, sized from the header hint; (3) off-GUI-thread decode
+(`QtConcurrent::run` + `QFutureWatcher::finished`) that swaps the placeholder for
+the real pixmap; (4) the view/zoom unit tests deterministically await the
+placeholder→pixmap swap. The edit-correctness co-requirement holds for images by
+the GUI-thread-only adoption argument above. This verdict does **not** add any
+wall-clock/latency gate (consistent with the perf-measurement ruling).
+
+Blast-radius note (residual accepted under B, image path): because the decode is
+now deferred, the capability predicates (`supportsZoom` / `supportsEditing` /
+`supportsSelectableText` / `supportsThumbnails` / `supportsSearch`) are keyed to a
+still-image being **available or pending** (decoded, or a valid header read),
+rather than to `m_image` already being non-null — so a control is never falsely
+disabled during the brief decode window, and no capabilities-changed signal is
+needed for images (unlike the PDF forms-toolbar refresh ADR 0006 required). A
+reload or recovery arriving while the initial decode is in flight **supersedes** it
+(a generation counter makes the stale `finished` callback a no-op), so the two
+never race.
 
 ## Evidence required to reopen
 
-N/A until accepted.
+For the **image** path (this verdict): a reproducible correctness defect
+attributable to the off-thread decode — an edit or save observing a half-decoded
+or wrong `m_image`, or a reload/open decode race that the generation guard fails to
+supersede — with the failing case named. The **PDF** path is out of scope here and
+reopens only under ADR 0006's own evidence bar.

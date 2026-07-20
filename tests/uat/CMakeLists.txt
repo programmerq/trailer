@@ -171,6 +171,13 @@ trailer_build_uat_exe(test_uat_sweep test_uat_sweep.cpp)
 target_link_libraries(test_uat_sweep PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 trailer_register_uat_dpr_matrix(test_uat_sweep)
 
+# Staged (async) image open UAT + G2 evidence (ADR 0008): the honest
+# "Loading image…" placeholder painted immediately, then the off-thread
+# decode swap. Runs across the HiDPI dpr matrix {1, 1.5, 2} (#92) so the
+# staged-open view holds on Retina/fractional scaling, not just dpr=1.
+trailer_build_uat_exe(test_uat_staged_image_open test_uat_staged_image_open.cpp)
+trailer_register_uat_dpr_matrix(test_uat_staged_image_open)
+
 # Empty-state window model UAT. Drives Application + MainWindow; PDF
 # fixtures use QPdfWriter (QtGui), so no Qt6::Pdf link is needed.
 trailer_add_uat_test(test_uat_empty_state test_uat_empty_state.cpp)

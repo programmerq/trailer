@@ -6,8 +6,11 @@
 #include "ui/SelectableTextLayer.h"
 
 #include <QColor>
+#include <QCoreApplication>
+#include <QElapsedTimer>
 #include <QEvent>
 #include <QFileInfo>
+#include <QFutureWatcher>
 #include <QImageReader>
 #include <QImageWriter>
 #include <QLabel>
@@ -26,6 +29,7 @@
 #include <QScrollBar>
 #include <QTimer>
 #include <QTransform>
+#include <QtConcurrent>
 
 #include <cmath>
 
@@ -277,10 +281,19 @@ ImageDocument::ImageDocument(QString path) : m_path(std::move(path)) {
     reader.setAutoTransform(true);
     m_animated = reader.supportsAnimation() && reader.imageCount() > 1;
     if (m_animated) {
+        // Animated GIFs are driven by QMovie (which decodes frame-by-frame
+        // lazily); m_image holds the first frame for thumbnail/hint use.
         m_frameCount = reader.imageCount();
         m_image = reader.read();
+        m_decoded = true;
     } else {
-        m_image = reader.read();
+        // Staged open (ADR 0008, image path = Option B): read ONLY the
+        // header for an immediate contentSizeHint, then decode the full
+        // image off the GUI thread. No reader.read() here — that full-pixel
+        // decode is exactly what this staging moves off the calling thread.
+        m_headerSize = reader.size();
+        if (!m_path.isEmpty() && !m_headerSize.isEmpty())
+            startDecode();
     }
     connectAnnotationHistory();
     // Re-run the active search whenever OCR results land in the store, so a
@@ -296,6 +309,152 @@ ImageDocument::ImageDocument(QString path) : m_path(std::move(path)) {
     // guard and the ExternalChangeMonitor can tell a later external write
     // apart from our own (ADR 2026-07-19).
     captureFileBaseline();
+}
+
+void ImageDocument::startDecode() {
+    const int gen = ++m_decodeGeneration;
+    m_decodeStarted = true;
+    m_decoded = false;
+    const QString path = m_path;
+    // Fresh QImageReader constructed inside the worker — shares nothing with
+    // the GUI thread (QImage is reentrant + copy-on-write), mirroring the
+    // "throwaway instance, shares nothing" discipline ADR 0006 adopted for
+    // the PDF annotation sweep. autoTransform matches the header read so the
+    // EXIF-oriented pixels agree with the size hint.
+    m_decodeFuture = QtConcurrent::run([path]() -> QImage {
+        QImageReader reader(path);
+        reader.setAutoTransform(true);
+        return reader.read();
+    });
+    if (m_decodeWatcher) {
+        m_decodeWatcher->disconnect();
+        m_decodeWatcher->deleteLater();
+    }
+    // Parent the watcher to the annotation store (a member QObject that dies
+    // with the document) so a document destroyed mid-decode tears the watcher
+    // down with it — the finished lambda can never fire against a freed
+    // `this`. The worker keeps only a copy of `path`, so it stays safe.
+    auto *watcher = new QFutureWatcher<QImage>(&m_annotations);
+    m_decodeWatcher = watcher;
+    QObject::connect(watcher, &QFutureWatcher<QImage>::finished, watcher,
+                     [this, gen]() { onDecodeFinished(gen); });
+    watcher->setFuture(m_decodeFuture);
+}
+
+void ImageDocument::ensureDecoded() const {
+    if (m_decoded || !m_decodeStarted)
+        return;
+    // Blocks on the worker via QFuture::result() (no event-loop spin, so no
+    // re-entrancy). Always on the GUI thread — every pixel-access caller
+    // renders on the UI thread — so this never races the finished slot.
+    m_image = m_decodeFuture.result();
+    if (m_pendingCaptureDpr > 1.0 && !m_image.isNull())
+        m_image.setDevicePixelRatio(m_pendingCaptureDpr);
+    m_decoded = true;
+}
+
+void ImageDocument::onDecodeFinished(int generation) {
+    if (generation != m_decodeGeneration)
+        return; // superseded by a reload/recovery (#89) — drop the stale result
+    ensureDecoded(); // adopt pixels (idempotent)
+    if (m_viewPopulated || !m_label)
+        return;
+    if (m_image.isNull()) {
+        m_viewPopulated = true;
+        m_label->setText(QObject::tr("Could not decode image:\n%1").arg(m_path));
+        return;
+    }
+    installDecodedContent();
+}
+
+void ImageDocument::supersedeDecode() {
+    // Reload / recovery took authoritative pixels: invalidate any in-flight
+    // open decode so its finished callback no-ops and ensureDecoded() stops
+    // blocking on the now-irrelevant future.
+    ++m_decodeGeneration;
+    m_decodeStarted = false;
+    m_decoded = true;
+}
+
+bool ImageDocument::awaitDecodeForTest(int timeoutMs) {
+    if (m_decoded || !m_decodeStarted)
+        return m_decoded;
+    QElapsedTimer t;
+    t.start();
+    while (!m_decoded && t.elapsed() < timeoutMs)
+        QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+    return m_decoded;
+}
+
+void ImageDocument::wireViewLayers() {
+    // Create the selectable-text layer + annotation overlay up front, while
+    // the staged-open decode is still in flight. MainWindow wires these at
+    // open time (overlay->selectionChanged → Inspector, capability probes), so
+    // they must EXIST before the pixels land — they simply have nothing to
+    // sample yet (the sampler returns {} on a null image). installDecodedContent
+    // refreshes their geometry once the real pixmap is in.
+    if (m_overlay || !m_label)
+        return;
+    // Stacking order on the QLabel host: SelectableTextLayer sits beneath the
+    // AnnotationOverlay so a user-drawn annotation paints over selectable-text
+    // highlights. The I-beam cursor lives on the text layer.
+    auto *textLayer = new SelectableTextLayer(m_label);
+    textLayer->setStore(&m_selectableText);
+    // Doc coordinates are image DEVICE pixels; the view draws at the logical
+    // size (device / dpr) times the logical zoom (see mapDocToView).
+    textLayer->setDocToView([this](QPointF p, int /*page*/) { return mapDocToView(p); });
+    textLayer->setPageAtView([](QPointF) { return 0; });
+    textLayer->setGeometry(m_label->rect());
+    textLayer->show();
+    m_textLayer = textLayer;
+
+    auto *overlay = new AnnotationOverlay(m_label);
+    overlay->setStore(&m_annotations);
+    overlay->setDocumentToView([this](QPointF p, int /*page*/) { return mapDocToView(p); });
+    overlay->setViewToDocument([this](QPointF p, int /*page*/) { return mapViewToDoc(p); });
+    overlay->setSourceSampler([this](QRectF docRect, QSize outPx, int /*page*/) -> QImage {
+        if (m_image.isNull())
+            return {};
+        const QRect src = docRect.toRect().intersected(m_image.rect());
+        if (src.isEmpty())
+            return {};
+        return m_image.copy(src).scaled(outPx, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    });
+    overlay->setGeometry(m_label->rect());
+    overlay->show();
+    overlay->raise(); // paint on top of the text layer
+    m_overlay = overlay;
+}
+
+void ImageDocument::installDecodedContent() {
+    if (m_viewPopulated || !m_label || !m_scroll || m_image.isNull())
+        return;
+    m_viewPopulated = true;
+
+    m_lastBuiltPixmap = buildDisplayPixmap(m_image, m_scale);
+    m_label->setPixmap(m_lastBuiltPixmap);
+    m_label->adjustSize();
+    // The view chrome was wired at open over the placeholder-sized label;
+    // resize it to the real content now.
+    if (m_overlay)
+        m_overlay->setGeometry(m_label->rect());
+    if (m_textLayer)
+        m_textLayer->setGeometry(m_label->rect());
+
+    if (!m_initialZoomApplied) {
+        // Fit-to-content on first show, capped at 100%. Same shape as
+        // PdfDocument's applyInitialFitZoom: schedule on the event loop so
+        // the scroll-area viewport has settled, then either shrink-to-fit or
+        // leave the image at actual size. Capture m_aliveFlag so the timer
+        // no-ops if the document is destroyed before this tick fires.
+        if (!m_aliveFlag)
+            m_aliveFlag = std::make_shared<bool>(true);
+        auto alive = m_aliveFlag;
+        QTimer::singleShot(0, m_scroll, [this, alive]() {
+            if (alive && *alive)
+                applyInitialFitZoom();
+        });
+    }
 }
 
 void ImageDocument::connectAnnotationHistory() {
@@ -354,6 +513,10 @@ QWidget *ImageDocument::createView(QWidget *parent) {
     label->setAlignment(Qt::AlignCenter);
     label->setBackgroundRole(QPalette::Base);
 
+    scroll->setWidget(label);
+    m_scroll = scroll;
+    m_label = label;
+
     if (m_animated) {
         auto *movie = new QMovie(m_path, QByteArray(), label);
         m_movie = movie;
@@ -361,77 +524,31 @@ QWidget *ImageDocument::createView(QWidget *parent) {
         if (movie->isValid()) {
             movie->start();
         }
-    } else if (!m_image.isNull()) {
-        m_lastBuiltPixmap = buildDisplayPixmap(m_image, 1.0);
-        label->setPixmap(m_lastBuiltPixmap);
-        label->adjustSize();
-    } else {
-        label->setText(QObject::tr("Could not decode image:\n%1").arg(m_path));
+        return scroll;
     }
 
-    scroll->setWidget(label);
-    m_scroll = scroll;
-    m_label = label;
     installResizeWatcher();
 
-    if (!m_animated && !m_image.isNull()) {
-        // Fit-to-content on first show, capped at 100%. Same shape as
-        // PdfDocument's applyInitialFitZoom: schedule on the event
-        // loop so the scroll-area viewport has settled, then either
-        // shrink-to-fit or leave the image at actual size.
-        // Capture m_aliveFlag so the timer no-ops if the document is
-        // destroyed before this tick fires — `this` would otherwise
-        // dangle (the view widget is deleteLater()'d but the document
-        // is destroyed immediately when the tab closes).
-        if (!m_aliveFlag)
-            m_aliveFlag = std::make_shared<bool>(true);
-        auto alive = m_aliveFlag;
-        QTimer::singleShot(0, scroll, [this, alive]() {
-            if (alive && *alive)
-                applyInitialFitZoom();
-        });
-    }
-
-    if (!m_animated && !m_image.isNull()) {
-        // Stacking order on the QLabel host: SelectableTextLayer
-        // sits beneath the AnnotationOverlay so a user-drawn
-        // annotation paints over selectable-text highlights. The
-        // I-beam cursor lives on the text layer; the overlay was
-        // changed to no longer claim it unconditionally.
-        auto *textLayer = new SelectableTextLayer(label);
-        textLayer->setStore(&m_selectableText);
-        // Doc coordinates are image DEVICE pixels; the view draws at the
-        // logical size (device / dpr) times the logical zoom (see
-        // mapDocToView / mapViewToDoc for the shared factor).
-        textLayer->setDocToView([this](QPointF p, int /*page*/) {
-            return mapDocToView(p);
-        });
-        textLayer->setPageAtView([](QPointF) { return 0; });
-        textLayer->setGeometry(label->rect());
-        textLayer->show();
-        m_textLayer = textLayer;
-
-        auto *overlay = new AnnotationOverlay(label);
-        overlay->setStore(&m_annotations);
-        overlay->setDocumentToView([this](QPointF p, int /*page*/) {
-            return mapDocToView(p);
-        });
-        overlay->setViewToDocument([this](QPointF p, int /*page*/) {
-            return mapViewToDoc(p);
-        });
-        overlay->setSourceSampler([this](QRectF docRect, QSize outPx, int /*page*/) -> QImage {
-            if (m_image.isNull())
-                return {};
-            const QRect src = docRect.toRect().intersected(m_image.rect());
-            if (src.isEmpty())
-                return {};
-            return m_image.copy(src).scaled(outPx, Qt::KeepAspectRatio, Qt::SmoothTransformation);
-        });
-        overlay->setGeometry(label->rect());
-        overlay->show();
-        // Raise so the overlay paints on top of the text layer.
-        overlay->raise();
-        m_overlay = overlay;
+    if (imageAvailableOrPending()) {
+        // Still image (decoded, injected, or staged-open pending): wire the
+        // overlay + text layer up front so MainWindow's open-time wiring finds
+        // them regardless of decode timing.
+        wireViewLayers();
+        if (!m_image.isNull()) {
+            // Already decoded — install the real content synchronously.
+            installDecodedContent();
+        } else {
+            // Staged open in flight (ADR 0008): paint an honest, unmistakable
+            // loading state sized from the header hint so the file is never
+            // misread as empty or broken (G3). onDecodeFinished swaps in the
+            // real pixmap when the worker returns.
+            label->setText(QObject::tr("Loading image…"));
+            const QSize hint = contentSizeHint();
+            if (!hint.isEmpty())
+                label->resize(hint);
+        }
+    } else {
+        label->setText(QObject::tr("Could not decode image:\n%1").arg(m_path));
     }
 
     return scroll;
@@ -457,17 +574,31 @@ void ImageDocument::applyScale(double factor) {
 }
 
 void ImageDocument::markCaptureOrigin(double dpr) {
-    if (m_image.isNull() || m_animated || dpr <= 0.0)
+    if (m_animated || dpr <= 0.0)
         return;
     m_captureOrigin = true;
     // Only stamp a genuine HiDPI ratio; at dpr == 1 the raw pixels are
     // already logical, so leave the image untouched (no behavior change
     // vs an ordinary open beyond the Actual-Size default).
-    if (dpr > 1.0)
-        m_image.setDevicePixelRatio(dpr);
+    //
+    // Staged open (ADR 0008): the capture's full decode may still be in
+    // flight (m_image null) — this is called right after open, before the
+    // window is sized. Record the dpr so it is stamped onto m_image when the
+    // pixels are adopted (ensureDecoded), and so contentSizeHint divides the
+    // header size by it. If the image is already present (decode landed, or
+    // an injected/recovered buffer), stamp it now.
+    if (dpr > 1.0) {
+        m_pendingCaptureDpr = dpr;
+        if (!m_image.isNull())
+            m_image.setDevicePixelRatio(dpr);
+    }
 }
 
 void ImageDocument::setImageForTest(const QImage &img, bool captureOrigin) {
+    // Injecting pixels directly bypasses the file reader and supersedes any
+    // in-flight open decode kicked by the ctor, so a late finished callback
+    // can't clobber the injected image.
+    supersedeDecode();
     m_image = img;
     m_animated = false;
     m_captureOrigin = captureOrigin;
@@ -481,6 +612,16 @@ QPixmap ImageDocument::labelPixmapForTest() const {
 }
 
 void ImageDocument::zoomIn() {
+    // An explicit user zoom must act, even if it arrives during the brief
+    // staged-open decode window: supportsZoom() is true from the header, so a
+    // no-op here would be a lying control (G3). ensureDecoded() blocks on the
+    // in-flight worker (bounded, GUI-thread-only) so the zoom always applies.
+    ensureDecoded();
+    // An explicit zoom supersedes the one-shot initial fit-to-content: cancel
+    // any still-pending applyInitialFitZoom tick so it can't fire later and
+    // clobber the factor the user just chose (staged open defers that tick
+    // behind the decode, so it can now land AFTER a user zoom).
+    m_initialZoomApplied = true;
     // Any explicit zoom step puts the document back into Custom mode —
     // the user is asking for a specific factor, not "track the
     // viewport". Mirrors PdfDocument::applyZoomFactor's behaviour.
@@ -489,21 +630,29 @@ void ImageDocument::zoomIn() {
 }
 
 void ImageDocument::zoomOut() {
+    ensureDecoded();
+    m_initialZoomApplied = true;
     m_zoomMode = ZoomMode::Custom;
     applyScale(m_scale / kZoomStep);
 }
 
 void ImageDocument::zoomActual() {
+    ensureDecoded();
+    m_initialZoomApplied = true;
     m_zoomMode = ZoomMode::Actual;
     applyScale(1.0);
 }
 
 void ImageDocument::zoomFitWidth() {
+    ensureDecoded();
+    m_initialZoomApplied = true;
     m_zoomMode = ZoomMode::FitToWidth;
     reapplyFitMode();
 }
 
 void ImageDocument::zoomFitPage() {
+    ensureDecoded();
+    m_initialZoomApplied = true;
     m_zoomMode = ZoomMode::FitInView;
     reapplyFitMode();
 }
@@ -602,6 +751,13 @@ void ImageDocument::applyInitialFitZoom() {
         m_initialZoomApplied = true;
         m_zoomMode = ZoomMode::Actual;
         applyScale(1.0);
+        // Staged open (ADR 0008): the scale is only decided now, on this
+        // async tick after the off-thread decode landed. Notify so MainWindow
+        // refreshes the zoom readout against the settled factor instead of the
+        // pre-fit placeholder value (the capabilitiesChanged reuse; the image
+        // has no other async capability, but the readout-refresh need is the
+        // same "answer known later" shape as the PDF forms probe).
+        m_capabilityNotifier.notifyChanged();
         return;
     }
     const int availW = m_scroll->viewport()->width();
@@ -639,9 +795,13 @@ void ImageDocument::applyInitialFitZoom() {
     // leaving the 100% cap intact. The explicit Fit-Page action still
     // sets FitInView and upscales on resize — that path is untouched.
     m_zoomMode = (fit < 1.0) ? ZoomMode::FitInView : ZoomMode::Actual;
+    // Async fit settled — refresh the readout (see the capture-origin branch).
+    m_capabilityNotifier.notifyChanged();
 }
 
 void ImageDocument::applyZoomState(ZoomMode mode, double factor) {
+    ensureDecoded(); // a restored/explicit zoom must apply even mid-decode
+    m_initialZoomApplied = true; // a restored zoom supersedes the initial auto-fit
     switch (mode) {
     case ZoomMode::FitInView:
         zoomFitPage();
@@ -805,6 +965,7 @@ bool ImageDocument::redo() {
 }
 
 void ImageDocument::rotatePage(int /*pageIndex*/, int degreesClockwise) {
+    ensureDecoded();
     if (m_image.isNull() || m_animated)
         return;
     pushUndoSnapshot();
@@ -816,6 +977,7 @@ void ImageDocument::rotatePage(int /*pageIndex*/, int degreesClockwise) {
 }
 
 void ImageDocument::flipHorizontal() {
+    ensureDecoded();
     if (m_image.isNull() || m_animated)
         return;
     pushUndoSnapshot();
@@ -833,6 +995,7 @@ void ImageDocument::flipHorizontal() {
 }
 
 void ImageDocument::flipVertical() {
+    ensureDecoded();
     if (m_image.isNull() || m_animated)
         return;
     pushUndoSnapshot();
@@ -846,6 +1009,7 @@ void ImageDocument::flipVertical() {
 }
 
 bool ImageDocument::resizeImage(int width, int height, bool smoothScaling) {
+    ensureDecoded();
     if (m_image.isNull() || m_animated || width <= 0 || height <= 0) {
         return false;
     }
@@ -859,6 +1023,7 @@ bool ImageDocument::resizeImage(int width, int height, bool smoothScaling) {
 }
 
 bool ImageDocument::cropToRect(int x, int y, int width, int height) {
+    ensureDecoded();
     if (m_image.isNull() || m_animated)
         return false;
     const QRect bounds(0, 0, m_image.width(), m_image.height());
@@ -917,6 +1082,7 @@ QImage applyColourTransform(const QImage &src, double brightness, double contras
 } // namespace
 
 bool ImageDocument::adjustColour(double brightness, double contrast, double saturation) {
+    ensureDecoded();
     if (m_image.isNull() || m_animated)
         return false;
     pushUndoSnapshot();
@@ -927,6 +1093,7 @@ bool ImageDocument::adjustColour(double brightness, double contrast, double satu
 }
 
 void ImageDocument::previewColour(double brightness, double contrast, double saturation) {
+    ensureDecoded();
     if (!m_label || m_image.isNull() || m_animated)
         return;
     const QImage preview = applyColourTransform(m_image, brightness, contrast, saturation);
@@ -940,6 +1107,7 @@ void ImageDocument::clearColourPreview() {
 }
 
 bool ImageDocument::replaceImage(const QImage &replacement) {
+    ensureDecoded();
     if (m_image.isNull() || m_animated || replacement.isNull())
         return false;
     // ML features produce ARGB32 output the same size as the input;
@@ -956,6 +1124,7 @@ bool ImageDocument::replaceImage(const QImage &replacement) {
 
 bool ImageDocument::exportAs(const QString &destPath, const QString &format, int quality,
                              const QString &filterId) const {
+    ensureDecoded();
     if (m_image.isNull())
         return false;
     QImage out = flattenAnnotations(m_image, m_annotations.annotations());
@@ -991,6 +1160,7 @@ bool ImageDocument::exportAs(const QString &destPath, const QString &format, int
 }
 
 bool ImageDocument::save(const QString &newPath) {
+    ensureDecoded();
     if (m_image.isNull() || m_animated)
         return false;
     const QString target = newPath.isEmpty() ? m_path : newPath;
@@ -1025,6 +1195,10 @@ bool ImageDocument::reloadFromDisk() {
     const QImage fresh = reader.read();
     if (fresh.isNull())
         return false;
+    // Supersede any in-flight initial-open decode so a stale worker result
+    // can't land after the reloaded pixels (#89: reload must supersede, not
+    // race). The generation bump makes the old finished callback a no-op.
+    supersedeDecode();
     m_image = fresh;
     // A clean-doc reload discards the (empty) edit state; there is nothing to
     // preserve because reload only runs when the buffer is clean or the user
@@ -1048,6 +1222,7 @@ bool ImageDocument::writeRecoverySnapshot(const QString &sidecarPath) {
     // flattened in (the same visual save() would produce) to the sidecar, so
     // reopen-recovery can restore the in-progress edit. m_image /
     // m_annotations / m_dirty / m_path are all left untouched.
+    ensureDecoded();
     if (m_image.isNull() || m_animated || sidecarPath.isEmpty())
         return false;
     const QImage out = flattenAnnotations(m_image, m_annotations.annotations());
@@ -1064,6 +1239,10 @@ bool ImageDocument::recoverFrom(const QString &sidecarPath) {
     QImage recovered(sidecarPath);
     if (recovered.isNull())
         return false;
+    // Recovery takes authoritative pixels: supersede any in-flight open
+    // decode so its finished callback can't clobber the recovered raster
+    // (called right after open in Application::openFiles).
+    supersedeDecode();
     // Keep m_path pointing at the user's real file; adopt the recovered
     // pixels and mark dirty. The backing file is untouched until an explicit
     // Save. Any prior annotations were flattened into the snapshot, so the
@@ -1111,6 +1290,7 @@ void ImageDocument::setAnimationPlaying(bool playing) {
 }
 
 QImage ImageDocument::renderThumbnail(int pageIndex, QSize targetSize) {
+    ensureDecoded();
     if (pageIndex != 0 || m_image.isNull() || !targetSize.isValid()) {
         return {};
     }
@@ -1118,6 +1298,7 @@ QImage ImageDocument::renderThumbnail(int pageIndex, QSize targetSize) {
 }
 
 void ImageDocument::print(QWidget *dialogParent) {
+    ensureDecoded();
     if (m_image.isNull()) {
         return;
     }
