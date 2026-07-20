@@ -3460,6 +3460,20 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // on page change / after OCR by the m_ocrPagePoll tick so the notice
     // self-clears.
     updateLargeDocOcrHint();
+
+    // Refresh the zoom readout AFTER the document's async initial fit.
+    // updateZoomIndicator() ran synchronously above, but for a document
+    // whose scale is decided by the ASYNC applyInitialFitZoom (an image
+    // that shrinks to fit, scheduled via QTimer::singleShot(0) during
+    // createView), that synchronous read is the pre-fit value (e.g.
+    // 100%) and disagrees with the render once the fit lands. This
+    // MainWindow singleShot(0) is scheduled after the doc's fit tick, so
+    // it fires later and reads the settled scale. `this` is the timer's
+    // context object, so a window closed before it fires cancels it; the
+    // readout itself re-reads the current document, tolerating a tab
+    // switch in the interim. (Live update during a window drag remains a
+    // documented pre-existing limitation — IDocument is not a QObject.)
+    QTimer::singleShot(0, this, [this]() { updateZoomIndicator(); });
 }
 
 void MainWindow::updateLargeDocOcrHint() {
