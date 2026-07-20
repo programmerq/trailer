@@ -95,6 +95,10 @@ QString AppPaths::logsDir() {
     return joinPath(dataDir(), QStringLiteral("logs"));
 }
 
+QString AppPaths::sessionDraftsDir() {
+    return joinPath(dataDir(), QStringLiteral("session-drafts"));
+}
+
 QString AppPaths::modelsDir() {
     return joinPath(dataDir(), QStringLiteral("models"));
 }

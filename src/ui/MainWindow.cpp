@@ -33,6 +33,7 @@
 #include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "ml/OcrEngine.h"
+#include "platform/QuitMenu.h"
 #include "platform/ScreenCapturePermission.h"
 #include "platform/Share.h"
 #include "settings/AppPaths.h"
@@ -847,10 +848,22 @@ void MainWindow::buildMenus() {
     closeAction->setShortcut(QKeySequence::Close);
     connect(closeAction, &QAction::triggered, this, &QMainWindow::close);
 
-    auto *quitAction = fileMenu->addAction(tr("&Quit"));
-    quitAction->setShortcut(QKeySequence::Quit);
-    quitAction->setMenuRole(QAction::QuitRole);
-    connect(quitAction, &QAction::triggered, qApp, &QCoreApplication::quit);
+    m_quitAction = fileMenu->addAction(tr("&Quit"));
+    m_quitAction->setShortcut(QKeySequence::Quit);
+    m_quitAction->setMenuRole(QAction::QuitRole);
+    connect(m_quitAction, &QAction::triggered, this,
+            [this]() { m_app->requestQuit(QuitMode::Normal); });
+
+    // "Quit and Keep Windows" (⌥⌘Q). The QAction carries the functional
+    // accelerator on every platform (headless-testable); on macOS QuitMenu
+    // installs the native in-place Option swap on top — a display nicety
+    // that the feature does not depend on.
+    m_quitKeepWindowsAction = fileMenu->addAction(tr("Quit and Keep Windows"));
+    m_quitKeepWindowsAction->setShortcut(
+        QKeySequence(Qt::MetaModifier | Qt::AltModifier | Qt::Key_Q));
+    connect(m_quitKeepWindowsAction, &QAction::triggered, this,
+            [this]() { m_app->requestQuit(QuitMode::KeepWindows); });
+    QuitMenu::installAlternateKeepItem(m_quitAction, m_quitKeepWindowsAction);
 
     auto *editMenu = menuBar()->addMenu(tr("&Edit"));
     buildEditMenu(editMenu);
@@ -4148,6 +4161,30 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         // chose Discard. Drop through and let the close proceed.
     }
     event->accept();
+}
+
+std::vector<IDocument *> MainWindow::collectDirtyDocsForQuit() const {
+    // Mirror closeEvent's dirty-doc walk: current document first (so the
+    // user usually sees just one prompt — the doc they were looking at),
+    // then the rest, de-duplicated. Dirty OR untitled qualifies — an
+    // untitled doc is clean but backed only by a transient temp file, so
+    // quitting without a prompt would lose its content (ADR-0004).
+    std::vector<IDocument *> dirty;
+    const int total = m_documentView->documentCount();
+    dirty.reserve(static_cast<size_t>(total));
+    if (auto *current = m_documentView->currentDocument()) {
+        if (current->isDirty() || current->isUntitled())
+            dirty.push_back(current);
+    }
+    for (int i = 0; i < total; ++i) {
+        IDocument *doc = nullptr;
+        if (m_documentView->documentAt(i, &doc) && doc &&
+            (doc->isDirty() || doc->isUntitled()) &&
+            std::find(dirty.begin(), dirty.end(), doc) == dirty.end()) {
+            dirty.push_back(doc);
+        }
+    }
+    return dirty;
 }
 
 bool MainWindow::confirmCloseDirtyDoc(IDocument *doc) {
