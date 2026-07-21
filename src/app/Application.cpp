@@ -4,6 +4,7 @@
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
 #include "platform/QuitMenu.h"
+#include "platform/PortalScreenshot.h"
 #include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
 #include "ui/MainWindow.h"
@@ -1034,6 +1035,23 @@ void Application::addAcquireItems(QMenu *fileMenu, QWidget *captureContext) {
     window->setToolTip(tr("Window capture isn't available on this platform yet."));
     selectedArea->setEnabled(false);
     selectedArea->setToolTip(tr("Selected-area capture isn't available on this platform yet."));
+
+    // Wayland whole-screen capture needs the XDG screenshot portal (a
+    // client-side grab yields only a null pixmap there). When no portal is
+    // running, disable Whole Screen with an explaining tooltip rather than
+    // letting the click silently produce nothing (G3; backlog
+    // 2026-07-12-wayland-screenshot-portal). Re-evaluated on every open so a
+    // portal that starts mid-session re-enables the item. On X11/Windows this
+    // is a no-op — isWaylandSession() is false, so the item stays enabled.
+    auto refreshWholeScreen = [wholeScreen]() {
+        const bool ok = !trailer::isWaylandSession() || trailer::portalScreenshotAvailable();
+        wholeScreen->setEnabled(ok);
+        wholeScreen->setToolTip(
+            ok ? QString()
+               : tr("Screenshot capture needs a desktop screenshot portal, which isn't running."));
+    };
+    refreshWholeScreen();
+    connect(screenshotMenu, &QMenu::aboutToShow, this, refreshWholeScreen);
 #endif
 
     // Placeholders for acquire sources with no backend yet. Present but
@@ -1231,23 +1249,59 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
     if (dprScreen)
         setPendingCaptureDpr(dprScreen->devicePixelRatio());
 #else
-    // QScreen fallback: only whole-screen capture is supported. The
+    // Linux/BSD/Windows: only whole-screen capture is supported. The
     // Window / Selected-Area items are disabled in the UI on this
     // platform, so `mode` should already be Screen here.
     if (mode != ShotMode::Screen)
         return;
-    QScreen *screen = QGuiApplication::primaryScreen();
-    if (!screen)
-        return;
-    const QPixmap shot = screen->grabWindow(0);
-    if (shot.isNull() || !shot.save(path, "PNG"))
-        return;
-    // grabWindow() stamps the screen dpr on the pixmap, but the PNG save drops
-    // it; recover it so a HiDPI capture opens 1:1 (see openFiles).
-    {
+
+    // Pick the capture path from the session type + portal availability.
+    // X11/xcb/Windows -> QScreen::grabWindow (a client-side root grab works).
+    // Wayland -> the XDG screenshot portal (grabWindow returns null there);
+    // Wayland with no portal -> honest-degrade, never a silent null (G3,
+    // backlog 2026-07-12-wayland-screenshot-portal).
+    switch (trailer::chooseLinuxScreenshotBackend(trailer::isWaylandSession(),
+                                                  trailer::portalScreenshotAvailable())) {
+    case trailer::LinuxScreenshotBackend::Portal: {
+        QString err;
+        const auto r = trailer::capturePortalScreenshotToPng(path, /*interactive=*/false, &err);
+        if (r == trailer::PortalCaptureResult::Cancelled)
+            return; // user dismissed the portal prompt — a self-caused no-op
+        if (r != trailer::PortalCaptureResult::Ok) {
+            // The portal was advertised as available but the capture failed.
+            // Surface it — do not fall back to a grabWindow that would only
+            // yield a null pixmap under Wayland.
+            qWarning() << "Application: portal screenshot failed:" << err;
+            if (auto *mw = qobject_cast<MainWindow *>(context))
+                mw->flashError(tr("Screenshot capture via the desktop portal failed."));
+            return;
+        }
+        // Portal wrote the PNG to `path`; the portal image already carries the
+        // compositor's pixel dimensions, so no dpr recovery is applied here.
+        break;
+    }
+    case trailer::LinuxScreenshotBackend::QScreenGrab: {
+        QScreen *screen = QGuiApplication::primaryScreen();
+        if (!screen)
+            return;
+        const QPixmap shot = screen->grabWindow(0);
+        if (shot.isNull() || !shot.save(path, "PNG"))
+            return;
+        // grabWindow() stamps the screen dpr on the pixmap, but the PNG save
+        // drops it; recover it so a HiDPI capture opens 1:1 (see openFiles).
         const double dpr =
             shot.devicePixelRatio() > 0.0 ? shot.devicePixelRatio() : screen->devicePixelRatio();
         setPendingCaptureDpr(dpr);
+        break;
+    }
+    case trailer::LinuxScreenshotBackend::Unavailable:
+        // Wayland with no screenshot portal. The menu item is disabled +
+        // tooltipped for this state, but a programmatic/edge trigger can still
+        // land here — degrade honestly rather than emit a silent null (G3).
+        if (auto *mw = qobject_cast<MainWindow *>(context))
+            mw->flashError(tr("Screenshot capture needs a desktop screenshot portal, "
+                              "which isn't running."));
+        return;
     }
 #endif
 

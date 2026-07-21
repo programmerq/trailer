@@ -79,4 +79,32 @@ enum class PickerCaptureResult {
 PickerCaptureResult captureViaPickerToPng(const QString &outPngPath, bool wholeDisplay,
                                           QString *errorOut);
 
+// Which still-capture path Trailer drives on Linux/BSD for a whole-screen
+// grab. Selected purely from (is this a Wayland session?) and (is the XDG
+// screenshot portal available?), so the rule is unit-testable off-platform.
+//
+//   QScreenGrab — QScreen::grabWindow(0). Works on X11 (and offscreen/xcb
+//                 test platforms), which permit a client-side root grab.
+//   Portal      — the org.freedesktop.portal.Screenshot desktop portal.
+//                 The only path that yields real pixels under Wayland, where
+//                 a client-side grab is blocked and grabWindow returns null.
+//   Unavailable — Wayland with no screenshot portal running. Capture cannot
+//                 succeed, so the caller must degrade honestly (disabled
+//                 control + tooltip, never a silent null result) per gate G3.
+enum class LinuxScreenshotBackend {
+    QScreenGrab,
+    Portal,
+    Unavailable,
+};
+
+// Pure policy: resolve the whole-screen capture backend on Linux/BSD.
+//   - Not a Wayland session (X11/xcb/offscreen): QScreenGrab — a client-side
+//     grab is permitted there, and the portal (if any) is not needed. This
+//     is deliberately independent of portalAvailable so X11 behaviour is
+//     unchanged whether or not a portal happens to be running.
+//   - Wayland + portal available: Portal.
+//   - Wayland + no portal: Unavailable (honest-degrade signal).
+// No platform calls — testable on any host.
+LinuxScreenshotBackend chooseLinuxScreenshotBackend(bool isWaylandSession, bool portalAvailable);
+
 } // namespace trailer

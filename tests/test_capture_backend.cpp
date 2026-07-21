@@ -8,10 +8,13 @@
 // SCScreenshotManager) is Apple-only and not exercised here — this test
 // needs no Mac.
 
+#include "platform/PortalScreenshot.h"
 #include "platform/ScreenCaptureBackend.h"
 #include "settings/Settings.h"
 
 #include <QFile>
+#include <QFileInfo>
+#include <QGuiApplication>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -25,6 +28,9 @@ class TestCaptureBackend : public QObject {
     void effectivePolicy();
     void settingsPersistRoundTrip();
     void settingsUnknownStringIsSafeDefault();
+    void linuxScreenshotPolicy();
+    void waylandSessionMatchesPlatform();
+    void livePortalCaptureOrSkip();
 #ifndef Q_OS_MACOS
     void nativeStubIsUnavailable();
 #endif
@@ -123,6 +129,62 @@ void TestCaptureBackend::settingsUnknownStringIsSafeDefault() {
     Settings s(path);
     s.load();
     QCOMPARE(s.captureBackend(), CaptureBackend::Screencapture);
+}
+
+// The Wayland/Linux capture-backend selection rule (pure, no platform calls).
+// This is the deterministic core the backlog item's threshold turns on: on
+// Wayland the affordance routes to the Portal when one is available, and to
+// Unavailable (the honest-degrade signal) when it is not — never to a
+// grabWindow that would silently return null.
+void TestCaptureBackend::linuxScreenshotPolicy() {
+    using B = LinuxScreenshotBackend;
+    // Not Wayland (X11 / xcb / offscreen / Windows): always the client-side
+    // grab, independent of whether a portal happens to be present.
+    QCOMPARE(chooseLinuxScreenshotBackend(/*wayland=*/false, /*portal=*/false), B::QScreenGrab);
+    QCOMPARE(chooseLinuxScreenshotBackend(/*wayland=*/false, /*portal=*/true), B::QScreenGrab);
+    // Wayland with a portal -> route through the portal (the only path that
+    // yields real pixels there).
+    QCOMPARE(chooseLinuxScreenshotBackend(/*wayland=*/true, /*portal=*/true), B::Portal);
+    // Wayland with no portal -> Unavailable, so the caller degrades honestly
+    // instead of silently producing nothing.
+    QCOMPARE(chooseLinuxScreenshotBackend(/*wayland=*/true, /*portal=*/false), B::Unavailable);
+}
+
+// The isWaylandSession() wrapper reflects the live Qt platform. The unit suite
+// runs under offscreen, so this pins that offscreen is not misread as Wayland
+// (which would wrongly route to the portal path in the real app).
+void TestCaptureBackend::waylandSessionMatchesPlatform() {
+    const bool platformIsWayland =
+        QGuiApplication::platformName().startsWith(QStringLiteral("wayland"), Qt::CaseInsensitive);
+    QCOMPARE(isWaylandSession(), platformIsWayland);
+}
+
+// Live end-to-end portal capture. This exercises the real QtDBus path
+// (capturePortalScreenshotToPng) ONLY when a screenshot portal is actually
+// reachable on the session bus — i.e. under the stood-up sway + dbus +
+// pipewire + xdg-desktop-portal(+wlr) stack. In ordinary offscreen CI (no
+// session bus, no portal) it QSKIPs, mirroring the Wine-only QSKIP precedent:
+// the deterministic policy above is the always-on coverage; this adds real
+// coverage where the stack exists without gating the fast PR loop.
+void TestCaptureBackend::livePortalCaptureOrSkip() {
+    if (!trailer::portalScreenshotAvailable())
+        QSKIP("no XDG screenshot portal on the session bus — live capture not testable here");
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString out = dir.filePath("portal-shot.png");
+
+    QString err;
+    const auto r = trailer::capturePortalScreenshotToPng(out, /*interactive=*/false, &err);
+    // A non-interactive whole-screen grab should not be Cancelled; Ok is the
+    // expected outcome, and any failure must carry a reason (never a silent
+    // null — the property the backlog item guards).
+    if (r == trailer::PortalCaptureResult::Cancelled)
+        QSKIP("portal reported the request cancelled — not a deterministic outcome to assert");
+    QVERIFY2(r == trailer::PortalCaptureResult::Ok,
+             qPrintable(QStringLiteral("portal capture failed: %1").arg(err)));
+    QVERIFY(QFileInfo::exists(out));
+    QVERIFY(QFileInfo(out).size() > 0);
 }
 
 #ifndef Q_OS_MACOS

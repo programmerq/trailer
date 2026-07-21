@@ -38,4 +38,16 @@ CaptureBackend effectiveCaptureBackend(CaptureBackend configured, bool screenCap
     return CaptureBackend::Screencapture;
 }
 
+LinuxScreenshotBackend chooseLinuxScreenshotBackend(bool isWaylandSession, bool portalAvailable) {
+    // X11 / xcb / offscreen: a client-side root grab works, so keep the
+    // long-standing QScreen::grabWindow path and ignore the portal entirely.
+    if (!isWaylandSession)
+        return LinuxScreenshotBackend::QScreenGrab;
+    // Wayland: grabWindow returns null (client-side grabs are blocked), so a
+    // real capture requires the portal. Without it, signal honest-degrade
+    // rather than letting the caller silently produce nothing.
+    return portalAvailable ? LinuxScreenshotBackend::Portal
+                           : LinuxScreenshotBackend::Unavailable;
+}
+
 } // namespace trailer
