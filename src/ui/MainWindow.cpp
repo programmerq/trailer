@@ -204,7 +204,12 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // Save/Discard.)
     connect(m_documentView, &DocumentView::documentCloseRequested, this,
             [this](IDocument *doc, bool *veto) {
-                if (doc && (doc->isDirty() || doc->isUntitled())) {
+                // hasUnsavedWork() (not isDirty()) so a CLEAN doc whose backing
+                // file was DELETED on disk (buffer is the last copy — CF-7)
+                // still gets the Save/Discard/Cancel prompt instead of closing
+                // silently. isUntitled() keeps #78's prompt for a content-bearing
+                // untitled doc backed only by a transient temp file.
+                if (doc && (doc->hasUnsavedWork() || doc->isUntitled())) {
                     *veto = !confirmCloseDirtyDoc(doc);
                 } else if (doc && !doc->filePath().isEmpty()) {
                     // Clean tab close: confirmCloseDirtyDoc never runs and the
@@ -288,12 +293,25 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         auto *doc = m_documentView->currentDocument();
         if (!doc)
             return;
-        // Deliberate clobber of the newer on-disk copy: arm the one-shot force
-        // flag, then save over the original. The banner is dismissed only when
-        // saveDocumentAsync confirms the save succeeded, so a failed clobber
-        // leaves the conflict affordance up (F5).
-        doc->setForceSaveOverExternalChange(true);
-        saveDocumentAsync(doc, doc->filePath());
+        // "Keep mine" no longer writes to disk on click (ADR 2026-07-20). It
+        // resolves the conflict in the user's favour WITHOUT a silent write:
+        // the (already-dirty) buffer is kept, and the load-time baseline is
+        // refreshed to the current on-disk identity so the save-time guard now
+        // reads NoChange — i.e. the conflict is cleared and the user's next
+        // EXPLICIT Save overwrites the file cleanly, without re-prompting. The
+        // overwrite thus happens through a visible, user-initiated action
+        // rather than as a side effect of a banner button.
+        //
+        // Contrast with Dismiss, which only hides the banner and leaves the
+        // baseline (and thus the guard) untouched — so the next Save re-detects
+        // the conflict and re-prompts.
+        doc->captureFileBaseline();
+        if (m_fileChangeBanner)
+            m_fileChangeBanner->dismiss();
+        // The buffer is still unsaved relative to disk; keep the "•" marker and
+        // let the user know Save will now overwrite without a further prompt.
+        updateTitleForDocument(doc);
+        flashStatus(tr("Keeping your version — Save will overwrite the file on disk."));
     });
     connect(m_fileChangeBanner, &FileChangeBanner::saveRequested, this, [this]() {
         auto *doc = m_documentView->currentDocument();
@@ -768,11 +786,15 @@ void MainWindow::autoSaveDirtyDocs() {
         IDocument *doc = nullptr;
         if (!m_documentView->documentAt(i, &doc) || !doc)
             continue;
-        // Skip clean docs, and skip docs with no user-chosen path —
-        // both a genuinely path-less doc and an untitled transient
-        // import (whose only path is a temp file). Auto-saving an
-        // untitled doc would silently write to the temp file and could
-        // clear its untitled state; the user must pick a real
+        // Gate on isDirty(), NOT hasUnsavedWork(): a clean-but-externally-
+        // deleted doc (CF-7) has hasUnsavedWork()==true, but silently
+        // recreating a file the user may have deleted on purpose, on a timer,
+        // is worse than leaving it for the explicit banner-Save. This
+        // asymmetry with the close/quit predicates is deliberate.
+        // Also skip docs with no user-chosen path — both a genuinely path-less
+        // doc and an untitled transient import (whose only path is a temp
+        // file). Auto-saving an untitled doc would silently write to the temp
+        // file and could clear its untitled state; the user must pick a real
         // destination via Save-As, so auto-save leaves it alone.
         if (!doc->isDirty() || doc->filePath().isEmpty() || doc->isUntitled())
             continue;
@@ -2638,6 +2660,9 @@ void MainWindow::onExternalFileDeleted() {
         return;
     // Keep the buffer; the banner's Save recreates the file on disk.
     m_fileChangeBanner->showDeleted();
+    // Refresh the title/tab so the "•" unsaved marker appears — a deleted
+    // backing file now counts as unsaved work (CF-7), even for a clean doc.
+    updateTitleForDocument(doc);
 }
 
 void MainWindow::reloadCurrentDocumentFromDisk() {
@@ -2927,7 +2952,9 @@ void MainWindow::updateTitleForDocument(IDocument *doc) {
         return;
     }
     const QString name = doc->displayName();
-    const QString marker = doc->isDirty() ? QStringLiteral("• ") : QString();
+    // hasUnsavedWork() so the "•" also shows for a clean doc whose backing file
+    // was deleted on disk (CF-7) — its buffer is the only remaining copy.
+    const QString marker = doc->hasUnsavedWork() ? QStringLiteral("• ") : QString();
     setWindowTitle(tr("%1%2 — Trailer").arg(marker, name));
     // setWindowFilePath bridges to NSWindow::representedFilename on
     // macOS — the title bar gets a clickable folder icon for "Show
@@ -4294,14 +4321,16 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     // pasted/acquired content; ADR-0004).
     std::vector<IDocument *> dirty;
     dirty.reserve(static_cast<size_t>(total));
+    // hasUnsavedWork() (not isDirty()) so a clean doc whose backing file was
+    // deleted on disk is prompted at window-close too, not just at tab-close.
     if (auto *current = m_documentView->currentDocument()) {
-        if (current->isDirty() || current->isUntitled())
+        if (current->hasUnsavedWork() || current->isUntitled())
             dirty.push_back(current);
     }
     for (int i = 0; i < total; ++i) {
         IDocument *doc = nullptr;
         if (m_documentView->documentAt(i, &doc) && doc &&
-            (doc->isDirty() || doc->isUntitled()) &&
+            (doc->hasUnsavedWork() || doc->isUntitled()) &&
             std::find(dirty.begin(), dirty.end(), doc) == dirty.end()) {
             dirty.push_back(doc);
         }
@@ -4326,20 +4355,23 @@ void MainWindow::closeEvent(QCloseEvent *event) {
 std::vector<IDocument *> MainWindow::collectDirtyDocsForQuit() const {
     // Mirror closeEvent's dirty-doc walk: current document first (so the
     // user usually sees just one prompt — the doc they were looking at),
-    // then the rest, de-duplicated. Dirty OR untitled qualifies — an
-    // untitled doc is clean but backed only by a transient temp file, so
-    // quitting without a prompt would lose its content (ADR-0004).
+    // then the rest, de-duplicated. hasUnsavedWork() OR untitled qualifies:
+    // hasUnsavedWork() (= isDirty() || externally-deleted, CF-7) so a clean
+    // doc whose backing file was deleted underneath is prompted on ⌘Q instead
+    // of quitting silently (its buffer is the last copy); an untitled doc is
+    // clean but backed only by a transient temp file, so quitting without a
+    // prompt would likewise lose its content (ADR-0004).
     std::vector<IDocument *> dirty;
     const int total = m_documentView->documentCount();
     dirty.reserve(static_cast<size_t>(total));
     if (auto *current = m_documentView->currentDocument()) {
-        if (current->isDirty() || current->isUntitled())
+        if (current->hasUnsavedWork() || current->isUntitled())
             dirty.push_back(current);
     }
     for (int i = 0; i < total; ++i) {
         IDocument *doc = nullptr;
         if (m_documentView->documentAt(i, &doc) && doc &&
-            (doc->isDirty() || doc->isUntitled()) &&
+            (doc->hasUnsavedWork() || doc->isUntitled()) &&
             std::find(dirty.begin(), dirty.end(), doc) == dirty.end()) {
             dirty.push_back(doc);
         }

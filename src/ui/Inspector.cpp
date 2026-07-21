@@ -435,7 +435,11 @@ void Inspector::rebuildDocumentInfo() {
     } else {
         m_docSizeLabel->setText(tr("—"));
     }
-    m_docDirtyLabel->setText(m_doc->isDirty() ? tr("Modified") : tr("Clean"));
+    // Use hasUnsavedWork() (not isDirty()) so this matches the title-bar "•"
+    // and the close-prompt predicate: a CLEAN doc whose backing file was
+    // externally deleted (CF-7) has unsaved work and must read as Modified,
+    // not "Clean" — the Inspector would otherwise contradict the title.
+    m_docDirtyLabel->setText(m_doc->hasUnsavedWork() ? tr("Modified") : tr("Clean"));
 }
 
 void Inspector::rebuildAnnotationList() {
