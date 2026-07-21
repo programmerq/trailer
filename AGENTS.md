@@ -62,7 +62,10 @@ rejected, regardless of how cleanly it implements its stated feature.
   Download, format doesn't support the operation — disable the control
   and set a `setToolTip(...)` explaining where to go. Never let the
   user click and hit a popup that exists only to say the feature isn't
-  available right now. See PHILOSOPHY.md → *How Trailer reduces friction*.
+  available right now. See PHILOSOPHY.md → *How Trailer reduces friction*,
+  and [`docs/ux-guidelines.md`](docs/ux-guidelines.md) for the applied
+  minimal-UI-surface checklist (subtle affordances over dialogs / popups /
+  progress bars).
 
 If a feature you're asked to implement seems to brush against any of
 these, stop and ask in the PR description before writing code.

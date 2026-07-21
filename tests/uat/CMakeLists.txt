@@ -105,6 +105,7 @@ trailer_add_uat_test(test_uat_instant_alpha_and_smart_lasso
     test_uat_instant_alpha_and_smart_lasso.cpp)
 
 trailer_add_uat_test(test_uat_recognize_text test_uat_recognize_text.cpp)
+trailer_add_uat_test(test_uat_ocr_disk_cache test_uat_ocr_disk_cache.cpp)
 
 # External file-change handling (ADR 2026-07-19): silent clean-reload, dirty-
 # conflict banner, deleted banner, G3 Compare placeholder. Also emits the G2
@@ -208,6 +209,17 @@ endif()
 # needed.
 trailer_add_uat_test(test_uat_zoom_indicator test_uat_zoom_indicator.cpp)
 
+# Off-GUI-thread document open (UAT-VWR-100, backlog
+# 2026-07-15-offthread-pdf-open-placeholder / DR 0006 (b)). Captures the
+# "Loading…" placeholder → real page before/after G2 evidence. Builds a PDF
+# via QPdfWriter and drives PdfDocument + QPdfView directly, so it links Qt PDF.
+#
+# Runs across the HiDPI dpr matrix {1, 1.5, 2}: open-at-logical-size is
+# dpr-sensitive, so the placeholder/page visuals must hold at each dpr.
+trailer_build_uat_exe(test_uat_offthread_open test_uat_offthread_open.cpp)
+target_link_libraries(test_uat_offthread_open PRIVATE Qt6::Pdf Qt6::PdfWidgets)
+trailer_register_uat_dpr_matrix(test_uat_offthread_open)
+
 # Inline Open Recent list in the empty state (backlog
 # 2026-07-12-empty-state-open-recent-list). Drives Application +
 # MainWindow; PDF fixtures use QPdfWriter (QtGui), so no Qt6::Pdf link is
@@ -223,3 +235,11 @@ trailer_add_uat_test(test_uat_empty_state_recent test_uat_empty_state_recent.cpp
 # grab() of the open Window menu to $TRAILER_WINDOWMENU_EVIDENCE_DIR when
 # set.
 trailer_add_uat_test(test_uat_window_menu_maximize test_uat_window_menu_maximize.cpp)
+
+# Preferences pane UAT (theme live-wire + tabs-grow-with-settings). Guards
+# that the Theme control is enabled and every visible tab has >=1 enabled
+# operable control. Also emits the curated G2 before/after evidence (enabled
+# Theme combo + app in light/dark) to $TRAILER_PREF_EVIDENCE_DIR when set.
+# Drives PreferencesDialog + Application + MainWindow with an image document
+# (PNG via QImage), so no Qt6::Pdf link is needed.
+trailer_add_uat_test(test_uat_preferences test_uat_preferences.cpp)

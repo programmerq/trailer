@@ -247,6 +247,10 @@ The reference user opens a file, does the thing, and closes the file.
 Anything between them and "the thing" is friction. Trailer pays the
 implementation cost so the user doesn't pay the attention cost.
 
+The applied, checklist form of the principles below — minimal UI surface,
+subtle in-context affordances over dialogs / popups / progress bars —
+lives in [`docs/ux-guidelines.md`](docs/ux-guidelines.md).
+
 - **No lying controls.** A control never claims to do one thing and
   does another. This has two parts:
   - *A control that won't work is greyed out, with a tooltip.* If a

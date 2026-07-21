@@ -16,8 +16,14 @@ namespace trailer {
 // `OcrEngine::TextBlock` keyed by page index so multi-page PDFs round-
 // trip cleanly (single-page documents only ever populate page 0).
 //
-// In-memory only — no disk persistence in this phase. Re-OCRing on
-// reopen is acceptable; a disk cache is a follow-up.
+// This store is the per-document, in-memory tier. Persistence across
+// reopen is provided UNDER it by a bounded, content-hash-keyed on-disk
+// LRU cache (`OcrDiskCache`, ADR 0013 §G13.4) owned by the
+// `OcrController`: on a read miss the controller reads through the disk
+// tier before running OCR, and on a successful pass it writes through.
+// The store itself stays a pure in-memory container with no filesystem
+// dependency — the disk tier is keyed by the same content hash the store
+// stashes here (`contentHashFor`), so the two agree by construction.
 //
 // Invalidation is by content hash: callers stash the source-image hash
 // alongside the results, and a page-level edit (rotate/crop/replace)

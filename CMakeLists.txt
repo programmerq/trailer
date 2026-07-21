@@ -194,6 +194,8 @@ set(TRAILER_SOURCES
     src/document/PdfCommands.h
     src/document/RecoveryStore.cpp
     src/document/RecoveryStore.h
+    src/document/OcrDiskCache.cpp
+    src/document/OcrDiskCache.h
     src/document/PdfEditor.cpp
     src/document/PdfEditor.h
     src/document/SelectableTextStore.cpp

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "annotation/Annotation.h"
+#include "ui/IconHelper.h"
 
 #include <QToolBar>
 
@@ -51,11 +52,17 @@ class FormToolbar : public QToolBar {
     // but keeps the popover from landing at (0,0) regardless).
     void signHereRequested(const QPoint &anchorGlobalPos);
 
+  public:
+    // Re-tint the toolbar's themed tool icons from the current palette,
+    // called by MainWindow after a live theme (colour-scheme) change.
+    void refreshThemedIcons() { m_themedIcons.refresh(); }
+
   private:
     QAction *makeToolAction(const QString &label, AnnotationTool tool,
                             const QString &pendingText = {},
                             const QString &iconResource = QString());
 
+    ThemedIconBinder m_themedIcons;
     QActionGroup *m_group = nullptr;
     AnnotationTool m_tool = AnnotationTool::None;
     QString m_pendingText;

@@ -460,8 +460,14 @@ design, until a future change adds concurrency caps.
 
 A status-bar `QLabel` (`MainWindow::m_mlIndicator`) shows whenever
 the scheduler is non-idle; tooltip is the running task's label.
-This is the **only** affordance the user sees for background ML —
-modals are off the table per PHILOSOPHY.
+This is the peripheral, always-on affordance for background ML —
+modals are off the table per PHILOSOPHY. A feature may add a *subtle,
+in-place* status hint on its own control on top of the dot (never a
+progress bar or modal): background removal reflects its op status as a
+glyph on the `Tools > Remove Background` menu entry itself — see
+[DR 2026-07-21-bg-removal-menu-status-glyph](decision-records/2026-07-21-bg-removal-menu-status-glyph.md),
+which refines the "only affordance" wording for that op. OCR keeps the
+richer `MlProgressWidget` (spinner + elapsed + cancel) per ADR 0002.
 
 **Recipe.** A new ML feature looks like:
 
@@ -647,3 +653,28 @@ One intentional exception: `Settings::load()` still reads the legacy
 `redaction.warning_acknowledged` key, which is deliberately *not* in the
 registry — it is a read-only migration key rewritten under `first_use.`
 on the next `save()` and never queried via `volatilityOf` in production.
+
+**Live-apply seams (worked examples).** A `Live` key still needs a
+consumer that actually re-reads or re-applies it — the classification is a
+promise the code must keep:
+
+- `general.theme` — not read live by any consumer, so it is re-applied on
+  OK via `PreferencesDialog::settingsApplied` → `Application::applyTheme`,
+  which maps the enum through `colorSchemeFor` (`src/settings/Settings.cpp`)
+  onto `QStyleHints::setColorScheme` and re-tints the themed toolbar/menu
+  icons (`ThemedIconBinder` in `src/ui/IconHelper.h`; a palette swap does
+  not touch already-baked icon pixmaps). `Theme::System` hands the scheme
+  back to Qt so it tracks the OS, and `QStyleHints::colorSchemeChanged`
+  re-tints icons on a live OS flip. Mirrors the `recent_max` apply-signal
+  pattern. See DR 2026-07-20-theme-applies-live.
+
+**Preferences tabs grow with settings.** The Preferences dialog adds a tab
+only once it has ≥1 real, wired, operable control — never an empty
+placeholder tab. A roadmap pane (e.g. Forms) stays *absent* until at least
+one of its settings is wired and persists, rather than shipping as an empty
+stub. This is the per-tab analogue of "no lying controls" (G3): a tab that
+exists implies operable settings behind it. The rule is enforced by
+`tests/uat/test_uat_preferences.cpp`
+(`uat_pref_020_everyVisibleTabHasEnabledOperableControl`), which asserts
+every visible tab has an enabled operable control; the tab-construction
+site in `src/ui/PreferencesDialog.cpp` carries the matching in-code note.

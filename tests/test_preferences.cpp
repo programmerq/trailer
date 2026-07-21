@@ -26,7 +26,8 @@ class TestPreferences : public QObject {
     void cancelDiscards();
     void restoreDefaultsResetsAll();
     void perFieldReset();
-    void themeControlDisabled();
+    void themeControlEnabled();
+    void themeAppliesLiveThroughSignal();
     void cancelPreservesExistingFile();
     void okPreservesMachineState();
     void untouchedRecentMaxNotClamped();
@@ -165,15 +166,55 @@ void TestPreferences::perFieldReset() {
     QCOMPARE(s2.autoSave(), false);  // still the mutated value
 }
 
-void TestPreferences::themeControlDisabled() {
+// The Theme control is now live-wired (docs/decision-records/
+// 2026-07-20-theme-applies-live.md, superseding docs/decisions/0004): the
+// combo is enabled and the old "not applied yet" helper label is gone.
+void TestPreferences::themeControlEnabled() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     Settings s(dir.filePath("settings.toml"));
     PreferencesDialog dlg(s);
     auto *combo = dlg.findChild<QComboBox *>("themeCombo");
     QVERIFY(combo);
-    QCOMPARE(combo->isEnabled(), false);
-    QVERIFY(!combo->toolTip().isEmpty());
+    QVERIFY(combo->isEnabled());
+    // The obsolete disabled-state helper label must be gone.
+    QVERIFY(!dlg.findChild<QLabel *>("themeHelpLabel"));
+    // All three modes are offered.
+    QCOMPARE(combo->count(), 3);
+}
+
+// Live-apply proof for theme. Like recent_max, theme is not read live by
+// its consumer — it takes effect without a restart only because accept()
+// emits settingsApplied and the host re-applies it (MainWindow re-applies
+// via Application::applyTheme). This drives the real signal end to end:
+// change the combo, accept, and a connected consumer sees the new theme
+// and its mapped colour scheme — no dialog reconstruction, no restart. If
+// accept() stopped emitting the signal, the consumer would keep the stale
+// theme and this fails.
+void TestPreferences::themeAppliesLiveThroughSignal() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+
+    Settings s(dir.filePath("settings.toml"));
+    QCOMPARE(s.theme(), Theme::System); // default
+
+    PreferencesDialog dlg(s);
+    QObject ctx;
+    Qt::ColorScheme applied = Qt::ColorScheme::Unknown;
+    int applyCount = 0;
+    QObject::connect(&dlg, &PreferencesDialog::settingsApplied, &ctx,
+                     [&applied, &applyCount, &s]() {
+                         applied = colorSchemeFor(s.theme());
+                         ++applyCount;
+                     });
+
+    auto *combo = dlg.findChild<QComboBox *>("themeCombo");
+    combo->setCurrentIndex(combo->findData(static_cast<int>(Theme::Dark)));
+    dlg.accept(); // applyToSettings -> save -> emit settingsApplied
+
+    QCOMPARE(applyCount, 1);
+    QCOMPARE(s.theme(), Theme::Dark);
+    QCOMPARE(applied, Qt::ColorScheme::Dark);
 }
 
 void TestPreferences::cancelPreservesExistingFile() {
