@@ -7,8 +7,11 @@
 - **Date accepted / superseded:** 2026-07-21 (accepted)
 - **References:** backlog item `2026-07-12-wayland-screenshot-portal` (the work
   item this record closes; deleted in the implementing change per the backlog
-  close convention). Sibling: `docs/ci/wayland-tier.md` (the Phase-2 sway+grim
-  smoke tier) and the macOS capture records
+  close convention). The companion Wayland-CI PR (#117) adds a
+  `docs/ci/wayland-tier.md` sway+grim launch-and-screenshot smoke tier; that
+  file is **not present on this branch** and that tier does **not** run the
+  live portal test (see *CI coverage* below). Related: the macOS capture
+  records
   [`2026-07-16-permissionless-screen-capture`](2026-07-16-permissionless-screen-capture.md)
   / [`2026-07-16-capture-permission-preflight`](2026-07-16-capture-permission-preflight.md).
 
@@ -59,8 +62,33 @@ disabled with a tooltip explaining why; it never silently returns null.**
 Verified by (a) the deterministic policy test
 `TestCaptureBackend::linuxScreenshotPolicy` pinning the four-way selection, and
 (b) the gated live test `TestCaptureBackend::livePortalCaptureOrSkip`, which
-runs the real portal call end-to-end when a portal is on the session bus and
-QSKIPs otherwise (Wine-QSKIP precedent).
+exercises the real `capturePortalScreenshotToPng` round-trip **only when a
+screenshot portal is actually on the session bus**, and `QSKIP`s otherwise
+(Wine-QSKIP precedent).
+
+The end-to-end portal round-trip was proven **manually / locally** against a
+stood-up headless stack — `sway` (headless) + a private dbus session +
+`pipewire` + `wireplumber` + `xdg-desktop-portal-wlr` + a stub Access portal,
+driven by `portals.conf` — where the live test runs for real
+(`portalScreenshotAvailable()` → true, `capturePortalScreenshotToPng()` → `Ok`,
+non-blank PNG). See *CI coverage* for why that proof is not yet reproduced in
+automated CI.
+
+## CI coverage
+
+**The live portal path has zero executed coverage in the current PR/release
+CI.** Both PR CI and the release UAT gate run under `QT_QPA_PLATFORM=offscreen`
+with no screenshot portal on the session bus, so `livePortalCaptureOrSkip`
+always hits its `QSKIP` there — the always-on coverage is the deterministic
+`linuxScreenshotPolicy` selection test plus the offscreen-safe honest-degrade
+wiring, **not** the portal DBus call itself. Automated coverage of the real
+`capturePortalScreenshotToPng` round-trip requires a **future CI job that
+stands up the full portal stack** (compositor + dbus + pipewire +
+`xdg-desktop-portal(-wlr)`). The companion Wayland-CI PR (#117) adds only a
+launch-and-screenshot smoke tier (`docs/ci/wayland-tier.md`, not on this
+branch); that tier does **not** run the portal test, so it does not close this
+gap. Until such a job exists, the portal round-trip's guarantee rests on the
+manual/local proof above.
 
 ## In-code anchors
 
@@ -79,7 +107,13 @@ QSKIPs otherwise (Wine-QSKIP precedent).
   them to the portal's interactive mode).
 - The portal response timeout (30 s, `kResponseTimeoutMs`) is a hand-tuned
   guard against a wedged portal; it is an internal tuning constant, not a
-  user-visible default (PHILOSOPHY → *Hand-tuned values stay hand-tuned*).
+  user-visible default (PHILOSOPHY → *Hand-tuned values stay hand-tuned*). It
+  bounds **each phase separately** — the initial `bus.call()` ack and the
+  subsequent guarded `loop.exec()` wait for the async `Response` — so the
+  worst-case GUI-thread block for a maximally-slow-but-not-dead portal is
+  **~2× the constant (≈60 s), not 30 s**. A portal that is simply *absent*
+  fails fast (no name registered); the doubling only applies to a backend that
+  half-answers then wedges.
 - The non-interactive request (`interactive=false`) is used for the automated
   whole-screen grab; some backends still draw a brief confirmation. That is the
   backend's choice, honestly surfaced (a Cancelled response is treated as a

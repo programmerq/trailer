@@ -3,7 +3,6 @@
 #include <QDBusArgument>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
-#include <QDBusInterface>
 #include <QDBusMessage>
 #include <QDBusObjectPath>
 #include <QDBusReply>
@@ -31,6 +30,14 @@ constexpr char kRequestIface[] = "org.freedesktop.portal.Request";
 // Interactive backends can sit on a user prompt; a whole-screen non-interactive
 // grab returns in well under a second. 30 s is generous headroom for a slow
 // compositor without hanging the UI thread indefinitely on a wedged portal.
+// NOTE: this bounds EACH of the two blocking phases separately — the initial
+// bus.call() ack (QDBus::Block, kResponseTimeoutMs) and then the guarded
+// loop.exec() waiting for the async Response — so the worst-case GUI-thread
+// block for a maximally-slow-but-not-dead portal is ~2× this constant, not a
+// single 30 s. Tried: a single shared deadline across both phases (more code
+// for a corner that only matters when a portal half-answers then wedges);
+// 30 s per phase is the simpler guard. Symptom to lower it: users report the
+// UI hanging up to a minute when a backend is wedged rather than absent.
 constexpr int kResponseTimeoutMs = 30000;
 
 // Receives the one org.freedesktop.portal.Request.Response we care about and
@@ -69,19 +76,18 @@ bool portalScreenshotAvailable() {
     // this probe never auto-starts an activatable service merely because a
     // menu opened. A real Wayland session starts the portal at login; if it
     // isn't up, honest-degrade (disable the control) is the correct, safe read.
+    //
+    // This is intentionally a name-registration check ONLY — no QDBusInterface
+    // construction, no introspection round-trip. portalScreenshotAvailable() is
+    // called on every screenshot-submenu open (aboutToShow), so it sits on a
+    // hot UI path; a synchronous introspect/property blocking IPC per open was
+    // adding avoidable latency. isServiceRegistered() is a cheap local query
+    // against the bus daemon's known-names table and keeps the non-activating
+    // semantics (it never starts the service). If the frontend is up but a
+    // backend fails to export Screenshot, the actual capture call surfaces that
+    // honestly (Failed with a reason), which is the G3-correct place for it.
     QDBusConnectionInterface *dbus = bus.interface();
-    if (!dbus || !dbus->isServiceRegistered(QLatin1String(kPortalService)).value())
-        return false;
-    // Constructing the interface introspects the portal object; isValid() is
-    // false when the Screenshot interface is not exported (e.g. no backend
-    // provides org.freedesktop.impl.portal.Screenshot). Reading the "version"
-    // property is a further liveness check that the frontend actually answers.
-    QDBusInterface iface(QLatin1String(kPortalService), QLatin1String(kPortalPath),
-                         QLatin1String(kScreenshotIface), bus);
-    if (!iface.isValid())
-        return false;
-    const QVariant version = iface.property("version");
-    return version.isValid();
+    return dbus && dbus->isServiceRegistered(QLatin1String(kPortalService)).value();
 }
 
 PortalCaptureResult capturePortalScreenshotToPng(const QString &outPngPath, bool interactive,

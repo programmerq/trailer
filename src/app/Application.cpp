@@ -35,6 +35,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QPixmap>
+#include <QPointer>
 #include <QProcess>
 #include <QPushButton>
 #include <QScreen>
@@ -1016,8 +1017,21 @@ void Application::addAcquireItems(QMenu *fileMenu, QWidget *captureContext) {
     screenshotMenu->setToolTipsVisible(true);
 
     auto *wholeScreen = screenshotMenu->addAction(tr("Whole Screen"));
-    connect(wholeScreen, &QAction::triggered, this,
-            [this, captureContext]() { captureScreenshot(ShotMode::Screen, captureContext); });
+    connect(wholeScreen, &QAction::triggered, this, [this, wholeScreen, captureContext]() {
+        // Re-entrancy guard. On Wayland the portal capture spins a nested
+        // event loop (PortalScreenshot.cpp) that keeps this menu live, so a
+        // user could click Whole Screen again mid-capture and stack a second
+        // portal request / nested loop. Disable the action for the duration
+        // and restore it after. The QPointer covers the case where the capture
+        // context (and hence this menu + action) is destroyed inside the
+        // nested loop — we then simply don't touch the freed action. On
+        // X11/Windows there is no nested loop, so this is a harmless no-op.
+        QPointer<QAction> guard(wholeScreen);
+        guard->setEnabled(false);
+        captureScreenshot(ShotMode::Screen, captureContext);
+        if (guard)
+            guard->setEnabled(true);
+    });
 
     auto *window = screenshotMenu->addAction(tr("Window"));
     connect(window, &QAction::triggered, this,
@@ -1264,6 +1278,14 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
                                                   trailer::portalScreenshotAvailable())) {
     case trailer::LinuxScreenshotBackend::Portal: {
         QString err;
+        // capturePortalScreenshotToPng runs a nested QEventLoop that DOES
+        // dispatch DeferredDelete, so `context` (the triggering MainWindow)
+        // can be destroyed while we wait for the portal. Hold it in a QPointer
+        // captured BEFORE the call and re-check it before any post-call
+        // dereference; if the window is gone there is nothing to flash to, so
+        // abort quietly. (openFiles() below does not touch `context`, so the
+        // success path is unaffected by a mid-capture close.)
+        QPointer<QWidget> ctxGuard(context);
         const auto r = trailer::capturePortalScreenshotToPng(path, /*interactive=*/false, &err);
         if (r == trailer::PortalCaptureResult::Cancelled)
             return; // user dismissed the portal prompt — a self-caused no-op
@@ -1272,7 +1294,7 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
             // Surface it — do not fall back to a grabWindow that would only
             // yield a null pixmap under Wayland.
             qWarning() << "Application: portal screenshot failed:" << err;
-            if (auto *mw = qobject_cast<MainWindow *>(context))
+            if (auto *mw = qobject_cast<MainWindow *>(ctxGuard.data()))
                 mw->flashError(tr("Screenshot capture via the desktop portal failed."));
             return;
         }
