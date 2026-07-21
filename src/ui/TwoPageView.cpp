@@ -169,7 +169,12 @@ void TwoPageView::relayout() {
     verticalScrollBar()->setPageStep(vp.height());
     verticalScrollBar()->setSingleStep(std::max(1, vp.height() / 10));
 
-    const int hMax = std::max(0, static_cast<int>(std::ceil(canvas.width())) - vp.width());
+    // Floor (not ceil) the canvas width for the horizontal range: fitWidthZoom()
+    // solves the widest spread to exactly the viewport width, but float round-up
+    // in canvasSize() can leave the ceil'd width one pixel over, producing a 1px
+    // scrollbar Fit-Width is meant to remove. Flooring absorbs that sub-pixel
+    // excess; a genuine overflow of a full pixel or more still yields a range.
+    const int hMax = std::max(0, static_cast<int>(std::floor(canvas.width())) - vp.width());
     horizontalScrollBar()->setRange(0, hMax);
     horizontalScrollBar()->setPageStep(vp.width());
     horizontalScrollBar()->setSingleStep(std::max(1, vp.width() / 10));
@@ -181,7 +186,10 @@ void TwoPageView::resizeEvent(QResizeEvent *event) {
 }
 
 void TwoPageView::scrollToPage(int pageIndex) {
-    if (m_spreads.empty())
+    // Self-safe against a negative index regardless of caller guards: page1
+    // would become <= 0 and could false-match the cover spread's right==0
+    // sentinel (0 means "no page in this slot"), scrolling to the wrong place.
+    if (pageIndex < 0 || m_spreads.empty())
         return;
     const int page1 = pageIndex + 1; // spreads use 1-based page numbers
     double y = kOuterMargin;
@@ -229,14 +237,19 @@ int TwoPageView::topVisibleLeadingPage() const {
     if (m_spreads.empty())
         return 0;
     // Spreads stack from kOuterMargin downward; the top-most visible spread is
-    // the first whose bottom edge lies below the current scroll offset (i.e. it
-    // still intersects the top of the viewport). scrollToPage top-aligns a
-    // spread, so this resolves to that spread's leading page after navigation.
+    // the first whose vertical MIDPOINT lies below the current scroll offset.
+    // Testing the midpoint (not the bottom edge) decouples this from the
+    // kSpreadGap/kOuterMargin relationship: after scrollToPage top-aligns a
+    // spread the offset sits kOuterMargin above that spread's top, and the
+    // previous spread's midpoint is a whole half-page higher, so the previous
+    // spread is never misreported — even when the gap is smaller than the margin
+    // (both may move within their documented tuning ranges). A bottom-edge test
+    // would need kSpreadGap >= kOuterMargin to stay correct.
     const double scrollY = verticalScrollBar()->value();
     double y = kOuterMargin;
     for (const Spread &s : m_spreads) {
         const double sh = spreadHeight(s);
-        if (y + sh > scrollY)
+        if (y + sh / 2.0 > scrollY)
             return s.left - 1; // 1-based page -> 0-based index
         y += sh + kSpreadGap;
     }

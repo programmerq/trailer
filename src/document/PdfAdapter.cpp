@@ -1401,8 +1401,11 @@ void PdfDocument::goToPage(int pageIndex) {
     // In Two-Pages mode the QPdfView is hidden, so also scroll the visible
     // TwoPageView to the spread holding this page — otherwise Previous/Next Page
     // and thumbnail-click navigation would silently move only the hidden view
-    // (an inert control, G3). currentPage() still reads the QPdfView navigator,
-    // which the jump above keeps in sync.
+    // (an inert control, G3). The scroll fires TwoPageView::currentPageChanged,
+    // which updates m_twoPageCurrentPage — the value currentPage() reports in
+    // this mode — so the current-page indicator stays in sync. (The
+    // pageNavigator jump above keeps the hidden QPdfView consistent for when the
+    // user switches back to Single/Continuous.)
     if (m_viewMode == ViewMode::TwoPages && m_twoPageView) {
         m_twoPageView->scrollToPage(pageIndex);
     }
