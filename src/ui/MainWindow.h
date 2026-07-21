@@ -444,6 +444,12 @@ class MainWindow : public QMainWindow {
     // document — see onCurrentDocumentChanged / the on*ExternalFile* slots.
     ExternalChangeMonitor *m_externalChangeMonitor = nullptr;
     FileChangeBanner *m_fileChangeBanner = nullptr;
+    // Primary read-only degradation signal for Two-Pages mode: a non-modal
+    // strip above the document view that names the mode limitation and where to
+    // go to edit. The per-control disabled tooltips remain as the G3 floor; this
+    // banner is the additional, always-visible primary signal (decision record
+    // 2026-07-21-two-page-layout, D2-A). Shown/hidden by onCurrentDocumentChanged.
+    QLabel *m_twoPageModeBanner = nullptr;
     Inspector *m_inspector = nullptr;
     Magnifier *m_magnifier = nullptr;
     MarkupToolbar *m_markupToolbar = nullptr;

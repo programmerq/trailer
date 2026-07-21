@@ -288,9 +288,15 @@ void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {
     QAction *find = findAction(mw, QStringLiteral("action.edit.find"));
     QAction *twoPages = findAction(mw, QStringLiteral("action.view.twoPages"));
     QAction *continuous = findAction(mw, QStringLiteral("action.view.continuous"));
+    QAction *formToolbar = findAction(mw, QStringLiteral("action.view.formToolbar"));
     QVERIFY2(markup, "markup toolbar toggle must exist with objectName action.view.markupToolbar");
     QVERIFY2(find, "Find action must exist with objectName action.edit.find");
     QVERIFY2(twoPages && continuous, "view-mode actions must exist");
+
+    // The read-only mode banner is the PRIMARY degradation signal. Look it up by
+    // stable objectName; it is hidden outside Two-Pages mode.
+    auto *banner = mw->findChild<QLabel *>(QStringLiteral("twoPageModeBanner"));
+    QVERIFY2(banner, "Two-Pages read-only banner (objectName twoPageModeBanner) must exist");
 
     // Switch modes exactly as the user does — via the View-menu actions — so
     // the degradation runs through the real command path, not a back-door
@@ -298,6 +304,7 @@ void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {
     continuous->trigger();
     QApplication::processEvents();
     QVERIFY2(find->isEnabled(), "Find is available in Continuous mode");
+    QVERIFY2(!banner->isVisible(), "read-only banner must be hidden outside Two-Pages mode");
 
     // Two-Pages: markup + search disabled-with-tooltip pointing back to the
     // working modes.
@@ -305,6 +312,13 @@ void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {
     twoPages->trigger();
     QApplication::processEvents();
     QCOMPARE(doc->viewMode(), ViewMode::TwoPages);
+
+    // Primary signal: the read-only banner is now visible with the exact copy.
+    QVERIFY2(banner->isVisible(), "read-only banner must be visible in Two-Pages mode");
+    QCOMPARE(banner->text(),
+             QStringLiteral("Two Pages is a read-only view — switch to Single or "
+                            "Continuous to edit"));
+
     QVERIFY2(!markup->isEnabled(), "markup must be disabled in Two-Pages mode");
     QVERIFY2(markup->toolTip().contains(QStringLiteral("Switch to"), Qt::CaseInsensitive),
              qPrintable(QStringLiteral("markup degrade tooltip should point back; got: '%1'")
@@ -314,11 +328,24 @@ void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {
              qPrintable(QStringLiteral("search degrade tooltip should point back; got: '%1'")
                             .arg(find->toolTip())));
 
-    // Leaving Two-Pages restores both.
+    // G3 floor: the form-toolbar degrade tooltip must name FILLING FORMS — not
+    // borrow the "mark up or search" copy (the fixed bug). It stays disabled.
+    if (formToolbar) {
+        QVERIFY2(!formToolbar->isEnabled(), "form toolbar must be disabled in Two-Pages mode");
+        QVERIFY2(formToolbar->toolTip().contains(QStringLiteral("form"), Qt::CaseInsensitive),
+                 qPrintable(QStringLiteral("form degrade tooltip must reference forms; got: '%1'")
+                                .arg(formToolbar->toolTip())));
+        QVERIFY2(!formToolbar->toolTip().contains(QStringLiteral("mark up or search")),
+                 qPrintable(QStringLiteral("form tooltip must not say 'mark up or search'; got: '%1'")
+                                .arg(formToolbar->toolTip())));
+    }
+
+    // Leaving Two-Pages restores both and hides the banner.
     continuous->trigger();
     QApplication::processEvents();
     QVERIFY2(find->isEnabled(), "Find re-enables when leaving Two-Pages mode");
     QVERIFY2(markup->isEnabled(), "markup re-enables when leaving Two-Pages mode");
+    QVERIFY2(!banner->isVisible(), "read-only banner must hide again on leaving Two-Pages mode");
 }
 
 // UAT-VWR-074 — curated G2 evidence. Grabs the SAME multi-page document in

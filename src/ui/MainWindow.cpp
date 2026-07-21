@@ -285,6 +285,26 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_fileChangeBanner = new FileChangeBanner(m_documentPage);
     m_fileChangeBanner->hide();
     documentLayout->addWidget(m_fileChangeBanner);
+
+    // Two-Pages read-only mode banner (decision record 2026-07-21-two-page-
+    // layout, D2-A; gate G3). Two Pages is a read-only spread view — markup,
+    // forms, and search are disabled with per-control tooltips (the G3 floor).
+    // This strip is the PRIMARY, always-visible degradation signal so the user
+    // isn't left to discover the limitation control-by-control. Muted amber
+    // attention strip, theme-neutral inline style, mirroring FileChangeBanner.
+    // Shown/hidden by onCurrentDocumentChanged when view mode changes.
+    m_twoPageModeBanner = new QLabel(
+        tr("Two Pages is a read-only view — switch to Single or Continuous to edit"),
+        m_documentPage);
+    m_twoPageModeBanner->setObjectName(QStringLiteral("twoPageModeBanner"));
+    m_twoPageModeBanner->setAutoFillBackground(true);
+    m_twoPageModeBanner->setWordWrap(true);
+    m_twoPageModeBanner->setStyleSheet(QStringLiteral(
+        "#twoPageModeBanner { background-color: #fff4d6; border-bottom: 1px solid "
+        "#e6c86a; color: #5a4a12; padding: 6px 12px; }"));
+    m_twoPageModeBanner->hide();
+    documentLayout->addWidget(m_twoPageModeBanner);
+
     documentLayout->addWidget(m_documentView, 1);
     documentLayout->addWidget(m_animationBar);
 
@@ -1287,6 +1307,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     viewMenu->addAction(m_markupToolbarAction);
 
     m_formToolbarAction = m_formToolbar->toggleViewAction();
+    m_formToolbarAction->setObjectName(QStringLiteral("action.view.formToolbar"));
     m_formToolbarAction->setText(tr("Show Form Filling &Toolbar"));
     m_themedIcons.apply(m_formToolbarAction, QStringLiteral(":/icons/actions/panel-form.svg"),
                         this);
@@ -3829,8 +3850,16 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     const bool twoPageMode =
         doc && doc->supportsViewModes() && doc->viewMode() == ViewMode::TwoPages;
     if (twoPageMode) {
+        // Primary signal: the always-visible read-only banner above the view.
+        // The per-control tooltips below remain as the G3 no-lying-controls floor.
+        if (m_twoPageModeBanner)
+            m_twoPageModeBanner->show();
         const QString why =
             tr("Switch to Single Page or Continuous to mark up or search.");
+        // Form filling is not markup or search — its degrade tooltip must name
+        // the action it gates (filling forms), not borrow the find/markup copy.
+        const QString whyForm =
+            tr("Switch to Single Page or Continuous to fill forms.");
         m_findAction->setEnabled(false);
         m_findAction->setToolTip(why);
         m_findNextAction->setEnabled(false);
@@ -3859,17 +3888,20 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
         // toggle would be inert in two-up — degrade it the same honest way.
         if (m_formToolbarAction) {
             m_formToolbarAction->setEnabled(false);
-            m_formToolbarAction->setToolTip(why);
+            m_formToolbarAction->setToolTip(whyForm);
         }
         if (m_formToolbar && m_formToolbar->isVisible()) {
             m_formToolbarHiddenForTwoPage = true;
             m_formToolbar->hide();
         }
     } else {
-        // Leaving two-up: clear the degrade tooltips. Enablement was already
-        // set by the per-capability logic above for find/search; the markup
-        // toggle is re-gated on document presence here (its normal rule,
-        // mirroring the empty-state handler) so it is not left stuck disabled.
+        // Leaving two-up: hide the read-only banner and clear the degrade
+        // tooltips. Enablement was already set by the per-capability logic
+        // above for find/search; the markup toggle is re-gated on document
+        // presence here (its normal rule, mirroring the empty-state handler)
+        // so it is not left stuck disabled.
+        if (m_twoPageModeBanner)
+            m_twoPageModeBanner->hide();
         m_findAction->setToolTip(QString());
         m_findNextAction->setToolTip(QString());
         m_findPreviousAction->setToolTip(QString());
