@@ -222,6 +222,17 @@ class PdfDocument : public IDocument {
     bool saveCommitOnUi(const SaveContext &ctx);
 
     AnnotationStore *annotations() override {
+        // Obtaining the annotation store implies the document is being used, so
+        // the deferred off-thread open must be adopted first: dirty-tracking
+        // (ensureAnnotationHooksWired) needs m_valid + the adopted m_doc as its
+        // connection context, and it is wired via startBackgroundLoad below. If
+        // an edit lands on the store BEFORE adoption (e.g. an annotation added
+        // before the doc is attached to a window — the ctor used to make m_valid
+        // true synchronously), the hooks would be skipped and the edit would not
+        // mark the document dirty. ensureDocLoaded() restores that invariant; it
+        // drains only the doc-open worker (waitForFinished — reads already off
+        // the GUI thread), NOT the annotation sweep, which stays asynchronous.
+        ensureDocLoaded();
         // First genuine annotation access kicks the deferred unified load onto
         // a BACKGROUND worker (idempotent) and returns the store immediately —
         // empty at first, populated live when the worker commits. This is the
