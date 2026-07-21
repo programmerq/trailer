@@ -170,10 +170,14 @@ void TwoPageView::paintEvent(QPaintEvent *event) {
                 QPdfDocumentRenderOptions opts;
                 opts.setScaledSize(devPx);
                 QImage img = m_doc->render(page, devPx, opts);
+                // A PDF page is opaque white; QPdfDocument::render returns an
+                // image with a transparent background, so paint a white page
+                // rectangle first, then composite the rendered content over it.
+                // Without this the page shows as the (dark) viewport with only
+                // the ink floating on it. The rect also serves as the honest
+                // placeholder frame if the render failed.
+                painter.fillRect(QRectF(px, py, lw, lh), Qt::white);
                 if (img.isNull()) {
-                    // Honest placeholder: an empty page frame rather than a
-                    // silent blank, so a failed render is visible, not masked.
-                    painter.fillRect(QRectF(px, py, lw, lh), Qt::white);
                     painter.setPen(Qt::gray);
                     painter.drawRect(QRectF(px, py, lw, lh));
                     return;
