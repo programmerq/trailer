@@ -1,0 +1,60 @@
+CF-5 empty-window reuse / no-clobber — driven under the Tier-1 Xvfb
+ux-walkthrough harness (real X server + openbox WM + xdotool), not offscreen.
+
+  path:   tools/ux-walkthrough/paths/10-empty-window-reuse.sh
+  runner: tools/ux-walkthrough/run.sh 10
+  binary: build/trailer  (QT_QPA_PLATFORM=xcb, geometry 1400x1000x24)
+  date:   2026-07-20
+
+ORACLE: top-level app-window count by WM_CLASS ("trailer") — the same selector
+the harness uses to find the app window. The File -> Open dialog shares that
+WM_CLASS, so every count is taken AFTER the dialog closes and the UI settles.
+Reuse == count stays 1; no-clobber == count goes to 2.
+
+Driven assertion lines (stdout):
+
+  REUSE-A   before=1 after=1 expected_after=1 PASS
+  REUSE-B   before=1 after=1 expected_after=1 PASS
+  REUSE-C   before=1 after=1 expected_after=1 PASS
+  NOCLOBBER before=1 after=2 expected_after=2 PASS
+
+  run exit code: 0 (all assertions PASS)
+
+Per-scenario trigger + WM-observed outcome (from the run log):
+
+  A  File -> Open (Ctrl+O) a single file, from the empty launch window.
+     empty launch: count=1, win 4194311, title "Trailer"
+     after open:   count=1, SAME win 4194311, title "reuse-doc-a.png — Trailer"
+     -> reused the empty launch window in place. [cf5-reuse-open.png]
+
+  B  New from Clipboard (Ctrl+N) with an image on the clipboard, from the
+     empty launch window (Ctrl+N is cross-platform since PR #86).
+     clipboard: image/png, 15688 bytes
+     empty launch: count=1, title "Trailer"
+     after Ctrl+N: count=1, SAME window, title "trailer-clipboard-…png — Trailer"
+     -> pasted image opened into the empty launch window. [cf5-reuse-clipboard.png]
+
+  C  File -> Open a 2-image batch (Qt dialog quoted multi-select), from the
+     empty launch window.
+     empty launch: count=1, title "Trailer"
+     after batch:  count=1, one window holding BOTH files as tabs
+                   (tabs "reuse-doc-a.png" + "reuse-doc-b.png"; active tab in title)
+     -> batch reused the empty launch window as the shared tab strip.
+        [cf5-reuse-batch.png]
+
+  Control (no-clobber)  a real document is already open; open another file.
+     launched with a document: count=1, win 6291464, "reuse-doc-a.png — Trailer"
+     after Ctrl+O of a 2nd file: count=2
+                   win 6291464 "reuse-doc-a.png — Trailer" (untouched)
+                   win 6291518 "reuse-doc-b.png — Trailer" (new window)
+     -> the active document window was NOT clobbered; the second file spawned a
+        new window. [cf5-noclobber.png]
+
+Behaviour under test lives in Application::openFiles() (src/app/Application.cpp),
+the reuseCandidate / takeReuseOrFresh consume-once logic: it fires only under a
+real activeWindow()/single live window, which is exactly why a real WM (not
+QT_QPA_PLATFORM=offscreen) is required to observe it.
+
+BOUNDARY (unchanged, owner real-Mac checklist): the macOS-native no-window /
+Dock-reopen behaviour and ⌘-key specifics are not exercised here; this tier
+proves the cross-platform openFiles() reuse guard under a real window manager.

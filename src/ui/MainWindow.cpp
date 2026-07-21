@@ -2399,7 +2399,7 @@ void MainWindow::onTakeScreenshot() {
     windowRadio->setEnabled(false);
     regionRadio->setEnabled(false);
     auto *note = new QLabel(tr("Only whole-screen capture is supported on this platform. "
-                               "Window and region capture are tracked in TODO.md."),
+                               "Window and region capture aren't available yet."),
                             &dialog);
     note->setWordWrap(true);
     layout->addWidget(note);
