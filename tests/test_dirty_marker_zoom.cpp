@@ -29,6 +29,7 @@
 #include <QFile>
 #include <QImage>
 #include <QPageSize>
+#include <QPixmap>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QString>
@@ -311,7 +312,7 @@ void TestDirtyMarkerZoom::corruptImageDisablesEditAndZoomActions() {
 
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    const QString png = writeCorruptImage(dir.filePath(QStringLiteral("corrupt.png")));
+    const QString png = writeCorruptImage(dir.filePath(QStringLiteral("corrupt.ppm")));
 
     app->openFiles({png});
     QApplication::processEvents();
@@ -345,6 +346,25 @@ void TestDirtyMarkerZoom::corruptImageDisablesEditAndZoomActions() {
     QAction *rot = findActionByText(mw, QStringLiteral("Rotate Left"));
     QVERIFY2(rot, "Rotate Left action not found");
     QVERIFY2(!rot->isEnabled(), "Rotate Left must be disabled for an undecodable image");
+
+    // G3 evidence: when TRAILER_STAGED_OPEN_EVIDENCE_DIR is set, grab the
+    // window showing the decode-failed state — the main toolbar's zoom/rotate
+    // buttons rendered DISABLED (greyed) above the "Could not decode image:"
+    // view. Offscreen static grabs can't render a hover tooltip, so the
+    // tooltip text ("This image could not be opened.", asserted above) is
+    // noted in the PR caption instead; the disabled control state itself is in
+    // frame. A no-op in normal CI runs (env var unset).
+    const QString evDir = QString::fromLocal8Bit(qgetenv("TRAILER_STAGED_OPEN_EVIDENCE_DIR"));
+    if (!evDir.isEmpty()) {
+        QDir().mkpath(evDir);
+        mw->resize(900, 600);
+        QApplication::processEvents();
+        const QPixmap pm = mw->grab();
+        QVERIFY2(!pm.isNull(), "grab returned null for the decode-failed evidence shot");
+        QVERIFY2(pm.save(QDir(evDir).filePath(
+                     QStringLiteral("staged-open-03-decode-failed-disabled.png"))),
+                 "failed to write the decode-failed evidence shot");
+    }
 }
 
 // Custom main mirrors tests/test_image_scale.cpp: construct the real
