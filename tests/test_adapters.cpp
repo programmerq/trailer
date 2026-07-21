@@ -68,6 +68,7 @@ class TestAdapters : public QObject {
     void pdfDocumentReportsInvalidForMissingFile();
     void imageDocumentZoomResizesPixmap();
     void imageDocumentStagedOpenShowsLoadingPlaceholder();
+    void imageDocumentFastDecodeNeverFlashesLoadingText();
     void imageDocumentReloadSupersedesInFlightDecode();
     void imageDocumentDecodeFailureReportsNoCapabilities();
     void pdfDocumentAdvertisesCapabilities();
@@ -260,17 +261,25 @@ void TestAdapters::imageDocumentStagedOpenShowsLoadingPlaceholder() {
     QVERIFY(img.save(path, "PNG"));
 
     ImageDocument doc(path);
+    // Force the loading text to be deferred well past this test so the grace
+    // window is observable (owner refinement, PR #109).
+    doc.setPlaceholderTextDelayForTest(60000);
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
     auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     auto *label = qobject_cast<QLabel *>(scroll->widget());
     QVERIFY(label != nullptr);
 
-    // Staged open (ADR 0008, image path): before the off-thread decode lands,
-    // createView paints an honest "Loading image…" placeholder — a visible
-    // loading state, not a blank/stub the user could mistake for an empty or
-    // broken file (G3, no lying controls).
+    // Staged open (ADR 0008): the window is drawn from the header hint but the
+    // placeholder starts BLANK — no pixmap and no text during the grace window.
     QVERIFY2(label->pixmap().isNull(), "placeholder must not show a decoded pixmap yet");
+    QVERIFY2(label->text().isEmpty(), "placeholder text must be deferred (blank grace window)");
+    QVERIFY2(doc.placeholderTextTimerActiveForTest(), "the grace timer must be pending");
+
+    // Once the grace elapses (simulated) while the decode is still in flight,
+    // the honest "Loading image…" text appears — a visible loading state, not a
+    // blank/stub the user could mistake for an empty or broken file (G3).
+    doc.triggerPlaceholderTextTimerForTest();
     QVERIFY2(label->text().contains(QStringLiteral("Loading")),
              qPrintable(QStringLiteral("expected a loading placeholder, got text '%1'")
                             .arg(label->text())));
@@ -279,6 +288,34 @@ void TestAdapters::imageDocumentStagedOpenShowsLoadingPlaceholder() {
     QVERIFY(doc.awaitDecodeForTest());
     QVERIFY2(!label->pixmap().isNull(), "decoded pixmap must replace the placeholder");
     QVERIFY(label->text().isEmpty());
+}
+
+void TestAdapters::imageDocumentFastDecodeNeverFlashesLoadingText() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("fast.png");
+    QImage img(48, 48, QImage::Format_ARGB32);
+    img.fill(Qt::magenta);
+    QVERIFY(img.save(path, "PNG"));
+
+    ImageDocument doc(path);
+    // A grace delay far longer than the decode: the fast decode must swap in
+    // and CANCEL the timer, so the loading text is never shown (no one-frame
+    // flash — the owner's PR #109 requirement).
+    doc.setPlaceholderTextDelayForTest(60000);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
+    QVERIFY(scroll != nullptr);
+    auto *label = qobject_cast<QLabel *>(scroll->widget());
+    QVERIFY(label != nullptr);
+    QVERIFY2(label->text().isEmpty(), "grace window must start blank");
+
+    QVERIFY(doc.awaitDecodeForTest());
+    QVERIFY2(!label->pixmap().isNull(), "decoded pixmap must be shown after the fast decode");
+    QVERIFY2(label->text().isEmpty(),
+             "loading text must NEVER appear when the decode beats the grace delay");
+    QVERIFY2(!doc.placeholderTextTimerActiveForTest(),
+             "the fast-decode swap must cancel the pending grace timer");
 }
 
 void TestAdapters::imageDocumentReloadSupersedesInFlightDecode() {

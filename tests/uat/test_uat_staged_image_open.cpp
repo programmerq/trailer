@@ -78,9 +78,10 @@ class TestUatStagedImageOpen : public QObject {
     QTemporaryDir m_scratch;
 };
 
-// UAT-VWR-STAGED-010 — opening an image paints an honest "Loading image…"
-// placeholder immediately (no GUI-thread full decode), then swaps in the real
-// pixmap once the off-thread decode completes.
+// UAT-VWR-STAGED-010 — opening an image draws the header-sized window with a
+// BLANK placeholder (no GUI-thread full decode), keeps it blank for a grace
+// window, shows the "Loading image…" text only if the decode outlasts that
+// grace, then swaps in the real pixmap (owner refinement, PR #109).
 void TestUatStagedImageOpen::staged_open_10_placeholderThenDecodedSwap() {
     QVERIFY(m_scratch.isValid());
     const QString path = writeScene(m_scratch.filePath(QStringLiteral("scene.png")));
@@ -91,6 +92,9 @@ void TestUatStagedImageOpen::staged_open_10_placeholderThenDecodedSwap() {
              "open must defer the full-pixel decode off the GUI thread");
     // The window can be sized immediately from the header-only size hint.
     QCOMPARE(doc.contentSizeHint(), QSize(420, 300));
+    // Defer the loading text past this test so the grace state is observable
+    // and forced deterministically (no wall-clock).
+    doc.setPlaceholderTextDelayForTest(60000);
 
     auto *host = new QWidget;
     host->resize(500, 360);
@@ -104,20 +108,28 @@ void TestUatStagedImageOpen::staged_open_10_placeholderThenDecodedSwap() {
     auto *label = qobject_cast<QLabel *>(scroll->widget());
     QVERIFY(label);
 
-    // BEFORE: an honest, visible loading state — not a blank/stub the user
-    // could mistake for an empty or broken file (G3).
+    // STATE (a) — GRACE: the window is drawn, header-sized, but the placeholder
+    // is BLANK (no pixmap, no text) so a fast decode never flashes text.
     QVERIFY2(label->pixmap().isNull(), "placeholder must not show a decoded pixmap yet");
+    QVERIFY2(label->text().isEmpty(), "placeholder must be blank during the grace window");
+    QVERIFY2(doc.placeholderTextTimerActiveForTest(), "the grace timer must be pending");
+    saveShot(host, QStringLiteral("staged-open-01-grace-blank.png"));
+
+    // STATE (b) — POST-GRACE (slow load): once the grace elapses (simulated)
+    // while the decode is still in flight, the honest loading text appears — a
+    // visible loading state, not a blank/stub mistaken for an empty file (G3).
+    doc.triggerPlaceholderTextTimerForTest();
     QVERIFY2(label->text().contains(QStringLiteral("Loading")),
              qPrintable(QStringLiteral("expected a loading placeholder, got '%1'")
                             .arg(label->text())));
-    saveShot(host, QStringLiteral("staged-open-01-loading-placeholder.png"));
+    saveShot(host, QStringLiteral("staged-open-02-loading-placeholder.png"));
 
-    // AFTER: the off-thread decode swaps the placeholder for the real image.
+    // STATE (c) — DECODED: the off-thread decode swaps in the real image.
     QVERIFY(doc.awaitDecodeForTest());
     QVERIFY2(!label->pixmap().isNull(), "decoded pixmap must replace the placeholder");
     QVERIFY(label->text().isEmpty());
     QApplication::processEvents(); // settle the swap + initial-fit tick before the grab
-    saveShot(host, QStringLiteral("staged-open-02-decoded-image.png"));
+    saveShot(host, QStringLiteral("staged-open-03-decoded-image.png"));
 
     delete host;
 }

@@ -364,8 +364,10 @@ void ImageDocument::onDecodeFinished(int generation) {
         // honest error and notify: capabilities have flipped from their
         // provisional (pending) true back to false, so MainWindow must
         // re-disable the edit/zoom/print/search controls it enabled at open
-        // (G3 — no enabled-but-inert controls).
+        // (G3 — no enabled-but-inert controls). Cancel the loading-text timer:
+        // the "Could not decode" text replaces the (blank or loading) grace.
         m_viewPopulated = true;
+        cancelPlaceholderTextTimer();
         m_label->setText(QObject::tr("Could not decode image:\n%1").arg(m_path));
         m_capabilityNotifier.notifyChanged();
         return;
@@ -380,6 +382,9 @@ void ImageDocument::supersedeDecode() {
     ++m_decodeGeneration; // defense-in-depth: a stale callback still no-ops
     m_decodeStarted = false;
     m_decoded = true;
+    // The superseded open is gone — cancel its pending loading-text timer so it
+    // can't paint "Loading image…" over the reloaded/recovered pixels.
+    cancelPlaceholderTextTimer();
     // Drop the in-flight decode's watcher and future outright. Leaving them
     // intact would (a) fire one pointless finished callback and (b) retain the
     // superseded worker's fully-decoded QImage in the future's shared state for
@@ -447,10 +452,50 @@ void ImageDocument::wireViewLayers() {
     m_overlay = overlay;
 }
 
+void ImageDocument::startPlaceholderTextTimer() {
+    if (!m_label)
+        return;
+    cancelPlaceholderTextTimer();
+    // Parented to the label so it dies with the view; the alive-flag guards
+    // `this` (the document can outlive-or-predecease the widget hierarchy).
+    auto *timer = new QTimer(m_label);
+    timer->setSingleShot(true);
+    m_placeholderTextTimer = timer;
+    if (!m_aliveFlag)
+        m_aliveFlag = std::make_shared<bool>(true);
+    auto alive = m_aliveFlag;
+    QObject::connect(timer, &QTimer::timeout, timer, [this, alive]() {
+        if (alive && *alive)
+            showPlaceholderTextIfPending();
+    });
+    timer->start(m_placeholderTextDelayMs);
+}
+
+void ImageDocument::cancelPlaceholderTextTimer() {
+    if (m_placeholderTextTimer) {
+        m_placeholderTextTimer->stop();
+        m_placeholderTextTimer->deleteLater();
+        m_placeholderTextTimer = nullptr;
+    }
+}
+
+void ImageDocument::showPlaceholderTextIfPending() {
+    // The grace window elapsed. Show the loading text ONLY if the decode is
+    // still in flight — a decode that already swapped in (m_viewPopulated) or
+    // finished (m_decoded, incl. the failure path) must not have the text
+    // painted over it.
+    if (!m_label || m_viewPopulated || m_decoded || !m_decodeStarted)
+        return;
+    m_label->setText(QObject::tr("Loading image…"));
+}
+
 void ImageDocument::installDecodedContent() {
     if (m_viewPopulated || !m_label || !m_scroll || m_image.isNull())
         return;
     m_viewPopulated = true;
+    // The real pixmap is going in — cancel any pending loading-text timer so it
+    // can't fire after the swap.
+    cancelPlaceholderTextTimer();
 
     m_lastBuiltPixmap = buildDisplayPixmap(m_image, m_scale);
     m_label->setPixmap(m_lastBuiltPixmap);
@@ -566,14 +611,17 @@ QWidget *ImageDocument::createView(QWidget *parent) {
             // Already decoded — install the real content synchronously.
             installDecodedContent();
         } else {
-            // Staged open in flight (ADR 0008): paint an honest, unmistakable
-            // loading state sized from the header hint so the file is never
-            // misread as empty or broken (G3). onDecodeFinished swaps in the
-            // real pixmap when the worker returns.
-            label->setText(QObject::tr("Loading image…"));
+            // Staged open in flight (ADR 0008): draw the header-sized window
+            // NOW but leave the placeholder BLANK. The honest "Loading image…"
+            // text is deferred by kPlaceholderTextDelayMs so a fast decode
+            // swaps in the real image without the text flashing for one frame;
+            // a decode that outlasts the grace window gets the text via the
+            // timer and keeps it until the swap (owner request, PR #109).
+            // onDecodeFinished / installDecodedContent cancel the timer.
             const QSize hint = contentSizeHint();
             if (!hint.isEmpty())
                 label->resize(hint);
+            startPlaceholderTextTimer();
         }
     } else {
         label->setText(QObject::tr("Could not decode image:\n%1").arg(m_path));

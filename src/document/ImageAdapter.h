@@ -16,6 +16,7 @@
 #include <QSize>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
 #include <cmath>
 #include <memory>
 #include <vector>
@@ -259,6 +260,21 @@ class ImageDocument : public IDocument {
     // superseded worker's buffer isn't pinned and its stale callback can't
     // fire). Also true when no decode was ever started.
     bool decodeWatcherClearedForTest() const { return m_decodeWatcher.isNull(); }
+    // Override the staged-open grace delay before the "Loading image…" text
+    // appears (see m_placeholderTextDelayMs). Set a large value to force the
+    // fast-decode branch (text never shown) or drive the timer directly with
+    // triggerPlaceholderTextTimerForTest() — deterministic, no wall-clock.
+    // Call before createView(), which starts the timer.
+    void setPlaceholderTextDelayForTest(int ms) { m_placeholderTextDelayMs = ms; }
+    // Synchronously run the grace-timer's slot (as if the delay elapsed), so a
+    // test can force the "loading text while still decoding" state without
+    // sleeping. No-op unless the decode is still in flight.
+    void triggerPlaceholderTextTimerForTest() { showPlaceholderTextIfPending(); }
+    // True while the grace timer is still pending (started, not yet fired or
+    // cancelled) — lets a test assert a fast decode / supersede cancelled it.
+    bool placeholderTextTimerActiveForTest() const {
+        return m_placeholderTextTimer && m_placeholderTextTimer->isActive();
+    }
 
   private:
     // The image's effective devicePixelRatio, clamped to a positive
@@ -313,6 +329,12 @@ class ImageDocument : public IDocument {
     // path (already-decoded / injected image) and the async swap. Idempotent
     // via m_viewPopulated.
     void installDecodedContent();
+    // Staged-open delayed placeholder (ADR 0008, owner refinement PR #109):
+    // start / cancel the grace timer that defers the "Loading image…" text,
+    // and the slot that shows the text only if the decode is still in flight.
+    void startPlaceholderTextTimer();
+    void cancelPlaceholderTextTimer();
+    void showPlaceholderTextIfPending();
     // Mark any in-flight open decode as superseded (reload / recovery took
     // authoritative pixels): bump the generation so the stale finished
     // callback no-ops, and stop ensureDecoded from blocking on the old
@@ -467,6 +489,23 @@ class ImageDocument : public IDocument {
     // landed; stamped onto m_image when the pixels are adopted. 0 for
     // ordinary opens (dpr 1, no stamp).
     qreal m_pendingCaptureDpr = 0.0;
+    // Grace timer that defers the staged-open "Loading image…" text; parented
+    // to the view label so it dies with the widget hierarchy.
+    QPointer<QTimer> m_placeholderTextTimer;
+    // Grace delay (ms) before the staged-open "Loading image…" text appears.
+    // Represents how long the header-sized window shows a BLANK placeholder
+    // before the loading text is drawn, so a fast decode swaps in the real
+    // image without the text ever flashing for a single frame — while a
+    // slow/large decode still gets a visible loading state once the grace
+    // elapses (owner request on PR #109, 2026-07-21; ADR 0008 update note).
+    // Range considered: 0 (text immediately — the pre-refinement behaviour that
+    // flashed) up to ~2000 (a slow decode risks looking hung with no feedback);
+    // 1000 ms tracks the NN/g ~1 s "flow" limit cited in
+    // docs/performance-budgets.md. Symptom to change: LOWER if the blank window
+    // reads as a stall on common hardware; RAISE if the text still flashes for
+    // ordinary local opens on the reference machine. Injectable per-document
+    // for deterministic tests via setPlaceholderTextDelayForTest().
+    int m_placeholderTextDelayMs = 1000;
     // Fires when the async initial fit lands so MainWindow refreshes the zoom
     // readout (staged open, ADR 0008). Declared last so it outlives nothing
     // that needs it during teardown.

@@ -362,7 +362,7 @@ void TestDirtyMarkerZoom::corruptImageDisablesEditAndZoomActions() {
         const QPixmap pm = mw->grab();
         QVERIFY2(!pm.isNull(), "grab returned null for the decode-failed evidence shot");
         QVERIFY2(pm.save(QDir(evDir).filePath(
-                     QStringLiteral("staged-open-03-decode-failed-disabled.png"))),
+                     QStringLiteral("staged-open-04-decode-failed-disabled.png"))),
                  "failed to write the decode-failed evidence shot");
     }
 }

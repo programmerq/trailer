@@ -5,6 +5,28 @@
 - **Date proposed:** 2026-07-15
 - **Date accepted / superseded:** 2026-07-20 (accepted for the **image** path; see the verdict for the scope boundary against the PDF path)
 
+> **Update (2026-07-21, owner refinement on PR #109 — delayed placeholder
+> text).** The owner directed a UX tweak to the shipped image path, verbatim:
+> "Only display the 'loading' message after a 1 second delay. If the image loads
+> before that 1 second time, then don't display the text. … Still do the header
+> read and draw the window first → empty text for up to 1 second → display text
+> until image loads." This changes a **user-visible default**: the "Loading
+> image…" text no longer appears at first paint; the header-sized window is drawn
+> immediately and the placeholder stays **blank** for a grace delay, after which
+> the text is shown *only if* the decode is still in flight. A decode that beats
+> the grace swaps in the real image with the text never shown — removing the
+> single-frame text flash on fast/local opens — while a slow/large decode still
+> gets the honest loading state. Header-draw-first and the off-thread decode are
+> unchanged; this only defers *when* the text is painted. The grace value is a
+> hand-tuned constant, `m_placeholderTextDelayMs` (default 1000 ms) at
+> `src/document/ImageAdapter.h:508`, which carries the required in-code rationale
+> (what it represents, range considered, symptom to change); it is injectable
+> per-document for deterministic tests. The first-paint admissible objection
+> above is annotated to keep the shipped grace-then-text behaviour consistent
+> with this record. Evidence: `docs/uat/images/staged-open-01-grace-blank.png`
+> (grace), `-02-loading-placeholder.png` (post-grace, slow load),
+> `-03-decoded-image.png` (decoded).
+
 ## Context
 
 Opening a document in Trailer is, today, **fully synchronous on the GUI thread**,
@@ -160,7 +182,15 @@ External grounding (a template for the options, not a ruling for Trailer):
   placeholder page is not visibly a loading state, the user reads a blank or stub
   page as the *actual* document (an empty PDF, a failed open) and acts on it — the
   concrete failure is "I thought the file was empty / broken." Option B is only
-  admissible with an honest, unmistakable placeholder that resolves into page 1.
+  admissible with an honest placeholder that resolves into page 1. **(Refined
+  2026-07-21 — see the Update note below.)** The shipped image path shows the
+  placeholder text after a ~1 s grace rather than instantly: a decode that beats
+  the grace swaps in the real image with no text (no single-frame flash), and a
+  decode slow enough that the user could otherwise mistake the window for empty
+  gets the honest "Loading image…" text before that point. The window itself is
+  drawn header-sized from the first frame, so the "blank" grace is a momentary,
+  correctly-sized empty region, not a stub document the user can act on — the
+  objection stays satisfied.
 - **Any editing user, Options A/B/C, edit-correctness step:** the research question
   bars regressing edit/annotation correctness. Whichever way the editor load is
   deferred or moved off-thread, the first edit or save must observe a *fully and
