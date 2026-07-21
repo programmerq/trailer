@@ -460,8 +460,14 @@ design, until a future change adds concurrency caps.
 
 A status-bar `QLabel` (`MainWindow::m_mlIndicator`) shows whenever
 the scheduler is non-idle; tooltip is the running task's label.
-This is the **only** affordance the user sees for background ML —
-modals are off the table per PHILOSOPHY.
+This is the peripheral, always-on affordance for background ML —
+modals are off the table per PHILOSOPHY. A feature may add a *subtle,
+in-place* status hint on its own control on top of the dot (never a
+progress bar or modal): background removal reflects its op status as a
+glyph on the `Tools > Remove Background` menu entry itself — see
+[DR 2026-07-21-bg-removal-menu-status-glyph](decision-records/2026-07-21-bg-removal-menu-status-glyph.md),
+which refines the "only affordance" wording for that op. OCR keeps the
+richer `MlProgressWidget` (spinner + elapsed + cancel) per ADR 0002.
 
 **Recipe.** A new ML feature looks like:
 

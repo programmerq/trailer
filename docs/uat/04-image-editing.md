@@ -484,6 +484,32 @@ populated).
 - The original opaque image returns.
 - Undo stack clears this entry; `Edit > Redo` is available.
 
+### UAT-IMG-105 — Remove Background menu-entry status glyph
+
+Background removal runs asynchronously with **no** progress bar or
+spinner widget. The `Tools > Remove Background` menu entry itself is the
+status surface (a subtle glyph); the document stays the focus. See
+[DR 2026-07-21-bg-removal-menu-status-glyph](../decision-records/2026-07-21-bg-removal-menu-status-glyph.md).
+Harness: `uat_bgr_070/080/090` in `tests/uat/test_uat_background_removal.cpp`.
+
+**Preconditions:** An image is open; the U²-Net model is available.
+**Steps / Expected:**
+1. Open the Tools menu. `Remove Background` is actionable (no status
+   glyph, or the "good candidate" sparkle badge when the image scores
+   well).
+2. Choose `Remove Background`. While it calculates, the entry shows a
+   **busy** glyph and stays enabled; its tooltip notes that choosing it
+   again cancels. No progress bar or modal appears.
+3. Choose the entry again while it is calculating → the op cancels; the
+   image is left byte-for-byte unchanged (not dirty, no undo entry) and
+   the glyph returns to its actionable state.
+4. If an op fails transiently (null result), the entry shows a **failed**
+   glyph with a retry tooltip and stays enabled; the document is
+   untouched.
+5. When the op can't be triggered (non-image document, or the model is
+   set to *Never Download*), the entry is disabled and carries a muted
+   **unavailable** glyph plus its explain-why tooltip.
+
 ---
 
 ## Instant Alpha (Phase 6)

@@ -37,6 +37,7 @@ class MarkupToolbar;
 class SearchBar;
 class Sidebar;
 
+class CancellationToken;
 class MlProgressWidget;
 class OcrController;
 class SamController;
@@ -94,6 +95,18 @@ class MainWindow : public QMainWindow {
     // network download. Returns whether the model is (now) ready.
     void setOcrModelDownloadHookForTesting(std::function<bool()> hook) {
         m_ocrModelDownloadHook = std::move(hook);
+    }
+
+    // Test seam for the Remove Background op lifecycle. When set, onRemove-
+    // Background() runs this override INSTEAD of the real BackgroundRemover
+    // and skips the model-download pre-flight, so the menu-glyph state
+    // machine + cancellation + byte-preservation can be exercised without a
+    // network-downloaded ONNX model. The override runs on the MlScheduler
+    // worker thread; poll the token exactly as the real remover does. Return
+    // a null QImage to simulate cancel/failure. nullptr in production.
+    void setBackgroundRemoveFnForTesting(
+        std::function<QImage(const QImage &, const CancellationToken *)> fn) {
+        m_bgRemoveFnOverride = std::move(fn);
     }
 
     // Test-only introspection for the pointer-keyed large-doc notice /
@@ -372,13 +385,31 @@ class MainWindow : public QMainWindow {
     // for non-image documents (no-ops).
     void scheduleBackgroundCandidateScore(IDocument *doc);
 
-    // Apply the cached badge state for `doc` to the Remove Background
-    // menu action: a 12px "sparkle" glyph + a positive tooltip when
-    // the heuristic says this image looks promising, otherwise no
-    // icon and the policy-aware tooltip set by applyMlPolicy(). Idempo-
-    // tent; called whenever the active document changes or the scorer
-    // finishes a pass.
+    // Single icon+tooltip authority for the Remove Background menu entry
+    // (DR 2026-07-21-bg-removal-menu-status-glyph). Layers the transient
+    // op-status glyph OVER the candidate-recommendation badge, in priority:
+    //   1. Unavailable (entry disabled — wrong doc type / policy blocked):
+    //      a muted "can't" glyph; the applyMlPolicy() tooltip stands.
+    //   2. Calculating (op in flight): a "busy" glyph; tooltip says the op
+    //      is running and re-invoking cancels it.
+    //   3. Failed (last op returned null, not cancelled): an alert glyph;
+    //      tooltip invites a retry. Transient — cleared on the next viable
+    //      Available refresh.
+    //   4. Available: the heuristic "sparkle" recommendation badge (or no
+    //      icon) exactly as before.
+    // Idempotent; called whenever the active document changes, the scorer
+    // finishes a pass, or the op lifecycle advances.
     void updateRemoveBackgroundBadge(IDocument *doc);
+
+    // Transient status of the Remove Background op, surfaced as the menu
+    // entry's glyph (DR 2026-07-21). Unavailable is not tracked here — it is
+    // derived from the action's enabled state at refresh time.
+    enum class BgRemovalStatus { Available, Calculating, Failed };
+
+    // GUI-thread teardown for a finished Remove Background op. Clears the
+    // in-flight state, sets the next status (success/cancel → Available,
+    // failure → Failed), and refreshes the menu glyph. Idempotent.
+    void finishBackgroundRemoval(bool cancelled, bool succeeded);
 
     Application *m_app;
     DocumentView *m_documentView = nullptr;
@@ -615,6 +646,23 @@ class MainWindow : public QMainWindow {
     // them if the doc closes mid-compute. Maps to the MlScheduler task
     // id returned by submit(); zero means no in-flight job.
     QHash<const IDocument *, std::uint64_t> m_pendingCandidateJobs;
+
+    // Remove Background op lifecycle (DR 2026-07-21-bg-removal-menu-status-
+    // glyph). The op is surfaced ONLY through the menu entry's status glyph
+    // (plus the ambient m_mlIndicator dot per CONVENTIONS §12) — no progress
+    // bar or spinner widget. m_bgRemovalActive guards re-entrancy: a second
+    // trigger while an op is in flight cancels it via m_bgRemovalToken (the
+    // running op's cooperative cancellation token) rather than stacking a
+    // second submission. m_bgRemovalStatus drives the glyph the refresh
+    // function paints. Only one ML op runs at a time (single MlScheduler
+    // worker), so a single token/flag pair is sufficient.
+    bool m_bgRemovalActive = false;
+    std::shared_ptr<CancellationToken> m_bgRemovalToken;
+    BgRemovalStatus m_bgRemovalStatus = BgRemovalStatus::Available;
+    // Test seam: replaces the real BackgroundRemover inference and skips the
+    // download pre-flight (see setBackgroundRemoveFnForTesting). nullptr in
+    // production.
+    std::function<QImage(const QImage &, const CancellationToken *)> m_bgRemoveFnOverride;
     // Item A on-demand search OCR: images whose page 0 we have already
     // asked to OCR because the user typed a search query while the OCR
     // store was still empty. Guards against re-submitting (and thus

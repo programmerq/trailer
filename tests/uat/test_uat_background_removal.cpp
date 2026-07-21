@@ -45,16 +45,35 @@
 //       Opening a flat document-like fixture (near-white + thin text
 //       bands) leaves the Remove Background action with no badge icon
 //       after the scoring pass completes.
+//   uat_bgr_070_calculatingGlyphAndCancelPreservesBytes
+//       Triggering Remove Background flips the menu entry to its
+//       "calculating" glyph (a static busy glyph, NOT a progress bar or
+//       spinner widget) while the op runs; re-invoking the entry cancels
+//       the op; the document is left byte-for-byte identical, not dirty,
+//       with no undo entry (DR 2026-07-21). Asserts the OCR MlProgressWidget
+//       is never driven by background removal. A fake inference is injected
+//       so the flow runs without a network model.
+//   uat_bgr_080_transientFailureShowsFailedGlyph
+//       An injected null-result (transient inference failure, not a cancel)
+//       leaves the menu entry on its "failed" glyph with a retry tooltip,
+//       still enabled, and the document untouched.
+//   uat_bgr_090_disabledDocShowsUnavailableGlyph
+//       When the entry can't be triggered (model set to Never Download →
+//       disabled), it carries the muted "unavailable" glyph alongside its
+//       explain-why tooltip.
 
 #include "app/Application.h"
 #include "document/ImageAdapter.h"
 #include "ml/BackgroundCandidateScorer.h"
 #include "ml/BackgroundRemover.h"
+#include "ml/CancellationToken.h"
 #include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "settings/AppPaths.h"
 #include "ui/DocumentView.h"
+#include "ui/IconHelper.h"
 #include "ui/MainWindow.h"
+#include "ui/MlProgressWidget.h"
 #include "ui/ModelManagerDialog.h"
 
 #include <QAction>
@@ -66,8 +85,12 @@
 #include <QMenuBar>
 #include <QPainter>
 #include <QPainterPath>
+#include <QPixmap>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QtTest/QtTest>
+
+#include <atomic>
 
 using namespace trailer;
 
@@ -232,6 +255,66 @@ bool seedU2NetPIntoAppCache() {
     return QFile::copy(src, dest);
 }
 
+// Raw pixel bytes of an image, for a byte-for-byte pre/post comparison. Two
+// images with the same size + format and identical constBits() are pixel-
+// identical — the byte-preservation guarantee (cancel restores the pre-op
+// image; nothing written) is exactly this equality.
+QByteArray rawImageBytes(const QImage &img) {
+    return QByteArray(reinterpret_cast<const char *>(img.constBits()),
+                      static_cast<int>(img.sizeInBytes()));
+}
+
+// True when `icon` is the same themed glyph the app would build from `res` for
+// `w`'s palette — a direct assertion on which status glyph the menu entry
+// carries. Both sides go through the identical themedActionIcon() path, so the
+// rendered pixmaps are bit-equal for a match.
+bool iconIsResource(const QIcon &icon, const QString &res, const QWidget *w) {
+    if (icon.isNull())
+        return false;
+    const QIcon expected = trailer::themedActionIcon(res, w);
+    const int sz = 16;
+    return expected.pixmap(sz).toImage() == icon.pixmap(sz).toImage();
+}
+
+// The status-bar ML progress widget (OCR's affordance). Background removal must
+// NOT drive it any more; the tests assert its label never carries bg-removal
+// text.
+MlProgressWidget *findProgressWidget(MainWindow *mw) {
+    return mw->findChild<MlProgressWidget *>();
+}
+
+// G2 evidence capture. When TRAILER_UAT_IMAGE_DIR is set, pop up the real Tools
+// menu (so the Remove Background entry's live icon/enabled/tooltip render) and
+// grab it offscreen to <name>.png (the sanctioned QWidget::grab() method). A
+// no-op in normal CI runs so the test never depends on a writable path.
+void captureToolsMenu(MainWindow *mw, const QString &name) {
+    const QString dir = QString::fromLocal8Bit(qgetenv("TRAILER_UAT_IMAGE_DIR"));
+    if (dir.isEmpty() || !mw)
+        return;
+    QMenu *tools = nullptr;
+    for (QAction *top : mw->menuBar()->actions()) {
+        QMenu *menu = top->menu();
+        if (!menu)
+            continue;
+        for (QAction *a : menu->actions()) {
+            if (a->text() == QStringLiteral("Remove &Background")) {
+                tools = menu;
+                break;
+            }
+        }
+        if (tools)
+            break;
+    }
+    if (!tools)
+        return;
+    QDir().mkpath(dir);
+    tools->popup(QPoint(0, 0));
+    QApplication::processEvents();
+    tools->grab().save(QDir(dir).filePath(name + QStringLiteral(".png")), "PNG");
+    tools->hide();
+    QApplication::processEvents();
+}
+
 } // namespace
 
 class TestUatBackgroundRemoval : public QObject {
@@ -244,6 +327,9 @@ class TestUatBackgroundRemoval : public QObject {
     void uat_bgr_040_neverDownloadPolicyDisablesMenuWithTooltip();
     void uat_bgr_050_goodCandidateImageSurfacesBadge();
     void uat_bgr_060_flatDocumentImageHasNoBadge();
+    void uat_bgr_070_calculatingGlyphAndCancelPreservesBytes();
+    void uat_bgr_080_transientFailureShowsFailedGlyph();
+    void uat_bgr_090_disabledDocShowsUnavailableGlyph();
 
   private:
     QTemporaryDir m_scratch;
@@ -464,6 +550,173 @@ void TestUatBackgroundRemoval::uat_bgr_060_flatDocumentImageHasNoBadge() {
     QVERIFY(action);
     QVERIFY2(action->icon().isNull(), "Flat document fixture should not clear the recommend "
                                       "threshold — no badge icon should be set.");
+}
+
+void TestUatBackgroundRemoval::uat_bgr_070_calculatingGlyphAndCancelPreservesBytes() {
+    QVERIFY(m_scratch.isValid());
+    const QString imgPath = writeSampleImage(m_scratch.filePath(QStringLiteral("bgr070.png")));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->settings().setMlRunOnBattery(true); // UserAction always runs; be explicit.
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+    drainScheduler(app); // let the candidate scorer settle so it can't race the glyph.
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    auto *imgDoc = dynamic_cast<ImageDocument *>(dv->currentDocument());
+    QVERIFY(imgDoc);
+
+    // Snapshot the pre-op pixels — the byte-preservation invariant requires
+    // these survive a cancel byte-for-byte.
+    const QImage beforeImg = imgDoc->image();
+    const QByteArray beforeBytes = rawImageBytes(beforeImg);
+    QVERIFY(!beforeBytes.isEmpty());
+
+    // Inject a fake inference that blocks until cancelled, then returns a null
+    // QImage exactly as the real BackgroundRemover::remove() does on cancel.
+    std::atomic<bool> entered{false};
+    std::atomic<bool> sawCancel{false};
+    mw->setBackgroundRemoveFnForTesting(
+        [&entered, &sawCancel](const QImage &, const CancellationToken *tok) -> QImage {
+            entered.store(true);
+            for (int i = 0; i < 5000; ++i) { // ~10s safety cap
+                if (CancellationToken::isCancelled(tok)) {
+                    sawCancel.store(true);
+                    break;
+                }
+                QThread::msleep(2);
+            }
+            return {}; // cancelled (or capped) → null, mirrors remove()
+        });
+
+    QAction *action = findActionByText(mw->menuBar(), QStringLiteral("Remove &Background"));
+    QVERIFY(action);
+    QVERIFY(action->isEnabled());
+
+    // Fire the menu action — the real user entry point.
+    action->trigger();
+
+    // The entry flips to its "calculating" glyph while the op runs. It stays
+    // ENABLED (re-invoking is the cancel gesture) and its tooltip says so.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        iconIsResource(action->icon(), QStringLiteral(":/icons/actions/status-busy.svg"), mw),
+        4000);
+    QVERIFY2(action->isEnabled(), "Calculating entry must stay enabled so re-invoking can cancel");
+    QVERIFY2(action->toolTip().contains(QStringLiteral("cancel")),
+             qPrintable(QString("Calculating tooltip should mention cancel: '%1'")
+                            .arg(action->toolTip())));
+    QTRY_VERIFY_WITH_TIMEOUT(entered.load(), 4000);
+    captureToolsMenu(mw, QStringLiteral("bg-removal-menu-calculating"));
+
+    // Background removal must NOT drive the OCR progress widget any more.
+    auto *progress = findProgressWidget(mw);
+    QVERIFY2(!progress || !progress->labelText().contains(QStringLiteral("Removing background")),
+             "Background removal must not surface the MlProgressWidget");
+
+    // Re-invoke the entry — the sanctioned cancel gesture (no ✕ button exists).
+    action->trigger();
+
+    // The op unwinds: worker observes the token, the entry returns to Available
+    // (no busy glyph), still enabled.
+    QTRY_VERIFY_WITH_TIMEOUT(sawCancel.load(), 4000);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !iconIsResource(action->icon(), QStringLiteral(":/icons/actions/status-busy.svg"), mw),
+        4000);
+    QVERIFY(action->isEnabled());
+    captureToolsMenu(mw, QStringLiteral("bg-removal-menu-available"));
+
+    // BYTE-PRESERVATION: post-cancel image is byte-for-byte identical to pre-op.
+    const QImage afterImg = imgDoc->image();
+    QCOMPARE(afterImg.size(), beforeImg.size());
+    QCOMPARE(afterImg.format(), beforeImg.format());
+    QCOMPARE(rawImageBytes(afterImg), beforeBytes);
+    QVERIFY2(!imgDoc->isDirty(), "A cancelled background removal must not dirty the document");
+    QVERIFY2(!imgDoc->canUndo(), "A cancelled background removal must not push an undo entry");
+
+    mw->setBackgroundRemoveFnForTesting({});
+    app->mlScheduler().waitForIdle(2000);
+    QApplication::processEvents();
+}
+
+void TestUatBackgroundRemoval::uat_bgr_080_transientFailureShowsFailedGlyph() {
+    QVERIFY(m_scratch.isValid());
+    const QString imgPath = writeSampleImage(m_scratch.filePath(QStringLiteral("bgr080.png")));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->settings().setMlRunOnBattery(true);
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+    drainScheduler(app);
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    auto *imgDoc = dynamic_cast<ImageDocument *>(dv->currentDocument());
+    QVERIFY(imgDoc);
+    const QByteArray beforeBytes = rawImageBytes(imgDoc->image());
+
+    // Inject a fake that returns null WITHOUT waiting for a cancel — a transient
+    // inference failure. The lifecycle maps this to the Failed glyph.
+    mw->setBackgroundRemoveFnForTesting(
+        [](const QImage &, const CancellationToken *) -> QImage { return {}; });
+
+    QAction *action = findActionByText(mw->menuBar(), QStringLiteral("Remove &Background"));
+    QVERIFY(action);
+    action->trigger();
+
+    // The op finishes failed: the entry shows the "failed" glyph + a retry
+    // tooltip and stays enabled so the user can try again.
+    QTRY_VERIFY_WITH_TIMEOUT(
+        iconIsResource(action->icon(), QStringLiteral(":/icons/actions/status-failed.svg"), mw),
+        4000);
+    QVERIFY2(action->isEnabled(), "A failed op leaves the entry enabled for retry");
+    QVERIFY2(action->toolTip().contains(QStringLiteral("try")),
+             qPrintable(QString("Failed tooltip should invite a retry: '%1'").arg(action->toolTip())));
+    captureToolsMenu(mw, QStringLiteral("bg-removal-menu-failed"));
+
+    // The document is untouched by a failed op.
+    QCOMPARE(rawImageBytes(imgDoc->image()), beforeBytes);
+    QVERIFY(!imgDoc->isDirty());
+    QVERIFY(!imgDoc->canUndo());
+
+    mw->setBackgroundRemoveFnForTesting({});
+    app->mlScheduler().waitForIdle(2000);
+    QApplication::processEvents();
+}
+
+void TestUatBackgroundRemoval::uat_bgr_090_disabledDocShowsUnavailableGlyph() {
+    QVERIFY(m_scratch.isValid());
+    const QString imgPath = writeSampleImage(m_scratch.filePath(QStringLiteral("bgr090.png")));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    // Model absent (init() wiped it) AND marked Never Download → the entry can't
+    // be triggered, so applyMlPolicy() disables it. This is the general
+    // "unavailable / can't be triggered" state; the glyph keys off the disabled
+    // state, so any disabled reason (non-image doc, no doc, policy) shares it.
+    ModelPolicy::setNeverDownload(app, ModelId::U2NetP, true);
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    QAction *action = findActionByText(mw->menuBar(), QStringLiteral("Remove &Background"));
+    QVERIFY(action);
+    QVERIFY2(!action->isEnabled(), "Never-Download policy must disable the entry");
+    QVERIFY2(
+        iconIsResource(action->icon(), QStringLiteral(":/icons/actions/status-unavailable.svg"), mw),
+        "A disabled/unavailable entry must carry the muted unavailable glyph");
+    // G3: the explain-why tooltip still stands alongside the glyph.
+    QVERIFY2(action->toolTip().contains(QStringLiteral("Manage ML Models")),
+             qPrintable(QString("Unavailable entry keeps its explain-why tooltip: '%1'")
+                            .arg(action->toolTip())));
+    captureToolsMenu(mw, QStringLiteral("bg-removal-menu-unavailable"));
 }
 
 int main(int argc, char **argv) {
