@@ -200,3 +200,19 @@ endif()
 # image document (fixture is a PNG via QImage), so no Qt6::Pdf link is
 # needed.
 trailer_add_uat_test(test_uat_zoom_indicator test_uat_zoom_indicator.cpp)
+
+# Inline Open Recent list in the empty state (backlog
+# 2026-07-12-empty-state-open-recent-list). Drives Application +
+# MainWindow; PDF fixtures use QPdfWriter (QtGui), so no Qt6::Pdf link is
+# needed. Writes curated before/after grab() PNGs to
+# $TRAILER_WELCOME_EVIDENCE_DIR when set (the G2 UX-Done artifact). A new
+# file rather than an edit to test_uat_empty_state.cpp, to avoid a
+# collision with the open PR #95.
+trailer_add_uat_test(test_uat_empty_state_recent test_uat_empty_state_recent.cpp)
+
+# Window-menu Maximize/Restore dynamic label (backlog
+# 2026-07-12-maximize-restore-dynamic-label). Drives Application +
+# MainWindow; no document fixture, so no Qt6::Pdf link is needed. Writes a
+# grab() of the open Window menu to $TRAILER_WINDOWMENU_EVIDENCE_DIR when
+# set.
+trailer_add_uat_test(test_uat_window_menu_maximize test_uat_window_menu_maximize.cpp)
