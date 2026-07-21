@@ -228,6 +228,11 @@ class ImageDocument : public IDocument {
     // view/zoom tests deterministically await the placeholder→pixmap swap
     // before reading label->pixmap() / scaleFactor().
     bool awaitDecodeForTest(int timeoutMs = 5000);
+    // True once no in-flight decode watcher is retained — i.e. a
+    // reload/recovery that superseded the open decode dropped it (so the
+    // superseded worker's buffer isn't pinned and its stale callback can't
+    // fire). Also true when no decode was ever started.
+    bool decodeWatcherClearedForTest() const { return m_decodeWatcher.isNull(); }
 
   private:
     // The image's effective devicePixelRatio, clamped to a positive
@@ -238,12 +243,19 @@ class ImageDocument : public IDocument {
         return d > 0.0 ? d : 1.0;
     }
     // True once the file is known to be a decodable still image — from the
-    // header read at open, before the async full decode lands, and after.
-    // Keyed to available-OR-pending (not "m_image non-null") so a still
-    // image's capabilities never falsely read as unsupported during the
-    // brief off-thread decode window (ADR 0008, image path).
+    // header read at open, before the async full decode lands, and after a
+    // SUCCESSFUL decode. Keyed to available-OR-in-flight so a still image's
+    // capabilities never falsely read as unsupported during the brief
+    // off-thread decode window (ADR 0008, image path). Crucially, once the
+    // decode has FINISHED (m_decoded) the header-size "pending" no longer
+    // counts: a decode that produced a null image (valid header, corrupt
+    // body) is genuinely unavailable, so capabilities go false and the
+    // controls disable rather than stay enabled-but-inert (G3).
     bool imageAvailableOrPending() const {
-        return !m_image.isNull() || (!m_animated && !m_headerSize.isEmpty());
+        if (!m_image.isNull())
+            return true;
+        // Only "pending" while a decode is actually still in flight.
+        return !m_animated && m_decodeStarted && !m_decoded && !m_headerSize.isEmpty();
     }
     // Device-pixel dimensions of the still image: the decoded size once
     // available, otherwise the header size read at open. Empty for an

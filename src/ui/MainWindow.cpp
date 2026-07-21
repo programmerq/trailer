@@ -3660,6 +3660,64 @@ void MainWindow::onDocumentCapabilitiesChanged() {
     // for PDFs (their notifier fires for the forms probe; this just re-reads
     // the already-correct zoom).
     updateZoomIndicator();
+
+    // Staged image open, decode-FAILURE path (ADR 0008): when a decode fails
+    // (valid header, corrupt/truncated body) the image's capabilities flip
+    // from their provisional (pending) true — under which onCurrentDocumentChanged
+    // ENABLED these controls at open — back to false. Re-apply the
+    // capability-gated action states so the edit/zoom/print/search controls
+    // DISABLE instead of staying enabled-but-inert against a null image (G3).
+    // This intentionally mirrors the enable block in onCurrentDocumentChanged;
+    // the two are kept in sync by hand because IDocument is not a QObject with
+    // per-capability change signals. For a PDF (notifier fires for the forms
+    // probe) and for a SUCCEEDED image decode this is a harmless idempotent
+    // re-apply of already-correct states.
+    const bool canEdit = doc && doc->supportsEditing();
+    const bool isImage = dynamic_cast<ImageDocument *>(doc) != nullptr;
+    const bool hasZoom = doc && doc->supportsZoom();
+    m_zoomInAction->setEnabled(hasZoom);
+    m_zoomOutAction->setEnabled(hasZoom);
+    m_zoomActualAction->setEnabled(hasZoom);
+    m_zoomFitAction->setEnabled(hasZoom);
+    m_zoomFitPageAction->setEnabled(hasZoom);
+    m_printAction->setEnabled(doc && doc->supportsPrint());
+    const bool hasSearch = doc && doc->supportsSearch();
+    m_findAction->setEnabled(hasSearch);
+    m_findNextAction->setEnabled(hasSearch);
+    m_findPreviousAction->setEnabled(hasSearch);
+    m_saveAction->setEnabled(canEdit);
+    m_saveAsAction->setEnabled(canEdit);
+    m_rotateLeftAction->setEnabled(canEdit);
+    m_rotateRightAction->setEnabled(canEdit);
+    m_flipHorizontalAction->setEnabled(canEdit);
+    m_flipVerticalAction->setEnabled(canEdit);
+    m_adjustSizeAction->setEnabled(canEdit && isImage);
+    m_adjustColourAction->setEnabled(canEdit && isImage);
+    m_cropImageAction->setEnabled(canEdit && isImage);
+    if (isImage && !canEdit) {
+        // An image that finished decoding with no usable pixels. The document
+        // view already shows the "Could not decode image:" reason; give the
+        // now-disabled controls a matching tooltip so hovering explains the
+        // greyed-out state — there is nowhere to go, so "why" alone suffices
+        // (G3). ML/OCR actions can't act on a null image either.
+        const QString why = tr("This image could not be opened.");
+        for (QAction *a :
+             {m_zoomInAction, m_zoomOutAction, m_zoomActualAction, m_zoomFitAction,
+              m_zoomFitPageAction, m_rotateLeftAction, m_rotateRightAction,
+              m_flipHorizontalAction, m_flipVerticalAction, m_adjustSizeAction,
+              m_adjustColourAction, m_cropImageAction, m_saveAction, m_saveAsAction}) {
+            if (a)
+                a->setToolTip(why);
+        }
+        if (m_removeBackgroundAction)
+            m_removeBackgroundAction->setEnabled(false);
+        if (m_instantAlphaAction)
+            m_instantAlphaAction->setEnabled(false);
+        if (m_smartLassoAction)
+            m_smartLassoAction->setEnabled(false);
+        if (m_recognizeTextAction)
+            m_recognizeTextAction->setEnabled(false);
+    }
 }
 
 void MainWindow::onAnnotationSelectionChanged(int id) {

@@ -8,6 +8,8 @@
 #include "ui/MainWindow.h"
 #include "ui/SelectableTextLayer.h"
 
+#include <QBuffer>
+#include <QFile>
 #include <QImage>
 #include <QKeyEvent>
 #include <QLabel>
@@ -66,6 +68,7 @@ class TestAdapters : public QObject {
     void imageDocumentZoomResizesPixmap();
     void imageDocumentStagedOpenShowsLoadingPlaceholder();
     void imageDocumentReloadSupersedesInFlightDecode();
+    void imageDocumentDecodeFailureReportsNoCapabilities();
     void pdfDocumentAdvertisesCapabilities();
     void pdfDocumentRendersThumbnailsForValidFile();
     void pdfDocumentAcceptsSearchQueryWithoutView();
@@ -292,12 +295,54 @@ void TestAdapters::imageDocumentReloadSupersedesInFlightDecode() {
     QVERIFY(doc.reloadFromDisk());
     QVERIFY2(!doc.isDecodePendingForTest(),
              "reload must supersede the in-flight open decode");
+    // Supersede must also DROP the in-flight watcher + future so the superseded
+    // worker's decoded buffer isn't pinned for the doc's lifetime and its stale
+    // finished callback can't fire (memory-retention finding).
+    QVERIFY2(doc.decodeWatcherClearedForTest(),
+             "reload must drop the superseded decode's watcher, not just guard it");
 
     // Flush any stale worker finished callback; the generation guard must make
     // it a no-op so it can never clobber the reloaded (blue) pixels.
     QVERIFY(doc.awaitDecodeForTest());
     QCoreApplication::processEvents();
     QCOMPARE(doc.image().pixelColor(0, 0), QColor(Qt::blue));
+}
+
+void TestAdapters::imageDocumentDecodeFailureReportsNoCapabilities() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("corrupt.ppm");
+    // A PPM whose ASCII header fully specifies the size (QImageReader::size()
+    // succeeds, so the staged open kicks a decode) but whose binary pixel data
+    // is truncated to far fewer than 400*300*3 bytes, so the full decode fails.
+    // This is the "pending, then failed decode" path staged open introduces.
+    {
+        QByteArray ppm = QByteArrayLiteral("P6\n400 300\n255\n");
+        ppm.append(100, '\0');
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(ppm);
+    }
+
+    ImageDocument doc(path);
+    // The header parsed → staged decode kicked → capabilities provisionally
+    // report the image as present while it is still decoding.
+    QVERIFY2(doc.isDecodePendingForTest(), "a parseable header must kick the staged decode");
+    QVERIFY(doc.supportsZoom());
+    QCOMPARE(doc.pageCount(), 1);
+
+    // Await the decode; it produces a null image (corrupt body).
+    QVERIFY(doc.awaitDecodeForTest());
+    QVERIFY(doc.image().isNull());
+
+    // Capabilities MUST now be honest: a null decoded image is not
+    // zoomable/editable/searchable and has no page. Otherwise the controls
+    // would stay enabled-but-inert against a null image (G3 — lying controls).
+    QVERIFY2(!doc.supportsZoom(), "failed decode must not report zoom support");
+    QVERIFY2(!doc.supportsEditing(), "failed decode must not report edit support");
+    QVERIFY2(!doc.supportsThumbnails(), "failed decode must not report thumbnails");
+    QVERIFY2(!doc.supportsSelectableText(), "failed decode must not report selectable text");
+    QCOMPARE(doc.pageCount(), 0);
 }
 
 void TestAdapters::pdfDocumentAdvertisesCapabilities() {

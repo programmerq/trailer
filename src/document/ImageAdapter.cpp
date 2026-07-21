@@ -360,8 +360,14 @@ void ImageDocument::onDecodeFinished(int generation) {
     if (m_viewPopulated || !m_label)
         return;
     if (m_image.isNull()) {
+        // Decode failed (valid header, corrupt/truncated body). Show the
+        // honest error and notify: capabilities have flipped from their
+        // provisional (pending) true back to false, so MainWindow must
+        // re-disable the edit/zoom/print/search controls it enabled at open
+        // (G3 — no enabled-but-inert controls).
         m_viewPopulated = true;
         m_label->setText(QObject::tr("Could not decode image:\n%1").arg(m_path));
+        m_capabilityNotifier.notifyChanged();
         return;
     }
     installDecodedContent();
@@ -371,9 +377,24 @@ void ImageDocument::supersedeDecode() {
     // Reload / recovery took authoritative pixels: invalidate any in-flight
     // open decode so its finished callback no-ops and ensureDecoded() stops
     // blocking on the now-irrelevant future.
-    ++m_decodeGeneration;
+    ++m_decodeGeneration; // defense-in-depth: a stale callback still no-ops
     m_decodeStarted = false;
     m_decoded = true;
+    // Drop the in-flight decode's watcher and future outright. Leaving them
+    // intact would (a) fire one pointless finished callback and (b) retain the
+    // superseded worker's fully-decoded QImage in the future's shared state for
+    // the document's lifetime — a peak-memory waste on a large image.
+    // deleteLater (not delete) so this is safe even if we are inside the
+    // watcher's own signal emission; disconnect first so the pending finished
+    // can't run our slot in the meantime.
+    if (m_decodeWatcher) {
+        m_decodeWatcher->disconnect();
+        m_decodeWatcher->deleteLater();
+        m_decodeWatcher = nullptr;
+    }
+    // Reset our handle so the shared state (and its decoded buffer) is released
+    // as soon as the detached worker finishes, instead of being pinned here.
+    m_decodeFuture = QFuture<QImage>();
 }
 
 bool ImageDocument::awaitDecodeForTest(int timeoutMs) {
