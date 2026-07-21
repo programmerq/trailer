@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace trailer {
 
@@ -69,6 +70,55 @@ void TwoPageView::setZoomFactor(double factor) {
     m_zoom = factor;
     relayout();
     viewport()->update();
+}
+
+double TwoPageView::fitWidthZoom() const {
+    if (!m_doc || m_spreads.empty())
+        return m_zoom;
+    // Fit the WIDEST spread to the viewport width, discounting the outer canvas
+    // margins. The inter-page gutter is a fixed logical gap (not scaled), so it
+    // is subtracted from the available width before solving for the zoom that
+    // makes the two page widths fill the rest.
+    const double availW = viewport()->width() - 2.0 * kOuterMargin;
+    if (availW <= 0.0)
+        return m_zoom;
+    double z = std::numeric_limits<double>::max();
+    for (const Spread &s : m_spreads) {
+        const double p1w = m_doc->pagePointSize(s.left - 1).width();
+        if (s.right != 0) {
+            const double p2w = m_doc->pagePointSize(s.right - 1).width();
+            const double pagesW = p1w + p2w;
+            if (pagesW > 0.0)
+                z = std::min(z, (availW - kPageGutter) / pagesW);
+        } else if (p1w > 0.0) {
+            z = std::min(z, availW / p1w);
+        }
+    }
+    if (z == std::numeric_limits<double>::max() || z <= 0.0)
+        return m_zoom;
+    return z;
+}
+
+double TwoPageView::fitPageZoom() const {
+    if (!m_doc || m_spreads.empty())
+        return m_zoom;
+    // Start from the width fit (no horizontal overflow for any spread), then
+    // tighten so every spread's height also fits the viewport — the result makes
+    // a whole spread visible in one screen without horizontal overflow.
+    double z = fitWidthZoom();
+    const double availH = viewport()->height() - 2.0 * kOuterMargin;
+    if (availH <= 0.0)
+        return z;
+    for (const Spread &s : m_spreads) {
+        double ph = m_doc->pagePointSize(s.left - 1).height();
+        if (s.right != 0)
+            ph = std::max(ph, m_doc->pagePointSize(s.right - 1).height());
+        if (ph > 0.0)
+            z = std::min(z, availH / ph);
+    }
+    if (z <= 0.0)
+        return m_zoom;
+    return z;
 }
 
 double TwoPageView::spreadHeight(const Spread &s) const {

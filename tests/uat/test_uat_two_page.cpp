@@ -117,6 +117,7 @@ class TestUatTwoPage : public QObject {
     void uat_vwr_075_navigationScrollsSpread();
     void uat_vwr_076_relayoutOnPageDelete();
     void uat_vwr_077_livePageTrackingOnFreeScroll();
+    void uat_vwr_078_spreadAwareFitNoOverflow();
 
   private:
     QTemporaryDir m_scratch;
@@ -580,6 +581,65 @@ void TestUatTwoPage::uat_vwr_077_livePageTrackingOnFreeScroll() {
              qPrintable(QStringLiteral("current page must advance on free-scroll, not freeze at "
                                        "the first spread; got %1")
                             .arg(doc->currentPage())));
+}
+
+// UAT-VWR-078 — Fit-Width / Fit-Page are spread-aware in Two-Pages mode: a
+// facing spread (page1 + gutter + page2) fits the viewport WIDTH without
+// horizontal overflow. QPdfView's per-page fit would leave a whole page hanging
+// off the edge, so the fit must route through the custom surface. Regression
+// guard for the overflowing-spread fit finding.
+void TestUatTwoPage::uat_vwr_078_spreadAwareFitNoOverflow() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    const QString pdf =
+        writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_078.pdf")), 6);
+    MainWindow *mw = openFreshWindow(app, pdf);
+    QVERIFY(mw);
+    mw->resize(1000, 720);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    doc->setViewMode(ViewMode::TwoPages);
+    QApplication::processEvents();
+
+    auto *twoPage = mw->findChild<TwoPageView *>(QStringLiteral("view.twoPage"));
+    QVERIFY(twoPage);
+    QScrollBar *hbar = twoPage->horizontalScrollBar();
+
+    // Precondition: zoom in until a spread overflows the viewport horizontally,
+    // so there is a real overflow for the fit to remove.
+    for (int i = 0; i < 12 && hbar->maximum() == 0; ++i) {
+        doc->zoomIn();
+        QApplication::processEvents();
+    }
+    QVERIFY2(hbar->maximum() > 0,
+             "precondition: an oversized spread must overflow horizontally");
+
+    // Spread-aware Fit-Width must remove the horizontal overflow (a full spread
+    // fits the viewport width; <= 1px slack tolerates canvas-size ceil rounding).
+    doc->zoomFitWidth();
+    QApplication::processEvents();
+    QVERIFY2(hbar->maximum() <= 1,
+             qPrintable(QStringLiteral("Fit-Width must fit a full spread without horizontal "
+                                       "overflow; hbar max = %1")
+                            .arg(hbar->maximum())));
+
+    // Fit-Page likewise fits the spread horizontally (and tightens for height).
+    for (int i = 0; i < 12 && hbar->maximum() == 0; ++i) {
+        doc->zoomIn();
+        QApplication::processEvents();
+    }
+    QVERIFY2(hbar->maximum() > 0, "re-establish horizontal overflow before Fit-Page");
+    doc->zoomFitPage();
+    QApplication::processEvents();
+    QVERIFY2(hbar->maximum() <= 1,
+             qPrintable(QStringLiteral("Fit-Page must fit a full spread without horizontal "
+                                       "overflow; hbar max = %1")
+                            .arg(hbar->maximum())));
 }
 
 int main(int argc, char **argv) {

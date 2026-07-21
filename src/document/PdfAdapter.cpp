@@ -1080,12 +1080,26 @@ void PdfDocument::zoomActual() {
 void PdfDocument::zoomFitWidth() {
     if (!m_view)
         return;
+    // Two-Pages mode renders through the custom TwoPageView, whose fit must
+    // account for a full facing spread (page1 + gutter + page2) — QPdfView's
+    // per-page FitToWidth would overflow the viewport by a whole page. Route to
+    // the spread-aware fit and apply it through the shared zoom path so the
+    // zoom-% readout stays truthful; QPdfView keeps its own fit for the other
+    // two modes (record clause 3, G3: the visible surface actually fits).
+    if (m_viewMode == ViewMode::TwoPages && m_twoPageView) {
+        applyZoomFactor(m_twoPageView->fitWidthZoom());
+        return;
+    }
     m_view->setZoomMode(QPdfView::ZoomMode::FitToWidth);
 }
 
 void PdfDocument::zoomFitPage() {
     if (!m_view)
         return;
+    if (m_viewMode == ViewMode::TwoPages && m_twoPageView) {
+        applyZoomFactor(m_twoPageView->fitPageZoom());
+        return;
+    }
     m_view->setZoomMode(QPdfView::ZoomMode::FitInView);
 }
 

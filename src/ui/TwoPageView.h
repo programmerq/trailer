@@ -50,6 +50,18 @@ class TwoPageView : public QAbstractScrollArea {
     void setZoomFactor(double factor);
     double zoomFactor() const { return m_zoom; }
 
+    // Spread-aware fit zoom factors. Fit-Width returns the zoom at which the
+    // WIDEST spread (page1 + gutter + page2) fits the viewport width; Fit-Page
+    // additionally requires every spread to fit the viewport height, so one
+    // spread is fully visible without horizontal overflow. Unlike QPdfView's
+    // per-page fit these account for both facing pages + the gutter, so a spread
+    // never overflows the viewport horizontally in Two-Pages mode. The caller
+    // applies the returned factor through the shared zoom path so the zoom-%
+    // readout stays truthful. Returns the current zoom unchanged if the layout
+    // or viewport isn't ready.
+    double fitWidthZoom() const;
+    double fitPageZoom() const;
+
     // The spreads currently laid out (for tests / callers that need the
     // pairing without re-deriving it).
     const std::vector<Spread> &spreads() const { return m_spreads; }
