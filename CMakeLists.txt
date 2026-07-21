@@ -288,6 +288,8 @@ set(TRAILER_SOURCES
     src/ui/SelectableTextLayer.h
     src/ui/Sidebar.cpp
     src/ui/Sidebar.h
+    src/ui/TwoPageView.cpp
+    src/ui/TwoPageView.h
     src/ui/SignatureCaptureDialog.cpp
     src/ui/SignatureCaptureDialog.h
     src/ui/SignaturePicker.cpp
