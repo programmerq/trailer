@@ -435,6 +435,8 @@ class TestQuitAndKeepWindows : public QObject {
     void restoreMovedPagePdfKeepsOrderDirtyAndOriginalPath();
     void restoreInsertedPagesPdfSurvivesWithoutSource();
     void restoreStructuralPdfMovedOriginalReturnsUntitledDirty();
+    void restoreAnnotatedPdfDeletedBackingReturnsUntitledDirty();
+    void keepWindowsAnnotatedPdfDeletedBackingSnapshotFailurePrompts();
     void keepWindowsClearsStaleRecoverySidecar();
     void restoreCombinedStructuralAndAnnotationKeepsBothEditable();
     void annotationJsonRoundTripsAllFields();
@@ -1228,6 +1230,103 @@ void TestQuitAndKeepWindows::restoreStructuralPdfMovedOriginalReturnsUntitledDir
     QVERIFY(info.ok);
     QCOMPARE(info.rotate, 90);
     QVERIFY(!m_app->sessionDraftStore().hasSession());
+}
+
+void TestQuitAndKeepWindows::restoreAnnotatedPdfDeletedBackingReturnsUntitledDirty() {
+    // Never-worry-save floor (deleted-backing annotated PDF): an
+    // annotation-ONLY dirty PDF whose on-disk backing is DELETED underneath
+    // between ⌥⌘Q and restore must NOT be silently dropped. The pristine
+    // original+JSON AnnotatedPath approach can't reopen a deleted file, so the
+    // keep captures a SELF-SUFFICIENT annotation-baked blob (the same path a
+    // structural PDF takes) and restore returns it as an UNTITLED, dirty doc
+    // with the unsaved annotation still present and EDITABLE. Before this fix
+    // the AnnotatedPath restore branch did `!QFileInfo::exists(dd.path) →
+    // continue`, silently dropping the doc and its annotations.
+    if (runningUnderWine())
+        QSKIP(kWineOpenFileDeleteSkip); // QFile::remove(path) below; see helper
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/annotated-gone.pdf";
+    writeTinyPdf(path);
+
+    PdfDocument *original = addAnnotationDirtyPdfWindow(m_app, path);
+    QVERIFY(original->isDirty());
+    QVERIFY(!original->hasStructuralEdits()); // annotation-only dirtiness
+    const int originalCount = original->annotations()->count();
+    QVERIFY(originalCount >= 1);
+
+    // Force the qpdf editor to load WHILE THE FILE STILL EXISTS, so the live
+    // editor holds an open handle on the backing file. On Linux an unlink of a
+    // still-open file leaves the inode readable through that handle, so the
+    // in-memory snapshot arm (writeRecoverySnapshot serializing the live editor
+    // graph) can still succeed after the directory entry is gone.
+    // hasPendingDestructiveAnnotation() drives ensureAnnotationsLoadedSync() →
+    // ensureEditorLoaded(), which opens that handle; it returns false here (the
+    // annotation is a plain Rectangle, not a redaction/signature).
+    QVERIFY(!original->hasPendingDestructiveAnnotation());
+
+    // The backing file disappears BEFORE the keep (deleted by the user).
+    QVERIFY(QFile::remove(path));
+    QVERIFY(!QFileInfo::exists(path));
+
+    m_app->setPerformQuitForTesting([] {});
+    QVERIFY(m_app->requestQuit(QuitMode::KeepWindows)); // no prompt → self-sufficient blob
+    QVERIFY(m_app->sessionDraftStore().hasSession());   // captured, not dropped
+
+    QVERIFY(m_app->restoreKeptWindows());
+
+    PdfDocument *restored = findRestoredPdf(m_app, original);
+    QVERIFY(restored);                    // NOT silently dropped despite the gone backing
+    QVERIFY(restored->isUntitled());      // no on-disk home → first Save prompts Save-As
+    QVERIFY(restored->filePath().isEmpty());
+    QVERIFY(restored->isDirty());         // returned STILL DIRTY
+    // The unsaved annotation survived, editable (a live store object with its
+    // geometry, not flattened into page content).
+    QCOMPARE(restored->annotations()->count(), originalCount);
+    const std::vector<Annotation> &anns = restored->annotations()->annotations();
+    QVERIFY(!anns.empty());
+    QCOMPARE(anns.front().type, AnnotationType::Rectangle);
+    QCOMPARE(anns.front().bounds, QRectF(10.0, 12.0, 40.0, 22.0));
+    QVERIFY(!m_app->sessionDraftStore().hasSession()); // one-shot, consumed
+}
+
+void TestQuitAndKeepWindows::keepWindowsAnnotatedPdfDeletedBackingSnapshotFailurePrompts() {
+    // Never-worry-save floor (deleted-backing annotated PDF, prompt arm): when
+    // the self-sufficient snapshot CANNOT be produced for a deleted-backing
+    // annotated PDF (e.g. the editor was never loaded so qpdf can no longer
+    // read the gone file — modelled here with the force-failure seam),
+    // canDraftForKeep must PROVE that up front and return false so requestQuit
+    // PROMPTS the doc rather than silently dropping it. A Cancel response then
+    // aborts the quit, proving the prompt path ran and nothing was lost.
+    if (runningUnderWine())
+        QSKIP(kWineOpenFileDeleteSkip); // QFile::remove(path) below; see helper
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/annotated-nosnap.pdf";
+    writeTinyPdf(path);
+
+    MainWindow *win = nullptr;
+    PdfDocument *pdf = addAnnotationDirtyPdfWindow(m_app, path, &win);
+    QVERIFY(pdf->isDirty());
+    QVERIFY(!pdf->hasStructuralEdits());
+    pdf->setForceRecoverySnapshotFailureForTesting(true);
+
+    // Backing deleted → the annotation-dirty doc now needs the self-sufficient
+    // blob path (AnnotatedPath can't reopen a gone file), and the snapshot the
+    // preflight attempts is forced to fail.
+    QVERIFY(QFile::remove(path));
+    QVERIFY(!QFileInfo::exists(path));
+
+    win->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+    int quitCount = 0;
+    m_app->setPerformQuitForTesting([&] { ++quitCount; });
+
+    const bool proceeded = m_app->requestQuit(QuitMode::KeepWindows);
+
+    QVERIFY(!proceeded);                                // snapshot preflight failed → prompt → Cancel aborts
+    QCOMPARE(quitCount, 0);                             // quit did NOT run
+    QVERIFY(!m_app->sessionDraftStore().hasSession());  // NOT silently dropped
+    QCOMPARE(win->documentCount(), 1);                  // doc kept, still open
 }
 
 void TestQuitAndKeepWindows::keepWindowsClearsStaleRecoverySidecar() {
