@@ -236,24 +236,36 @@ int TwoPageView::leadingPageOfPrevSpread(int fromPage) const {
 int TwoPageView::topVisibleLeadingPage() const {
     if (m_spreads.empty())
         return 0;
-    // Spreads stack from kOuterMargin downward; the top-most visible spread is
-    // the first whose vertical MIDPOINT lies below the current scroll offset.
-    // Testing the midpoint (not the bottom edge) decouples this from the
-    // kSpreadGap/kOuterMargin relationship: after scrollToPage top-aligns a
-    // spread the offset sits kOuterMargin above that spread's top, and the
-    // previous spread's midpoint is a whole half-page higher, so the previous
-    // spread is never misreported — even when the gap is smaller than the margin
-    // (both may move within their documented tuning ranges). A bottom-edge test
-    // would need kSpreadGap >= kOuterMargin to stay correct.
-    const double scrollY = verticalScrollBar()->value();
-    double y = kOuterMargin;
+    // Spreads stack from kOuterMargin downward. The "current" spread is the LAST
+    // one whose TOP has reached or passed the viewport top — we advance to the
+    // next spread only once THAT spread's top actually crosses the viewport top.
+    //
+    // Why not the vertical MIDPOINT (the prior rule): a spread taller than ~2x
+    // the viewport is abandoned the instant the user scrolls past its midpoint,
+    // even though its bottom half still fills the whole viewport and the next
+    // spread has not appeared. That makes the current-page indicator lead by one
+    // and lets Next Page skip a whole spread. A top-crossing rule keeps the
+    // oversized spread current until its successor genuinely enters view.
+    //
+    // Why not a naive `top <= scrollY`: scrollToPage() top-aligns spread S by
+    // setting scrollY = absoluteTop(S) - kOuterMargin, so absoluteTop(S) sits
+    // kOuterMargin BELOW scrollY. Comparing against scrollY alone would report
+    // S-1 right after a top-align. Probe the line scrollY + kOuterMargin instead
+    // (with a small float epsilon for arithmetic slack), i.e. report the spread
+    // whose vertical extent contains that line: the last spread whose
+    // absoluteTop <= scrollY + kOuterMargin + epsilon. That keeps the top-align
+    // correct (S reported after scrollToPage(S)) while fixing the oversized skip.
+    constexpr double kProbeEpsilon = 0.5; // logical px of float slack
+    const double probe = verticalScrollBar()->value() + kOuterMargin + kProbeEpsilon;
+    double y = kOuterMargin;                    // absolute top of the current spread
+    int leading = m_spreads.front().left - 1;   // last spread whose top <= probe
     for (const Spread &s : m_spreads) {
-        const double sh = spreadHeight(s);
-        if (y + sh / 2.0 > scrollY)
-            return s.left - 1; // 1-based page -> 0-based index
-        y += sh + kSpreadGap;
+        if (y > probe)
+            break; // this spread's top has not reached the viewport top yet
+        leading = s.left - 1; // 1-based page -> 0-based index
+        y += spreadHeight(s) + kSpreadGap;
     }
-    return m_spreads.back().left - 1;
+    return leading;
 }
 
 void TwoPageView::maybeEmitCurrentPage() {

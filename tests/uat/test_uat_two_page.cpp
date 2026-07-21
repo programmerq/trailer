@@ -238,6 +238,7 @@ class TestUatTwoPage : public QObject {
     void uat_vwr_079_zoomReadoutMatchesRenderScale();
     void uat_vwr_080_dprBackingResolution();
     void uat_vwr_081_nextPageWalksAllSpreads();
+    void uat_vwr_082_oversizedSpreadTracking();
 
   private:
     QTemporaryDir m_scratch;
@@ -1135,6 +1136,103 @@ void TestUatTwoPage::uat_vwr_081_nextPageWalksAllSpreads() {
     prevPage->trigger();
     QApplication::processEvents();
     QCOMPARE(doc->currentPage(), 0);
+}
+
+// UAT-VWR-082 — an oversized spread (taller than 2x the viewport) is NOT
+// abandoned at its midpoint in Two-Pages mode. When the user scrolls into such a
+// spread's bottom half — the spread still fills the viewport, the NEXT spread's
+// top has not yet crossed the viewport top — the current-page indicator must
+// still report the CURRENT spread's leading page, not the next. The prior
+// midpoint rule flipped to the next spread the instant the scroll passed the
+// spread's centre, so currentPage() led by one and Next Page could skip a whole
+// spread. Guards the top-crossing rule in TwoPageView::topVisibleLeadingPage().
+// FAILS against the old midpoint implementation (it reports page 1 at the tested
+// offset instead of 0); passes with the top-crossing rule.
+void TestUatTwoPage::uat_vwr_082_oversizedSpreadTracking() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    // 6-page cover-alone book → spreads [1],[2,3],[4,5],[6]; 0-based leading
+    // pages 0,1,3,5. We exercise the FIRST spread (the lone cover, page 0).
+    const QString pdf =
+        writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_082.pdf")), 6);
+    MainWindow *mw = openFreshWindow(app, pdf);
+    QVERIFY(mw);
+    mw->resize(900, 700);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    doc->setViewMode(ViewMode::TwoPages);
+    QApplication::processEvents();
+
+    auto *twoPage = mw->findChild<TwoPageView *>(QStringLiteral("view.twoPage"));
+    QVERIFY(twoPage);
+    QScrollBar *vbar = twoPage->verticalScrollBar();
+
+    // Reproduce "Actual Size / manual zoom in a small window": make the cover
+    // spread MORE THAN 2x taller than the viewport. Drive the view's zoom
+    // directly — its scroll-tracking logic is what this slot exercises, and
+    // uat_vwr_072/079 already prove that zoom is shared with the truthful readout
+    // — computing the factor from the LIVE viewport height so the >2x relation
+    // holds regardless of the offscreen chrome height.
+    const int vpH = twoPage->viewport()->height();
+    QVERIFY2(vpH > 0, "viewport must have a real height");
+    const double nativeH = doc->pageSizeHint(0).height();
+    QVERIFY2(nativeH > 0.0, "cover must report a positive native height");
+    const double zoom = (2.5 * vpH) / nativeH; // spread height ≈ 2.5x the viewport
+    twoPage->setZoomFactor(zoom);
+    QApplication::processEvents();
+
+    const double spreadH = nativeH * zoom;
+    QVERIFY2(spreadH > 2.0 * vpH,
+             "precondition: the cover spread must be taller than 2x the viewport");
+    QVERIFY2(vbar->maximum() > 0, "need a real scroll range to move through the spread");
+
+    // Top-aligning the cover reports the cover (page 0) — the top-align
+    // correctness the top-crossing rule must preserve.
+    vbar->setValue(0);
+    QApplication::processEvents();
+    QCOMPARE(doc->currentPage(), 0);
+
+    // Find spread 1's ([2,3]) top-align offset: the FIRST scroll offset at which
+    // advancing to spread 1 is correct (its top reaches the viewport top).
+    // scrollToPage sets vbar to absoluteTop(spread1) - kOuterMargin, i.e. exactly
+    // this switch point. currentPage() legitimately becomes 1 here.
+    twoPage->scrollToPage(1); // spread [2,3], leading page index 1
+    QApplication::processEvents();
+    const int spread1TopAlign = vbar->value();
+    QVERIFY2(spread1TopAlign > 0, "spread 1 must have a real top-align offset");
+    QCOMPARE(doc->currentPage(), 1);
+
+    // Scroll into the cover's BOTTOM HALF but short of spread 1's top-align: the
+    // cover still fills the viewport, spread 1's top has NOT crossed the viewport
+    // top. 0.75x the spread height is safely past the cover's midpoint yet well
+    // below spread1TopAlign (~spreadH + gap up), so it is inside the exact band
+    // where the old midpoint rule mis-reports the next spread.
+    const int bottomHalf = static_cast<int>(spreadH * 0.75);
+    QVERIFY2(bottomHalf < spread1TopAlign,
+             qPrintable(QStringLiteral("test scroll point %1 must be BELOW spread 1's "
+                                       "top-align %2 (next spread not yet in view)")
+                            .arg(bottomHalf)
+                            .arg(spread1TopAlign)));
+
+    QSignalSpy spy(twoPage, &TwoPageView::currentPageChanged);
+    vbar->setValue(bottomHalf);
+    QApplication::processEvents();
+
+    // The cover is still the current spread. Reporting page 1 here (the old
+    // midpoint rule) would lead the indicator by one and let Next Page skip the
+    // cover→2·3 step. currentPage() — and the last currentPageChanged value —
+    // must still be the cover's leading page, 0.
+    QVERIFY2(doc->currentPage() == 0,
+             qPrintable(QStringLiteral("oversized cover spread must stay current in its "
+                                       "bottom half (expected leading page 0); got %1")
+                            .arg(doc->currentPage())));
+    if (spy.count() > 0)
+        QCOMPARE(spy.last().at(0).toInt(), 0);
 }
 
 int main(int argc, char **argv) {

@@ -117,8 +117,10 @@ class TwoPageView : public QAbstractScrollArea {
     void resizeEvent(QResizeEvent *event) override;
 
   private:
-    // 0-based leading page of the top-most spread currently intersecting the
-    // viewport top. Drives the currentPageChanged() signal.
+    // 0-based leading page of the "current" spread: the last spread whose top
+    // has reached or passed the viewport top (so an oversized spread stays
+    // current while its lower half fills the viewport, rather than being
+    // abandoned at its midpoint). Drives the currentPageChanged() signal.
     int topVisibleLeadingPage() const;
     // Recompute the top-most visible spread and emit currentPageChanged() if it
     // changed since the last emit. Called on every vertical-scroll tick.
