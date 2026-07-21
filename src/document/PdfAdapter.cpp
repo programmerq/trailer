@@ -963,6 +963,21 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
                          if (twoPageView)
                              twoPageView->setZoomFactor(z);
                      });
+    // Re-lay-out the spreads whenever the document's page graph changes: an
+    // in-place reload after a page op (rotate / delete / insert / move / crop,
+    // revert, recover) changes pageCount / page sizes, and a deferred/async open
+    // reaches Ready after createView. Without these the cached spreads would keep
+    // drawing the pre-change layout while the user sits in Two-Pages mode.
+    QObject::connect(m_doc.get(), &QPdfDocument::pageCountChanged, twoPageView,
+                     [twoPageView]() {
+                         if (twoPageView)
+                             twoPageView->relayout();
+                     });
+    QObject::connect(m_doc.get(), &QPdfDocument::statusChanged, twoPageView,
+                     [twoPageView](QPdfDocument::Status) {
+                         if (twoPageView)
+                             twoPageView->relayout();
+                     });
     m_viewStack = stack;
     m_twoPageView = twoPageView;
 
@@ -1356,6 +1371,14 @@ void PdfDocument::goToPage(int pageIndex) {
         return;
     }
     m_view->pageNavigator()->jump(pageIndex, QPointF{}, m_view->zoomFactor());
+    // In Two-Pages mode the QPdfView is hidden, so also scroll the visible
+    // TwoPageView to the spread holding this page — otherwise Previous/Next Page
+    // and thumbnail-click navigation would silently move only the hidden view
+    // (an inert control, G3). currentPage() still reads the QPdfView navigator,
+    // which the jump above keeps in sync.
+    if (m_viewMode == ViewMode::TwoPages && m_twoPageView) {
+        m_twoPageView->scrollToPage(pageIndex);
+    }
 }
 
 void PdfDocument::setSearchQuery(const QString &query) {

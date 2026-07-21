@@ -125,6 +125,22 @@ void TwoPageView::resizeEvent(QResizeEvent *event) {
     relayout();
 }
 
+void TwoPageView::scrollToPage(int pageIndex) {
+    if (m_spreads.empty())
+        return;
+    const int page1 = pageIndex + 1; // spreads use 1-based page numbers
+    double y = kOuterMargin;
+    for (const Spread &s : m_spreads) {
+        if (s.left == page1 || s.right == page1) {
+            verticalScrollBar()->setValue(std::min(
+                static_cast<int>(y - kOuterMargin), verticalScrollBar()->maximum()));
+            viewport()->update();
+            return;
+        }
+        y += spreadHeight(s) + kSpreadGap;
+    }
+}
+
 void TwoPageView::paintEvent(QPaintEvent *event) {
     QPainter painter(viewport());
     painter.fillRect(event->rect(), viewport()->palette().color(QPalette::Dark));

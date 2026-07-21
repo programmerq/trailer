@@ -570,6 +570,12 @@ class MainWindow : public QMainWindow {
     QAction *m_singlePageAction = nullptr;
     QAction *m_twoPagesAction = nullptr;
     QAction *m_continuousAction = nullptr;
+    // True while the markup / form toolbar was auto-hidden because the document
+    // entered Two-Pages mode (honest degradation). Lets us restore the user's
+    // prior toolbar visibility when they leave Two-Pages, instead of leaving a
+    // toolbar they had open closed.
+    bool m_markupHiddenForTwoPage = false;
+    bool m_formToolbarHiddenForTwoPage = false;
 
     QAction *m_previousPageAction = nullptr;
     QAction *m_nextPageAction = nullptr;

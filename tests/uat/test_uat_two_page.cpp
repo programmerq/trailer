@@ -21,8 +21,10 @@
 
 #include "app/Application.h"
 #include "document/IDocument.h"
+#include "document/SpreadLayout.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
+#include "ui/TwoPageView.h"
 
 #include <QAbstractScrollArea>
 #include <QAction>
@@ -112,6 +114,8 @@ class TestUatTwoPage : public QObject {
     void uat_vwr_072_actualSizeTruthfulZoom();
     void uat_vwr_073_honestDegradationTooltips();
     void uat_vwr_074_g2Evidence();
+    void uat_vwr_075_navigationScrollsSpread();
+    void uat_vwr_076_relayoutOnPageDelete();
 
   private:
     QTemporaryDir m_scratch;
@@ -192,16 +196,25 @@ void TestUatTwoPage::uat_vwr_071_coverAlonePairingGeometry() {
     QApplication::processEvents();
     QCOMPARE(doc->viewMode(), ViewMode::TwoPages);
 
-    auto *twoPage =
-        mw->findChild<QAbstractScrollArea *>(QStringLiteral("view.twoPage"));
+    auto *twoPage = mw->findChild<TwoPageView *>(QStringLiteral("view.twoPage"));
     QVERIFY2(twoPage, "TwoPageView (objectName view.twoPage) must exist in Two-Pages mode");
     QVERIFY2(twoPage->isVisible(), "TwoPageView must be the visible surface in Two-Pages mode");
 
-    // Geometry is asserted through the scrollbars: a 5-page book with
-    // cover-alone pairing produces spreads [1],[2,3],[4,5] — 3 rows, so the
-    // vertical range must exceed a single spread's height.
-    QVERIFY2(twoPage->verticalScrollBar()->maximum() >= 0,
-             "TwoPageView must expose a vertical scroll range for stacked spreads");
+    // The view must actually have built the cover-alone pairing from the shared
+    // helper: a 5-page book → spreads [1],[2,3],[4,5] (page 1 alone, then facing
+    // pairs). Assert the live layout equals spreadsFor(5, coverAlone=true) — the
+    // integration check that the view consumes the pairing correctly (the pure
+    // pairing itself is unit-tested in tests/test_spread_layout.cpp).
+    const std::vector<Spread> expected = spreadsFor(5, /*coverAlone=*/true);
+    QCOMPARE(int(twoPage->spreads().size()), int(expected.size()));
+    for (size_t i = 0; i < expected.size(); ++i) {
+        QCOMPARE(twoPage->spreads()[i].left, expected[i].left);
+        QCOMPARE(twoPage->spreads()[i].right, expected[i].right);
+    }
+    // 3 stacked spreads at fit zoom exceed the viewport, so there is a real
+    // vertical scroll range to move through (continuous spread scroll).
+    QVERIFY2(twoPage->verticalScrollBar()->maximum() > 0,
+             "TwoPageView must expose a non-empty vertical scroll range for 3 stacked spreads");
 }
 
 // UAT-VWR-072 — "Actual Size" renders each page at 1 PDF point -> 1 logical
@@ -236,6 +249,17 @@ void TestUatTwoPage::uat_vwr_072_actualSizeTruthfulZoom() {
     // same physical page size in every mode.
     QVERIFY2(qFuzzyCompare(doc->zoomFactor(), 1.0),
              qPrintable(QStringLiteral("Actual Size must be per-page zoom 1.0; got %1")
+                            .arg(doc->zoomFactor())));
+
+    // The custom surface must actually render at that same factor — the zoom is
+    // SHARED with QPdfView so the readout is truthful, not a separate scale. A
+    // desync between doc->zoomFactor() (read from QPdfView) and the TwoPageView's
+    // render zoom would silently make the readout lie; assert they agree.
+    auto *twoPage = mw->findChild<TwoPageView *>(QStringLiteral("view.twoPage"));
+    QVERIFY(twoPage);
+    QVERIFY2(qFuzzyCompare(twoPage->zoomFactor(), doc->zoomFactor()),
+             qPrintable(QStringLiteral("TwoPageView render zoom %1 must match the readout %2")
+                            .arg(twoPage->zoomFactor())
                             .arg(doc->zoomFactor())));
 }
 
@@ -343,43 +367,59 @@ void TestUatTwoPage::uat_vwr_074_g2Evidence() {
     QVERIFY(!before.isNull());
     save(before.toImage(), QStringLiteral("2026-07-21-two-page-single-before.png"));
 
-    // AFTER: Two-Pages mode on the SAME document. Zoom out a little so a whole
-    // facing pair fits, then scroll past the lone cover (cover-alone ON) so the
-    // shot shows a genuine side-by-side spread — the point of the feature.
+    // AFTER: Two-Pages mode on the SAME document, TOP-ANCHORED. Zoom out enough
+    // that the lone cover (page 1) AND the first facing pair (2,3) are both
+    // visible at scroll 0, so the shot makes the cover-alone pairing (page 1
+    // alone, then 2 & 3 side by side) unmistakable — and page 1 appears in both
+    // the before and after shots.
     QVERIFY(twoPages->isEnabled());
     twoPages->trigger();
     QApplication::processEvents();
-    doc->zoomOut();
-    doc->zoomOut();
+    for (int i = 0; i < 4; ++i)
+        doc->zoomOut();
     QApplication::processEvents();
-    auto *twoPageView =
-        mw->findChild<QAbstractScrollArea *>(QStringLiteral("view.twoPage"));
+    auto *twoPageView = mw->findChild<TwoPageView *>(QStringLiteral("view.twoPage"));
     QVERIFY(twoPageView);
-    QScrollBar *vbar = twoPageView->verticalScrollBar();
-    // Scroll ~30% down: with spreads [1],[2,3],[4,5],[6] this lands on a facing
-    // pair rather than the lone cover at the very top.
-    vbar->setValue(static_cast<int>(vbar->maximum() * 0.3));
+    twoPageView->verticalScrollBar()->setValue(0);
     QApplication::processEvents();
     const QPixmap after = mw->grab();
     QVERIFY(!after.isNull());
     save(after.toImage(), QStringLiteral("2026-07-21-two-page-facing-after.png"));
 
-    // DISABLED TOGGLE + tooltip (G3), reconstructed. The real menu tooltip
-    // cannot be captured in an offscreen static grab, so build a panel that
-    // mirrors the greyed control and its two enablement tooltips verbatim.
+    // DISABLED TOGGLE + tooltip (G3). Read the tooltip text LIVE from the real
+    // greyed m_twoPagesAction (opening a single-page PDF, then an image) rather
+    // than retyping the strings, so the evidence cannot drift from the code. The
+    // panel is a reconstruction because a hover-tooltip cannot be captured in an
+    // offscreen static grab — the accepted fallback per the G2 capture-method
+    // ruling — but every string in it is the actual QAction::toolTip().
+    const QString singlePdf =
+        writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_074_single.pdf")), 1);
+    MainWindow *sw = openFreshWindow(app, singlePdf);
+    QVERIFY(sw);
+    QAction *swToggle = findAction(sw, QStringLiteral("action.view.twoPages"));
+    QVERIFY(swToggle && !swToggle->isEnabled());
+    const QString singleTip = swToggle->toolTip();
+
+    const QString imgPath =
+        writeSampleImage(m_scratch.filePath(QStringLiteral("uat_vwr_074.png")));
+    MainWindow *iw = openFreshWindow(app, imgPath);
+    QVERIFY(iw);
+    QAction *iwToggle = findAction(iw, QStringLiteral("action.view.twoPages"));
+    QVERIFY(iwToggle && !iwToggle->isEnabled());
+    const QString imageTip = iwToggle->toolTip();
+
     QWidget panel;
     panel.setObjectName(QStringLiteral("evidence.toggleDisabled"));
     panel.setStyleSheet(QStringLiteral("background:#f4f4f4;"));
     auto *lay = new QVBoxLayout(&panel);
-    auto *row = new QLabel(QStringLiteral("View ▸ Two Pages"), &panel);
+    auto *row = new QLabel(QStringLiteral("View ▸ Two Pages   (disabled)"), &panel);
     row->setEnabled(false); // greyed, as the disabled menu entry renders
     row->setStyleSheet(QStringLiteral("font-size:15px; padding:6px 10px;"));
     lay->addWidget(row);
-    auto *tipSingle = new QLabel(
-        QStringLiteral("Tooltip (single-page PDF): “This document has only one page.”"),
-        &panel);
-    auto *tipImage = new QLabel(
-        QStringLiteral("Tooltip (image): “Images don't have pages to face.”"), &panel);
+    auto *tipSingle =
+        new QLabel(QStringLiteral("Tooltip (single-page PDF): “%1”").arg(singleTip), &panel);
+    auto *tipImage =
+        new QLabel(QStringLiteral("Tooltip (image): “%1”").arg(imageTip), &panel);
     for (QLabel *t : {tipSingle, tipImage}) {
         t->setFrameShape(QFrame::StyledPanel);
         t->setStyleSheet(QStringLiteral("color:#333; background:#fffbe6; padding:6px 10px;"));
@@ -391,6 +431,79 @@ void TestUatTwoPage::uat_vwr_074_g2Evidence() {
     const QPixmap disabled = panel.grab();
     QVERIFY(!disabled.isNull());
     save(disabled.toImage(), QStringLiteral("2026-07-21-two-page-toggle-disabled.png"));
+}
+
+// UAT-VWR-075 — navigation stays live in Two-Pages mode. Previous/Next Page (and
+// thumbnail-click) route through IDocument::goToPage, which in two-up mode must
+// scroll the TwoPageView to the target page's spread — otherwise it would move
+// only the hidden QPdfView and read as an inert control (G3). Regression guard
+// for the correctness-review finding.
+void TestUatTwoPage::uat_vwr_075_navigationScrollsSpread() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    const QString pdf =
+        writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_075.pdf")), 6);
+    MainWindow *mw = openFreshWindow(app, pdf);
+    QVERIFY(mw);
+    mw->resize(1000, 720);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    doc->setViewMode(ViewMode::TwoPages);
+    QApplication::processEvents();
+
+    auto *twoPage = mw->findChild<TwoPageView *>(QStringLiteral("view.twoPage"));
+    QVERIFY(twoPage);
+    QScrollBar *vbar = twoPage->verticalScrollBar();
+    QVERIFY2(vbar->maximum() > 0, "need a real scroll range to observe navigation");
+    vbar->setValue(0);
+    QApplication::processEvents();
+    QCOMPARE(vbar->value(), 0);
+
+    // Jump to the last page: the visible spread canvas must scroll down.
+    doc->goToPage(doc->pageCount() - 1);
+    QApplication::processEvents();
+    QVERIFY2(vbar->value() > 0,
+             "Navigating to a later page must scroll the TwoPageView spread canvas");
+}
+
+// UAT-VWR-076 — the spread layout follows document mutations. Deleting a page in
+// Two-Pages mode must re-lay-out the spreads (fewer pages → fewer spreads),
+// rather than keep drawing the pre-edit layout. Regression guard for the
+// stale-spreads correctness-review finding.
+void TestUatTwoPage::uat_vwr_076_relayoutOnPageDelete() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    const QString pdf =
+        writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_076.pdf")), 6);
+    MainWindow *mw = openFreshWindow(app, pdf);
+    QVERIFY(mw);
+    mw->resize(1000, 720);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    doc->setViewMode(ViewMode::TwoPages);
+    QApplication::processEvents();
+
+    auto *twoPage = mw->findChild<TwoPageView *>(QStringLiteral("view.twoPage"));
+    QVERIFY(twoPage);
+    // 6 pages, cover-alone: [1],[2,3],[4,5],[6] → 4 spreads.
+    QCOMPARE(int(twoPage->spreads().size()), 4);
+
+    // Delete two pages → 4 pages: [1],[2,3],[4] → 3 spreads. The view must
+    // reflect the new page graph without a manual resize/zoom nudge.
+    doc->deletePages({4, 5});
+    QApplication::processEvents();
+    QCOMPARE(doc->pageCount(), 4);
+    QCOMPARE(int(twoPage->spreads().size()), 3);
 }
 
 int main(int argc, char **argv) {

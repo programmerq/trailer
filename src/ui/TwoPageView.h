@@ -37,6 +37,11 @@ class TwoPageView : public QAbstractScrollArea {
 
     // Cover-alone pairing: page 1 alone, then (2,3),(4,5)… Default ON (the
     // book-like default ratified for PR1; no user-facing toggle yet).
+    // NOTE: setCoverAlone()/coverAlone()/spreads() are intentionally unused in
+    // PR1 — the record scopes the user-facing cover-alone toggle out of PR1.
+    // They are the thin seam PR2 consumes when it wires that toggle and
+    // reprojects overlays onto the spread geometry; kept minimal so the seam
+    // costs nothing. Remove them if PR2's shape ends up differing.
     void setCoverAlone(bool coverAlone);
     bool coverAlone() const { return m_coverAlone; }
 
@@ -49,14 +54,23 @@ class TwoPageView : public QAbstractScrollArea {
     // pairing without re-deriving it).
     const std::vector<Spread> &spreads() const { return m_spreads; }
 
+    // Recompute spreads + scroll ranges from the current document. Public so the
+    // adapter can call it after an in-place document reload (rotate / delete /
+    // insert / move / crop / revert) changes the page count or page sizes —
+    // otherwise the cached spreads would keep drawing the pre-edit layout.
+    void relayout();
+
+  public slots:
+    // Scroll the spread that contains 1-based-friendly 0-based `pageIndex` into
+    // view (top-aligned). Lets Previous/Next Page and thumbnail-click navigation
+    // stay live in Two-Pages mode instead of only moving the hidden QPdfView.
+    void scrollToPage(int pageIndex);
+
   protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
 
   private:
-    // Recompute the spread list and the scrollbar ranges from the current
-    // document, cover-alone setting, zoom, and viewport size.
-    void relayout();
     // Logical height of spread row `i` at the current zoom (max of its pages).
     double spreadHeight(const Spread &s) const;
     // Logical width of spread row `i` at the current zoom (both pages + gutter).

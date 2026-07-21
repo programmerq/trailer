@@ -3830,7 +3830,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
         doc && doc->supportsViewModes() && doc->viewMode() == ViewMode::TwoPages;
     if (twoPageMode) {
         const QString why =
-            tr("Switch to Single Page or Continuous to use this in a facing-page view.");
+            tr("Switch to Single Page or Continuous to mark up or search.");
         m_findAction->setEnabled(false);
         m_findAction->setToolTip(why);
         m_findNextAction->setEnabled(false);
@@ -3841,14 +3841,30 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             m_searchButton->setEnabled(false);
             m_searchButton->setToolTip(why);
         }
+        // The transient search bar is dismissed (reopened with one Find
+        // keystroke on return); the docked markup toolbar's prior visibility is
+        // remembered so we can restore it on exit rather than silently closing
+        // a toolbar the user had open.
         if (m_searchBar && m_searchBar->isVisible())
             hideSearchBar();
         if (m_markupToolbarAction) {
             m_markupToolbarAction->setEnabled(false);
             m_markupToolbarAction->setToolTip(why);
         }
-        if (m_markupToolbar && m_markupToolbar->isVisible())
+        if (m_markupToolbar && m_markupToolbar->isVisible()) {
+            m_markupHiddenForTwoPage = true;
             m_markupToolbar->hide();
+        }
+        // Form filling also drives overlays on the hidden QPdfView, so its
+        // toggle would be inert in two-up — degrade it the same honest way.
+        if (m_formToolbarAction) {
+            m_formToolbarAction->setEnabled(false);
+            m_formToolbarAction->setToolTip(why);
+        }
+        if (m_formToolbar && m_formToolbar->isVisible()) {
+            m_formToolbarHiddenForTwoPage = true;
+            m_formToolbar->hide();
+        }
     } else {
         // Leaving two-up: clear the degrade tooltips. Enablement was already
         // set by the per-capability logic above for find/search; the markup
@@ -3860,6 +3876,22 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
         if (m_markupToolbarAction) {
             m_markupToolbarAction->setEnabled(doc != nullptr);
             m_markupToolbarAction->setToolTip(QString());
+        }
+        if (m_formToolbarAction) {
+            m_formToolbarAction->setEnabled(doc != nullptr);
+            m_formToolbarAction->setToolTip(QString());
+        }
+        // Restore a markup / form toolbar we auto-hid on entering Two-Pages, so
+        // the round trip through two-up leaves the user's layout as they had it.
+        if (m_markupHiddenForTwoPage) {
+            m_markupHiddenForTwoPage = false;
+            if (m_markupToolbar && doc)
+                m_markupToolbar->show();
+        }
+        if (m_formToolbarHiddenForTwoPage) {
+            m_formToolbarHiddenForTwoPage = false;
+            if (m_formToolbar && doc)
+                m_formToolbar->show();
         }
     }
 
