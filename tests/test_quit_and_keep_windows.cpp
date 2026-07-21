@@ -1242,6 +1242,8 @@ void TestQuitAndKeepWindows::restoreAnnotatedPdfDeletedBackingReturnsUntitledDir
     // with the unsaved annotation still present and EDITABLE. Before this fix
     // the AnnotatedPath restore branch did `!QFileInfo::exists(dd.path) →
     // continue`, silently dropping the doc and its annotations.
+    if (runningUnderWine())
+        QSKIP(kWineOpenFileDeleteSkip); // QFile::remove(path) below; see helper
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = dir.path() + "/annotated-gone.pdf";
@@ -1296,6 +1298,8 @@ void TestQuitAndKeepWindows::keepWindowsAnnotatedPdfDeletedBackingSnapshotFailur
     // canDraftForKeep must PROVE that up front and return false so requestQuit
     // PROMPTS the doc rather than silently dropping it. A Cancel response then
     // aborts the quit, proving the prompt path ran and nothing was lost.
+    if (runningUnderWine())
+        QSKIP(kWineOpenFileDeleteSkip); // QFile::remove(path) below; see helper
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = dir.path() + "/annotated-nosnap.pdf";
