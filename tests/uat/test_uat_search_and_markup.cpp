@@ -430,11 +430,13 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_ann_125_selectAllSelectsEveryAnnotation();
     void uat_ann_126_selectAllThenDeleteRemovesAllInOneUndo();
     void uat_ann_127_dragGeneratesOneUndoStep();
-    void uat_ann_128_clickOnAnnotationWithDrawingToolSelects();
+    void uat_ann_128_drawingToolPressStartsNewShape();
     void uat_ann_129_freehandPressOverInkStartsNewStroke();
     void uat_ann_130_strokeDialogSurvivesStoreMutation();
-    void uat_ann_131_toolSwitchesToSelectAfterShapeCommit();
+    void uat_ann_131_boundedShapeStaysStickyAfterCommit();
     void uat_ann_132_freehandStaysStickyAfterStroke();
+    void uat_ann_133_boundedToolsDrawFirstOverExisting();
+    void uat_ann_134_boundedToolsAreStickyViaToolbar();
     void uat_ann_140_interleavedUndoIsChronological();
     void uat_toc_010_outlineDisabledOnPlainPdf();
     void uat_toc_011_outlineExposedForPdfWithBookmarks();
@@ -2474,19 +2476,26 @@ void TestUatSearchAndMarkup::uat_ann_127_dragGeneratesOneUndoStep() {
     QCOMPARE(f.store->find(f.drawnId)->bounds, before);
 }
 
-// UAT-ANN-128 — Clicking on an existing annotation while a drawing
-// tool (e.g. Arrow) is active selects the annotation rather than
-// creating a new overlapping one. Workstream D1: the press handler
-// hit-tests existing annotations BEFORE the drawing-tool path.
-void TestUatSearchAndMarkup::uat_ann_128_clickOnAnnotationWithDrawingToolSelects() {
+// UAT-ANN-128 — Pressing over an existing annotation while a bounded
+// drawing tool (e.g. Rectangle) is active starts a NEW shape (draw-
+// first-on-press), rather than selecting the annotation underneath.
+//
+// This is the DRAWING-TOOL PARITY inversion of the pre-parity
+// UAT-ANN-128 (owner ruling "parity", 2026-07-20; ADR
+// docs/decision-records/2026-07-20-drawing-tool-parity.md). Before
+// parity a bounded-tool press selected the existing shape; now
+// selection is Select-tool-only (Preview-style) and the press draws a
+// new overlapping shape. The press handler runs its select/move
+// hit-test ONLY for the Select tool.
+void TestUatSearchAndMarkup::uat_ann_128_drawingToolPressStartsNewShape() {
     AnnEditingFixture f = buildAnnEditingFixture(m_scratch, QStringLiteral("128"));
     QVERIFY(f.overlay);
     QVERIFY(f.drawnId != 0);
     QCOMPARE(f.store->count(), 1);
 
-    // Switch to the Rectangle drawing tool (a "draws on drag" tool;
-    // Arrow / Ellipse would behave the same — Rectangle is the easy
-    // one to drive through the markup-toolbar action).
+    // The fixture drew one rectangle spanning view (200,250)-(320,340)
+    // and left the Select tool armed. Re-arm the Rectangle drawing tool
+    // so the next press exercises the draw-first path.
     auto *markup = f.mw->findChild<MarkupToolbar *>();
     QVERIFY(markup);
     QAction *rectAction = findToolAction(markup, QStringLiteral("Rectangle"));
@@ -2495,14 +2504,18 @@ void TestUatSearchAndMarkup::uat_ann_128_clickOnAnnotationWithDrawingToolSelects
     QApplication::processEvents();
     QVERIFY(f.overlay->activeTool() == AnnotationTool::Rectangle);
 
-    // Click on the existing rectangle (no drag — press + release at
-    // the same point).
-    sendMouse(f.overlay, QEvent::MouseButtonPress, QPoint(260, 295), Qt::LeftButton);
-    sendMouse(f.overlay, QEvent::MouseButtonRelease, QPoint(260, 295), Qt::LeftButton);
+    // Press-drag STARTING on top of the existing rectangle and dragging
+    // off to the side.
+    dragOnOverlay(f.overlay, QPoint(260, 295), QPoint(420, 400));
     QApplication::processEvents();
 
-    QCOMPARE(f.store->count(), 1); // no new annotation created
-    QCOMPARE(f.overlay->selectedAnnotationId(), f.drawnId);
+    // A NEW rectangle was drawn; the existing one is neither selected
+    // nor removed.
+    QCOMPARE(f.store->count(), 2);
+    QCOMPARE(f.store->annotations().back().type, AnnotationType::Rectangle);
+    QVERIFY2(f.store->annotations().back().id != f.drawnId,
+             "draw-first press must create a distinct new rectangle");
+    QCOMPARE(f.overlay->selectedAnnotationId(), 0);
 }
 
 // UAT-ANN-129 — With the free-form Ink tool active, a press-drag that
@@ -2704,11 +2717,18 @@ void TestUatSearchAndMarkup::uat_ann_130_strokeDialogSurvivesStoreMutation() {
     QCOMPARE(survivor->style.stroke, QColor(255, 0, 0));
 }
 
-// UAT-ANN-131 — After committing a freshly-drawn shape, the markup
-// toolbar auto-switches back to the Select tool so the user can grab
-// the just-drawn shape to move / resize / restyle without manually
-// flipping the toolbar back. 2026-05-20 HITL pass.
-void TestUatSearchAndMarkup::uat_ann_131_toolSwitchesToSelectAfterShapeCommit() {
+// UAT-ANN-131 — After committing a freshly-drawn bounded shape, the
+// markup toolbar STAYS on that tool (sticky-draw), so the user can draw
+// shape after shape without re-arming the tool between each.
+//
+// This is the DRAWING-TOOL PARITY inversion of the pre-parity
+// UAT-ANN-131 (owner ruling "parity", 2026-07-20; ADR
+// docs/decision-records/2026-07-20-drawing-tool-parity.md). Before
+// parity the bounded shapes auto-reverted to Select on commit; now they
+// match Ink and stay armed. Must drive through the MARKUP TOOLBAR: the
+// revert/sticky decision lives in MainWindow::onAnnotationCommitted,
+// which reads the toolbar's tool.
+void TestUatSearchAndMarkup::uat_ann_131_boundedShapeStaysStickyAfterCommit() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
         m_scratch.filePath(QStringLiteral("uat_ann_131.pdf")), QStringLiteral("fixture"));
@@ -2735,15 +2755,28 @@ void TestUatSearchAndMarkup::uat_ann_131_toolSwitchesToSelectAfterShapeCommit() 
     QVERIFY(overlay);
     QCOMPARE(overlay->activeTool(), AnnotationTool::Rectangle);
 
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    AnnotationStore *store = dv->currentDocument()->annotations();
+    QVERIFY(store);
+    const int before = store->count();
+
     dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
     QApplication::processEvents();
 
     // Post-drag: the rectangle was committed AND the toolbar / overlay
-    // both flipped back to Select. Without the auto-switch the user
-    // would have to click Select manually before they could grab the
-    // shape they just drew.
-    QCOMPARE(markup->activeTool(), AnnotationTool::Select);
-    QCOMPARE(overlay->activeTool(), AnnotationTool::Select);
+    // both STAY on Rectangle (sticky). Pre-parity they flipped to Select.
+    QCOMPARE(store->count(), before + 1);
+    QCOMPARE(markup->activeTool(), AnnotationTool::Rectangle);
+    QCOMPARE(overlay->activeTool(), AnnotationTool::Rectangle);
+
+    // A second drag therefore draws a SECOND rectangle rather than
+    // becoming a rubber-band selection.
+    dragOnOverlay(overlay, QPoint(360, 250), QPoint(460, 340));
+    QApplication::processEvents();
+    QCOMPARE(store->count(), before + 2);
+    QCOMPARE(store->annotations().back().type, AnnotationType::Rectangle);
+    QCOMPARE(overlay->selectedAnnotationId(), 0);
 }
 
 // UAT-ANN-132 — The free-form Freehand (Ink) tool is STICKY: after a
@@ -2815,6 +2848,163 @@ void TestUatSearchAndMarkup::uat_ann_132_freehandStaysStickyAfterStroke() {
     QCOMPARE(store->annotations().back().type, AnnotationType::Ink);
     // The second drag drew; it did not select anything.
     QCOMPARE(overlay->selectedAnnotationId(), 0);
+}
+
+// UAT-ANN-133 — DRAWING-TOOL PARITY, draw-first-on-press for every
+// bounded shape tool. For each of Rectangle / Ellipse / Line / Arrow:
+// arm the tool, draw one shape, then press-drag STARTING on top of that
+// shape — a NEW shape of the same type is created and the original is
+// neither selected nor moved. Selection is Select-tool-only (Preview).
+// Owner ruling "parity", 2026-07-20; ADR
+// docs/decision-records/2026-07-20-drawing-tool-parity.md.
+void TestUatSearchAndMarkup::uat_ann_133_boundedToolsDrawFirstOverExisting() {
+    struct Case {
+        const char *label;
+        AnnotationTool tool;
+        AnnotationType type;
+    };
+    const Case cases[] = {
+        {"Rectangle", AnnotationTool::Rectangle, AnnotationType::Rectangle},
+        {"Ellipse", AnnotationTool::Ellipse, AnnotationType::Ellipse},
+        {"Line", AnnotationTool::Line, AnnotationType::Line},
+        {"Arrow", AnnotationTool::Arrow, AnnotationType::Arrow},
+    };
+
+    for (const Case &c : cases) {
+        QVERIFY(m_scratch.isValid());
+        const QString pdfPath = writePdfWithKeyword(
+            m_scratch.filePath(QStringLiteral("uat_ann_133_%1.pdf").arg(c.label)),
+            QStringLiteral("fixture"));
+
+        auto *app = qobject_cast<Application *>(qApp);
+        QVERIFY(app);
+        app->openFiles({pdfPath});
+        QApplication::processEvents();
+
+        MainWindow *mw = currentMainWindow();
+        QVERIFY(mw);
+        mw->resize(1100, 750);
+        QApplication::processEvents();
+
+        auto *dv = mw->findChild<DocumentView *>();
+        QVERIFY(dv);
+        AnnotationStore *store = dv->currentDocument()->annotations();
+        QVERIFY(store);
+
+        auto *markup = mw->findChild<MarkupToolbar *>();
+        QVERIFY(markup);
+        QAction *toolAction = findToolAction(markup, QString::fromLatin1(c.label));
+        QVERIFY2(toolAction, c.label);
+        toolAction->setChecked(true);
+        QApplication::processEvents();
+        QCOMPARE(markup->activeTool(), c.tool);
+
+        auto *overlay = mw->findChild<AnnotationOverlay *>();
+        QVERIFY(overlay);
+        QCOMPARE(overlay->activeTool(), c.tool);
+
+        // Draw the first shape spanning view (200,250)-(320,340).
+        const int before = store->count();
+        dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
+        QApplication::processEvents();
+        QCOMPARE(store->count(), before + 1);
+        const Annotation firstShape = store->annotations().back();
+        QCOMPARE(firstShape.type, c.type);
+        const int firstId = firstShape.id;
+        const QRectF firstBounds = firstShape.bounds;
+
+        // Press-drag STARTING inside the first shape's view bounds and
+        // dragging off to the side. (260,295) is inside (200,250)-(320,340).
+        dragOnOverlay(overlay, QPoint(260, 295), QPoint(430, 420));
+        QApplication::processEvents();
+
+        // A NEW shape of the same type is created; the original is
+        // untouched and unselected.
+        QCOMPARE(store->count(), before + 2);
+        QCOMPARE(store->annotations().back().type, c.type);
+        QVERIFY2(store->annotations().back().id != firstId,
+                 "draw-first press must create a distinct new shape, not select/move the first");
+        QCOMPARE(overlay->selectedAnnotationId(), 0);
+        const Annotation *orig = store->find(firstId);
+        QVERIFY2(orig != nullptr, "original shape must still exist");
+        QCOMPARE(orig->bounds, firstBounds);
+    }
+}
+
+// UAT-ANN-134 — DRAWING-TOOL PARITY, sticky-draw for every bounded
+// shape tool. For each of Rectangle / Ellipse / Line / Arrow: arm the
+// tool VIA THE TOOLBAR, commit one shape, and confirm the tool STAYS
+// armed (toolbar AND overlay), so a second drag draws a second shape.
+// Driving through the toolbar is essential — the sticky/revert decision
+// lives in MainWindow::onAnnotationCommitted, which reads the toolbar's
+// tool (arming on the overlay bypasses it; see UAT-ANN-132). Owner
+// ruling "parity", 2026-07-20; ADR
+// docs/decision-records/2026-07-20-drawing-tool-parity.md.
+void TestUatSearchAndMarkup::uat_ann_134_boundedToolsAreStickyViaToolbar() {
+    struct Case {
+        const char *label;
+        AnnotationTool tool;
+        AnnotationType type;
+    };
+    const Case cases[] = {
+        {"Rectangle", AnnotationTool::Rectangle, AnnotationType::Rectangle},
+        {"Ellipse", AnnotationTool::Ellipse, AnnotationType::Ellipse},
+        {"Line", AnnotationTool::Line, AnnotationType::Line},
+        {"Arrow", AnnotationTool::Arrow, AnnotationType::Arrow},
+    };
+
+    for (const Case &c : cases) {
+        QVERIFY(m_scratch.isValid());
+        const QString pdfPath = writePdfWithKeyword(
+            m_scratch.filePath(QStringLiteral("uat_ann_134_%1.pdf").arg(c.label)),
+            QStringLiteral("fixture"));
+
+        auto *app = qobject_cast<Application *>(qApp);
+        QVERIFY(app);
+        app->openFiles({pdfPath});
+        QApplication::processEvents();
+
+        MainWindow *mw = currentMainWindow();
+        QVERIFY(mw);
+        mw->resize(1100, 750);
+        QApplication::processEvents();
+
+        auto *dv = mw->findChild<DocumentView *>();
+        QVERIFY(dv);
+        AnnotationStore *store = dv->currentDocument()->annotations();
+        QVERIFY(store);
+
+        auto *markup = mw->findChild<MarkupToolbar *>();
+        QVERIFY(markup);
+        QAction *toolAction = findToolAction(markup, QString::fromLatin1(c.label));
+        QVERIFY2(toolAction, c.label);
+        toolAction->setChecked(true);
+        QApplication::processEvents();
+        QCOMPARE(markup->activeTool(), c.tool);
+
+        auto *overlay = mw->findChild<AnnotationOverlay *>();
+        QVERIFY(overlay);
+        QCOMPARE(overlay->activeTool(), c.tool);
+
+        // First shape.
+        const int before = store->count();
+        dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
+        QApplication::processEvents();
+        QCOMPARE(store->count(), before + 1);
+        QCOMPARE(store->annotations().back().type, c.type);
+
+        // STICKY: toolbar AND overlay both stay on the tool — no revert.
+        QCOMPARE(markup->activeTool(), c.tool);
+        QCOMPARE(overlay->activeTool(), c.tool);
+
+        // A second drag draws a SECOND shape rather than rubber-band-
+        // selecting.
+        dragOnOverlay(overlay, QPoint(360, 250), QPoint(460, 340));
+        QApplication::processEvents();
+        QCOMPARE(store->count(), before + 2);
+        QCOMPARE(store->annotations().back().type, c.type);
+        QCOMPARE(overlay->selectedAnnotationId(), 0);
+    }
 }
 
 // UAT-ANN-140 — Interleaved page-op + annotation undo is chronological.
