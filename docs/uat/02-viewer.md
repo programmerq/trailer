@@ -565,6 +565,30 @@ GIF with no frames decoded.
 
 ---
 
+## Document open (off the GUI thread)
+
+### UAT-VWR-100 — Open shows a "Loading…" placeholder, then the page
+
+The residual `QPdfDocument::load` runs on a worker thread (backlog
+`2026-07-15-offthread-pdf-open-placeholder`, deferred (b) of decision record
+0006): the open's file reads never run on the GUI thread. Until the load
+settles, the document view is an honest "Loading…" placeholder (G3: it is not
+a lying control — it offers no action that cannot act); when the load
+completes the placeholder is replaced in place by the real page view.
+
+**Preconditions:** A PDF whose initial open is still in flight.
+**Steps:**
+1. Build the document view while the open has not yet settled.
+2. Let the background open complete.
+**Expected:**
+- Before the open settles: the view shows a centered "Loading…" label — not a
+  blank pane and not fake content.
+- After the open settles: the label is gone and the real page view is shown.
+- No document-open file read is performed on the GUI thread
+  (guarded structurally by `tests/test_perf_gui_thread_io.cpp`).
+
+---
+
 ## Magnifier
 
 ### UAT-VWR-080 — Toggle Magnifier
