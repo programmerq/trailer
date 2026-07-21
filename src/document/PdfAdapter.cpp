@@ -647,8 +647,8 @@ QWidget *PdfDocument::createView(QWidget *parent) {
     // signal the overlay/text layer already follow, so it fires on keyboard
     // paging, thumbnail jumps, AND continuous-scroll page crossings.
     QObject::connect(view->pageNavigator(), &QPdfPageNavigator::currentPageChanged,
-                     &m_pageChangeNotifier,
-                     [this](int page) { m_pageChangeNotifier.notifyPageChanged(page); });
+                     &m_pageChangeNotifier, &PageChangeNotifier::notifyPageChanged,
+                     Qt::UniqueConnection);
     QObject::connect(view->verticalScrollBar(), &QScrollBar::valueChanged, overlay,
                      QOverload<>::of(&QWidget::update));
     QObject::connect(view->horizontalScrollBar(), &QScrollBar::valueChanged, overlay,
