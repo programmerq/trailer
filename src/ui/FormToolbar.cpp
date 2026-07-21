@@ -49,15 +49,14 @@ FormToolbar::FormToolbar(QWidget *parent) : QToolBar(parent) {
 
     addSeparator();
 
-    m_autoFillAction =
-        addAction(themedActionIcon(QStringLiteral(":/icons/actions/tool-autofill.svg"), this),
-                  tr("AutoFill"));
+    m_autoFillAction = addAction(tr("AutoFill"));
+    m_themedIcons.apply(m_autoFillAction, QStringLiteral(":/icons/actions/tool-autofill.svg"), this);
     m_autoFillAction->setToolTip(tr("AutoFill — fill form fields from your saved card"));
     connect(m_autoFillAction, &QAction::triggered, this, &FormToolbar::autoFillRequested);
 
-    m_signHereAction =
-        addAction(themedActionIcon(QStringLiteral(":/icons/actions/tool-sign-here.svg"), this),
-                  tr("Sign Here"));
+    m_signHereAction = addAction(tr("Sign Here"));
+    m_themedIcons.apply(m_signHereAction, QStringLiteral(":/icons/actions/tool-sign-here.svg"),
+                        this);
     m_signHereAction->setToolTip(tr("Sign Here — place a saved signature on the page"));
     connect(m_signHereAction, &QAction::triggered, this, [this]() {
         // Anchor the picker popover under the Sign-Here button so it
@@ -74,11 +73,10 @@ FormToolbar::FormToolbar(QWidget *parent) : QToolBar(parent) {
 
 QAction *FormToolbar::makeToolAction(const QString &label, AnnotationTool tool,
                                      const QString &pendingText, const QString &iconResource) {
-    QAction *action = nullptr;
+    QAction *action = addAction(label);
     if (!iconResource.isEmpty()) {
-        action = addAction(themedActionIcon(iconResource, this), label);
-    } else {
-        action = addAction(label);
+        // Bind through the binder so the icon re-tints on a live theme change.
+        m_themedIcons.apply(action, iconResource, this);
     }
     action->setToolTip(label);
     action->setCheckable(true);

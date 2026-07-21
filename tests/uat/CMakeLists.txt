@@ -223,3 +223,11 @@ trailer_add_uat_test(test_uat_empty_state_recent test_uat_empty_state_recent.cpp
 # grab() of the open Window menu to $TRAILER_WINDOWMENU_EVIDENCE_DIR when
 # set.
 trailer_add_uat_test(test_uat_window_menu_maximize test_uat_window_menu_maximize.cpp)
+
+# Preferences pane UAT (theme live-wire + tabs-grow-with-settings). Guards
+# that the Theme control is enabled and every visible tab has >=1 enabled
+# operable control. Also emits the curated G2 before/after evidence (enabled
+# Theme combo + app in light/dark) to $TRAILER_PREF_EVIDENCE_DIR when set.
+# Drives PreferencesDialog + Application + MainWindow with an image document
+# (PNG via QImage), so no Qt6::Pdf link is needed.
+trailer_add_uat_test(test_uat_preferences test_uat_preferences.cpp)

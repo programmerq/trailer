@@ -15,6 +15,7 @@ class TestSettings : public QObject {
     void roundTrip();
     void missingFileYieldsDefaults();
     void enumConversions();
+    void colorSchemeMapping();
     void firstUseFlagsRoundTrip();
     void sessionRoundTrips();
     void mlSchedulerDefaults();
@@ -84,6 +85,17 @@ void TestSettings::enumConversions() {
     QCOMPARE(openFilesInFromString("new_tab"), OpenFilesIn::NewTab);
     QCOMPARE(openFilesInFromString("new_window"), OpenFilesIn::NewWindow);
     QCOMPARE(openFilesInFromString("same_window"), OpenFilesIn::SameWindow);
+}
+
+// colorSchemeFor is the single translation point Application::applyTheme
+// uses to map the persisted Theme onto Qt's live colour scheme. System
+// must map to Unknown (hand control back to Qt so it follows the OS), and
+// Light/Dark to their explicit schemes. If this mapping drifts, the Theme
+// control would apply the wrong appearance without a restart.
+void TestSettings::colorSchemeMapping() {
+    QCOMPARE(colorSchemeFor(Theme::System), Qt::ColorScheme::Unknown);
+    QCOMPARE(colorSchemeFor(Theme::Light), Qt::ColorScheme::Light);
+    QCOMPARE(colorSchemeFor(Theme::Dark), Qt::ColorScheme::Dark);
 }
 
 void TestSettings::firstUseFlagsRoundTrip() {

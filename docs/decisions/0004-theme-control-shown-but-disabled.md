@@ -1,8 +1,17 @@
 # DR-4: Theme control shown-but-disabled with an explanatory tooltip
 
-- Status: Accepted
+- Status: Superseded by DR 2026-07-20-theme-applies-live
+  (`docs/decision-records/2026-07-20-theme-applies-live.md`)
 - Date: 2026-07-09
+- Superseded: 2026-07-20
 - Area: Preferences pane (ROADMAP #8)
+
+> **Superseded (2026-07-20).** The live theming this record deferred
+> ("planned for a future release") has landed: the Theme control now applies
+> light/dark/system live without a restart and is enabled. See
+> DR 2026-07-20-theme-applies-live for the current decision. The context
+> below is retained as the historical rationale for the interim
+> shown-but-disabled state.
 
 ## Context
 

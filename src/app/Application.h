@@ -65,6 +65,19 @@ class Application : public QApplication {
     void openFiles(const QStringList &paths, bool markUntitled = false);
     void clearRecent();
 
+    // Apply `theme` to the running application: set the Qt colour scheme
+    // (QStyleHints::setColorScheme, Qt 6.8+) so the palette flips light↔dark
+    // without a restart, then re-tint the themed toolbar/menu icons across
+    // every window (themedActionIcon bakes fixed-colour pixmaps, which a
+    // palette swap alone does not refresh). Called once at startup from the
+    // constructor with the persisted theme, and live from
+    // PreferencesDialog::settingsApplied when the user changes the Theme
+    // control. For Theme::System the scheme is handed back to Qt so it
+    // tracks the OS; the constructor also connects
+    // QStyleHints::colorSchemeChanged so a live OS flip re-tints the icons.
+    // Public so a test can drive the apply path without the dialog.
+    void applyTheme(Theme theme);
+
     // Set just before a screenshot / clipboard-origin openFiles() call so
     // the resulting image document is stamped with the real capture
     // devicePixelRatio (device px / dpr = logical size) and defaults to
@@ -231,6 +244,10 @@ class Application : public QApplication {
 
   private:
     void notifyWindowsRecentChanged();
+    // Re-tint the themed icons of every live window. Called after a colour
+    // scheme change (explicit via applyTheme, or an OS flip while in System
+    // mode via QStyleHints::colorSchemeChanged).
+    void refreshThemedIconsAllWindows();
     // Track a New-from-Clipboard action so refreshClipboardActions()
     // keeps its enabled state + tooltip live. QPointer entries survive
     // the owning menu/window being destroyed.

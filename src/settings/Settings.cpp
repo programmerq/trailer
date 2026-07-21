@@ -94,6 +94,22 @@ Theme themeFromString(const QString &value) {
     return Theme::System;
 }
 
+Qt::ColorScheme colorSchemeFor(Theme value) {
+    switch (value) {
+    case Theme::System:
+        // Unknown tells QStyleHints::setColorScheme to relinquish the
+        // override so Qt follows the OS appearance (and emits
+        // colorSchemeChanged when the OS flips) — this is what makes
+        // System mode track the OS live.
+        return Qt::ColorScheme::Unknown;
+    case Theme::Light:
+        return Qt::ColorScheme::Light;
+    case Theme::Dark:
+        return Qt::ColorScheme::Dark;
+    }
+    return Qt::ColorScheme::Unknown;
+}
+
 QString openFilesInToString(OpenFilesIn value) {
     switch (value) {
     case OpenFilesIn::NewTab:

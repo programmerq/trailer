@@ -1,5 +1,6 @@
 #include "IconHelper.h"
 
+#include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
 #include <QFile>
@@ -100,6 +101,43 @@ QIcon themedActionIcon(const QString& resource, const QWidget* widget) {
     const QPalette pal = widget ? widget->palette() : QApplication::palette();
     return themedActionIcon(resource, pal.color(QPalette::WindowText),
                             pal.color(QPalette::Disabled, QPalette::WindowText));
+}
+
+QIcon ThemedIconBinder::apply(QAction* target, const QString& resource,
+                              const QWidget* tintSource) {
+    const QIcon icon = themedActionIcon(resource, tintSource);
+    if (target)
+        target->setIcon(icon);
+    m_bindings.push_back({target, nullptr, resource, tintSource});
+    return icon;
+}
+
+QIcon ThemedIconBinder::apply(QAbstractButton* target, const QString& resource,
+                              const QWidget* tintSource) {
+    const QIcon icon = themedActionIcon(resource, tintSource);
+    if (target)
+        target->setIcon(icon);
+    m_bindings.push_back({nullptr, target, resource, tintSource});
+    return icon;
+}
+
+void ThemedIconBinder::refresh() {
+    for (const Binding& b : m_bindings) {
+        // Skip a binding whose target died before this refresh — the
+        // QPointer guards make a stale entry a no-op rather than a crash.
+        const bool haveTarget = b.action || b.button;
+        if (!haveTarget)
+            continue;
+        // Re-tint from the target's own palette when the recorded tint
+        // source is gone; the target widget/action host carries the live
+        // (post-swap) palette either way.
+        const QWidget* tint = b.tintSource ? b.tintSource.data() : nullptr;
+        const QIcon icon = themedActionIcon(b.resource, tint);
+        if (b.action)
+            b.action->setIcon(icon);
+        else if (b.button)
+            b.button->setIcon(icon);
+    }
 }
 
 QAction* makeDisabledAction(QMenu* menu, const QString& text,

@@ -7,6 +7,7 @@
 #include <QLatin1StringView>
 #include <QString>
 #include <QStringList>
+#include <QtCore/qnamespace.h>
 
 #include <optional>
 
@@ -215,6 +216,19 @@ class Settings {
 
 QString themeToString(Theme value);
 Theme themeFromString(const QString &value);
+
+// Map a Theme to the Qt colour scheme applied at runtime via
+// QStyleHints::setColorScheme (Qt 6.8+). This is the single translation
+// point between Trailer's persisted theme and Qt's live theming:
+//   System → Qt::ColorScheme::Unknown — hand control back to Qt so it
+//     tracks the OS appearance and flips live when the OS does.
+//   Light  → Qt::ColorScheme::Light  (force light regardless of OS)
+//   Dark   → Qt::ColorScheme::Dark   (force dark regardless of OS)
+// A free function (not a member, no QApplication needed) so the mapping
+// is unit-testable in isolation. See Application::applyTheme and
+// docs/decision-records/2026-07-20-theme-applies-live.md.
+Qt::ColorScheme colorSchemeFor(Theme value);
+
 QString openFilesInToString(OpenFilesIn value);
 OpenFilesIn openFilesInFromString(const QString &value);
 
