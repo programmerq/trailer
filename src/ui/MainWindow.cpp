@@ -721,29 +721,11 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
             [this](bool missing) { m_ocrModelMissingHint->setVisible(missing); });
 
     // ADR 0002 §3: re-derive auto-OCR / the missing-model hint on PAGE
-    // change, not just document change. IDocument is not a QObject and
-    // exposes no page-changed signal, so — mirroring Sidebar's
-    // m_pageSyncTimer — poll the current page at a light cadence and notify
-    // the controller only when it actually changes (scrolling from a text
-    // page to a scanned page must surface the hint).
-    m_ocrPagePoll = new QTimer(this);
-    m_ocrPagePoll->setInterval(150);
-    connect(m_ocrPagePoll, &QTimer::timeout, this, [this]() {
-        auto *doc = m_documentView->currentDocument();
-        if (!doc || !m_ocrController)
-            return;
-        // Re-derive the large-doc recognize notice every tick so it self-
-        // clears the moment the visible page gains text / OCR results
-        // (ADR 0006). The helper short-circuits on the cheap guards before
-        // it ever probes pageHasText(), so this stays light.
-        updateLargeDocOcrHint();
-        const int page = doc->currentPage();
-        if (page == m_lastOcrPage)
-            return;
-        m_lastOcrPage = page;
-        m_ocrController->onVisiblePageChanged(page);
-    });
-    m_ocrPagePoll->start();
+    // change, not just document change. IDocument is not a QObject, but its
+    // PageChangeNotifier is — onCurrentDocumentChanged() connects the active
+    // document's notifier to onActivePageChanged(), which re-derives the
+    // notice and pushes the visible page to the controller (scrolling from a
+    // text page to a scanned page must surface the hint). No polling timer.
 
     // Auto-save loop. Tick every 30 s; each tick writes a RECOVERY SIDECAR
     // (not the backing file — see autoSaveDirtyDocs() and DR
@@ -1010,8 +992,8 @@ void MainWindow::buildMainToolbar() {
     // checked state mirrors back via Sidebar::modeChanged.
     auto *sidebarBtn = new QToolButton(m_mainToolbar);
     sidebarBtn->setText(tr("Sidebar"));
-    sidebarBtn->setIcon(
-        themedActionIcon(QStringLiteral(":/icons/actions/panel-sidebar.svg"), m_mainToolbar));
+    m_themedIcons.apply(sidebarBtn, QStringLiteral(":/icons/actions/panel-sidebar.svg"),
+                        m_mainToolbar);
     sidebarBtn->setToolButtonStyle(Qt::ToolButtonIconOnly);
     sidebarBtn->setToolTip(tr("Sidebar"));
     sidebarBtn->setPopupMode(QToolButton::InstantPopup);
@@ -1089,8 +1071,8 @@ void MainWindow::buildMainToolbar() {
     // the toolbar (rather than swapping widgets) preserves the
     // signals and counter state wired up in the constructor.
     m_searchButton = new QToolButton(m_mainToolbar);
-    m_searchButton->setIcon(
-        themedActionIcon(QStringLiteral(":/icons/actions/view-search.svg"), m_mainToolbar));
+    m_themedIcons.apply(m_searchButton, QStringLiteral(":/icons/actions/view-search.svg"),
+                        m_mainToolbar);
     m_searchButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_searchButton->setToolTip(
         tr("Search (%1)").arg(QKeySequence(QKeySequence::Find).toString(QKeySequence::NativeText)));
@@ -1297,15 +1279,15 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
 
     m_markupToolbarAction = m_markupToolbar->toggleViewAction();
     m_markupToolbarAction->setText(tr("Toggle &Markup Toolbar"));
-    m_markupToolbarAction->setIcon(
-        themedActionIcon(QStringLiteral(":/icons/actions/panel-markup.svg"), this));
+    m_themedIcons.apply(m_markupToolbarAction, QStringLiteral(":/icons/actions/panel-markup.svg"),
+                        this);
     m_markupToolbarAction->setShortcut(QKeySequence(tr("Ctrl+Shift+A")));
     viewMenu->addAction(m_markupToolbarAction);
 
     m_formToolbarAction = m_formToolbar->toggleViewAction();
     m_formToolbarAction->setText(tr("Show Form Filling &Toolbar"));
-    m_formToolbarAction->setIcon(
-        themedActionIcon(QStringLiteral(":/icons/actions/panel-form.svg"), this));
+    m_themedIcons.apply(m_formToolbarAction, QStringLiteral(":/icons/actions/panel-form.svg"),
+                        this);
     m_formToolbarAction->setShortcut(QKeySequence(tr("Ctrl+Shift+B")));
     viewMenu->addAction(m_formToolbarAction);
 
@@ -1388,8 +1370,8 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
 
     viewMenu->addSeparator();
 
-    m_zoomInAction = viewMenu->addAction(
-        themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-in.svg"), this), tr("Zoom &In"));
+    m_zoomInAction = viewMenu->addAction(tr("Zoom &In"));
+    m_themedIcons.apply(m_zoomInAction, QStringLiteral(":/icons/actions/view-zoom-in.svg"), this);
     m_zoomInAction->setObjectName(QStringLiteral("action.view.zoomIn"));
     m_zoomInAction->setShortcuts({
         QKeySequence::ZoomIn,
@@ -1401,9 +1383,8 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
         updateZoomIndicator();
     });
 
-    m_zoomOutAction = viewMenu->addAction(
-        themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-out.svg"), this),
-        tr("Zoom &Out"));
+    m_zoomOutAction = viewMenu->addAction(tr("Zoom &Out"));
+    m_themedIcons.apply(m_zoomOutAction, QStringLiteral(":/icons/actions/view-zoom-out.svg"), this);
     m_zoomOutAction->setObjectName(QStringLiteral("action.view.zoomOut"));
     m_zoomOutAction->setShortcut(QKeySequence::ZoomOut);
     connect(m_zoomOutAction, &QAction::triggered, this, [this]() {
@@ -1420,9 +1401,9 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     //   ⌘+ / ⌘- → Zoom In / Out
     // Fit to Width stays in the menu but no longer carries a digit
     // shortcut (⌘2 is now Single Page).
-    m_zoomFitPageAction = viewMenu->addAction(
-        themedActionIcon(QStringLiteral(":/icons/actions/view-fit-page.svg"), this),
-        tr("Fit &Page"));
+    m_zoomFitPageAction = viewMenu->addAction(tr("Fit &Page"));
+    m_themedIcons.apply(m_zoomFitPageAction, QStringLiteral(":/icons/actions/view-fit-page.svg"),
+                        this);
     m_zoomFitPageAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_9));
     connect(m_zoomFitPageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
@@ -1430,9 +1411,9 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
         updateZoomIndicator();
     });
 
-    m_zoomActualAction = viewMenu->addAction(
-        themedActionIcon(QStringLiteral(":/icons/actions/view-zoom-actual.svg"), this),
-        tr("&Actual Size"));
+    m_zoomActualAction = viewMenu->addAction(tr("&Actual Size"));
+    m_themedIcons.apply(m_zoomActualAction, QStringLiteral(":/icons/actions/view-zoom-actual.svg"),
+                        this);
     m_zoomActualAction->setObjectName(QStringLiteral("action.view.actualSize"));
     m_zoomActualAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_0));
     connect(m_zoomActualAction, &QAction::triggered, this, [this]() {
@@ -1441,9 +1422,8 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
         updateZoomIndicator();
     });
 
-    m_zoomFitAction = viewMenu->addAction(
-        themedActionIcon(QStringLiteral(":/icons/actions/view-fit-width.svg"), this),
-        tr("&Fit to Width"));
+    m_zoomFitAction = viewMenu->addAction(tr("&Fit to Width"));
+    m_themedIcons.apply(m_zoomFitAction, QStringLiteral(":/icons/actions/view-fit-width.svg"), this);
     connect(m_zoomFitAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomFitWidth();
@@ -1643,15 +1623,15 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     // toolsMenu->setToolTipsVisible(true) at attach time — so no separate
     // explicit call is needed.
 
-    m_rotateLeftAction = toolsMenu->addAction(
-        themedActionIcon(QStringLiteral(":/icons/actions/page-rotate-left.svg"), this),
-        tr("Rotate &Left"));
+    m_rotateLeftAction = toolsMenu->addAction(tr("Rotate &Left"));
+    m_themedIcons.apply(m_rotateLeftAction, QStringLiteral(":/icons/actions/page-rotate-left.svg"),
+                        this);
     m_rotateLeftAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_L));
     connect(m_rotateLeftAction, &QAction::triggered, this, &MainWindow::onRotateLeft);
 
-    m_rotateRightAction = toolsMenu->addAction(
-        themedActionIcon(QStringLiteral(":/icons/actions/page-rotate-right.svg"), this),
-        tr("Rotate &Right"));
+    m_rotateRightAction = toolsMenu->addAction(tr("Rotate &Right"));
+    m_themedIcons.apply(m_rotateRightAction, QStringLiteral(":/icons/actions/page-rotate-right.svg"),
+                        this);
     m_rotateRightAction->setObjectName(QStringLiteral("action.tools.rotateRight"));
     m_rotateRightAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_R));
     connect(m_rotateRightAction, &QAction::triggered, this, &MainWindow::onRotateRight);
@@ -1721,6 +1701,15 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     m_cropPagesAction = toolsMenu->addAction(tr("&Crop Pages…"));
     connect(m_cropPagesAction, &QAction::triggered, this, &MainWindow::onCropPages);
 
+    // Direct-manipulation crop (backlog
+    // 2026-07-15-crop-pages-direct-manipulation): draw the crop
+    // rectangle on the page with a live dimmed preview instead of
+    // guessing four millimetre margins in a no-preview modal. The
+    // numeric dialog above stays for users who want exact margins.
+    m_cropPagesDragAction = toolsMenu->addAction(tr("Crop Pages by &Dragging"));
+    connect(m_cropPagesDragAction, &QAction::triggered, this,
+            &MainWindow::onCropPagesByDragging);
+
     // Fill Forms stays at the top level — it's the primary affordance
     // for working with a fillable PDF and the action that auto-toggles
     // when an AcroForm is opened. AutoFill (My Card → field matcher)
@@ -1786,8 +1775,15 @@ void MainWindow::onCropPages() {
     const double t = dialog.topMm() * kMmToPt;
     const double r = dialog.rightMm() * kMmToPt;
     const double b = dialog.bottomMm() * kMmToPt;
-    if (l == 0.0 && t == 0.0 && r == 0.0 && b == 0.0)
+    if (l == 0.0 && t == 0.0 && r == 0.0 && b == 0.0) {
+        // A committed action that no-ops must say why rather than
+        // looking like nothing happened (PHILOSOPHY → How Trailer
+        // reduces friction; backlog 2026-07-15-crop-pages-direct-
+        // manipulation threshold: an all-zero OK gives visible
+        // feedback).
+        flashStatus(tr("No crop applied — all four margins were zero."));
         return;
+    }
 
     bool anyApplied = false;
     if (dialog.applyToAllPages()) {
@@ -1807,6 +1803,57 @@ void MainWindow::onCropPages() {
     }
     m_sidebar->refreshThumbnails();
     onCurrentDocumentChanged(doc);
+}
+
+void MainWindow::onCropPagesByDragging() {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing())
+        return;
+    // Activate the on-page crop tool. The overlay captures the drag,
+    // draws the dimmed live preview, and emits cropCommitted on Enter
+    // (wired to onCropRectCommitted in onCurrentDocumentChanged).
+    doc->setAnnotationTool(AnnotationTool::CropRect);
+    flashStatus(tr("Drag on the page to set the crop region, then press Enter to "
+                   "apply (Esc to cancel)."));
+}
+
+void MainWindow::onCropRectCommitted(const QRectF &docRect, int page) {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing() || docRect.isEmpty())
+        return;
+    // The overlay reports a KEEP rectangle in page points, top-left
+    // origin. CropPageCommand wants trim margins (left/top/right/bottom
+    // in points). Convert against the page's point size; clamp any
+    // negative (rect drawn slightly outside the page) to zero.
+    //
+    // Assumption: the overlay's doc coordinates are relative to the
+    // page's current /CropBox (what QPdfView displays), while cropPage
+    // trims relative to the /MediaBox. These coincide on an un-cropped
+    // page — the threshold's flow — so the first drag-crop is exact.
+    // Re-cropping an ALREADY-cropped page via drag would be offset by
+    // the existing CropBox inset; that (rare) case, and the matching
+    // MediaBox-absolute behaviour of the numeric dialog, is a tracked
+    // follow-up, not a regression this PR introduces.
+    const QSizeF pageSize = doc->pageSizeHint(page);
+    if (pageSize.isEmpty()) {
+        flashError(tr("Crop failed — could not read the page size."));
+        return;
+    }
+    const double l = std::max(0.0, docRect.left());
+    const double t = std::max(0.0, docRect.top());
+    const double r = std::max(0.0, pageSize.width() - docRect.right());
+    const double b = std::max(0.0, pageSize.height() - docRect.bottom());
+    if (!doc->cropPage(page, l, t, r, b)) {
+        flashError(tr("Crop failed — the selected region is too small."));
+        return;
+    }
+    // Drop back to the Select tool so the freshly-cropped page is
+    // immediately interactive (matches the one-shot behaviour of the
+    // drawing tools) and the crop scrim clears.
+    doc->setAnnotationTool(AnnotationTool::Select);
+    m_sidebar->refreshThumbnails();
+    onCurrentDocumentChanged(doc);
+    flashSuccess(tr("Page cropped."));
 }
 
 void MainWindow::onInsertPages() {
@@ -2002,6 +2049,19 @@ void MainWindow::onAdjustColour() {
 }
 
 void MainWindow::onRemoveBackground() {
+    // Re-entrancy / cancel affordance (DR 2026-07-21). The op has no progress
+    // widget, so the menu entry itself is the only surface. Re-invoking it
+    // while an op is calculating is the sanctioned CANCEL gesture: flip the
+    // running op's token and return. The GUI-thread apply step then drops the
+    // (null) result without touching the document — the pre-op image is left
+    // byte-for-byte intact (the byte-preservation invariant, formerly ADR 0002
+    // §2). One op runs at a time, so a second submission can never stack.
+    if (m_bgRemovalActive) {
+        if (m_bgRemovalToken)
+            m_bgRemovalToken->cancel();
+        return;
+    }
+
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsEditing())
         return;
@@ -2009,50 +2069,63 @@ void MainWindow::onRemoveBackground() {
     if (!imgDoc)
         return;
 
-    // Heap-allocate the remover so its lifetime spans the worker
-    // thread that captures this shared_ptr in the inference lambda
-    // below.
-    auto remover = std::make_shared<BackgroundRemover>(&m_app->modelRegistry());
+    // Resolve the inference function. The test seam replaces the real
+    // BackgroundRemover (and skips the model-download pre-flight) so the
+    // menu-glyph / cancel / byte-preservation path is exercisable without a
+    // network-downloaded ONNX model; production falls through to the pre-flight
+    // + real remover below.
+    std::function<QImage(const QImage &, const CancellationToken *)> removeFn =
+        m_bgRemoveFnOverride;
+    if (!removeFn) {
+        // Heap-allocate the remover so its lifetime spans the worker
+        // thread that captures this shared_ptr in the inference lambda
+        // below.
+        auto remover = std::make_shared<BackgroundRemover>(&m_app->modelRegistry());
 
-    // Pre-flight: confirm download + policy via the shared helper. If
-    // anything goes wrong (user cancel, policy block, failed download)
-    // bail without falling through to the inference step.
-    ModelDownloadRequest req;
-    req.app = m_app;
-    req.parent = this;
-    req.required = {ModelId::U2NetP};
-    req.featureName = tr("Background Removal");
-    req.modelLabel = tr("U²-Net Portable");
-    req.licenseLabel = tr("Apache 2.0");
-    req.progressMessage = tr("Downloading U\u00b2-Net Portable…");
-    req.failureSubject = tr("the background-removal model");
-    req.isReady = [remover]() { return remover->isModelReady(); };
-    req.kickoff = [remover]() { remover->ensureModelAvailable(); };
-    req.wireSignals = [remover](QProgressDialog *progress, bool *ready, bool *failed,
-                                QString *failureMessage) {
-        connect(remover.get(), &BackgroundRemover::downloadProgress, progress,
-                [progress](qint64 received, qint64 total) {
-                    if (total <= 0) {
-                        progress->setRange(0, 0);
-                        return;
-                    }
-                    progress->setRange(0, 100);
-                    progress->setValue(static_cast<int>(received * 100 / total));
-                });
-        connect(remover.get(), &BackgroundRemover::modelReady, progress, [progress, ready]() {
-            *ready = true;
-            progress->setValue(progress->maximum());
-            progress->close();
-        });
-        connect(remover.get(), &BackgroundRemover::modelUnavailable, progress,
-                [progress, failed, failureMessage](const QString &msg) {
-                    *failed = true;
-                    *failureMessage = msg;
-                    progress->close();
-                });
-    };
-    if (!requestModelDownload(req))
-        return;
+        // Pre-flight: confirm download + policy via the shared helper. If
+        // anything goes wrong (user cancel, policy block, failed download)
+        // bail without falling through to the inference step.
+        ModelDownloadRequest req;
+        req.app = m_app;
+        req.parent = this;
+        req.required = {ModelId::U2NetP};
+        req.featureName = tr("Background Removal");
+        req.modelLabel = tr("U²-Net Portable");
+        req.licenseLabel = tr("Apache 2.0");
+        req.progressMessage = tr("Downloading U\u00b2-Net Portable…");
+        req.failureSubject = tr("the background-removal model");
+        req.isReady = [remover]() { return remover->isModelReady(); };
+        req.kickoff = [remover]() { remover->ensureModelAvailable(); };
+        req.wireSignals = [remover](QProgressDialog *progress, bool *ready, bool *failed,
+                                    QString *failureMessage) {
+            connect(remover.get(), &BackgroundRemover::downloadProgress, progress,
+                    [progress](qint64 received, qint64 total) {
+                        if (total <= 0) {
+                            progress->setRange(0, 0);
+                            return;
+                        }
+                        progress->setRange(0, 100);
+                        progress->setValue(static_cast<int>(received * 100 / total));
+                    });
+            connect(remover.get(), &BackgroundRemover::modelReady, progress, [progress, ready]() {
+                *ready = true;
+                progress->setValue(progress->maximum());
+                progress->close();
+            });
+            connect(remover.get(), &BackgroundRemover::modelUnavailable, progress,
+                    [progress, failed, failureMessage](const QString &msg) {
+                        *failed = true;
+                        *failureMessage = msg;
+                        progress->close();
+                    });
+        };
+        if (!requestModelDownload(req))
+            return;
+
+        removeFn = [remover](const QImage &src, const CancellationToken *tok) {
+            return remover->remove(src, tok);
+        };
+    }
 
     // Inference runs through MlScheduler at UserAction priority so:
     //
@@ -2081,37 +2154,43 @@ void MainWindow::onRemoveBackground() {
     // "Never download" policy is the cause).
     const QImage source = imgDoc->image();
     auto *self = this;
-    auto handle =
-        m_app->mlScheduler().submit(MlPriority::UserAction, tr("Removing background…"),
-                                    [self, source, doc, imgDoc, remover](CancellationToken &token) {
-                                        const QImage result = remover->remove(source, &token);
-                                        if (token.isCancelled() || result.isNull()) {
-                                            // Cancellation or transient failure: bail without
-                                            // touching the document. The status-bar indicator
-                                            // clears automatically when the scheduler reports
-                                            // idle.
-                                            return;
-                                        }
-                                        // Apply on the GUI thread. We snapshot the doc pointer
-                                        // and re-check it against the active document — if the
-                                        // user closed or switched away between submission and
-                                        // completion, drop the result so we don't mutate a
-                                        // different document underfoot.
-                                        QMetaObject::invokeMethod(
-                                            self,
-                                            [self, doc, imgDoc, result]() {
-                                                auto *current =
-                                                    self->m_documentView->currentDocument();
-                                                if (current != doc)
-                                                    return;
-                                                if (!imgDoc->replaceImage(result))
-                                                    return;
-                                                self->m_sidebar->refreshThumbnails();
-                                                self->updateTitleForDocument(doc);
-                                            },
-                                            Qt::QueuedConnection);
-                                    });
-    Q_UNUSED(handle);
+    auto handle = m_app->mlScheduler().submit(
+        MlPriority::UserAction, tr("Removing background…"),
+        [self, source, doc, imgDoc, removeFn](CancellationToken &token) {
+            const QImage result = removeFn(source, &token);
+            const bool cancelled = token.isCancelled();
+            const bool succeeded = !cancelled && !result.isNull();
+            // Hop back to the GUI thread for BOTH the menu-glyph teardown and
+            // the (success-only) document mutation. We snapshot the doc pointer
+            // and re-check it against the active document — if the user closed
+            // or switched away between submission and completion, drop the
+            // result so we don't mutate a different document underfoot. On
+            // cancel/failure we simply do not apply: the pre-op image is left
+            // byte-for-byte intact (formerly ADR 0002 §2). A transient failure
+            // surfaces the "Failed" glyph so the user knows a retry is worth it.
+            QMetaObject::invokeMethod(
+                self,
+                [self, doc, imgDoc, result, cancelled, succeeded]() {
+                    self->finishBackgroundRemoval(cancelled, succeeded);
+                    if (!succeeded)
+                        return;
+                    auto *current = self->m_documentView->currentDocument();
+                    if (current != doc)
+                        return;
+                    if (!imgDoc->replaceImage(result))
+                        return;
+                    self->m_sidebar->refreshThumbnails();
+                    self->updateTitleForDocument(doc);
+                },
+                Qt::QueuedConnection);
+        });
+    // Store the running op's token so re-invoking the entry can cancel it, and
+    // flip the menu entry to its "calculating" glyph. The token must be live
+    // before the entry advertises the cancel gesture.
+    m_bgRemovalToken = handle.token;
+    m_bgRemovalActive = true;
+    m_bgRemovalStatus = BgRemovalStatus::Calculating;
+    updateRemoveBackgroundBadge(doc);
 }
 
 // Pre-flights for MobileSAM (Instant Alpha / Smart Lasso) and PP-OCR
@@ -3130,6 +3209,45 @@ void MainWindow::scheduleBackgroundCandidateScore(IDocument *doc) {
 void MainWindow::updateRemoveBackgroundBadge(IDocument *doc) {
     if (!m_removeBackgroundAction)
         return;
+
+    // DR 2026-07-21-bg-removal-menu-status-glyph: the menu entry's icon is the
+    // single, subtle status surface for background removal (no progress bar /
+    // spinner). The transient op status is layered OVER the candidate-
+    // recommendation "sparkle" badge, in priority order below. Only when the
+    // op is idle (Available) does the entry fall through to the recommendation
+    // badge — its original behaviour.
+    const QString calcTip = tr("Removing background… (choose again to cancel)");
+    const QString failedTip = tr("Couldn't remove the background — choose again to try once more.");
+
+    // 1. Unavailable: applyMlPolicy() has disabled the entry (wrong document
+    //    type, no document, or the model is set to Never Download). The
+    //    greyed row + its tooltip already state "can't"; we add a muted glyph
+    //    so the "can't" reads at a glance without re-opening the tooltip. We do
+    //    NOT touch the tooltip — applyMlPolicy() owns it here.
+    if (!m_removeBackgroundAction->isEnabled()) {
+        m_removeBackgroundAction->setIcon(
+            themedActionIcon(QStringLiteral(":/icons/actions/status-unavailable.svg"), this));
+        return;
+    }
+    // 2. Calculating: an op is in flight. A "busy" glyph indicates progress
+    //    without a widget; the tooltip states the cancel gesture (re-invoke).
+    if (m_bgRemovalStatus == BgRemovalStatus::Calculating) {
+        m_removeBackgroundAction->setIcon(
+            themedActionIcon(QStringLiteral(":/icons/actions/status-busy.svg"), this));
+        m_removeBackgroundAction->setToolTip(calcTip);
+        return;
+    }
+    // 3. Failed: the last op returned null (transient inference failure, not a
+    //    cancel). An alert glyph flags it; the tooltip invites a retry. This
+    //    clears the moment the entry next reaches an Available refresh.
+    if (m_bgRemovalStatus == BgRemovalStatus::Failed) {
+        m_removeBackgroundAction->setIcon(
+            themedActionIcon(QStringLiteral(":/icons/actions/status-failed.svg"), this));
+        m_removeBackgroundAction->setToolTip(failedTip);
+        return;
+    }
+
+    // 4. Available: original recommendation-badge behaviour.
     const bool recommended = doc && m_backgroundCandidateDocs.contains(doc);
     // QAction::toolTip() returns text() when no explicit tooltip has
     // been set, so an "is it empty?" check would always be false.
@@ -3140,6 +3258,12 @@ void MainWindow::updateRemoveBackgroundBadge(IDocument *doc) {
                                  "Open Tools → Manage ML Models… to allow it.");
     const QString badgeTip = tr("Background removal works well for this kind of image.");
     const bool policyBlocked = m_removeBackgroundAction->toolTip() == policyTip;
+    // A transient op tooltip from a prior Calculating/Failed state must not
+    // outlive the return to Available — clear it before the badge logic runs.
+    if (m_removeBackgroundAction->toolTip() == calcTip ||
+        m_removeBackgroundAction->toolTip() == failedTip) {
+        m_removeBackgroundAction->setToolTip(QString());
+    }
     if (recommended) {
         // Sparkle glyph signals "this image looks like a good
         // candidate." We use the same themedActionIcon helper the rest
@@ -3163,6 +3287,23 @@ void MainWindow::updateRemoveBackgroundBadge(IDocument *doc) {
     }
 }
 
+void MainWindow::finishBackgroundRemoval(bool cancelled, bool succeeded) {
+    // GUI-thread teardown for a finished op (DR 2026-07-21). Idempotent: a
+    // no-op if no op is active (e.g. a stray second invoke). Clears the in-
+    // flight guard + token, then maps the outcome to the next glyph state:
+    //   - succeeded  → Available (the new image is applied by the caller)
+    //   - cancelled  → Available (bytes untouched; a cancel is not a failure)
+    //   - failure    → Failed    (null result; the glyph invites a retry)
+    // Refreshing the badge repaints the entry for the CURRENT document.
+    if (!m_bgRemovalActive)
+        return;
+    m_bgRemovalActive = false;
+    m_bgRemovalToken.reset();
+    m_bgRemovalStatus = (!succeeded && !cancelled) ? BgRemovalStatus::Failed
+                                                   : BgRemovalStatus::Available;
+    updateRemoveBackgroundBadge(m_documentView->currentDocument());
+}
+
 void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // One-shot fit-to-content window resize. Drives the first frame
     // when the user opens a single file from cold start; later doc
@@ -3176,12 +3317,13 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
 
     // Update the auto-OCR controller. It cancels in-flight
     // submissions for the previous doc and starts following the
-    // new one. The visible-page enqueue is driven from the page-
-    // tracking timer below once the doc has settled.
+    // new one. The visible-page enqueue below primes it for the
+    // current page; later page changes arrive via the document's
+    // PageChangeNotifier → onActivePageChanged().
     if (m_ocrController) {
         m_ocrController->setDocument(doc);
-        // Sync the page-poll baseline so the poll doesn't re-fire the same
-        // page we push here.
+        // Prime the page baseline so onActivePageChanged() doesn't re-fire
+        // the same page we push here.
         m_lastOcrPage = doc ? doc->currentPage() : -1;
         if (doc && doc->supportsSelectableText()) {
             m_ocrController->onVisiblePageChanged(doc->currentPage());
@@ -3218,6 +3360,23 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             connect(notifier, &CapabilityNotifier::capabilitiesChanged, this,
                     &MainWindow::onDocumentCapabilitiesChanged, Qt::UniqueConnection);
         }
+        // Re-derive auto-OCR / the missing-model hint whenever the current
+        // page changes. Replaces the former 150 ms poll: PdfDocument fires
+        // its PageChangeNotifier from the navigator, covering keyboard paging,
+        // thumbnail jumps, AND continuous-scroll page crossings. Named-slot +
+        // UniqueConnection so repeated tab switches don't stack connections.
+        if (auto *pageNotifier = doc->pageChangeNotifier()) {
+            connect(pageNotifier, &PageChangeNotifier::currentPageChanged, this,
+                    &MainWindow::onActivePageChanged, Qt::UniqueConnection);
+        }
+        // Re-derive the large-doc recognize notice when OCR results land for
+        // any page (the store emits changed() once blocks are stored), so the
+        // notice self-clears the moment the visible page gains text — the
+        // other half of what the old poll re-checked every tick.
+        if (auto *textStore = doc->selectableText()) {
+            connect(textStore, &SelectableTextStore::changed, this,
+                    &MainWindow::updateLargeDocOcrHint, Qt::UniqueConnection);
+        }
         // Forward annotation-selection changes from the doc's overlay
         // to the Inspector. The overlay is a child of the doc's view
         // widget; we re-find it on every focus change because the
@@ -3238,6 +3397,12 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             // overlay's m_tool directly here.
             connect(overlay, &AnnotationOverlay::annotationCommitted, this,
                     &MainWindow::onAnnotationCommitted, Qt::UniqueConnection);
+            // Direct-manipulation crop commit (Enter over the CropRect
+            // tool). The overlay hands us a page-space keep-rect; we
+            // turn it into a CropPageCommand. Named-slot + Unique so
+            // repeated tab switches don't stack duplicate connections.
+            connect(overlay, &AnnotationOverlay::cropCommitted, this,
+                    &MainWindow::onCropRectCommitted, Qt::UniqueConnection);
             // Wire SAM plumbing into the overlay so the InstantAlpha /
             // SmartLasso tool branches can fire decoder passes and
             // commit results without going through a modal dialog. The
@@ -3403,6 +3568,12 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // callback, so a tab switch immediately after a scoring pass
     // doesn't drop the verdict). Non-image docs are no-ops.
     scheduleBackgroundCandidateScore(doc);
+    // A transient Failed glyph belongs to the op that produced it, not to the
+    // newly-selected document — clear it on a document change so it doesn't
+    // bleed across docs (DR 2026-07-21). A genuinely in-flight op keeps its
+    // Calculating glyph (it is still running against its original document).
+    if (m_bgRemovalStatus == BgRemovalStatus::Failed)
+        m_bgRemovalStatus = BgRemovalStatus::Available;
     updateRemoveBackgroundBadge(doc);
     applyMlPolicy(m_instantAlphaAction, canEdit && isImage,
                   {ModelId::MobileSamEncoder, ModelId::MobileSamDecoder});
@@ -3435,6 +3606,15 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     m_cropImageAction->setEnabled(canEdit && isImage);
     m_insertPagesAction->setEnabled(isPdfLike);
     m_cropPagesAction->setEnabled(isPdfLike);
+    // Drag-to-crop targets PDF pages. When it can't act, disable it and
+    // say why + where to go (G3: no lying controls) rather than letting
+    // the user pick it and hit a dead end.
+    m_cropPagesDragAction->setEnabled(isPdfLike);
+    m_cropPagesDragAction->setToolTip(
+        isPdfLike ? tr("Drag a crop rectangle directly on the page.")
+        : doc     ? tr("Crop Pages works on PDF documents. For an image, use "
+                        "Tools → Crop Image.")
+                  : tr("Open a PDF to crop its pages."));
     // Forms-toolbar enable/populate. Extracted so it can run both here (at
     // open) AND when the document's async form detection later completes
     // (capabilitiesChanged → onDocumentCapabilitiesChanged). Since PR #63 the
@@ -3615,8 +3795,8 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // Large-doc OCR hint chip. Dismissal is keyed per-document (ADR
     // 0006), so switching documents does not clear another document's
     // dismissal. Visibility is derived by the shared helper, also re-run
-    // on page change / after OCR by the m_ocrPagePoll tick so the notice
-    // self-clears.
+    // on page change (PageChangeNotifier → onActivePageChanged) and after
+    // OCR (SelectableTextStore::changed) so the notice self-clears.
     updateLargeDocOcrHint();
 
     // Refresh the zoom readout AFTER the document's async initial fit.
@@ -3632,6 +3812,29 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // switch in the interim. (Live update during a window drag remains a
     // documented pre-existing limitation — IDocument is not a QObject.)
     QTimer::singleShot(0, this, [this]() { updateZoomIndicator(); });
+}
+
+void MainWindow::onActivePageChanged(int /*page*/) {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc || !m_ocrController)
+        return;
+    // Re-derive the large-doc recognize notice so it self-clears / re-shows
+    // for the page just landed on (ADR 0006). The helper short-circuits on the
+    // cheap guards before it ever probes pageHasText(), so this stays light.
+    updateLargeDocOcrHint();
+    // Read the page from the CURRENT document rather than trusting the signal's
+    // argument: this slot is connected to each visited document's notifier
+    // (mirroring the CapabilityNotifier wiring), and those connections linger
+    // after a tab switch, so a stray emission from a non-current document must
+    // not push its page index into the controller for the current one. The
+    // navigator updates currentPage() before it emits, so for the live document
+    // this equals the signalled page.
+    const int page = doc->currentPage();
+    if (page == m_lastOcrPage)
+        return;
+    m_lastOcrPage = page;
+    if (doc->supportsSelectableText())
+        m_ocrController->onVisiblePageChanged(page);
 }
 
 void MainWindow::updateLargeDocOcrHint() {
@@ -4240,14 +4443,30 @@ void MainWindow::dropEvent(QDropEvent *event) {
     }
 }
 
+void MainWindow::refreshThemedIcons() {
+    m_themedIcons.refresh();
+    if (m_markupToolbar)
+        m_markupToolbar->refreshThemedIcons();
+    if (m_formToolbar)
+        m_formToolbar->refreshThemedIcons();
+    // The Remove-Background sparkle badge is set/cleared dynamically per
+    // document (updateRemoveBackgroundBadge), so it is not in the binder;
+    // re-run it for the current document so the badge, if showing, re-tints.
+    updateRemoveBackgroundBadge(m_documentView ? m_documentView->currentDocument() : nullptr);
+}
+
 void MainWindow::onOpenPreferences() {
     PreferencesDialog dlg(m_app->settings(), this);
     dlg.setManageModelsCallback([this]() { showModelManagerDialog(this, m_app); });
     dlg.setResetAllCallback([this]() { onResetTrailerSettings(); });
-    // recent_max is consumed once at startup (not read live), so re-apply
-    // it to the live RecentFiles cap when the user saves preferences.
+    // Re-apply the settings that are not read live when the user saves
+    // preferences:
+    //   • recent_max — consumed once at startup, re-applied to the live cap.
+    //   • theme — apply the colour scheme app-wide (every window re-tints)
+    //     so the Theme control takes effect immediately, without a restart.
     connect(&dlg, &PreferencesDialog::settingsApplied, this, [this]() {
         m_app->recentFiles().setMaxEntries(m_app->settings().recentMax());
+        m_app->applyTheme(m_app->settings().theme());
     });
     dlg.exec();
 }

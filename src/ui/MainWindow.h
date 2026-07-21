@@ -1,6 +1,7 @@
 #pragma once
 
 #include "document/IDocument.h"
+#include "ui/IconHelper.h"
 
 #include <QActionGroup>
 #include <QHash>
@@ -37,6 +38,7 @@ class MarkupToolbar;
 class SearchBar;
 class Sidebar;
 
+class CancellationToken;
 class MlProgressWidget;
 class OcrController;
 class SamController;
@@ -96,6 +98,18 @@ class MainWindow : public QMainWindow {
         m_ocrModelDownloadHook = std::move(hook);
     }
 
+    // Test seam for the Remove Background op lifecycle. When set, onRemove-
+    // Background() runs this override INSTEAD of the real BackgroundRemover
+    // and skips the model-download pre-flight, so the menu-glyph state
+    // machine + cancellation + byte-preservation can be exercised without a
+    // network-downloaded ONNX model. The override runs on the MlScheduler
+    // worker thread; poll the token exactly as the real remover does. Return
+    // a null QImage to simulate cancel/failure. nullptr in production.
+    void setBackgroundRemoveFnForTesting(
+        std::function<QImage(const QImage &, const CancellationToken *)> fn) {
+        m_bgRemoveFnOverride = std::move(fn);
+    }
+
     // Test-only introspection for the pointer-keyed large-doc notice /
     // pageHasText caches (Copilot review #58). Both are keyed by the raw
     // IDocument* and must be purged when a document closes so a recycled
@@ -129,6 +143,13 @@ class MainWindow : public QMainWindow {
     // run says "No text found" rather than falsely claiming completion.
     // Static + public so it is unit-testable without a MainWindow instance.
     static QString recognizeCompletionMessage(bool cancelled, int blockCount);
+
+    // Re-tint every themed toolbar/menu icon this window owns (its own
+    // binder plus the markup/form toolbars) from the current palette, and
+    // refresh the dynamic background-removal badge. Called by Application
+    // after a live theme (colour-scheme) change so icons stay legible when
+    // the app switches light↔dark without a restart.
+    void refreshThemedIcons();
 
   public slots:
     void rebuildRecentMenu();
@@ -211,6 +232,10 @@ class MainWindow : public QMainWindow {
     void onCropImage();
     void onInsertPages();
     void onCropPages();
+    // Activate the on-page drag-to-crop tool (direct-manipulation crop).
+    void onCropPagesByDragging();
+    // Apply a crop from the overlay's page-space keep-rectangle.
+    void onCropRectCommitted(const QRectF &docRect, int page);
     void onAbout();
     void onAutoFillCurrentForm();
     void onManageMyCard();
@@ -239,6 +264,12 @@ class MainWindow : public QMainWindow {
     // member function — not a lambda — so the Qt::UniqueConnection
     // flag in the connect() call actually takes effect.
     void onActiveAnnotationStoreChanged();
+    // Slot fired by the active document's PageChangeNotifier when the current
+    // page changes. Re-derives the large-doc OCR notice and pushes the visible
+    // page to the auto-OCR controller (which surfaces / clears the missing-
+    // model hint). Replaces the former 150 ms m_ocrPagePoll. Must be a member
+    // function — not a lambda — so the Qt::UniqueConnection flag takes effect.
+    void onActivePageChanged(int page);
 
   private:
     void buildMenus();
@@ -325,9 +356,11 @@ class MainWindow : public QMainWindow {
     void hideSearchBar();
     void updateTitleForDocument(IDocument *doc);
     // Re-derive the large-doc "Recognize text" notice visibility (ADR
-    // 0006). Called from onCurrentDocumentChanged and the m_ocrPagePoll
-    // tick so the notice is guarded by a real per-page text check and
-    // self-clears once the page gains text / OCR results / is dismissed.
+    // 0006). Called from onCurrentDocumentChanged, the active document's
+    // PageChangeNotifier (page moved), and its SelectableTextStore::changed
+    // (OCR results landed), so the notice is guarded by a real per-page text
+    // check and self-clears once the page gains text / OCR results / is
+    // dismissed — no polling timer.
     void updateLargeDocOcrHint();
     void updateUndoRedoActions(IDocument *doc);
     // Refresh the status-bar zoom-% readout from the current document's
@@ -360,13 +393,31 @@ class MainWindow : public QMainWindow {
     // for non-image documents (no-ops).
     void scheduleBackgroundCandidateScore(IDocument *doc);
 
-    // Apply the cached badge state for `doc` to the Remove Background
-    // menu action: a 12px "sparkle" glyph + a positive tooltip when
-    // the heuristic says this image looks promising, otherwise no
-    // icon and the policy-aware tooltip set by applyMlPolicy(). Idempo-
-    // tent; called whenever the active document changes or the scorer
-    // finishes a pass.
+    // Single icon+tooltip authority for the Remove Background menu entry
+    // (DR 2026-07-21-bg-removal-menu-status-glyph). Layers the transient
+    // op-status glyph OVER the candidate-recommendation badge, in priority:
+    //   1. Unavailable (entry disabled — wrong doc type / policy blocked):
+    //      a muted "can't" glyph; the applyMlPolicy() tooltip stands.
+    //   2. Calculating (op in flight): a "busy" glyph; tooltip says the op
+    //      is running and re-invoking cancels it.
+    //   3. Failed (last op returned null, not cancelled): an alert glyph;
+    //      tooltip invites a retry. Transient — cleared on the next viable
+    //      Available refresh.
+    //   4. Available: the heuristic "sparkle" recommendation badge (or no
+    //      icon) exactly as before.
+    // Idempotent; called whenever the active document changes, the scorer
+    // finishes a pass, or the op lifecycle advances.
     void updateRemoveBackgroundBadge(IDocument *doc);
+
+    // Transient status of the Remove Background op, surfaced as the menu
+    // entry's glyph (DR 2026-07-21). Unavailable is not tracked here — it is
+    // derived from the action's enabled state at refresh time.
+    enum class BgRemovalStatus { Available, Calculating, Failed };
+
+    // GUI-thread teardown for a finished Remove Background op. Clears the
+    // in-flight state, sets the next status (success/cancel → Available,
+    // failure → Failed), and refreshes the menu glyph. Idempotent.
+    void finishBackgroundRemoval(bool cancelled, bool succeeded);
 
     Application *m_app;
     DocumentView *m_documentView = nullptr;
@@ -398,6 +449,10 @@ class MainWindow : public QMainWindow {
     MarkupToolbar *m_markupToolbar = nullptr;
     FormToolbar *m_formToolbar = nullptr;
     SearchBar *m_searchBar = nullptr;
+    // Records the window's themed toolbar/menu icons so refreshThemedIcons()
+    // can re-tint them after a live theme (colour-scheme) change — a palette
+    // swap does not touch the fixed-colour pixmaps themedActionIcon bakes.
+    ThemedIconBinder m_themedIcons;
     // Collapsed-state proxy for the search bar in the main toolbar.
     // Clicking the button expands m_searchBar inline and hides the
     // button; dismissing the bar (Esc, empty query) does the reverse.
@@ -433,6 +488,7 @@ class MainWindow : public QMainWindow {
     QAction *m_cropImageAction = nullptr;
     QAction *m_insertPagesAction = nullptr;
     QAction *m_cropPagesAction = nullptr;
+    QAction *m_cropPagesDragAction = nullptr;
     QAction *m_fillFormsAction = nullptr;
     // Documents we've already auto-enabled Fill Forms for. Tracked so
     // that toggling Fill Forms off, switching docs, and switching back
@@ -552,12 +608,11 @@ class MainWindow : public QMainWindow {
     // slow single-page op appends "· Ns" past 10s. Stopped on finish/idle.
     QTimer *m_ocrElapsedTimer = nullptr;
     int m_ocrElapsedSecs = 0;
-    // ADR 0002 §3 page-change re-derivation. IDocument exposes no page-
-    // changed signal, so — mirroring Sidebar's m_pageSyncTimer — poll the
-    // current page and notify the controller only when it changes, so the
-    // missing-model hint re-derives when scrolling between text and scanned
-    // pages. m_lastOcrPage is the last page pushed to the controller.
-    QTimer *m_ocrPagePoll = nullptr;
+    // ADR 0002 §3 page-change re-derivation. Driven by the active document's
+    // PageChangeNotifier (a real page-changed signal) so the missing-model
+    // hint re-derives when scrolling between text and scanned pages — no
+    // polling. m_lastOcrPage is the last page pushed to the controller;
+    // onActivePageChanged() dedups against it.
     int m_lastOcrPage = -1;
     // Test seam for the missing-model hint's download-consent routing.
     std::function<bool()> m_ocrModelDownloadHook;
@@ -585,8 +640,7 @@ class MainWindow : public QMainWindow {
     // never dereferenced.
     QSet<IDocument *> m_largeDocOcrHintDismissed;
     // Single-entry cache for the pageHasText() probe, which re-extracts
-    // the full page text and is polled ~7Hz by m_ocrPagePoll. Only re-
-    // probed when the (document, page) changes.
+    // the full page text. Only re-probed when the (document, page) changes.
     IDocument *m_pageHasTextCacheDoc = nullptr;
     int m_pageHasTextCachePage = -1;
     bool m_pageHasTextCacheValue = false;
@@ -604,6 +658,23 @@ class MainWindow : public QMainWindow {
     // them if the doc closes mid-compute. Maps to the MlScheduler task
     // id returned by submit(); zero means no in-flight job.
     QHash<const IDocument *, std::uint64_t> m_pendingCandidateJobs;
+
+    // Remove Background op lifecycle (DR 2026-07-21-bg-removal-menu-status-
+    // glyph). The op is surfaced ONLY through the menu entry's status glyph
+    // (plus the ambient m_mlIndicator dot per CONVENTIONS §12) — no progress
+    // bar or spinner widget. m_bgRemovalActive guards re-entrancy: a second
+    // trigger while an op is in flight cancels it via m_bgRemovalToken (the
+    // running op's cooperative cancellation token) rather than stacking a
+    // second submission. m_bgRemovalStatus drives the glyph the refresh
+    // function paints. Only one ML op runs at a time (single MlScheduler
+    // worker), so a single token/flag pair is sufficient.
+    bool m_bgRemovalActive = false;
+    std::shared_ptr<CancellationToken> m_bgRemovalToken;
+    BgRemovalStatus m_bgRemovalStatus = BgRemovalStatus::Available;
+    // Test seam: replaces the real BackgroundRemover inference and skips the
+    // download pre-flight (see setBackgroundRemoveFnForTesting). nullptr in
+    // production.
+    std::function<QImage(const QImage &, const CancellationToken *)> m_bgRemoveFnOverride;
     // Item A on-demand search OCR: images whose page 0 we have already
     // asked to OCR because the user typed a search query while the OCR
     // store was still empty. Guards against re-submitting (and thus

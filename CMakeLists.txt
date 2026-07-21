@@ -183,6 +183,7 @@ set(TRAILER_SOURCES
     src/document/ImageAdapter.cpp
     src/document/ImageAdapter.h
     src/document/CapabilityNotifier.h
+    src/document/PageChangeNotifier.h
     src/document/ExternalChangeMonitor.cpp
     src/document/ExternalChangeMonitor.h
     src/document/ExternalChangeState.cpp
@@ -193,6 +194,8 @@ set(TRAILER_SOURCES
     src/document/PdfCommands.h
     src/document/RecoveryStore.cpp
     src/document/RecoveryStore.h
+    src/document/OcrDiskCache.cpp
+    src/document/OcrDiskCache.h
     src/document/PdfEditor.cpp
     src/document/PdfEditor.h
     src/document/SelectableTextStore.cpp

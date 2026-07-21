@@ -2,6 +2,7 @@
 
 #include "app/Application.h"
 #include "document/IDocument.h"
+#include "document/OcrDiskCache.h"
 #include "document/SelectableTextStore.h"
 #include "ml/OcrEngine.h"
 #include "settings/Settings.h"
@@ -18,7 +19,8 @@ namespace trailer {
 
 OcrController::OcrController(Application *app, QObject *parent)
     : QObject(parent), m_app(app),
-      m_engine(std::make_shared<OcrEngine>(app ? &app->modelRegistry() : nullptr)) {
+      m_engine(std::make_shared<OcrEngine>(app ? &app->modelRegistry() : nullptr)),
+      m_diskCache(std::make_shared<OcrDiskCache>()) {
     // Single-shot reveal timer (ADR 0002 G2). Fires once per batch after
     // the reveal delay; if the batch is still running we ask MainWindow
     // to surface the progress widget. Ops that finish first stop it.
@@ -73,12 +75,6 @@ void OcrController::onVisiblePageChanged(int page) {
     // edge cases.
     if (doc->hasTextLayer())
         return;
-    if (isLargeDoc()) {
-        // Cancel anything still pending — large docs only get an
-        // explicit user-action submission.
-        cancelPagesNotMatching(doc, {});
-        return;
-    }
     // ADR 0002 §3: on the ambient path, if the language model isn't
     // installed we no longer silently no-op. evaluateAutoOcrModel() above
     // has already surfaced the non-modal in-context hint; skip the
@@ -106,26 +102,43 @@ void OcrController::onVisiblePageChanged(int page) {
         if (area > kEagerOcrMaxPixels)
             return;
     }
-    // Build the list of pages we want OCR'd: the visible page, plus
-    // ±1 neighbours if they exist.
-    std::vector<int> wanted;
-    wanted.push_back(page);
-    if (page - 1 >= 0)
-        wanted.push_back(page - 1);
-    if (page + 1 < doc->pageCount())
-        wanted.push_back(page + 1);
-    // Cancel anything pending for pages we no longer care about.
-    cancelPagesNotMatching(doc, wanted);
-    // Visible page is highest of the auto priorities. Neighbours run
-    // as Prefetch. Ambient submissions are never batch-tracked — they
-    // must not drive the progress widget nor be user-cancellable.
+    // Build the lazy OCR window (ADR 0013 §G13.3): the visible page plus
+    // the ±kLazyWindowRadius pages around it, clamped to the document. This
+    // applies uniformly to small and large/multi-page documents — a large
+    // doc is no longer cancelled down to nothing; it gets the same
+    // recenter-on-jump window so navigating a big document OCRs on demand
+    // instead of never.
+    std::vector<int> window;
+    window.reserve(static_cast<size_t>(2 * kLazyWindowRadius + 1));
+    for (int p = page - kLazyWindowRadius; p <= page + kLazyWindowRadius; ++p) {
+        if (p >= 0 && p < doc->pageCount())
+            window.push_back(p);
+    }
+    // Cancel anything pending for pages outside the new window. On a jump
+    // this recenters OCR: the previous window's speculative pages are
+    // cancelled and the new window's pages submitted (G13.3 assertion ii).
+    cancelPagesNotMatching(doc, window);
+    // Visible page is highest of the auto priorities; the rest of the
+    // window runs as Prefetch (first to be cancelled, and battery-suppressed
+    // when run_on_battery=false — G13.3 assertion iv). Ambient submissions
+    // are never batch-tracked — they must not drive the progress widget nor
+    // be user-cancellable.
     submitPage(doc, page, MlPriority::VisiblePage, /*forceRerun=*/false, /*batchTracked=*/false);
-    if (page - 1 >= 0)
-        submitPage(doc, page - 1, MlPriority::Prefetch, /*forceRerun=*/false,
-                   /*batchTracked=*/false);
-    if (page + 1 < doc->pageCount())
-        submitPage(doc, page + 1, MlPriority::Prefetch, /*forceRerun=*/false,
-                   /*batchTracked=*/false);
+    for (int p : window) {
+        if (p != page)
+            submitPage(doc, p, MlPriority::Prefetch, /*forceRerun=*/false,
+                       /*batchTracked=*/false);
+    }
+}
+
+std::vector<int> OcrController::pendingPagesForTesting() const {
+    std::vector<int> pages;
+    for (const auto &kv : m_pending) {
+        if (kv.first.doc == m_doc)
+            pages.push_back(kv.first.page);
+    }
+    std::sort(pages.begin(), pages.end());
+    return pages;
 }
 
 void OcrController::submitUserPages(IDocument *doc, std::vector<int> pages, bool forceRerun) {
@@ -231,8 +244,8 @@ void OcrController::deactivateBatch() {
 void OcrController::cancelBatchTrackedHandles() {
     // Cancel and forget only batch-tracked scheduler tasks so not-yet-
     // started batch pages never run and in-flight recognition bails at its
-    // next checkpoint. Ambient (visible-page ±1) submissions are left
-    // running (ADR 0002 review item 3).
+    // next checkpoint. Ambient (visible-page ±kLazyWindowRadius) submissions
+    // are left running (ADR 0002 review item 3).
     MlScheduler *sched = m_app ? &m_app->mlScheduler() : nullptr;
     for (auto it = m_pending.begin(); it != m_pending.end();) {
         if (it->second.batchTracked) {
@@ -380,6 +393,25 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
     // than the OCR pass it can let us skip.
     const std::uint64_t contentHash = hashImageContent(source);
 
+    // On-disk cache read-through (ADR 0013 §G13.4). The disk tier is keyed
+    // by the content hash alone, so a page whose pixels match a previously
+    // recognized page — this document on a later launch, or a different
+    // document with identical pixels — restores its text WITHOUT re-OCR.
+    // This is the reopen/dedup win. A force-rerun deliberately bypasses the
+    // read (the user asked to recompute) and drops any stale disk entry for
+    // this content so a re-OCR that yields fewer/garbage blocks can't leave
+    // the old result behind to be served next visit.
+    if (m_diskCache) {
+        if (!forceRerun) {
+            if (auto cached = m_diskCache->load(contentHash)) {
+                store->put(page, contentHash, std::move(*cached));
+                return SubmitResult::Cached;
+            }
+        } else {
+            m_diskCache->remove(contentHash);
+        }
+    }
+
     // Ambient re-OCR skip for a page that already OCR'd to ZERO usable
     // blocks at this exact content (ADR G13.1/G13.2). Such a page never
     // gets a put() (hasResults stays false, so the completion status stays
@@ -418,6 +450,9 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
     // Test seam: a supplied recognizer replaces the ONNX pipeline (and
     // bypasses the model-ready gate). Null in production.
     RecognizeFn recognizer = m_recognizer;
+    // Disk cache captured by value so the write-through below runs even for
+    // ambient pages (where `self` is null). Nothing worker-thread-only.
+    std::shared_ptr<OcrDiskCache> diskCache = m_diskCache;
 
     // We can't QPointer-track an IDocument directly because the
     // interface doesn't derive from QObject. Instead capture the
@@ -439,7 +474,7 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
     const int epoch = batchTracked ? m_batchEpoch : -1;
 
     auto handle = m_app->mlScheduler().submit(priority, label,
-        [engine, recognizer, source, page, storePtr, self, cancelGuard, epoch, ocrScale, contentHash](CancellationToken &token) {
+        [engine, recognizer, source, page, storePtr, self, cancelGuard, epoch, ocrScale, contentHash, diskCache](CancellationToken &token) {
             if (token.isCancelled())
                 return;
             // OcrEngine::recognize cooperates with the same token
@@ -484,7 +519,7 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
             // queue the write through its thread context.
             QMetaObject::invokeMethod(
                 storePtr,
-                [storePtr, self, cancelGuard, page, contentHash, cancelled, epoch,
+                [storePtr, self, cancelGuard, page, contentHash, cancelled, epoch, diskCache,
                  out = std::move(out)]() mutable {
                     // No-partial-write guard (ADR 0002 §2): if the batch
                     // was cancelled (or this page's token flipped mid-
@@ -503,6 +538,14 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
                     // reason — retry once the model lands.)
                     if (!discard && storePtr) {
                         if (!out.empty()) {
+                            // Write-through to the on-disk tier (ADR 0013
+                            // §G13.4) BEFORE the move, so the recognized
+                            // text survives reopen. Keyed by content hash;
+                            // the store already holds the doc-space-scaled
+                            // blocks and the disk copy matches, so a later
+                            // read-through put()s them straight back.
+                            if (diskCache)
+                                diskCache->store(contentHash, out);
                             storePtr->put(page, contentHash, std::move(out));
                         } else {
                             // Text-less page: record an attempted-and-empty

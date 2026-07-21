@@ -1,6 +1,7 @@
 #pragma once
 
 #include "annotation/Annotation.h"
+#include "ui/IconHelper.h"
 
 #include <QHash>
 #include <QToolBar>
@@ -40,6 +41,10 @@ class MarkupToolbar : public QToolBar {
     // groups stay populated for every document type.)
     void setToolVisible(AnnotationTool tool, bool visible);
 
+    // Re-tint the toolbar's themed tool icons from the current palette,
+    // called by MainWindow after a live theme (colour-scheme) change.
+    void refreshThemedIcons() { m_themedIcons.refresh(); }
+
   signals:
     void activeToolChanged(AnnotationTool tool);
     void styleChanged(const AnnotationStyle &style);
@@ -48,6 +53,7 @@ class MarkupToolbar : public QToolBar {
     QAction *makeToolAction(const QString &label, AnnotationTool tool,
                             const QString &iconResource = QString());
 
+    ThemedIconBinder m_themedIcons;
     QActionGroup *m_group = nullptr;
     AnnotationTool m_tool = AnnotationTool::None;
     AnnotationStyle m_style;

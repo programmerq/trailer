@@ -124,6 +124,8 @@ QString annotationToolName(AnnotationTool tool) {
         return QStringLiteral("instant_alpha");
     case AnnotationTool::SmartLasso:
         return QStringLiteral("smart_lasso");
+    case AnnotationTool::CropRect:
+        return QStringLiteral("crop_rect");
     }
     return QStringLiteral("unknown");
 }
