@@ -46,11 +46,29 @@ unit-tested policy `chooseLinuxScreenshotBackend`
 - **Wayland + portal available** → drive
   `org.freedesktop.portal.Screenshot.Screenshot` and open the returned image
   (`src/platform/PortalScreenshot.cpp`, Linux-only QtDBus; a stub elsewhere).
-- **Wayland + no portal** → **honest-degrade**: the *Whole Screen* menu item is
-  `setEnabled(false)` with a tooltip pointing at the missing portal
-  (`Application::addAcquireItems`, re-evaluated on menu open), and the capture
-  entry point (`Application::captureScreenshot`) flashes an explanation instead
-  of returning a null result.
+- **Wayland + no portal** → **honest-degrade**: the *Whole Screen* control is
+  `setEnabled(false)` with a tooltip pointing at the missing portal in **both**
+  entry points — the File ▸ Screenshot menu item
+  (`Application::addAcquireItems`, re-evaluated on menu open) and the Tools ▸
+  Take Screenshot dialog radio (`MainWindow::onTakeScreenshot`) — and the
+  capture entry point (`Application::captureScreenshot`) flashes an explanation
+  instead of returning a null result.
+
+**Detecting "is this a Wayland session" — from the display-server signals, not
+the Qt plugin name.** The session verdict is `isWaylandSession()`
+(`src/platform/PortalScreenshot.cpp`), computed by the pure, unit-tested
+`isWaylandSessionFromSignals(platformName, WAYLAND_DISPLAY, XDG_SESSION_TYPE)`
+(`src/platform/ScreenCaptureBackend.cpp`). A session counts as Wayland when the
+native Wayland plugin is loaded (`platformName()` starts with `wayland`) **OR**
+`WAYLAND_DISPLAY` is set (non-empty) **OR** `XDG_SESSION_TYPE == "wayland"`.
+Keying off the plugin name **alone** is unsafe: under **XWayland** (the common
+GNOME/KDE default) Qt loads the `xcb` plugin while the compositor is Wayland,
+and `QScreen::grabWindow(0)` there returns a **BLACK pixmap** on Mutter/KWin —
+a silent wrong result that would be saved as a "screenshot". The
+display-server-signal detection routes that XWayland case to the portal (or the
+disabled+tooltip degrade), never to the black direct-grab path. Genuine X11
+(no Wayland signals) and the offscreen/CI plugin resolve to `QScreenGrab`
+unchanged.
 
 This is the user-visible behaviour change (a control that silently no-oped now
 either works or is disabled-with-reason), hence this record per **G6**.
@@ -60,7 +78,12 @@ either works or is disabled-with-reason), hence this record per **G6**.
 On Wayland, the screenshot affordance **either works via the XDG portal, or is
 disabled with a tooltip explaining why; it never silently returns null.**
 Verified by (a) the deterministic policy test
-`TestCaptureBackend::linuxScreenshotPolicy` pinning the four-way selection, and
+`TestCaptureBackend::linuxScreenshotPolicy` pinning the four-way selection,
+(a2) the XWayland-safeguard tests
+`TestCaptureBackend::waylandSessionFromSignalsTruthTable`,
+`::xwaylandRoutesToPortalOrUnavailable`, and `::waylandSessionDetectsXWaylandViaEnv`
+pinning that an XWayland session (xcb plugin + `WAYLAND_DISPLAY`) resolves to
+Portal/Unavailable and never to the black direct grab, and
 (b) the gated live test `TestCaptureBackend::livePortalCaptureOrSkip`, which
 exercises the real `capturePortalScreenshotToPng` round-trip **only when a
 screenshot portal is actually on the session bus**, and `QSKIP`s otherwise
@@ -94,11 +117,16 @@ manual/local proof above.
 
 - Selection policy + enum: `src/platform/ScreenCaptureBackend.h` /
   `.cpp` (`chooseLinuxScreenshotBackend`).
+- Wayland-session detection (display-server signals):
+  `src/platform/ScreenCaptureBackend.cpp` (`isWaylandSessionFromSignals`) and
+  its live wrapper `isWaylandSession()` in `src/platform/PortalScreenshot.cpp`
+  (stub `PortalScreenshot_stub.cpp`).
 - Portal probe + capture: `src/platform/PortalScreenshot.cpp`
   (`portalScreenshotAvailable`, `capturePortalScreenshotToPng`); non-Linux stub
   `src/platform/PortalScreenshot_stub.cpp`.
 - Wiring + honest-degrade: `src/app/Application.cpp`
-  (`captureScreenshot` `#else` branch, `addAcquireItems`).
+  (`captureScreenshot` `#else` branch, `addAcquireItems`) and the Take
+  Screenshot dialog `MainWindow::onTakeScreenshot` (`src/ui/MainWindow.cpp`).
 
 ## Notes / limits
 

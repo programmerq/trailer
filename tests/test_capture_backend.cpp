@@ -30,6 +30,9 @@ class TestCaptureBackend : public QObject {
     void settingsUnknownStringIsSafeDefault();
     void linuxScreenshotPolicy();
     void waylandSessionMatchesPlatform();
+    void waylandSessionDetectsXWaylandViaEnv();
+    void waylandSessionFromSignalsTruthTable();
+    void xwaylandRoutesToPortalOrUnavailable();
     void livePortalCaptureOrSkip();
 #ifndef Q_OS_MACOS
     void nativeStubIsUnavailable();
@@ -154,9 +157,125 @@ void TestCaptureBackend::linuxScreenshotPolicy() {
 // runs under offscreen, so this pins that offscreen is not misread as Wayland
 // (which would wrongly route to the portal path in the real app).
 void TestCaptureBackend::waylandSessionMatchesPlatform() {
+    // Make the assertion deterministic regardless of the developer's shell: with
+    // no Wayland env signals present, isWaylandSession() reflects only the live
+    // platform (offscreen -> false), which is what the real app needs so the
+    // offscreen/CI plugin is never misrouted to the portal path.
+    const bool origHasWd = qEnvironmentVariableIsSet("WAYLAND_DISPLAY");
+    const QString origWd = qEnvironmentVariable("WAYLAND_DISPLAY");
+    const bool origHasSt = qEnvironmentVariableIsSet("XDG_SESSION_TYPE");
+    const QString origSt = qEnvironmentVariable("XDG_SESSION_TYPE");
+    qunsetenv("WAYLAND_DISPLAY");
+    qunsetenv("XDG_SESSION_TYPE");
+
     const bool platformIsWayland =
         QGuiApplication::platformName().startsWith(QStringLiteral("wayland"), Qt::CaseInsensitive);
     QCOMPARE(isWaylandSession(), platformIsWayland);
+
+    if (origHasWd)
+        qputenv("WAYLAND_DISPLAY", origWd.toLocal8Bit());
+    if (origHasSt)
+        qputenv("XDG_SESSION_TYPE", origSt.toLocal8Bit());
+}
+
+// Safeguard 1 (pure): the full display-server-signal truth table for
+// isWaylandSessionFromSignals — no env, no display, fully deterministic.
+void TestCaptureBackend::waylandSessionFromSignalsTruthTable() {
+    // Native Wayland plugin -> Wayland regardless of env.
+    QVERIFY(isWaylandSessionFromSignals(QStringLiteral("wayland"), QString(), QString()));
+    QVERIFY(isWaylandSessionFromSignals(QStringLiteral("wayland-egl"), QString(), QString()));
+
+    // XWayland: xcb plugin but WAYLAND_DISPLAY set -> Wayland (the black-frame
+    // case Safeguard 1 exists for).
+    QVERIFY(isWaylandSessionFromSignals(QStringLiteral("xcb"), QStringLiteral("wayland-0"),
+                                        QString()));
+    // XWayland via XDG_SESSION_TYPE alone -> Wayland.
+    QVERIFY(isWaylandSessionFromSignals(QStringLiteral("xcb"), QString(),
+                                        QStringLiteral("wayland")));
+    QVERIFY(isWaylandSessionFromSignals(QStringLiteral("xcb"), QString(),
+                                        QStringLiteral("Wayland"))); // case-insensitive
+
+    // Genuine X11 (no signals) -> NOT Wayland. This keeps the direct grab path.
+    QVERIFY(!isWaylandSessionFromSignals(QStringLiteral("xcb"), QString(), QString()));
+    QVERIFY(!isWaylandSessionFromSignals(QStringLiteral("xcb"), QString(), QStringLiteral("x11")));
+    // Offscreen/CI with no signals -> NOT Wayland (parity preserved).
+    QVERIFY(!isWaylandSessionFromSignals(QStringLiteral("offscreen"), QString(), QString()));
+    // An EMPTY WAYLAND_DISPLAY is not a signal -> genuine X11 stays X11.
+    QVERIFY(!isWaylandSessionFromSignals(QStringLiteral("xcb"), QString(), QStringLiteral("")));
+}
+
+// Safeguard 1 (composition): the XWayland case must route to the portal when
+// available and to the honest-degrade signal (Unavailable) when not — NEVER to
+// the direct QScreenGrab that returns a black pixmap. This composes the two
+// pure seams exactly as the live app does (isWaylandSessionFromSignals feeding
+// chooseLinuxScreenshotBackend), so it is the deterministic proof of the fix.
+void TestCaptureBackend::xwaylandRoutesToPortalOrUnavailable() {
+    using B = LinuxScreenshotBackend;
+    // XWayland session (xcb plugin, WAYLAND_DISPLAY set) + portal available -> Portal.
+    const bool xwaylandSession =
+        isWaylandSessionFromSignals(QStringLiteral("xcb"), QStringLiteral("wayland-0"), QString());
+    QVERIFY(xwaylandSession);
+    QCOMPARE(chooseLinuxScreenshotBackend(xwaylandSession, /*portal=*/true), B::Portal);
+    // XWayland + no portal -> Unavailable (honest degrade), NOT QScreenGrab.
+    QCOMPARE(chooseLinuxScreenshotBackend(xwaylandSession, /*portal=*/false), B::Unavailable);
+    QVERIFY(chooseLinuxScreenshotBackend(xwaylandSession, /*portal=*/false) != B::QScreenGrab);
+
+    // Genuine X11 (no Wayland signals, xcb) -> QScreenGrab unchanged, either
+    // portal-flag value.
+    const bool x11Session =
+        isWaylandSessionFromSignals(QStringLiteral("xcb"), QString(), QString());
+    QVERIFY(!x11Session);
+    QCOMPARE(chooseLinuxScreenshotBackend(x11Session, /*portal=*/true), B::QScreenGrab);
+    QCOMPARE(chooseLinuxScreenshotBackend(x11Session, /*portal=*/false), B::QScreenGrab);
+}
+
+// Safeguard 1 (XWayland black-frame): the live isWaylandSession() must treat a
+// Wayland display server as a Wayland session even when Qt loaded the xcb
+// plugin (XWayland), where a direct grabWindow yields a BLACK pixmap. Detection
+// keys off the display-server signals (WAYLAND_DISPLAY / XDG_SESSION_TYPE), not
+// only the Qt platform name. Driven here through the env seam so it is
+// deterministic and needs no real compositor. (RED before the fix: the old
+// wrapper consulted only platformName() and returned false for XWayland.)
+void TestCaptureBackend::waylandSessionDetectsXWaylandViaEnv() {
+    // The unit suite runs under the offscreen plugin, so platformName() is not
+    // "wayland"; any Wayland verdict below therefore comes purely from the env
+    // signals — exactly the XWayland (xcb-plugin-on-a-Wayland-server) case.
+    const bool origHasWd = qEnvironmentVariableIsSet("WAYLAND_DISPLAY");
+    const QString origWd = qEnvironmentVariable("WAYLAND_DISPLAY");
+    const bool origHasSt = qEnvironmentVariableIsSet("XDG_SESSION_TYPE");
+    const QString origSt = qEnvironmentVariable("XDG_SESSION_TYPE");
+    auto restore = [&]() {
+        if (origHasWd)
+            qputenv("WAYLAND_DISPLAY", origWd.toLocal8Bit());
+        else
+            qunsetenv("WAYLAND_DISPLAY");
+        if (origHasSt)
+            qputenv("XDG_SESSION_TYPE", origSt.toLocal8Bit());
+        else
+            qunsetenv("XDG_SESSION_TYPE");
+    };
+
+    // Baseline: no Wayland signals under offscreen -> not a Wayland session.
+    qunsetenv("WAYLAND_DISPLAY");
+    qunsetenv("XDG_SESSION_TYPE");
+    QCOMPARE(isWaylandSession(), false);
+
+    // XWayland via WAYLAND_DISPLAY set (non-empty) -> Wayland session.
+    qputenv("WAYLAND_DISPLAY", QByteArrayLiteral("wayland-0"));
+    QCOMPARE(isWaylandSession(), true);
+
+    // XWayland via XDG_SESSION_TYPE=="wayland" alone -> Wayland session.
+    qunsetenv("WAYLAND_DISPLAY");
+    qputenv("XDG_SESSION_TYPE", QByteArrayLiteral("wayland"));
+    QCOMPARE(isWaylandSession(), true);
+
+    // An empty WAYLAND_DISPLAY is NOT a Wayland signal, and a non-wayland
+    // session type keeps the genuine-X11 verdict.
+    qputenv("WAYLAND_DISPLAY", QByteArray());
+    qputenv("XDG_SESSION_TYPE", QByteArrayLiteral("x11"));
+    QCOMPARE(isWaylandSession(), false);
+
+    restore();
 }
 
 // Live end-to-end portal capture. This exercises the real QtDBus path

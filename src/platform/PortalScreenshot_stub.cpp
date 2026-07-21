@@ -1,5 +1,7 @@
 #include "PortalScreenshot.h"
 
+#include "ScreenCaptureBackend.h"
+
 #include <QGuiApplication>
 
 // Non-Linux stub: the XDG desktop portal is a freedesktop/Wayland concept, so
@@ -12,9 +14,13 @@
 namespace trailer {
 
 bool isWaylandSession() {
-    // Honest even off-Linux: a Windows/macOS Qt session is never "wayland".
-    return QGuiApplication::platformName().startsWith(QLatin1String("wayland"),
-                                                      Qt::CaseInsensitive);
+    // Honest even off-Linux: a Windows/macOS Qt session is never "wayland" and
+    // sets neither WAYLAND_DISPLAY nor XDG_SESSION_TYPE=wayland, so this stays
+    // false there. Shares the same display-server-signal detection as the real
+    // backend so the two can't drift.
+    return isWaylandSessionFromSignals(QGuiApplication::platformName(),
+                                       qEnvironmentVariable("WAYLAND_DISPLAY"),
+                                       qEnvironmentVariable("XDG_SESSION_TYPE"));
 }
 
 bool portalScreenshotAvailable() {

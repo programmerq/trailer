@@ -107,4 +107,25 @@ enum class LinuxScreenshotBackend {
 // No platform calls — testable on any host.
 LinuxScreenshotBackend chooseLinuxScreenshotBackend(bool isWaylandSession, bool portalAvailable);
 
+// Pure detection: is this a Wayland session, judged from the DISPLAY-SERVER
+// signals rather than only Qt's platform-plugin name?
+//
+// The hazard this exists to catch is XWayland: on the common GNOME/KDE Wayland
+// desktop Qt frequently loads the xcb plugin (so platformName()=="xcb") while
+// the real display server is Wayland. A direct QScreen::grabWindow(0) then
+// returns a BLACK pixmap on Mutter/KWin — a silent WRONG result that would be
+// saved as a "screenshot". Keying only off platformName() misses this and takes
+// the black direct-grab path; keying off the session signals routes it to the
+// portal (or the honest disabled+tooltip degrade) instead.
+//
+// A session is Wayland when ANY of:
+//   - platformName starts with "wayland" (native Wayland plugin), OR
+//   - waylandDisplay is non-empty (WAYLAND_DISPLAY — set for XWayland clients,
+//     unset on genuine X11 and under the offscreen/CI plugin), OR
+//   - xdgSessionType equals "wayland" (XDG_SESSION_TYPE, the logind signal).
+// An EMPTY waylandDisplay is not a signal (so a stray empty export can't
+// misclassify genuine X11). Pure — no platform calls, testable on any host.
+bool isWaylandSessionFromSignals(const QString &platformName, const QString &waylandDisplay,
+                                 const QString &xdgSessionType);
+
 } // namespace trailer

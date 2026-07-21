@@ -1,5 +1,7 @@
 #include "PortalScreenshot.h"
 
+#include "ScreenCaptureBackend.h"
+
 #include <QDBusArgument>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
@@ -63,9 +65,13 @@ class ResponseWaiter : public QObject {
 } // namespace
 
 bool isWaylandSession() {
-    // "wayland" and any "wayland-egl"/variant all start with "wayland".
-    return QGuiApplication::platformName().startsWith(QLatin1String("wayland"),
-                                                      Qt::CaseInsensitive);
+    // Detect from the DISPLAY-SERVER signals, not only Qt's platform name, so
+    // an XWayland session (Qt loads the xcb plugin while the compositor is
+    // Wayland) is recognised and never takes the direct grabWindow(0) path that
+    // returns a BLACK pixmap there. See isWaylandSessionFromSignals().
+    return isWaylandSessionFromSignals(QGuiApplication::platformName(),
+                                       qEnvironmentVariable("WAYLAND_DISPLAY"),
+                                       qEnvironmentVariable("XDG_SESSION_TYPE"));
 }
 
 bool portalScreenshotAvailable() {

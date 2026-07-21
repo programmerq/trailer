@@ -34,6 +34,7 @@
 #include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "ml/OcrEngine.h"
+#include "platform/PortalScreenshot.h"
 #include "platform/QuitMenu.h"
 #include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
@@ -2532,9 +2533,31 @@ void MainWindow::onTakeScreenshot() {
 #ifndef Q_OS_MACOS
     windowRadio->setEnabled(false);
     regionRadio->setEnabled(false);
-    auto *note = new QLabel(tr("Only whole-screen capture is supported on this platform. "
-                               "Window and region capture aren't available yet."),
-                            &dialog);
+    // On a Wayland session (native OR XWayland) with no screenshot portal even
+    // Whole Screen can't act: a client-side grab yields a null pixmap under
+    // native Wayland and a BLACK pixmap under XWayland. Gate this dialog
+    // consistently with the File → Screenshot menu (Application::addAcquireItems)
+    // — disable the Whole Screen radio (and thus the OK path) with an honest
+    // tooltip instead of leaving it enabled to degrade only at capture time,
+    // which would make it a lying control (G3). X11/Windows keep Whole Screen
+    // enabled and the original note.
+    const bool waylandNoPortal =
+        trailer::chooseLinuxScreenshotBackend(trailer::isWaylandSession(),
+                                              trailer::portalScreenshotAvailable()) ==
+        trailer::LinuxScreenshotBackend::Unavailable;
+    QLabel *note = nullptr;
+    if (waylandNoPortal) {
+        screenRadio->setEnabled(false);
+        screenRadio->setToolTip(
+            tr("Screenshot capture needs a desktop screenshot portal, which isn't running."));
+        note = new QLabel(
+            tr("Screenshot capture needs a desktop screenshot portal, which isn't running."),
+            &dialog);
+    } else {
+        note = new QLabel(tr("Only whole-screen capture is supported on this platform. "
+                             "Window and region capture aren't available yet."),
+                          &dialog);
+    }
     note->setWordWrap(true);
     layout->addWidget(note);
 #endif
