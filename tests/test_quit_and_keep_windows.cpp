@@ -284,6 +284,45 @@ FirstPageInfo inspectRestoredFirstPage(PdfDocument *doc) {
     return info;
 }
 
+// The /Rotate of every page, in order, of a restored PDF. Saves the live
+// editor to a throwaway temp (a DIFFERENT file, so no same-file handle issue)
+// and reads each page via raw qpdf. Used to prove a page MOVE reordered the
+// pages (a rotated marker page lands at its new index). NOTE: save()
+// re-points the doc's Save target to the temp, so callers must assert
+// filePath() BEFORE calling this. Returns empty on failure.
+std::vector<int> restoredPageRotations(PdfDocument *doc) {
+    std::vector<int> rots;
+    ScopedTempFile tmp(QStringLiteral("keep_rots_XXXXXX.pdf"));
+    if (!tmp.isValid() || !doc->save(tmp.path()))
+        return rots;
+    try {
+        QPDF pdf;
+        pdf.processFile(tmp.path().toLocal8Bit().constData());
+        for (QPDFPageObjectHelper &page : QPDFPageDocumentHelper(pdf).getAllPages()) {
+            QPDFObjectHandle rot = page.getObjectHandle().getKey("/Rotate");
+            rots.push_back(rot.isInteger() ? static_cast<int>(rot.getIntValue()) : 0);
+        }
+    } catch (const std::exception &) {
+        rots.clear();
+    }
+    return rots;
+}
+
+// Write a multi-page PDF (`pages` one-page-each) to `path`.
+QString writeMultiPagePdf(const QString &path, int pages, const QString &label) {
+    QPdfWriter writer(path);
+    writer.setPageSize(QPageSize(QPageSize::A4));
+    QPainter painter(&writer);
+    for (int i = 0; i < pages; ++i) {
+        painter.drawText(QRect(100, 100, 800, 200), Qt::AlignCenter,
+                         QStringLiteral("%1 %2").arg(label).arg(i + 1));
+        if (i < pages - 1)
+            writer.newPage();
+    }
+    painter.end();
+    return path;
+}
+
 void closeAllWindows(Application *app) {
     const auto wins = app->windows();
     for (MainWindow *w : wins) {
@@ -321,9 +360,15 @@ class TestQuitAndKeepWindows : public QObject {
     void keepWindowsAnnotationDirtyPdfUsesAnnotatedPathKind();
     void keepWindowsStructuralPdfPersistsWithoutPrompt();
     void keepWindowsStructuralPdfUsesStructuralDraftKind();
+    void keepWindowsStructuralPdfWithPendingRedactionPrompts();
+    void keepWindowsStructuralPdfSnapshotFailurePrompts();
     void restoreRotatedPdfKeepsRotationDirtyAndOriginalPath();
     void restoreDeletedPagePdfKeepsPageCountDirtyAndOriginalPath();
     void restoreCroppedPdfKeepsCropBoxDirtyAndOriginalPath();
+    void restoreMovedPagePdfKeepsOrderDirtyAndOriginalPath();
+    void restoreInsertedPagesPdfSurvivesWithoutSource();
+    void restoreStructuralPdfMovedOriginalReturnsUntitledDirty();
+    void keepWindowsClearsStaleRecoverySidecar();
     void restoreCombinedStructuralAndAnnotationKeepsBothEditable();
     void annotationJsonRoundTripsAllFields();
     void keepWindowsDirtyTitledImageRestoresDirtyWithPath();
@@ -808,6 +853,73 @@ void TestQuitAndKeepWindows::keepWindowsStructuralPdfUsesStructuralDraftKind() {
     QCOMPARE(firstDocManifestKind(m_app), QStringLiteral("structural-draft"));
 }
 
+void TestQuitAndKeepWindows::keepWindowsStructuralPdfWithPendingRedactionPrompts() {
+    // FIX 2 (never-worry-save floor): a PDF that is structurally dirty AND
+    // carries a PENDING (un-applied) redaction annotation must NOT ride ⌥⌘Q
+    // silently — writeRecoverySnapshot() would BURN the redaction into page
+    // content, so a silent keep would return it applied and no longer editable
+    // (a silent irreversible commit). It must fall back to the per-doc prompt,
+    // exactly as it did before the structural-keep feature. Proof: with a
+    // Cancel response staged, the prompt aborts the quit — a silent keep would
+    // ignore Cancel and proceed.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/redact.pdf";
+    writeTinyPdf(path);
+
+    MainWindow *win = nullptr;
+    PdfDocument *pdf = addPdfWindow(m_app, path, &win);
+    pdf->rotatePage(0, 90); // structural
+    Annotation r;
+    r.type = AnnotationType::Redaction; // pending, un-applied
+    r.page = 0;
+    r.bounds = QRectF(20.0, 20.0, 60.0, 20.0);
+    pdf->annotations()->add(r);
+    QVERIFY(pdf->hasStructuralEdits());
+
+    win->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+    int quitCount = 0;
+    m_app->setPerformQuitForTesting([&] { ++quitCount; });
+
+    const bool proceeded = m_app->requestQuit(QuitMode::KeepWindows);
+
+    QVERIFY(!proceeded);                                // routed to prompt; Cancel aborts
+    QCOMPARE(quitCount, 0);                             // quit did NOT run
+    QVERIFY(!m_app->sessionDraftStore().hasSession());  // nothing kept-and-burned
+    QCOMPARE(win->documentCount(), 1);                  // doc kept, still open
+}
+
+void TestQuitAndKeepWindows::keepWindowsStructuralPdfSnapshotFailurePrompts() {
+    // FIX 1 (never-worry-save floor): if the edited-blob snapshot cannot be
+    // produced for a structural PDF, canDraftForKeep must PROVE that up front
+    // and return false so requestQuit PROMPTS the doc — rather than reporting
+    // it draftable and then silently OMITTING it from the capture (its edits
+    // would vanish with no prompt on next launch). The snapshot-failure seam
+    // forces writeRecoverySnapshot() to fail; a Cancel response then aborts the
+    // quit, proving the prompt path ran.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/nosnap.pdf";
+    writeTinyPdf(path);
+
+    MainWindow *win = nullptr;
+    PdfDocument *pdf = addPdfWindow(m_app, path, &win);
+    pdf->rotatePage(0, 90); // structural
+    pdf->setForceRecoverySnapshotFailureForTesting(true);
+    QVERIFY(pdf->hasStructuralEdits());
+
+    win->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+    int quitCount = 0;
+    m_app->setPerformQuitForTesting([&] { ++quitCount; });
+
+    const bool proceeded = m_app->requestQuit(QuitMode::KeepWindows);
+
+    QVERIFY(!proceeded);                                // snapshot preflight failed → prompt → Cancel aborts
+    QCOMPARE(quitCount, 0);                             // quit did NOT run
+    QVERIFY(!m_app->sessionDraftStore().hasSession());  // NOT silently dropped
+    QCOMPARE(win->documentCount(), 1);                  // doc kept, still open
+}
+
 void TestQuitAndKeepWindows::restoreRotatedPdfKeepsRotationDirtyAndOriginalPath() {
     // Round-trip: rotate page 0 → ⌥⌘Q keep → relaunch/restore → the rotation
     // is intact (/Rotate == 90 in the restored editor), the restored doc is
@@ -925,6 +1037,161 @@ void TestQuitAndKeepWindows::restoreCroppedPdfKeepsCropBoxDirtyAndOriginalPath()
     QVERIFY(info.cropBox.width() < info.mediaBox.width());
     QVERIFY(info.cropBox.height() < info.mediaBox.height());
     QVERIFY(!m_app->sessionDraftStore().hasSession());
+}
+
+void TestQuitAndKeepWindows::restoreMovedPagePdfKeepsOrderDirtyAndOriginalPath() {
+    // FIX 5: round-trip for a page MOVE. A 3-page PDF whose page 0 is rotated
+    // (a marker) then moved to the end returns with the marker page at its new
+    // index, the doc dirty, its Save target the ORIGINAL path, and the original
+    // file byte-unchanged.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/moveme.pdf";
+    writeMultiPagePdf(path, 3, QStringLiteral("Page"));
+    const QByteArray originalDigest = sha256Of(path);
+    QVERIFY(!originalDigest.isEmpty());
+
+    PdfDocument *original = addPdfWindow(m_app, path);
+    QCOMPARE(original->pageCount(), 3);
+    original->rotatePage(2, 90);  // mark the LAST page with /Rotate 90
+    original->movePage(2, 0);     // move it to the front → rotations [90,0,0]
+    QVERIFY(original->hasStructuralEdits());
+
+    m_app->setPerformQuitForTesting([] {});
+    QVERIFY(m_app->requestQuit(QuitMode::KeepWindows));
+    QVERIFY(m_app->sessionDraftStore().hasSession());
+
+    QVERIFY(m_app->restoreKeptWindows());
+
+    PdfDocument *restored = findRestoredPdf(m_app, original);
+    QVERIFY(restored);
+    QCOMPARE(restored->filePath(), path);       // Save re-points to the ORIGINAL
+    QVERIFY(restored->isDirty());
+    QCOMPARE(restored->pageCount(), 3);
+    QCOMPARE(sha256Of(path), originalDigest);   // original untouched
+    // The rotated marker page moved to the front: the move survived the round-trip.
+    const std::vector<int> rots = restoredPageRotations(restored);
+    QCOMPARE(rots, (std::vector<int>{90, 0, 0}));
+    QVERIFY(!m_app->sessionDraftStore().hasSession());
+}
+
+void TestQuitAndKeepWindows::restoreInsertedPagesPdfSurvivesWithoutSource() {
+    // FIX 5 (highest-value): round-trip for INSERT-pages-from-a-file. Foreign
+    // pages inserted from a SEPARATE source file must be materialized into the
+    // self-contained edited blob, so they survive a keep+restore even when the
+    // source file is DELETED before restore. Proves the blob carries the
+    // inserted page content, not a reference to the source.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/main.pdf";
+    writeMultiPagePdf(path, 1, QStringLiteral("Main"));
+    const QByteArray originalDigest = sha256Of(path);
+    QVERIFY(!originalDigest.isEmpty());
+    const QString source = dir.path() + "/insert-source.pdf";
+    writeMultiPagePdf(source, 2, QStringLiteral("Inserted"));
+
+    PdfDocument *original = addPdfWindow(m_app, path);
+    QCOMPARE(original->pageCount(), 1);
+    QVERIFY(original->insertPagesFrom(source, 1)); // insert 2 pages after page 0
+    QCOMPARE(original->pageCount(), 3);
+    QVERIFY(original->hasStructuralEdits());
+
+    m_app->setPerformQuitForTesting([] {});
+    QVERIFY(m_app->requestQuit(QuitMode::KeepWindows));
+    QVERIFY(m_app->sessionDraftStore().hasSession());
+
+    // Delete the insert SOURCE before restore: the inserted pages must already
+    // live in the captured blob, not depend on the source still being present.
+    QVERIFY(QFile::remove(source));
+    QVERIFY(!QFileInfo::exists(source));
+
+    QVERIFY(m_app->restoreKeptWindows());
+
+    PdfDocument *restored = findRestoredPdf(m_app, original);
+    QVERIFY(restored);
+    QCOMPARE(restored->filePath(), path);       // Save re-points to the ORIGINAL
+    QVERIFY(restored->isDirty());
+    QCOMPARE(restored->pageCount(), 3);         // inserted pages survived w/o source
+    QCOMPARE(sha256Of(path), originalDigest);   // original main untouched
+    const FirstPageInfo info = inspectRestoredFirstPage(restored);
+    QVERIFY(info.ok);
+    QCOMPARE(info.pageCount, 3);
+    QVERIFY(!m_app->sessionDraftStore().hasSession());
+}
+
+void TestQuitAndKeepWindows::restoreStructuralPdfMovedOriginalReturnsUntitledDirty() {
+    // FIX 3 (never-worry-save floor): the StructuralDraft blob is the COMPLETE
+    // edited PDF and does not need the original to render (the original is only
+    // the Save re-association target). So if the original is MOVED or DELETED
+    // between ⌥⌘Q and restore, the captured work must NOT be silently dropped —
+    // it returns as an UNTITLED, dirty doc (edits intact) whose first Save
+    // prompts Save-As, mirroring the image Draft untitled restore.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/gone.pdf";
+    writeTinyPdf(path);
+
+    PdfDocument *original = addPdfWindow(m_app, path);
+    original->rotatePage(0, 90);
+    QVERIFY(original->hasStructuralEdits());
+
+    m_app->setPerformQuitForTesting([] {});
+    QVERIFY(m_app->requestQuit(QuitMode::KeepWindows));
+    QVERIFY(m_app->sessionDraftStore().hasSession());
+
+    // The original disappears before restore (moved/deleted by the user).
+    QVERIFY(QFile::remove(path));
+    QVERIFY(!QFileInfo::exists(path));
+
+    QVERIFY(m_app->restoreKeptWindows());
+
+    PdfDocument *restored = findRestoredPdf(m_app, original);
+    QVERIFY(restored);                    // NOT dropped despite the missing original
+    QVERIFY(restored->isUntitled());      // no on-disk home → first Save prompts Save-As
+    QVERIFY(restored->filePath().isEmpty());
+    QVERIFY(restored->isDirty());
+    // The structural edit is intact in the recovered, self-sufficient blob.
+    const FirstPageInfo info = inspectRestoredFirstPage(restored);
+    QVERIFY(info.ok);
+    QCOMPARE(info.rotate, 90);
+    QVERIFY(!m_app->sessionDraftStore().hasSession());
+}
+
+void TestQuitAndKeepWindows::keepWindowsClearsStaleRecoverySidecar() {
+    // FIX 4: the #90 autosave recovery sidecar is keyed by the backing path and
+    // is written on autosave ticks — but a ⌥⌘Q keep SUPERSEDES it (the doc
+    // reopens dirty with the kept state). If the keep flow left the older
+    // sidecar behind, a later File→Open of the original would resurrect the
+    // superseded pre-keep state via pendingRecovery(). Assert the keep clears
+    // the sidecar for a kept doc that has an on-disk original.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/sidecar.pdf";
+    writeTinyPdf(path);
+
+    PdfDocument *pdf = addPdfWindow(m_app, path);
+    pdf->rotatePage(0, 90);
+    QVERIFY(pdf->hasStructuralEdits());
+
+    // Simulate a prior autosave tick: write a recovery sidecar for this backing
+    // file and record it in the store (what MainWindow's autosave does).
+    RecoveryStore &store = m_app->recoveryStore();
+    const QString sidecar = store.sidecarPathFor(path);
+    QVERIFY(pdf->writeRecoverySnapshot(sidecar));
+    store.recordSnapshot(path, sidecar);
+    QVERIFY(store.lookup(path).has_value());  // sidecar is present pre-keep
+
+    m_app->setPerformQuitForTesting([] {});
+    QVERIFY(m_app->requestQuit(QuitMode::KeepWindows));
+    QVERIFY(m_app->sessionDraftStore().hasSession());
+
+    // The keep superseded the sidecar: it (and its index entry) are gone, so a
+    // later reopen of the original will NOT resurrect superseded state.
+    QVERIFY(!store.lookup(path).has_value());
+    QVERIFY(!store.pendingRecovery(path).has_value());
+    QVERIFY(!QFileInfo::exists(sidecar));
+    // The backing file itself was never touched by the sidecar clear.
+    QVERIFY(QFileInfo::exists(path));
 }
 
 void TestQuitAndKeepWindows::restoreCombinedStructuralAndAnnotationKeepsBothEditable() {

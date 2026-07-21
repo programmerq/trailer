@@ -496,6 +496,11 @@ PdfDocument::~PdfDocument() {
 }
 
 QString PdfDocument::displayName() const {
+    // A recovery-untitled doc (markUntitledForRecovery) has no on-disk home;
+    // show a clean "Untitled" rather than an empty basename until the user
+    // Saves it to a real path (mirrors ImageDocument::displayName).
+    if (m_untitled)
+        return QObject::tr("Untitled");
     return QFileInfo(m_path).fileName();
 }
 
@@ -1719,6 +1724,19 @@ bool PdfDocument::save(const QString &newPath) {
     return saveCommitOnUi(*ctx);
 }
 
+bool PdfDocument::hasPendingDestructiveAnnotation() {
+    // See the header comment: force the complete annotation set to be present
+    // (the deferred sweep may still be in flight) before scanning, so this
+    // safety gate can never MISS a disk-resident redaction/signature and let it
+    // be silently burned in by a keep snapshot.
+    ensureAnnotationsLoadedSync();
+    for (const Annotation &a : m_annotations.annotations()) {
+        if (a.type == AnnotationType::Redaction || a.type == AnnotationType::Signature)
+            return true;
+    }
+    return false;
+}
+
 bool PdfDocument::writeRecoverySnapshot(const QString &sidecarPath) {
     // Auto-save calls this instead of save(): it must NEVER write the backing
     // file and must NOT clear the dirty flag. We snapshot the CURRENT editor
@@ -1728,6 +1746,8 @@ bool PdfDocument::writeRecoverySnapshot(const QString &sidecarPath) {
     // applyRedactions()/flattenSignatures() are destructive. The live document
     // (m_editor / m_path / m_doc / dirty flags) is left completely untouched;
     // only the sidecar is written.
+    if (m_forceRecoverySnapshotFailureForTesting)
+        return false; // test seam: exercise the ⌥⌘Q snapshot-preflight fallback
     ensureEditorLoaded();
     ensureAnnotationsLoadedSync();
     if (!m_valid || !m_editor || !m_editor->isValid() || sidecarPath.isEmpty())
