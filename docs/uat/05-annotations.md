@@ -729,32 +729,43 @@ tool active; the annotation is selected.
   pre-drag position. The drag is not unwound in micro-steps.
 - The same applies to dragging a corner resize handle.
 
-### UAT-ANN-128 — Click on an existing annotation with a drawing tool active selects it
+### UAT-ANN-128 — Drawing-tool press over an existing annotation starts a new shape
 
-**Preconditions:** A document with at least one annotation. A
-drawing tool (e.g. Arrow, Rectangle) is active.
+**Preconditions:** A document with at least one annotation. A bounded
+drawing tool (Rectangle / Ellipse / Line / Arrow) is active.
+
+**Rationale:** DRAWING-TOOL PARITY (owner ruling "parity",
+2026-07-20; decision record
+[`2026-07-20-drawing-tool-parity.md`](../decision-records/2026-07-20-drawing-tool-parity.md)).
+The bounded shape tools now match the free-form Ink tool: a press with
+a drawing tool active always starts a NEW mark, Preview/Acrobat-style.
+Selecting an existing annotation is a **Select-tool-only** gesture.
+This inverts the pre-parity behaviour, where a bounded-tool press
+selected the shape underneath.
 
 **Steps:**
-1. Click on an existing annotation (press + release at the same
-   point, no drag).
+1. Press-drag starting on top of the existing annotation and drag off
+   to the side.
 
 **Expected:**
-- No new annotation is created.
-- The clicked annotation is selected (selection ring appears,
-  Delete / arrow-key nudge work).
-- A subsequent click-drag on empty space still draws a new shape
-  with the active drawing tool.
+- A NEW shape of the active tool's type is created (the store gains one
+  entry).
+- The existing annotation is **not** selected and **not** moved — no
+  selection ring appears as a result of the press.
+- To select the underlying shape, the user switches to the Select tool
+  (UAT-ANN-120).
 
 ### UAT-ANN-129 — Freehand (Ink) press over an existing stroke starts a new stroke
 
 **Preconditions:** A document with at least one existing Ink
 annotation. The **Ink** (freehand) tool is active.
 
-**Rationale:** UAT-ANN-128 routes a drawing-tool click onto an existing
-annotation to *select* it. Free-form geometry is the one exception:
-like Preview/Acrobat, a freehand press is always "new mark" — otherwise
-the user could never draw over their own ink. Ink is the only free-form
-tool; the bounded shape tools keep UAT-ANN-128's select-on-click.
+**Rationale:** Like Preview/Acrobat, a freehand press is always "new
+mark" — otherwise the user could never draw over their own ink. Since
+DRAWING-TOOL PARITY (2026-07-20) the bounded shape tools behave the
+same way (UAT-ANN-128): every drawing-tool press starts a new shape,
+and selecting an existing annotation is a Select-tool-only gesture.
+This case pins the behaviour specifically for the free-form Ink tool.
 
 **Steps:**
 1. Press-drag a freehand stroke that **starts inside** the bounds of
@@ -797,26 +808,35 @@ before opening the dialog and re-fetch the annotation by id after
 the dialog returns, rather than holding the `find()` pointer
 across the modal.
 
-### UAT-ANN-131 — Toolbar auto-switches to Select after a one-shot shape
+### UAT-ANN-131 — Bounded shape tool stays sticky after a commit
 
-**Preconditions:** Markup toolbar visible. A one-shot drawing tool
-(Rectangle, Ellipse, Line, Arrow — but NOT Freehand, see UAT-ANN-132)
-is active.
+**Preconditions:** Markup toolbar visible. A bounded drawing tool
+(Rectangle / Ellipse / Line / Arrow) is armed via the toolbar.
+
+**Rationale:** DRAWING-TOOL PARITY (owner ruling "parity",
+2026-07-20; decision record
+[`2026-07-20-drawing-tool-parity.md`](../decision-records/2026-07-20-drawing-tool-parity.md)).
+The bounded shapes now match Freehand's sticky-draw. This inverts the
+pre-parity behaviour, where a bounded shape auto-reverted to Select on
+commit.
 
 **Steps:**
-1. Drag on the page to draw a rectangle.
-2. Release the mouse.
+1. Drag on the page to draw a rectangle; release.
+2. Drag again on empty space to draw a second rectangle; release.
 
 **Expected:**
-- The new rectangle is committed to the document.
-- The markup toolbar's checked tool flips back to **Select**.
-- A follow-up click on the just-drawn rectangle selects it (does
-  NOT create a second overlapping shape).
+- Both rectangles are committed to the document.
+- After the first shape the markup toolbar's checked tool STAYS on
+  **Rectangle** — it does NOT revert to Select.
+- The second drag therefore draws a new shape; it does not become a
+  rubber-band selection.
 
-**Note:** The one-shot tools (bounded shapes) flip back to Select on
-commit. The free-form Freehand (Ink) tool is the exception — it is
-sticky (UAT-ANN-132). Whether the bounded shapes should also become
-sticky is an open owner decision (parity question from PR #91).
+**Note:** All the bounded shape tools (Rectangle / Ellipse / Line /
+Arrow) and Freehand (Ink) are sticky. The non-sticky tools that revert
+to Select on commit are the stamp/region tools (HighlightShape,
+Redaction, ZoomLens, Signature) and the text-markup tools (Highlight,
+Underline, StrikeOut); the text/edit tools (Text, Note, SpeechBubble)
+open an inline editor instead of committing through this path.
 
 ---
 
@@ -842,9 +862,56 @@ place one mark). Auto-reverting to Select after every stroke (the
 pre-fix CF-3 behaviour, backlog
 `2026-07-20-freehand-auto-revert-drawover-noop`) made the second
 draw-over drag silently select instead of draw, with no feedback.
-This is the Preview-style sticky-draw behaviour; it is the default for
-Freehand only (the bounded shapes still flip to Select per
-UAT-ANN-131).
+This is the Preview-style sticky-draw behaviour. Since DRAWING-TOOL
+PARITY (2026-07-20) it is the default for the bounded shape tools too
+(UAT-ANN-131 / UAT-ANN-134), not just Freehand.
+
+---
+
+### UAT-ANN-133 — Bounded drawing tools draw-first over an existing shape
+
+**Preconditions:** A document open. For each bounded tool
+(Rectangle / Ellipse / Line / Arrow) the test arms the tool and draws
+one shape first.
+
+**Rationale:** DRAWING-TOOL PARITY (owner ruling "parity",
+2026-07-20; decision record
+[`2026-07-20-drawing-tool-parity.md`](../decision-records/2026-07-20-drawing-tool-parity.md)).
+Per-tool coverage of the draw-first-on-press behaviour that UAT-ANN-128
+pins for Rectangle — extended here to Ellipse, Line, and Arrow.
+
+**Steps (per tool):**
+1. Arm the tool via the markup toolbar; drag to draw one shape.
+2. Press-drag STARTING on top of that shape and drag off to the side.
+
+**Expected (per tool):**
+- A NEW shape of the same type is created (store count +1 per drag).
+- The first shape is neither selected nor moved (its bounds are
+  unchanged; `selectedAnnotationId` stays 0).
+
+---
+
+### UAT-ANN-134 — Bounded drawing tools are sticky (per tool, via toolbar)
+
+**Preconditions:** Markup toolbar visible.
+
+**Rationale:** DRAWING-TOOL PARITY (owner ruling "parity",
+2026-07-20; decision record
+[`2026-07-20-drawing-tool-parity.md`](../decision-records/2026-07-20-drawing-tool-parity.md)).
+Per-tool coverage of the sticky-draw behaviour that UAT-ANN-131 pins
+for Rectangle — extended here to Ellipse, Line, and Arrow. Must be
+driven through the toolbar, since the sticky/revert decision lives in
+`MainWindow::onAnnotationCommitted`, which reads the toolbar's tool
+(arming on the overlay bypasses it; see UAT-ANN-132).
+
+**Steps (per tool):**
+1. Arm the tool via the markup toolbar; drag to draw one shape; release.
+2. Observe the toolbar's checked tool. Drag again on empty space.
+
+**Expected (per tool):**
+- After the first shape the toolbar AND overlay both STAY on the tool.
+- The second drag draws a second shape of the same type; it does not
+  become a rubber-band selection (`selectedAnnotationId` stays 0).
 
 ---
 

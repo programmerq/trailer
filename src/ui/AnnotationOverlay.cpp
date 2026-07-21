@@ -1029,26 +1029,34 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent *event) {
         }
     }
     // Hit-test against existing annotations BEFORE the drawing-tool
-    // path. A click that lands on an existing annotation routes to
-    // select + prepare-to-move — for the Select tool AND for the
-    // bounded shape tools (Rectangle / Ellipse / Line / Arrow), so a
-    // user aiming at an existing shape selects it rather than stacking a
-    // new overlapping one (UAT-ANN-128).
+    // path — but ONLY for the Select tool. Selection-and-move is a
+    // Select-tool affordance, Preview/Acrobat-style: a press with a
+    // drawing tool active always starts a NEW mark, regardless of what
+    // is underneath.
     //
-    // The one exception is FREE-FORM geometry: the Ink tool. A freehand
-    // stroke that starts on top of an earlier mark must begin a NEW
-    // stroke — like Preview/Acrobat — otherwise the user could never
-    // draw over their own ink (Bug 3). Ink is the only free-form tool;
-    // its press falls straight through to the stroke-capture setup
-    // below regardless of what is underneath.
+    // This is the "draw-first on press" half of DRAWING-TOOL PARITY
+    // (owner ruling "parity", 2026-07-20; ADR
+    // docs/decision-records/2026-07-20-drawing-tool-parity.md). The
+    // bounded shape tools (Rectangle / Ellipse / Line / Arrow) now match
+    // the free-form Ink tool, which already drew-first since Bug 3 (#91).
+    // Previously this guard was `m_tool != Ink`, so the bounded tools
+    // hijacked a press over an existing shape into select-and-move
+    // (the old UAT-ANN-128). Under parity, a user aiming a drawing tool
+    // at an existing shape draws a new overlapping one; to select the
+    // underlying shape they switch to the Select tool.
     //
-    // The Select tool keeps a sticky multi-step semantics: first
+    // Every non-Select tool therefore falls straight through to the
+    // draw / stroke-capture setup below. SAM tools (InstantAlpha /
+    // SmartLasso) never reach here — they have their own press branch
+    // above. Text / Note / SpeechBubble still open their inline editor
+    // on release; the only thing they lose is the click-to-select-an-
+    // existing-annotation shortcut, which now belongs to Select alone.
+    //
+    // The Select tool keeps its sticky multi-step semantics: first
     // click selects, second click on the same annotation begins the
-    // move drag. A bounded shape tool short-circuits to immediate
-    // select-and-prepare-to-move; the move only "commits" if the user
-    // actually drags, since the compound is lazy-pushed (see
-    // AnnotationStore::pushHistory).
-    if (m_tool != AnnotationTool::Ink) {
+    // move drag. The move only "commits" if the user actually drags,
+    // since the compound is lazy-pushed (see AnnotationStore::pushHistory).
+    if (m_tool == AnnotationTool::Select) {
         const int hitId = hitTest(event->position());
         if (hitId != 0) {
             const bool wasAlreadySelected = (m_selectedAnnotationId == hitId);
@@ -1058,12 +1066,12 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent *event) {
             }
             m_extraSelectedIds.clear();
             m_pendingSelection.clear();
-            // Prepare a move-drag. For the Select tool we keep the
-            // existing "click twice to drag" affordance (UAT-ANN-120
-            // pins single-click as a pure-select gesture, not a move).
-            // For bounded shape tools the user's click target was
-            // clearly the annotation, so begin the move immediately.
-            const bool readyToMove = (m_tool != AnnotationTool::Select) || wasAlreadySelected;
+            // Prepare a move-drag. Select keeps the "click twice to
+            // drag" affordance (UAT-ANN-120 pins single-click as a
+            // pure-select gesture, not a move): the first click only
+            // selects, and a second press on the already-selected
+            // annotation begins the move.
+            const bool readyToMove = wasAlreadySelected;
             if (readyToMove && m_store) {
                 if (const Annotation *a = m_store->find(hitId)) {
                     m_movingSelected = true;

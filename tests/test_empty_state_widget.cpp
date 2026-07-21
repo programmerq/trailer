@@ -1,13 +1,16 @@
 // Unit tests for EmptyStateWidget — the empty-state / first-run welcome
 // surface. Verifies the "Open File…" button, the openRequested signal,
-// drag-highlight state on drag-enter/leave, and filesDropped on a drop
-// carrying local file URLs.
+// drag-highlight state on drag-enter/leave, filesDropped on a drop
+// carrying local file URLs, and the inline Open Recent list
+// (populate / cap / hide-when-empty / click-emits-openRecentRequested).
 
+#include "recent/RecentFiles.h"
 #include "ui/EmptyStateWidget.h"
 
 #include <QDragEnterEvent>
 #include <QDragLeaveEvent>
 #include <QDropEvent>
+#include <QList>
 #include <QMimeData>
 #include <QPushButton>
 #include <QSignalSpy>
@@ -16,6 +19,23 @@
 
 using namespace trailer;
 
+namespace {
+
+// Build a synthetic recent-file list of `count` entries, most-recent
+// first, with predictable display names and paths.
+QList<RecentEntry> makeRecent(int count) {
+    QList<RecentEntry> entries;
+    for (int i = 0; i < count; ++i) {
+        RecentEntry e;
+        e.path = QStringLiteral("/docs/file%1.pdf").arg(i);
+        e.displayName = QStringLiteral("file%1.pdf").arg(i);
+        entries.append(e);
+    }
+    return entries;
+}
+
+} // namespace
+
 class TestEmptyStateWidget : public QObject {
     Q_OBJECT
   private slots:
@@ -23,6 +43,10 @@ class TestEmptyStateWidget : public QObject {
     void clickingOpenButtonEmitsOpenRequested();
     void dropWithFileUrlsEmitsFilesDropped();
     void dragEnterSetsHighlightAndLeaveClears();
+    void recentSectionHiddenByDefaultAndWhenEmpty();
+    void recentEntriesPopulateAndShowSection();
+    void recentListCapsAtMaxShown();
+    void clickingRecentEntryEmitsPathAndSetsToolTip();
 };
 
 void TestEmptyStateWidget::openButtonExistsAndIsEnabled() {
@@ -91,6 +115,76 @@ void TestEmptyStateWidget::dragEnterSetsHighlightAndLeaveClears() {
     QDragLeaveEvent leave;
     QApplication::sendEvent(&widget, &leave);
     QVERIFY2(!widget.isDragHighlighted(), "Drag-leave should clear the highlight");
+}
+
+// A freshly-constructed widget, and one handed an empty list, hides the
+// recent section entirely — no empty placeholder (no-lying-controls /
+// no-empty-affordance philosophy).
+void TestEmptyStateWidget::recentSectionHiddenByDefaultAndWhenEmpty() {
+    EmptyStateWidget widget;
+    // isVisibleTo is used so the check is valid whether or not the
+    // top-level widget itself has been shown.
+    QVERIFY2(!widget.isRecentSectionVisible(),
+             "The recent section must be hidden before any entries are set");
+    QCOMPARE(widget.recentEntryCount(), 0);
+
+    widget.setRecentEntries(makeRecent(3));
+    QVERIFY2(widget.isRecentSectionVisible(), "Setting entries must show the recent section");
+
+    widget.setRecentEntries({});
+    QVERIFY2(!widget.isRecentSectionVisible(),
+             "Clearing the recent list must hide the section again (no empty placeholder)");
+    QCOMPARE(widget.recentEntryCount(), 0);
+}
+
+// Setting a non-empty list renders one clickable entry per file and
+// shows the section.
+void TestEmptyStateWidget::recentEntriesPopulateAndShowSection() {
+    EmptyStateWidget widget;
+    widget.setRecentEntries(makeRecent(3));
+
+    QVERIFY(widget.isRecentSectionVisible());
+    QCOMPARE(widget.recentEntryCount(), 3);
+}
+
+// The list never renders more than kMaxRecentShown entries even when the
+// model holds more.
+void TestEmptyStateWidget::recentListCapsAtMaxShown() {
+    EmptyStateWidget widget;
+    widget.setRecentEntries(makeRecent(EmptyStateWidget::kMaxRecentShown + 5));
+    QCOMPARE(widget.recentEntryCount(), EmptyStateWidget::kMaxRecentShown);
+}
+
+// Clicking a recent entry emits openRecentRequested carrying that
+// entry's path, and the entry button exposes the full path as a tooltip.
+void TestEmptyStateWidget::clickingRecentEntryEmitsPathAndSetsToolTip() {
+    EmptyStateWidget widget;
+    widget.setRecentEntries(makeRecent(3));
+
+    // The recent-entry buttons carry the path as their tooltip; the
+    // "Open File…" button does not, so filter on that to find them.
+    QList<QPushButton *> recentButtons;
+    for (QPushButton *b : widget.findChildren<QPushButton *>()) {
+        if (b->toolTip().startsWith(QStringLiteral("/docs/")))
+            recentButtons.append(b);
+    }
+    QCOMPARE(recentButtons.size(), 3);
+
+    QSignalSpy spy(&widget, &EmptyStateWidget::openRecentRequested);
+    QVERIFY(spy.isValid());
+
+    // Click the first entry (file0.pdf → /docs/file0.pdf).
+    QPushButton *first = nullptr;
+    for (QPushButton *b : recentButtons) {
+        if (b->text() == QStringLiteral("file0.pdf"))
+            first = b;
+    }
+    QVERIFY2(first, "Expected a recent entry labelled with its display name");
+    QCOMPARE(first->toolTip(), QStringLiteral("/docs/file0.pdf"));
+
+    first->click();
+    QCOMPARE(spy.count(), 1);
+    QCOMPARE(spy.takeFirst().at(0).toString(), QStringLiteral("/docs/file0.pdf"));
 }
 
 QTEST_MAIN(TestEmptyStateWidget)
