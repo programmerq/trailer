@@ -1,0 +1,19 @@
+---
+name: trailer-ux-walkthrough-first-driven-run
+description: First full driven-mode run of the ux-walkthrough machinery (2026-07-20) — post-merge-train shakeout of #76/#80/#83/#85/#86/#89/#91 via the PR #87 Xvfb harness; results, the unmerged zoom-open fix, and the retracted CF-4 misread
+metadata:
+  type: project
+---
+
+**Trigger.** On 2026-07-20 the owner merged the #76–91 train (#76/#80/#83/#85/#86/#89/#91) to main WITHOUT his usual manual review pass, trusting the newly-adopted ux-walkthrough machinery to catch what he otherwise would. This was that machinery's FIRST FULL DRIVEN run — personas driving the real built binary (Xvfb + xdotool) end-to-end, not reading a diff + one static grab() screenshot. Persona A = 3 task-scripted cognitive-walkthrough workers executing golden paths; Persona B = Preview/Acrobat parity judge. The harness itself lives on PR #87 branch `claude/ux-walkthrough-drive-harness` and is **NOT on main as of 2026-07-20**; it needs `libxcb-cursor0` present or the Qt xcb plugin won't load. See [[trailer-ux-walkthrough-personas-proposal]] (the adopted proposal this realizes) and [[trailer-ux-evidence-ruling]].
+
+**HEADLINE finding (still actionable).** The zoom-% readout is wrong on every image open, AND ordinary images open upscaled past 100% on first resize. Two root causes: (1) `MainWindow::updateZoomIndicator` reads a `zoomFactor` that is desynced from the async initial fit (IDocument is not a QObject, so there is no signal to re-drive the indicator when the deferred fit lands); (2) `ImageAdapter` `reapplyFitMode` is uncapped, so a small image scales past 100%. BOTH are ALREADY FIXED on the unmerged branch `fix/image-open-zoom-readout` @ `05657d9`, which is **NOT an ancestor of main** (`6aab23f` / `7bae42b`) — the merge train shipped without it. Recommendation: merge/rebase that branch onto main.
+
+**Deliverables from this run.**
+- Findings report delivered to the coordinator.
+- **PR #93** (branch `claude/ux-walkthrough-audit-2026-07-20`, head `511c123`) = 6 confirmed new backlog items plus committed evidence images. The items (all `docs/backlog/2026-07-20-*`): `image-open-zoom-readout-fix-unmerged`, `freehand-auto-revert-drawover-noop`, `empty-launch-window-orphaned-on-open`, `conflict-banner-keep-mine-labeling`, `deleted-file-clean-doc-silent-loss`, `screenshot-dialog-todo-leak`.
+- 5 NEW golden-path scripts (paths 05–09, including a new File → Screenshot → Whole Screen path) landed separately on comparison branch `claude/ux-walkthrough-paths-handoff-2026-07-20` @ `06e6b1e`, for the #87 session to reconcile onto the harness branch. Single-writer chain is #87 → audit → #87 (this audit does not itself write the harness branch).
+
+**LESSON — a finding was RETRACTED.** A 7th candidate finding, CF-4 ("title-bar dirty-marker `•` clears on zoom"), was RETRACTED as a MISREAD under adversarial re-verification. Zoom never rebuilds the title; the `•` is keyed on the authoritative `isDirty()` (which already includes annotation dirtiness), so it cannot clear on a zoom. The original "oscillation" montage that suggested the bug was a duplicated-crop artifact (proven by md5 — the "before" and "after" frames were byte-identical). Process lesson: persona montages MUST be assembled from distinct, individually-verified captures; a suspiciously repeating pattern warrants an md5 check and a live re-run BEFORE the finding is filed.
+
+**Harness boundaries (what this run could NOT see — stays on the owner's manual macOS pass; Linux dpr=1).** Native macOS global menu bar, Retina/HiDPI (dpr=2) rendering fidelity, real Scanner/Camera acquisition, TCC permission prompts, disabled-item tooltip-on-hover, and per-platform dialog button order. These remain owner-manual-milestone territory, consistent with the honesty caveats in [[trailer-ux-walkthrough-personas-proposal]].
