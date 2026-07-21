@@ -21,9 +21,11 @@ permissions:
 on:
   push:
     branches: [main]
-    # If build-and-test or clang-format ever become *required* checks,
-    # path-skipped PRs would hang on "Expected" — pair this with a
-    # same-name no-op workflow on the inverse paths, or drop paths-ignore.
+    # If build-and-test, wayland-smoke, or clang-format ever become
+    # *required* checks, path-skipped PRs would hang on "Expected" — pair
+    # this with a same-name no-op workflow on the inverse paths, or drop
+    # paths-ignore. This is one reason wayland-smoke should stay a
+    # non-required (advisory) check for now (see docs/ci/wayland-tier.md).
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -178,11 +180,16 @@ jobs:
       - name: ccache
         uses: hendrikmuhs/ccache-action@v1.2.23
         with:
-          # SAME key as build-and-test (native gcc → same object cache), so
-          # this job reuses that job's warm cache and rebuilds nothing when it
-          # runs after (or alongside) it. The action restores by key prefix and
-          # appends a timestamp on save, so sharing the key is safe.
-          key: ci-${{ runner.os }}-gcc
+          # OWN key (…-gcc-wayland), distinct from build-and-test's ci-…-gcc.
+          # Both jobs use native gcc so the objects are compatible, but this job
+          # builds ONLY `--target trailer` (a subset of build-and-test's full
+          # tree). The two jobs run concurrently (no `needs:`), and the action
+          # restores by key prefix + saves under a timestamped key — so if they
+          # shared a key, this partial build's cache save could win the restore
+          # race and degrade build-and-test's hit rate. A separate key keeps
+          # each job's cache self-consistent; it warms independently from the
+          # cross-branch fallback the action already does within a key.
+          key: ci-${{ runner.os }}-gcc-wayland
           max-size: 500M
           # Custom trailer-runner image ships an empty apt index, so the
           # action must run `apt-get update` before `apt-get install ccache`.
@@ -194,6 +201,14 @@ jobs:
         # that image is rebuilt + the ARC runner-set repointed, install them
         # here so the job is green WITHOUT waiting for an image rebuild. Skips
         # the apt work when the packages are already present (custom image).
+        #
+        # sway drags a real dependency tree through the egress proxy on every
+        # run until it is baked into the runner image, so a single proxy hiccup
+        # could red-gate unrelated PRs. Wrap update+install in a bounded retry
+        # with backoff (same resilience the toolchain installs use) to ride out
+        # a transient failure. Until sway+grim are baked in, this job SHOULD be
+        # kept a NON-REQUIRED (advisory) status check in branch protection —
+        # see docs/ci/wayland-tier.md.
         shell: bash
         run: |
           set -euo pipefail
@@ -209,8 +224,19 @@ jobs:
           if [ "${#missing[@]}" -eq 0 ]; then
             echo "sway + grim preinstalled — skipping apt-get."
           else
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends "${missing[@]}"
+            n=0
+            until [ "$n" -ge 3 ]; do
+              if sudo apt-get update && sudo apt-get install -y --no-install-recommends "${missing[@]}"; then
+                break
+              fi
+              n=$((n+1))
+              if [ "$n" -ge 3 ]; then
+                echo "::error::apt-get failed to install ${missing[*]} after 3 attempts (egress-proxy hiccup?)"
+                exit 1
+              fi
+              echo "apt-get attempt $n failed — retrying in $((n*5))s..."
+              sleep "$((n*5))"
+            done
           fi
 
       - name: Configure
@@ -230,15 +256,21 @@ jobs:
 
       - name: Wayland launch + screenshot smoke
         # Starts sway headless (pixman), launches build/trailer under
-        # QT_QPA_PLATFORM=wayland on a sample image, asserts platformName is
-        # wayland (no xcb/offscreen fallback), grim-captures the window, and
-        # asserts the PNG is 1280x800 and non-blank. Self-contained: it uses
-        # ImageMagick `identify` when present and falls back to a stdlib
-        # Python PNG analyzer otherwise. Deterministic hard oracle → safe to
-        # block merge.
+        # QT_QPA_PLATFORM=wayland on a sample image, hard-gates that a surface
+        # maps, then poll-captures with grim until a non-blank 1280x800 frame
+        # lands. Self-contained: it uses ImageMagick `identify` when present and
+        # falls back to a stdlib Python PNG analyzer otherwise. Deterministic
+        # hard oracle — but keep it a NON-REQUIRED status check until sway+grim
+        # are baked into the runner image (see docs/ci/wayland-tier.md).
         run: bash scripts/wayland-smoke.sh
         env:
           WAYLAND_SMOKE_OUT: ${{ github.workspace }}/wayland-smoke.png
+          # Point the smoke at the SAME Qt the build used. install-qt-action
+          # (setup-linux-build) exports QT_ROOT_DIR to the job env; its plugins
+          # dir ships libqwayland.so. The script's own auto-detect can miss the
+          # CI Qt layout, so pass this explicitly — the script then hard-asserts
+          # libqwayland is present under it before launching.
+          QT_PLUGIN_PATH: ${{ env.QT_ROOT_DIR }}/plugins
 
       - name: Upload Wayland screenshot
         # Always upload so a failure's capture is inspectable too.

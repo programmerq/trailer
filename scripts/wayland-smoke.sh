@@ -20,8 +20,9 @@
 #      qt.qpa logging on; poll its log for the plugin-loaded line.
 #   4. ASSERT platformName is wayland (grep the "Successfully loaded ... wayland"
 #      line). Hard-fail if it fell back to xcb/offscreen.
-#   5. grim-capture the compositor output to a PNG.
-#   6. ASSERT the PNG is 1280x800 AND non-blank (not a single flat colour).
+#   5. HARD-GATE that a view with an app_id actually maps (swaymsg get_tree).
+#   6. Poll-capture-retry with grim until a non-blank 1280x800 PNG is captured
+#      (or a generous deadline passes) — no fixed sleep, no single-shot flake.
 #   7. Clean up (trap kills trailer + sway) and exit 0 only if every assert passed.
 #
 # Idempotent / CI-safe: each run gets its own runtime dir and cleans up on exit.
@@ -54,8 +55,14 @@ OUT_PNG="${WAYLAND_SMOKE_OUT:-$REPO_ROOT/wayland-smoke.png}"
 # Timeouts (seconds) — polled, never a blind sleep.
 SOCKET_TIMEOUT="${WAYLAND_SMOKE_SOCKET_TIMEOUT:-15}"
 PLUGIN_TIMEOUT="${WAYLAND_SMOKE_PLUGIN_TIMEOUT:-20}"
-# Short settle after the surface maps so the first frame is painted before grim.
-PAINT_SETTLE="${WAYLAND_SMOKE_PAINT_SETTLE:-2}"
+# How long to wait for a view with an app_id to MAP on the compositor.
+MAP_TIMEOUT="${WAYLAND_SMOKE_MAP_TIMEOUT:-15}"
+# Generous deadline for the poll-capture-retry loop: keep grim-capturing until a
+# non-blank frame lands or this passes. Slow CI runners can be seconds behind on
+# committing the first painted frame, so this must be roomy.
+CAPTURE_TIMEOUT="${WAYLAND_SMOKE_CAPTURE_TIMEOUT:-30}"
+# Throttle between capture attempts inside that loop.
+CAPTURE_RETRY_INTERVAL="${WAYLAND_SMOKE_CAPTURE_RETRY_INTERVAL:-0.5}"
 
 # Non-blank thresholds (see assert_png_nonblank).
 MIN_UNIQUE_COLORS="${WAYLAND_SMOKE_MIN_COLORS:-64}"
@@ -66,6 +73,13 @@ MIN_UNIQUE_COLORS="${WAYLAND_SMOKE_MIN_COLORS:-64}"
 for tool in sway grim; do
   command -v "$tool" >/dev/null 2>&1 || { err "'$tool' not found on PATH — install sway + grim (see docker/runner/Dockerfile)"; exit 2; }
 done
+# The non-blank oracle (assert_png_nonblank) needs an image analyzer: ImageMagick
+# `identify` OR python3 (the pure-stdlib PNG fallback). Without either, the size
+# read fails with a misleading dimension error late in the run — check up front.
+if ! command -v identify >/dev/null 2>&1 && ! command -v python3 >/dev/null 2>&1; then
+  err "no image analyzer found — need ImageMagick 'identify' or 'python3' on PATH for the non-blank PNG check"
+  exit 2
+fi
 [ -x "$TRAILER_BIN" ] || { err "trailer binary not found or not executable: $TRAILER_BIN (build it first)"; exit 2; }
 if [ ! -f "$SAMPLE_DOC" ]; then
   log "sample doc '$SAMPLE_DOC' missing — launching Trailer with no file (empty-state window)"
@@ -77,7 +91,8 @@ fi
 # dir per run keeps the job idempotent / re-runnable. chmod 700 as XDG requires.
 # ---------------------------------------------------------------------------
 XDG_RUNTIME_DIR="$(mktemp -d /tmp/wl-smoke.XXXXXX)"
-mkdir -p "$XDG_RUNTIME_DIR"
+# mktemp -d already created it mode 700; re-chmod defensively in case a
+# restrictive-umask environment or a future TMPDIR override loosened it.
 chmod 700 "$XDG_RUNTIME_DIR"
 export XDG_RUNTIME_DIR
 log "XDG_RUNTIME_DIR=$XDG_RUNTIME_DIR"
@@ -105,13 +120,22 @@ cleanup() {
   rm -rf "$XDG_RUNTIME_DIR" 2>/dev/null || true
   return "$rc"
 }
-trap cleanup EXIT INT TERM
+# Run cleanup exactly once, on EXIT. On INT/TERM we just `exit 130`, which
+# triggers the EXIT trap — so children are never double-killed and the EXIT
+# handler's `local rc=$?` still preserves the real exit code on assert-fail paths.
+trap cleanup EXIT
+trap 'exit 130' INT TERM
 
 # ---------------------------------------------------------------------------
 # 1. Start sway headless (pixman renderer — no GPU in CI).
 # ---------------------------------------------------------------------------
 cat > "$SWAY_CFG" <<EOF
 output HEADLESS-1 resolution ${WIDTH}x${HEIGHT}
+# Pin a solid black background so an unmapped output is PROVABLY one flat
+# colour. Without this a future sway default could render a non-flat "no
+# wallpaper" pattern (checkerboard / gradient) that would false-PASS the
+# non-blank oracle even when Trailer never painted.
+output HEADLESS-1 bg #000000 solid_color
 default_border none
 # No wallpaper/bar: a bare output is a flat colour, so a blank capture stays
 # blank (and fails the non-blank assert) unless Trailer actually paints.
@@ -143,11 +167,36 @@ done
 export WAYLAND_DISPLAY
 log "compositor up: WAYLAND_DISPLAY=$WAYLAND_DISPLAY"
 
+# Point swaymsg at sway's IPC socket. sway exports SWAYSOCK in its OWN env, not
+# ours, so the mapped-view gate's swaymsg can't find the compositor without
+# this. sway creates sway-ipc.<uid>.<pid>.sock alongside the wayland socket;
+# poll briefly for it (it's normally already present by now).
+SWAYSOCK=""
+for _ in 1 2 3 4 5 6 7 8 9 10; do
+  for ipc in "$XDG_RUNTIME_DIR"/sway-ipc.*.sock; do
+    [ -S "$ipc" ] && { SWAYSOCK="$ipc"; break; }
+  done
+  [ -n "$SWAYSOCK" ] && break
+  sleep 0.2
+done
+if [ -n "$SWAYSOCK" ]; then
+  export SWAYSOCK
+  log "SWAYSOCK=$SWAYSOCK"
+else
+  log "sway IPC socket not found — mapped-view gate will be skipped (capture-retry loop is the oracle)"
+fi
+
 # ---------------------------------------------------------------------------
-# 2. Locate the Qt plugins dir (best-effort). Phase 1: the wayland platform
-#    plugin ships in the aqt Qt bundle; if the binary can't already find its
-#    plugin prefix (rpath / QLibraryInfo), QT_PLUGIN_PATH bridges the gap.
-#    Harmless when Qt already knows where its plugins are.
+# 2. Resolve the Qt plugins dir and HARD-ASSERT it ships libqwayland.
+#    In CI the wayland-smoke job exports QT_PLUGIN_PATH derived from the SAME
+#    Qt the build used (QT_ROOT_DIR/plugins — see .github/workflows/ci.yml);
+#    the CI Qt layout (aqtinstall/install-qt-action) does not always match the
+#    local-container globs below, so relying on auto-detect in CI can leave
+#    QT_PLUGIN_PATH unset and Trailer unable to find libqwayland.so → a silent
+#    xcb/offscreen fallback. Locally / in the runner image we auto-detect via
+#    qmake or a glob as a fallback. Either way we assert the resolved dir
+#    actually contains the wayland platform plugin BEFORE launching, so a
+#    missing plugin is diagnosed here rather than chased through a fallback line.
 # ---------------------------------------------------------------------------
 if [ -z "${QT_PLUGIN_PATH:-}" ]; then
   qt_plugins=""
@@ -164,11 +213,20 @@ if [ -z "${QT_PLUGIN_PATH:-}" ]; then
   fi
   if [ -n "$qt_plugins" ] && [ -d "$qt_plugins/platforms" ]; then
     export QT_PLUGIN_PATH="$qt_plugins"
-    log "QT_PLUGIN_PATH=$QT_PLUGIN_PATH"
-  else
-    log "QT_PLUGIN_PATH unset and not auto-detected — relying on the binary's baked plugin prefix"
+    log "QT_PLUGIN_PATH=$QT_PLUGIN_PATH (auto-detected)"
   fi
 fi
+# Hard-assert: a plugins dir containing libqwayland*.so must have resolved.
+# Launching without it would only produce a misleading xcb/offscreen fallback.
+if [ -z "${QT_PLUGIN_PATH:-}" ]; then
+  err "QT_PLUGIN_PATH is unset and could not be auto-detected — set it to the Qt plugins dir (QT_ROOT_DIR/plugins) so Trailer can load libqwayland.so"
+  exit 2
+fi
+if ! find "$QT_PLUGIN_PATH" -maxdepth 2 -name 'libqwayland*.so' 2>/dev/null | grep -q .; then
+  err "no libqwayland*.so under QT_PLUGIN_PATH=$QT_PLUGIN_PATH — the wayland platform plugin is missing; Trailer would fall back to xcb/offscreen"
+  exit 2
+fi
+log "QT_PLUGIN_PATH=$QT_PLUGIN_PATH (wayland platform plugin present)"
 
 # ---------------------------------------------------------------------------
 # 3. Launch Trailer under the wayland plugin with qt.qpa logging on.
@@ -208,24 +266,34 @@ done
 [ -n "$plugin_ok" ] || { err "did not observe the wayland-plugin-loaded line within ${PLUGIN_TIMEOUT}s — qt.qpa log:"; cat "$TRAILER_LOG" >&2; exit 1; }
 log "ASSERT PASS: platformName is wayland (xdg-shell), no xcb/offscreen fallback"
 
-# Belt-and-suspenders: confirm the compositor actually has a mapped view.
-if command -v swaymsg >/dev/null 2>&1; then
-  tree="$(swaymsg -t get_tree 2>/dev/null || true)"
-  if printf '%s' "$tree" | grep -q '"app_id"'; then
-    log "compositor reports a mapped view (swaymsg get_tree)"
-  fi
+# ---------------------------------------------------------------------------
+# 5. HARD GATE: a view with an app_id must actually MAP on the compositor
+#    before we capture. The plugin-loaded line (step 4) proves the plugin
+#    bound; it does NOT prove a surface mapped. Poll swaymsg get_tree until a
+#    mapped app_id view appears (bounded), and FAIL if none does — this catches
+#    "plugin loaded but the surface never mapped" before we ever capture. If
+#    swaymsg is somehow absent, skip this gate and let the capture-retry loop
+#    below be the real oracle.
+# ---------------------------------------------------------------------------
+if command -v swaymsg >/dev/null 2>&1 && [ -n "${SWAYSOCK:-}" ]; then
+  mapped_ok=""
+  deadline=$(( $(date +%s) + MAP_TIMEOUT ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    if ! kill -0 "$TRAILER_PID" 2>/dev/null; then
+      err "Trailer exited before mapping a surface — qt.qpa log:"; cat "$TRAILER_LOG" >&2; exit 1
+    fi
+    # A real toplevel has a non-null "app_id": "..."; unmanaged/container
+    # nodes carry "app_id": null, so match a quoted (non-null) value only.
+    if swaymsg -t get_tree 2>/dev/null | grep -qE '"app_id": *"[^"]'; then
+      mapped_ok=1; break
+    fi
+    sleep 0.2
+  done
+  [ -n "$mapped_ok" ] || { err "no view with an app_id mapped within ${MAP_TIMEOUT}s — plugin loaded but the surface never mapped; qt.qpa log:"; cat "$TRAILER_LOG" >&2; exit 1; }
+  log "ASSERT PASS: a view with an app_id is mapped (swaymsg get_tree)"
+else
+  log "swaymsg/SWAYSOCK not available — skipping mapped-view gate; capture-retry loop is the oracle"
 fi
-
-# Let the surface commit its first painted frame before we capture.
-sleep "$PAINT_SETTLE"
-
-# ---------------------------------------------------------------------------
-# 5. Capture the compositor output with grim.
-# ---------------------------------------------------------------------------
-log "capturing compositor output with grim -> $OUT_PNG"
-grim "$OUT_PNG"
-[ -s "$OUT_PNG" ] || { err "grim produced an empty file"; exit 1; }
-log "captured $(file -b "$OUT_PNG")"
 
 # ---------------------------------------------------------------------------
 # 6. ASSERT the PNG is the expected size AND non-blank (not one flat colour).
@@ -251,17 +319,22 @@ p = sys.argv[1]
 data = open(p, "rb").read()
 assert data[:8] == b"\x89PNG\r\n\x1a\n", "not a PNG"
 i = 8
-width = height = bit_depth = color_type = None
+width = height = bit_depth = color_type = interlace = None
 idat = bytearray()
 while i < len(data):
     (ln,) = struct.unpack(">I", data[i:i+4]); typ = data[i+4:i+8]
     chunk = data[i+8:i+8+ln]; i += 12 + ln
     if typ == b"IHDR":
-        width, height, bit_depth, color_type = struct.unpack(">IIBB", chunk[:10])
+        # IHDR: width, height, bit_depth, color_type, compression, filter, interlace
+        (width, height, bit_depth, color_type,
+         _comp, _filter, interlace) = struct.unpack(">IIBBBBB", chunk[:13])
     elif typ == b"IDAT":
         idat += chunk
     elif typ == b"IEND":
         break
+# grim never interlaces; the unfilter loop below assumes a single non-interlaced
+# pass, so decoding an Adam7 image would silently produce garbage colour counts.
+assert interlace == 0, f"interlaced PNG (interlace={interlace}) not supported"
 channels = {0:1, 2:3, 3:1, 4:2, 6:4}[color_type]
 assert bit_depth == 8, f"unexpected bit depth {bit_depth}"
 bpp = channels
@@ -310,21 +383,53 @@ PY
   if [ "$w" != "$WIDTH" ] || [ "$h" != "$HEIGHT" ]; then
     err "capture is ${w}x${h}, expected ${WIDTH}x${HEIGHT}"; return 1
   fi
+  # Validate the colour count is an integer BEFORE the numeric compare. A
+  # non-empty but non-numeric value (analyzer hiccup) would make `[ … -lt … ]`
+  # error out; hidden behind `2>/dev/null` that used to fall through to PASS —
+  # a fail-OPEN. Fail CLOSED instead.
+  case "$ncolors" in
+    ''|*[!0-9]*) err "non-numeric colour count '$ncolors' — image analyzer failed to produce a count"; return 1 ;;
+  esac
   # Non-blank check: a flat single-colour buffer has 1 unique colour; real
   # painted UI has thousands. Require a healthy margin above 1.
-  if [ -z "$ncolors" ] || [ "$ncolors" -lt "$MIN_UNIQUE_COLORS" ] 2>/dev/null; then
+  if [ "$ncolors" -lt "$MIN_UNIQUE_COLORS" ]; then
     err "capture looks blank/flat: unique-colors=$ncolors (need >= $MIN_UNIQUE_COLORS) — Trailer did not paint real UI"
     return 1
   fi
   return 0
 }
 
-if assert_png_nonblank "$OUT_PNG"; then
-  log "ASSERT PASS: capture is ${WIDTH}x${HEIGHT} and non-blank"
-else
-  err "non-blank assertion FAILED"
+# ---------------------------------------------------------------------------
+# 6b. Poll-capture-retry: repeatedly grim-capture and run the size + non-blank
+#     check, retrying on a throttled interval until a non-blank ${WIDTH}x${HEIGHT}
+#     frame is captured or CAPTURE_TIMEOUT passes. This replaces a fixed settle
+#     + single capture, which flaked on slow runners that had not committed the
+#     first painted frame when grim fired (blank capture → false red on
+#     unrelated PRs). Succeeds as soon as one good frame lands.
+# ---------------------------------------------------------------------------
+log "capturing compositor output with grim (poll up to ${CAPTURE_TIMEOUT}s) -> $OUT_PNG"
+captured_ok=""
+deadline=$(( $(date +%s) + CAPTURE_TIMEOUT ))
+while [ "$(date +%s)" -lt "$deadline" ]; do
+  if ! kill -0 "$TRAILER_PID" 2>/dev/null; then
+    err "Trailer exited before a non-blank frame was captured — qt.qpa log:"; cat "$TRAILER_LOG" >&2; exit 1
+  fi
+  # Quiet during polling: only the final verdict is logged. grim can transiently
+  # fail (frame in flight); a blank/wrong-size frame just triggers another try.
+  if grim "$OUT_PNG" 2>/dev/null && [ -s "$OUT_PNG" ] \
+     && assert_png_nonblank "$OUT_PNG" >/dev/null 2>&1; then
+    captured_ok=1; break
+  fi
+  sleep "$CAPTURE_RETRY_INTERVAL"
+done
+if [ -z "$captured_ok" ]; then
+  err "no non-blank ${WIDTH}x${HEIGHT} frame captured within ${CAPTURE_TIMEOUT}s — re-running the check on the last capture to surface why:"
+  grim "$OUT_PNG" 2>/dev/null || true
+  assert_png_nonblank "$OUT_PNG" || true   # unsuppressed: prints the failing reason
   exit 1
 fi
+log "captured $(file -b "$OUT_PNG")"
+log "ASSERT PASS: capture is ${WIDTH}x${HEIGHT} and non-blank"
 
 log "ALL ASSERTS PASSED — Trailer renders on native Wayland. Screenshot: $OUT_PNG"
 exit 0

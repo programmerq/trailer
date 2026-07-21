@@ -4,7 +4,21 @@ The `wayland-smoke` job in [`.github/workflows/ci.yml`](../../.github/workflows/
 launches the real built `trailer` binary on a headless Wayland compositor and
 screenshots it. It is the one CI check that proves Trailer runs natively on
 Wayland — something the offscreen unit tier and the Wine tier structurally
-cannot prove. It is deterministic (hard oracle) and **blocks merge**.
+cannot prove. Its oracle is deterministic (a hard pass/fail), so it is
+*eligible* to gate merges.
+
+**Branch-protection status: keep it NON-REQUIRED (advisory) for now.** The job
+runs on every PR and every push to `main`, but until `sway` + `grim` are baked
+into the runner image (see *Runner image / ride-along* below) it apt-installs
+them per run, pulling a real dependency tree through the egress proxy; a single
+proxy hiccup would then red-gate unrelated PRs. Until the bake lands, do **not**
+mark it a required check. There is a second reason to hold off: `ci.yml` carries
+`paths-ignore: ['**.md', 'docs/**']`, so a docs-only PR skips the whole workflow
+— a *required* `wayland-smoke` would hang forever on "Expected" for those PRs
+(the same caveat already documented for `build-and-test`). Promote it to
+required only after the packages are baked in **and** the paths-ignore
+interaction is resolved (a same-name no-op workflow on the inverse paths, or
+dropping paths-ignore).
 
 Driver: [`scripts/wayland-smoke.sh`](../../scripts/wayland-smoke.sh).
 
@@ -21,18 +35,33 @@ Driver: [`scripts/wayland-smoke.sh`](../../scripts/wayland-smoke.sh).
    under `QT_QPA_PLATFORM=wayland` with `QT_LOGGING_RULES='qt.qpa.*=true'`.
 4. **Asserts `platformName == wayland`** by grepping the qt.qpa log for the
    `Successfully loaded Qt platform plugin "wayland"` line, and hard-fails on
-   an `xcb`/`offscreen`/`minimal` fallback line. Strict.
-5. Captures the compositor output with **grim** to a PNG (uploaded as a CI
-   artifact).
-6. **Asserts the PNG is `1280x800` and non-blank** — not a single flat colour.
-   A bare sway output is a flat colour, so a capture stays blank unless Trailer
-   actually paints; painted UI has thousands of unique colours. Uses ImageMagick
-   `identify` when present, and falls back to a pure-stdlib Python PNG analyzer
-   (zlib IDAT + scanline unfilter + unique-colour count) so the script is
-   self-contained.
+   an `xcb`/`offscreen`/`minimal` fallback line. Before launching it also
+   **hard-asserts** a Qt plugins dir containing `libqwayland*.so` was resolved
+   (from `QT_PLUGIN_PATH` — the CI job exports it from the same Qt the build
+   used — or a local auto-detect), so a missing plugin fails clearly instead of
+   silently falling back.
+5. **Hard-gates that a surface actually maps.** "Plugin loaded" proves the
+   plugin bound, not that a window mapped. The script polls `swaymsg get_tree`
+   until a view with an `app_id` appears (bounded deadline) and fails if none
+   does — catching "plugin loaded but the surface never mapped" before capture.
+   (If `swaymsg`/`SWAYSOCK` is unavailable it skips this gate and leans on the
+   capture-retry loop as the real oracle.)
+6. **Poll-captures with grim until a non-blank `1280x800` frame lands.** Rather
+   than a fixed settle + single capture (which flaked on slow runners that had
+   not committed the first painted frame when grim fired), it re-captures on a
+   throttled interval up to a generous deadline, succeeding as soon as a
+   non-blank frame is captured and failing only if the deadline passes. A bare
+   sway output is a solid colour (the config pins `bg #000000 solid_color`), so
+   a capture stays blank unless Trailer actually paints; painted UI has
+   thousands of unique colours. Uses ImageMagick `identify` when present, and
+   falls back to a pure-stdlib Python PNG analyzer (zlib IDAT + scanline
+   unfilter + unique-colour count; non-interlaced only) so the script is
+   self-contained. The final captured PNG is uploaded as a CI artifact. The
+   colour-count check fails **closed** on a non-numeric count.
 
-A `trap` kills trailer + sway and removes the runtime dir on exit; each run is
-idempotent and re-runnable.
+A `trap cleanup EXIT` (with `trap 'exit 130' INT TERM`) kills trailer + sway
+and removes the runtime dir exactly once on exit, preserving the real exit
+code; each run is idempotent and re-runnable.
 
 ## Design decisions
 
@@ -85,12 +114,18 @@ inline rather than hidden.
 ARC runner-set repointed at the new tag, the CI job **apt-installs them
 per-run** (mirroring the Wine tier's per-run install), so the tier is green
 without waiting for an image rebuild — the same ride-along pattern PR #87 used.
+That per-run install goes through the egress proxy, so it is wrapped in a
+bounded retry (3 attempts with backoff) to ride out a transient proxy hiccup;
+even so, this per-run dependency pull is exactly **why the job should stay a
+non-required (advisory) check until the bake lands** (see the top of this doc).
 The Qt wayland platform plugin needs no package: the aqt Qt 6.11 `linux_gcc_64`
 bundle already ships `libqwayland.so` + the xdg-shell integration.
 
 ## Proof
 
-`docs/ci/images/wayland-smoke-proof.png` is a genuine capture of Trailer
+![Trailer on native Wayland](images/wayland-smoke-proof.png)
+
+`docs/ci/images/wayland-smoke-proof.png` (above) is a genuine capture of Trailer
 running on native Wayland (sway + grim) with an image document open — full menu
 bar, markup toolbar, and status bar. Not a blank buffer.
 
