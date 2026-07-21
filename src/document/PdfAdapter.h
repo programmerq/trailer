@@ -23,6 +23,7 @@ class QPdfSearchModel;
 class QPdfBookmarkModel;
 class QIdentityProxyModel;
 class QPdfView;
+class QStackedWidget;
 template <typename T> class QFutureWatcher;
 // tests/test_adapters.cpp — befriended so the desync test seam below
 // stays private instead of shipping as callable production API.
@@ -33,6 +34,7 @@ namespace trailer {
 class AnnotationOverlay;
 class FormOverlay;
 class SelectableTextLayer;
+class TwoPageView;
 
 class PdfDocument : public IDocument {
   public:
@@ -507,6 +509,12 @@ class PdfDocument : public IDocument {
     QPointer<AnnotationOverlay> m_overlay;
     QPointer<SelectableTextLayer> m_textLayer;
     QPointer<FormOverlay> m_formOverlay;
+    // AUGMENT wiring (decision record 2026-07-21-two-page-layout, D1-A):
+    // createView returns a QStackedWidget holding the QPdfView surface
+    // (Single/Continuous, unchanged) at index 0 and the custom TwoPageView
+    // (Two-Pages mode) at index 1. applyViewMode swaps the visible page.
+    QPointer<QStackedWidget> m_viewStack;
+    QPointer<TwoPageView> m_twoPageView;
     AnnotationStore m_annotations;
     SelectableTextStore m_selectableText;
     ViewMode m_viewMode = ViewMode::Continuous;

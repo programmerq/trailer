@@ -25,14 +25,18 @@
 #include <QAbstractScrollArea>
 #include <QAction>
 #include <QDir>
+#include <QFrame>
 #include <QImage>
+#include <QLabel>
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfView>
 #include <QPdfWriter>
 #include <QRect>
+#include <QScrollBar>
 #include <QString>
 #include <QTemporaryDir>
+#include <QVBoxLayout>
 #include <QWidget>
 #include <QtTest/QtTest>
 
@@ -75,6 +79,25 @@ QAction *findAction(MainWindow *mw, const QString &objectName) {
     return mw ? mw->findChild<QAction *>(objectName) : nullptr;
 }
 
+// Open `path` in a FRESH window: close any existing MainWindows first (the
+// default is window-per-file, so leaving earlier windows open makes
+// currentMainWindow() ambiguous), then open and return the sole window.
+MainWindow *openFreshWindow(Application *app, const QString &path) {
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (qobject_cast<MainWindow *>(w))
+            w->close();
+    }
+    QApplication::processEvents();
+    app->openFiles({path});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    if (mw) {
+        mw->show();
+        QApplication::processEvents();
+    }
+    return mw;
+}
+
 } // namespace
 
 class TestUatTwoPage : public QObject {
@@ -109,12 +132,8 @@ void TestUatTwoPage::uat_vwr_070_toggleEnablementByDocType() {
     // Multi-page PDF → enabled.
     const QString multi =
         writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_070_multi.pdf")), 4);
-    app->openFiles({multi});
-    QApplication::processEvents();
-    MainWindow *mw = currentMainWindow();
+    MainWindow *mw = openFreshWindow(app, multi);
     QVERIFY(mw);
-    mw->show();
-    QApplication::processEvents();
     QAction *twoPages = findAction(mw, QStringLiteral("action.view.twoPages"));
     QVERIFY2(twoPages, "Two Pages action must exist with objectName action.view.twoPages");
     QVERIFY2(twoPages->isEnabled(), "Two Pages must be enabled for a multi-page PDF");
@@ -122,9 +141,8 @@ void TestUatTwoPage::uat_vwr_070_toggleEnablementByDocType() {
     // Single-page PDF → disabled + explanatory tooltip.
     const QString single =
         writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_070_single.pdf")), 1);
-    app->openFiles({single});
-    QApplication::processEvents();
-    mw = currentMainWindow();
+    mw = openFreshWindow(app, single);
+    QVERIFY(mw);
     twoPages = findAction(mw, QStringLiteral("action.view.twoPages"));
     QVERIFY(twoPages);
     QVERIFY2(!twoPages->isEnabled(), "Two Pages must be disabled for a single-page PDF");
@@ -134,9 +152,8 @@ void TestUatTwoPage::uat_vwr_070_toggleEnablementByDocType() {
 
     // Image → disabled + explanatory tooltip.
     const QString image = writeSampleImage(m_scratch.filePath(QStringLiteral("uat_vwr_070.png")));
-    app->openFiles({image});
-    QApplication::processEvents();
-    mw = currentMainWindow();
+    mw = openFreshWindow(app, image);
+    QVERIFY(mw);
     twoPages = findAction(mw, QStringLiteral("action.view.twoPages"));
     QVERIFY(twoPages);
     QVERIFY2(!twoPages->isEnabled(), "Two Pages must be disabled for an image");
@@ -177,11 +194,6 @@ void TestUatTwoPage::uat_vwr_071_coverAlonePairingGeometry() {
     QVERIFY2(twoPage, "TwoPageView (objectName view.twoPage) must exist in Two-Pages mode");
     QVERIFY2(twoPage->isVisible(), "TwoPageView must be the visible surface in Two-Pages mode");
 
-    // The spread canvas must be wider than a single page (two side by side)
-    // and taller than one spread (multiple spreads stacked for scrolling).
-    const int contentW = twoPage->widget() ? twoPage->widget()->width()
-                                           : twoPage->viewport()->width();
-    Q_UNUSED(contentW);
     // Geometry is asserted through the scrollbars: a 5-page book with
     // cover-alone pairing produces spreads [1],[2,3],[4,5] — 3 rows, so the
     // vertical range must exceed a single spread's height.
@@ -247,18 +259,25 @@ void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {
 
     QAction *markup = findAction(mw, QStringLiteral("action.view.markupToolbar"));
     QAction *find = findAction(mw, QStringLiteral("action.edit.find"));
+    QAction *twoPages = findAction(mw, QStringLiteral("action.view.twoPages"));
+    QAction *continuous = findAction(mw, QStringLiteral("action.view.continuous"));
     QVERIFY2(markup, "markup toolbar toggle must exist with objectName action.view.markupToolbar");
     QVERIFY2(find, "Find action must exist with objectName action.edit.find");
+    QVERIFY2(twoPages && continuous, "view-mode actions must exist");
 
-    // Baseline (Continuous): both usable on a normal PDF.
-    doc->setViewMode(ViewMode::Continuous);
+    // Switch modes exactly as the user does — via the View-menu actions — so
+    // the degradation runs through the real command path, not a back-door
+    // setViewMode call.
+    continuous->trigger();
     QApplication::processEvents();
     QVERIFY2(find->isEnabled(), "Find is available in Continuous mode");
 
     // Two-Pages: markup + search disabled-with-tooltip pointing back to the
     // working modes.
-    doc->setViewMode(ViewMode::TwoPages);
+    QVERIFY2(twoPages->isEnabled(), "Two Pages must be enabled for this multi-page PDF");
+    twoPages->trigger();
     QApplication::processEvents();
+    QCOMPARE(doc->viewMode(), ViewMode::TwoPages);
     QVERIFY2(!markup->isEnabled(), "markup must be disabled in Two-Pages mode");
     QVERIFY2(markup->toolTip().contains(QStringLiteral("Switch to"), Qt::CaseInsensitive),
              qPrintable(QStringLiteral("markup degrade tooltip should point back; got: '%1'")
@@ -269,9 +288,10 @@ void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {
                             .arg(find->toolTip())));
 
     // Leaving Two-Pages restores both.
-    doc->setViewMode(ViewMode::Continuous);
+    continuous->trigger();
     QApplication::processEvents();
     QVERIFY2(find->isEnabled(), "Find re-enables when leaving Two-Pages mode");
+    QVERIFY2(markup->isEnabled(), "markup re-enables when leaving Two-Pages mode");
 }
 
 int main(int argc, char **argv) {

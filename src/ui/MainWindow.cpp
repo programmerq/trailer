@@ -1197,6 +1197,7 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
     editMenu->addSeparator();
 
     m_findAction = editMenu->addAction(tr("&Find…"));
+    m_findAction->setObjectName(QStringLiteral("action.edit.find"));
     m_findAction->setShortcut(QKeySequence::Find);
     connect(m_findAction, &QAction::triggered, this, &MainWindow::showSearchBar);
 
@@ -1278,6 +1279,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     viewMenu->addAction(toggleSidebar);
 
     m_markupToolbarAction = m_markupToolbar->toggleViewAction();
+    m_markupToolbarAction->setObjectName(QStringLiteral("action.view.markupToolbar"));
     m_markupToolbarAction->setText(tr("Toggle &Markup Toolbar"));
     m_themedIcons.apply(m_markupToolbarAction, QStringLiteral(":/icons/actions/panel-markup.svg"),
                         this);
@@ -1307,35 +1309,42 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     // make room. Cmd-1 → Continuous (Trailer's default mode), Cmd-2 →
     // Single Page, Cmd-3 → Two Pages.
     m_singlePageAction = viewMenu->addAction(tr("Single Page"));
+    m_singlePageAction->setObjectName(QStringLiteral("action.view.singlePage"));
     m_singlePageAction->setCheckable(true);
     m_singlePageAction->setShortcut(QKeySequence(tr("Ctrl+2")));
     connect(m_singlePageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
             doc->setViewMode(ViewMode::SinglePage);
+            onCurrentDocumentChanged(doc);
         }
     });
 
-    // Cmd-3 is reserved here but the action stays disabled: Qt's
-    // QPdfView::PageMode only exposes SinglePage and MultiPage — there is
-    // no facing/two-up layout. PdfDocument::applyViewMode warns and no-ops
-    // on ViewMode::TwoPages (it deliberately does not alias Continuous), so
-    // enabling this action would be a no-op. A real side-by-side layout
-    // needs a custom view (tracked as a larger follow-up); once it lands
-    // and the action is enabled, Cmd-3 starts working.
-    // makeDisabledAction starts it disabled with the explanatory tooltip and
-    // enables tooltips on the View menu.
+    // Two Pages (Cmd-3) drives the custom TwoPageView (decision record
+    // 2026-07-21-two-page-layout, D1-A). makeDisabledAction starts it disabled
+    // with an explanatory tooltip and enables tooltips on the View menu; the
+    // per-document enable/tooltip is (re)computed in onCurrentDocumentChanged
+    // (enabled only for multi-page PDFs; G3 no-lying-controls otherwise).
     m_twoPagesAction = makeDisabledAction(
         viewMenu, tr("Two Pages"),
-        tr("Two-page layout is not yet available."));
+        tr("Two-page layout needs a multi-page PDF."));
+    m_twoPagesAction->setObjectName(QStringLiteral("action.view.twoPages"));
     m_twoPagesAction->setCheckable(true);
     m_twoPagesAction->setShortcut(QKeySequence(tr("Ctrl+3")));
+    connect(m_twoPagesAction, &QAction::triggered, this, [this]() {
+        if (auto *doc = m_documentView->currentDocument()) {
+            doc->setViewMode(ViewMode::TwoPages);
+            onCurrentDocumentChanged(doc);
+        }
+    });
 
     m_continuousAction = viewMenu->addAction(tr("Continuous"));
+    m_continuousAction->setObjectName(QStringLiteral("action.view.continuous"));
     m_continuousAction->setCheckable(true);
     m_continuousAction->setShortcut(QKeySequence(tr("Ctrl+1")));
     connect(m_continuousAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
             doc->setViewMode(ViewMode::Continuous);
+            onCurrentDocumentChanged(doc);
         }
     });
 
@@ -3508,9 +3517,25 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     const bool hasModes = doc && doc->supportsViewModes();
     m_singlePageAction->setEnabled(hasModes);
     m_continuousAction->setEnabled(hasModes);
-    // m_twoPagesAction stays disabled pending implementation.
 
     const bool multiplePages = doc && doc->pageCount() > 1;
+    // Two Pages toggle (G3, no lying controls): enabled ONLY for multi-page
+    // PDFs (a facing spread needs pages to face). Disabled-with-tooltip that
+    // says WHY for every other case — image, single-page PDF, no document —
+    // per decision record 2026-07-21-two-page-layout clause 5. The tooltip is
+    // only meaningful when the action is disabled, so it is cleared when enabled.
+    const bool twoPagesOk = hasModes && multiplePages;
+    m_twoPagesAction->setEnabled(twoPagesOk);
+    if (twoPagesOk) {
+        m_twoPagesAction->setToolTip(QString());
+    } else if (doc && doc->documentType() == DocumentType::Image) {
+        m_twoPagesAction->setToolTip(tr("Images don't have pages to face."));
+    } else if (doc && doc->supportsViewModes() && doc->pageCount() <= 1) {
+        m_twoPagesAction->setToolTip(tr("This document has only one page."));
+    } else {
+        m_twoPagesAction->setToolTip(tr("Two-page layout needs a multi-page PDF."));
+    }
+
     m_previousPageAction->setEnabled(multiplePages);
     m_nextPageAction->setEnabled(multiplePages);
 
@@ -3791,6 +3816,52 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
 
     syncViewModeActions(doc);
     updateTitleForDocument(doc);
+
+    // Honest degradation in Two-Pages mode (decision record
+    // 2026-07-21-two-page-layout, D2-A; gate G3). The first shipping two-up
+    // increment does not yet reproject markup, text-selection, or search onto
+    // the spread geometry, so those controls are disabled-with-tooltip that
+    // points back to the working modes rather than silently no-opping. Full
+    // parity is the COMMITTED PR2 follow-up
+    // (docs/backlog/2026-07-21-two-page-overlay-search-parity). This override
+    // runs after the per-capability enablement above so it wins in two-up mode
+    // and restores the normal state on the way out.
+    const bool twoPageMode =
+        doc && doc->supportsViewModes() && doc->viewMode() == ViewMode::TwoPages;
+    if (twoPageMode) {
+        const QString why =
+            tr("Switch to Single Page or Continuous to use this in a facing-page view.");
+        m_findAction->setEnabled(false);
+        m_findAction->setToolTip(why);
+        m_findNextAction->setEnabled(false);
+        m_findNextAction->setToolTip(why);
+        m_findPreviousAction->setEnabled(false);
+        m_findPreviousAction->setToolTip(why);
+        if (m_searchButton) {
+            m_searchButton->setEnabled(false);
+            m_searchButton->setToolTip(why);
+        }
+        if (m_searchBar && m_searchBar->isVisible())
+            hideSearchBar();
+        if (m_markupToolbarAction) {
+            m_markupToolbarAction->setEnabled(false);
+            m_markupToolbarAction->setToolTip(why);
+        }
+        if (m_markupToolbar && m_markupToolbar->isVisible())
+            m_markupToolbar->hide();
+    } else {
+        // Leaving two-up: clear the degrade tooltips. Enablement was already
+        // set by the per-capability logic above for find/search; the markup
+        // toggle is re-gated on document presence here (its normal rule,
+        // mirroring the empty-state handler) so it is not left stuck disabled.
+        m_findAction->setToolTip(QString());
+        m_findNextAction->setToolTip(QString());
+        m_findPreviousAction->setToolTip(QString());
+        if (m_markupToolbarAction) {
+            m_markupToolbarAction->setEnabled(doc != nullptr);
+            m_markupToolbarAction->setToolTip(QString());
+        }
+    }
 
     // Large-doc OCR hint chip. Dismissal is keyed per-document (ADR
     // 0006), so switching documents does not clear another document's

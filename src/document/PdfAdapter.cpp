@@ -3,6 +3,7 @@
 #include "ui/AnnotationOverlay.h"
 #include "ui/FormOverlay.h"
 #include "ui/SelectableTextLayer.h"
+#include "ui/TwoPageView.h"
 #include "util/TempPath.h"
 
 #include <QApplication>
@@ -38,6 +39,7 @@
 #include <QSizeF>
 #include <QThread>
 #include <QTimer>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QtConcurrent>
 
@@ -943,7 +945,32 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
     QObject::connect(formOverlay, &FormOverlay::fieldValueChanged, view,
                      [this](int id, const QString &value) { setFormFieldValue(id, value); });
 
-    return view;
+    // AUGMENT (decision record 2026-07-21-two-page-layout, D1-A): host the
+    // QPdfView surface and a custom TwoPageView in a QStackedWidget. Single and
+    // Continuous keep driving the QPdfView (index 0), unchanged; Two-Pages mode
+    // shows the TwoPageView (index 1). The zoom factor is SHARED — TwoPageView
+    // follows QPdfView::zoomFactorChanged — so the zoom-% readout stays truthful
+    // across all three modes (record clause 3).
+    auto *stack = new QStackedWidget(parent);
+    stack->addWidget(view); // index 0: Single / Continuous
+
+    auto *twoPageView = new TwoPageView(stack);
+    twoPageView->setDocument(m_doc.get());
+    twoPageView->setZoomFactor(view->zoomFactor());
+    stack->addWidget(twoPageView); // index 1: Two-Pages
+    QObject::connect(view, &QPdfView::zoomFactorChanged, twoPageView,
+                     [twoPageView](qreal z) {
+                         if (twoPageView)
+                             twoPageView->setZoomFactor(z);
+                     });
+    m_viewStack = stack;
+    m_twoPageView = twoPageView;
+
+    // Apply the current mode now that both surfaces exist (Continuous by
+    // default → shows the QPdfView).
+    applyViewMode();
+
+    return stack;
 }
 
 void PdfDocument::setAnnotationTool(AnnotationTool tool) {
@@ -973,21 +1000,25 @@ void PdfDocument::applyViewMode() {
     switch (m_viewMode) {
     case ViewMode::SinglePage:
         m_view->setPageMode(QPdfView::PageMode::SinglePage);
+        if (m_viewStack && m_view)
+            m_viewStack->setCurrentWidget(m_view);
         break;
     case ViewMode::TwoPages:
-        // Two-page (facing) layout is not supported: QPdfView::PageMode only
-        // offers SinglePage and MultiPage, neither of which is a real two-up
-        // layout. Deliberately do NOT alias Continuous here — silently showing
-        // a different layout than the label promises is forbidden by policy.
-        // The View > Two Pages action (m_twoPagesAction) is kept disabled with
-        // an explanatory tooltip so this case is unreachable from the UI; this
-        // guard prevents any future code path from regressing into a silent
-        // alias. Leave the current page mode untouched.
-        qWarning("PdfDocument::applyViewMode: ViewMode::TwoPages is unsupported "
-                 "(no facing layout in QPdfView); leaving page mode unchanged");
-        return;
+        // Two-up (facing) layout has no QPdfView::PageMode, so it renders
+        // through the custom TwoPageView (decision record
+        // 2026-07-21-two-page-layout, D1-A AUGMENT). Swap the stack to it and
+        // sync the shared zoom factor so Actual Size / the zoom-% readout mean
+        // the same thing here as in Single/Continuous (clause 3). If the stack
+        // isn't built yet (createView not run) there is nothing to switch.
+        if (m_twoPageView && m_view)
+            m_twoPageView->setZoomFactor(m_view->zoomFactor());
+        if (m_viewStack && m_twoPageView)
+            m_viewStack->setCurrentWidget(m_twoPageView);
+        break;
     case ViewMode::Continuous:
         m_view->setPageMode(QPdfView::PageMode::MultiPage);
+        if (m_viewStack && m_view)
+            m_viewStack->setCurrentWidget(m_view);
         break;
     }
 }
