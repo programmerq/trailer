@@ -107,6 +107,11 @@ class MainWindow : public QMainWindow {
     bool pageHasTextCacheHasDocForTesting(const IDocument *doc) const {
         return m_pageHasTextCacheDoc == doc;
     }
+    // Test-only access to the auto-OCR controller so a UAT can inject a
+    // recording recognizer + force model-ready and then drive the menu-level
+    // force-rerun affordance end-to-end (onRerunRecognizeText →
+    // submitUserPages forceRerun=true). Never used in production.
+    OcrController *ocrControllerForTesting() const { return m_ocrController; }
 
     // Quit-time support for Application::requestQuit(QuitMode::Normal).
     // collectDirtyDocsForQuit returns this window's documents that need a
@@ -203,6 +208,14 @@ class MainWindow : public QMainWindow {
     void onInstantAlpha();
     void onSmartLasso();
     void onRecognizeText();
+    // Force re-run of text recognition for a single-page document. The
+    // Recognize Text… dialog — the only place the force-rerun checkbox
+    // lives — is skipped for single-page docs, so this entry is the only
+    // way to re-recognise a page whose OCR landed non-empty-but-wrong text
+    // (watermark noise, a stray glyph). Routes to the same invalidate-then-
+    // OCR path as the dialog checkbox (submitUserPages forceRerun=true).
+    // Backlog: docs/backlog/2026-07-15-single-page-force-rerun.md.
+    void onRerunRecognizeText();
     void onExportAs();
     void onCopyPageAsImage();
     void onExportPasswordProtected();
@@ -249,6 +262,13 @@ class MainWindow : public QMainWindow {
     // model hint). Replaces the former 150 ms m_ocrPagePoll. Must be a member
     // function — not a lambda — so the Qt::UniqueConnection flag takes effect.
     void onActivePageChanged(int page);
+    // Fired by the active document's SelectableTextStore when a page's OCR
+    // entry is added / replaced / removed. Refreshes the single-page re-run
+    // affordance, whose enabled state and status glyph depend on
+    // hasResults(currentPage()) and so must update the moment OCR lands after
+    // open. Must be a member — not a lambda — so Qt::UniqueConnection in the
+    // connect() call takes effect.
+    void onSelectableTextPageChanged(int page);
 
   private:
     void buildMenus();
@@ -438,6 +458,12 @@ class MainWindow : public QMainWindow {
     QAction *m_instantAlphaAction = nullptr;
     QAction *m_smartLassoAction = nullptr;
     QAction *m_recognizeTextAction = nullptr;
+    // Single-page force-rerun entry (backlog 2026-07-15-single-page-force-
+    // rerun). Enabled only when the current doc is single-page, supports
+    // selectable text, and already has OCR results to replace; otherwise
+    // disabled with a why/where-to-go tooltip (G3). Refreshed by
+    // refreshRerunRecognizeAction() both at doc-change and when OCR lands.
+    QAction *m_rerunRecognizeAction = nullptr;
     QAction *m_exportAsAction = nullptr;
     QAction *m_exportPasswordProtectedAction = nullptr;
     QAction *m_reduceFileSizeAction = nullptr;
@@ -627,6 +653,19 @@ class MainWindow : public QMainWindow {
     // pages that already have results. Uses the same OcrController path the
     // menu uses; when the model is absent it silently no-ops (no modal).
     void maybeKickSearchOcr(IDocument *doc, const QString &query);
+    // Re-evaluate the single-page re-run affordance's enabled state and
+    // why/where-to-go tooltip (G3). Shared by updateActionStates (at
+    // doc-change) and onSelectableTextPageChanged (when OCR lands after
+    // open). Self-contained: recomputes the ML-policy gate inline.
+    void refreshRerunRecognizeAction();
+    // Debounce for the passive image selectable-text cue: (document,
+    // content-hash) last flashed. Identity-only pointer, never dereferenced;
+    // prevents an identical re-put (e.g. a future disk-cache restore of the
+    // same pixels) from re-flashing the cue for text the user already knows
+    // is selectable. Purged with the doc via the same close hook as the
+    // large-doc notice caches.
+    IDocument *m_imageSelectableCueDoc = nullptr;
+    std::uint64_t m_imageSelectableCueHash = 0;
 };
 
 } // namespace trailer

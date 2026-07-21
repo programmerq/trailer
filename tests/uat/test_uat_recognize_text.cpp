@@ -61,6 +61,7 @@
 #include <QScopeGuard>
 #include <QSemaphore>
 #include <QSignalSpy>
+#include <QStatusBar>
 
 #include <atomic>
 #include <QTemporaryDir>
@@ -80,6 +81,18 @@ MainWindow *currentMainWindow() {
     return nullptr;
 }
 
+// openFiles() opens each document in its own MainWindow, so a test that
+// needs to swap the "current" document to a second file must close the
+// existing window(s) first (mirrors init()). Neither fixture is dirty, so
+// close() never prompts.
+void closeAllMainWindows() {
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (qobject_cast<MainWindow *>(w))
+            w->close();
+    }
+    QApplication::processEvents();
+}
+
 QAction *findActionByText(QMenuBar *bar, const QString &text) {
     for (QAction *top : bar->actions()) {
         QMenu *menu = top->menu();
@@ -91,6 +104,35 @@ QAction *findActionByText(QMenuBar *bar, const QString &text) {
         }
     }
     return nullptr;
+}
+
+// The QMenu owning the action with `text`, so a test can grab the open menu
+// and show a greyed-out entry (G3 evidence — a window grab has the menu
+// closed and cannot show it).
+QMenu *menuOwningAction(QMenuBar *bar, const QString &text) {
+    for (QAction *top : bar->actions()) {
+        QMenu *menu = top->menu();
+        if (!menu)
+            continue;
+        for (QAction *a : menu->actions()) {
+            if (a->text() == text)
+                return menu;
+        }
+    }
+    return nullptr;
+}
+
+// Grab an offscreen render of `menu` (laid out but not shown on a display) to
+// PNG when TRAILER_SHOT_DIR is set. QWidget::grab() forces a layout+paint, so
+// the greyed disabled entry and its enabled siblings render without a display.
+void saveMenuShot(QMenu *menu, const QString &name) {
+    const QByteArray shotDir = qgetenv("TRAILER_SHOT_DIR");
+    if (shotDir.isEmpty() || !menu)
+        return;
+    QDir().mkpath(QString::fromLocal8Bit(shotDir));
+    menu->ensurePolished();
+    menu->adjustSize();
+    menu->grab().save(QString::fromLocal8Bit(shotDir) + "/" + name);
 }
 
 QString writeTextImage(const QString &path, const QString &text = QStringLiteral("HELLO 1234"),
@@ -197,6 +239,9 @@ class TestUatRecognizeText : public QObject {
     void uat_ocr_120_smallImageAutoOcrsOnOpen();
     void uat_ocr_130_imageOverThresholdDoesNotEagerOcr();
     void uat_ocr_140_emptyPageNotReOcrdOnRevisit();
+    void uat_ocr_150_singlePageForceRerunReRunsThroughMenu();
+    void uat_ocr_160_rerunActionDisabledWithTooltip();
+    void uat_ocr_170_imageSelectableCueFiresOnOcrLandNoModal();
 
   private:
     QTemporaryDir m_scratch;
@@ -1031,6 +1076,212 @@ void TestUatRecognizeText::uat_ocr_140_emptyPageNotReOcrdOnRevisit() {
     QTest::qWait(50);
     QCOMPARE(calls.load(), callsAfterFirst);
     QVERIFY2(!store->hasResults(0), "hasResults stays false across the revisit");
+}
+
+// uat_ocr_150 — single-page force-rerun (backlog 2026-07-15-single-page-
+// force-rerun). A single-page image that OCR'd to non-empty-but-WRONG text
+// (watermark garbage) has hasResults(0)=true, so the ambient "already ran"
+// guard would skip a plain re-run. The new Tools → Re-run Text Recognition
+// entry must be enabled and reach submitUserPages(forceRerun=true), which
+// invalidates then re-recognises — replacing the wrong text.
+void TestUatRecognizeText::uat_ocr_150_singlePageForceRerunReRunsThroughMenu() {
+    QVERIFY(m_scratch.isValid());
+    const QString imgPath = writeTextImage(m_scratch.filePath(QStringLiteral("ocr150.png")));
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *imgDoc = dynamic_cast<ImageDocument *>(mw->findChild<DocumentView *>()->currentDocument());
+    QVERIFY(imgDoc);
+    QCOMPARE(imgDoc->pageCount(), 1);
+    auto *store = imgDoc->selectableText();
+    QVERIFY(store && !store->hasResults(0));
+
+    // Seed a non-empty-but-WRONG result so hasResults(0) is true — the exact
+    // state the plain path can no longer replace.
+    OcrEngine::TextBlock wrong;
+    wrong.text = QStringLiteral("WATERMARK-GARBAGE");
+    wrong.polygon = QPolygon(QRect(0, 0, 20, 20));
+    store->put(0, hashImageContent(imgDoc->image()), {wrong});
+    QVERIFY(store->hasResults(0));
+
+    // Inject a recording recognizer + force model-ready into the window's OWN
+    // controller (the one onRerunRecognizeText drives), and bypass the
+    // model-download consent gate so no real modal / network is needed.
+    OcrController *ctrl = mw->ocrControllerForTesting();
+    QVERIFY(ctrl);
+    ctrl->setModelReadyForTesting(true);
+    ctrl->setProgressRevealDelayMs(0);
+    std::atomic<int> calls{0};
+    ctrl->setRecognizerForTesting(
+        [&calls](const QImage &, const CancellationToken *) -> QVector<OcrEngine::TextBlock> {
+            ++calls;
+            OcrEngine::TextBlock b;
+            b.text = QStringLiteral("corrected-ocr");
+            b.polygon = QPolygon(QRect(0, 0, 20, 20));
+            return {b};
+        });
+    mw->setOcrModelDownloadHookForTesting([]() { return true; });
+
+    // Threshold 1: the affordance EXISTS and is enabled for a single-page doc
+    // that already has results (the put() above fired pageChanged →
+    // refreshRerunRecognizeAction via the MainWindow connection).
+    QAction *rerun =
+        findActionByText(mw->menuBar(), QStringLiteral("Re-run Text &Recognition"));
+    QVERIFY2(rerun, "Tools → Re-run Text Recognition action is missing");
+    QVERIFY2(rerun->isEnabled(),
+             "Re-run must be enabled for a single-page doc that already has OCR results");
+    saveMenuShot(menuOwningAction(mw->menuBar(), QStringLiteral("Re-run Text &Recognition")),
+                 QStringLiteral("rerun-enabled.png"));
+
+    // Threshold 1+2: triggering it reaches submitUserPages(forceRerun=true),
+    // whose submitPage invalidates page 0 (dropping the wrong entry) and
+    // re-recognises — the recognizer runs and the store is replaced.
+    rerun->trigger();
+    QTRY_VERIFY2(calls.load() >= 1,
+                 "force-rerun must re-invoke the recognizer despite hasResults(0)");
+    QTRY_VERIFY(store->hasResults(0) &&
+                store->blocks(0).front().text == QStringLiteral("corrected-ocr"));
+    QVERIFY2(store->blocks(0).front().text != QStringLiteral("WATERMARK-GARBAGE"),
+             "the wrong text must be replaced, not kept");
+}
+
+// uat_ocr_160 — G3 (no lying controls). The Re-run entry is disabled with a
+// why/where-to-go tooltip when it can't act: (a) a single-page image with no
+// results yet, and (b) a multi-page doc (force-rerun lives in the Recognize
+// Text… dialog there). Grabs the Tools menu for the disabled-state evidence.
+void TestUatRecognizeText::uat_ocr_160_rerunActionDisabledWithTooltip() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    // (a) Single-page image, no OCR results yet → disabled + "run Recognize
+    // Text first" tooltip.
+    const QString imgPath = writeTextImage(m_scratch.filePath(QStringLiteral("ocr160.png")));
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    QAction *rerun =
+        findActionByText(mw->menuBar(), QStringLiteral("Re-run Text &Recognition"));
+    QVERIFY2(rerun, "Tools → Re-run Text Recognition action is missing");
+    QVERIFY2(!rerun->isEnabled(),
+             "Re-run must be disabled for a single-page image with no results yet");
+    QVERIFY2(rerun->toolTip().contains(QStringLiteral("Run Recognize Text first")),
+             qPrintable(QStringLiteral("no-results tooltip must say what to do, got: %1")
+                            .arg(rerun->toolTip())));
+    saveMenuShot(menuOwningAction(mw->menuBar(), QStringLiteral("Re-run Text &Recognition")),
+                 QStringLiteral("rerun-disabled-no-results.png"));
+
+    // (b) Multi-page (born-digital) PDF → disabled + "use Recognize Text…"
+    // tooltip (force-rerun is reachable via the dialog checkbox there).
+    closeAllMainWindows();
+    const QString pdf = writeMultiPagePdf(m_scratch.filePath(QStringLiteral("ocr160.pdf")), 3,
+                                          /*withText=*/true);
+    app->openFiles({pdf});
+    QApplication::processEvents();
+    mw = currentMainWindow();
+    QVERIFY(mw);
+    rerun = findActionByText(mw->menuBar(), QStringLiteral("Re-run Text &Recognition"));
+    QVERIFY(rerun);
+    QVERIFY2(!rerun->isEnabled(), "Re-run must be disabled for a multi-page document");
+    QVERIFY2(rerun->toolTip().contains(QStringLiteral("multi-page")),
+             qPrintable(QStringLiteral("multi-page tooltip must point at the dialog, got: %1")
+                            .arg(rerun->toolTip())));
+    saveMenuShot(menuOwningAction(mw->menuBar(), QStringLiteral("Re-run Text &Recognition")),
+                 QStringLiteral("rerun-disabled-multipage.png"));
+}
+
+// uat_ocr_170 — passive image selectable-text cue (backlog 2026-07-15-image-
+// selectable-text-cue). When an image page gains usable OCR blocks, a
+// transient status-bar line appears — NO modal, self-clearing. Honest: it
+// never fires for a text-less page (hasResults gate), and it is debounced so
+// an identical re-put doesn't re-flash. PDFs (own recognize chip) don't fire
+// it.
+void TestUatRecognizeText::uat_ocr_170_imageSelectableCueFiresOnOcrLandNoModal() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    const QString imgPath = writeTextImage(m_scratch.filePath(QStringLiteral("ocr170.png")));
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *imgDoc = dynamic_cast<ImageDocument *>(mw->findChild<DocumentView *>()->currentDocument());
+    QVERIFY(imgDoc);
+    auto *store = imgDoc->selectableText();
+    QVERIFY(store && !store->hasResults(0));
+
+    const QString kCue = QStringLiteral("now selectable");
+
+    // BEFORE: no OCR results → no cue in the status bar.
+    mw->statusBar()->clearMessage();
+    QVERIFY2(!mw->statusBar()->currentMessage().contains(kCue),
+             "cue must be absent before OCR results land");
+    saveNoticeShot(mw, QStringLiteral("image-cue-before.png"));
+
+    // Simulate an OCR pass landing usable blocks on the visible page.
+    const std::uint64_t hash = hashImageContent(imgDoc->image());
+    OcrEngine::TextBlock b;
+    b.text = QStringLiteral("SELECTABLE");
+    b.polygon = QPolygon(QRect(0, 0, 20, 20));
+    store->put(0, hash, {b});
+    QApplication::processEvents();
+
+    // AFTER: Threshold 1 — the transient cue is present in the status bar.
+    QVERIFY2(mw->statusBar()->currentMessage().contains(kCue),
+             qPrintable(QStringLiteral("cue must appear once text lands, got: %1")
+                            .arg(mw->statusBar()->currentMessage())));
+    saveNoticeShot(mw, QStringLiteral("image-cue-after.png"));
+
+    // Threshold 1 (non-modal): no dialog / modal was spawned by the cue.
+    QVERIFY2(QApplication::activeModalWidget() == nullptr,
+             "the cue must never spawn a modal");
+    for (QWidget *w : QApplication::topLevelWidgets()) {
+        if (auto *d = qobject_cast<QDialog *>(w))
+            QVERIFY2(!d->isVisible(), "no QDialog may be shown by the passive cue");
+    }
+
+    // Debounce: an identical re-put (same content hash) must NOT re-flash.
+    mw->statusBar()->clearMessage();
+    store->put(0, hash, {b});
+    QApplication::processEvents();
+    QVERIFY2(!mw->statusBar()->currentMessage().contains(kCue),
+             "an identical re-put must not re-flash the cue (debounced)");
+
+    // Threshold 2 (honest): a pageChanged where hasResults() is false (an
+    // invalidate — the text-less / discarded case's observable analogue) must
+    // NOT fire the cue.
+    mw->statusBar()->clearMessage();
+    store->invalidate(0);
+    QApplication::processEvents();
+    QVERIFY2(!store->hasResults(0), "invalidate clears results");
+    QVERIFY2(!mw->statusBar()->currentMessage().contains(kCue),
+             "the cue must not fire when the page holds no usable blocks");
+
+    // PDFs have their own recognize-notice chip — the image cue must not fire
+    // for a PDF even when its store gains a page entry.
+    closeAllMainWindows();
+    const QString pdf = writeMultiPagePdf(m_scratch.filePath(QStringLiteral("ocr170.pdf")), 1,
+                                          /*withText=*/true);
+    app->openFiles({pdf});
+    QApplication::processEvents();
+    mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *pdfDoc = mw->findChild<DocumentView *>()->currentDocument();
+    QVERIFY(pdfDoc && !dynamic_cast<ImageDocument *>(pdfDoc));
+    auto *pdfStore = pdfDoc->selectableText();
+    QVERIFY(pdfStore);
+    mw->statusBar()->clearMessage();
+    OcrEngine::TextBlock pb;
+    pb.text = QStringLiteral("PDFTEXT");
+    pb.polygon = QPolygon(QRect(0, 0, 20, 20));
+    pdfStore->put(0, 0x1234u, {pb});
+    QApplication::processEvents();
+    QVERIFY2(!mw->statusBar()->currentMessage().contains(kCue),
+             "the image cue must not fire for a PDF document");
 }
 
 int main(int argc, char **argv) {
