@@ -105,6 +105,7 @@ trailer_add_uat_test(test_uat_instant_alpha_and_smart_lasso
     test_uat_instant_alpha_and_smart_lasso.cpp)
 
 trailer_add_uat_test(test_uat_recognize_text test_uat_recognize_text.cpp)
+trailer_add_uat_test(test_uat_ocr_disk_cache test_uat_ocr_disk_cache.cpp)
 
 # External file-change handling (ADR 2026-07-19): silent clean-reload, dirty-
 # conflict banner, deleted banner, G3 Compare placeholder. Also emits the G2

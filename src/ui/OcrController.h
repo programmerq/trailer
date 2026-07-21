@@ -21,6 +21,7 @@ namespace trailer {
 class Application;
 class CancellationToken;
 class IDocument;
+class OcrDiskCache;
 class SelectableTextStore;
 
 // Coordinates OCR submissions for the active document of a single
@@ -114,6 +115,15 @@ class OcrController : public QObject {
         std::function<QVector<OcrEngine::TextBlock>(const QImage &, const CancellationToken *)>;
     void setRecognizerForTesting(RecognizeFn fn) { m_recognizer = std::move(fn); }
     void setModelReadyForTesting(std::optional<bool> ready) { m_modelReadyOverride = ready; }
+
+    // Test seam: replace the on-disk OCR result cache (ADR 0013 §G13.4)
+    // with one pointed at a temporary directory so tests never touch the
+    // real data dir. Null disables the disk tier entirely. In production
+    // the controller constructs a cache over AppPaths::ocrCacheDir().
+    void setDiskCacheForTesting(std::shared_ptr<OcrDiskCache> cache) {
+        m_diskCache = std::move(cache);
+    }
+    OcrDiskCache *diskCacheForTesting() const { return m_diskCache.get(); }
 
     // Test seam: the 0-based pages that currently hold a live pending
     // submission for the active document, sorted ascending. Lets the
@@ -271,6 +281,12 @@ class OcrController : public QObject {
     // when the controller frees; the shared_ptr defers OcrEngine
     // destruction until the lambda exits.
     std::shared_ptr<OcrEngine> m_engine;
+    // Bounded on-disk OCR result cache (ADR 0013 §G13.4). shared_ptr so a
+    // worker's GUI-thread apply lambda can capture it to write-through
+    // even for ambient (non-batch) pages where `self` is null. Read-
+    // through happens on the UI thread in submitPage(); all access is
+    // UI-thread, so the cache needs no internal locking.
+    std::shared_ptr<OcrDiskCache> m_diskCache;
     std::unordered_map<PendingKey, PendingEntry, PendingKeyHash> m_pending;
 
     // --- UserAction batch tracking (ADR 0002) ---

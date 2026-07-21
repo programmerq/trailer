@@ -159,6 +159,11 @@ void TestOcrWindow::uat_ocr_win_010_windowIsVisiblePagePlusMinusTwo() {
     FakeOcrDoc doc(20);
     ctl.setDocument(&doc);
     ctl.setModelReadyForTesting(true);
+    // Scheduling tests: isolate from the persistent on-disk OCR cache so a
+    // page recognized in an earlier slot can't disk-hit here (read-through
+    // returns Cached, skipping the scheduler) and skew which pages get
+    // submitted / recognized. The disk cache has its own dedicated tests.
+    ctl.setDiskCacheForTesting(nullptr);
     auto calls = std::make_shared<std::atomic<int>>(0);
     ctl.setRecognizerForTesting(oneBlockRecognizer(calls));
 
@@ -189,6 +194,11 @@ void TestOcrWindow::uat_ocr_win_020_windowClampsAtDocumentEdges() {
     FakeOcrDoc doc(6); // pages 0..5
     ctl.setDocument(&doc);
     ctl.setModelReadyForTesting(true);
+    // Scheduling tests: isolate from the persistent on-disk OCR cache so a
+    // page recognized in an earlier slot can't disk-hit here (read-through
+    // returns Cached, skipping the scheduler) and skew which pages get
+    // submitted / recognized. The disk cache has its own dedicated tests.
+    ctl.setDiskCacheForTesting(nullptr);
     auto calls = std::make_shared<std::atomic<int>>(0);
     ctl.setRecognizerForTesting(oneBlockRecognizer(calls));
 
@@ -209,6 +219,11 @@ void TestOcrWindow::uat_ocr_win_030_jumpRecentersAndCancelsOldWindow() {
     FakeOcrDoc doc(30);
     ctl.setDocument(&doc);
     ctl.setModelReadyForTesting(true);
+    // Scheduling tests: isolate from the persistent on-disk OCR cache so a
+    // page recognized in an earlier slot can't disk-hit here (read-through
+    // returns Cached, skipping the scheduler) and skew which pages get
+    // submitted / recognized. The disk cache has its own dedicated tests.
+    ctl.setDiskCacheForTesting(nullptr);
     auto calls = std::make_shared<std::atomic<int>>(0);
     ctl.setRecognizerForTesting(oneBlockRecognizer(calls));
 
@@ -234,6 +249,11 @@ void TestOcrWindow::uat_ocr_win_040_largeDocGetsAmbientWindowNotCancelToNothing(
     ctl.setDocument(&doc);
     QVERIFY2(ctl.isLargeDoc(), "120-page doc must count as large");
     ctl.setModelReadyForTesting(true);
+    // Scheduling tests: isolate from the persistent on-disk OCR cache so a
+    // page recognized in an earlier slot can't disk-hit here (read-through
+    // returns Cached, skipping the scheduler) and skew which pages get
+    // submitted / recognized. The disk cache has its own dedicated tests.
+    ctl.setDiskCacheForTesting(nullptr);
     auto calls = std::make_shared<std::atomic<int>>(0);
     ctl.setRecognizerForTesting(oneBlockRecognizer(calls));
 
@@ -250,6 +270,11 @@ void TestOcrWindow::uat_ocr_win_050_backgroundOffSubmitsNothingExplicitStillRuns
     FakeOcrDoc doc(20);
     ctl.setDocument(&doc);
     ctl.setModelReadyForTesting(true);
+    // Scheduling tests: isolate from the persistent on-disk OCR cache so a
+    // page recognized in an earlier slot can't disk-hit here (read-through
+    // returns Cached, skipping the scheduler) and skew which pages get
+    // submitted / recognized. The disk cache has its own dedicated tests.
+    ctl.setDiskCacheForTesting(nullptr);
     ctl.setProgressRevealDelayMs(0);
     auto calls = std::make_shared<std::atomic<int>>(0);
     ctl.setRecognizerForTesting(oneBlockRecognizer(calls));
@@ -279,6 +304,11 @@ void TestOcrWindow::uat_ocr_win_060_onBatteryOnlyVisiblePageRunsNeighboursSuppre
     FakeOcrDoc doc(20);
     ctl.setDocument(&doc);
     ctl.setModelReadyForTesting(true);
+    // Scheduling tests: isolate from the persistent on-disk OCR cache so a
+    // page recognized in an earlier slot can't disk-hit here (read-through
+    // returns Cached, skipping the scheduler) and skew which pages get
+    // submitted / recognized. The disk cache has its own dedicated tests.
+    ctl.setDiskCacheForTesting(nullptr);
     auto calls = std::make_shared<std::atomic<int>>(0);
     ctl.setRecognizerForTesting(oneBlockRecognizer(calls));
 
