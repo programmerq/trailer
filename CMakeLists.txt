@@ -255,6 +255,8 @@ set(TRAILER_SOURCES
     src/ui/AnnotationOverlay.h
     src/ui/CropPagesDialog.cpp
     src/ui/CropPagesDialog.h
+    src/ui/PasswordExportDialog.cpp
+    src/ui/PasswordExportDialog.h
     src/ui/FormOverlay.cpp
     src/ui/FormOverlay.h
     src/ui/FormToolbar.cpp

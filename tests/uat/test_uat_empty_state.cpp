@@ -21,6 +21,9 @@
 #include "ui/MarkupToolbar.h"
 
 #include <QAction>
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QImage>
 #include <QMenu>
 #include <QMenuBar>
 #include <QPageSize>
@@ -77,6 +80,25 @@ QString writeTinyPdf(const QString &path) {
     return path;
 }
 
+// A tiny on-disk PNG. Two or more of these opened in one openFiles() call
+// drive the image-batch path (Application::isImageBatch), mirroring the
+// writePng fixture used by test_uat_foundations.cpp.
+QString writeTinyPng(const QString &path) {
+    QImage img(80, 60, QImage::Format_RGB32);
+    img.fill(Qt::white);
+    img.save(path, "PNG");
+    return path;
+}
+
+// Mirror the clipboard-image setup used by the ⌘N tests in
+// test_uat_file_menu_ia.cpp: a tiny in-memory image on the system
+// clipboard drives newFromClipboard() through its openFiles() path.
+void setClipboardImage() {
+    QImage img(4, 4, QImage::Format_ARGB32);
+    img.fill(Qt::red);
+    QGuiApplication::clipboard()->setImage(img);
+}
+
 } // namespace
 
 class TestUatEmptyState : public QObject {
@@ -89,6 +111,11 @@ class TestUatEmptyState : public QObject {
     void uat_empty_003_closingLastDocumentPersistsEmptyState();
     void uat_empty_004_multiWindowClosesNonLastWindow();
     void uat_empty_005_markupToolbarHiddenOverEmptyState();
+    void uat_empty_006_openReusesEmptyLaunchWindow();
+    void uat_empty_007_newFromClipboardReusesEmptyLaunchWindow();
+    void uat_empty_008_openDoesNotClobberDocumentWindow();
+    void uat_empty_009_multiFileConsumesLaunchWindowOnce();
+    void uat_empty_010_imageBatchReusesEmptyLaunchWindow();
 
   private:
     QTemporaryDir m_scratch;
@@ -349,6 +376,156 @@ void TestUatEmptyState::uat_empty_005_markupToolbarHiddenOverEmptyState() {
              "Form toolbar toggle must be re-enabled once a document is open again");
 #endif
 }
+
+// CF-5 — Open reuses the empty launch window. On Win/Linux launch there
+// is one empty untouched window (documentCount()==0). Opening a file in
+// NewWindow mode must load into THAT window rather than spawning a second
+// one and orphaning the empty launch frame (Preview.app behavior).
+void TestUatEmptyState::uat_empty_006_openReusesEmptyLaunchWindow() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writeTinyPdf(m_scratch.filePath("uat_empty_006.pdf"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    // The empty launch window: one live, untouched window.
+    MainWindow *launch = app->ensureWindow();
+    QVERIFY(launch);
+    QCOMPARE(app->windowCount(), 1);
+    QCOMPARE(launch->documentCount(), 0);
+
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    // Reuse, not spawn: still exactly one window, and it now holds the doc.
+    QCOMPARE(app->windowCount(), 1);
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    QCOMPARE(mw->documentCount(), 1);
+    // Identity: it must be the SAME window that launched, not a fresh one
+    // that happens to leave the count at 1 (which would mean the launch
+    // frame was orphaned/closed and replaced).
+    QCOMPARE(mw, launch);
+}
+
+// CF-5 — New-from-Clipboard reuses the empty launch window. ⌘N routes
+// through the same openFiles() reuse path, so pasting an image into the
+// empty launch window must load it there rather than orphaning it.
+void TestUatEmptyState::uat_empty_007_newFromClipboardReusesEmptyLaunchWindow() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    MainWindow *launch = app->ensureWindow();
+    QVERIFY(launch);
+    QCOMPARE(app->windowCount(), 1);
+    QCOMPARE(launch->documentCount(), 0);
+
+    // Clipboard-image injection works headlessly under offscreen (the
+    // ⌘N enable-gate tests in test_uat_file_menu_ia.cpp rely on it), so
+    // we drive the real newFromClipboard() path here rather than a
+    // synthetic openFiles() stand-in.
+    setClipboardImage();
+    app->newFromClipboard();
+    QApplication::processEvents();
+
+    QCOMPARE(app->windowCount(), 1);
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    QCOMPARE(mw->documentCount(), 1);
+}
+
+// CF-5 guard — Open must NOT clobber a window that already holds a
+// document. With one real document window active, opening another file in
+// NewWindow mode spawns a SECOND window (only empty/untouched windows are
+// reuse candidates). This mirrors the uat_empty_004 setup semantics; kept
+// distinct because that case exercises the close path, this one the reuse
+// guard on the open path.
+void TestUatEmptyState::uat_empty_008_openDoesNotClobberDocumentWindow() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdf1 = writeTinyPdf(m_scratch.filePath("uat_empty_008a.pdf"));
+    const QString pdf2 = writeTinyPdf(m_scratch.filePath("uat_empty_008b.pdf"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    app->openFiles({pdf1});
+    QApplication::processEvents();
+    QCOMPARE(app->windowCount(), 1);
+    MainWindow *first = currentMainWindow();
+    QVERIFY(first);
+    QCOMPARE(first->documentCount(), 1);
+
+    // A real document window is active — the next open must not reuse it.
+    app->openFiles({pdf2});
+    QApplication::processEvents();
+    QCOMPARE(app->windowCount(), 2);
+}
+
+// CF-5 consume-once — Opening a MULTI-FILE batch of non-image documents
+// (PDFs still spawn one window each) from an empty launch window must
+// reuse that window for the FIRST file and spawn a fresh window for the
+// SECOND, ending at two windows. The launch frame must survive holding
+// exactly the first document — this pins the `reuseCandidate = nullptr`
+// consume-once step so the second file can't claim the launch window too.
+void TestUatEmptyState::uat_empty_009_multiFileConsumesLaunchWindowOnce() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdf1 = writeTinyPdf(m_scratch.filePath("uat_empty_009a.pdf"));
+    const QString pdf2 = writeTinyPdf(m_scratch.filePath("uat_empty_009b.pdf"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    MainWindow *launch = app->ensureWindow();
+    QVERIFY(launch);
+    QCOMPARE(app->windowCount(), 1);
+    QCOMPARE(launch->documentCount(), 0);
+    QPointer<MainWindow> launchGuard(launch);
+
+    app->openFiles({pdf1, pdf2});
+    QApplication::processEvents();
+
+    // First file reused the launch window; second spawned a fresh one.
+    QCOMPARE(app->windowCount(), 2);
+    QVERIFY2(!launchGuard.isNull(),
+             "The empty launch window must survive as the first file's window");
+    QCOMPARE(launch->documentCount(), 1);
+}
+
+// CF-5 image-batch reuse — An image batch (2+ images in one openFiles()
+// call) shares a single window via the tab strip. Opened from an empty
+// launch window it must REUSE that window as the batch window rather than
+// spawning a second and orphaning the launch frame: window count stays 1,
+// and the launch window is the batch target holding both images.
+void TestUatEmptyState::uat_empty_010_imageBatchReusesEmptyLaunchWindow() {
+    QVERIFY(m_scratch.isValid());
+    const QString png1 = writeTinyPng(m_scratch.filePath("uat_empty_010a.png"));
+    const QString png2 = writeTinyPng(m_scratch.filePath("uat_empty_010b.png"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    MainWindow *launch = app->ensureWindow();
+    QVERIFY(launch);
+    QCOMPARE(app->windowCount(), 1);
+    QCOMPARE(launch->documentCount(), 0);
+    QPointer<MainWindow> launchGuard(launch);
+
+    app->openFiles({png1, png2});
+    QApplication::processEvents();
+
+    // Reuse, not spawn: the batch shares the launch window (no orphan).
+    QCOMPARE(app->windowCount(), 1);
+    QVERIFY2(!launchGuard.isNull(),
+             "The empty launch window must be reused as the image-batch window");
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    QCOMPARE(mw, launch);
+    QCOMPARE(launch->documentCount(), 2);
+}
+
+// Note: CF-9 (screenshot-dialog copy: drop the "tracked in TODO.md"
+// reference) is a copy-only change with no assertable UI behavior; it is
+// verified by reading the reworded QLabel in MainWindow::onTakeScreenshot.
 
 // Custom main: sandbox HOME before Application is constructed so
 // Settings/RecentFiles never touch the real config dir.

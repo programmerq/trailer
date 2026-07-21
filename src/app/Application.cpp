@@ -288,10 +288,63 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
         return true;
     };
     const bool batchedImages = mode == OpenFilesIn::NewWindow && isImageBatch();
-    MainWindow *batchTarget = batchedImages ? ensureFreshWindow() : nullptr;
+
+    // CF-5: In NewWindow mode, reuse an empty/untouched launch window for
+    // the FIRST opened document — and for an image batch's shared window —
+    // instead of spawning a second window and orphaning the empty one
+    // (matches Preview.app). "Empty/untouched" == a live MainWindow with
+    // documentCount()==0 (a window with no document holds nothing to
+    // clobber). Compute the candidate ONCE, up front, BEFORE the batch
+    // decision, and consume it at most once: the image batch takes it if
+    // present, otherwise the first single NewWindow file does; every
+    // subsequent file still gets a fresh window. Never reuse a window that
+    // already holds a document — opening a file while a real document
+    // window is active must still spawn a new window.
+    MainWindow *reuseCandidate = nullptr;
+    if (mode == OpenFilesIn::NewWindow) {
+        // Prefer the active/frontmost window if it's one of ours and empty.
+        if (auto *active = qobject_cast<MainWindow *>(QApplication::activeWindow())) {
+            if (m_windows.contains(active) && active->documentCount() == 0)
+                reuseCandidate = active;
+        }
+        // Fallback: the launch-window case where offscreen/headless may not
+        // set an active window — exactly one live window, and it's empty.
+        if (!reuseCandidate && windowCount() == 1) {
+            if (MainWindow *only = firstExistingWindow();
+                only && only->documentCount() == 0)
+                reuseCandidate = only;
+        }
+    }
+
+    // Consume the reuse candidate at most once, then fall back to a fresh
+    // window. Shared by the image-batch target below and the per-file
+    // NewWindow loop so the consume-once invariant lives in one place and
+    // can't drift between the two call sites.
+    auto takeReuseOrFresh = [&]() -> MainWindow * {
+        if (reuseCandidate) {
+            MainWindow *w = reuseCandidate;
+            reuseCandidate = nullptr;
+            return w;
+        }
+        return ensureFreshWindow();
+    };
+
+    // An image batch shares one window (the tab strip) rather than spawning
+    // N frames. Reuse the empty launch window as that batch window when one
+    // is available so the batch path no longer orphans it; taking the
+    // candidate here consumes it so the single-file loop below can't claim
+    // it a second time.
+    MainWindow *batchTarget = batchedImages ? takeReuseOrFresh() : nullptr;
 
     for (const QString &path : paths) {
         auto doc = m_registry.open(path);
+
+        // Defensive: a failed open (null document) must not consume the
+        // reuse candidate or a freshly spawned window on a no-op
+        // addDocument(nullptr). Skip it before any target is selected so a
+        // later good file still reuses the empty launch window.
+        if (!doc)
+            continue;
 
         // Reopen-recovery: if a newer auto-save recovery sidecar exists for
         // this backing file (e.g. the app crashed mid-session before an
@@ -300,7 +353,7 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
         // until the user Saves; if they Discard, their file was never
         // modified. Sidecars live in app-data, so this reads only our own
         // snapshot, never the user's directory.
-        if (doc && !path.isEmpty()) {
+        if (!path.isEmpty()) {
             if (const auto sidecar = m_recoveryStore.pendingRecovery(path)) {
                 if (!doc->recoverFrom(*sidecar)) {
                     // Restore failed (corrupt/unreadable snapshot): drop the
@@ -339,7 +392,10 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
                 // One window per file. Even when `paths` has
                 // multiple entries we spawn a separate window for
                 // each so the user can arrange them independently.
-                target = ensureFreshWindow();
+                // CF-5: the FIRST file reuses an empty launch window
+                // if one is available (consume-once), then subsequent
+                // files spawn fresh.
+                target = takeReuseOrFresh();
                 break;
             case OpenFilesIn::SameWindow:
             case OpenFilesIn::NewTab:
@@ -496,7 +552,13 @@ QList<SessionWindowDescriptor> Application::captureSessionForKeep() const {
 
             auto *img = dynamic_cast<ImageDocument *>(doc);
             auto *pdf = dynamic_cast<PdfDocument *>(doc);
-            const bool dirtyOrUntitled = doc->isUntitled() || doc->isDirty();
+            // hasUnsavedWork() (not bare isDirty()) so a CLEAN image doc whose
+            // backing file was DELETED underneath (CF-7) is DRAFTED here — its
+            // in-memory raster is the last copy. Without this it would fall to
+            // the else-branch and be stored as a {kind:"path"} reference to a
+            // file that no longer exists, silently losing the raster on
+            // restore. isUntitled() keeps #78's untitled-draft case.
+            const bool dirtyOrUntitled = doc->isUntitled() || doc->hasUnsavedWork();
             // Only draft a dirty/untitled doc we can capture without a prompt.
             // A dirty non-draftable doc has already been resolved (saved or
             // discarded) by requestQuit's prompt fallback, so by here it is

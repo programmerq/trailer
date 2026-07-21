@@ -55,7 +55,12 @@ conflict guard** so no write can clobber an uncaused external change.
 `Reload` / silent-reload re-reads the document in place and drops the (empty, or
 user-discarded) edit state. `Keep mine` is a **force-save** that clobbers the
 newer on-disk copy on purpose and refreshes the baseline (a one-shot flag,
-consumed by exactly one save attempt). `Compare` is a **G3-honest
+consumed by exactly one save attempt). **(Refined 2026-07-20:** the banner's
+Keep-mine no longer writes on click — it keeps the buffer, refreshes the
+baseline, and defers the overwrite to the user's next explicit Save. See
+[`2026-07-20-conflict-banner-keep-mine-semantics.md`](2026-07-20-conflict-banner-keep-mine-semantics.md).
+The adapter-level force-save mechanism described here is unchanged.)**
+`Compare` is a **G3-honest
 disabled-with-tooltip placeholder** — no side-by-side diff view exists yet, so
 the control is present-but-inert with a tooltip explaining why and where to go,
 never a lying control.

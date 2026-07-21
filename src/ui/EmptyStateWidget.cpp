@@ -3,12 +3,14 @@
 #include <QDragEnterEvent>
 #include <QDragLeaveEvent>
 #include <QDropEvent>
+#include <QFont>
 #include <QLabel>
 #include <QMimeData>
 #include <QPainter>
 #include <QPainterPath>
 #include <QPen>
 #include <QPushButton>
+#include <QSizePolicy>
 #include <QStringList>
 #include <QStyle>
 #include <QUrl>
@@ -19,9 +21,10 @@ namespace trailer {
 EmptyStateWidget::EmptyStateWidget(QWidget *parent) : QWidget(parent) {
     setAcceptDrops(true);
 
-    // Centred column: icon → headline → subtitle → button. The outer
-    // layout stretches above and below so the block floats in the
-    // vertical centre no matter how tall the window is.
+    // Centred column: icon → headline → subtitle → button → (optional
+    // recent list). The outer layout stretches above and below so the
+    // block floats in the vertical centre no matter how tall the window
+    // is.
     auto *outer = new QVBoxLayout(this);
     outer->setContentsMargins(48, 48, 48, 48);
     outer->addStretch(1);
@@ -70,7 +73,93 @@ EmptyStateWidget::EmptyStateWidget(QWidget *parent) : QWidget(parent) {
     connect(m_openButton, &QPushButton::clicked, this, &EmptyStateWidget::openRequested);
     outer->addWidget(m_openButton, 0, Qt::AlignHCenter);
 
+    // Inline "Recent" list. Modelled on macOS Preview's welcome surface:
+    // a short, plain vertical list of file names (no thumbnails, no
+    // project-picker chrome). Built empty and hidden; setRecentEntries()
+    // populates it and toggles visibility. Kept out of the layout's
+    // stretch region so it sits directly under the button.
+    m_recentSection = new QWidget(this);
+    auto *recentColumn = new QVBoxLayout(m_recentSection);
+    recentColumn->setContentsMargins(0, 20, 0, 0);
+    recentColumn->setSpacing(2);
+
+    auto *recentHeading = new QLabel(tr("Recent"), m_recentSection);
+    recentHeading->setAlignment(Qt::AlignLeft);
+    // Dim + slightly smaller than body text so it reads as a quiet
+    // section label, not a competing headline.
+    QFont headingFont = recentHeading->font();
+    headingFont.setPointSizeF(headingFont.pointSizeF() * 0.9);
+    recentHeading->setFont(headingFont);
+    QPalette headingPalette = recentHeading->palette();
+    QColor headingDim = headingPalette.color(QPalette::WindowText);
+    headingDim.setAlphaF(0.55);
+    headingPalette.setColor(QPalette::WindowText, headingDim);
+    recentHeading->setPalette(headingPalette);
+    recentColumn->addWidget(recentHeading, 0, Qt::AlignLeft);
+
+    // The entry buttons live in their own layout so setRecentEntries()
+    // can rebuild just the list, leaving the heading in place.
+    m_recentEntriesLayout = new QVBoxLayout();
+    m_recentEntriesLayout->setContentsMargins(0, 0, 0, 0);
+    m_recentEntriesLayout->setSpacing(0);
+    recentColumn->addLayout(m_recentEntriesLayout);
+
+    m_recentSection->hide();
+    outer->addWidget(m_recentSection, 0, Qt::AlignHCenter);
+
     outer->addStretch(1);
+}
+
+void EmptyStateWidget::setRecentEntries(const QList<RecentEntry> &entries) {
+    if (!m_recentEntriesLayout || !m_recentSection)
+        return;
+
+    // Clear the previous entry buttons. Delete now (not deleteLater): a
+    // taken-but-not-yet-deleted button stays a visible child at its old
+    // geometry and would ghost under the rebuilt list until the event
+    // loop drained. Immediate delete is safe even under re-entrancy —
+    // clicking an entry runs openFiles → notifyWindowsRecentChanged →
+    // rebuildRecentMenu → setRecentEntries, i.e. this can run *inside* a
+    // button's own clicked() emission. QAbstractButton::click() guards its
+    // emitter with a QPointer and skips post-emit work once it nulls, so
+    // deleting that button here does not use-after-free.
+    while (QLayoutItem *item = m_recentEntriesLayout->takeAt(0)) {
+        if (QWidget *w = item->widget())
+            delete w;
+        delete item;
+    }
+
+    const int shown = qMin(entries.size(), kMaxRecentShown);
+    for (int i = 0; i < shown; ++i) {
+        const RecentEntry &entry = entries.at(i);
+        auto *button = new QPushButton(entry.displayName, m_recentSection);
+        // Flat, link-style: no push-button chrome, left-aligned text,
+        // pointing-hand cursor — reads as a clickable name, not a chunky
+        // button, matching Preview's quiet recent list.
+        button->setFlat(true);
+        button->setCursor(Qt::PointingHandCursor);
+        button->setStyleSheet(QStringLiteral("text-align: left; padding: 2px 0px;"));
+        button->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+        // The full path is a quiet secondary affordance on hover; the
+        // visible label stays the short display name (Preview restraint).
+        button->setToolTip(entry.path);
+        const QString path = entry.path;
+        connect(button, &QPushButton::clicked, this,
+                [this, path]() { emit openRecentRequested(path); });
+        m_recentEntriesLayout->addWidget(button, 0, Qt::AlignLeft);
+    }
+
+    // No lying / empty affordance: hide the whole section (heading
+    // included) when there is nothing to list.
+    m_recentSection->setVisible(shown > 0);
+}
+
+int EmptyStateWidget::recentEntryCount() const {
+    return m_recentEntriesLayout ? m_recentEntriesLayout->count() : 0;
+}
+
+bool EmptyStateWidget::isRecentSectionVisible() const {
+    return m_recentSection && m_recentSection->isVisibleTo(const_cast<EmptyStateWidget *>(this));
 }
 
 void EmptyStateWidget::setDragHighlighted(bool highlighted) {

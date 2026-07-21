@@ -46,7 +46,7 @@ class TestFreehandSelectionPrecedence : public QObject {
   private slots:
     void inkPressOnExistingAnnotationStartsNewStroke();
     void selectToolStillSelectsOnClick();
-    void boundedToolStillSelectsOnClick();
+    void boundedToolPressStartsNewShape();
 };
 
 // With Ink active, pressing INSIDE an existing Ink annotation's bounds
@@ -131,40 +131,74 @@ void TestFreehandSelectionPrecedence::selectToolStillSelectsOnClick() {
     QCOMPARE(store.count(), 1);
 }
 
-// Guard against an over-broad carve-out. The Bug 3 fix skips the
-// select/move hijack ONLY for the free-form Ink tool; the BOUNDED shape
-// tools (Rectangle/Ellipse/Line/Arrow) must still select an existing
-// annotation on click, per UAT-ANN-128. If a future change widened the
-// carve-out (e.g. `m_tool != Select` or excluding Arrow), this fails.
-void TestFreehandSelectionPrecedence::boundedToolStillSelectsOnClick() {
-    QWidget host;
-    host.resize(800, 600);
-    AnnotationStore store;
-    AnnotationOverlay overlay(&host);
-    overlay.setGeometry(host.rect());
-    overlay.setStore(&store);
-    overlay.setDocumentToView([](QPointF p, int) { return p; });
-    overlay.setViewToDocument([](QPointF v, int) { return v; });
-    overlay.setPageAtViewPoint([](QPointF) { return 0; });
+// DRAWING-TOOL PARITY (owner ruling "parity", 2026-07-20; ADR
+// docs/decision-records/2026-07-20-drawing-tool-parity.md): the BOUNDED
+// shape tools (Rectangle / Ellipse / Line / Arrow) now match Ink's
+// draw-first-on-press. A press-drag that STARTS over an existing
+// annotation must begin a NEW shape of the active tool's type — never
+// select or move the shape underneath (selection is Select-tool-only,
+// Preview-style). This inverts the pre-parity UAT-ANN-128, where a
+// bounded-tool press selected the existing shape.
+void TestFreehandSelectionPrecedence::boundedToolPressStartsNewShape() {
+    struct Case {
+        AnnotationTool tool;
+        AnnotationType type;
+    };
+    const Case cases[] = {
+        {AnnotationTool::Rectangle, AnnotationType::Rectangle},
+        {AnnotationTool::Ellipse, AnnotationType::Ellipse},
+        {AnnotationTool::Line, AnnotationType::Line},
+        {AnnotationTool::Arrow, AnnotationType::Arrow},
+    };
 
-    // Seed a committed Rectangle spanning (100,100)-(200,200).
-    Annotation rect;
-    rect.type = AnnotationType::Rectangle;
-    rect.page = 0;
-    rect.bounds = QRectF(100, 100, 100, 100);
-    store.add(rect);
-    const int id = store.annotations().back().id;
+    for (const Case &c : cases) {
+        QWidget host;
+        host.resize(800, 600);
+        AnnotationStore store;
+        AnnotationOverlay overlay(&host);
+        overlay.setGeometry(host.rect());
+        overlay.setStore(&store);
+        overlay.setDocumentToView([](QPointF p, int) { return p; });
+        overlay.setViewToDocument([](QPointF v, int) { return v; });
+        overlay.setPageAtViewPoint([](QPointF) { return 0; });
 
-    // Rectangle tool active, click inside the existing rectangle.
-    overlay.setActiveTool(AnnotationTool::Rectangle);
-    QCOMPARE(overlay.selectedAnnotationId(), 0);
-    sendMouse(&overlay, QEvent::MouseButtonPress, QPointF(140, 140), Qt::LeftButton);
-    sendMouse(&overlay, QEvent::MouseButtonRelease, QPointF(140, 140), Qt::LeftButton);
-    QApplication::processEvents();
+        // Seed one committed shape of the same type spanning
+        // (100,100)-(200,200).
+        Annotation seed;
+        seed.type = c.type;
+        seed.page = 0;
+        seed.bounds = QRectF(100, 100, 100, 100);
+        if (c.type == AnnotationType::Line || c.type == AnnotationType::Arrow)
+            seed.points = {QPointF(100, 100), QPointF(200, 200)};
+        store.add(seed);
+        const int firstId = store.annotations().back().id;
+        const QRectF firstBounds = store.annotations().back().bounds;
 
-    // The existing rectangle is selected; no new overlapping shape.
-    QCOMPARE(overlay.selectedAnnotationId(), id);
-    QCOMPARE(store.count(), 1);
+        overlay.setActiveTool(c.tool);
+        QCOMPARE(overlay.selectedAnnotationId(), 0);
+
+        // Press-drag STARTING inside the existing shape's bounds and
+        // dragging off to the side.
+        QVERIFY2(firstBounds.contains(QPointF(140, 140)),
+                 "test setup: press point must be inside the seeded shape's bounds");
+        sendMouse(&overlay, QEvent::MouseButtonPress, QPointF(140, 140), Qt::LeftButton);
+        sendMouse(&overlay, QEvent::MouseMove, QPointF(300, 260), Qt::LeftButton);
+        sendMouse(&overlay, QEvent::MouseButtonRelease, QPointF(360, 300), Qt::LeftButton);
+        QApplication::processEvents();
+
+        // A NEW, distinct shape of the tool's type was created; the
+        // original is neither selected nor moved.
+        QCOMPARE(store.count(), 2);
+        const Annotation &added = store.annotations().back();
+        QCOMPARE(added.type, c.type);
+        QVERIFY2(added.id != firstId,
+                 "bounded-tool press-drag must create a distinct new shape, not mutate the first");
+        QCOMPARE(overlay.selectedAnnotationId(), 0);
+
+        const Annotation *orig = store.find(firstId);
+        QVERIFY2(orig != nullptr, "original shape must still exist");
+        QCOMPARE(orig->bounds, firstBounds);
+    }
 }
 
 QTEST_MAIN(TestFreehandSelectionPrecedence)

@@ -18,6 +18,7 @@
 #include "document/ExternalChangeMonitor.h"
 #include "document/ExternalChangeState.h"
 #include "document/IDocument.h"
+#include "ui/DocumentView.h"
 #include "ui/FileChangeBanner.h"
 #include "ui/MainWindow.h"
 
@@ -46,6 +47,23 @@ QString writeImage(const QString &path, QSize size, const QColor &color) {
     img.fill(color);
     img.save(path, "PNG");
     return path;
+}
+
+QByteArray readAllBytes(const QString &path) {
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly))
+        return {};
+    return f.readAll();
+}
+
+// Trigger the Save action (⌘S / Ctrl+S) so the full onSave path runs.
+void triggerSave(MainWindow *mw) {
+    for (QAction *a : mw->findChildren<QAction *>()) {
+        if (a->shortcut() == QKeySequence(QKeySequence::Save)) {
+            a->trigger();
+            return;
+        }
+    }
 }
 
 // Curated G2 evidence dir (opt-in): committed PNGs are produced by pointing
@@ -268,6 +286,172 @@ class TestUatExternalChange : public QObject {
         QCOMPARE(banner->mode(), FileChangeBanner::Mode::Hidden);
         QCOMPARE(doc->imagePixelSize(), QSize(200, 150));
         QVERIFY(!doc->isDirty());
+    }
+
+    // UAT-EXT-006 (CF-7): a CLEAN document whose backing file is DELETED on
+    // disk must count as having unsaved work for close purposes — the buffer is
+    // then the ONLY remaining copy, so closing it silently would lose it. After
+    // the delete is detected the doc shows the "•" dirty marker, and invoking
+    // the tab-close request path runs the Save/Discard/Cancel prompt (here
+    // forced to Cancel) which vetoes the close and keeps the document open,
+    // rather than dropping it with no prompt.
+    void uat_ext_006_deletedCleanDocIsUnsavedForClose() {
+        auto *app = qobject_cast<Application *>(qApp);
+        QVERIFY(app);
+        const QString path =
+            writeImage(m_dir.filePath(QStringLiteral("ext006.png")), QSize(120, 90), Qt::white);
+        app->openFiles({path});
+        MainWindow *mw = currentMainWindow();
+        QVERIFY(mw);
+        mw->resize(1000, 700);
+        QApplication::processEvents();
+
+        auto *banner = mw->findChild<FileChangeBanner *>();
+        auto *mon = mw->findChild<ExternalChangeMonitor *>();
+        auto *dv = mw->findChild<DocumentView *>();
+        QVERIFY(banner);
+        QVERIFY(mon);
+        QVERIFY(dv);
+        mon->setDebounceMsForTest(10);
+
+        IDocument *doc = currentDoc(mw);
+        QVERIFY(doc);
+        // The doc is clean (never edited) — this is the crux of CF-7.
+        QVERIFY(!doc->isDirty());
+
+        // Another program deletes the backing file out from under us.
+        QVERIFY(QFile::remove(path));
+        mon->pokeForTest();
+        QTRY_COMPARE_WITH_TIMEOUT(banner->mode(), FileChangeBanner::Mode::Deleted, 2000);
+
+        // CF-7 fix, part 1: the vanished-file doc now advertises unsaved work
+        // and shows the "•" marker even though no edit was ever made.
+        QVERIFY(doc->hasUnsavedWork());
+        QVERIFY(mw->windowTitle().contains(QStringLiteral("• ")));
+
+        // The tab bar auto-hides with a single document; force it visible for
+        // the evidence grab so the "•" unsaved marker on the tab is captured
+        // (the OS title bar, which also carries it, is outside a widget grab).
+        dv->setTabBarAutoHide(false);
+        QApplication::processEvents();
+        // G2 evidence: clean doc whose file was deleted now carries the "•"
+        // unsaved marker on its tab, alongside the deleted banner (CF-7).
+        grabTo(mw, QStringLiteral("deleted-clean-doc-dirty-marker.png"));
+        dv->setTabBarAutoHide(true);
+
+        // The user dismisses the banner (hides the warning) then closes the tab.
+        banner->dismiss();
+        QApplication::processEvents();
+
+        // CF-7 fix, part 2: closing now runs the unsaved-changes prompt. Force
+        // Cancel so the prompt's veto keeps the doc — pre-fix the close guard
+        // only fired for isDirty() docs, so a clean-but-deleted doc closed with
+        // NO prompt and the buffer (the last copy) was lost silently.
+        mw->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+        const int before = dv->documentCount();
+        QMetaObject::invokeMethod(dv, "onTabCloseRequested", Qt::DirectConnection,
+                                  Q_ARG(int, 0));
+        QApplication::processEvents();
+        // The prompt vetoed the close: the document is still open, not dropped.
+        QCOMPARE(dv->documentCount(), before);
+    }
+
+    // UAT-EXT-007 (CF-6): "Keep mine" no longer writes to disk on click. It
+    // keeps the (dirty) buffer, refreshes the baseline so the conflict clears,
+    // and dismisses the banner — the file is overwritten only by the user's
+    // next EXPLICIT Save, which then succeeds without re-prompting.
+    void uat_ext_007_keepMineDefersWriteToExplicitSave() {
+        auto *app = qobject_cast<Application *>(qApp);
+        QVERIFY(app);
+        const QString path =
+            writeImage(m_dir.filePath(QStringLiteral("ext007.png")), QSize(120, 90), Qt::white);
+        app->openFiles({path});
+        MainWindow *mw = currentMainWindow();
+        QVERIFY(mw);
+        QApplication::processEvents();
+
+        auto *banner = mw->findChild<FileChangeBanner *>();
+        auto *mon = mw->findChild<ExternalChangeMonitor *>();
+        QVERIFY(banner);
+        QVERIFY(mon);
+        mon->setDebounceMsForTest(10);
+
+        IDocument *doc = currentDoc(mw);
+        QVERIFY(doc);
+        doc->rotatePage(0, 90); // dirty edit -> a realistic conflict
+        QVERIFY(doc->isDirty());
+
+        // Another program overwrites the file with different content/size.
+        writeImage(path, QSize(640, 480), Qt::darkCyan);
+        mon->pokeForTest();
+        QTRY_COMPARE_WITH_TIMEOUT(banner->mode(), FileChangeBanner::Mode::Conflict, 2000);
+
+        // Record the on-disk bytes as the external program left them.
+        const QByteArray externalBytes = readAllBytes(path);
+        QVERIFY(!externalBytes.isEmpty());
+
+        // Click Keep mine. Crucially, this writes NOTHING to disk on click.
+        banner->clickKeepMineForTest();
+        QApplication::processEvents();
+        QCOMPARE(banner->mode(), FileChangeBanner::Mode::Hidden);
+        QVERIFY(doc->isDirty()); // buffer kept, still unsaved
+        // No write happened: the on-disk bytes are byte-for-byte the external
+        // copy, not our buffer.
+        QCOMPARE(readAllBytes(path), externalBytes);
+        // The conflict is resolved (baseline refreshed) so the guard reads
+        // NoChange — the next Save will overwrite cleanly, no re-prompt.
+        QVERIFY(doc->externalChangeState() == ExternalChangeState::NoChange);
+
+        // Now the user issues an explicit Save. It overwrites the file (bytes
+        // change) and does NOT re-raise the conflict banner.
+        triggerSave(mw);
+        QApplication::processEvents();
+        QTRY_VERIFY_WITH_TIMEOUT(!doc->isDirty(), 2000);
+        QCOMPARE(banner->mode(), FileChangeBanner::Mode::Hidden);
+        QVERIFY(readAllBytes(path) != externalBytes); // our buffer won
+    }
+
+    // UAT-EXT-008 (CF-6): "Dismiss" is distinct from "Keep mine" — it only
+    // hides the banner and leaves the conflict guard ARMED, so the next Save
+    // re-detects the conflict and re-raises the banner (no silent clobber).
+    void uat_ext_008_dismissLeavesGuardArmed() {
+        auto *app = qobject_cast<Application *>(qApp);
+        QVERIFY(app);
+        const QString path =
+            writeImage(m_dir.filePath(QStringLiteral("ext008.png")), QSize(120, 90), Qt::white);
+        app->openFiles({path});
+        MainWindow *mw = currentMainWindow();
+        QVERIFY(mw);
+        QApplication::processEvents();
+
+        auto *banner = mw->findChild<FileChangeBanner *>();
+        auto *mon = mw->findChild<ExternalChangeMonitor *>();
+        QVERIFY(banner);
+        QVERIFY(mon);
+        mon->setDebounceMsForTest(10);
+
+        IDocument *doc = currentDoc(mw);
+        QVERIFY(doc);
+        doc->rotatePage(0, 90);
+        writeImage(path, QSize(640, 480), Qt::darkCyan);
+        mon->pokeForTest();
+        QTRY_COMPARE_WITH_TIMEOUT(banner->mode(), FileChangeBanner::Mode::Conflict, 2000);
+
+        const QByteArray externalBytes = readAllBytes(path);
+
+        // Dismiss just hides the banner; it must NOT touch the baseline.
+        banner->clickDismissForTest();
+        QApplication::processEvents();
+        QCOMPARE(banner->mode(), FileChangeBanner::Mode::Hidden);
+        // Guard still armed: the conflict is unchanged.
+        QVERIFY(doc->externalChangeState() == ExternalChangeState::DirtyConflict);
+
+        // A Save now re-detects the conflict and re-raises the banner rather
+        // than clobbering the newer on-disk copy.
+        triggerSave(mw);
+        QApplication::processEvents();
+        QTRY_COMPARE_WITH_TIMEOUT(banner->mode(), FileChangeBanner::Mode::Conflict, 2000);
+        QCOMPARE(readAllBytes(path), externalBytes); // no clobber
     }
 };
 
