@@ -67,6 +67,20 @@ class TwoPageView : public QAbstractScrollArea {
     // pairing without re-deriving it).
     const std::vector<Spread> &spreads() const { return m_spreads; }
 
+    // Spread-adjacency navigation for Previous/Next Page in Two-Pages mode.
+    // Given the 0-based `fromPage` that Next/Previous is relative to (any page
+    // of the currently-visible spread — the caller passes the free-scroll-
+    // tracked leading page), return the 0-based LEADING page of the adjacent
+    // spread, clamped at the ends. Derived from the real SpreadLayout, so
+    // cover-alone / trailing-unpaired pages are handled by the pairing rule
+    // rather than hardcoded arithmetic. Next/Previous MUST step by a whole
+    // spread: stepping by a single page maps the right page of a spread back to
+    // that same spread (scrollToPage top-aligns the containing spread), so
+    // per-page stepping sticks and never advances — the reason these exist.
+    // Returns `fromPage` unchanged when there is no layout.
+    int leadingPageOfNextSpread(int fromPage) const;
+    int leadingPageOfPrevSpread(int fromPage) const;
+
     // Render 0-based `pageIndex` exactly as the paint path does: at
     // pts x zoom x devicePixelRatio DEVICE pixels, with the dpr stamped so the
     // image occupies pts x zoom LOGICAL pixels. paintEvent() draws this same

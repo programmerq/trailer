@@ -76,6 +76,8 @@ class PdfDocument : public IDocument {
     // auto-OCR / missing-model hint re-derivation react to a real signal
     // instead of polling currentPage() on a timer.
     PageChangeNotifier *pageChangeNotifier() override { return &m_pageChangeNotifier; }
+    int nextPageIndex() const override;
+    int previousPageIndex() const override;
 
     bool supportsSearch() const override { return true; }
     void setSearchQuery(const QString &query) override;

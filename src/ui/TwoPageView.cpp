@@ -196,6 +196,35 @@ void TwoPageView::scrollToPage(int pageIndex) {
     }
 }
 
+int TwoPageView::leadingPageOfNextSpread(int fromPage) const {
+    if (m_spreads.empty())
+        return fromPage;
+    const int page1 = fromPage + 1; // spreads use 1-based page numbers
+    for (size_t i = 0; i < m_spreads.size(); ++i) {
+        const Spread &s = m_spreads[i];
+        if (s.left == page1 || s.right == page1) {
+            const size_t next = std::min(i + 1, m_spreads.size() - 1);
+            return m_spreads[next].left - 1; // 1-based -> 0-based index
+        }
+    }
+    // fromPage is not in any spread (out of range) — clamp to the last spread.
+    return m_spreads.back().left - 1;
+}
+
+int TwoPageView::leadingPageOfPrevSpread(int fromPage) const {
+    if (m_spreads.empty())
+        return fromPage;
+    const int page1 = fromPage + 1;
+    for (size_t i = 0; i < m_spreads.size(); ++i) {
+        const Spread &s = m_spreads[i];
+        if (s.left == page1 || s.right == page1) {
+            const size_t prev = (i == 0) ? 0 : i - 1;
+            return m_spreads[prev].left - 1;
+        }
+    }
+    return m_spreads.front().left - 1;
+}
+
 int TwoPageView::topVisibleLeadingPage() const {
     if (m_spreads.empty())
         return 0;

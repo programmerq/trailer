@@ -41,7 +41,9 @@
 #include <QScreen>
 #include <QScrollBar>
 #include <QString>
+#include <QStringList>
 #include <QTemporaryDir>
+#include <QVector>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QtTest/QtTest>
@@ -235,6 +237,7 @@ class TestUatTwoPage : public QObject {
     void uat_vwr_078_spreadAwareFitNoOverflow();
     void uat_vwr_079_zoomReadoutMatchesRenderScale();
     void uat_vwr_080_dprBackingResolution();
+    void uat_vwr_081_nextPageWalksAllSpreads();
 
   private:
     QTemporaryDir m_scratch;
@@ -1029,6 +1032,109 @@ void TestUatTwoPage::uat_vwr_080_dprBackingResolution() {
                                 .arg(pageImg.width())
                                 .arg(logicalRasterW)));
     }
+}
+
+// UAT-VWR-081 — Next/Previous Page walk EVERY spread in Two-Pages mode, in
+// order, to the last spread (not stuck). This is the reviewer's empirical
+// repro: currentPage() returns the leading page of the top-visible spread, but
+// Next Page was wired as goToPage(currentPage()+1) — from the left page of a
+// spread, +1 is that spread's RIGHT page, which scrollToPage maps back to the
+// SAME spread, so navigation stuck at the second spread and could never reach
+// the later ones. Drives the REAL View-menu Next/Previous Page actions (the
+// user's path, and the exact code that regressed) rather than calling
+// goToPage() directly, so it guards the wiring, not just the helper. Fails
+// against the old currentPage()±1 wiring, which produces 1,1,1,… here.
+void TestUatTwoPage::uat_vwr_081_nextPageWalksAllSpreads() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    // 8-page cover-alone book → spreads [1],[2,3],[4,5],[6,7],[8]; 0-based
+    // leading page indices, in order: 0, 1, 3, 5, 7.
+    const QString pdf =
+        writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_081.pdf")), 8);
+    MainWindow *mw = openFreshWindow(app, pdf);
+    QVERIFY(mw);
+    // A short viewport at Actual Size keeps every spread (each a full A4 page
+    // tall) larger than the viewport, so scrollToPage can top-align EACH spread
+    // — including the last — instead of clamping it against the canvas bottom.
+    // That makes currentPage() (derived from the top-visible spread) reach the
+    // final spread's leading page deterministically.
+    mw->resize(1000, 640);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    doc->setViewMode(ViewMode::TwoPages);
+    QApplication::processEvents();
+    doc->zoomActual();
+    QApplication::processEvents();
+
+    auto *twoPage = mw->findChild<TwoPageView *>(QStringLiteral("view.twoPage"));
+    QVERIFY(twoPage);
+    QVERIFY2(twoPage->verticalScrollBar()->maximum() > 0,
+             "need a real scroll range so each spread can top-align");
+
+    // Cover-alone pairing sanity: 8 pages → 5 spreads.
+    QCOMPARE(int(twoPage->spreads().size()), 5);
+
+    QAction *nextPage = findAction(mw, QStringLiteral("action.view.nextPage"));
+    QAction *prevPage = findAction(mw, QStringLiteral("action.view.previousPage"));
+    QVERIFY2(nextPage && prevPage, "Next/Previous Page actions must exist");
+
+    // Start at the cover.
+    doc->goToPage(0);
+    QApplication::processEvents();
+    QCOMPARE(doc->currentPage(), 0);
+
+    // Pressing Next Page four times must visit spread leading pages 1,3,5,7 in
+    // order — every spread, to the last. The old currentPage()+1 wiring yields
+    // 1,1,1,1 here (stuck on the second spread), so this sequence is the guard.
+    const QVector<int> forwardExpected{1, 3, 5, 7};
+    QVector<int> forwardGot;
+    for (int i = 0; i < forwardExpected.size(); ++i) {
+        nextPage->trigger();
+        QApplication::processEvents();
+        forwardGot.push_back(doc->currentPage());
+    }
+    QVERIFY2(forwardGot == forwardExpected,
+             qPrintable(QStringLiteral("Next Page must walk every spread to the last "
+                                       "(expected 1,3,5,7); got %1 — navigation is stuck")
+                            .arg([&] {
+                                QStringList s;
+                                for (int v : forwardGot)
+                                    s << QString::number(v);
+                                return s.join(QLatin1Char(','));
+                            }())));
+
+    // Next Page at the last spread clamps (stays on the final leading page).
+    nextPage->trigger();
+    QApplication::processEvents();
+    QCOMPARE(doc->currentPage(), 7);
+
+    // Previous Page walks back symmetrically: 5,3,1,0.
+    const QVector<int> backExpected{5, 3, 1, 0};
+    QVector<int> backGot;
+    for (int i = 0; i < backExpected.size(); ++i) {
+        prevPage->trigger();
+        QApplication::processEvents();
+        backGot.push_back(doc->currentPage());
+    }
+    QVERIFY2(backGot == backExpected,
+             qPrintable(QStringLiteral("Previous Page must walk back through every spread "
+                                       "(expected 5,3,1,0); got %1")
+                            .arg([&] {
+                                QStringList s;
+                                for (int v : backGot)
+                                    s << QString::number(v);
+                                return s.join(QLatin1Char(','));
+                            }())));
+
+    // Previous Page at the cover clamps (stays on page 0).
+    prevPage->trigger();
+    QApplication::processEvents();
+    QCOMPARE(doc->currentPage(), 0);
 }
 
 int main(int argc, char **argv) {

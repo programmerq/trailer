@@ -1408,6 +1408,23 @@ void PdfDocument::goToPage(int pageIndex) {
     }
 }
 
+int PdfDocument::nextPageIndex() const {
+    // In Two-Pages mode Next Page must advance by a whole SPREAD relative to the
+    // currently-visible one, not by one page: currentPage()+1 lands on the right
+    // page of the same spread, which scrollToPage() maps straight back to that
+    // spread, so per-page stepping would stick. Ask the layout for the next
+    // spread's leading page instead. Single/Continuous keep single-page steps.
+    if (m_viewMode == ViewMode::TwoPages && m_twoPageView)
+        return m_twoPageView->leadingPageOfNextSpread(currentPage());
+    return currentPage() + 1;
+}
+
+int PdfDocument::previousPageIndex() const {
+    if (m_viewMode == ViewMode::TwoPages && m_twoPageView)
+        return m_twoPageView->leadingPageOfPrevSpread(currentPage());
+    return currentPage() - 1;
+}
+
 void PdfDocument::setSearchQuery(const QString &query) {
     if (!m_valid) {
         return;

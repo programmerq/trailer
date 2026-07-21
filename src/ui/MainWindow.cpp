@@ -1385,7 +1385,9 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     m_previousPageAction->setShortcut(QKeySequence(Qt::Key_PageUp));
     connect(m_previousPageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
-            doc->goToPage(doc->currentPage() - 1);
+            // previousPageIndex() steps by a whole spread in Two-Pages mode and
+            // by one page otherwise; goToPage() clamps out-of-range indices.
+            doc->goToPage(doc->previousPageIndex());
         }
     });
 
@@ -1394,7 +1396,9 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     m_nextPageAction->setShortcut(QKeySequence(Qt::Key_PageDown));
     connect(m_nextPageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
-            doc->goToPage(doc->currentPage() + 1);
+            // nextPageIndex() steps by a whole spread in Two-Pages mode and by
+            // one page otherwise; goToPage() clamps out-of-range indices.
+            doc->goToPage(doc->nextPageIndex());
         }
     });
 
@@ -1505,13 +1509,13 @@ void MainWindow::buildGoMenu(QMenu *goMenu) {
     auto *prevPage = goMenu->addAction(tr("&Previous Page"));
     prevPage->setShortcut(QKeySequence(tr("Ctrl+Left")));
     connect(prevPage, &QAction::triggered, this, withCurrentDoc([](IDocument *doc) {
-                doc->goToPage(std::max(0, doc->currentPage() - 1));
+                doc->goToPage(std::max(0, doc->previousPageIndex()));
             }));
 
     auto *nextPage = goMenu->addAction(tr("&Next Page"));
     nextPage->setShortcut(QKeySequence(tr("Ctrl+Right")));
     connect(nextPage, &QAction::triggered, this, withCurrentDoc([](IDocument *doc) {
-                doc->goToPage(std::min(doc->pageCount() - 1, doc->currentPage() + 1));
+                doc->goToPage(std::min(doc->pageCount() - 1, doc->nextPageIndex()));
             }));
 
     auto *lastPage = goMenu->addAction(tr("&Last Page"));
