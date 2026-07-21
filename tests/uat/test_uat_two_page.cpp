@@ -603,7 +603,7 @@ void TestUatTwoPage::uat_vwr_074_g2Evidence() {
     auto *badgeRow = new QWidget(&panel);
     auto *badgeLay = new QHBoxLayout(badgeRow);
     badgeLay->setContentsMargins(0, 0, 0, 0);
-    auto *badgeLabel = new QLabel(QStringLiteral("\U0001F512 Read-only"), badgeRow);
+    auto *badgeLabel = new QLabel(QStringLiteral("Read-only"), badgeRow);
     badgeLabel->setStyleSheet(QStringLiteral(
         "background:#fff4d6; border:1px solid #e6c86a; border-radius:4px; "
         "color:#5a4a12; font-size:13px; padding:1px 6px;"));

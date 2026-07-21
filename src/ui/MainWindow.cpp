@@ -614,7 +614,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // to edit" sentence lives in its tooltip; the per-control disabled tooltips
     // stay as the G3 floor. Shown only in Two-Pages mode by
     // onCurrentDocumentChanged.
-    m_readOnlyBadge = new QLabel(tr("\U0001F512 Read-only"), this);
+    m_readOnlyBadge = new QLabel(tr("Read-only"), this);
     m_readOnlyBadge->setObjectName(QStringLiteral("twoPageReadOnlyBadge"));
     m_readOnlyBadge->setToolTip(
         tr("Two Pages is a read-only view — switch to Single or Continuous to edit"));
