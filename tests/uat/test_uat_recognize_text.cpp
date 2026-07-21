@@ -241,7 +241,7 @@ class TestUatRecognizeText : public QObject {
     void uat_ocr_140_emptyPageNotReOcrdOnRevisit();
     void uat_ocr_150_singlePageForceRerunReRunsThroughMenu();
     void uat_ocr_160_rerunActionDisabledWithTooltip();
-    void uat_ocr_170_imageSelectableCueFiresOnOcrLandNoModal();
+    void uat_ocr_170_recognizedGlyphReflectsOcrNoCueNoModal();
 
   private:
     QTemporaryDir m_scratch;
@@ -1133,6 +1133,13 @@ void TestUatRecognizeText::uat_ocr_150_singlePageForceRerunReRunsThroughMenu() {
     QVERIFY2(rerun, "Tools → Re-run Text Recognition action is missing");
     QVERIFY2(rerun->isEnabled(),
              "Re-run must be enabled for a single-page doc that already has OCR results");
+    // Status glyph (owner HITL on #114): the entry is checkable and its
+    // native menu checkmark is ON when the current page has recognised,
+    // selectable text — the in-context replacement for the removed status-bar
+    // cue.
+    QVERIFY2(rerun->isCheckable(), "Re-run must be checkable to carry the status glyph");
+    QVERIFY2(rerun->isChecked(),
+             "the status glyph must be ON when the page has recognised text");
     saveMenuShot(menuOwningAction(mw->menuBar(), QStringLiteral("Re-run Text &Recognition")),
                  QStringLiteral("rerun-enabled.png"));
 
@@ -1146,6 +1153,24 @@ void TestUatRecognizeText::uat_ocr_150_singlePageForceRerunReRunsThroughMenu() {
                 store->blocks(0).front().text == QStringLiteral("corrected-ocr"));
     QVERIFY2(store->blocks(0).front().text != QStringLiteral("WATERMARK-GARBAGE"),
              "the wrong text must be replaced, not kept");
+    // The status glyph stays truthful across the click: after the fresh OCR
+    // lands the page still has results, so the checkmark is back ON (the
+    // checkable QAction's auto-toggle on trigger is re-derived away).
+    QTRY_VERIFY2(rerun->isChecked(),
+                 "the status glyph must be ON again after the re-run lands text");
+
+    // Declined download-consent must not leave the glyph lying. With results
+    // still present, a re-run whose consent hook returns false returns early;
+    // the auto-toggle-OFF must have been re-derived back ON and no new OCR
+    // runs (the blocker a reviewer caught on the early-return path).
+    QVERIFY(rerun->isChecked() && rerun->isEnabled());
+    const int callsBeforeDecline = calls.load();
+    mw->setOcrModelDownloadHookForTesting([]() { return false; });
+    rerun->trigger();
+    QApplication::processEvents();
+    QVERIFY2(rerun->isChecked(),
+             "a declined-consent re-run must not flip the status glyph OFF");
+    QCOMPARE(calls.load(), callsBeforeDecline);
 }
 
 // uat_ocr_160 — G3 (no lying controls). The Re-run entry is disabled with a
@@ -1169,6 +1194,9 @@ void TestUatRecognizeText::uat_ocr_160_rerunActionDisabledWithTooltip() {
     QVERIFY2(rerun, "Tools → Re-run Text Recognition action is missing");
     QVERIFY2(!rerun->isEnabled(),
              "Re-run must be disabled for a single-page image with no results yet");
+    // Status glyph OFF: no recognised text yet, so the checkmark is clear.
+    QVERIFY2(!rerun->isChecked(),
+             "the status glyph must be OFF when the page has no recognised text");
     QVERIFY2(rerun->toolTip().contains(QStringLiteral("Run Recognize Text first")),
              qPrintable(QStringLiteral("no-results tooltip must say what to do, got: %1")
                             .arg(rerun->toolTip())));
@@ -1194,13 +1222,14 @@ void TestUatRecognizeText::uat_ocr_160_rerunActionDisabledWithTooltip() {
                  QStringLiteral("rerun-disabled-multipage.png"));
 }
 
-// uat_ocr_170 — passive image selectable-text cue (backlog 2026-07-15-image-
-// selectable-text-cue). When an image page gains usable OCR blocks, a
-// transient status-bar line appears — NO modal, self-clearing. Honest: it
-// never fires for a text-less page (hasResults gate), and it is debounced so
-// an identical re-put doesn't re-flash. PDFs (own recognize chip) don't fire
-// it.
-void TestUatRecognizeText::uat_ocr_170_imageSelectableCueFiresOnOcrLandNoModal() {
+// uat_ocr_170 — recognised-text status GLYPH, not a status-bar cue (owner HITL
+// on #114: the former transient long-form status-bar line — "Text in this
+// image is now selectable…" — was distracting; it is replaced by the Re-run
+// Text Recognition entry's native menu checkmark). When an image page gains
+// usable OCR blocks the checkmark turns ON; it turns OFF when the text is
+// invalidated. NO status-bar cue text ever appears, and NO modal is spawned —
+// the document stays the focus.
+void TestUatRecognizeText::uat_ocr_170_recognizedGlyphReflectsOcrNoCueNoModal() {
     QVERIFY(m_scratch.isValid());
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
@@ -1214,13 +1243,23 @@ void TestUatRecognizeText::uat_ocr_170_imageSelectableCueFiresOnOcrLandNoModal()
     auto *store = imgDoc->selectableText();
     QVERIFY(store && !store->hasResults(0));
 
-    const QString kCue = QStringLiteral("now selectable");
+    QAction *rerun =
+        findActionByText(mw->menuBar(), QStringLiteral("Re-run Text &Recognition"));
+    QVERIFY2(rerun, "Tools → Re-run Text Recognition action is missing");
+    QVERIFY2(rerun->isCheckable(), "the status glyph is the entry's checkmark — must be checkable");
 
-    // BEFORE: no OCR results → no cue in the status bar.
+    // The removed status-bar cue text must never appear. This exact substring
+    // was the old long-form line; assert it is absent through the whole flow.
+    const QString kOldCue = QStringLiteral("now selectable");
+
+    // BEFORE: no OCR results → glyph OFF, no cue in the status bar. Grab the
+    // Tools menu in this "not recognised" state for the G2 before/after pair.
     mw->statusBar()->clearMessage();
-    QVERIFY2(!mw->statusBar()->currentMessage().contains(kCue),
-             "cue must be absent before OCR results land");
-    saveNoticeShot(mw, QStringLiteral("image-cue-before.png"));
+    QVERIFY2(!rerun->isChecked(), "glyph must be OFF before any text lands");
+    QVERIFY2(!mw->statusBar()->currentMessage().contains(kOldCue),
+             "the removed status-bar cue must be absent before OCR");
+    saveMenuShot(menuOwningAction(mw->menuBar(), QStringLiteral("Re-run Text &Recognition")),
+                 QStringLiteral("glyph-off.png"));
 
     // Simulate an OCR pass landing usable blocks on the visible page.
     const std::uint64_t hash = hashImageContent(imgDoc->image());
@@ -1230,58 +1269,35 @@ void TestUatRecognizeText::uat_ocr_170_imageSelectableCueFiresOnOcrLandNoModal()
     store->put(0, hash, {b});
     QApplication::processEvents();
 
-    // AFTER: Threshold 1 — the transient cue is present in the status bar.
-    QVERIFY2(mw->statusBar()->currentMessage().contains(kCue),
-             qPrintable(QStringLiteral("cue must appear once text lands, got: %1")
+    // AFTER: the glyph turns ON (the in-context status signal), and NO cue
+    // text is pushed to the status bar.
+    QVERIFY2(rerun->isChecked(),
+             "glyph must turn ON once the page gains recognised text");
+    QVERIFY2(rerun->isEnabled(), "the entry is also actionable (manual re-run) once text lands");
+    QVERIFY2(!mw->statusBar()->currentMessage().contains(kOldCue),
+             qPrintable(QStringLiteral("no status-bar cue may appear on OCR land, got: %1")
                             .arg(mw->statusBar()->currentMessage())));
-    saveNoticeShot(mw, QStringLiteral("image-cue-after.png"));
+    saveMenuShot(menuOwningAction(mw->menuBar(), QStringLiteral("Re-run Text &Recognition")),
+                 QStringLiteral("glyph-on.png"));
 
-    // Threshold 1 (non-modal): no dialog / modal was spawned by the cue.
+    // Non-modal: the status change spawns no dialog / modal.
     QVERIFY2(QApplication::activeModalWidget() == nullptr,
-             "the cue must never spawn a modal");
+             "the status glyph must never spawn a modal");
     for (QWidget *w : QApplication::topLevelWidgets()) {
         if (auto *d = qobject_cast<QDialog *>(w))
-            QVERIFY2(!d->isVisible(), "no QDialog may be shown by the passive cue");
+            QVERIFY2(!d->isVisible(), "no QDialog may be shown by the passive status glyph");
     }
 
-    // Debounce: an identical re-put (same content hash) must NOT re-flash.
-    mw->statusBar()->clearMessage();
-    store->put(0, hash, {b});
-    QApplication::processEvents();
-    QVERIFY2(!mw->statusBar()->currentMessage().contains(kCue),
-             "an identical re-put must not re-flash the cue (debounced)");
-
-    // Threshold 2 (honest): a pageChanged where hasResults() is false (an
-    // invalidate — the text-less / discarded case's observable analogue) must
-    // NOT fire the cue.
-    mw->statusBar()->clearMessage();
+    // Honest: when the text is invalidated (the text-less / discarded case's
+    // observable analogue) the glyph turns OFF — it never claims text that
+    // isn't there.
     store->invalidate(0);
     QApplication::processEvents();
     QVERIFY2(!store->hasResults(0), "invalidate clears results");
-    QVERIFY2(!mw->statusBar()->currentMessage().contains(kCue),
-             "the cue must not fire when the page holds no usable blocks");
-
-    // PDFs have their own recognize-notice chip — the image cue must not fire
-    // for a PDF even when its store gains a page entry.
-    closeAllMainWindows();
-    const QString pdf = writeMultiPagePdf(m_scratch.filePath(QStringLiteral("ocr170.pdf")), 1,
-                                          /*withText=*/true);
-    app->openFiles({pdf});
-    QApplication::processEvents();
-    mw = currentMainWindow();
-    QVERIFY(mw);
-    auto *pdfDoc = mw->findChild<DocumentView *>()->currentDocument();
-    QVERIFY(pdfDoc && !dynamic_cast<ImageDocument *>(pdfDoc));
-    auto *pdfStore = pdfDoc->selectableText();
-    QVERIFY(pdfStore);
-    mw->statusBar()->clearMessage();
-    OcrEngine::TextBlock pb;
-    pb.text = QStringLiteral("PDFTEXT");
-    pb.polygon = QPolygon(QRect(0, 0, 20, 20));
-    pdfStore->put(0, 0x1234u, {pb});
-    QApplication::processEvents();
-    QVERIFY2(!mw->statusBar()->currentMessage().contains(kCue),
-             "the image cue must not fire for a PDF document");
+    QVERIFY2(!rerun->isChecked(),
+             "glyph must turn OFF when the page holds no usable blocks");
+    QVERIFY2(!mw->statusBar()->currentMessage().contains(kOldCue),
+             "no cue text on invalidate either");
 }
 
 int main(int argc, char **argv) {

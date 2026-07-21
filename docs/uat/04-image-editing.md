@@ -730,6 +730,45 @@ cached OCR for the visible page.
 - Clicking the link kicks off a UserAction OCR for the visible
   page; the chip hides once results land.
 
+### UAT-IMG-128 — Recognised-text status glyph + single-page re-run
+
+Harness: `uat_ocr_150`, `uat_ocr_160`, `uat_ocr_170`.
+
+The `Tools > Recognize Text…` dialog hosts the force-rerun checkbox,
+but a **single-page** document skips that dialog, so `Tools > Re-run
+Text Recognition` is the affordance that re-recognises a single page
+whose OCR landed non-empty-but-wrong (watermark noise, a stray glyph).
+That same entry doubles as the recognised-text **status glyph**: it is
+a checkable menu item whose native checkmark is ON when a single-page
+document's current page carries recognised, selectable text (i.e.
+whenever the entry is actionable). There is **no** status-bar cue —
+the status is conveyed only by the glyph, so the document stays the
+focus.
+
+**Preconditions:** A single-page image is the active document; the
+PP-OCR models are available (or the download hook is satisfied).
+**Steps:**
+1. Open the image before OCR has produced results and open the Tools
+   menu.
+2. Let OCR populate the page (or run `Tools > Recognize Text…`), then
+   reopen the Tools menu.
+3. With recognised text present, choose `Tools > Re-run Text
+   Recognition`.
+**Expected:**
+- Step 1: `Re-run Text Recognition` is **disabled** and **unchecked**
+  (glyph off); its tooltip says to run Recognize Text first. No
+  status-bar cue text appears.
+- Step 2: the entry is **enabled** and **checked** (glyph on) — the
+  in-context signal that the image's text is now selectable. Still no
+  status-bar cue, no modal.
+- Step 3: the page is invalidated and re-recognised
+  (`submitUserPages(forceRerun=true)`), replacing the prior text; the
+  glyph returns to ON once the fresh result lands.
+- G3 (no lying controls): for a multi-page document the entry is
+  disabled with a tooltip pointing at the `Recognize Text…` dialog's
+  "Re-run recognition" checkbox; for a single-page doc with no results
+  yet it is disabled with a "Run Recognize Text first" tooltip.
+
 ---
 
 ## Known gaps

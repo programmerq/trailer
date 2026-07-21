@@ -459,10 +459,14 @@ class MainWindow : public QMainWindow {
     QAction *m_smartLassoAction = nullptr;
     QAction *m_recognizeTextAction = nullptr;
     // Single-page force-rerun entry (backlog 2026-07-15-single-page-force-
-    // rerun). Enabled only when the current doc is single-page, supports
-    // selectable text, and already has OCR results to replace; otherwise
-    // disabled with a why/where-to-go tooltip (G3). Refreshed by
-    // refreshRerunRecognizeAction() both at doc-change and when OCR lands.
+    // rerun) that doubles as the recognised-text status glyph (owner HITL on
+    // #114). Checkable: the native menu checkmark is on when the current page
+    // carries recognised, selectable text — the subtle in-context glyph that
+    // replaced the former transient status-bar cue. Enabled only when the
+    // current doc is single-page, supports selectable text, and already has
+    // OCR results to replace; otherwise disabled with a why/where-to-go
+    // tooltip (G3). Refreshed by refreshRerunRecognizeAction() both at
+    // doc-change and when OCR lands.
     QAction *m_rerunRecognizeAction = nullptr;
     QAction *m_exportAsAction = nullptr;
     QAction *m_exportPasswordProtectedAction = nullptr;
@@ -653,19 +657,12 @@ class MainWindow : public QMainWindow {
     // pages that already have results. Uses the same OcrController path the
     // menu uses; when the model is absent it silently no-ops (no modal).
     void maybeKickSearchOcr(IDocument *doc, const QString &query);
-    // Re-evaluate the single-page re-run affordance's enabled state and
-    // why/where-to-go tooltip (G3). Shared by updateActionStates (at
-    // doc-change) and onSelectableTextPageChanged (when OCR lands after
-    // open). Self-contained: recomputes the ML-policy gate inline.
+    // Re-evaluate the single-page re-run affordance's enabled state, checkmark
+    // status glyph, and why/where-to-go tooltip (G3). Shared by
+    // updateActionStates (at doc-change) and onSelectableTextPageChanged (when
+    // OCR lands after open). Self-contained: recomputes the ML-policy gate
+    // inline.
     void refreshRerunRecognizeAction();
-    // Debounce for the passive image selectable-text cue: (document,
-    // content-hash) last flashed. Identity-only pointer, never dereferenced;
-    // prevents an identical re-put (e.g. a future disk-cache restore of the
-    // same pixels) from re-flashing the cue for text the user already knows
-    // is selectable. Purged with the doc via the same close hook as the
-    // large-doc notice caches.
-    IDocument *m_imageSelectableCueDoc = nullptr;
-    std::uint64_t m_imageSelectableCueHash = 0;
 };
 
 } // namespace trailer

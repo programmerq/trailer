@@ -252,14 +252,6 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
             m_pageHasTextCachePage = -1;
             m_pageHasTextCacheValue = false;
         }
-        // Same recycled-address hazard for the image selectable-text cue
-        // debounce: forget the closed doc so a fresh doc at the same address
-        // can't inherit its "already flashed" state and suppress a legitimate
-        // first cue.
-        if (m_imageSelectableCueDoc == doc) {
-            m_imageSelectableCueDoc = nullptr;
-            m_imageSelectableCueHash = 0;
-        }
         m_contentAwareFormSidebarPending.remove(doc);
         // Drop the SAM encoder cache + cancel in-flight tasks for this
         // doc. Without this a closed document's address could be
@@ -1693,9 +1685,19 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     // replace a page's non-empty-but-wrong OCR. This sibling entry reaches
     // submitUserPages(forceRerun=true) directly. Starts disabled with a
     // why/where tooltip; refreshRerunRecognizeAction() re-evaluates it.
+    //
+    // The entry doubles as the recognised-text STATUS glyph (owner HITL on
+    // #114 replaced the transient status-bar cue with this): it is made
+    // checkable so the native menu checkmark renders when the current page
+    // has recognised, selectable text — a subtle, in-context glyph rather
+    // than long-form status-bar prose. It is a status indicator, not a user
+    // toggle, so refreshRerunRecognizeAction() always re-derives the checked
+    // state from hasResults() and onRerunRecognizeText() re-asserts it after
+    // the auto-toggle a checkable QAction performs on trigger.
     m_rerunRecognizeAction = makeDisabledAction(
         toolsMenu, tr("Re-run Text &Recognition"),
         tr("Open a single-page document with recognised text to re-run recognition."));
+    m_rerunRecognizeAction->setCheckable(true);
     connect(m_rerunRecognizeAction, &QAction::triggered, this,
             &MainWindow::onRerunRecognizeText);
 
@@ -2407,6 +2409,14 @@ void MainWindow::onRecognizeText() {
 }
 
 void MainWindow::onRerunRecognizeText() {
+    // A checkable QAction auto-toggles its checked state on trigger, BEFORE
+    // this slot runs. The checkmark is a read-only status glyph, not a user
+    // toggle, so immediately re-derive it from the store — this corrects the
+    // auto-toggle on every exit path below (declined download-consent, guard
+    // returns), so a cancelled re-run can never leave the glyph lying about
+    // whether the page still holds recognised text.
+    refreshRerunRecognizeAction();
+
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsSelectableText())
         return;
@@ -2432,6 +2442,12 @@ void MainWindow::onRerunRecognizeText() {
         return;
 
     m_ocrController->submitUserPages(doc, {page}, /*forceRerun=*/true);
+    // Action feedback on the user's explicit click (mirrors onRecognizeText's
+    // flash) — this is confirmation of an invoked action, not the passive
+    // "now selectable" cue the owner's #114 HITL removed. The glyph was
+    // already re-derived at the top of this slot; submitPage's async
+    // invalidate → pageChanged and the subsequent put() re-derive it again as
+    // the fresh result lands.
     flashStatus(tr("Re-running text recognition…"));
 }
 
@@ -2444,6 +2460,15 @@ void MainWindow::refreshRerunRecognizeAction() {
     auto *store = doc ? doc->selectableText() : nullptr;
     const bool hasResults = store && store->hasResults(doc->currentPage());
     const bool base = canOcr && singlePage && hasResults;
+
+    // Status glyph: the native menu checkmark is on exactly when the current
+    // page carries recognised, selectable text (owner HITL on #114 — this
+    // replaces the transient status-bar cue). Re-derived here rather than
+    // toggled, so it never lies: it turns on when OCR lands and off when the
+    // text is invalidated. Applies to any single-page doc with results
+    // (single-page images and scanned single-page PDFs alike), not images
+    // only — the same condition (`base`) that makes the entry actionable.
+    m_rerunRecognizeAction->setChecked(base);
 
     // Same ML-policy gate as applyMlPolicy() for the Recognize entry: if the
     // recognizer models are set to Never Download and not already present, a
@@ -2488,47 +2513,17 @@ void MainWindow::refreshRerunRecognizeAction() {
 }
 
 void MainWindow::onSelectableTextPageChanged(int page) {
-    // OCR results just changed for the active document's page. Two effects:
-
-    // (1) The single-page re-run affordance gates on hasResults(currentPage);
-    // that flips true when the first OCR pass lands after open, so refresh it
-    // here (covers scanned single-page PDFs too, which OCR after open).
+    Q_UNUSED(page);
+    // OCR results just changed for the active document's page. The
+    // recognised-and-selectable status is surfaced only through the Re-run
+    // Text Recognition menu entry's checkmark glyph + enabled state (owner
+    // HITL on #114: the former transient status-bar cue was distracting long-
+    // form text). refreshRerunRecognizeAction() re-derives that glyph from
+    // hasResults(currentPage()), which flips true when the first OCR pass
+    // lands after open (covers single-page images and scanned single-page
+    // PDFs alike). No status-bar text, no modal — the document stays the
+    // focus.
     refreshRerunRecognizeAction();
-
-    // (2) Passive image selectable-text cue (backlog 2026-07-15-image-
-    // selectable-text-cue). Images gained a real OCR text layer but had no
-    // affirmative signal it worked — only Find lighting up and on-match
-    // highlight, both of which require the user to already be searching. PDFs
-    // have the recognize-notice chip; this is the image analogue.
-    auto *doc = m_documentView->currentDocument();
-    if (!doc)
-        return;
-    // Images only — PDFs surface their own recognize-notice chip.
-    if (!dynamic_cast<ImageDocument *>(doc))
-        return;
-    // Only the visible page, and only when text actually landed. A text-less
-    // page memoes via markAttempted() WITHOUT a put(), so hasResults() stays
-    // false and the cue never fires for it — honest per ADR 0002 §3 / G13.2.
-    if (page != doc->currentPage())
-        return;
-    auto *store = doc->selectableText();
-    // Only respond to the CURRENT doc's own store. Across tab switches this
-    // slot stays connected to previously-current docs' stores too, so a
-    // background tab finishing OCR must not fire the foreground doc's cue.
-    if (!store || sender() != store || !store->hasResults(page))
-        return;
-    // Debounce identical re-puts (a future disk-cache restore of the same
-    // pixels) so the cue doesn't re-flash for text the user already knows is
-    // selectable. Pointer is identity-only.
-    const std::uint64_t hash = store->contentHashFor(page);
-    if (m_imageSelectableCueDoc == doc && m_imageSelectableCueHash == hash)
-        return;
-    m_imageSelectableCueDoc = doc;
-    m_imageSelectableCueHash = hash;
-    // Transient, non-modal, self-clearing (flashStatus uses a 4 s timeout).
-    // No persistent control to dismiss.
-    flashStatus(tr("Text in this image is now selectable — use Find, or drag "
-                   "to select."));
 }
 
 void MainWindow::onExportAs() {
@@ -3405,8 +3400,8 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
                     &MainWindow::onActiveAnnotationStoreChanged, Qt::UniqueConnection);
         }
         // Listen for OCR results landing in this document's selectable-text
-        // store so the passive image cue can fire and the single-page re-run
-        // affordance can enable the moment text appears. Named slot +
+        // store so the single-page re-run affordance's checkmark glyph +
+        // enabled state update the moment text appears. Named slot +
         // UniqueConnection so repeated doc changes don't stack duplicates
         // (the store outlives tab switches; a closed doc's store is destroyed,
         // dropping its connection).
