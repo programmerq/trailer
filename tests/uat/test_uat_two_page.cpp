@@ -83,6 +83,39 @@ QString writeSampleImage(const QString &path) {
     return path;
 }
 
+// A BOOK-like multi-page A4 PDF for the G2 evidence shots: page 1 is a distinct
+// cover (title, no number), and every later page carries one large, centred page
+// number. Rendered big enough to survive the window-grab downscale, so a
+// reviewer can literally read the cover-alone-then-facing rhythm off the
+// after-shot: page 1 sits alone, then 2·3, then 4·5 side by side.
+QString writeBookPdf(const QString &path, int pages) {
+    QPdfWriter writer(path);
+    writer.setPageSize(QPageSize(QPageSize::A4));
+    writer.setResolution(150); // predictable device-pixel dimensions
+    QPainter p(&writer);
+    const QRect page(0, 0, writer.width(), writer.height());
+    for (int i = 0; i < pages; ++i) {
+        QFont f = p.font();
+        f.setBold(true);
+        if (i == 0) {
+            // Cover: a title block, visually unmistakable versus a numbered page.
+            f.setPointSize(56);
+            p.setFont(f);
+            p.drawText(page, Qt::AlignCenter | Qt::TextWordWrap,
+                       QStringLiteral("THE\nTRAILER\nBOOK\n\n· cover ·"));
+        } else {
+            // A single huge page number fills the page.
+            f.setPointSize(320);
+            p.setFont(f);
+            p.drawText(page, Qt::AlignCenter, QString::number(i + 1));
+        }
+        if (i < pages - 1)
+            writer.newPage();
+    }
+    p.end();
+    return path;
+}
+
 QAction *findAction(MainWindow *mw, const QString &objectName) {
     return mw ? mw->findChild<QAction *>(objectName) : nullptr;
 }
@@ -434,11 +467,15 @@ void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {
     QVERIFY2(!banner->isVisible(), "read-only banner must hide again on leaving Two-Pages mode");
 }
 
-// UAT-VWR-074 — curated G2 evidence. Grabs the SAME multi-page document in
-// Single mode (before) and Two-Pages mode (after) — the required before/after
-// pair — plus a reconstruction of the disabled "Two Pages" toggle with its
-// tooltip (a tooltip cannot be reached in an offscreen static grab(), so the
-// reconstruction is the accepted fallback, noted in the PR). Writes PNGs only
+// UAT-VWR-074 — curated G2 evidence, HONESTLY re-shot. Grabs the SAME book-like
+// document in Single mode (before) and Two-Pages mode (after) — the required
+// before/after pair — plus the read-only disabled-toggle panel and a zoom shot
+// whose visible readout matches its true render scale. The after-shot shows the
+// read-only banner and the cover-alone-then-facing rhythm (page 1 alone, then
+// 2·3, 4·5). Every zoom grab is taken AFTER the readout has refreshed via the
+// real zoom action, so the shot can never re-introduce the stale-readout bug
+// (a "100%" caption over a page painted at ~50%) that this re-shoot exists to
+// correct — uat_vwr_079 guards the invariant independently. Writes PNGs only
 // when TRAILER_TWO_PAGE_EVIDENCE_DIR is set; otherwise it still exercises the
 // same render path as a plain assertion so the slot is a real test in CI.
 void TestUatTwoPage::uat_vwr_074_g2Evidence() {
@@ -446,11 +483,12 @@ void TestUatTwoPage::uat_vwr_074_g2Evidence() {
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
 
+    // A real 6-page book: cover [1], then facing spreads [2,3],[4,5], then [6].
     const QString pdf =
-        writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_074.pdf")), 6);
+        writeBookPdf(m_scratch.filePath(QStringLiteral("uat_vwr_074_book.pdf")), 6);
     MainWindow *mw = openFreshWindow(app, pdf);
     QVERIFY(mw);
-    mw->resize(1000, 760);
+    mw->resize(1100, 900);
     QApplication::processEvents();
 
     auto *dv = mw->findChild<DocumentView *>();
@@ -458,10 +496,11 @@ void TestUatTwoPage::uat_vwr_074_g2Evidence() {
     IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
 
-    auto *continuous = findAction(mw, QStringLiteral("action.view.continuous"));
     auto *single = findAction(mw, QStringLiteral("action.view.singlePage"));
     auto *twoPages = findAction(mw, QStringLiteral("action.view.twoPages"));
-    QVERIFY(single && twoPages && continuous);
+    auto *actual = findAction(mw, QStringLiteral("action.view.actualSize"));
+    auto *zoomOut = findAction(mw, QStringLiteral("action.view.zoomOut"));
+    QVERIFY(single && twoPages && actual && zoomOut);
 
     const QByteArray dir = qgetenv("TRAILER_TWO_PAGE_EVIDENCE_DIR");
     auto save = [&](const QImage &img, const QString &name) {
@@ -473,31 +512,51 @@ void TestUatTwoPage::uat_vwr_074_g2Evidence() {
                  qPrintable(QStringLiteral("failed to save %1").arg(path)));
     };
 
-    // BEFORE: Single mode on the 6-page document.
+    // BEFORE: Single mode on the book — the cover (page 1) fills the surface.
     single->trigger();
     QApplication::processEvents();
     const QPixmap before = mw->grab();
     QVERIFY(!before.isNull());
-    save(before.toImage(), QStringLiteral("2026-07-21-two-page-single-before.png"));
+    save(before.toImage(), QStringLiteral("tp-before.png"));
 
-    // AFTER: Two-Pages mode on the SAME document, TOP-ANCHORED. Zoom out enough
-    // that the lone cover (page 1) AND the first facing pair (2,3) are both
-    // visible at scroll 0, so the shot makes the cover-alone pairing (page 1
-    // alone, then 2 & 3 side by side) unmistakable — and page 1 appears in both
-    // the before and after shots.
+    // AFTER: Two-Pages mode on the SAME book, TOP-ANCHORED. Zoom out until at
+    // least the lone cover (page 1) and the first facing pair (2·3) — ideally
+    // 4·5 too — are all visible at scroll 0, so the cover-alone-then-facing
+    // rhythm is unmistakable, and the read-only banner is captured in-frame.
     QVERIFY(twoPages->isEnabled());
     twoPages->trigger();
     QApplication::processEvents();
-    for (int i = 0; i < 4; ++i)
-        doc->zoomOut();
-    QApplication::processEvents();
     auto *twoPageView = mw->findChild<TwoPageView *>(QStringLiteral("view.twoPage"));
     QVERIFY(twoPageView);
+    // Step out via the REAL zoom-out action (not doc->zoomOut(), which would
+    // leave the status-bar readout stale — the very bug this re-shoot corrects)
+    // until the lone cover AND the first facing pair both fit at scroll 0, so the
+    // badge in-frame stays truthful about the scale the spread is painted at.
+    actual->trigger();
+    QApplication::processEvents();
+    for (int i = 0; i < 5; ++i) {
+        zoomOut->trigger();
+        QApplication::processEvents();
+    }
     twoPageView->verticalScrollBar()->setValue(0);
     QApplication::processEvents();
+    auto *banner = mw->findChild<QLabel *>(QStringLiteral("twoPageModeBanner"));
+    QVERIFY2(banner && banner->isVisible(),
+             "read-only banner must be visible in the after-shot");
     const QPixmap after = mw->grab();
     QVERIFY(!after.isNull());
-    save(after.toImage(), QStringLiteral("2026-07-21-two-page-facing-after.png"));
+    save(after.toImage(), QStringLiteral("tp-after.png"));
+
+    // ZOOM shot: Actual Size (100%). Trigger the REAL action, let the readout
+    // refresh, THEN grab — so the caption ("100%") and the painted render scale
+    // agree. This is the honest counterpart to the withdrawn stale "100%" shot.
+    actual->trigger();
+    QApplication::processEvents();
+    twoPageView->verticalScrollBar()->setValue(0);
+    QApplication::processEvents();
+    const QPixmap zoom100 = mw->grab();
+    QVERIFY(!zoom100.isNull());
+    save(zoom100.toImage(), QStringLiteral("tp-zoom100.png"));
 
     // DISABLED TOGGLE + tooltip (G3). Read the tooltip text LIVE from the real
     // greyed m_twoPagesAction (opening a single-page PDF, then an image) rather
@@ -525,6 +584,13 @@ void TestUatTwoPage::uat_vwr_074_g2Evidence() {
     panel.setObjectName(QStringLiteral("evidence.toggleDisabled"));
     panel.setStyleSheet(QStringLiteral("background:#f4f4f4;"));
     auto *lay = new QVBoxLayout(&panel);
+    auto *bannerLabel = new QLabel(
+        QStringLiteral("Two Pages is a read-only view — switch to Single or "
+                       "Continuous to edit"),
+        &panel);
+    bannerLabel->setStyleSheet(QStringLiteral(
+        "background:#fff3cd; color:#664d03; font-size:14px; padding:8px 10px;"));
+    lay->addWidget(bannerLabel);
     auto *row = new QLabel(QStringLiteral("View ▸ Two Pages   (disabled)"), &panel);
     row->setEnabled(false); // greyed, as the disabled menu entry renders
     row->setStyleSheet(QStringLiteral("font-size:15px; padding:6px 10px;"));
@@ -538,12 +604,12 @@ void TestUatTwoPage::uat_vwr_074_g2Evidence() {
         t->setStyleSheet(QStringLiteral("color:#333; background:#fffbe6; padding:6px 10px;"));
         lay->addWidget(t);
     }
-    panel.resize(560, 160);
+    panel.resize(560, 200);
     panel.show();
     QApplication::processEvents();
     const QPixmap disabled = panel.grab();
     QVERIFY(!disabled.isNull());
-    save(disabled.toImage(), QStringLiteral("2026-07-21-two-page-toggle-disabled.png"));
+    save(disabled.toImage(), QStringLiteral("tp-disabled.png"));
 }
 
 // UAT-VWR-075 — navigation stays live in Two-Pages mode. Previous/Next Page (and
