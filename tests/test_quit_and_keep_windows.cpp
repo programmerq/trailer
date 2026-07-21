@@ -40,6 +40,7 @@
 #include <QCryptographicHash>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QImage>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -52,6 +53,7 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <algorithm>
 #include <memory>
 #include <optional>
 
@@ -225,6 +227,29 @@ PdfDocument *addPdfWindow(Application *app, const QString &path,
     auto doc = std::make_unique<PdfDocument>(path);
     PdfDocument *ptr = doc.get();
     win->addDocument(std::move(doc));
+    if (outWin)
+        *outWin = win;
+    return ptr;
+}
+
+// Open a REAL on-disk image, then DELETE its backing file underneath the open
+// document (CF-7 "deleted underneath"). The doc stays CLEAN (never edited) and
+// TITLED, but its file is gone, so its in-memory raster is the last copy:
+// isDirty()==false, isUntitled()==false, externalChangeState()==Deleted, and
+// hasUnsavedWork()==true. Returns the raw doc pointer (owned by the window).
+// The caller asserts the deleted-underneath preconditions via QVERIFY (a
+// helper cannot, since QVERIFY returns void). `path` must be a writable
+// location whose file this helper creates and then removes.
+ImageDocument *addDeletedUnderneathImageWindow(Application *app, const QImage &image,
+                                               const QString &path,
+                                               MainWindow **outWin = nullptr) {
+    image.save(path, "PNG");
+    MainWindow *win = app->ensureFreshWindow();
+    auto doc = std::make_unique<ImageDocument>(path); // loads + captures baseline
+    ImageDocument *ptr = doc.get();
+    win->addDocument(std::move(doc));
+    // Yank the backing file out from under the open, clean, titled doc.
+    QFile::remove(path);
     if (outWin)
         *outWin = win;
     return ptr;
@@ -414,6 +439,8 @@ class TestQuitAndKeepWindows : public QObject {
     void restoreCombinedStructuralAndAnnotationKeepsBothEditable();
     void annotationJsonRoundTripsAllFields();
     void keepWindowsDirtyTitledImageRestoresDirtyWithPath();
+    void deletedUnderneathDocIsPromptedOnNormalQuit();
+    void keepWindowsKeepsDeletedDocWithoutWritingBackingFile();
 
   private:
     Application *m_app = nullptr;
@@ -1362,6 +1389,100 @@ void TestQuitAndKeepWindows::keepWindowsDirtyTitledImageRestoresDirtyWithPath() 
     QVERIFY(restored->isDirty());          // returned still dirty
     QCOMPARE(restored->image().convertToFormat(QImage::Format_ARGB32),
              expected.convertToFormat(QImage::Format_ARGB32));
+}
+
+void TestQuitAndKeepWindows::deletedUnderneathDocIsPromptedOnNormalQuit() {
+    // CF-7 × #78 integration: a CLEAN, TITLED doc whose backing file was
+    // DELETED underneath has hasUnsavedWork()==true but isDirty()==false. The
+    // ⌘Q (Normal) quit collection must include it — its in-memory buffer is
+    // the last copy — so ⌘Q PROMPTS instead of silently quitting and dropping
+    // the buffer. Driven through collectDirtyDocsForQuit() and the Normal quit
+    // seam directly (the app-level ⌘Q shortcut is not reachable headless).
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/deleted-underneath.png";
+
+    MainWindow *win = nullptr;
+    ImageDocument *doc =
+        addDeletedUnderneathImageWindow(m_app, makeKnownImage(19, 15, 6), path, &win);
+
+    // The deleted-underneath state: clean, titled, but unsaved work exists.
+    QVERIFY(!doc->isDirty());
+    QVERIFY(!doc->isUntitled());
+    QCOMPARE(doc->externalChangeState(), ExternalChangeState::Deleted);
+    QVERIFY(doc->hasUnsavedWork());
+    QVERIFY(!QFileInfo::exists(path)); // backing file really is gone
+
+    // (a) The quit collection includes the deleted-underneath doc. Were the
+    // predicate still bare isDirty()||isUntitled(), this clean titled doc
+    // would be absent and ⌘Q would quit silently.
+    const std::vector<IDocument *> collected = win->collectDirtyDocsForQuit();
+    QVERIFY(std::find(collected.begin(), collected.end(),
+                      static_cast<IDocument *>(doc)) != collected.end());
+
+    // (a, end-to-end) A Normal quit therefore raises the per-doc prompt; a
+    // Cancel response aborts the whole quit. If the doc were NOT collected the
+    // prompt would never fire and requestQuit would proceed (return true).
+    win->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+    int quitCount = 0;
+    m_app->setPerformQuitForTesting([&] { ++quitCount; });
+
+    const bool proceeded = m_app->requestQuit(QuitMode::Normal);
+
+    QVERIFY(!proceeded);                // Cancel at the prompt aborted the quit
+    QCOMPARE(quitCount, 0);             // did NOT silently quit
+    QCOMPARE(win->documentCount(), 1);  // doc kept
+    QVERIFY(!QFileInfo::exists(path));  // Cancel wrote nothing to the backing file
+}
+
+void TestQuitAndKeepWindows::keepWindowsKeepsDeletedDocWithoutWritingBackingFile() {
+    // CF-7 × #78 integration, keep path: ⌥⌘Q (Quit and Keep Windows) keeps a
+    // deleted-underneath image doc WITHOUT prompting and WITHOUT writing its
+    // (deleted) backing file. The raster is the last copy, so it is DRAFTED
+    // into the session store (app-data) — not stored as a dangling path ref —
+    // and comes back byte-identical on restore.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/deleted-underneath-keep.png";
+    const QImage known = makeKnownImage(23, 17, 8);
+
+    MainWindow *win = nullptr;
+    ImageDocument *doc = addDeletedUnderneathImageWindow(m_app, known, path, &win);
+    QVERIFY(doc->hasUnsavedWork());
+    QVERIFY(!doc->isDirty());
+    QVERIFY(!QFileInfo::exists(path));
+
+    // A Cancel response would abort IF a prompt were raised — the keep path
+    // must NOT prompt (the raster is draftable), so it stays irrelevant.
+    win->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
+    int quitCount = 0;
+    m_app->setPerformQuitForTesting([&] { ++quitCount; });
+
+    const bool proceeded = m_app->requestQuit(QuitMode::KeepWindows);
+
+    QVERIFY(proceeded);                                // kept without a prompt
+    QCOMPARE(quitCount, 1);
+    QVERIFY(m_app->sessionDraftStore().hasSession());  // drafted, not dropped
+    QVERIFY(!QFileInfo::exists(path));                 // backing file NOT written
+
+    // The deleted doc's raster survived: restore brings it back byte-for-byte
+    // (proving it was drafted, not stored as a dangling path to the gone file).
+    QVERIFY(m_app->restoreKeptWindows());
+    ImageDocument *restored = nullptr;
+    for (MainWindow *w : m_app->windows()) {
+        if (!w)
+            continue;
+        for (int i = 0; i < w->documentCount(); ++i) {
+            IDocument *d = nullptr;
+            if (w->documentAt(i, &d) == 1 && d && d != doc)
+                if (auto *img = dynamic_cast<ImageDocument *>(d))
+                    restored = img;
+        }
+    }
+    QVERIFY(restored);
+    QCOMPARE(restored->image().convertToFormat(QImage::Format_ARGB32),
+             known.convertToFormat(QImage::Format_ARGB32));
+    QVERIFY(!QFileInfo::exists(path)); // restore did not recreate the backing file
 }
 
 // Custom main: sandbox HOME/XDG before Application is constructed so the
