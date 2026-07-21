@@ -338,6 +338,13 @@ void ImageDocument::onAnnotationHistoryEvicted() {
 }
 
 QString ImageDocument::displayName() const {
+    // An untitled document is backed only by an ugly UUID temp filename
+    // (trailer-clipboard-…-<uuid>.png); presenting that in the tab and
+    // the "Save changes to …?" prompt would leak an implementation
+    // detail. Show a clean "Untitled" until the user saves to a real
+    // path (at which point m_untitled clears and the basename shows).
+    if (m_untitled)
+        return QObject::tr("Untitled");
     return QFileInfo(m_path).fileName();
 }
 
@@ -478,6 +485,31 @@ void ImageDocument::setImageForTest(const QImage &img, bool captureOrigin) {
 
 QPixmap ImageDocument::labelPixmapForTest() const {
     return m_lastBuiltPixmap;
+}
+
+void ImageDocument::restoreFromDraft(const QImage &img, const QString &path, bool untitled,
+                                     bool dirty, bool captureOrigin) {
+    m_image = img;
+    m_animated = false;
+    m_path = path;
+    m_untitled = untitled;
+    m_dirty = dirty;
+    // Re-apply the capture-origin flag so a restored screenshot / clipboard
+    // grab keeps its Actual-Size zoom default. `img` already carries the
+    // persisted devicePixelRatio (the caller stamped it before this call,
+    // since a PNG blob does not round-trip Qt's dpr), so preserve it rather
+    // than letting markCaptureOrigin re-derive one.
+    m_captureOrigin = captureOrigin;
+    // A restored draft starts with no undo history — the blob captured the
+    // resulting pixels, not the edit log — and must re-run its one-shot
+    // initial-fit decision when a view is attached.
+    m_undoStack.clear();
+    m_redoStack.clear();
+    m_undoLog.clear();
+    m_redoLog.clear();
+    m_initialZoomApplied = false;
+    m_scale = 1.0;
+    m_zoomMode = ZoomMode::Custom;
 }
 
 void ImageDocument::zoomIn() {
@@ -1010,6 +1042,14 @@ bool ImageDocument::save(const QString &newPath) {
     m_annotations.clear();
     m_path = target;
     m_dirty = false;
+    // A save with an explicit destination (Save-As) gives the document a
+    // user-chosen path, so it is no longer untitled. A plain save() with
+    // an empty newPath keeps whatever titled/untitled state it had — but
+    // the UI never routes an untitled doc here without a real path
+    // (MainWindow forces untitled saves through Save-As), so in practice
+    // this only fires on the Save-As that resolves the untitled state.
+    if (!newPath.isEmpty())
+        m_untitled = false;
     // Refresh the baseline to the bytes we just wrote so our own save never
     // looks like an external change.
     captureFileBaseline();

@@ -33,6 +33,7 @@
 #include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "ml/OcrEngine.h"
+#include "platform/QuitMenu.h"
 #include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
 #include "platform/Share.h"
@@ -191,16 +192,19 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     connect(m_documentView, &DocumentView::allTabsClosed, this, &MainWindow::onAllTabsClosed);
     // Unsaved-changes veto for tab closes. onTabCloseRequested emits this
     // synchronously before tearing the tab down; we prompt (reusing the
-    // same Save/Discard/Cancel flow as closeEvent) only for dirty docs
-    // and set *veto when the user aborts. A CLEAN doc is never prompted
-    // — the isDirty() guard keeps never-worry-save from nagging when
-    // nothing is lost. (Note: under the recovery-sidecar model auto-save
-    // no longer clears dirty, so an auto-saved-but-unsaved doc is still
-    // dirty here and correctly routes through confirmCloseDirtyDoc, which
-    // clears its sidecar on Save/Discard.)
+    // same Save/Discard/Cancel flow as closeEvent) for dirty docs AND for
+    // untitled docs (content-bearing but backed only by a transient temp
+    // file — clean yet unsaved to any real location, so closing silently
+    // would lose the pasted/acquired content; ADR-0004). A CLEAN, titled
+    // doc is never prompted — that guard keeps never-worry-save and
+    // auto-saved docs from nagging when nothing is lost. (Note: under the
+    // recovery-sidecar model auto-save no longer clears dirty, so an
+    // auto-saved-but-unsaved doc is still dirty here and correctly routes
+    // through confirmCloseDirtyDoc, which clears its sidecar on
+    // Save/Discard.)
     connect(m_documentView, &DocumentView::documentCloseRequested, this,
             [this](IDocument *doc, bool *veto) {
-                if (doc && doc->isDirty()) {
+                if (doc && (doc->isDirty() || doc->isUntitled())) {
                     *veto = !confirmCloseDirtyDoc(doc);
                 } else if (doc && !doc->filePath().isEmpty()) {
                     // Clean tab close: confirmCloseDirtyDoc never runs and the
@@ -764,7 +768,13 @@ void MainWindow::autoSaveDirtyDocs() {
         IDocument *doc = nullptr;
         if (!m_documentView->documentAt(i, &doc) || !doc)
             continue;
-        if (!doc->isDirty() || doc->filePath().isEmpty())
+        // Skip clean docs, and skip docs with no user-chosen path —
+        // both a genuinely path-less doc and an untitled transient
+        // import (whose only path is a temp file). Auto-saving an
+        // untitled doc would silently write to the temp file and could
+        // clear its untitled state; the user must pick a real
+        // destination via Save-As, so auto-save leaves it alone.
+        if (!doc->isDirty() || doc->filePath().isEmpty() || doc->isUntitled())
             continue;
         // Skip a document whose explicit Save is running on a worker thread:
         // that worker is mutating the same non-thread-safe qpdf editor
@@ -889,10 +899,22 @@ void MainWindow::buildMenus() {
     closeAction->setShortcut(QKeySequence::Close);
     connect(closeAction, &QAction::triggered, this, &QMainWindow::close);
 
-    auto *quitAction = fileMenu->addAction(tr("&Quit"));
-    quitAction->setShortcut(QKeySequence::Quit);
-    quitAction->setMenuRole(QAction::QuitRole);
-    connect(quitAction, &QAction::triggered, qApp, &QCoreApplication::quit);
+    m_quitAction = fileMenu->addAction(tr("&Quit"));
+    m_quitAction->setShortcut(QKeySequence::Quit);
+    m_quitAction->setMenuRole(QAction::QuitRole);
+    connect(m_quitAction, &QAction::triggered, this,
+            [this]() { m_app->requestQuit(QuitMode::Normal); });
+
+    // "Quit and Keep Windows" (⌥⌘Q). The QAction carries the functional
+    // accelerator on every platform (headless-testable); on macOS QuitMenu
+    // installs the native in-place Option swap on top — a display nicety
+    // that the feature does not depend on.
+    m_quitKeepWindowsAction = fileMenu->addAction(tr("Quit and Keep Windows"));
+    m_quitKeepWindowsAction->setShortcut(
+        QKeySequence(Qt::MetaModifier | Qt::AltModifier | Qt::Key_Q));
+    connect(m_quitKeepWindowsAction, &QAction::triggered, this,
+            [this]() { m_app->requestQuit(QuitMode::KeepWindows); });
+    QuitMenu::installAlternateKeepItem(m_quitAction, m_quitKeepWindowsAction);
 
     auto *editMenu = menuBar()->addMenu(tr("&Edit"));
     buildEditMenu(editMenu);
@@ -2297,7 +2319,9 @@ void MainWindow::onExportAs() {
             // workflow people expect from Preview.
             << tr("PDF document (*.pdf)");
     QString selected;
-    const QString suggested = doc->filePath().isEmpty()
+    // Same friendly-base treatment as Save-As: an untitled doc's temp path
+    // is UUID garbage, so seed the Export picker from displayName().
+    const QString suggested = (doc->filePath().isEmpty() || doc->isUntitled())
                                   ? doc->displayName()
                                   : QFileInfo(doc->filePath()).completeBaseName() + ".png";
     const QString path = QFileDialog::getSaveFileName(this, tr("Export As"), suggested,
@@ -2409,7 +2433,11 @@ void MainWindow::onSave() {
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsEditing())
         return;
-    if (doc->filePath().isEmpty()) {
+    // A path-less doc, or an untitled transient import (whose only path
+    // is a temp file the user never chose), must route through Save-As
+    // so the user picks a real destination rather than overwriting the
+    // temp file (ADR-0004).
+    if (doc->filePath().isEmpty() || doc->isUntitled()) {
         onSaveAs();
         return;
     }
@@ -2707,7 +2735,14 @@ QString MainWindow::chooseSaveAsPath(IDocument *doc) {
     // not a wholesale rewrite of the original. Plain saves keep the
     // basename so an idempotent re-save doesn't pollute the picker
     // history.
-    const QString basePath = doc->filePath().isEmpty() ? doc->displayName() : doc->filePath();
+    // An untitled transient import's filePath() is an ugly UUID temp path
+    // (trailer-clipboard-…-<uuid>.png); seeding the picker from it would
+    // pre-fill that garbage as the suggested filename. Seed from the
+    // friendly displayName() ("Untitled") instead — the user gets a clean,
+    // editable stem, and the correct extension is still resolved below.
+    const QString basePath = (doc->filePath().isEmpty() || doc->isUntitled())
+                                 ? doc->displayName()
+                                 : doc->filePath();
     QFileInfo bi(basePath);
     const QString stem = bi.completeBaseName().isEmpty() ? basePath : bi.completeBaseName();
     const QString ext = bi.suffix().isEmpty()
@@ -2898,7 +2933,9 @@ void MainWindow::updateTitleForDocument(IDocument *doc) {
     // macOS — the title bar gets a clickable folder icon for "Show
     // in Finder", drag-out, tags, and locked-state toggles. On
     // Linux / Windows it's a no-op outside Qt's internal bookkeeping.
-    setWindowFilePath(doc->filePath());
+    // For an untitled doc, clear it: exposing the transient temp path here
+    // would leak the UUID temp filename through the macOS proxy icon.
+    setWindowFilePath(doc->isUntitled() ? QString() : doc->filePath());
 
     const int idx = m_documentView->currentIndex();
     if (idx >= 0) {
@@ -4234,15 +4271,19 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     // ask Save / Discard / Cancel. Cancel anywhere aborts the close.
     // The order is current-document-first so the user usually only
     // sees one prompt — the doc they were just looking at.
+    // Prompt for dirty docs AND for untitled docs (clean but backed only
+    // by a transient temp file — closing silently would lose the
+    // pasted/acquired content; ADR-0004).
     std::vector<IDocument *> dirty;
     dirty.reserve(static_cast<size_t>(total));
     if (auto *current = m_documentView->currentDocument()) {
-        if (current->isDirty())
+        if (current->isDirty() || current->isUntitled())
             dirty.push_back(current);
     }
     for (int i = 0; i < total; ++i) {
         IDocument *doc = nullptr;
-        if (m_documentView->documentAt(i, &doc) && doc && doc->isDirty() &&
+        if (m_documentView->documentAt(i, &doc) && doc &&
+            (doc->isDirty() || doc->isUntitled()) &&
             std::find(dirty.begin(), dirty.end(), doc) == dirty.end()) {
             dirty.push_back(doc);
         }
@@ -4262,6 +4303,30 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         // chose Discard. Drop through and let the close proceed.
     }
     event->accept();
+}
+
+std::vector<IDocument *> MainWindow::collectDirtyDocsForQuit() const {
+    // Mirror closeEvent's dirty-doc walk: current document first (so the
+    // user usually sees just one prompt — the doc they were looking at),
+    // then the rest, de-duplicated. Dirty OR untitled qualifies — an
+    // untitled doc is clean but backed only by a transient temp file, so
+    // quitting without a prompt would lose its content (ADR-0004).
+    std::vector<IDocument *> dirty;
+    const int total = m_documentView->documentCount();
+    dirty.reserve(static_cast<size_t>(total));
+    if (auto *current = m_documentView->currentDocument()) {
+        if (current->isDirty() || current->isUntitled())
+            dirty.push_back(current);
+    }
+    for (int i = 0; i < total; ++i) {
+        IDocument *doc = nullptr;
+        if (m_documentView->documentAt(i, &doc) && doc &&
+            (doc->isDirty() || doc->isUntitled()) &&
+            std::find(dirty.begin(), dirty.end(), doc) == dirty.end()) {
+            dirty.push_back(doc);
+        }
+    }
+    return dirty;
 }
 
 bool MainWindow::confirmCloseDirtyDoc(IDocument *doc) {
@@ -4297,6 +4362,16 @@ bool MainWindow::confirmCloseDirtyDoc(IDocument *doc) {
         box.setText(tr("Save changes to %1?").arg(doc->displayName()));
         box.setStandardButtons(QMessageBox::Save | QMessageBox::Discard | QMessageBox::Cancel);
         box.setDefaultButton(QMessageBox::Save);
+        if (doc->isUntitled()) {
+            // An untitled doc has no destination yet: Save opens a file
+            // picker, so signal that with an ellipsis (only for untitled —
+            // a titled doc writes immediately and keeps plain "Save"). Also
+            // spell out the stakes, since the content lives only in a
+            // transient temp file that would be lost on Discard.
+            if (auto *saveButton = box.button(QMessageBox::Save))
+                saveButton->setText(tr("Save…"));
+            box.setInformativeText(tr("If you don't save, this image will be lost."));
+        }
         answer = box.exec();
         break;
     }
@@ -4306,11 +4381,14 @@ bool MainWindow::confirmCloseDirtyDoc(IDocument *doc) {
         return false;
     if (answer == QMessageBox::Save) {
         bool ok = false;
-        if (doc->filePath().isEmpty()) {
-            // Untitled document: route through the Save-As dialog so the
-            // user picks a destination, then save synchronously (like the
-            // has-path branch below) so the dirty check reflects the real
-            // outcome rather than a still-pending async save.
+        if (doc->filePath().isEmpty() || doc->isUntitled()) {
+            // No user-chosen destination: a genuinely path-less doc, or
+            // an untitled transient import whose only path is a temp
+            // file. Route through the Save-As dialog so the user picks a
+            // real destination — never silently overwrite the temp file
+            // — then save synchronously (like the has-path branch below)
+            // so the dirty check reflects the real outcome rather than a
+            // still-pending async save.
             const QString path = chooseSaveAsPath(doc);
             if (path.isEmpty()) {
                 // The user cancelled Save-As. Honour the cancel: abort the
