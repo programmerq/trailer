@@ -978,6 +978,13 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
                          if (twoPageView)
                              twoPageView->relayout();
                      });
+    // Track the visible spread as the user free-scrolls the TwoPageView so the
+    // current-page indicator (sidebar highlight, driven by currentPage()) stays
+    // live in Two-Pages mode instead of freezing on the first spread. We only
+    // record the value — we must NOT scroll the view back or re-navigate, which
+    // would create a feedback loop.
+    QObject::connect(twoPageView, &TwoPageView::currentPageChanged, m_doc.get(),
+                     [this](int leadingPage) { m_twoPageCurrentPage = leadingPage; });
     m_viewStack = stack;
     m_twoPageView = twoPageView;
 
@@ -1363,6 +1370,12 @@ QImage PdfDocument::renderThumbnail(int pageIndex, QSize targetSize) {
 int PdfDocument::currentPage() const {
     if (!m_view)
         return 0;
+    // In Two-Pages mode the QPdfView is hidden and its navigator only moves on
+    // explicit goToPage(); free-scrolling the custom TwoPageView doesn't touch
+    // it. Return the leading page the TwoPageView reports for the top-most
+    // visible spread so the current-page indicator tracks the scroll position.
+    if (m_viewMode == ViewMode::TwoPages && m_twoPageView)
+        return m_twoPageCurrentPage;
     return m_view->pageNavigator()->currentPage();
 }
 

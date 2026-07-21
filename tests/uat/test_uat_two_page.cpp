@@ -116,6 +116,7 @@ class TestUatTwoPage : public QObject {
     void uat_vwr_074_g2Evidence();
     void uat_vwr_075_navigationScrollsSpread();
     void uat_vwr_076_relayoutOnPageDelete();
+    void uat_vwr_077_livePageTrackingOnFreeScroll();
 
   private:
     QTemporaryDir m_scratch;
@@ -531,6 +532,54 @@ void TestUatTwoPage::uat_vwr_076_relayoutOnPageDelete() {
     QApplication::processEvents();
     QCOMPARE(doc->pageCount(), 4);
     QCOMPARE(int(twoPage->spreads().size()), 3);
+}
+
+// UAT-VWR-077 — the current-page indicator tracks free-scroll in Two-Pages mode
+// instead of freezing on the first spread. Free-scrolling the TwoPageView must
+// advance doc->currentPage() (which the sidebar highlight polls) and emit
+// TwoPageView::currentPageChanged. Regression guard for the Preview-parity miss
+// where the indicator froze because the hidden QPdfView navigator can't observe
+// the custom surface's scrolling.
+void TestUatTwoPage::uat_vwr_077_livePageTrackingOnFreeScroll() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    const QString pdf =
+        writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_077.pdf")), 8);
+    MainWindow *mw = openFreshWindow(app, pdf);
+    QVERIFY(mw);
+    mw->resize(1000, 720);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    doc->setViewMode(ViewMode::TwoPages);
+    QApplication::processEvents();
+
+    auto *twoPage = mw->findChild<TwoPageView *>(QStringLiteral("view.twoPage"));
+    QVERIFY(twoPage);
+    QScrollBar *vbar = twoPage->verticalScrollBar();
+    QVERIFY2(vbar->maximum() > 0, "need a real scroll range to observe live tracking");
+
+    // At the top, the current page is the cover (page 0).
+    vbar->setValue(0);
+    QApplication::processEvents();
+    QCOMPARE(doc->currentPage(), 0);
+
+    // The view must emit currentPageChanged as we free-scroll — and the tracked
+    // current page must advance past the first spread, not stay frozen at 0.
+    QSignalSpy spy(twoPage, &TwoPageView::currentPageChanged);
+    vbar->setValue(vbar->maximum());
+    QApplication::processEvents();
+
+    QVERIFY2(spy.count() > 0,
+             "free-scrolling must emit TwoPageView::currentPageChanged");
+    QVERIFY2(doc->currentPage() > 0,
+             qPrintable(QStringLiteral("current page must advance on free-scroll, not freeze at "
+                                       "the first spread; got %1")
+                            .arg(doc->currentPage())));
 }
 
 int main(int argc, char **argv) {

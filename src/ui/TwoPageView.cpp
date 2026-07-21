@@ -40,6 +40,11 @@ TwoPageView::TwoPageView(QWidget *parent) : QAbstractScrollArea(parent) {
             qOverload<>(&QWidget::update));
     connect(horizontalScrollBar(), &QScrollBar::valueChanged, viewport(),
             qOverload<>(&QWidget::update));
+    // Track the visible spread as the user free-scrolls so the current-page
+    // indicator (sidebar highlight) stays live in Two-Pages mode instead of
+    // freezing on the first spread.
+    connect(verticalScrollBar(), &QScrollBar::valueChanged, this,
+            [this]() { maybeEmitCurrentPage(); });
 }
 
 void TwoPageView::setDocument(QPdfDocument *doc) {
@@ -139,6 +144,32 @@ void TwoPageView::scrollToPage(int pageIndex) {
         }
         y += spreadHeight(s) + kSpreadGap;
     }
+}
+
+int TwoPageView::topVisibleLeadingPage() const {
+    if (m_spreads.empty())
+        return 0;
+    // Spreads stack from kOuterMargin downward; the top-most visible spread is
+    // the first whose bottom edge lies below the current scroll offset (i.e. it
+    // still intersects the top of the viewport). scrollToPage top-aligns a
+    // spread, so this resolves to that spread's leading page after navigation.
+    const double scrollY = verticalScrollBar()->value();
+    double y = kOuterMargin;
+    for (const Spread &s : m_spreads) {
+        const double sh = spreadHeight(s);
+        if (y + sh > scrollY)
+            return s.left - 1; // 1-based page -> 0-based index
+        y += sh + kSpreadGap;
+    }
+    return m_spreads.back().left - 1;
+}
+
+void TwoPageView::maybeEmitCurrentPage() {
+    const int page = topVisibleLeadingPage();
+    if (page == m_lastReportedPage)
+        return; // emit only on change — no per-pixel churn / feedback churn
+    m_lastReportedPage = page;
+    emit currentPageChanged(page);
 }
 
 void TwoPageView::paintEvent(QPaintEvent *event) {

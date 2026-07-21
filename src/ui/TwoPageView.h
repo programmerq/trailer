@@ -66,11 +66,27 @@ class TwoPageView : public QAbstractScrollArea {
     // stay live in Two-Pages mode instead of only moving the hidden QPdfView.
     void scrollToPage(int pageIndex);
 
+  signals:
+    // Emitted (only on change) with the 0-based leading page of the top-most
+    // visible spread as the user free-scrolls. Lets the current-page indicator
+    // (sidebar highlight) track the scroll position in Two-Pages mode instead of
+    // freezing on the first spread — the QPdfView navigator can't see this
+    // custom surface's scrolling. Consumers must NOT scroll this view back in
+    // response (feedback loop); they update indicator state only.
+    void currentPageChanged(int leadingPageIndex);
+
   protected:
     void paintEvent(QPaintEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
 
   private:
+    // 0-based leading page of the top-most spread currently intersecting the
+    // viewport top. Drives the currentPageChanged() signal.
+    int topVisibleLeadingPage() const;
+    // Recompute the top-most visible spread and emit currentPageChanged() if it
+    // changed since the last emit. Called on every vertical-scroll tick.
+    void maybeEmitCurrentPage();
+
     // Logical height of spread row `i` at the current zoom (max of its pages).
     double spreadHeight(const Spread &s) const;
     // Logical width of spread row `i` at the current zoom (both pages + gutter).
@@ -82,6 +98,9 @@ class TwoPageView : public QAbstractScrollArea {
     bool m_coverAlone = true;
     double m_zoom = 1.0;
     std::vector<Spread> m_spreads;
+    // Last leading page reported via currentPageChanged(); -1 forces the first
+    // computed value to emit. Guards against per-pixel signal churn.
+    int m_lastReportedPage = -1;
 };
 
 } // namespace trailer

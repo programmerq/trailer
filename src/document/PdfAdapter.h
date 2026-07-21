@@ -515,6 +515,13 @@ class PdfDocument : public IDocument {
     // (Two-Pages mode) at index 1. applyViewMode swaps the visible page.
     QPointer<QStackedWidget> m_viewStack;
     QPointer<TwoPageView> m_twoPageView;
+    // Live current page (0-based leading page of the top-most visible spread)
+    // reported by TwoPageView as the user free-scrolls in Two-Pages mode. The
+    // hidden QPdfView navigator can't observe that surface's scrolling, so
+    // currentPage() reads this instead when m_viewMode == TwoPages, keeping the
+    // sidebar current-page highlight live. Updated by a signal, never scrolled
+    // back (no feedback loop).
+    int m_twoPageCurrentPage = 0;
     AnnotationStore m_annotations;
     SelectableTextStore m_selectableText;
     ViewMode m_viewMode = ViewMode::Continuous;
