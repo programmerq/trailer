@@ -55,9 +55,51 @@
 #include <memory>
 #include <optional>
 
+#ifdef Q_OS_WIN
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 using namespace trailer;
 
 namespace {
+
+// True only when the process runs under the Wine emulator. Canonical detection
+// (matches tests/test_discard_file_integrity.cpp): Wine exports
+// ntdll!wine_get_version; real Windows and Linux/macOS return false. Used to
+// QSKIP the two cases that delete a file still held open by a live document —
+// see kWineOpenFileDeleteSkip and docs/backlog/2026-07-21-wine-keep-restore-
+// file-move-open-handle.md.
+bool runningUnderWine() {
+#ifdef Q_OS_WIN
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    return ntdll != nullptr && GetProcAddress(ntdll, "wine_get_version") != nullptr;
+#else
+    return false;
+#endif
+}
+
+// Why these two round-trips skip under Wine: both simulate the user MOVING or
+// DELETING the kept file between ⌥⌘Q and relaunch by QFile::remove()-ing it
+// while the ORIGINAL document is still alive (performQuit is a no-op stub in
+// these tests, so the pre-quit window/document is never torn down). On the
+// Windows/Wine file model a file held open by a live handle cannot be deleted,
+// so QFile::remove() returns false; POSIX unlink-of-an-open-file succeeds, so
+// Linux runs the full assertion set. For the backing-file case the qpdf editor
+// was additionally adopted from the annotation-sweep WORKER thread, whose
+// handle Wine does not release even on main-thread teardown (the #90 cross-
+// thread-handle limitation). The real keep flow releases the document when the
+// process exits at ⌥⌘Q, before the user moves the file. Skipped under Wine (our
+// only automated Windows signal; the native-Windows job is disabled); asserted
+// in full on Linux. See docs/backlog/2026-07-21-wine-keep-restore-file-move-
+// open-handle.md.
+constexpr const char *kWineOpenFileDeleteSkip =
+    "Wine/Windows: QFile::remove() of the kept file fails while the original "
+    "document still holds it open (the harness keeps the pre-quit document alive "
+    "via a no-op performQuit); POSIX unlink-of-open succeeds, so Linux asserts "
+    "this in full. See docs/backlog/2026-07-21-wine-keep-restore-file-move-open-"
+    "handle.md.";
 
 // A deterministic, non-flat image so a lossy or truncated round-trip is
 // caught. ARGB32 with a per-pixel gradient across all channels.
@@ -1081,6 +1123,8 @@ void TestQuitAndKeepWindows::restoreInsertedPagesPdfSurvivesWithoutSource() {
     // self-contained edited blob, so they survive a keep+restore even when the
     // source file is DELETED before restore. Proves the blob carries the
     // inserted page content, not a reference to the source.
+    if (runningUnderWine())
+        QSKIP(kWineOpenFileDeleteSkip); // QFile::remove(source) below; see helper
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = dir.path() + "/main.pdf";
@@ -1126,6 +1170,8 @@ void TestQuitAndKeepWindows::restoreStructuralPdfMovedOriginalReturnsUntitledDir
     // between ⌥⌘Q and restore, the captured work must NOT be silently dropped —
     // it returns as an UNTITLED, dirty doc (edits intact) whose first Save
     // prompts Save-As, mirroring the image Draft untitled restore.
+    if (runningUnderWine())
+        QSKIP(kWineOpenFileDeleteSkip); // QFile::remove(path) below; see helper
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = dir.path() + "/gone.pdf";
