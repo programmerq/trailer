@@ -30,6 +30,7 @@
 #include <QAction>
 #include <QDir>
 #include <QFrame>
+#include <QGuiApplication>
 #include <QImage>
 #include <QLabel>
 #include <QPageSize>
@@ -37,12 +38,15 @@
 #include <QPdfView>
 #include <QPdfWriter>
 #include <QRect>
+#include <QScreen>
 #include <QScrollBar>
 #include <QString>
 #include <QTemporaryDir>
 #include <QVBoxLayout>
 #include <QWidget>
 #include <QtTest/QtTest>
+
+#include <cmath>
 
 using namespace trailer;
 
@@ -83,6 +87,84 @@ QAction *findAction(MainWindow *mw, const QString &objectName) {
     return mw ? mw->findChild<QAction *>(objectName) : nullptr;
 }
 
+// The devicePixelRatio this run was launched under. The CMake dpr matrix
+// (tests/uat/CMakeLists.txt, trailer_register_uat_dpr_matrix) sets
+// QT_SCALE_FACTOR per process; Qt reads it before QGuiApplication and stamps
+// it on every QScreen. Defaults to 1.0 when unset (a plain `ctest` run). The
+// offscreen platform reports dpr = 1 by default, so a value > 1 here is the
+// proof the injection actually took — mirrors requestedDpr() in
+// test_uat_thumbnail_sidebar.cpp.
+double requestedDpr() {
+    bool ok = false;
+    const double v = qEnvironmentVariable("QT_SCALE_FACTOR").toDouble(&ok);
+    return (ok && v > 0.0) ? v : 1.0;
+}
+
+// The dpr Qt actually realized on the primary screen — what the widget tree
+// and the TwoPageView render path see.
+double screenDpr() {
+    auto *s = QGuiApplication::primaryScreen();
+    return s ? s->devicePixelRatio() : 1.0;
+}
+
+// Parse the integer percent shown in the status-bar zoom indicator
+// (MainWindow's `zoomIndicator` QLabel, text like "150%"). Returns -1 if the
+// label is missing / not visible / unparseable so the caller can fail loudly.
+int displayedZoomPercent(MainWindow *mw) {
+    auto *label = mw ? mw->findChild<QLabel *>(QStringLiteral("zoomIndicator")) : nullptr;
+    if (!label || !label->isVisible())
+        return -1;
+    QString t = label->text().trimmed();
+    t.remove(QLatin1Char('%'));
+    bool ok = false;
+    const int pct = t.toInt(&ok);
+    return ok ? pct : -1;
+}
+
+// Measure the ACTUAL painted width, in LOGICAL pixels, of the lone cover page
+// (page 1, top-of-canvas at scroll 0) in a TwoPageView, by grabbing the
+// viewport and scanning for the white page rectangle on a near-top row. This
+// reads what is really drawn on screen — independent of any stored zoom factor
+// — so dividing it by the native point width yields the TRUE render scale the
+// user is looking at. Returns < 0 if the page could not be measured (not found,
+// or clipped at a viewport edge, which would make the width untrustworthy).
+double measuredCoverWidthLogical(TwoPageView *view) {
+    if (!view)
+        return -1.0;
+    view->verticalScrollBar()->setValue(0);
+    QApplication::processEvents();
+    const QImage img = view->viewport()->grab().toImage();
+    if (img.isNull() || img.width() < 8 || img.height() < 8)
+        return -1.0;
+    const double dpr = img.devicePixelRatio() > 0.0 ? img.devicePixelRatio() : 1.0;
+    // The cover's top edge sits at the outer canvas margin (~20 logical px);
+    // scan a row a few logical px below it, well inside the top white margin and
+    // far above the second spread (which is a whole page height lower). Even if
+    // this row crossed the centred page label, the page's left/right edges are
+    // white margins, so the first/last near-white pixel still marks the page.
+    const int scanY = static_cast<int>(std::lround(28.0 * dpr));
+    if (scanY < 0 || scanY >= img.height())
+        return -1.0;
+    auto nearWhite = [](QRgb c) {
+        return qRed(c) > 220 && qGreen(c) > 220 && qBlue(c) > 220;
+    };
+    int left = -1, right = -1;
+    for (int x = 0; x < img.width(); ++x) {
+        if (nearWhite(img.pixel(x, scanY))) {
+            if (left < 0)
+                left = x;
+            right = x;
+        }
+    }
+    if (left < 0)
+        return -1.0; // no page found on this row
+    // Reject a clipped measurement: if the white run touches either viewport
+    // edge the page overflows and its true width is unknowable here.
+    if (left == 0 || right == img.width() - 1)
+        return -1.0;
+    return double(right - left + 1) / dpr;
+}
+
 // Open `path` in a FRESH window: close any existing MainWindows first (the
 // default is window-per-file, so leaving earlier windows open makes
 // currentMainWindow() ambiguous), then open and return the sole window.
@@ -118,6 +200,7 @@ class TestUatTwoPage : public QObject {
     void uat_vwr_076_relayoutOnPageDelete();
     void uat_vwr_077_livePageTrackingOnFreeScroll();
     void uat_vwr_078_spreadAwareFitNoOverflow();
+    void uat_vwr_079_zoomReadoutMatchesRenderScale();
 
   private:
     QTemporaryDir m_scratch;
@@ -640,6 +723,110 @@ void TestUatTwoPage::uat_vwr_078_spreadAwareFitNoOverflow() {
              qPrintable(QStringLiteral("Fit-Page must fit a full spread without horizontal "
                                        "overflow; hbar max = %1")
                             .arg(hbar->maximum())));
+}
+
+// UAT-VWR-079 — the status-bar zoom readout tells the TRUTH about the scale the
+// content is actually drawn at in Two-Pages mode. uat_vwr_072 proves the stored
+// factors agree (TwoPageView::zoomFactor() == doc->zoomFactor()); this proves
+// the NUMBER THE USER SEES ("150%") matches the PAINTED page — the gap that let
+// a "100%" evidence shot actually be captured at ~50% because the readout had
+// gone stale relative to the true render scale. Measured by grabbing the painted
+// cover page and comparing its logical width / native point width against the
+// parsed `zoomIndicator` percent, at three distinct zoom levels so a stuck /
+// stale readout (fixed number, or number desynced from the render) is caught.
+// Runs across the dpr matrix; the measurement divides out dpr so the assertion
+// is dpr-invariant.
+void TestUatTwoPage::uat_vwr_079_zoomReadoutMatchesRenderScale() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    const QString pdf =
+        writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_079.pdf")), 5);
+    MainWindow *mw = openFreshWindow(app, pdf);
+    QVERIFY(mw);
+    // Wide window so the lone A4 cover fits the viewport WIDTH at every tested
+    // zoom (<=125%), keeping the width scan clear of the viewport edges.
+    mw->resize(1600, 1000);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+
+    // Enter Two-Pages through the real View-menu action (the user's path).
+    QAction *twoPages = findAction(mw, QStringLiteral("action.view.twoPages"));
+    QVERIFY(twoPages && twoPages->isEnabled());
+    twoPages->trigger();
+    QApplication::processEvents();
+    QCOMPARE(doc->viewMode(), ViewMode::TwoPages);
+
+    auto *twoPage = mw->findChild<TwoPageView *>(QStringLiteral("view.twoPage"));
+    QVERIFY(twoPage);
+
+    // Native point width of the cover, read WITHOUT rendering (same value the
+    // paint path scales by pts x zoom), so the true-scale computation is not
+    // circular with the render zoom.
+    const double nativeW = doc->pageSizeHint(0).width();
+    QVERIFY2(nativeW > 0.0, "cover page must report a positive native point width");
+
+    // Drive zoom through the REAL zoom actions so the readout refreshes exactly
+    // as it does for the user (MainWindow updates the indicator from the action
+    // handlers, not from doc->zoom*()). Reading the label after each keeps a
+    // stale-label regression observable rather than masked.
+    QAction *actual = findAction(mw, QStringLiteral("action.view.actualSize"));
+    QAction *zoomIn = findAction(mw, QStringLiteral("action.view.zoomIn"));
+    QAction *zoomOut = findAction(mw, QStringLiteral("action.view.zoomOut"));
+    QVERIFY(actual && zoomIn && zoomOut);
+
+    auto checkAtCurrentZoom = [&](const char *ctx) {
+        QApplication::processEvents();
+        const int shownPct = displayedZoomPercent(mw);
+        QVERIFY2(shownPct > 0,
+                 qPrintable(QStringLiteral("[%1] zoom indicator must show a "
+                                           "positive percent")
+                                .arg(QLatin1String(ctx))));
+        const double logicalW = measuredCoverWidthLogical(twoPage);
+        QVERIFY2(logicalW > 0.0,
+                 qPrintable(QStringLiteral("[%1] cover page must be measurable "
+                                           "on screen (not clipped) — widen the "
+                                           "window if this fails")
+                                .arg(QLatin1String(ctx))));
+        const int truePct = int(std::lround(logicalW / nativeW * 100.0));
+        qInfo().noquote() << "ZOOM-READOUT" << ctx << "shown%" << shownPct
+                          << "painted%" << truePct << "logicalW" << logicalW
+                          << "nativeW" << nativeW << "dpr" << screenDpr();
+        // The readout and the true painted scale must agree within 2 points
+        // (sub-pixel page-edge rounding). A stale readout (e.g. "100%" while the
+        // page is painted at ~50%) fails this by ~50 points.
+        QVERIFY2(std::abs(truePct - shownPct) <= 2,
+                 qPrintable(QStringLiteral("[%1] zoom readout %2%% disagrees with "
+                                           "the painted render scale %3%% — the "
+                                           "readout is lying about the zoom")
+                                .arg(QLatin1String(ctx))
+                                .arg(shownPct)
+                                .arg(truePct)));
+    };
+
+    // Level 1: Actual Size — readout must read 100% AND the page must actually
+    // be painted at 1 pt -> 1 logical px.
+    actual->trigger();
+    QApplication::processEvents();
+    QCOMPARE(displayedZoomPercent(mw), 100);
+    checkAtCurrentZoom("actual-100");
+
+    // Level 2: zoomed out (distinct, well below 100%).
+    actual->trigger();
+    QApplication::processEvents();
+    zoomOut->trigger();
+    zoomOut->trigger();
+    checkAtCurrentZoom("zoomed-out");
+
+    // Level 3: zoomed in one step (distinct, above 100%, still fits the width).
+    actual->trigger();
+    QApplication::processEvents();
+    zoomIn->trigger();
+    checkAtCurrentZoom("zoomed-in");
 }
 
 int main(int argc, char **argv) {
