@@ -120,6 +120,7 @@ class TestOcrWindow : public QObject {
 
   private slots:
     void init();
+    void cleanup();
     void uat_ocr_win_010_windowIsVisiblePagePlusMinusTwo();
     void uat_ocr_win_020_windowClampsAtDocumentEdges();
     void uat_ocr_win_030_jumpRecentersAndCancelsOldWindow();
@@ -136,9 +137,17 @@ class TestOcrWindow : public QObject {
 
 void TestOcrWindow::init() {
     // Default to AC so speculative Prefetch runs (the battery test flips
-    // this itself). Cleared implicitly by the next test's init().
+    // this itself). cleanup() clears it after each test so the global
+    // probe never leaks past this test class.
     PowerSource::setProbeForTesting(&forceAc);
     resetSettings();
+}
+
+void TestOcrWindow::cleanup() {
+    // Symmetric teardown for init()'s probe install; matches the
+    // test_ml_scheduler.cpp init()/cleanup() idiom so no global
+    // PowerSource state leaks to later tests.
+    PowerSource::clearProbeForTesting();
 }
 
 // Backlog Threshold 1 (Window). ADR G13.3 states N = 2 and asserts the
