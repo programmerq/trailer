@@ -211,6 +211,10 @@ class MainWindow : public QMainWindow {
     void onCropImage();
     void onInsertPages();
     void onCropPages();
+    // Activate the on-page drag-to-crop tool (direct-manipulation crop).
+    void onCropPagesByDragging();
+    // Apply a crop from the overlay's page-space keep-rectangle.
+    void onCropRectCommitted(const QRectF &docRect, int page);
     void onAbout();
     void onAutoFillCurrentForm();
     void onManageMyCard();
@@ -433,6 +437,7 @@ class MainWindow : public QMainWindow {
     QAction *m_cropImageAction = nullptr;
     QAction *m_insertPagesAction = nullptr;
     QAction *m_cropPagesAction = nullptr;
+    QAction *m_cropPagesDragAction = nullptr;
     QAction *m_fillFormsAction = nullptr;
     // Documents we've already auto-enabled Fill Forms for. Tracked so
     // that toggling Fill Forms off, switching docs, and switching back
