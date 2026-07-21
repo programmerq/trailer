@@ -18,9 +18,15 @@
 
 namespace trailer {
 
-// True when the current Qt session is Wayland (platformName() == "wayland" or a
-// "wayland-*" variant). Thin wrapper over QGuiApplication::platformName() so the
-// call site reads intent, not a string test. Safe to call on any platform.
+// True when the current session is Wayland, judged from the DISPLAY-SERVER
+// signals — not only Qt's platform-plugin name. Wraps the pure, unit-tested
+// isWaylandSessionFromSignals(platformName, WAYLAND_DISPLAY, XDG_SESSION_TYPE)
+// with the live values: Wayland when the native plugin is loaded
+// (platformName() starts with "wayland") OR WAYLAND_DISPLAY is non-empty OR
+// XDG_SESSION_TYPE == "wayland". The env signals are what catch XWayland, where
+// Qt loads the xcb plugin while the compositor is Wayland and a direct
+// grabWindow(0) returns a BLACK pixmap. Safe to call on any platform (the
+// non-Linux stub shares the same pure function and stays false there).
 bool isWaylandSession();
 
 // True when org.freedesktop.portal.Screenshot is reachable on the session bus

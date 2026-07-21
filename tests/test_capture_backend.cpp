@@ -15,6 +15,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
+#include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -165,17 +166,23 @@ void TestCaptureBackend::waylandSessionMatchesPlatform() {
     const QString origWd = qEnvironmentVariable("WAYLAND_DISPLAY");
     const bool origHasSt = qEnvironmentVariableIsSet("XDG_SESSION_TYPE");
     const QString origSt = qEnvironmentVariable("XDG_SESSION_TYPE");
+    // qScopeGuard so a failing QCOMPARE restores the env even on early return.
+    const auto restore = qScopeGuard([&]() {
+        if (origHasWd)
+            qputenv("WAYLAND_DISPLAY", origWd.toLocal8Bit());
+        else
+            qunsetenv("WAYLAND_DISPLAY");
+        if (origHasSt)
+            qputenv("XDG_SESSION_TYPE", origSt.toLocal8Bit());
+        else
+            qunsetenv("XDG_SESSION_TYPE");
+    });
     qunsetenv("WAYLAND_DISPLAY");
     qunsetenv("XDG_SESSION_TYPE");
 
     const bool platformIsWayland =
         QGuiApplication::platformName().startsWith(QStringLiteral("wayland"), Qt::CaseInsensitive);
     QCOMPARE(isWaylandSession(), platformIsWayland);
-
-    if (origHasWd)
-        qputenv("WAYLAND_DISPLAY", origWd.toLocal8Bit());
-    if (origHasSt)
-        qputenv("XDG_SESSION_TYPE", origSt.toLocal8Bit());
 }
 
 // Safeguard 1 (pure): the full display-server-signal truth table for
@@ -244,7 +251,10 @@ void TestCaptureBackend::waylandSessionDetectsXWaylandViaEnv() {
     const QString origWd = qEnvironmentVariable("WAYLAND_DISPLAY");
     const bool origHasSt = qEnvironmentVariableIsSet("XDG_SESSION_TYPE");
     const QString origSt = qEnvironmentVariable("XDG_SESSION_TYPE");
-    auto restore = [&]() {
+    // qScopeGuard so a failing QCOMPARE below (which early-returns from the
+    // slot) still restores the env and can't leak WAYLAND_DISPLAY/XDG_SESSION_TYPE
+    // into sibling tests in this same process (e.g. livePortalCaptureOrSkip).
+    const auto restore = qScopeGuard([&]() {
         if (origHasWd)
             qputenv("WAYLAND_DISPLAY", origWd.toLocal8Bit());
         else
@@ -253,7 +263,7 @@ void TestCaptureBackend::waylandSessionDetectsXWaylandViaEnv() {
             qputenv("XDG_SESSION_TYPE", origSt.toLocal8Bit());
         else
             qunsetenv("XDG_SESSION_TYPE");
-    };
+    });
 
     // Baseline: no Wayland signals under offscreen -> not a Wayland session.
     qunsetenv("WAYLAND_DISPLAY");
@@ -275,7 +285,7 @@ void TestCaptureBackend::waylandSessionDetectsXWaylandViaEnv() {
     qputenv("XDG_SESSION_TYPE", QByteArrayLiteral("x11"));
     QCOMPARE(isWaylandSession(), false);
 
-    restore();
+    // env restored by the qScopeGuard above on every exit path.
 }
 
 // Live end-to-end portal capture. This exercises the real QtDBus path

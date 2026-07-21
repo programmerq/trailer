@@ -2537,10 +2537,12 @@ void MainWindow::onTakeScreenshot() {
     // Whole Screen can't act: a client-side grab yields a null pixmap under
     // native Wayland and a BLACK pixmap under XWayland. Gate this dialog
     // consistently with the File → Screenshot menu (Application::addAcquireItems)
-    // — disable the Whole Screen radio (and thus the OK path) with an honest
-    // tooltip instead of leaving it enabled to degrade only at capture time,
-    // which would make it a lying control (G3). X11/Windows keep Whole Screen
-    // enabled and the original note.
+    // — disable the Whole Screen radio with an honest tooltip instead of leaving
+    // it enabled to look actionable, which would make it a lying control (G3).
+    // (The OK button stays enabled; if the user accepts anyway, the capture
+    // choke point resolves to Unavailable and flashes the SAME honest message
+    // rather than producing a null/black file — an honest degrade, never a
+    // silent no-op.) X11/Windows keep Whole Screen enabled and the original note.
     const bool waylandNoPortal =
         trailer::chooseLinuxScreenshotBackend(trailer::isWaylandSession(),
                                               trailer::portalScreenshotAvailable()) ==
