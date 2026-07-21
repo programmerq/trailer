@@ -108,6 +108,21 @@ class MainWindow : public QMainWindow {
         return m_pageHasTextCacheDoc == doc;
     }
 
+    // Quit-time support for Application::requestQuit(QuitMode::Normal).
+    // collectDirtyDocsForQuit returns this window's documents that need a
+    // save/name prompt at quit (dirty OR untitled), current-document-first
+    // so the user usually sees only one prompt. confirmCloseForQuit runs
+    // the ADR-0004 Save/Discard/Cancel prompt for one document, returning
+    // false on Cancel or a failed save (Application aborts the quit). Both
+    // reuse the same machinery as the window-close path.
+    std::vector<IDocument *> collectDirtyDocsForQuit() const;
+    bool confirmCloseForQuit(IDocument *doc) { return confirmCloseDirtyDoc(doc); }
+
+    // Test-only: the "Quit and Keep Windows" (⌥⌘Q) action, so a headless
+    // test can assert its shortcut and that triggering it routes to the
+    // KeepWindows quit path without a real menu event.
+    QAction *quitKeepWindowsActionForTesting() const { return m_quitKeepWindowsAction; }
+
     // Honest terminal message for a finished Recognize Text batch. Cancelled
     // batches report the no-changes-saved message; otherwise the message is
     // truthful about whether any text was actually recognized — a zero-block
@@ -148,6 +163,10 @@ class MainWindow : public QMainWindow {
     // mode" affordance Mac apps lean on. Falls through to the base
     // implementation when nothing matches.
     void keyPressEvent(QKeyEvent *event) override;
+    // Track window-state transitions so the Window-menu maximize/restore
+    // action can retitle itself ("Maximize" ↔ "Restore" on Win/Linux;
+    // static "Zoom" on macOS). Falls through to the base implementation.
+    void changeEvent(QEvent *event) override;
     // Suppress Qt's built-in right-click toolbar/dock context menu.
     // That menu lets the user accidentally hide a toolbar with no
     // discoverable way to bring it back — the source of the
@@ -239,6 +258,12 @@ class MainWindow : public QMainWindow {
     // Application::windows() each time so freshly-opened or
     // closed frames show up immediately.
     void refreshWindowMenuList();
+    // Retitle the Window-menu maximize/restore action to match the
+    // current window state: "&Restore" when maximized, "&Maximize"
+    // otherwise. No-op on macOS, where the action keeps its native
+    // static "&Zoom" label. Called on WindowStateChange and before the
+    // Window menu shows.
+    void updateMaximizeActionLabel();
     // Shows the one-time "redaction is not defence-grade" warning
     // (DESIGN §6.11.6) the first time the user activates the
     // Redaction tool. Returns true if the user either already
@@ -384,6 +409,11 @@ class MainWindow : public QMainWindow {
     Sidebar *m_sidebar = nullptr;
     QMenu *m_recentMenu = nullptr;
 
+    QAction *m_quitAction = nullptr;
+    // "Quit and Keep Windows" (⌥⌘Q). Created cross-platform so the model is
+    // headless-testable; on macOS QuitMenu adds the native in-place Option
+    // swap on top. Routes to Application::requestQuit(QuitMode::KeepWindows).
+    QAction *m_quitKeepWindowsAction = nullptr;
     QAction *m_saveAction = nullptr;
     QAction *m_saveAsAction = nullptr;
     QAction *m_rotateLeftAction = nullptr;
@@ -446,6 +476,10 @@ class MainWindow : public QMainWindow {
     QAction *m_shareAction = nullptr; // macOS-only; null on other platforms
     QToolBar *m_mainToolbar = nullptr;
     QMenu *m_windowMenu = nullptr;
+    // Maximize/restore toggle in the Window menu (macOS "Zoom"). Stored
+    // so changeEvent() can retitle it to match the current window state
+    // on Win/Linux; on macOS it keeps its static native "Zoom" label.
+    QAction *m_maximizeAction = nullptr;
     // Sentinel separator: the dynamic window list is rebuilt by
     // removing every action AFTER this separator before each show.
     QAction *m_windowMenuListSeparator = nullptr;

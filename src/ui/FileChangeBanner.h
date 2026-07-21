@@ -40,11 +40,21 @@ class FileChangeBanner : public QFrame {
     bool compareEnabled() const; // must be false (G3 placeholder)
     bool saveEnabled() const;
     QString compareTooltip() const;
+    QString reloadText() const;
+    QString keepMineText() const;
+    // The visually-weighted primary/default action of the conflict banner
+    // (CF-6). "Keep mine" is the default — it preserves the user's active work
+    // and writes nothing until an explicit Save, the non-destructive-until-save
+    // choice — while Reload (which discards edits) is secondary and Dismiss is
+    // flat/passive.
+    bool keepMineIsDefault() const;
+    bool dismissIsFlat() const;
 
     // Fire the corresponding signal without a real click (offscreen tests).
     void clickReloadForTest();
     void clickKeepMineForTest();
     void clickSaveForTest();
+    void clickDismissForTest();
 
   signals:
     void reloadRequested();

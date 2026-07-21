@@ -3,6 +3,7 @@
 #include "TrailerVersion.h"
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
+#include "platform/QuitMenu.h"
 #include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
 #include "ui/MainWindow.h"
@@ -15,6 +16,7 @@
 #endif
 
 #include <QAction>
+#include <QBuffer>
 #include <QClipboard>
 #include <QDateTime>
 #include <QDebug>
@@ -67,6 +69,13 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
     // quit-on-last-window-closed (true) is therefore left in place there —
     // disabling it would strand the process with no window and no way to quit
     // or open a file after the last window is torn down via WA_DeleteOnClose.
+
+    // Quit seams (see requestQuit). Default performQuit terminates the app;
+    // the keeps-windows probe reads the OS NSQuitAlwaysKeepsWindows default
+    // (false off macOS). Tests override both to observe quit decisions
+    // without terminating the process.
+    m_performQuit = [] { QCoreApplication::quit(); };
+    m_quitKeepsWindowsProbe = [] { return QuitMenu::osQuitAlwaysKeepsWindows(); };
 
     m_settings.load();
     m_recent.setMaxEntries(m_settings.recentMax());
@@ -224,7 +233,7 @@ MainWindow *Application::ensureFreshWindow() {
     return window;
 }
 
-void Application::openFiles(const QStringList &paths) {
+void Application::openFiles(const QStringList &paths, bool markUntitled) {
     // Consume a capture dpr staged by a screenshot / clipboard grab (see
     // setPendingCaptureDpr) up front — BEFORE the empty-paths guard — and
     // reset it immediately. Doing this at the very top means a staged dpr
@@ -279,10 +288,63 @@ void Application::openFiles(const QStringList &paths) {
         return true;
     };
     const bool batchedImages = mode == OpenFilesIn::NewWindow && isImageBatch();
-    MainWindow *batchTarget = batchedImages ? ensureFreshWindow() : nullptr;
+
+    // CF-5: In NewWindow mode, reuse an empty/untouched launch window for
+    // the FIRST opened document — and for an image batch's shared window —
+    // instead of spawning a second window and orphaning the empty one
+    // (matches Preview.app). "Empty/untouched" == a live MainWindow with
+    // documentCount()==0 (a window with no document holds nothing to
+    // clobber). Compute the candidate ONCE, up front, BEFORE the batch
+    // decision, and consume it at most once: the image batch takes it if
+    // present, otherwise the first single NewWindow file does; every
+    // subsequent file still gets a fresh window. Never reuse a window that
+    // already holds a document — opening a file while a real document
+    // window is active must still spawn a new window.
+    MainWindow *reuseCandidate = nullptr;
+    if (mode == OpenFilesIn::NewWindow) {
+        // Prefer the active/frontmost window if it's one of ours and empty.
+        if (auto *active = qobject_cast<MainWindow *>(QApplication::activeWindow())) {
+            if (m_windows.contains(active) && active->documentCount() == 0)
+                reuseCandidate = active;
+        }
+        // Fallback: the launch-window case where offscreen/headless may not
+        // set an active window — exactly one live window, and it's empty.
+        if (!reuseCandidate && windowCount() == 1) {
+            if (MainWindow *only = firstExistingWindow();
+                only && only->documentCount() == 0)
+                reuseCandidate = only;
+        }
+    }
+
+    // Consume the reuse candidate at most once, then fall back to a fresh
+    // window. Shared by the image-batch target below and the per-file
+    // NewWindow loop so the consume-once invariant lives in one place and
+    // can't drift between the two call sites.
+    auto takeReuseOrFresh = [&]() -> MainWindow * {
+        if (reuseCandidate) {
+            MainWindow *w = reuseCandidate;
+            reuseCandidate = nullptr;
+            return w;
+        }
+        return ensureFreshWindow();
+    };
+
+    // An image batch shares one window (the tab strip) rather than spawning
+    // N frames. Reuse the empty launch window as that batch window when one
+    // is available so the batch path no longer orphans it; taking the
+    // candidate here consumes it so the single-file loop below can't claim
+    // it a second time.
+    MainWindow *batchTarget = batchedImages ? takeReuseOrFresh() : nullptr;
 
     for (const QString &path : paths) {
         auto doc = m_registry.open(path);
+
+        // Defensive: a failed open (null document) must not consume the
+        // reuse candidate or a freshly spawned window on a no-op
+        // addDocument(nullptr). Skip it before any target is selected so a
+        // later good file still reuses the empty launch window.
+        if (!doc)
+            continue;
 
         // Reopen-recovery: if a newer auto-save recovery sidecar exists for
         // this backing file (e.g. the app crashed mid-session before an
@@ -291,7 +353,7 @@ void Application::openFiles(const QStringList &paths) {
         // until the user Saves; if they Discard, their file was never
         // modified. Sidecars live in app-data, so this reads only our own
         // snapshot, never the user's directory.
-        if (doc && !path.isEmpty()) {
+        if (!path.isEmpty()) {
             if (const auto sidecar = m_recoveryStore.pendingRecovery(path)) {
                 if (!doc->recoverFrom(*sidecar)) {
                     // Restore failed (corrupt/unreadable snapshot): drop the
@@ -309,6 +371,15 @@ void Application::openFiles(const QStringList &paths) {
                 img->markCaptureOrigin(captureDpr);
         }
 
+        // Transient import (clipboard / screenshot): the doc is backed
+        // only by a temp file the user never chose, so mark it untitled
+        // — it stays clean but must prompt Save-As on close rather than
+        // vanishing silently. Only raster imports use this path today.
+        if (markUntitled) {
+            if (auto *img = dynamic_cast<ImageDocument *>(doc.get()))
+                img->markUntitled();
+        }
+
         MainWindow *target = nullptr;
         if (batchTarget) {
             // All images of this batch share one window so the user
@@ -321,7 +392,10 @@ void Application::openFiles(const QStringList &paths) {
                 // One window per file. Even when `paths` has
                 // multiple entries we spawn a separate window for
                 // each so the user can arrange them independently.
-                target = ensureFreshWindow();
+                // CF-5: the FIRST file reuses an empty launch window
+                // if one is available (consume-once), then subsequent
+                // files spawn fresh.
+                target = takeReuseOrFresh();
                 break;
             case OpenFilesIn::SameWindow:
             case OpenFilesIn::NewTab:
@@ -333,7 +407,13 @@ void Application::openFiles(const QStringList &paths) {
         }
 
         target->addDocument(std::move(doc));
-        m_recent.add(path);
+        // Never record a transient import's temp path in Recent Files: the
+        // user never chose that location and the file is subject to OS
+        // cleanup, so a Recent entry pointing at it would dangle. Once the
+        // user Save-As's the untitled doc to a real destination the normal
+        // save flow records that chosen path.
+        if (!markUntitled)
+            m_recent.add(path);
     }
     m_recent.save();
     notifyWindowsRecentChanged();
@@ -361,7 +441,258 @@ void Application::onWindowDestroyed(QObject *window) {
                     m_windows.end());
 }
 
+bool Application::requestQuit(QuitMode mode) {
+    // Decision-record refinement (2026-07-19): the EXPLICIT menu commands are
+    // decoupled from the OS `NSQuitAlwaysKeepsWindows` setting. That setting
+    // governs only macOS's own automatic window auto-restoration; it does NOT
+    // flip what ⌘Q / ⌥⌘Q do here. So the mapping is fixed and honest:
+    //   QuitMode::KeepWindows (⌥⌘Q) — ALWAYS keeps, NEVER prompts.
+    //   QuitMode::Normal      (⌘Q)  — ALWAYS runs the per-doc Save/Discard/
+    //                                 Cancel prompt.
+    // (The m_quitKeepsWindowsProbe seam is retained — it still feeds the
+    // native macOS chrome and the decoupling regression test — but it no
+    // longer changes which branch an explicit command takes.)
+    if (mode == QuitMode::KeepWindows) {
+        // KeepWindows keeps what it can draft and prompts for anything dirty
+        // it cannot (ADR-0004 no-silent-loss floor). An unsaved/untitled
+        // document that is NOT losslessly draftable — a PDF with unsaved
+        // annotations, an image with a null raster — would otherwise be
+        // stored as a clean {kind:"path"} reference and restore with its
+        // edits gone. For exactly those docs we raise the Normal per-doc
+        // Save/Discard/Cancel prompt BEFORE quitting, so their edits are
+        // saved or explicitly discarded; draftable (image) docs are kept
+        // silently with no prompt.
+        for (MainWindow *win : windows()) {
+            if (!win)
+                continue;
+            for (IDocument *doc : win->collectDirtyDocsForQuit()) {
+                if (!canDraftForKeep(doc)) {
+                    if (!win->confirmCloseForQuit(doc))
+                        return false; // Cancel / failed save: keep all, write nothing
+                }
+            }
+        }
+
+        // Serialize the open-window set (including the remaining unsaved /
+        // untitled image bytes) so the next launch restores it. The save is
+        // atomic: a failure leaves any prior valid session intact. If it
+        // fails we must NOT silently quit and lose the still-unsaved drafts —
+        // fall back to the Normal prompt path so nothing is dropped.
+        if (!m_draftStore.save(captureSessionForKeep())) {
+            if (!promptDirtyDocsForQuit())
+                return false; // aborted — keep every document
+            m_draftStore.clear();
+        }
+        if (m_performQuit)
+            m_performQuit();
+        return true;
+    }
+
+    // Normal: prompt to save/name every unsaved or untitled document, one
+    // at a time, across every window. Cancel (or a failed save) on any
+    // prompt aborts the quit with everything still open and nothing written.
+    if (!promptDirtyDocsForQuit())
+        return false; // aborted — keep every document, write nothing
+    // Every document resolved (saved or discarded). Drop any stale kept-
+    // windows draft so a later launch doesn't resurrect a quit we cleaned.
+    m_draftStore.clear();
+    if (m_performQuit)
+        m_performQuit();
+    return true;
+}
+
+bool Application::canDraftForKeep(IDocument *doc) const {
+    // "Draftable" == the kept-windows capture can persist this document's
+    // unsaved state with NO user interaction, so ⌥⌘Q keeps it silently
+    // instead of falling back to the ADR-0004 per-doc prompt.
+    //
+    //  * Image doc with a non-null raster — captured byte-for-byte as PNG.
+    //  * PDF whose dirtiness is ANNOTATION-ONLY and which has an on-disk
+    //    path — captured as its original path plus a JSON payload of the
+    //    unsaved annotations, re-applied editable + dirty on restore
+    //    (restoreAnnotationsFromDraft).
+    //
+    // A structurally-edited PDF (rotate/delete/crop — hasStructuralEdits())
+    // is deliberately NOT draftable: the annotation JSON cannot reconstruct
+    // qpdf page-graph edits, and this pass does not implement a full-document
+    // draft blob for it. To honour the ADR-0004 no-silent-loss floor those
+    // fall back to the per-doc prompt (a narrow, flagged residual — see
+    // docs/backlog/2026-07-19-structural-pdf-keep-fidelity.md). A pathless
+    // PDF likewise cannot be reopened from disk, so it is not draftable.
+    if (auto *img = dynamic_cast<ImageDocument *>(doc))
+        return !img->image().isNull();
+    if (auto *pdf = dynamic_cast<PdfDocument *>(doc))
+        return pdf->isDirty() && !pdf->hasStructuralEdits() && !pdf->filePath().isEmpty();
+    return false;
+}
+
+bool Application::promptDirtyDocsForQuit() {
+    for (MainWindow *win : windows()) {
+        if (!win)
+            continue;
+        for (IDocument *doc : win->collectDirtyDocsForQuit()) {
+            if (!win->confirmCloseForQuit(doc))
+                return false; // Cancel / failed save aborts the quit
+        }
+    }
+    return true;
+}
+
+QList<SessionWindowDescriptor> Application::captureSessionForKeep() const {
+    QList<SessionWindowDescriptor> out;
+    for (MainWindow *win : windows()) {
+        if (!win)
+            continue;
+        SessionWindowDescriptor wd;
+        const int total = win->documentCount();
+        for (int i = 0; i < total; ++i) {
+            IDocument *doc = nullptr;
+            if (!win->documentAt(i, &doc) || !doc)
+                continue;
+
+            auto *img = dynamic_cast<ImageDocument *>(doc);
+            auto *pdf = dynamic_cast<PdfDocument *>(doc);
+            // hasUnsavedWork() (not bare isDirty()) so a CLEAN image doc whose
+            // backing file was DELETED underneath (CF-7) is DRAFTED here — its
+            // in-memory raster is the last copy. Without this it would fall to
+            // the else-branch and be stored as a {kind:"path"} reference to a
+            // file that no longer exists, silently losing the raster on
+            // restore. isUntitled() keeps #78's untitled-draft case.
+            const bool dirtyOrUntitled = doc->isUntitled() || doc->hasUnsavedWork();
+            // Only draft a dirty/untitled doc we can capture without a prompt.
+            // A dirty non-draftable doc has already been resolved (saved or
+            // discarded) by requestQuit's prompt fallback, so by here it is
+            // either clean-on-disk (→ Path) or was discarded (its edits are
+            // meant to be gone). We never store a still-dirty doc we cannot
+            // capture as a clean Path silently — that path is unreachable
+            // post-prompt.
+            const bool needsImageDraft = dirtyOrUntitled && img && canDraftForKeep(doc);
+            // A PDF whose dirtiness is annotation-only is captured as its
+            // on-disk path plus the unsaved annotations (re-applied editable
+            // + dirty on restore). Structural-edited PDFs failed
+            // canDraftForKeep and were resolved by the prompt fallback above.
+            const bool needsPdfAnnotationDraft =
+                dirtyOrUntitled && pdf && !img && canDraftForKeep(doc);
+            SessionDocDescriptor dd;
+            if (needsPdfAnnotationDraft) {
+                dd.kind = SessionDocDescriptor::Kind::AnnotatedPath;
+                dd.path = doc->filePath();
+                const std::vector<Annotation> &live = pdf->annotations()->annotations();
+                dd.annotations = QList<Annotation>(live.begin(), live.end());
+            } else if (needsImageDraft) {
+                // Persist the raster's exact bytes so an unsaved/untitled
+                // window returns byte-for-byte. PNG is lossless, so the
+                // round-trip preserves every pixel.
+                QByteArray bytes;
+                QBuffer buffer(&bytes);
+                bool encoded = buffer.open(QIODevice::WriteOnly) &&
+                               img->image().save(&buffer, "PNG");
+                buffer.close();
+                if (!encoded || bytes.isEmpty()) {
+                    // Could not encode a dirty/untitled doc's bytes. Do NOT
+                    // silently drop it — skipping here would lose its content
+                    // with no prompt. canDraftForKeep() gates on a non-null
+                    // image, so in practice this is unreachable; if it ever
+                    // fires, prefer keeping the whole capture honest by
+                    // aborting the draft for this doc via the prompt path.
+                    // (Belt-and-braces: requestQuit already prompted for the
+                    // non-draftable case; a null-image image-doc would have
+                    // failed canDraftForKeep and been prompted too.)
+                    continue;
+                }
+                dd.kind = SessionDocDescriptor::Kind::Draft;
+                dd.bytes = bytes;
+                dd.format = QStringLiteral("png");
+                dd.untitled = doc->isUntitled();
+                dd.originalPath = doc->isUntitled() ? QString() : doc->filePath();
+                // Persist the HiDPI restore state: a PNG blob does not carry
+                // Qt's devicePixelRatio, so without this an unsaved Retina
+                // screenshot (dpr 2, capture-origin) restores double-sized.
+                dd.devicePixelRatio = img->image().devicePixelRatio();
+                dd.captureOrigin = img->isCaptureOrigin();
+            } else if (!doc->filePath().isEmpty()) {
+                // A titled doc stored as a clean Path ref, reopened from disk.
+                // Reaching here for a dirty non-draftable doc is only possible
+                // AFTER requestQuit's prompt fallback resolved it: a Save left
+                // it clean-on-disk (Path is exact), a Discard means its edits
+                // are intentionally gone (Path reopens the on-disk version).
+                // Non-dirty saved docs land here directly. Either way no
+                // unsaved content is silently lost.
+                dd.kind = SessionDocDescriptor::Kind::Path;
+                dd.path = doc->filePath();
+            } else {
+                continue; // nothing persistable (e.g. a path-less non-image)
+            }
+            wd.docs.append(dd);
+        }
+        if (!wd.docs.isEmpty())
+            out.append(wd);
+    }
+    return out;
+}
+
+bool Application::restoreKeptWindows() {
+    if (!m_draftStore.hasSession())
+        return false;
+
+    const QList<SessionWindowDescriptor> descriptors = m_draftStore.restore();
+    bool anyOpened = false;
+    for (const SessionWindowDescriptor &wd : descriptors) {
+        MainWindow *win = nullptr;
+        for (const SessionDocDescriptor &dd : wd.docs) {
+            std::unique_ptr<IDocument> doc;
+            if (dd.kind == SessionDocDescriptor::Kind::Draft) {
+                QImage img;
+                if (!img.loadFromData(dd.bytes, dd.format.toLatin1().constData()))
+                    continue;
+                // A PNG blob does not carry Qt's devicePixelRatio, so re-stamp
+                // the persisted dpr before handing the image to the document —
+                // otherwise a Retina screenshot (dpr 2) restores at dpr 1 and
+                // renders double its logical size.
+                img.setDevicePixelRatio(dd.devicePixelRatio > 0.0 ? dd.devicePixelRatio : 1.0);
+                auto imgDoc = std::make_unique<ImageDocument>(QString());
+                imgDoc->restoreFromDraft(img, dd.originalPath, dd.untitled,
+                                         /*dirty=*/!dd.untitled, dd.captureOrigin);
+                doc = std::move(imgDoc);
+            } else if (dd.kind == SessionDocDescriptor::Kind::AnnotatedPath) {
+                // A PDF reopened from disk with its unsaved annotations
+                // re-applied as editable objects and marked dirty — so it
+                // returns exactly as it was at ⌥⌘Q: same file, same edits,
+                // still unsaved. If the file is gone we drop just this doc.
+                if (dd.path.isEmpty() || !QFileInfo::exists(dd.path))
+                    continue;
+                doc = m_registry.open(dd.path);
+                if (auto *pdf = dynamic_cast<PdfDocument *>(doc.get()))
+                    pdf->restoreAnnotationsFromDraft(dd.annotations, /*dirty=*/true);
+                m_recent.add(dd.path);
+            } else {
+                if (dd.path.isEmpty() || !QFileInfo::exists(dd.path))
+                    continue;
+                doc = m_registry.open(dd.path);
+                m_recent.add(dd.path);
+            }
+            if (!doc)
+                continue;
+            if (!win)
+                win = ensureFreshWindow();
+            win->addDocument(std::move(doc));
+            anyOpened = true;
+        }
+    }
+    m_recent.save();
+    notifyWindowsRecentChanged();
+
+    // Consume the store on a successful restore so the kept session is a
+    // one-shot — a subsequent launch falls back to the path-list session.
+    m_draftStore.clear();
+    return anyOpened;
+}
+
 bool Application::restorePreviousSession() {
+    // A kept-windows draft store wins: it carries unsaved/untitled content
+    // the path-list session cannot, and is consumed on restore.
+    if (restoreKeptWindows())
+        return true;
     if (!m_settings.restorePreviousWindows())
         return false;
     const QStringList stored = m_settings.sessionOpenFiles();
@@ -599,7 +930,8 @@ void Application::newFromClipboard() {
                 }
             }
             setPendingCaptureDpr(dpr);
-            openFiles({path});
+            openFiles({path}, /*markUntitled=*/true);
+            return;
         }
         return;
     }
@@ -757,7 +1089,7 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
     }
 #endif
 
-    openFiles({path});
+    openFiles({path}, /*markUntitled=*/true);
 }
 
 #ifdef Q_OS_MACOS
@@ -813,9 +1145,19 @@ void Application::installNoWindowMenuBar() {
     auto *quitAction = fileMenu->addAction(tr("&Quit"));
     quitAction->setShortcut(QKeySequence::Quit);
     quitAction->setMenuRole(QAction::QuitRole);
-    connect(quitAction, &QAction::triggered, this, &QCoreApplication::quit);
+    connect(quitAction, &QAction::triggered, this,
+            [this]() { requestQuit(QuitMode::Normal); });
+
+    // "Quit and Keep Windows" (⌥⌘Q). The functional accelerator works
+    // here even without the native in-place Option swap; QuitMenu installs
+    // that visual alternate on top (a display nicety only).
+    auto *keepAction = fileMenu->addAction(tr("Quit and Keep Windows"));
+    keepAction->setShortcut(QKeySequence(Qt::MetaModifier | Qt::AltModifier | Qt::Key_Q));
+    connect(keepAction, &QAction::triggered, this,
+            [this]() { requestQuit(QuitMode::KeepWindows); });
 
     m_noWindowMenuBar = bar;
+    QuitMenu::installAlternateKeepItem(quitAction, keepAction);
 }
 
 void Application::openFilesFromDialog() {

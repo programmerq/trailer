@@ -166,6 +166,19 @@ class IDocument {
 
     virtual bool supportsEditing() const { return false; }
     virtual bool isDirty() const { return false; }
+    // True when the document has content but no user-chosen save
+    // location — its only backing is a transient temp file (e.g. a
+    // macOS "New from Clipboard" / "Acquire from screenshot" import
+    // written under QStandardPaths::TempLocation). Such a document is
+    // clean on creation (isDirty()==false) yet must NOT close silently:
+    // the transient file is subject to OS cleanup and the user never
+    // picked a real destination. Closing it therefore prompts
+    // Save-As / Discard / Cancel just like a dirty document, and a Save
+    // routes through Save-As so the user chooses a real filename. Once
+    // saved to a user-chosen path this returns false. Default false —
+    // ordinary opened documents already have a real path. See ADR-0004
+    // (no silent data loss, ever).
+    virtual bool isUntitled() const { return false; }
     virtual bool canUndo() const { return false; }
     virtual bool canRedo() const { return false; }
     // Return true iff an operation was actually reverted / reapplied.
@@ -294,6 +307,17 @@ class IDocument {
     // Pure decision delegated to classifyExternalChange (ExternalChangeState.h).
     ExternalChangeState externalChangeState() const {
         return classifyExternalChangeFor(m_fileBaseline, filePath(), isDirty());
+    }
+    // True iff closing the document now would lose content the user cannot get
+    // back — the predicate the close-time save prompt is gated on. This is
+    // isDirty() PLUS one non-edit case (CF-7): the backing file was DELETED on
+    // disk while the doc was open, which makes the in-memory buffer the only
+    // remaining copy even when no edit was ever made. Without this a clean doc
+    // whose file vanished would close with no prompt and drop its buffer
+    // silently — the ADR-0004 no-silent-loss floor extended to a vanished file.
+    // See docs/decision-records/2026-07-20-conflict-banner-keep-mine-semantics.md.
+    bool hasUnsavedWork() const {
+        return isDirty() || externalChangeState() == ExternalChangeState::Deleted;
     }
     // Set by the "Keep mine" force-save path so the next same-file save skips
     // the conflict guard and clobbers on purpose. Consumed by the adapter's

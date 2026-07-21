@@ -63,26 +63,36 @@ related features introduced in Phase 5.
 - Opening the exported PDF prompts for the password.
 - Entering the password loads the document; page count matches the original.
 
-### UAT-SEC-021 — Export with mismatched passwords shows error
+### UAT-SEC-021 — Mismatched passwords are blocked inline, destination kept
 
 **Preconditions:** A plain PDF is open.
 **Steps:**
 1. `File > Export as Password-Protected PDF…`
-2. Enter different strings in Password and Confirm.
-3. Click OK.
+2. Choose a destination path.
+3. Enter different strings in Password and Confirm.
 **Expected:**
-- A "Passwords do not match" warning is shown.
-- No file is written.
+- The OK button is disabled and an inline hint reads "Passwords do not
+  match." (hovering the disabled OK shows the same reason). No warning
+  dialog appears; no file is written.
+- Correcting the Confirm field to match enables OK immediately, **without
+  reopening the Save dialog** — the destination chosen in step 2 is kept.
 
-### UAT-SEC-022 — Export with empty password shows error
+### UAT-SEC-022 — Empty password is blocked inline
 
 **Preconditions:** A plain PDF is open.
 **Steps:**
 1. `File > Export as Password-Protected PDF…`
-2. Leave both password fields empty, click OK.
+2. Choose a destination path.
+3. Leave both password fields empty.
 **Expected:**
-- An "Empty password" warning is shown.
-- No file is written.
+- The OK button is disabled and an inline hint reads "Enter a password to
+  protect the PDF." No warning dialog appears; no file is written.
+- Typing a password and a matching confirmation enables OK without
+  reopening the Save dialog.
+
+Regression guard: `tests/test_password_export_dialog.cpp` covers the
+validation state machine (empty / confirm-empty / mismatch / valid) and that
+the OK button's enabled state and tooltip track validity live.
 
 ### UAT-SEC-023 — Export preserves existing annotations
 
