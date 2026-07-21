@@ -66,6 +66,29 @@ QByteArray snapshotStructuralPdfBytes(PdfDocument *pdf) {
     return f.readAll();
 }
 
+// True iff this dirty PDF must be kept via the SELF-SUFFICIENT edited-blob path
+// (StructuralDraft) rather than the pristine-original + annotation-JSON path
+// (AnnotatedPath). Two cases need the blob:
+//   * STRUCTURAL page edits (rotate/delete/move/insert/crop) — the qpdf command
+//     list is not serializable, so only the baked bytes reconstruct them.
+//   * an annotation-ONLY dirty PDF whose on-disk backing is MISSING — the
+//     AnnotatedPath restore reopens {original path + JSON}, which cannot work
+//     once the original is gone (the deleted file silently drops on restore).
+//     The snapshot serializes the IN-MEMORY editor graph (annotations baked as
+//     editable /Annot), so it is self-sufficient and survives the deletion,
+//     restoring as an untitled, dirty doc with the annotations intact.
+// A normal annotation-dirty PDF whose backing STILL EXISTS is NOT covered here
+// (returns false) and keeps taking the lighter AnnotatedPath, exactly as before.
+// Callers guarantee filePath() is non-empty before calling (a pathless PDF is
+// never draftable), so the missing-backing test is unambiguous.
+bool keepNeedsSelfSufficientBlob(PdfDocument *pdf) {
+    if (!pdf)
+        return false;
+    if (pdf->hasStructuralEdits())
+        return true;
+    return pdf->isDirty() && !QFileInfo::exists(pdf->filePath());
+}
+
 } // namespace
 
 void Application::applyIdentity() {
@@ -606,8 +629,15 @@ bool Application::canDraftForKeep(IDocument *doc) const {
     if (auto *pdf = dynamic_cast<PdfDocument *>(doc)) {
         if (!pdf->isDirty() || pdf->filePath().isEmpty())
             return false;
-        if (!pdf->hasStructuralEdits())
-            return true; // annotation-only → AnnotatedPath (no blob needed)
+        if (!keepNeedsSelfSufficientBlob(pdf))
+            return true; // annotation-only, backing present → AnnotatedPath (no blob)
+        // Everything below needs the self-sufficient blob: a structurally-edited
+        // PDF, OR an annotation-only-dirty PDF whose backing file is gone (which
+        // must bake its in-memory annotations into a blob, since the pristine-
+        // original + JSON AnnotatedPath cannot reopen a deleted file). Both run
+        // the same snapshot preflight + destructive-annotation gate below, so
+        // both arms of the never-worry-save floor (keep faithfully OR prompt)
+        // apply to the deleted-backing annotation case for free.
         // Already proven snapshottable earlier in this same ⌥⌘Q flow.
         if (m_keepStructuralSnapshotCache.contains(doc))
             return true;
@@ -694,8 +724,18 @@ QList<SessionWindowDescriptor> Application::captureSessionForKeep() const {
             //    plus the unsaved annotations (re-applied editable + dirty on
             //    restore).
             const bool isDraftablePdf = dirtyOrUntitled && pdf && !img && canDraftForKeep(doc);
-            const bool needsPdfStructuralDraft = isDraftablePdf && pdf->hasStructuralEdits();
-            const bool needsPdfAnnotationDraft = isDraftablePdf && !pdf->hasStructuralEdits();
+            // Structural edits — OR an annotation-only dirty PDF whose backing is
+            // gone — take the self-sufficient blob (StructuralDraft). A normal
+            // annotation-dirty PDF with its backing present stays AnnotatedPath.
+            // Evaluate the predicate ONCE: it stats the backing file
+            // (QFileInfo::exists), so two calls could disagree if the file
+            // disappears mid-capture (inconsistent classification) and would
+            // double-stat. Gate on isDraftablePdf so a null/non-draftable doc
+            // never triggers the stat (preserves the original short-circuit).
+            const bool needsSelfSufficient =
+                isDraftablePdf && keepNeedsSelfSufficientBlob(pdf);
+            const bool needsPdfStructuralDraft = needsSelfSufficient;
+            const bool needsPdfAnnotationDraft = isDraftablePdf && !needsSelfSufficient;
             SessionDocDescriptor dd;
             if (needsPdfStructuralDraft) {
                 // Reuse the edited-PDF bytes canDraftForKeep already proved
