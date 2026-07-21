@@ -31,6 +31,7 @@
 #include <QDir>
 #include <QFrame>
 #include <QGuiApplication>
+#include <QHBoxLayout>
 #include <QImage>
 #include <QLabel>
 #include <QPageSize>
@@ -416,10 +417,18 @@ void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {
     QVERIFY2(find, "Find action must exist with objectName action.edit.find");
     QVERIFY2(twoPages && continuous, "view-mode actions must exist");
 
-    // The read-only mode banner is the PRIMARY degradation signal. Look it up by
-    // stable objectName; it is hidden outside Two-Pages mode.
-    auto *banner = mw->findChild<QLabel *>(QStringLiteral("twoPageModeBanner"));
-    QVERIFY2(banner, "Two-Pages read-only banner (objectName twoPageModeBanner) must exist");
+    // The read-only badge is the PRIMARY degradation signal — a compact
+    // in-context pill in the status bar (minimal-UI guideline, #116), not a
+    // full-width banner. Look it up by stable objectName; it is hidden outside
+    // Two-Pages mode, and the full sentence lives in its tooltip.
+    auto *badge = mw->findChild<QLabel *>(QStringLiteral("twoPageReadOnlyBadge"));
+    QVERIFY2(badge, "Two-Pages read-only badge (objectName twoPageReadOnlyBadge) must exist");
+    QVERIFY2(badge->toolTip().contains(
+                 QStringLiteral("Two Pages is a read-only view — switch to Single or "
+                                "Continuous to edit")),
+             qPrintable(QStringLiteral("badge tooltip must carry the full read-only "
+                                       "sentence; got: '%1'")
+                            .arg(badge->toolTip())));
 
     // Switch modes exactly as the user does — via the View-menu actions — so
     // the degradation runs through the real command path, not a back-door
@@ -427,7 +436,7 @@ void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {
     continuous->trigger();
     QApplication::processEvents();
     QVERIFY2(find->isEnabled(), "Find is available in Continuous mode");
-    QVERIFY2(!banner->isVisible(), "read-only banner must be hidden outside Two-Pages mode");
+    QVERIFY2(!badge->isVisible(), "read-only badge must be hidden outside Two-Pages mode");
 
     // Two-Pages: markup + search disabled-with-tooltip pointing back to the
     // working modes.
@@ -436,11 +445,9 @@ void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {
     QApplication::processEvents();
     QCOMPARE(doc->viewMode(), ViewMode::TwoPages);
 
-    // Primary signal: the read-only banner is now visible with the exact copy.
-    QVERIFY2(banner->isVisible(), "read-only banner must be visible in Two-Pages mode");
-    QCOMPARE(banner->text(),
-             QStringLiteral("Two Pages is a read-only view — switch to Single or "
-                            "Continuous to edit"));
+    // Primary signal: the compact read-only badge is now visible; its tooltip
+    // (asserted above) carries the full "switch to edit" sentence.
+    QVERIFY2(badge->isVisible(), "read-only badge must be visible in Two-Pages mode");
 
     QVERIFY2(!markup->isEnabled(), "markup must be disabled in Two-Pages mode");
     QVERIFY2(markup->toolTip().contains(QStringLiteral("Switch to"), Qt::CaseInsensitive),
@@ -463,20 +470,21 @@ void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {
                                 .arg(formToolbar->toolTip())));
     }
 
-    // Leaving Two-Pages restores both and hides the banner.
+    // Leaving Two-Pages restores both and hides the badge.
     continuous->trigger();
     QApplication::processEvents();
     QVERIFY2(find->isEnabled(), "Find re-enables when leaving Two-Pages mode");
     QVERIFY2(markup->isEnabled(), "markup re-enables when leaving Two-Pages mode");
-    QVERIFY2(!banner->isVisible(), "read-only banner must hide again on leaving Two-Pages mode");
+    QVERIFY2(!badge->isVisible(), "read-only badge must hide again on leaving Two-Pages mode");
 }
 
 // UAT-VWR-074 — curated G2 evidence, HONESTLY re-shot. Grabs the SAME book-like
 // document in Single mode (before) and Two-Pages mode (after) — the required
 // before/after pair — plus the read-only disabled-toggle panel and a zoom shot
 // whose visible readout matches its true render scale. The after-shot shows the
-// read-only banner and the cover-alone-then-facing rhythm (page 1 alone, then
-// 2·3, 4·5). Every zoom grab is taken AFTER the readout has refreshed via the
+// compact read-only badge (the minimal-UI signal per #116, not a full-width
+// banner) and the cover-alone-then-facing rhythm (page 1 alone, then 2·3, 4·5).
+// Every zoom grab is taken AFTER the readout has refreshed via the
 // real zoom action, so the shot can never re-introduce the stale-readout bug
 // (a "100%" caption over a page painted at ~50%) that this re-shoot exists to
 // correct — uat_vwr_079 guards the invariant independently. Writes PNGs only
@@ -535,7 +543,7 @@ void TestUatTwoPage::uat_vwr_074_g2Evidence() {
     // Step out via the REAL zoom-out action (not doc->zoomOut(), which would
     // leave the status-bar readout stale — the very bug this re-shoot corrects)
     // until the lone cover AND the first facing pair both fit at scroll 0, so the
-    // badge in-frame stays truthful about the scale the spread is painted at.
+    // zoom badge in-frame stays truthful about the scale the spread is painted at.
     actual->trigger();
     QApplication::processEvents();
     for (int i = 0; i < 5; ++i) {
@@ -544,9 +552,9 @@ void TestUatTwoPage::uat_vwr_074_g2Evidence() {
     }
     twoPageView->verticalScrollBar()->setValue(0);
     QApplication::processEvents();
-    auto *banner = mw->findChild<QLabel *>(QStringLiteral("twoPageModeBanner"));
-    QVERIFY2(banner && banner->isVisible(),
-             "read-only banner must be visible in the after-shot");
+    auto *badge = mw->findChild<QLabel *>(QStringLiteral("twoPageReadOnlyBadge"));
+    QVERIFY2(badge && badge->isVisible(),
+             "read-only badge must be visible in the after-shot");
     const QPixmap after = mw->grab();
     QVERIFY(!after.isNull());
     save(after.toImage(), QStringLiteral("tp-after.png"));
@@ -588,13 +596,27 @@ void TestUatTwoPage::uat_vwr_074_g2Evidence() {
     panel.setObjectName(QStringLiteral("evidence.toggleDisabled"));
     panel.setStyleSheet(QStringLiteral("background:#f4f4f4;"));
     auto *lay = new QVBoxLayout(&panel);
-    auto *bannerLabel = new QLabel(
-        QStringLiteral("Two Pages is a read-only view — switch to Single or "
-                       "Continuous to edit"),
+    // The read-only signal is now a COMPACT status-bar badge (a lock pill), not a
+    // full-width banner (minimal-UI guideline, #116). Show the pill left-aligned
+    // at its natural width with the full sentence as its tooltip caption below,
+    // mirroring the real m_readOnlyBadge style.
+    auto *badgeRow = new QWidget(&panel);
+    auto *badgeLay = new QHBoxLayout(badgeRow);
+    badgeLay->setContentsMargins(0, 0, 0, 0);
+    auto *badgeLabel = new QLabel(QStringLiteral("\U0001F512 Read-only"), badgeRow);
+    badgeLabel->setStyleSheet(QStringLiteral(
+        "background:#fff4d6; border:1px solid #e6c86a; border-radius:4px; "
+        "color:#5a4a12; font-size:13px; padding:1px 6px;"));
+    badgeLay->addWidget(badgeLabel);
+    badgeLay->addStretch(1);
+    lay->addWidget(badgeRow);
+    auto *badgeTip = new QLabel(
+        QStringLiteral("Badge tooltip: “Two Pages is a read-only view — switch to "
+                       "Single or Continuous to edit”"),
         &panel);
-    bannerLabel->setStyleSheet(QStringLiteral(
-        "background:#fff3cd; color:#664d03; font-size:14px; padding:8px 10px;"));
-    lay->addWidget(bannerLabel);
+    badgeTip->setWordWrap(true);
+    badgeTip->setStyleSheet(QStringLiteral("color:#555; font-size:12px; padding:2px 2px 6px;"));
+    lay->addWidget(badgeTip);
     auto *row = new QLabel(QStringLiteral("View ▸ Two Pages   (disabled)"), &panel);
     row->setEnabled(false); // greyed, as the disabled menu entry renders
     row->setStyleSheet(QStringLiteral("font-size:15px; padding:6px 10px;"));

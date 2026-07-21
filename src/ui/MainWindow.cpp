@@ -286,25 +286,6 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_fileChangeBanner->hide();
     documentLayout->addWidget(m_fileChangeBanner);
 
-    // Two-Pages read-only mode banner (decision record 2026-07-21-two-page-
-    // layout, D2-A; gate G3). Two Pages is a read-only spread view — markup,
-    // forms, and search are disabled with per-control tooltips (the G3 floor).
-    // This strip is the PRIMARY, always-visible degradation signal so the user
-    // isn't left to discover the limitation control-by-control. Muted amber
-    // attention strip, theme-neutral inline style, mirroring FileChangeBanner.
-    // Shown/hidden by onCurrentDocumentChanged when view mode changes.
-    m_twoPageModeBanner = new QLabel(
-        tr("Two Pages is a read-only view — switch to Single or Continuous to edit"),
-        m_documentPage);
-    m_twoPageModeBanner->setObjectName(QStringLiteral("twoPageModeBanner"));
-    m_twoPageModeBanner->setAutoFillBackground(true);
-    m_twoPageModeBanner->setWordWrap(true);
-    m_twoPageModeBanner->setStyleSheet(QStringLiteral(
-        "#twoPageModeBanner { background-color: #fff4d6; border-bottom: 1px solid "
-        "#e6c86a; color: #5a4a12; padding: 6px 12px; }"));
-    m_twoPageModeBanner->hide();
-    documentLayout->addWidget(m_twoPageModeBanner);
-
     documentLayout->addWidget(m_documentView, 1);
     documentLayout->addWidget(m_animationBar);
 
@@ -623,6 +604,25 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_zoomIndicator->setObjectName(QStringLiteral("zoomIndicator"));
     m_zoomIndicator->setVisible(false);
     statusBar()->addPermanentWidget(m_zoomIndicator);
+
+    // Two-Pages read-only badge (decision record 2026-07-21-two-page-layout,
+    // D2-A; gate G3; minimal-UI guideline docs/ux-guidelines.md, #116). A
+    // compact lock pill sitting with the permanent status-bar widgets, next to
+    // the zoom readout — the ambient-status surface the guideline blesses. It is
+    // the always-visible PRIMARY read-only signal, but it RECEDES (a small
+    // badge, not a full-width banner). The full "switch to Single or Continuous
+    // to edit" sentence lives in its tooltip; the per-control disabled tooltips
+    // stay as the G3 floor. Shown only in Two-Pages mode by
+    // onCurrentDocumentChanged.
+    m_readOnlyBadge = new QLabel(tr("\U0001F512 Read-only"), this);
+    m_readOnlyBadge->setObjectName(QStringLiteral("twoPageReadOnlyBadge"));
+    m_readOnlyBadge->setToolTip(
+        tr("Two Pages is a read-only view — switch to Single or Continuous to edit"));
+    m_readOnlyBadge->setStyleSheet(QStringLiteral(
+        "#twoPageReadOnlyBadge { background-color: #fff4d6; border: 1px solid "
+        "#e6c86a; border-radius: 4px; color: #5a4a12; padding: 1px 6px; }"));
+    m_readOnlyBadge->setVisible(false);
+    statusBar()->addPermanentWidget(m_readOnlyBadge);
 
     // ADR 0002: richer progress+cancel widget for foreground ML ops.
     // Sits next to the ambient m_mlIndicator dot (which stays untouched).
@@ -3854,10 +3854,11 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     const bool twoPageMode =
         doc && doc->supportsViewModes() && doc->viewMode() == ViewMode::TwoPages;
     if (twoPageMode) {
-        // Primary signal: the always-visible read-only banner above the view.
+        // Primary signal: the always-visible, compact read-only badge in the
+        // status bar (its tooltip carries the full "switch to edit" sentence).
         // The per-control tooltips below remain as the G3 no-lying-controls floor.
-        if (m_twoPageModeBanner)
-            m_twoPageModeBanner->show();
+        if (m_readOnlyBadge)
+            m_readOnlyBadge->setVisible(true);
         const QString why =
             tr("Switch to Single Page or Continuous to mark up or search.");
         // Form filling is not markup or search — its degrade tooltip must name
@@ -3899,13 +3900,13 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             m_formToolbar->hide();
         }
     } else {
-        // Leaving two-up: hide the read-only banner and clear the degrade
+        // Leaving two-up: hide the read-only badge and clear the degrade
         // tooltips. Enablement was already set by the per-capability logic
         // above for find/search; the markup toggle is re-gated on document
         // presence here (its normal rule, mirroring the empty-state handler)
         // so it is not left stuck disabled.
-        if (m_twoPageModeBanner)
-            m_twoPageModeBanner->hide();
+        if (m_readOnlyBadge)
+            m_readOnlyBadge->setVisible(false);
         m_findAction->setToolTip(QString());
         m_findNextAction->setToolTip(QString());
         m_findPreviousAction->setToolTip(QString());
