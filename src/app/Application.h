@@ -10,6 +10,8 @@
 #include "settings/Settings.h"
 
 #include <QApplication>
+#include <QByteArray>
+#include <QHash>
 #include <QList>
 #include <QMenuBar>
 #include <QPointer>
@@ -244,6 +246,13 @@ class Application : public QApplication {
     // decision record (KeepWindows keeps what it can draft, prompts for
     // anything dirty it cannot).
     bool canDraftForKeep(IDocument *doc) const;
+    // Clear the autosave recovery sidecar (#90 RecoveryStore) for every kept
+    // document in `session` that has an on-disk original path. A ⌥⌘Q keep
+    // supersedes the sidecar (the doc reopens dirty with the kept state), so
+    // leaving the older sidecar behind would let a later File→Open of the
+    // original resurrect superseded pre-keep state. Never touches the backing
+    // file — only the app-data sidecar + index entry.
+    void clearRecoverySidecarsFor(const QList<SessionWindowDescriptor> &session);
     // Run the Normal per-document Save/Discard/Cancel prompt across every
     // window's dirty/untitled documents. Returns false if any prompt was
     // Cancelled (or a Save failed) — the caller must then abort the quit.
@@ -277,6 +286,15 @@ class Application : public QApplication {
     // AppData/session-drafts; written by requestQuit(KeepWindows) and
     // consumed by restoreKeptWindows() on the next launch.
     SessionDraftStore m_draftStore;
+    // Structural-PDF keep snapshots proven producible by canDraftForKeep and
+    // reused by captureSessionForKeep within a single ⌥⌘Q flow (keyed by doc
+    // pointer). canDraftForKeep serializes the edited bytes up front to PROVE
+    // the doc is snapshottable — an unsnapshottable structural PDF must be
+    // PROMPTED, never silently dropped — and caches the result here so the
+    // capture pass does not re-serialize. Cleared at the start of every
+    // KeepWindows quit so a stale pointer can never be reused. See
+    // docs/backlog/2026-07-20-nondestructive-structural-redaction-keep.md.
+    mutable QHash<IDocument *, QByteArray> m_keepStructuralSnapshotCache;
     // Test seams — see the *ForTesting setters. m_performQuit defaults to
     // QCoreApplication::quit; m_quitKeepsWindowsProbe defaults to the
     // native NSQuitAlwaysKeepsWindows read (false off macOS / unset).

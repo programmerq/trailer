@@ -21,8 +21,16 @@ namespace trailer {
 // the annotations re-apply as individually editable objects, still dirty.
 // See docs/decision-records/2026-07-16-quit-and-keep-windows.md
 // (D1 → app-managed draft store; PDF annotation-persistence refinement).
+// A PDF with STRUCTURAL page edits (rotate/delete/move/crop/insert) is
+// stored as a STRUCTURAL_DRAFT: the edited-PDF blob bytes (the qpdf command
+// list cannot be serialized — the commands hold live in-memory object
+// handles) live in a blob file beside the manifest, and the ORIGINAL on-disk
+// path is carried alongside so Save re-associates to it. On restore the
+// original reopens, the blob is loaded into a private editor copy, and the
+// doc is marked dirty with the original file untouched.
+// See docs/backlog/2026-07-19-structural-pdf-keep-fidelity.md.
 struct SessionDocDescriptor {
-    enum class Kind { Path, Draft, AnnotatedPath };
+    enum class Kind { Path, Draft, AnnotatedPath, StructuralDraft };
 
     Kind kind = Kind::Path;
 
@@ -41,6 +49,10 @@ struct SessionDocDescriptor {
     // `format` names the encoding (e.g. "png"). `untitled` preserves the
     // isUntitled() flag; `originalPath` is the on-disk file a titled-but-
     // dirty document edits (empty for a genuinely untitled document).
+    //
+    // Kind::StructuralDraft reuses `bytes` (the edited-PDF blob), `format`
+    // ("pdf"), and `originalPath` (the original file to reopen + re-associate
+    // Save to). `untitled`/`devicePixelRatio`/`captureOrigin` do not apply.
     //
     // `devicePixelRatio` and `captureOrigin` preserve the HiDPI restore
     // state: a raster encoding (PNG) does NOT carry Qt's devicePixelRatio,
