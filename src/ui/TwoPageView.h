@@ -3,6 +3,7 @@
 #include "document/SpreadLayout.h"
 
 #include <QAbstractScrollArea>
+#include <QImage>
 #include <QPointer>
 #include <vector>
 
@@ -65,6 +66,16 @@ class TwoPageView : public QAbstractScrollArea {
     // The spreads currently laid out (for tests / callers that need the
     // pairing without re-deriving it).
     const std::vector<Spread> &spreads() const { return m_spreads; }
+
+    // Render 0-based `pageIndex` exactly as the paint path does: at
+    // pts x zoom x devicePixelRatio DEVICE pixels, with the dpr stamped so the
+    // image occupies pts x zoom LOGICAL pixels. paintEvent() draws this same
+    // image, so the two cannot drift. Exposed so a HiDPI test can assert the
+    // render target's TRUE pixel resolution scales with the device-pixel ratio
+    // — the invariant a "render at 1x then upscale" regression (blur on Retina)
+    // would break while leaving the logical geometry unchanged. Returns a null
+    // image when the document/page is not renderable.
+    QImage renderPageImage(int pageIndex) const;
 
     // Recompute spreads + scroll ranges from the current document. Public so the
     // adapter can call it after an in-place document reload (rotate / delete /

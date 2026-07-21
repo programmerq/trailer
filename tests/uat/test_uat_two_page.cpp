@@ -201,6 +201,7 @@ class TestUatTwoPage : public QObject {
     void uat_vwr_077_livePageTrackingOnFreeScroll();
     void uat_vwr_078_spreadAwareFitNoOverflow();
     void uat_vwr_079_zoomReadoutMatchesRenderScale();
+    void uat_vwr_080_dprBackingResolution();
 
   private:
     QTemporaryDir m_scratch;
@@ -827,6 +828,141 @@ void TestUatTwoPage::uat_vwr_079_zoomReadoutMatchesRenderScale() {
     QApplication::processEvents();
     zoomIn->trigger();
     checkAtCurrentZoom("zoomed-in");
+}
+
+// UAT-VWR-080 — HiDPI backing-resolution oracle. Before this slot the dpr
+// matrix {1, 1.5, 2} ran the whole two-page suite three times but asserted
+// nothing dpr-SPECIFIC, so a Retina-blur regression (each page rendered at 1x
+// logical resolution then upscaled by dpr) would pass silently: the logical
+// geometry is identical, only the pixels are mushy. This slot reads the ACTIVE
+// dpr for the current matrix variant and asserts (a) the injection took, (b) the
+// view's backing store is dpr-aware, and (c) the render TARGET — the per-page
+// raster the paint path actually produces — has true pixel resolution
+// pts x zoom x dpr, i.e. it scales with dpr instead of staying at the logical
+// size. (c) is the one that fails under the 1x-then-upscale regression.
+void TestUatTwoPage::uat_vwr_080_dprBackingResolution() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    // Prove the dpr injection took: the CMake matrix runs this binary under
+    // QT_SCALE_FACTOR in {1, 1.5, 2}; a silent regression to dpr = 1 would make
+    // the {1.5, 2} runs vacuous. Read the requested value and assert the primary
+    // screen realized it, so every assertion below is a real HiDPI check.
+    const double wantDpr = requestedDpr();
+    const double gotDpr = screenDpr();
+    qInfo().noquote() << "DPR requested" << wantDpr << "primaryScreen" << gotDpr;
+    QVERIFY2(std::abs(gotDpr - wantDpr) < 0.01,
+             qPrintable(QStringLiteral("dpr injection did not take: QT_SCALE_FACTOR "
+                                       "requested %1 but the screen reports %2")
+                            .arg(wantDpr)
+                            .arg(gotDpr)));
+
+    const QString pdf =
+        writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_080.pdf")), 5);
+    MainWindow *mw = openFreshWindow(app, pdf);
+    QVERIFY(mw);
+    mw->resize(1200, 800);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+
+    doc->setViewMode(ViewMode::TwoPages);
+    QApplication::processEvents();
+    auto *twoPage = mw->findChild<TwoPageView *>(QStringLiteral("view.twoPage"));
+    QVERIFY(twoPage);
+
+    // Actual Size — a clean lw = native point width for the resolution math.
+    QAction *actual = findAction(mw, QStringLiteral("action.view.actualSize"));
+    QVERIFY(actual);
+    actual->trigger();
+    QApplication::processEvents();
+
+    // The realized dpr the widget tree paints at (matches the primary screen
+    // under the offscreen plugin's fixed-at-startup dpr).
+    const double dpr = twoPage->viewport()->devicePixelRatioF();
+    QVERIFY2(std::abs(dpr - wantDpr) < 0.01, "widget dpr must match the injected dpr");
+
+    // (b) Backing store is dpr-aware: a viewport grab carries the dpr and its
+    // PHYSICAL pixel dimensions are dpr x the logical size. This proves the
+    // paint surface itself is HiDPI, not a 1x buffer.
+    const QSize vpLogical = twoPage->viewport()->size();
+    const QImage vpGrab = twoPage->viewport()->grab().toImage();
+    QVERIFY(!vpGrab.isNull());
+    qInfo().noquote() << "VIEWPORT logical" << vpLogical << "grab-physical"
+                      << vpGrab.size() << "grab-dpr" << vpGrab.devicePixelRatio();
+    QVERIFY2(std::abs(vpGrab.devicePixelRatio() - dpr) < 0.01,
+             "viewport grab must carry the device-pixel ratio");
+    QVERIFY2(std::abs(vpGrab.width() - std::lround(vpLogical.width() * dpr)) <= 1 &&
+                 std::abs(vpGrab.height() - std::lround(vpLogical.height() * dpr)) <= 1,
+             qPrintable(QStringLiteral("viewport backing store must be dpr x the "
+                                       "logical size: logical %1x%2 * dpr %3 vs "
+                                       "physical %4x%5")
+                            .arg(vpLogical.width())
+                            .arg(vpLogical.height())
+                            .arg(dpr)
+                            .arg(vpGrab.width())
+                            .arg(vpGrab.height())));
+
+    // (c) THE anti-blur oracle. renderPageImage(0) is the exact per-page raster
+    // paintEvent() draws (shared code). Its device-pixel size must be
+    // pts x zoom x dpr — the render target's TRUE resolution scaling with dpr.
+    // Expected width is computed independently from the native point size
+    // (pageSizeHint, no render) x the zoom x the live dpr, so it is not circular
+    // with the view's own render.
+    const double nativeW = doc->pageSizeHint(0).width();
+    const double nativeH = doc->pageSizeHint(0).height();
+    const double zoom = doc->zoomFactor();
+    QVERIFY(nativeW > 0.0 && nativeH > 0.0);
+    const QImage pageImg = twoPage->renderPageImage(0);
+    QVERIFY2(!pageImg.isNull(), "renderPageImage(0) must produce the page raster");
+
+    const int expDevW = int(std::ceil(nativeW * zoom * dpr));
+    const int expDevH = int(std::ceil(nativeH * zoom * dpr));
+    const int logicalRasterW = int(std::ceil(nativeW * zoom)); // the 1x resolution
+    qInfo().noquote() << "PAGE-RASTER device" << pageImg.size() << "raster-dpr"
+                      << pageImg.devicePixelRatio() << "expDev" << expDevW << "x"
+                      << expDevH << "logical1x-width" << logicalRasterW << "dpr"
+                      << dpr;
+
+    QVERIFY2(std::abs(pageImg.devicePixelRatio() - dpr) < 0.01,
+             "page raster must be stamped with the device-pixel ratio");
+    // Device resolution scales with dpr (== the logical raster x dpr). A
+    // 1x-then-upscale regression would leave renderPageImage at ~logicalRasterW
+    // and fail this by a factor of dpr.
+    QVERIFY2(std::abs(pageImg.width() - expDevW) <= 1 &&
+                 std::abs(pageImg.height() - expDevH) <= 1,
+             qPrintable(QStringLiteral("page render target must be dpr x the logical "
+                                       "raster: expected %1x%2 device px (native "
+                                       "%3x%4 * zoom %5 * dpr %6), got %7x%8")
+                            .arg(expDevW)
+                            .arg(expDevH)
+                            .arg(nativeW)
+                            .arg(nativeH)
+                            .arg(zoom)
+                            .arg(dpr)
+                            .arg(pageImg.width())
+                            .arg(pageImg.height())));
+    // And the logical size the raster occupies is dpr-invariant (pts x zoom):
+    // physical width / dpr rounds back to the 1x logical raster width.
+    QVERIFY2(std::abs(int(std::lround(pageImg.width() / dpr)) - logicalRasterW) <= 1,
+             "page raster must occupy pts x zoom LOGICAL pixels regardless of dpr");
+    // Explicit anti-upscale guard at HiDPI: the device raster is strictly wider
+    // than the 1x logical raster, so content is genuinely rendered at higher
+    // resolution rather than upscaled. (At dpr = 1 there is nothing to upscale.)
+    if (dpr > 1.01) {
+        QVERIFY2(pageImg.width() > logicalRasterW + 1,
+                 qPrintable(QStringLiteral("at dpr %1 the page raster (%2 px) must "
+                                           "exceed the 1x logical width (%3 px) — "
+                                           "otherwise the page is rendered at 1x and "
+                                           "upscaled (Retina blur)")
+                                .arg(dpr)
+                                .arg(pageImg.width())
+                                .arg(logicalRasterW)));
+    }
 }
 
 int main(int argc, char **argv) {

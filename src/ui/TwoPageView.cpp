@@ -222,13 +222,36 @@ void TwoPageView::maybeEmitCurrentPage() {
     emit currentPageChanged(page);
 }
 
+QImage TwoPageView::renderPageImage(int pageIndex) const {
+    if (!m_doc || m_doc->status() != QPdfDocument::Status::Ready)
+        return {};
+    const QSizeF pts = m_doc->pagePointSize(pageIndex);
+    if (pts.isEmpty())
+        return {};
+    const qreal dpr = effectiveDpr(viewport()->devicePixelRatioF());
+    const double lw = pts.width() * m_zoom;
+    const double lh = pts.height() * m_zoom;
+    // Render at pts x zoom x dpr DEVICE pixels, then stamp dpr so the image
+    // occupies lw x lh LOGICAL pixels — crisp at HiDPI, identical logical
+    // geometry as 1x (record clause 4). Rendering at the logical size and
+    // letting the painter upscale by dpr would blur on Retina — the exact
+    // regression the dpr-matrix UAT guards.
+    const QSize devPx(std::max(1, static_cast<int>(std::ceil(lw * dpr))),
+                      std::max(1, static_cast<int>(std::ceil(lh * dpr))));
+    QPdfDocumentRenderOptions opts;
+    opts.setScaledSize(devPx);
+    QImage img = m_doc->render(pageIndex, devPx, opts);
+    if (!img.isNull())
+        img.setDevicePixelRatio(dpr);
+    return img;
+}
+
 void TwoPageView::paintEvent(QPaintEvent *event) {
     QPainter painter(viewport());
     painter.fillRect(event->rect(), viewport()->palette().color(QPalette::Dark));
     if (!m_doc || m_spreads.empty() || m_doc->status() != QPdfDocument::Status::Ready)
         return;
 
-    const qreal dpr = effectiveDpr(viewport()->devicePixelRatioF());
     const QSizeF canvas = canvasSize();
     const int vpW = viewport()->width();
 
@@ -259,14 +282,11 @@ void TwoPageView::paintEvent(QPaintEvent *event) {
                     return;
                 const double lw = pts.width() * m_zoom;
                 const double lh = pts.height() * m_zoom;
-                // Render at pts x zoom x dpr device pixels, then stamp dpr so
-                // the image occupies lw x lh LOGICAL pixels — crisp at HiDPI,
-                // identical logical geometry as 1x (record clause 4).
-                const QSize devPx(std::max(1, static_cast<int>(std::ceil(lw * dpr))),
-                                  std::max(1, static_cast<int>(std::ceil(lh * dpr))));
-                QPdfDocumentRenderOptions opts;
-                opts.setScaledSize(devPx);
-                QImage img = m_doc->render(page, devPx, opts);
+                // Render at pts x zoom x dpr device pixels (crisp at HiDPI) via
+                // the shared helper that renderPageImage() / the dpr UAT also
+                // read, so the render-target resolution cannot drift from the
+                // tested invariant.
+                const QImage img = renderPageImage(page);
                 // A PDF page is opaque white; QPdfDocument::render returns an
                 // image with a transparent background, so paint a white page
                 // rectangle first, then composite the rendered content over it.
@@ -279,7 +299,6 @@ void TwoPageView::paintEvent(QPaintEvent *event) {
                     painter.drawRect(QRectF(px, py, lw, lh));
                     return;
                 }
-                img.setDevicePixelRatio(dpr);
                 painter.drawImage(QPointF(px, py), img);
             };
 
