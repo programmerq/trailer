@@ -118,3 +118,15 @@ jobs:
           docker run --rm trailer-runner:pr-validate jq --version
           docker run --rm trailer-runner:pr-validate zip -v
           docker run --rm trailer-runner:pr-validate shellcheck --version
+
+      - name: Verify baked-in Wayland smoke tooling
+        # Assert the sway+grim layer (docker/runner/Dockerfile, added by
+        # PR #117) is actually present and runnable in the built image, so
+        # a broken Wayland-tooling layer is caught pre-merge. These run in a
+        # bare container with no compositor / Wayland session, so pick
+        # invocations that exit 0 without one: `sway --version` prints and
+        # exits 0; `grim -h` prints usage and exits 0 (plain `grim` would try
+        # to capture and fail with no compositor).
+        run: |
+          docker run --rm trailer-runner:pr-validate sway --version
+          docker run --rm trailer-runner:pr-validate grim -h
