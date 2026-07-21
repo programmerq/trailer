@@ -1,7 +1,6 @@
 #pragma once
 
 #include <QDockWidget>
-#include <QTimer>
 
 #include <vector>
 
@@ -110,7 +109,6 @@ class Sidebar : public QDockWidget {
     // when the doc has no /Outlines tree.
     QTreeView *m_outline = nullptr;
     ThumbnailModel *m_model = nullptr;
-    QTimer m_pageSyncTimer;
     int m_placeholderIndex = 0;
     int m_tabsIndex = 0;
     int m_outlineIndex = 0;

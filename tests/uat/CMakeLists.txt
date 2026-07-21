@@ -134,6 +134,13 @@ trailer_add_uat_test(test_uat_ml_affordances test_uat_ml_affordances.cpp)
 trailer_add_uat_test(test_uat_pdf_pages test_uat_pdf_pages.cpp)
 target_link_libraries(test_uat_pdf_pages PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 
+# Page-changed signal replaces the former 150 ms polls (backlog
+# 2026-07-12-page-changed-signal-no-poll). Drives the QPdfView navigator via
+# doc->goToPage() and reads back the Sidebar selection + large-doc OCR hint, so
+# it links Qt PDF.
+trailer_add_uat_test(test_uat_page_change_signal test_uat_page_change_signal.cpp)
+target_link_libraries(test_uat_page_change_signal PRIVATE Qt6::Pdf Qt6::PdfWidgets)
+
 # Sidebar thumbnail sizing (scale-to-width + aspect-fit rows, ADR 0006).
 # Builds a mixed portrait/landscape deck via QPdfWriter and reads back
 # per-page point sizes through QPdfDocument, so it links Qt PDF.

@@ -2,6 +2,7 @@
 #include "annotation/AnnotationStore.h"
 #include "document/DocumentRegistry.h"
 #include "document/ImageAdapter.h"
+#include "document/PageChangeNotifier.h"
 #include "document/PdfAdapter.h"
 #include "document/PdfEditor.h"
 #include "document/SelectableTextStore.h"
@@ -118,6 +119,11 @@ class TestAdapters : public QObject {
     void recognizeTextSkipsDialogForSinglePage();
     // Item C — honest completion feedback.
     void ocrBatchWithZeroBlocksReportsNoTextFound();
+    // Page-changed signal (backlog 2026-07-12-page-changed-signal-no-poll):
+    // PdfDocument exposes a real page-changed signal via PageChangeNotifier,
+    // and single-frame image documents expose none.
+    void pdfDocumentPageChangeNotifierFiresOnPageChange();
+    void imageDocumentHasNoPageChangeNotifier();
 };
 
 namespace {
@@ -2086,6 +2092,74 @@ void TestAdapters::ocrBatchWithZeroBlocksReportsNoTextFound() {
              QStringLiteral("Text recognition complete"));
     QCOMPARE(MainWindow::recognizeCompletionMessage(/*cancelled=*/true, /*blockCount=*/0),
              QStringLiteral("Text recognition cancelled — no changes saved"));
+}
+
+// Backlog 2026-07-12-page-changed-signal-no-poll (1): PdfDocument fires a real
+// page-changed signal on every current-page change. The former 150 ms polls in
+// MainWindow and the Sidebar are replaced by connecting to this notifier, so it
+// must fire (with the new page index) when the page moves — here via goToPage(),
+// which routes through the same navigator jump the keyboard/thumbnail paths use.
+void TestAdapters::pdfDocumentPageChangeNotifierFiresOnPageChange() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("multipage.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        for (int i = 0; i < 3; ++i) {
+            if (i > 0)
+                writer.newPage();
+            painter.drawText(QRect(100, 100, 400, 100), Qt::AlignCenter,
+                             QStringLiteral("Page %1").arg(i + 1));
+        }
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    QCOMPARE(doc.pageCount(), 3);
+
+    PageChangeNotifier *notifier = doc.pageChangeNotifier();
+    QVERIFY2(notifier, "PdfDocument must expose a PageChangeNotifier");
+
+    // A view is required: the notifier is driven by the QPdfView navigator.
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    QVERIFY(view);
+
+    QSignalSpy spy(notifier, &PageChangeNotifier::currentPageChanged);
+    QVERIFY(spy.isValid());
+    QCOMPARE(doc.currentPage(), 0);
+
+    doc.goToPage(2);
+    // The navigator emits synchronously on jump(); no timer / event-loop spin.
+    QVERIFY2(spy.count() >= 1, "page change must emit currentPageChanged");
+    QCOMPARE(spy.last().at(0).toInt(), 2);
+    QCOMPARE(doc.currentPage(), 2);
+
+    // A jump back fires again with the new index.
+    doc.goToPage(0);
+    QVERIFY(spy.count() >= 2);
+    QCOMPARE(spy.last().at(0).toInt(), 0);
+    QCOMPARE(doc.currentPage(), 0);
+}
+
+// A single-frame image document has no notion of a moving current page, so it
+// exposes no PageChangeNotifier (the base-class nullptr default). The Sidebar /
+// MainWindow wiring is null-guarded on this, so such documents simply never
+// receive page-change events.
+void TestAdapters::imageDocumentHasNoPageChangeNotifier() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("solid.png");
+    QImage img(32, 32, QImage::Format_ARGB32);
+    img.fill(Qt::white);
+    QVERIFY(img.save(path));
+
+    ImageAdapter adapter;
+    auto doc = adapter.open(path);
+    QVERIFY(doc);
+    QVERIFY(doc->pageChangeNotifier() == nullptr);
 }
 
 QTEST_MAIN(TestAdapters)

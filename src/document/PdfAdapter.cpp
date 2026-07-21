@@ -664,6 +664,14 @@ QWidget *PdfDocument::createView(QWidget *parent) {
                          if (overlay)
                              overlay->setPage(page);
                      });
+    // Announce the page change to non-QObject IDocument consumers (Sidebar
+    // page-sync, MainWindow auto-OCR / missing-model hint). Routed through the
+    // notifier because IDocument is not a QObject; this is the same navigator
+    // signal the overlay/text layer already follow, so it fires on keyboard
+    // paging, thumbnail jumps, AND continuous-scroll page crossings.
+    QObject::connect(view->pageNavigator(), &QPdfPageNavigator::currentPageChanged,
+                     &m_pageChangeNotifier, &PageChangeNotifier::notifyPageChanged,
+                     Qt::UniqueConnection);
     QObject::connect(view->verticalScrollBar(), &QScrollBar::valueChanged, overlay,
                      QOverload<>::of(&QWidget::update));
     QObject::connect(view->horizontalScrollBar(), &QScrollBar::valueChanged, overlay,
