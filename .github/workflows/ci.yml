@@ -21,9 +21,11 @@ permissions:
 on:
   push:
     branches: [main]
-    # If build-and-test or clang-format ever become *required* checks,
-    # path-skipped PRs would hang on "Expected" — pair this with a
-    # same-name no-op workflow on the inverse paths, or drop paths-ignore.
+    # If build-and-test, wayland-smoke, or clang-format ever become
+    # *required* checks, path-skipped PRs would hang on "Expected" — pair
+    # this with a same-name no-op workflow on the inverse paths, or drop
+    # paths-ignore. This is one reason wayland-smoke should stay a
+    # non-required (advisory) check for now (see docs/ci/wayland-tier.md).
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -129,6 +131,156 @@ jobs:
         run: ctest -C Release --output-on-failure --label-exclude uat
         env:
           QT_QPA_PLATFORM: offscreen
+
+  wayland-smoke:
+    name: Wayland launch + screenshot smoke
+    runs-on: trailer-k8s
+    # Least privilege: this job checks out, builds, and uploads one PNG
+    # artifact — no extra token scope beyond the workflow-level read.
+    permissions:
+      contents: read
+    # Modest wall-time by design (the owner is minutes-conscious): this job
+    # BUILDS ONLY the `trailer` target (not the test binaries) and runs ONE
+    # launch-and-screenshot smoke — no unit re-run, no UAT. With the Linux
+    # job's warm ccache it lands well under the Linux tier's time; the cold
+    # first run needs the same headroom the Linux build documents.
+    timeout-minutes: 40
+    #
+    # WHY this tier exists, and WHY it is launch+screenshot ONLY:
+    # ---------------------------------------------------------------------
+    # This is the ONE check that proves Trailer loads the *wayland* Qt
+    # platform plugin, maps a real xdg-shell surface on a real compositor,
+    # and paints actual UI into it. Offscreen unit tests and the Wine tier
+    # structurally cannot prove that. See docs/ci/wayland-tier.md.
+    #
+    # The unit suite and UAT are DELIBERATELY NOT run under Wayland here
+    # (they stay on offscreen in the build-and-test / release jobs), for
+    # honest, documented reasons from the Phase 1 investigation:
+    #   * Unit suite under Wayland is 57/60, not 60/60. `test_dirty_marker_zoom`
+    #     HANGS: MainWindow::closeEvent (src/ui/MainWindow.cpp:4432)
+    #     auto-accepts the unsaved-changes modal ONLY under offscreen/minimal;
+    #     under wayland it shows the real Save/Discard/Cancel dialog and blocks
+    #     forever with no user. `test_image_scale` fails on fractional-scaling
+    #     rounding (real-compositor DPR vs offscreen dpr=1), and
+    #     `test_perf_freehand_repaint` is a wall-time perf budget that is noise
+    #     under a compositor (the same `perf` tier the Wine job drops).
+    #   * UAT can't even be pointed at Wayland yet: tests/uat/CMakeLists.txt:15
+    #     forces QT_QPA_PLATFORM=offscreen as an unconditional per-test
+    #     ENVIRONMENT property (overriding an ambient wayland), and the same
+    #     modal hang hits 5 UAT binaries.
+    # Moving those under Wayland needs the Phase 3 modal-skip fix + a UAT
+    # platform opt-in first; gating a fast PR loop on a known modal hang would
+    # be dishonest bookkeeping. This mirrors the Wine tier's honest
+    # `--label-exclude 'uat|perf'` exclusion, stated inline rather than hidden.
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-linux-build
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          # OWN key (…-gcc-wayland), distinct from build-and-test's ci-…-gcc.
+          # Both jobs use native gcc so the objects are compatible, but this job
+          # builds ONLY `--target trailer` (a subset of build-and-test's full
+          # tree). The two jobs run concurrently (no `needs:`), and the action
+          # restores by key prefix + saves under a timestamped key — so if they
+          # shared a key, this partial build's cache save could win the restore
+          # race and degrade build-and-test's hit rate. A separate key keeps
+          # each job's cache self-consistent; it warms independently from the
+          # cross-branch fallback the action already does within a key.
+          key: ci-${{ runner.os }}-gcc-wayland
+          max-size: 500M
+          # Custom trailer-runner image ships an empty apt index, so the
+          # action must run `apt-get update` before `apt-get install ccache`.
+          update-package-index: true
+
+      - name: Install sway + grim
+        # Per-run apt install, mirroring the Wine tier's per-run toolchain
+        # install: docker/runner/Dockerfile BAKES these for later, but until
+        # that image is rebuilt + the ARC runner-set repointed, install them
+        # here so the job is green WITHOUT waiting for an image rebuild. Skips
+        # the apt work when the packages are already present (custom image).
+        #
+        # sway drags a real dependency tree through the egress proxy on every
+        # run until it is baked into the runner image, so a single proxy hiccup
+        # could red-gate unrelated PRs. Wrap update+install in a bounded retry
+        # with backoff (same resilience the toolchain installs use) to ride out
+        # a transient failure. Until sway+grim are baked in, this job SHOULD be
+        # kept a NON-REQUIRED (advisory) status check in branch protection —
+        # see docs/ci/wayland-tier.md.
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for pkg in sway grim; do
+            if dpkg -s "$pkg" >/dev/null 2>&1; then
+              echo "  preinstalled (skipped): $pkg"
+            else
+              echo "  will install via apt:   $pkg"
+              missing+=("$pkg")
+            fi
+          done
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "sway + grim preinstalled — skipping apt-get."
+          else
+            n=0
+            until [ "$n" -ge 3 ]; do
+              if sudo apt-get update && sudo apt-get install -y --no-install-recommends "${missing[@]}"; then
+                break
+              fi
+              n=$((n+1))
+              if [ "$n" -ge 3 ]; then
+                echo "::error::apt-get failed to install ${missing[*]} after 3 attempts (egress-proxy hiccup?)"
+                exit 1
+              fi
+              echo "apt-get attempt $n failed — retrying in $((n*5))s..."
+              sleep "$((n*5))"
+            done
+          fi
+
+      - name: Configure
+        # Identical invocation to build-and-test so ccache objects hit. See
+        # that job for the flag-by-flag rationale (Ninja, mold, UX recorder).
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=mold
+          -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=mold
+          -DTRAILER_ENABLE_UX_RECORDER=ON
+
+      - name: Build trailer binary only
+        # Just the app — not the test_* binaries — to keep wall-time modest.
+        run: cmake --build build --parallel --target trailer
+
+      - name: Wayland launch + screenshot smoke
+        # Starts sway headless (pixman), launches build/trailer under
+        # QT_QPA_PLATFORM=wayland on a sample image, hard-gates that a surface
+        # maps, then poll-captures with grim until a non-blank 1280x800 frame
+        # lands. Self-contained: it uses ImageMagick `identify` when present and
+        # falls back to a stdlib Python PNG analyzer otherwise. Deterministic
+        # hard oracle — but keep it a NON-REQUIRED status check until sway+grim
+        # are baked into the runner image (see docs/ci/wayland-tier.md).
+        run: bash scripts/wayland-smoke.sh
+        env:
+          WAYLAND_SMOKE_OUT: ${{ github.workspace }}/wayland-smoke.png
+          # Point the smoke at the SAME Qt the build used. install-qt-action
+          # (setup-linux-build) exports QT_ROOT_DIR to the job env; its plugins
+          # dir ships libqwayland.so. The script's own auto-detect can miss the
+          # CI Qt layout, so pass this explicitly — the script then hard-asserts
+          # libqwayland is present under it before launching.
+          QT_PLUGIN_PATH: ${{ env.QT_ROOT_DIR }}/plugins
+
+      - name: Upload Wayland screenshot
+        # Always upload so a failure's capture is inspectable too.
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wayland-smoke-screenshot
+          path: wayland-smoke.png
+          retention-days: 30
+          if-no-files-found: warn
 
   windows-cross-build:
     name: Windows cross-build + Wine unit tests
