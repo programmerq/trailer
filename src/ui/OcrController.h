@@ -27,20 +27,20 @@ class SelectableTextStore;
 // MainWindow. Holds a shared OcrEngine and a small bookkeeping table
 // keyed by (document*, page) so we don't submit the same work twice.
 //
-// Submission shape (Workstream F):
+// Submission shape (Workstream F; lazy window per ADR 0013 §G13.3):
 //   - On every current-page change, submit OCR for the visible page
 //     at `VisiblePage` priority. Cancel any pending VisiblePage that
 //     no longer matches the new page.
-//   - For documents with >1 page, submit ±1 neighbours at `Prefetch`
-//     priority. Pending Prefetch for far pages gets cancelled when
-//     the user jumps somewhere unrelated.
+//   - Submit the ±kLazyWindowRadius neighbours (N = 2, a 5-page
+//     window) at `Prefetch` priority. Pending Prefetch for pages that
+//     fall outside the new window gets cancelled when the user jumps
+//     somewhere unrelated — the window recenters on demand.
+//   - The lazy window applies uniformly to small and large/multi-page
+//     documents: a large doc is no longer cancelled down to nothing on
+//     the ambient path (it recenters on jump like any other doc).
 //   - The explicit Recognize Text… dialog submits work at
 //     `UserAction` priority (higher than VisiblePage), with the
 //     user's selected pages.
-//   - Large-doc guard: documents with pageCount() > 50 skip the
-//     automatic VisiblePage / Prefetch enqueue. The Recognize Text
-//     dialog stays available; the per-page MainWindow status bar
-//     offers an explicit "Recognize text on this page" affordance.
 //
 // All submissions go through Application::mlScheduler() so the
 // scheduler's power policy (run-on-battery, etc.) and priority
@@ -85,7 +85,7 @@ class OcrController : public QObject {
     // outstanding BATCH-TRACKED token so in-flight pages discard their
     // partial result and not-yet-started pages never run, stops the
     // completion count, and emits ocrBatchFinished(true). Idempotent — a
-    // no-op when no batch is active. Ambient auto-OCR (visible-page ±1)
+    // no-op when no batch is active. Ambient auto-OCR (visible-page ±kLazyWindowRadius)
     // is deliberately NOT affected — only batch-tracked handles are
     // cancelled.
     void cancelActiveBatch();
@@ -115,13 +115,26 @@ class OcrController : public QObject {
     void setRecognizerForTesting(RecognizeFn fn) { m_recognizer = std::move(fn); }
     void setModelReadyForTesting(std::optional<bool> ready) { m_modelReadyOverride = ready; }
 
+    // Test seam: the 0-based pages that currently hold a live pending
+    // submission for the active document, sorted ascending. Lets the
+    // lazy-window / jump tests assert exactly which pages are enqueued
+    // (and that out-of-window pages were cancelled) synchronously, without
+    // depending on worker-thread execution timing. Empty when there is no
+    // document. Note: a page that the scheduler pre-cancels (a Prefetch
+    // suppressed on battery) is still recorded here — battery suppression
+    // is observed through execution (store results), not this set.
+    std::vector<int> pendingPagesForTesting() const;
+
     // Cancel everything we have in flight. Used on window close /
     // doc replace.
     void cancelAll();
 
-    // Page-count threshold above which we skip the automatic visible-
-    // page enqueue. Exposed for tests; matches the value in the spec
-    // (>50 pages).
+    // Page-count threshold above which a document counts as "large".
+    // No longer gates the ambient enqueue (large docs now get the same
+    // lazy ±kLazyWindowRadius window — ADR 0013 §G13.3); it drives the
+    // missing-model hint exclusion (evaluateAutoOcrModel) and MainWindow's
+    // large-doc "Recognize text on this page" notice. Exposed for tests;
+    // matches the value in the spec (>50 pages).
     static constexpr int kLargeDocPageThreshold = 50;
 
     // Pixel-area ceiling for EAGER auto-OCR on a single-page document
@@ -134,6 +147,20 @@ class OcrController : public QObject {
     // bypass this gate. Exposed for tests. Multi-page docs are governed by
     // isLargeDoc() instead.
     static constexpr int kEagerOcrMaxPixels = 2048 * 2048; // 4,194,304 px
+
+    // PHILOSOPHY: hand-tuned values stay hand-tuned. Radius of the lazy
+    // ambient-OCR window centred on the visible page (ADR 0013 §G13.3,
+    // docs/decision-records/0013-image-ocr-pipeline-lazy-window-bounded-cache.md):
+    // the visible page and the ±kLazyWindowRadius pages around it are
+    // OCR-submitted; everything outside the window is cancelled. N = 2 (a
+    // 5-page window) is the ratified value. Range considered ±1..±3: ±1
+    // (the prior value) under-covers the thumbnails just above/below the
+    // fold on a jump; ±3 widens the speculative Prefetch burst against the
+    // don't-cook-the-CPU budget with no measured benefit. Change it only
+    // with the measured reopen evidence ADR 0013 names — a real jump/scan
+    // pattern where ±2 stalls, or a measured CPU/battery cost. Exposed for
+    // tests.
+    static constexpr int kLazyWindowRadius = 2;
 
     // True when the document's page count exceeds the auto-OCR
     // threshold. The MainWindow uses this to decide whether to show
@@ -190,7 +217,7 @@ class OcrController : public QObject {
     // Value stored per pending key: the scheduler task id plus whether the
     // submission is part of a user-action batch. batchTracked lets
     // cancelActiveBatch() cancel ONLY batch handles and leave ambient
-    // (visible-page ±1) submissions running (ADR 0002 review item 3).
+    // (visible-page ±kLazyWindowRadius) submissions running (ADR 0002 review item 3).
     struct PendingEntry {
         MlTaskId id = 0;
         bool batchTracked = false;

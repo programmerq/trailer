@@ -721,29 +721,11 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
             [this](bool missing) { m_ocrModelMissingHint->setVisible(missing); });
 
     // ADR 0002 §3: re-derive auto-OCR / the missing-model hint on PAGE
-    // change, not just document change. IDocument is not a QObject and
-    // exposes no page-changed signal, so — mirroring Sidebar's
-    // m_pageSyncTimer — poll the current page at a light cadence and notify
-    // the controller only when it actually changes (scrolling from a text
-    // page to a scanned page must surface the hint).
-    m_ocrPagePoll = new QTimer(this);
-    m_ocrPagePoll->setInterval(150);
-    connect(m_ocrPagePoll, &QTimer::timeout, this, [this]() {
-        auto *doc = m_documentView->currentDocument();
-        if (!doc || !m_ocrController)
-            return;
-        // Re-derive the large-doc recognize notice every tick so it self-
-        // clears the moment the visible page gains text / OCR results
-        // (ADR 0006). The helper short-circuits on the cheap guards before
-        // it ever probes pageHasText(), so this stays light.
-        updateLargeDocOcrHint();
-        const int page = doc->currentPage();
-        if (page == m_lastOcrPage)
-            return;
-        m_lastOcrPage = page;
-        m_ocrController->onVisiblePageChanged(page);
-    });
-    m_ocrPagePoll->start();
+    // change, not just document change. IDocument is not a QObject, but its
+    // PageChangeNotifier is — onCurrentDocumentChanged() connects the active
+    // document's notifier to onActivePageChanged(), which re-derives the
+    // notice and pushes the visible page to the controller (scrolling from a
+    // text page to a scanned page must surface the hint). No polling timer.
 
     // Auto-save loop. Tick every 30 s; each tick writes a RECOVERY SIDECAR
     // (not the backing file — see autoSaveDirtyDocs() and DR
@@ -1721,6 +1703,15 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     m_cropPagesAction = toolsMenu->addAction(tr("&Crop Pages…"));
     connect(m_cropPagesAction, &QAction::triggered, this, &MainWindow::onCropPages);
 
+    // Direct-manipulation crop (backlog
+    // 2026-07-15-crop-pages-direct-manipulation): draw the crop
+    // rectangle on the page with a live dimmed preview instead of
+    // guessing four millimetre margins in a no-preview modal. The
+    // numeric dialog above stays for users who want exact margins.
+    m_cropPagesDragAction = toolsMenu->addAction(tr("Crop Pages by &Dragging"));
+    connect(m_cropPagesDragAction, &QAction::triggered, this,
+            &MainWindow::onCropPagesByDragging);
+
     // Fill Forms stays at the top level — it's the primary affordance
     // for working with a fillable PDF and the action that auto-toggles
     // when an AcroForm is opened. AutoFill (My Card → field matcher)
@@ -1786,8 +1777,15 @@ void MainWindow::onCropPages() {
     const double t = dialog.topMm() * kMmToPt;
     const double r = dialog.rightMm() * kMmToPt;
     const double b = dialog.bottomMm() * kMmToPt;
-    if (l == 0.0 && t == 0.0 && r == 0.0 && b == 0.0)
+    if (l == 0.0 && t == 0.0 && r == 0.0 && b == 0.0) {
+        // A committed action that no-ops must say why rather than
+        // looking like nothing happened (PHILOSOPHY → How Trailer
+        // reduces friction; backlog 2026-07-15-crop-pages-direct-
+        // manipulation threshold: an all-zero OK gives visible
+        // feedback).
+        flashStatus(tr("No crop applied — all four margins were zero."));
         return;
+    }
 
     bool anyApplied = false;
     if (dialog.applyToAllPages()) {
@@ -1807,6 +1805,57 @@ void MainWindow::onCropPages() {
     }
     m_sidebar->refreshThumbnails();
     onCurrentDocumentChanged(doc);
+}
+
+void MainWindow::onCropPagesByDragging() {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing())
+        return;
+    // Activate the on-page crop tool. The overlay captures the drag,
+    // draws the dimmed live preview, and emits cropCommitted on Enter
+    // (wired to onCropRectCommitted in onCurrentDocumentChanged).
+    doc->setAnnotationTool(AnnotationTool::CropRect);
+    flashStatus(tr("Drag on the page to set the crop region, then press Enter to "
+                   "apply (Esc to cancel)."));
+}
+
+void MainWindow::onCropRectCommitted(const QRectF &docRect, int page) {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsEditing() || docRect.isEmpty())
+        return;
+    // The overlay reports a KEEP rectangle in page points, top-left
+    // origin. CropPageCommand wants trim margins (left/top/right/bottom
+    // in points). Convert against the page's point size; clamp any
+    // negative (rect drawn slightly outside the page) to zero.
+    //
+    // Assumption: the overlay's doc coordinates are relative to the
+    // page's current /CropBox (what QPdfView displays), while cropPage
+    // trims relative to the /MediaBox. These coincide on an un-cropped
+    // page — the threshold's flow — so the first drag-crop is exact.
+    // Re-cropping an ALREADY-cropped page via drag would be offset by
+    // the existing CropBox inset; that (rare) case, and the matching
+    // MediaBox-absolute behaviour of the numeric dialog, is a tracked
+    // follow-up, not a regression this PR introduces.
+    const QSizeF pageSize = doc->pageSizeHint(page);
+    if (pageSize.isEmpty()) {
+        flashError(tr("Crop failed — could not read the page size."));
+        return;
+    }
+    const double l = std::max(0.0, docRect.left());
+    const double t = std::max(0.0, docRect.top());
+    const double r = std::max(0.0, pageSize.width() - docRect.right());
+    const double b = std::max(0.0, pageSize.height() - docRect.bottom());
+    if (!doc->cropPage(page, l, t, r, b)) {
+        flashError(tr("Crop failed — the selected region is too small."));
+        return;
+    }
+    // Drop back to the Select tool so the freshly-cropped page is
+    // immediately interactive (matches the one-shot behaviour of the
+    // drawing tools) and the crop scrim clears.
+    doc->setAnnotationTool(AnnotationTool::Select);
+    m_sidebar->refreshThumbnails();
+    onCurrentDocumentChanged(doc);
+    flashSuccess(tr("Page cropped."));
 }
 
 void MainWindow::onInsertPages() {
@@ -3176,12 +3225,13 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
 
     // Update the auto-OCR controller. It cancels in-flight
     // submissions for the previous doc and starts following the
-    // new one. The visible-page enqueue is driven from the page-
-    // tracking timer below once the doc has settled.
+    // new one. The visible-page enqueue below primes it for the
+    // current page; later page changes arrive via the document's
+    // PageChangeNotifier → onActivePageChanged().
     if (m_ocrController) {
         m_ocrController->setDocument(doc);
-        // Sync the page-poll baseline so the poll doesn't re-fire the same
-        // page we push here.
+        // Prime the page baseline so onActivePageChanged() doesn't re-fire
+        // the same page we push here.
         m_lastOcrPage = doc ? doc->currentPage() : -1;
         if (doc && doc->supportsSelectableText()) {
             m_ocrController->onVisiblePageChanged(doc->currentPage());
@@ -3218,6 +3268,23 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             connect(notifier, &CapabilityNotifier::capabilitiesChanged, this,
                     &MainWindow::onDocumentCapabilitiesChanged, Qt::UniqueConnection);
         }
+        // Re-derive auto-OCR / the missing-model hint whenever the current
+        // page changes. Replaces the former 150 ms poll: PdfDocument fires
+        // its PageChangeNotifier from the navigator, covering keyboard paging,
+        // thumbnail jumps, AND continuous-scroll page crossings. Named-slot +
+        // UniqueConnection so repeated tab switches don't stack connections.
+        if (auto *pageNotifier = doc->pageChangeNotifier()) {
+            connect(pageNotifier, &PageChangeNotifier::currentPageChanged, this,
+                    &MainWindow::onActivePageChanged, Qt::UniqueConnection);
+        }
+        // Re-derive the large-doc recognize notice when OCR results land for
+        // any page (the store emits changed() once blocks are stored), so the
+        // notice self-clears the moment the visible page gains text — the
+        // other half of what the old poll re-checked every tick.
+        if (auto *textStore = doc->selectableText()) {
+            connect(textStore, &SelectableTextStore::changed, this,
+                    &MainWindow::updateLargeDocOcrHint, Qt::UniqueConnection);
+        }
         // Forward annotation-selection changes from the doc's overlay
         // to the Inspector. The overlay is a child of the doc's view
         // widget; we re-find it on every focus change because the
@@ -3238,6 +3305,12 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             // overlay's m_tool directly here.
             connect(overlay, &AnnotationOverlay::annotationCommitted, this,
                     &MainWindow::onAnnotationCommitted, Qt::UniqueConnection);
+            // Direct-manipulation crop commit (Enter over the CropRect
+            // tool). The overlay hands us a page-space keep-rect; we
+            // turn it into a CropPageCommand. Named-slot + Unique so
+            // repeated tab switches don't stack duplicate connections.
+            connect(overlay, &AnnotationOverlay::cropCommitted, this,
+                    &MainWindow::onCropRectCommitted, Qt::UniqueConnection);
             // Wire SAM plumbing into the overlay so the InstantAlpha /
             // SmartLasso tool branches can fire decoder passes and
             // commit results without going through a modal dialog. The
@@ -3435,6 +3508,15 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     m_cropImageAction->setEnabled(canEdit && isImage);
     m_insertPagesAction->setEnabled(isPdfLike);
     m_cropPagesAction->setEnabled(isPdfLike);
+    // Drag-to-crop targets PDF pages. When it can't act, disable it and
+    // say why + where to go (G3: no lying controls) rather than letting
+    // the user pick it and hit a dead end.
+    m_cropPagesDragAction->setEnabled(isPdfLike);
+    m_cropPagesDragAction->setToolTip(
+        isPdfLike ? tr("Drag a crop rectangle directly on the page.")
+        : doc     ? tr("Crop Pages works on PDF documents. For an image, use "
+                        "Tools → Crop Image.")
+                  : tr("Open a PDF to crop its pages."));
     // Forms-toolbar enable/populate. Extracted so it can run both here (at
     // open) AND when the document's async form detection later completes
     // (capabilitiesChanged → onDocumentCapabilitiesChanged). Since PR #63 the
@@ -3615,8 +3697,8 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // Large-doc OCR hint chip. Dismissal is keyed per-document (ADR
     // 0006), so switching documents does not clear another document's
     // dismissal. Visibility is derived by the shared helper, also re-run
-    // on page change / after OCR by the m_ocrPagePoll tick so the notice
-    // self-clears.
+    // on page change (PageChangeNotifier → onActivePageChanged) and after
+    // OCR (SelectableTextStore::changed) so the notice self-clears.
     updateLargeDocOcrHint();
 
     // Refresh the zoom readout AFTER the document's async initial fit.
@@ -3632,6 +3714,29 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // switch in the interim. (Live update during a window drag remains a
     // documented pre-existing limitation — IDocument is not a QObject.)
     QTimer::singleShot(0, this, [this]() { updateZoomIndicator(); });
+}
+
+void MainWindow::onActivePageChanged(int /*page*/) {
+    auto *doc = m_documentView->currentDocument();
+    if (!doc || !m_ocrController)
+        return;
+    // Re-derive the large-doc recognize notice so it self-clears / re-shows
+    // for the page just landed on (ADR 0006). The helper short-circuits on the
+    // cheap guards before it ever probes pageHasText(), so this stays light.
+    updateLargeDocOcrHint();
+    // Read the page from the CURRENT document rather than trusting the signal's
+    // argument: this slot is connected to each visited document's notifier
+    // (mirroring the CapabilityNotifier wiring), and those connections linger
+    // after a tab switch, so a stray emission from a non-current document must
+    // not push its page index into the controller for the current one. The
+    // navigator updates currentPage() before it emits, so for the live document
+    // this equals the signalled page.
+    const int page = doc->currentPage();
+    if (page == m_lastOcrPage)
+        return;
+    m_lastOcrPage = page;
+    if (doc->supportsSelectableText())
+        m_ocrController->onVisiblePageChanged(page);
 }
 
 void MainWindow::updateLargeDocOcrHint() {

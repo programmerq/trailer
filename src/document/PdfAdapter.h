@@ -2,6 +2,7 @@
 
 #include "CapabilityNotifier.h"
 #include "IDocument.h"
+#include "PageChangeNotifier.h"
 #include "IFormatAdapter.h"
 #include "PdfCommands.h"
 #include "PdfEditor.h"
@@ -68,6 +69,11 @@ class PdfDocument : public IDocument {
     QSizeF pageSizeHint(int pageIndex) const override;
     int currentPage() const override;
     void goToPage(int pageIndex) override;
+    // Fires on every navigator page change (keyboard paging, thumbnail jumps,
+    // continuous-scroll page crossings), so the Sidebar page-sync and the
+    // auto-OCR / missing-model hint re-derivation react to a real signal
+    // instead of polling currentPage() on a timer.
+    PageChangeNotifier *pageChangeNotifier() override { return &m_pageChangeNotifier; }
 
     bool supportsSearch() const override { return true; }
     void setSearchQuery(const QString &query) override;
@@ -154,6 +160,18 @@ class PdfDocument : public IDocument {
     // structurally-dirty PDF falls back to the per-doc prompt (flagged
     // residual — see the decision record + docs/backlog).
     bool hasStructuralEdits() const { return m_dirty; }
+    // True iff this document carries a still-PENDING (un-applied) redaction or
+    // signature annotation. These are the only annotation kinds
+    // writeRecoverySnapshot() bakes DESTRUCTIVELY into page content
+    // (applyRedactions / flattenSignatures), so a ⌥⌘Q structural-keep blob of
+    // such a doc would come back with them BURNED IN and no longer editable —
+    // a silent irreversible commit. The kept-windows capture routes exactly
+    // this combination to the per-doc prompt instead (Application::
+    // canDraftForKeep; docs/backlog/2026-07-20-nondestructive-structural-
+    // redaction-keep.md). Forces a synchronous annotation load first so the
+    // check sees the COMPLETE set (never a racy, still-loading store) — hence
+    // non-const (the sync load commits the deferred annotation result).
+    bool hasPendingDestructiveAnnotation();
     // Rehydrate this document from a kept-windows draft on session restore:
     // re-apply `annotations` (the document's unsaved annotations, captured
     // at ⌥⌘Q) as individually editable objects and, when `dirty`, mark the
@@ -188,6 +206,30 @@ class PdfDocument : public IDocument {
     bool writeRecoverySnapshot(const QString &sidecarPath) override;
     bool recoverFrom(const QString &sidecarPath) override;
     bool reloadFromDisk() override;
+
+    // True once markUntitledForRecovery() has run: the document holds recovered
+    // (owned-copy-backed) content but has no on-disk home, so displayName shows
+    // "Untitled" and MainWindow routes its first Save through Save-As.
+    bool isUntitled() const override { return m_untitled; }
+    // Convert a just-recovered document into an UNTITLED one. Used by the
+    // kept-windows (⌥⌘Q) restore when a StructuralDraft's ORIGINAL file is gone:
+    // the self-sufficient edited blob already loaded via recoverFrom() still
+    // returns as unsaved, dirty work whose first Save prompts Save-As, rather
+    // than the captured edits being silently dropped. Clears m_path (no home)
+    // and marks the doc dirty; the recovered content is untouched.
+    void markUntitledForRecovery() {
+        m_untitled = true;
+        m_path.clear();
+        m_dirty = true;
+    }
+
+    // Test seam: force writeRecoverySnapshot() to fail, so a test can exercise
+    // the ⌥⌘Q keep-flow's snapshot-preflight fallback — an unsnapshottable
+    // structural PDF must be PROMPTED, never silently dropped (Application::
+    // canDraftForKeep FIX 1). No production caller sets this.
+    void setForceRecoverySnapshotFailureForTesting(bool fail) {
+        m_forceRecoverySnapshotFailureForTesting = fail;
+    }
 
     // Two-phase save for off-thread execution. The first phase
     // (saveBeginQpdfPhase) does only thread-safe qpdf work and may
@@ -431,6 +473,13 @@ class PdfDocument : public IDocument {
     void refreshSearchHighlights();
 
     QString m_path;
+    // Set only by markUntitledForRecovery(): a recovered structural-draft doc
+    // whose original file was gone at ⌥⌘Q restore time. Backs isUntitled() so
+    // its first Save routes through Save-As (see the header method comment).
+    bool m_untitled = false;
+    // Test-only: when set, writeRecoverySnapshot() returns false immediately.
+    // See setForceRecoverySnapshotFailureForTesting().
+    bool m_forceRecoverySnapshotFailureForTesting = false;
     std::unique_ptr<QPdfDocument> m_doc;
     std::unique_ptr<QPdfSearchModel> m_searchModel;
     // QPdfBookmarkModel is lazy: only created the first time
@@ -510,6 +559,10 @@ class PdfDocument : public IDocument {
     // Emitter fired once the background load has adopted the editor + detected
     // the AcroForm, so MainWindow re-runs its forms-toolbar setup (PR #63).
     CapabilityNotifier m_capabilityNotifier;
+    // Emitter fired on every navigator page change so page-driven UI (Sidebar
+    // sync, auto-OCR / missing-model hint) reacts to a signal instead of a
+    // poll timer. Owned by value; its QObject lifetime is bounded by this doc.
+    PageChangeNotifier m_pageChangeNotifier;
     // Watches the unified background-load future (annotation sweep + editor
     // parse + AcroForm detection). Held as a member so its lifetime is bounded
     // by this document: the destructor resets it so a still-pending finished

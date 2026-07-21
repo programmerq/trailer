@@ -364,6 +364,43 @@ not yet saved). An `Apply to all pages` batch crop counts here.
 Pinned by harness slot `uat_pdf_056_cropUndoRedo` in
 `tests/uat/test_uat_pdf_pages.cpp`.
 
+### UAT-PDF-057 — All-zero margins gives feedback
+
+**Preconditions:** PDF open, crop dialog open (`Tools > Crop Pages…`).
+**Steps:**
+1. Leave every margin at 0.
+2. Press OK.
+**Expected:**
+- A status message explains that nothing was cropped (e.g. "No crop
+  applied — all four margins were zero.") rather than the dialog
+  closing with no visible effect. Document is not marked dirty.
+
+Backlog `2026-07-15-crop-pages-direct-manipulation` (second clause of
+the threshold); ADR `2026-07-20-crop-direct-manipulation`.
+
+### UAT-PDF-058 — Crop a page by dragging on the page
+
+**Preconditions:** PDF open.
+**Steps:**
+1. `Tools > Crop Pages by Dragging`.
+2. Drag a rectangle over the region to keep. The area outside dims to
+   a live preview; corner handles let you adjust it.
+3. Press `Enter`.
+**Expected:**
+- The page's visible area shrinks to the dragged rectangle — no numeric
+  dialog is opened at any point.
+- The crop is undoable (`Cmd+Z` / `Ctrl+Z`) and the tab is marked dirty.
+- `Esc` before committing cancels with no change.
+- On a non-PDF document the menu item is disabled with a tooltip
+  pointing image users to `Tools > Crop Image` (no lying control).
+
+Backlog `2026-07-15-crop-pages-direct-manipulation` (first clause of
+the threshold); ADR `2026-07-20-crop-direct-manipulation`. Pinned by
+harness slot `uat_pdf_058_dragCropAppliesEndToEnd` in
+`tests/uat/test_uat_pdf_pages.cpp`; the page-anchoring / dpr-safety
+geometry is pinned hermetically by
+`tests/test_crop_direct_manipulation.cpp` (dpr × zoom matrix).
+
 ---
 
 ## Save and Save As

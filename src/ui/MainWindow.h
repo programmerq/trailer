@@ -211,6 +211,10 @@ class MainWindow : public QMainWindow {
     void onCropImage();
     void onInsertPages();
     void onCropPages();
+    // Activate the on-page drag-to-crop tool (direct-manipulation crop).
+    void onCropPagesByDragging();
+    // Apply a crop from the overlay's page-space keep-rectangle.
+    void onCropRectCommitted(const QRectF &docRect, int page);
     void onAbout();
     void onAutoFillCurrentForm();
     void onManageMyCard();
@@ -239,6 +243,12 @@ class MainWindow : public QMainWindow {
     // member function — not a lambda — so the Qt::UniqueConnection
     // flag in the connect() call actually takes effect.
     void onActiveAnnotationStoreChanged();
+    // Slot fired by the active document's PageChangeNotifier when the current
+    // page changes. Re-derives the large-doc OCR notice and pushes the visible
+    // page to the auto-OCR controller (which surfaces / clears the missing-
+    // model hint). Replaces the former 150 ms m_ocrPagePoll. Must be a member
+    // function — not a lambda — so the Qt::UniqueConnection flag takes effect.
+    void onActivePageChanged(int page);
 
   private:
     void buildMenus();
@@ -325,9 +335,11 @@ class MainWindow : public QMainWindow {
     void hideSearchBar();
     void updateTitleForDocument(IDocument *doc);
     // Re-derive the large-doc "Recognize text" notice visibility (ADR
-    // 0006). Called from onCurrentDocumentChanged and the m_ocrPagePoll
-    // tick so the notice is guarded by a real per-page text check and
-    // self-clears once the page gains text / OCR results / is dismissed.
+    // 0006). Called from onCurrentDocumentChanged, the active document's
+    // PageChangeNotifier (page moved), and its SelectableTextStore::changed
+    // (OCR results landed), so the notice is guarded by a real per-page text
+    // check and self-clears once the page gains text / OCR results / is
+    // dismissed — no polling timer.
     void updateLargeDocOcrHint();
     void updateUndoRedoActions(IDocument *doc);
     // Refresh the status-bar zoom-% readout from the current document's
@@ -433,6 +445,7 @@ class MainWindow : public QMainWindow {
     QAction *m_cropImageAction = nullptr;
     QAction *m_insertPagesAction = nullptr;
     QAction *m_cropPagesAction = nullptr;
+    QAction *m_cropPagesDragAction = nullptr;
     QAction *m_fillFormsAction = nullptr;
     // Documents we've already auto-enabled Fill Forms for. Tracked so
     // that toggling Fill Forms off, switching docs, and switching back
@@ -552,12 +565,11 @@ class MainWindow : public QMainWindow {
     // slow single-page op appends "· Ns" past 10s. Stopped on finish/idle.
     QTimer *m_ocrElapsedTimer = nullptr;
     int m_ocrElapsedSecs = 0;
-    // ADR 0002 §3 page-change re-derivation. IDocument exposes no page-
-    // changed signal, so — mirroring Sidebar's m_pageSyncTimer — poll the
-    // current page and notify the controller only when it changes, so the
-    // missing-model hint re-derives when scrolling between text and scanned
-    // pages. m_lastOcrPage is the last page pushed to the controller.
-    QTimer *m_ocrPagePoll = nullptr;
+    // ADR 0002 §3 page-change re-derivation. Driven by the active document's
+    // PageChangeNotifier (a real page-changed signal) so the missing-model
+    // hint re-derives when scrolling between text and scanned pages — no
+    // polling. m_lastOcrPage is the last page pushed to the controller;
+    // onActivePageChanged() dedups against it.
     int m_lastOcrPage = -1;
     // Test seam for the missing-model hint's download-consent routing.
     std::function<bool()> m_ocrModelDownloadHook;
@@ -585,8 +597,7 @@ class MainWindow : public QMainWindow {
     // never dereferenced.
     QSet<IDocument *> m_largeDocOcrHintDismissed;
     // Single-entry cache for the pageHasText() probe, which re-extracts
-    // the full page text and is polled ~7Hz by m_ocrPagePoll. Only re-
-    // probed when the (document, page) changes.
+    // the full page text. Only re-probed when the (document, page) changes.
     IDocument *m_pageHasTextCacheDoc = nullptr;
     int m_pageHasTextCachePage = -1;
     bool m_pageHasTextCacheValue = false;

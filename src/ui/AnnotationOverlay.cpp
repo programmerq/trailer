@@ -57,6 +57,17 @@ AnnotationOverlay::AnnotationOverlay(QWidget *parent) : QWidget(parent) {
 }
 
 void AnnotationOverlay::abortInFlightDrag() {
+    // A crop drag (draw / handle-resize / move) has no AnnotationStore
+    // compound to close — just drop the in-flight flags so a return
+    // from Cmd-Tab doesn't resume a phantom crop gesture. The already-
+    // drawn pending rect (if any) is left intact so the user comes back
+    // to what they had.
+    if (m_cropDrawing || m_cropHandle != ResizeHandle::None || m_cropMoving) {
+        m_cropDrawing = false;
+        m_cropHandle = ResizeHandle::None;
+        m_cropMoving = false;
+        update();
+    }
     if (!m_dragging && !m_movingSelected && m_resizingHandle == ResizeHandle::None) {
         return;
     }
@@ -118,6 +129,12 @@ void AnnotationOverlay::setActiveTool(AnnotationTool tool) {
         // away — otherwise a later Signature selection could surprise
         // them with a stale image.
         m_pendingSignaturePath.clear();
+    }
+    if (previous == AnnotationTool::CropRect && tool != AnnotationTool::CropRect) {
+        // Leaving the crop tool abandons any un-committed crop
+        // rectangle + its dimmed preview so a later re-activation
+        // starts clean.
+        clearPendingCrop();
     }
     // SAM tool lifecycle. Activating a SAM tool kicks off a prepare
     // pass (if not cached); deactivating drops any pending prompts
@@ -790,6 +807,71 @@ void AnnotationOverlay::paintEvent(QPaintEvent * /*event*/) {
         }
         drawOne(preview);
     }
+
+    // --- Crop tool: dimmed live preview of the region that will be
+    // KEPT vs discarded. Drawn last so it sits on top of everything.
+    // The rect is mapped from doc space every paint, so it tracks zoom
+    // / scroll / dpr with no extra plumbing (same transform the
+    // annotations use). ---
+    if (m_tool == AnnotationTool::CropRect && (m_cropDrawing || hasPendingCrop())) {
+        const QRectF viewRect = docRectToView(m_cropRectDoc, m_cropPage).intersected(rect());
+        if (!viewRect.isEmpty()) {
+            // Dim everything OUTSIDE the crop rect with a translucent
+            // scrim so the kept region reads as "in focus". Four bands
+            // avoid an even-odd QPainterPath fill (cheaper, and no
+            // seam artifacts at the rect edges).
+            const QColor scrim(0, 0, 0, 110); // ~43% black — enough to
+                                              // read as dimmed without
+                                              // hiding page content the
+                                              // user is aiming at.
+            const QRectF full = rect();
+            p.setPen(Qt::NoPen);
+            p.setBrush(scrim);
+            // top / bottom full-width bands, then left / right within
+            // the crop's vertical span.
+            p.drawRect(QRectF(full.left(), full.top(), full.width(), viewRect.top() - full.top()));
+            p.drawRect(QRectF(full.left(), viewRect.bottom(), full.width(),
+                              full.bottom() - viewRect.bottom()));
+            p.drawRect(QRectF(full.left(), viewRect.top(), viewRect.left() - full.left(),
+                              viewRect.height()));
+            p.drawRect(QRectF(viewRect.right(), viewRect.top(), full.right() - viewRect.right(),
+                              viewRect.height()));
+
+            // Crop boundary: a light dashed rectangle so it stays
+            // visible over both dark and light page content.
+            QPen border(QColor(255, 255, 255, 230));
+            border.setStyle(Qt::DashLine);
+            border.setWidth(1);
+            p.setPen(border);
+            p.setBrush(Qt::NoBrush);
+            p.drawRect(viewRect);
+
+            // Rule-of-thirds guides — the familiar crop-tool affordance.
+            QPen thirds(QColor(255, 255, 255, 90));
+            thirds.setWidth(1);
+            p.setPen(thirds);
+            for (int i = 1; i <= 2; ++i) {
+                const double x = viewRect.left() + viewRect.width() * i / 3.0;
+                const double y = viewRect.top() + viewRect.height() * i / 3.0;
+                p.drawLine(QPointF(x, viewRect.top()), QPointF(x, viewRect.bottom()));
+                p.drawLine(QPointF(viewRect.left(), y), QPointF(viewRect.right(), y));
+            }
+
+            // Corner handles for adjustment, drawn only once the rect
+            // has been laid down (not during the initial rubber-band,
+            // where the moving corner IS the cursor).
+            if (!m_cropDrawing && hasPendingCrop()) {
+                QPen hpen(QColor(255, 255, 255, 230));
+                hpen.setWidth(1);
+                p.setPen(hpen);
+                p.setBrush(QColor(60, 120, 220, 230));
+                for (auto h : {ResizeHandle::TopLeft, ResizeHandle::TopRight,
+                               ResizeHandle::BottomLeft, ResizeHandle::BottomRight}) {
+                    p.drawRect(handleRect(viewRect, h));
+                }
+            }
+        }
+    }
 }
 
 bool AnnotationOverlay::eventFilter(QObject *obj, QEvent *event) {
@@ -854,6 +936,15 @@ bool AnnotationOverlay::eventFilter(QObject *obj, QEvent *event) {
 }
 
 void AnnotationOverlay::mousePressEvent(QMouseEvent *event) {
+    // Crop tool owns the pointer (owner ruling 2026-07-20): a press
+    // starts / adjusts the crop rectangle and NEVER hit-tests or
+    // selects an annotation underneath. Handled before the store guard
+    // because the crop rect lives on the page, not in the annotation
+    // store — it works even on a document with no annotations.
+    if (m_tool == AnnotationTool::CropRect) {
+        handleCropPress(event);
+        return;
+    }
     if (!m_store || m_tool == AnnotationTool::None) {
         event->ignore();
         return;
@@ -1034,6 +1125,10 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent *event) {
 }
 
 void AnnotationOverlay::mouseMoveEvent(QMouseEvent *event) {
+    if (m_tool == AnnotationTool::CropRect) {
+        handleCropMove(event);
+        return;
+    }
     // SAM drag tracking. For Instant Alpha the single positive prompt
     // follows the cursor while the button is down; the controller
     // throttles to ~30 Hz so a rapid drag does not saturate the
@@ -1183,6 +1278,10 @@ void AnnotationOverlay::mouseMoveEvent(QMouseEvent *event) {
 }
 
 void AnnotationOverlay::mouseReleaseEvent(QMouseEvent *event) {
+    if (m_tool == AnnotationTool::CropRect) {
+        handleCropRelease(event);
+        return;
+    }
     // SAM release. Instant Alpha commits on release; Smart Lasso waits
     // for an explicit commit (Enter / double-click).
     if (isSamTool() && m_samDraggingInstant && event->button() == Qt::LeftButton &&
@@ -1534,6 +1633,22 @@ void AnnotationOverlay::mouseDoubleClickEvent(QMouseEvent *event) {
 }
 
 void AnnotationOverlay::keyPressEvent(QKeyEvent *event) {
+    // Crop keyboard handlers run first: they must fire regardless of
+    // any annotation selection. Enter commits the pending crop; Esc
+    // abandons it. Both are swallowed so the keystroke doesn't leak to
+    // the viewer (e.g. Esc closing something else).
+    if (m_tool == AnnotationTool::CropRect) {
+        if (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter) {
+            commitPendingCrop();
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_Escape) {
+            clearPendingCrop();
+            event->accept();
+            return;
+        }
+    }
     // SAM keyboard handlers run before the annotation-selection
     // branch so they fire even when nothing is "selected" in the
     // annotation-store sense.
@@ -1795,6 +1910,150 @@ void AnnotationOverlay::contextMenuEvent(QContextMenuEvent *event) {
     emit annotationCommitted(id);
     m_pendingSelection.clear();
     update();
+}
+
+// --- Direct-manipulation page crop (backlog
+// 2026-07-15-crop-pages-direct-manipulation) -----------------------------
+
+// Minimum crop side, in DOCUMENT units (PDF points / image pixels),
+// below which a gesture is treated as a stray click rather than a crop.
+// Range tried: 2–8; at 2 a jittery click could commit a sliver crop, at
+// 8 a deliberate small crop on a zoomed-in page felt sticky. 4 rejects
+// accidental clicks while still allowing a purposeful small selection.
+// Symptom to change: stray clicks committing tiny crops (raise it) or a
+// small intended crop being silently dropped (lower it).
+static constexpr double kMinCropSideDoc = 4.0;
+
+void AnnotationOverlay::handleCropPress(QMouseEvent *event) {
+    if (event->button() != Qt::LeftButton) {
+        event->ignore();
+        return;
+    }
+    // Take keyboard focus so Enter (commit) / Esc (cancel) reach
+    // keyPressEvent without a second click.
+    setFocus(Qt::MouseFocusReason);
+
+    // With a rect already down, a corner-handle press resizes it and a
+    // body press moves it. A press outside the rect starts a fresh
+    // rubber-band. Crop owns the pointer throughout: no annotation
+    // hit-test happens on any of these paths (owner ruling).
+    if (hasPendingCrop()) {
+        const ResizeHandle h = cropHandleAt(event->position());
+        if (h != ResizeHandle::None) {
+            m_cropHandle = h;
+            m_cropHandleOrigRect = m_cropRectDoc;
+            update();
+            return;
+        }
+        const QRectF viewRect = docRectToView(m_cropRectDoc, m_cropPage);
+        if (viewRect.contains(event->position())) {
+            m_cropMoving = true;
+            m_cropMoveStartDoc = toDoc(event->position(), m_cropPage);
+            m_cropMoveOrigRect = m_cropRectDoc;
+            update();
+            return;
+        }
+    }
+    m_cropPage = pageAt(event->position());
+    m_cropStartDoc = toDoc(event->position(), m_cropPage);
+    m_cropRectDoc = QRectF(m_cropStartDoc, m_cropStartDoc);
+    m_cropDrawing = true;
+    update();
+}
+
+void AnnotationOverlay::handleCropMove(QMouseEvent *event) {
+    // All three paths recompute the doc-space rect from an anchor
+    // captured at press time, so there is no per-frame drift and the
+    // stored rect is exactly what the cursor describes on the page.
+    if (m_cropHandle != ResizeHandle::None) {
+        const QPointF here = toDoc(event->position(), m_cropPage);
+        QRectF nb = m_cropHandleOrigRect;
+        switch (m_cropHandle) {
+        case ResizeHandle::TopLeft:
+            nb.setTopLeft(here);
+            break;
+        case ResizeHandle::TopRight:
+            nb.setTopRight(here);
+            break;
+        case ResizeHandle::BottomLeft:
+            nb.setBottomLeft(here);
+            break;
+        case ResizeHandle::BottomRight:
+            nb.setBottomRight(here);
+            break;
+        default:
+            break;
+        }
+        m_cropRectDoc = nb.normalized();
+        update();
+        return;
+    }
+    if (m_cropMoving) {
+        const QPointF here = toDoc(event->position(), m_cropPage);
+        m_cropRectDoc = m_cropMoveOrigRect.translated(here - m_cropMoveStartDoc);
+        update();
+        return;
+    }
+    if (m_cropDrawing) {
+        const QPointF here = toDoc(event->position(), m_cropPage);
+        m_cropRectDoc = QRectF(m_cropStartDoc, here).normalized();
+        update();
+        return;
+    }
+}
+
+void AnnotationOverlay::handleCropRelease(QMouseEvent *event) {
+    if (event->button() != Qt::LeftButton) {
+        event->ignore();
+        return;
+    }
+    m_cropDrawing = false;
+    m_cropHandle = ResizeHandle::None;
+    m_cropMoving = false;
+    // Drop a degenerate rect (a click with no real drag) so a stray
+    // click doesn't leave an invisible zero-area crop that would
+    // swallow the next Enter.
+    if (m_cropRectDoc.isNull() || m_cropRectDoc.width() < kMinCropSideDoc ||
+        m_cropRectDoc.height() < kMinCropSideDoc) {
+        m_cropRectDoc = QRectF();
+    } else {
+        m_cropRectDoc = m_cropRectDoc.normalized();
+    }
+    update();
+}
+
+void AnnotationOverlay::commitPendingCrop() {
+    if (!hasPendingCrop())
+        return;
+    const QRectF rectDoc = m_cropRectDoc.normalized();
+    if (rectDoc.width() < kMinCropSideDoc || rectDoc.height() < kMinCropSideDoc) {
+        clearPendingCrop();
+        return;
+    }
+    const int page = m_cropPage;
+    clearPendingCrop();
+    emit cropCommitted(rectDoc, page);
+}
+
+void AnnotationOverlay::clearPendingCrop() {
+    m_cropRectDoc = QRectF();
+    m_cropDrawing = false;
+    m_cropHandle = ResizeHandle::None;
+    m_cropMoving = false;
+    update();
+}
+
+AnnotationOverlay::ResizeHandle
+AnnotationOverlay::cropHandleAt(const QPointF &viewPt) const {
+    if (!hasPendingCrop())
+        return ResizeHandle::None;
+    const QRectF view = docRectToView(m_cropRectDoc, m_cropPage);
+    for (auto h : {ResizeHandle::TopLeft, ResizeHandle::TopRight, ResizeHandle::BottomLeft,
+                   ResizeHandle::BottomRight}) {
+        if (handleRect(view, h).contains(viewPt))
+            return h;
+    }
+    return ResizeHandle::None;
 }
 
 } // namespace trailer

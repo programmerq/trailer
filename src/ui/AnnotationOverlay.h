@@ -142,8 +142,38 @@ class AnnotationOverlay : public QWidget {
     // arithmetic.
     QRectF selectedViewRectForTest() const;
 
+    // --- Direct-manipulation page crop (backlog
+    // 2026-07-15-crop-pages-direct-manipulation) ---
+    // When the CropRect tool is active the overlay draws a
+    // page-anchored crop rectangle (stored in DOCUMENT space, so it
+    // survives zoom / dpr changes exactly like every other overlay
+    // geometry) with a live dimmed preview of the area that would be
+    // discarded. Pressing Enter commits it via the cropCommitted
+    // signal; Esc cancels. The crop tool OWNS the pointer: a press
+    // never hit-tests or selects an annotation underneath (owner
+    // ruling 2026-07-20).
+    //
+    // The pending crop rectangle in document coordinates, or an empty
+    // QRectF when none is being drawn/adjusted. Public so tests can
+    // assert page-anchoring (invariance under zoom / dpr) without
+    // reaching into private state.
+    QRectF pendingCropRectDoc() const { return m_cropRectDoc; }
+    // The page the pending crop rectangle lives on.
+    int cropPage() const { return m_cropPage; }
+    bool hasPendingCrop() const { return !m_cropRectDoc.isNull() && !m_cropRectDoc.isEmpty(); }
+    // Test seam: commit the current pending crop as if the user pressed
+    // Enter. No-op when there is no pending crop. Drives the exact same
+    // path as keyPressEvent(Return).
+    void commitPendingCropForTest() { commitPendingCrop(); }
+
   signals:
     void annotationCommitted(int id);
+    // Emitted when the user commits a direct-manipulation crop (Enter
+    // over the CropRect tool, or commitPendingCropForTest()). `docRect`
+    // is the region to KEEP, in document coordinates (PDF points /
+    // image pixels), on page `page`. MainWindow converts it into a
+    // CropPageCommand. Not emitted for a degenerate (sub-1-unit) rect.
+    void cropCommitted(const QRectF &docRect, int page);
     // Fires whenever m_selectedAnnotationId changes (including on
     // clear-to-zero). MainWindow uses this to drive the Inspector
     // pane's "Selection" section so the user gets per-annotation
@@ -166,6 +196,19 @@ class AnnotationOverlay : public QWidget {
     QPointF toDoc(const QPointF &viewPt, int page) const;
     int pageAt(const QPointF &viewPt) const;
     int hitTest(const QPointF &viewPt) const;
+
+    // --- Crop-tool helpers (see the public crop API above) ---
+    // Dispatch the CropRect tool's press / move / release. Split out of
+    // the mouse handlers so the crop path stays a single self-contained
+    // branch and never interleaves with the annotation-selection /
+    // drawing plumbing (owner ruling: crop owns the pointer).
+    void handleCropPress(QMouseEvent *event);
+    void handleCropMove(QMouseEvent *event);
+    void handleCropRelease(QMouseEvent *event);
+    // Emit cropCommitted for the current pending rect and clear it.
+    void commitPendingCrop();
+    // Drop the pending crop rect + any in-flight crop drag.
+    void clearPendingCrop();
 
     // SAM workflow helpers.
     bool isSamTool() const {
@@ -306,6 +349,32 @@ class AnnotationOverlay : public QWidget {
     // Compute the four handle rects in view space for the given
     // annotation bounds.
     QRectF handleRect(const QRectF &viewBounds, ResizeHandle which) const;
+    // Which corner handle of the pending crop rect (if any) lives at
+    // this view-space point. Mirrors handleAt() but keyed off the crop
+    // rect rather than the selected annotation. Declared after the
+    // ResizeHandle enum so the return type is in scope.
+    ResizeHandle cropHandleAt(const QPointF &viewPt) const;
+
+    // --- Crop-tool drag state (CropRect tool) ---
+    // The pending crop rectangle in DOCUMENT space. Everything about
+    // the crop lives in doc coordinates so it is page-anchored and
+    // dpr-safe by construction — the same invariant the #91/#94 zoom-
+    // drift family pinned for annotations. Empty/null when no crop is
+    // in progress.
+    QRectF m_cropRectDoc;
+    int m_cropPage = 0;
+    // True while the initial rubber-band drag is drawing a fresh rect.
+    bool m_cropDrawing = false;
+    QPointF m_cropStartDoc;
+    // Corner-resize of an already-drawn crop rect. m_cropHandle != None
+    // while a handle is being dragged; the anchor rect is captured at
+    // press so the drag resizes by exactly the cursor delta (no drift).
+    ResizeHandle m_cropHandle = ResizeHandle::None;
+    QRectF m_cropHandleOrigRect;
+    // Move of an already-drawn crop rect (press inside the body).
+    bool m_cropMoving = false;
+    QPointF m_cropMoveStartDoc;
+    QRectF m_cropMoveOrigRect;
 };
 
 } // namespace trailer

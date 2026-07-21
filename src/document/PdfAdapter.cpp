@@ -631,6 +631,11 @@ PdfDocument::~PdfDocument() {
 }
 
 QString PdfDocument::displayName() const {
+    // A recovery-untitled doc (markUntitledForRecovery) has no on-disk home;
+    // show a clean "Untitled" rather than an empty basename until the user
+    // Saves it to a real path (mirrors ImageDocument::displayName).
+    if (m_untitled)
+        return QObject::tr("Untitled");
     return QFileInfo(m_path).fileName();
 }
 
@@ -831,6 +836,14 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
                          if (overlay)
                              overlay->setPage(page);
                      });
+    // Announce the page change to non-QObject IDocument consumers (Sidebar
+    // page-sync, MainWindow auto-OCR / missing-model hint). Routed through the
+    // notifier because IDocument is not a QObject; this is the same navigator
+    // signal the overlay/text layer already follow, so it fires on keyboard
+    // paging, thumbnail jumps, AND continuous-scroll page crossings.
+    QObject::connect(view->pageNavigator(), &QPdfPageNavigator::currentPageChanged,
+                     &m_pageChangeNotifier, &PageChangeNotifier::notifyPageChanged,
+                     Qt::UniqueConnection);
     QObject::connect(view->verticalScrollBar(), &QScrollBar::valueChanged, overlay,
                      QOverload<>::of(&QWidget::update));
     QObject::connect(view->horizontalScrollBar(), &QScrollBar::valueChanged, overlay,
@@ -1899,6 +1912,19 @@ bool PdfDocument::save(const QString &newPath) {
     return saveCommitOnUi(*ctx);
 }
 
+bool PdfDocument::hasPendingDestructiveAnnotation() {
+    // See the header comment: force the complete annotation set to be present
+    // (the deferred sweep may still be in flight) before scanning, so this
+    // safety gate can never MISS a disk-resident redaction/signature and let it
+    // be silently burned in by a keep snapshot.
+    ensureAnnotationsLoadedSync();
+    for (const Annotation &a : m_annotations.annotations()) {
+        if (a.type == AnnotationType::Redaction || a.type == AnnotationType::Signature)
+            return true;
+    }
+    return false;
+}
+
 bool PdfDocument::writeRecoverySnapshot(const QString &sidecarPath) {
     // Auto-save calls this instead of save(): it must NEVER write the backing
     // file and must NOT clear the dirty flag. We snapshot the CURRENT editor
@@ -1908,6 +1934,8 @@ bool PdfDocument::writeRecoverySnapshot(const QString &sidecarPath) {
     // applyRedactions()/flattenSignatures() are destructive. The live document
     // (m_editor / m_path / m_doc / dirty flags) is left completely untouched;
     // only the sidecar is written.
+    if (m_forceRecoverySnapshotFailureForTesting)
+        return false; // test seam: exercise the ⌥⌘Q snapshot-preflight fallback
     ensureDocLoaded(); // definitive m_valid before the guards below
     ensureEditorLoaded();
     ensureAnnotationsLoadedSync();

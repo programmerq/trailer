@@ -93,6 +93,22 @@ bool SessionDraftStore::save(const QList<SessionWindowDescriptor> &windows) cons
                 docObj[QStringLiteral("originalPath")] = doc.originalPath;
                 docObj[QStringLiteral("dpr")] = doc.devicePixelRatio;
                 docObj[QStringLiteral("captureOrigin")] = doc.captureOrigin;
+            } else if (doc.kind == SessionDocDescriptor::Kind::StructuralDraft) {
+                // A structurally-edited PDF: the edited bytes live in a blob
+                // (stored exactly like a Draft blob) and the ORIGINAL path is
+                // recorded so restore reopens it and re-points Save to it.
+                const QString name = blobName(wIdx, dIdx, doc.format);
+                QSaveFile blob(QDir::cleanPath(staging + QLatin1Char('/') + name));
+                if (!blob.open(QIODevice::WriteOnly))
+                    return bail();
+                if (blob.write(doc.bytes) != doc.bytes.size())
+                    return bail();
+                if (!blob.commit())
+                    return bail();
+                docObj[QStringLiteral("kind")] = QStringLiteral("structural-draft");
+                docObj[QStringLiteral("blob")] = name;
+                docObj[QStringLiteral("format")] = doc.format;
+                docObj[QStringLiteral("originalPath")] = doc.originalPath;
             } else if (doc.kind == SessionDocDescriptor::Kind::AnnotatedPath) {
                 // A PDF (or other non-image) reopened from disk with its
                 // unsaved annotations re-applied editable. The annotations
@@ -189,6 +205,22 @@ QList<SessionWindowDescriptor> SessionDraftStore::restore() const {
                 // traversal payload like "../../etc/passwd". Strip any path
                 // components so the join can only ever address a file directly
                 // inside the store dir.
+                const QString name =
+                    QFileInfo(docObj.value(QStringLiteral("blob")).toString()).fileName();
+                if (name.isEmpty())
+                    continue; // no addressable blob → drop just this doc
+                QFile blob(QDir::cleanPath(m_dir + QLatin1Char('/') + name));
+                if (!blob.open(QIODevice::ReadOnly))
+                    continue; // a missing blob drops just that doc, not the session
+                dd.bytes = blob.readAll();
+                blob.close();
+            } else if (kind == QLatin1String("structural-draft")) {
+                dd.kind = SessionDocDescriptor::Kind::StructuralDraft;
+                dd.format = docObj.value(QStringLiteral("format")).toString(QStringLiteral("pdf"));
+                dd.originalPath = docObj.value(QStringLiteral("originalPath")).toString();
+                // Basename-only guard (see the Draft branch): the blob name
+                // comes from JSON that a foreign/tampered store could seed with
+                // a traversal payload, so strip any path components.
                 const QString name =
                     QFileInfo(docObj.value(QStringLiteral("blob")).toString()).fileName();
                 if (name.isEmpty())
