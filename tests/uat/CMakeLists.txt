@@ -165,6 +165,16 @@ target_link_libraries(test_uat_undo_interleaved_cap PRIVATE Qt6::Pdf Qt6::PdfWid
 trailer_add_uat_test(test_uat_viewer test_uat_viewer.cpp)
 target_link_libraries(test_uat_viewer PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 
+# Two-page (facing) continuous-spread view, PR1 (UAT-VWR-070..073). Drives the
+# custom TwoPageView + View-menu toggle in MainWindow, so it links Qt PDF for
+# the QPdfDocument / QPdfView surfaces. Runs across the HiDPI dpr matrix
+# {1, 1.5, 2}: the per-page Actual-Size render path is pts x zoom x dpr device
+# pixels, so fractional and 2x scaling are exactly the geometry this guards
+# (decision record 2026-07-21-two-page-layout, clauses 3 and 4).
+trailer_build_uat_exe(test_uat_two_page test_uat_two_page.cpp)
+target_link_libraries(test_uat_two_page PRIVATE Qt6::Pdf Qt6::PdfWidgets)
+trailer_register_uat_dpr_matrix(test_uat_two_page)
+
 # Layer-1 config-matrix robustness sweep (font-scale x RTL). Drives the
 # MainWindow shell (incl. the markup toolbar and side docks), so it needs
 # Qt PDF for the document view. Hard oracle + fast, so it carries the plain
