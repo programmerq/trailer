@@ -130,6 +130,126 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
 
+  wayland-smoke:
+    name: Wayland launch + screenshot smoke
+    runs-on: trailer-k8s
+    # Least privilege: this job checks out, builds, and uploads one PNG
+    # artifact — no extra token scope beyond the workflow-level read.
+    permissions:
+      contents: read
+    # Modest wall-time by design (the owner is minutes-conscious): this job
+    # BUILDS ONLY the `trailer` target (not the test binaries) and runs ONE
+    # launch-and-screenshot smoke — no unit re-run, no UAT. With the Linux
+    # job's warm ccache it lands well under the Linux tier's time; the cold
+    # first run needs the same headroom the Linux build documents.
+    timeout-minutes: 40
+    #
+    # WHY this tier exists, and WHY it is launch+screenshot ONLY:
+    # ---------------------------------------------------------------------
+    # This is the ONE check that proves Trailer loads the *wayland* Qt
+    # platform plugin, maps a real xdg-shell surface on a real compositor,
+    # and paints actual UI into it. Offscreen unit tests and the Wine tier
+    # structurally cannot prove that. See docs/ci/wayland-tier.md.
+    #
+    # The unit suite and UAT are DELIBERATELY NOT run under Wayland here
+    # (they stay on offscreen in the build-and-test / release jobs), for
+    # honest, documented reasons from the Phase 1 investigation:
+    #   * Unit suite under Wayland is 57/60, not 60/60. `test_dirty_marker_zoom`
+    #     HANGS: MainWindow::closeEvent (src/ui/MainWindow.cpp:4432)
+    #     auto-accepts the unsaved-changes modal ONLY under offscreen/minimal;
+    #     under wayland it shows the real Save/Discard/Cancel dialog and blocks
+    #     forever with no user. `test_image_scale` fails on fractional-scaling
+    #     rounding (real-compositor DPR vs offscreen dpr=1), and
+    #     `test_perf_freehand_repaint` is a wall-time perf budget that is noise
+    #     under a compositor (the same `perf` tier the Wine job drops).
+    #   * UAT can't even be pointed at Wayland yet: tests/uat/CMakeLists.txt:15
+    #     forces QT_QPA_PLATFORM=offscreen as an unconditional per-test
+    #     ENVIRONMENT property (overriding an ambient wayland), and the same
+    #     modal hang hits 5 UAT binaries.
+    # Moving those under Wayland needs the Phase 3 modal-skip fix + a UAT
+    # platform opt-in first; gating a fast PR loop on a known modal hang would
+    # be dishonest bookkeeping. This mirrors the Wine tier's honest
+    # `--label-exclude 'uat|perf'` exclusion, stated inline rather than hidden.
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: ./.github/actions/setup-linux-build
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          # SAME key as build-and-test (native gcc → same object cache), so
+          # this job reuses that job's warm cache and rebuilds nothing when it
+          # runs after (or alongside) it. The action restores by key prefix and
+          # appends a timestamp on save, so sharing the key is safe.
+          key: ci-${{ runner.os }}-gcc
+          max-size: 500M
+          # Custom trailer-runner image ships an empty apt index, so the
+          # action must run `apt-get update` before `apt-get install ccache`.
+          update-package-index: true
+
+      - name: Install sway + grim
+        # Per-run apt install, mirroring the Wine tier's per-run toolchain
+        # install: docker/runner/Dockerfile BAKES these for later, but until
+        # that image is rebuilt + the ARC runner-set repointed, install them
+        # here so the job is green WITHOUT waiting for an image rebuild. Skips
+        # the apt work when the packages are already present (custom image).
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=()
+          for pkg in sway grim; do
+            if dpkg -s "$pkg" >/dev/null 2>&1; then
+              echo "  preinstalled (skipped): $pkg"
+            else
+              echo "  will install via apt:   $pkg"
+              missing+=("$pkg")
+            fi
+          done
+          if [ "${#missing[@]}" -eq 0 ]; then
+            echo "sway + grim preinstalled — skipping apt-get."
+          else
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends "${missing[@]}"
+          fi
+
+      - name: Configure
+        # Identical invocation to build-and-test so ccache objects hit. See
+        # that job for the flag-by-flag rationale (Ninja, mold, UX recorder).
+        run: >-
+          cmake -S . -B build -G Ninja
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=mold
+          -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=mold
+          -DTRAILER_ENABLE_UX_RECORDER=ON
+
+      - name: Build trailer binary only
+        # Just the app — not the test_* binaries — to keep wall-time modest.
+        run: cmake --build build --parallel --target trailer
+
+      - name: Wayland launch + screenshot smoke
+        # Starts sway headless (pixman), launches build/trailer under
+        # QT_QPA_PLATFORM=wayland on a sample image, asserts platformName is
+        # wayland (no xcb/offscreen fallback), grim-captures the window, and
+        # asserts the PNG is 1280x800 and non-blank. Self-contained: it uses
+        # ImageMagick `identify` when present and falls back to a stdlib
+        # Python PNG analyzer otherwise. Deterministic hard oracle → safe to
+        # block merge.
+        run: bash scripts/wayland-smoke.sh
+        env:
+          WAYLAND_SMOKE_OUT: ${{ github.workspace }}/wayland-smoke.png
+
+      - name: Upload Wayland screenshot
+        # Always upload so a failure's capture is inspectable too.
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wayland-smoke-screenshot
+          path: wayland-smoke.png
+          retention-days: 30
+          if-no-files-found: warn
+
   windows-cross-build:
     name: Windows cross-build + Wine unit tests
     # Runs directly on the self-hosted trailer-k8s pods — NO Docker

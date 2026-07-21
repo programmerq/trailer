@@ -42,3 +42,9 @@ docs/screenshots/
 # throwaway bucket below is ignored; docs/uat/images/ is committable.
 uat-screenshots/
 !docs/uat/images/
+
+# Working capture from scripts/wayland-smoke.sh (the Wayland smoke tier). The
+# throwaway PNG at the repo root is regenerated on every run; the CI job
+# uploads it as a build artifact instead. The one CURATED proof image is
+# committed under docs/ci/images/ (which docs/** does not ignore).
+/wayland-smoke.png

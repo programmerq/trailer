@@ -182,6 +182,32 @@ RUN apt-get update \
         libxcb-cursor0 \
     && rm -rf /var/lib/apt/lists/*
 
+# wayland-smoke CI tier (scripts/wayland-smoke.sh): launch the real built
+# binary on a headless Wayland compositor and grim-capture the window, to
+# prove Trailer loads the *wayland* platform plugin and paints real UI —
+# something offscreen unit tests and the Wine tier can never prove. In its
+# own layer so it doesn't invalidate the (large, slow) toolchain layer above.
+#   * sway   — wlroots compositor; runs headless (WLR_BACKENDS=headless) with
+#              the pixman software renderer (no GPU in the k8s pods). Chosen
+#              over weston because weston's headless backend can't be
+#              screenshotted (grim needs wlroots' wlr-screencopy). See
+#              docs/ci/wayland-tier.md.
+#   * grim   — wlroots screenshot client; captures the compositor output.
+# The Qt wayland platform plugin itself needs NO package here — the aqt Qt
+# 6.11 linux_gcc_64 bundle already ships libqwayland.so + the xdg-shell
+# integration (verified in Phase 1), so setup-linux-build pulls it in with Qt.
+#
+# NOTE (ride-along, like PR #87): until this image is rebuilt + the ARC
+# runner-set repointed at the new tag, sway+grim are NOT yet baked in. The
+# wayland-smoke job in .github/workflows/ci.yml apt-installs them per-run
+# (mirroring the Wine tier's install pattern) so it goes green WITHOUT waiting
+# for an image rebuild; this layer just removes that per-run cost later.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        sway \
+        grim \
+    && rm -rf /var/lib/apt/lists/*
+
 # Restore the base image's non-root runner identity and home so the
 # ARC-launched runner process behaves identically to the stock image.
 USER runner
