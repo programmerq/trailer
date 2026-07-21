@@ -200,6 +200,8 @@ set(TRAILER_SOURCES
     src/document/PdfEditor.h
     src/document/SelectableTextStore.cpp
     src/document/SelectableTextStore.h
+    src/document/SpreadLayout.cpp
+    src/document/SpreadLayout.h
     src/document/StubAdapter.cpp
     src/document/StubAdapter.h
     src/filters/ImageFilter.cpp
