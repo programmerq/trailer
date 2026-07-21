@@ -2049,6 +2049,19 @@ void MainWindow::onAdjustColour() {
 }
 
 void MainWindow::onRemoveBackground() {
+    // Re-entrancy / cancel affordance (DR 2026-07-21). The op has no progress
+    // widget, so the menu entry itself is the only surface. Re-invoking it
+    // while an op is calculating is the sanctioned CANCEL gesture: flip the
+    // running op's token and return. The GUI-thread apply step then drops the
+    // (null) result without touching the document — the pre-op image is left
+    // byte-for-byte intact (the byte-preservation invariant, formerly ADR 0002
+    // §2). One op runs at a time, so a second submission can never stack.
+    if (m_bgRemovalActive) {
+        if (m_bgRemovalToken)
+            m_bgRemovalToken->cancel();
+        return;
+    }
+
     auto *doc = m_documentView->currentDocument();
     if (!doc || !doc->supportsEditing())
         return;
@@ -2056,50 +2069,63 @@ void MainWindow::onRemoveBackground() {
     if (!imgDoc)
         return;
 
-    // Heap-allocate the remover so its lifetime spans the worker
-    // thread that captures this shared_ptr in the inference lambda
-    // below.
-    auto remover = std::make_shared<BackgroundRemover>(&m_app->modelRegistry());
+    // Resolve the inference function. The test seam replaces the real
+    // BackgroundRemover (and skips the model-download pre-flight) so the
+    // menu-glyph / cancel / byte-preservation path is exercisable without a
+    // network-downloaded ONNX model; production falls through to the pre-flight
+    // + real remover below.
+    std::function<QImage(const QImage &, const CancellationToken *)> removeFn =
+        m_bgRemoveFnOverride;
+    if (!removeFn) {
+        // Heap-allocate the remover so its lifetime spans the worker
+        // thread that captures this shared_ptr in the inference lambda
+        // below.
+        auto remover = std::make_shared<BackgroundRemover>(&m_app->modelRegistry());
 
-    // Pre-flight: confirm download + policy via the shared helper. If
-    // anything goes wrong (user cancel, policy block, failed download)
-    // bail without falling through to the inference step.
-    ModelDownloadRequest req;
-    req.app = m_app;
-    req.parent = this;
-    req.required = {ModelId::U2NetP};
-    req.featureName = tr("Background Removal");
-    req.modelLabel = tr("U²-Net Portable");
-    req.licenseLabel = tr("Apache 2.0");
-    req.progressMessage = tr("Downloading U\u00b2-Net Portable…");
-    req.failureSubject = tr("the background-removal model");
-    req.isReady = [remover]() { return remover->isModelReady(); };
-    req.kickoff = [remover]() { remover->ensureModelAvailable(); };
-    req.wireSignals = [remover](QProgressDialog *progress, bool *ready, bool *failed,
-                                QString *failureMessage) {
-        connect(remover.get(), &BackgroundRemover::downloadProgress, progress,
-                [progress](qint64 received, qint64 total) {
-                    if (total <= 0) {
-                        progress->setRange(0, 0);
-                        return;
-                    }
-                    progress->setRange(0, 100);
-                    progress->setValue(static_cast<int>(received * 100 / total));
-                });
-        connect(remover.get(), &BackgroundRemover::modelReady, progress, [progress, ready]() {
-            *ready = true;
-            progress->setValue(progress->maximum());
-            progress->close();
-        });
-        connect(remover.get(), &BackgroundRemover::modelUnavailable, progress,
-                [progress, failed, failureMessage](const QString &msg) {
-                    *failed = true;
-                    *failureMessage = msg;
-                    progress->close();
-                });
-    };
-    if (!requestModelDownload(req))
-        return;
+        // Pre-flight: confirm download + policy via the shared helper. If
+        // anything goes wrong (user cancel, policy block, failed download)
+        // bail without falling through to the inference step.
+        ModelDownloadRequest req;
+        req.app = m_app;
+        req.parent = this;
+        req.required = {ModelId::U2NetP};
+        req.featureName = tr("Background Removal");
+        req.modelLabel = tr("U²-Net Portable");
+        req.licenseLabel = tr("Apache 2.0");
+        req.progressMessage = tr("Downloading U\u00b2-Net Portable…");
+        req.failureSubject = tr("the background-removal model");
+        req.isReady = [remover]() { return remover->isModelReady(); };
+        req.kickoff = [remover]() { remover->ensureModelAvailable(); };
+        req.wireSignals = [remover](QProgressDialog *progress, bool *ready, bool *failed,
+                                    QString *failureMessage) {
+            connect(remover.get(), &BackgroundRemover::downloadProgress, progress,
+                    [progress](qint64 received, qint64 total) {
+                        if (total <= 0) {
+                            progress->setRange(0, 0);
+                            return;
+                        }
+                        progress->setRange(0, 100);
+                        progress->setValue(static_cast<int>(received * 100 / total));
+                    });
+            connect(remover.get(), &BackgroundRemover::modelReady, progress, [progress, ready]() {
+                *ready = true;
+                progress->setValue(progress->maximum());
+                progress->close();
+            });
+            connect(remover.get(), &BackgroundRemover::modelUnavailable, progress,
+                    [progress, failed, failureMessage](const QString &msg) {
+                        *failed = true;
+                        *failureMessage = msg;
+                        progress->close();
+                    });
+        };
+        if (!requestModelDownload(req))
+            return;
+
+        removeFn = [remover](const QImage &src, const CancellationToken *tok) {
+            return remover->remove(src, tok);
+        };
+    }
 
     // Inference runs through MlScheduler at UserAction priority so:
     //
@@ -2128,37 +2154,43 @@ void MainWindow::onRemoveBackground() {
     // "Never download" policy is the cause).
     const QImage source = imgDoc->image();
     auto *self = this;
-    auto handle =
-        m_app->mlScheduler().submit(MlPriority::UserAction, tr("Removing background…"),
-                                    [self, source, doc, imgDoc, remover](CancellationToken &token) {
-                                        const QImage result = remover->remove(source, &token);
-                                        if (token.isCancelled() || result.isNull()) {
-                                            // Cancellation or transient failure: bail without
-                                            // touching the document. The status-bar indicator
-                                            // clears automatically when the scheduler reports
-                                            // idle.
-                                            return;
-                                        }
-                                        // Apply on the GUI thread. We snapshot the doc pointer
-                                        // and re-check it against the active document — if the
-                                        // user closed or switched away between submission and
-                                        // completion, drop the result so we don't mutate a
-                                        // different document underfoot.
-                                        QMetaObject::invokeMethod(
-                                            self,
-                                            [self, doc, imgDoc, result]() {
-                                                auto *current =
-                                                    self->m_documentView->currentDocument();
-                                                if (current != doc)
-                                                    return;
-                                                if (!imgDoc->replaceImage(result))
-                                                    return;
-                                                self->m_sidebar->refreshThumbnails();
-                                                self->updateTitleForDocument(doc);
-                                            },
-                                            Qt::QueuedConnection);
-                                    });
-    Q_UNUSED(handle);
+    auto handle = m_app->mlScheduler().submit(
+        MlPriority::UserAction, tr("Removing background…"),
+        [self, source, doc, imgDoc, removeFn](CancellationToken &token) {
+            const QImage result = removeFn(source, &token);
+            const bool cancelled = token.isCancelled();
+            const bool succeeded = !cancelled && !result.isNull();
+            // Hop back to the GUI thread for BOTH the menu-glyph teardown and
+            // the (success-only) document mutation. We snapshot the doc pointer
+            // and re-check it against the active document — if the user closed
+            // or switched away between submission and completion, drop the
+            // result so we don't mutate a different document underfoot. On
+            // cancel/failure we simply do not apply: the pre-op image is left
+            // byte-for-byte intact (formerly ADR 0002 §2). A transient failure
+            // surfaces the "Failed" glyph so the user knows a retry is worth it.
+            QMetaObject::invokeMethod(
+                self,
+                [self, doc, imgDoc, result, cancelled, succeeded]() {
+                    self->finishBackgroundRemoval(cancelled, succeeded);
+                    if (!succeeded)
+                        return;
+                    auto *current = self->m_documentView->currentDocument();
+                    if (current != doc)
+                        return;
+                    if (!imgDoc->replaceImage(result))
+                        return;
+                    self->m_sidebar->refreshThumbnails();
+                    self->updateTitleForDocument(doc);
+                },
+                Qt::QueuedConnection);
+        });
+    // Store the running op's token so re-invoking the entry can cancel it, and
+    // flip the menu entry to its "calculating" glyph. The token must be live
+    // before the entry advertises the cancel gesture.
+    m_bgRemovalToken = handle.token;
+    m_bgRemovalActive = true;
+    m_bgRemovalStatus = BgRemovalStatus::Calculating;
+    updateRemoveBackgroundBadge(doc);
 }
 
 // Pre-flights for MobileSAM (Instant Alpha / Smart Lasso) and PP-OCR
@@ -3177,6 +3209,45 @@ void MainWindow::scheduleBackgroundCandidateScore(IDocument *doc) {
 void MainWindow::updateRemoveBackgroundBadge(IDocument *doc) {
     if (!m_removeBackgroundAction)
         return;
+
+    // DR 2026-07-21-bg-removal-menu-status-glyph: the menu entry's icon is the
+    // single, subtle status surface for background removal (no progress bar /
+    // spinner). The transient op status is layered OVER the candidate-
+    // recommendation "sparkle" badge, in priority order below. Only when the
+    // op is idle (Available) does the entry fall through to the recommendation
+    // badge — its original behaviour.
+    const QString calcTip = tr("Removing background… (choose again to cancel)");
+    const QString failedTip = tr("Couldn't remove the background — choose again to try once more.");
+
+    // 1. Unavailable: applyMlPolicy() has disabled the entry (wrong document
+    //    type, no document, or the model is set to Never Download). The
+    //    greyed row + its tooltip already state "can't"; we add a muted glyph
+    //    so the "can't" reads at a glance without re-opening the tooltip. We do
+    //    NOT touch the tooltip — applyMlPolicy() owns it here.
+    if (!m_removeBackgroundAction->isEnabled()) {
+        m_removeBackgroundAction->setIcon(
+            themedActionIcon(QStringLiteral(":/icons/actions/status-unavailable.svg"), this));
+        return;
+    }
+    // 2. Calculating: an op is in flight. A "busy" glyph indicates progress
+    //    without a widget; the tooltip states the cancel gesture (re-invoke).
+    if (m_bgRemovalStatus == BgRemovalStatus::Calculating) {
+        m_removeBackgroundAction->setIcon(
+            themedActionIcon(QStringLiteral(":/icons/actions/status-busy.svg"), this));
+        m_removeBackgroundAction->setToolTip(calcTip);
+        return;
+    }
+    // 3. Failed: the last op returned null (transient inference failure, not a
+    //    cancel). An alert glyph flags it; the tooltip invites a retry. This
+    //    clears the moment the entry next reaches an Available refresh.
+    if (m_bgRemovalStatus == BgRemovalStatus::Failed) {
+        m_removeBackgroundAction->setIcon(
+            themedActionIcon(QStringLiteral(":/icons/actions/status-failed.svg"), this));
+        m_removeBackgroundAction->setToolTip(failedTip);
+        return;
+    }
+
+    // 4. Available: original recommendation-badge behaviour.
     const bool recommended = doc && m_backgroundCandidateDocs.contains(doc);
     // QAction::toolTip() returns text() when no explicit tooltip has
     // been set, so an "is it empty?" check would always be false.
@@ -3187,6 +3258,12 @@ void MainWindow::updateRemoveBackgroundBadge(IDocument *doc) {
                                  "Open Tools → Manage ML Models… to allow it.");
     const QString badgeTip = tr("Background removal works well for this kind of image.");
     const bool policyBlocked = m_removeBackgroundAction->toolTip() == policyTip;
+    // A transient op tooltip from a prior Calculating/Failed state must not
+    // outlive the return to Available — clear it before the badge logic runs.
+    if (m_removeBackgroundAction->toolTip() == calcTip ||
+        m_removeBackgroundAction->toolTip() == failedTip) {
+        m_removeBackgroundAction->setToolTip(QString());
+    }
     if (recommended) {
         // Sparkle glyph signals "this image looks like a good
         // candidate." We use the same themedActionIcon helper the rest
@@ -3208,6 +3285,23 @@ void MainWindow::updateRemoveBackgroundBadge(IDocument *doc) {
             m_removeBackgroundAction->setToolTip(QString());
         }
     }
+}
+
+void MainWindow::finishBackgroundRemoval(bool cancelled, bool succeeded) {
+    // GUI-thread teardown for a finished op (DR 2026-07-21). Idempotent: a
+    // no-op if no op is active (e.g. a stray second invoke). Clears the in-
+    // flight guard + token, then maps the outcome to the next glyph state:
+    //   - succeeded  → Available (the new image is applied by the caller)
+    //   - cancelled  → Available (bytes untouched; a cancel is not a failure)
+    //   - failure    → Failed    (null result; the glyph invites a retry)
+    // Refreshing the badge repaints the entry for the CURRENT document.
+    if (!m_bgRemovalActive)
+        return;
+    m_bgRemovalActive = false;
+    m_bgRemovalToken.reset();
+    m_bgRemovalStatus = (!succeeded && !cancelled) ? BgRemovalStatus::Failed
+                                                   : BgRemovalStatus::Available;
+    updateRemoveBackgroundBadge(m_documentView->currentDocument());
 }
 
 void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
@@ -3474,6 +3568,12 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // callback, so a tab switch immediately after a scoring pass
     // doesn't drop the verdict). Non-image docs are no-ops.
     scheduleBackgroundCandidateScore(doc);
+    // A transient Failed glyph belongs to the op that produced it, not to the
+    // newly-selected document — clear it on a document change so it doesn't
+    // bleed across docs (DR 2026-07-21). A genuinely in-flight op keeps its
+    // Calculating glyph (it is still running against its original document).
+    if (m_bgRemovalStatus == BgRemovalStatus::Failed)
+        m_bgRemovalStatus = BgRemovalStatus::Available;
     updateRemoveBackgroundBadge(doc);
     applyMlPolicy(m_instantAlphaAction, canEdit && isImage,
                   {ModelId::MobileSamEncoder, ModelId::MobileSamDecoder});
