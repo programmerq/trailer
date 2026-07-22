@@ -34,7 +34,9 @@
 #include "ui/MainWindow.h"
 #include "ui/PreferencesDialog.h"
 
+#include <QAction>
 #include <QDir>
+#include <QMenu>
 #include <QTabWidget>
 #include <QElapsedTimer>
 #include <QFileInfo>
@@ -109,6 +111,57 @@ bool grabAndSave(QWidget *w, const QString &outPath) {
     }
     std::printf("wrote %s (%dx%d)\n",
                 outPath.toLocal8Bit().constData(), pm.width(), pm.height());
+    return true;
+}
+
+// Build the real File → Screenshot submenu via Application::addAcquireItems
+// with INJECTED capability inputs (platformName + underWaylandSession), then
+// grab it offscreen. This is the sanctioned G2 method (QWidget::grab of the
+// real control) — the injection seam lets us drive the Wayland disabled state
+// under the offscreen plugin, where QGuiApplication::platformName() would
+// otherwise always be "offscreen" (→ Whole Screen enabled).
+//
+// NOTE: the honest tooltip on the disabled Whole Screen item is a hover-
+// transient QToolTip in a separate top-level window, so it is NOT part of the
+// menu->grab() pixmap. Its exact string is asserted in the unit test
+// (tests/test_linux_capture_capability.cpp::unavailableMessageIsHonest). The
+// greyed-out item itself is real in the grab.
+bool grabCaptureMenu(trailer::Application &app, QWidget *ctx, const QString &platformName,
+                     bool underWaylandSession, const QString &outPath) {
+    // Parent menu is a throwaway File menu; addAcquireItems adds the Screenshot
+    // submenu (Whole Screen / Window / Selected Area) plus Scanner / Camera.
+    QMenu fileMenu;
+    app.addAcquireItems(&fileMenu, ctx, platformName, underWaylandSession);
+
+    // The Screenshot submenu is the first action carrying a submenu.
+    QMenu *screenshotMenu = nullptr;
+    for (QAction *a : fileMenu.actions()) {
+        if (a->menu()) {
+            screenshotMenu = a->menu();
+            break;
+        }
+    }
+    if (!screenshotMenu) {
+        std::fprintf(stderr, "Screenshot submenu not found for %s\n",
+                     outPath.toLocal8Bit().constData());
+        return false;
+    }
+    // Popup offscreen so the menu lays out its items at a real size, then grab.
+    screenshotMenu->popup(QPoint(0, 0));
+    app.processEvents();
+    const QPixmap pm = screenshotMenu->grab();
+    screenshotMenu->close();
+    app.processEvents();
+    if (pm.isNull()) {
+        std::fprintf(stderr, "grab returned null pixmap for %s\n",
+                     outPath.toLocal8Bit().constData());
+        return false;
+    }
+    if (!pm.save(outPath)) {
+        std::fprintf(stderr, "failed to write %s\n", outPath.toLocal8Bit().constData());
+        return false;
+    }
+    std::printf("wrote %s (%dx%d)\n", outPath.toLocal8Bit().constData(), pm.width(), pm.height());
     return true;
 }
 
@@ -240,6 +293,27 @@ int main(int argc, char **argv) {
             }
         }
         delete prefs;
+    }
+
+    // G2 before/after evidence for the honest Wayland screenshot degrade.
+    // Same File → Screenshot submenu, same state, two capability inputs:
+    //   BEFORE — the Wayland user's OLD state: Whole Screen ENABLED (it looked
+    //            actionable but silently produced a null/black PNG). Rendered
+    //            with X11 inputs (platformName "xcb", not under a Wayland
+    //            session), which is exactly the enabled path the pre-fix code
+    //            took for a Wayland user because platformName was never
+    //            consulted for the session.
+    //   AFTER  — Whole Screen DISABLED with the honest tooltip. Rendered with
+    //            Wayland inputs (under a Wayland session), the state the fix now
+    //            produces for both native Wayland and XWayland.
+    if (!grabCaptureMenu(app, target, QStringLiteral("xcb"), /*underWaylandSession=*/false,
+                         QDir(outDir).filePath(QStringLiteral("wayland-capture-x11-enabled.png")))) {
+        return 1;
+    }
+    if (!grabCaptureMenu(
+            app, target, QStringLiteral("wayland"), /*underWaylandSession=*/true,
+            QDir(outDir).filePath(QStringLiteral("wayland-capture-wayland-disabled.png")))) {
+        return 1;
     }
 
     return 0;

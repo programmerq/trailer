@@ -103,7 +103,18 @@ class Application : public QApplication {
     // Selected Area), plus disabled Scanner / Camera placeholders.
     // `captureContext` is the window to hide during capture on macOS so
     // it doesn't occlude the shot; nullptr from the no-window bar.
+    // The production overload reads the capability inputs from the live
+    // environment (QGuiApplication::platformName() +
+    // qEnvironmentVariableIsSet("WAYLAND_DISPLAY")).
     void addAcquireItems(QMenu *fileMenu, QWidget *captureContext);
+    // Injectable overload for offscreen G2 evidence / tests: the capability
+    // inputs (platformName + underWaylandSession) are passed explicitly
+    // instead of read from the live environment, so the Wayland
+    // disabled-Whole-Screen state can be rendered under the offscreen plugin
+    // (where platformName() is always "offscreen"). The production overload
+    // above forwards the live values here; behaviour is otherwise identical.
+    void addAcquireItems(QMenu *fileMenu, QWidget *captureContext, const QString &platformName,
+                         bool underWaylandSession);
 
     // Open whatever the clipboard holds (image → temp PNG; file URL /
     // path → open directly). No-op when the clipboard has nothing

@@ -3,6 +3,7 @@
 #include "TrailerVersion.h"
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
+#include "platform/LinuxCaptureCapability.h"
 #include "platform/QuitMenu.h"
 #include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
@@ -1071,6 +1072,20 @@ QAction *Application::addNewFromClipboardAction(QMenu *fileMenu) {
 }
 
 void Application::addAcquireItems(QMenu *fileMenu, QWidget *captureContext) {
+    // Production entry: read the capability inputs from the live environment.
+    // WAYLAND_DISPLAY is set for XWayland clients and unset on genuine X11 and
+    // under the offscreen plugin, so this routes XWayland (where grabWindow is
+    // black) to the honest degrade while leaving real X11 / CI unchanged.
+    addAcquireItems(fileMenu, captureContext, QGuiApplication::platformName(),
+                    qEnvironmentVariableIsSet("WAYLAND_DISPLAY"));
+}
+
+void Application::addAcquireItems(QMenu *fileMenu, QWidget *captureContext,
+                                  const QString &platformName, bool underWaylandSession) {
+#ifdef Q_OS_MACOS
+    Q_UNUSED(platformName);
+    Q_UNUSED(underWaylandSession);
+#endif
     fileMenu->setToolTipsVisible(true);
 
     // Screenshot as an explicit-mode submenu. The OS picker hides its
@@ -1100,6 +1115,19 @@ void Application::addAcquireItems(QMenu *fileMenu, QWidget *captureContext) {
     window->setToolTip(tr("Window capture isn't available on this platform yet."));
     selectedArea->setEnabled(false);
     selectedArea->setToolTip(tr("Selected-area capture isn't available on this platform yet."));
+
+    // Wayland (native OR XWayland) has no usable QScreen grab path, so even
+    // Whole Screen can't act. Disable it with the same honest message the
+    // capture choke point surfaces (G3 defense-in-depth on top of the
+    // never-silent-null/black guard in captureScreenshot). The capability
+    // inputs are injected so the offscreen G2 grab can drive the disabled
+    // state; genuine X11 / offscreen keep Whole Screen enabled unchanged.
+    if (trailer::linuxCaptureCapability(platformName, underWaylandSession,
+                                        /*portalUsable=*/false) ==
+        trailer::LinuxCaptureCapability::WaylandNoCapture) {
+        wholeScreen->setEnabled(false);
+        wholeScreen->setToolTip(trailer::waylandCaptureUnavailableMessage());
+    }
 #endif
 
     // Placeholders for acquire sources with no backend yet. Present but
@@ -1297,23 +1325,63 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
     if (dprScreen)
         setPendingCaptureDpr(dprScreen->devicePixelRatio());
 #else
-    // QScreen fallback: only whole-screen capture is supported. The
-    // Window / Selected-Area items are disabled in the UI on this
-    // platform, so `mode` should already be Screen here.
-    if (mode != ShotMode::Screen)
-        return;
-    QScreen *screen = QGuiApplication::primaryScreen();
-    if (!screen)
-        return;
-    const QPixmap shot = screen->grabWindow(0);
-    if (shot.isNull() || !shot.save(path, "PNG"))
-        return;
-    // grabWindow() stamps the screen dpr on the pixmap, but the PNG save drops
-    // it; recover it so a HiDPI capture opens 1:1 (see openFiles).
-    {
+    // Non-macOS capture. Route on the platform's honest capability so we never
+    // hit grabWindow(0) on Wayland. Under native Wayland grabWindow(0) returns a
+    // null pixmap; under XWayland (platformName()=="xcb" but inside a Wayland
+    // session) it returns a BLACK pixmap on Mutter/KWin — a silent WRONG result,
+    // worse than the null. Both are the bug backlog 2026-07-12 forbids. This is
+    // the choke point that satisfies the "never silent null/black" guarantee for
+    // BOTH capture entry points (menu action and MainWindow::onTakeScreenshot).
+    //
+    // underWaylandSession comes from WAYLAND_DISPLAY (set for XWayland clients,
+    // unset on genuine X11 and under offscreen/CI), so real X11 and CI stay on
+    // the byte-identical grabWindow path below.
+    //
+    // portalUsable is hardcoded false: the XDG Screenshot portal backend is not
+    // implemented yet (tracked in docs/backlog/2026-07-20-wayland-screenshot-
+    // portal-dbus.md). We deliberately ship NO D-Bus code here — the portal
+    // exposes no window/area mode and no Wayland session exists in CI or on the
+    // owner's Mac, so a D-Bus path would ship never-executed.
+    switch (trailer::linuxCaptureCapability(QGuiApplication::platformName(),
+                                            qEnvironmentVariableIsSet("WAYLAND_DISPLAY"),
+                                            /*portalUsable=*/false)) {
+    case trailer::LinuxCaptureCapability::X11Grab: {
+        // QScreen fallback: only whole-screen capture is supported. The
+        // Window / Selected-Area items are disabled in the UI on this
+        // platform, so `mode` should already be Screen here. This block is
+        // byte-identical to Trailer's historical Linux capture path.
+        if (mode != ShotMode::Screen)
+            return;
+        QScreen *screen = QGuiApplication::primaryScreen();
+        if (!screen)
+            return;
+        const QPixmap shot = screen->grabWindow(0);
+        if (shot.isNull() || !shot.save(path, "PNG"))
+            return;
+        // grabWindow() stamps the screen dpr on the pixmap, but the PNG save
+        // drops it; recover it so a HiDPI capture opens 1:1 (see openFiles).
         const double dpr =
             shot.devicePixelRatio() > 0.0 ? shot.devicePixelRatio() : screen->devicePixelRatio();
         setPendingCaptureDpr(dpr);
+        break;
+    }
+    case trailer::LinuxCaptureCapability::WaylandPortal:
+        // Unreachable while portalUsable is hardcoded false above.
+        // reserved for portal follow-up (backlog 2026-07-20) — no D-Bus here.
+        return;
+    case trailer::LinuxCaptureCapability::WaylandNoCapture:
+        // Honest degrade: NEVER a bare silent return. A window context has a
+        // status bar, so flash the recovery route there (mirrors the macOS
+        // Screen-Recording-denied degrade above). The no-window Acquire flow
+        // (nullptr context) has no status bar; the menu action that reaches it
+        // is disabled with the same message (G3 defense-in-depth), so a bare
+        // return there is not a silent grabWindow null. All current callers
+        // (the per-window menu action and MainWindow::onTakeScreenshot) pass a
+        // MainWindow context, so the flash below is the live path; the bare
+        // return is only the unreachable-today nullptr guard.
+        if (auto *mw = qobject_cast<MainWindow *>(context))
+            mw->flashError(trailer::waylandCaptureUnavailableMessage());
+        return;
     }
 #endif
 
