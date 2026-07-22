@@ -25,6 +25,9 @@
 #     08  zoom-indicator        (zoom readout / steps / open-at-100%, #76/#80/#88)
 #     09  file-screenshot-direct (File -> Screenshot -> Whole Screen, dialogless, #86)
 #     10  empty-window-reuse    (CF-5 empty-window reuse / no-clobber, WM-driven)
+#     11  tools-screenshot-capture (Tools -> Take Screenshot capture + cancel, #77)
+#     12  discard-file-integrity (Discard leaves the backing file byte-identical, #90)
+#     13  quit-and-keep-basics  (quit prompt + Cancel keeps app alive, #78 Linux)
 #
 #   Options:
 #     --bin PATH     path to the trailer binary (default: <repo>/build/trailer)
@@ -59,12 +62,15 @@ declare -A PATHS=(
     [08]="08-zoom-indicator"
     [09]="09-file-screenshot-direct"
     [10]="10-empty-window-reuse"
+    [11]="11-tools-screenshot-capture"
+    [12]="12-discard-file-integrity"
+    [13]="13-quit-and-keep-basics"
 )
 
 while [ $# -gt 0 ]; do
     case "$1" in
-        all) SELECT=(01 02 03 04 05 06 07 08 09 10) ;;
-        01|02|03|04|05|06|07|08|09|10) SELECT+=("$1") ;;
+        all) SELECT=(01 02 03 04 05 06 07 08 09 10 11 12 13) ;;
+        01|02|03|04|05|06|07|08|09|10|11|12|13) SELECT+=("$1") ;;
         --bin) TRAILER_BIN="$2"; shift ;;
         --out) OUT_ROOT="$2"; shift ;;
         --geometry) GEOMETRY="$2"; shift ;;
@@ -73,7 +79,7 @@ while [ $# -gt 0 ]; do
     esac
     shift
 done
-[ ${#SELECT[@]} -gt 0 ] || SELECT=(01 02 03 04 05 06 07 08 09 10)
+[ ${#SELECT[@]} -gt 0 ] || SELECT=(01 02 03 04 05 06 07 08 09 10 11 12 13)
 
 # Dedup while preserving first-seen order, so e.g. `run.sh all 04` runs each
 # path once.

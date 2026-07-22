@@ -7,7 +7,19 @@
 - **Date accepted / superseded:** 2026-07-21 (accepted)
 - **References:** backlog item `2026-07-12-wayland-screenshot-portal` (the work
   item this record closes; deleted in the implementing change per the backlog
-  close convention). The companion Wayland-CI PR (#117) adds a
+  close convention). This record **builds on PR #106** ("Honest Wayland
+  screenshot degrade + capability gating"), which landed first and added the
+  *disable-with-tooltip* honest degrade (its pure `linuxCaptureCapability`
+  policy) without a working capture path; #106 deferred the real portal to the
+  backlog item `2026-07-20-wayland-screenshot-portal-dbus`. This change
+  **implements that portal** and therefore supersedes #106's placeholder:
+  `linuxCaptureCapability` (disable-only, no `portalUsable` call site) is
+  replaced by `chooseLinuxScreenshotBackend` (which actually routes to the
+  portal), and the `2026-07-20-wayland-screenshot-portal-dbus` backlog item is
+  closed (deleted) as done. The behaviour is a strict superset — the Wayland
+  no-portal case still disables + tooltips exactly as #106 did, and the
+  session detection is widened from `WAYLAND_DISPLAY`-only to also honour
+  `XDG_SESSION_TYPE`. The companion Wayland-CI PR (#117) adds a
   `docs/ci/wayland-tier.md` sway+grim launch-and-screenshot smoke tier; that
   file is **not present on this branch** and that tier does **not** run the
   live portal test (see *CI coverage* below). Related: the macOS capture
