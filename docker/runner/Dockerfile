@@ -197,11 +197,14 @@ RUN apt-get update \
 # 6.11 linux_gcc_64 bundle already ships libqwayland.so + the xdg-shell
 # integration (verified in Phase 1), so setup-linux-build pulls it in with Qt.
 #
-# NOTE (ride-along, like PR #87): until this image is rebuilt + the ARC
-# runner-set repointed at the new tag, sway+grim are NOT yet baked in. The
-# wayland-smoke job in .github/workflows/ci.yml apt-installs them per-run
-# (mirroring the Wine tier's install pattern) so it goes green WITHOUT waiting
-# for an image rebuild; this layer just removes that per-run cost later.
+# NOTE (ride-along, like PR #87): this layer is now on main and the
+# build-runner-image.yml workflow republishes ghcr.io/programmerq/trailer-runner
+# :latest on every merge-to-main that touches docker/runner/**, so a fresh
+# :latest carries sway+grim. The wayland-smoke job in .github/workflows/ci.yml
+# still apt-installs them per-run (behind a dpkg guard, mirroring the Wine
+# tier's pattern); that install becomes a no-op once the ARC runner-set picks
+# up a :latest with the packages baked in. Repointing/confirming the runner-set
+# on that image is a cluster-side step, not done here.
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         sway \
