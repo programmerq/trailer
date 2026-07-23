@@ -444,6 +444,16 @@ class MainWindow : public QMainWindow {
     // document — see onCurrentDocumentChanged / the on*ExternalFile* slots.
     ExternalChangeMonitor *m_externalChangeMonitor = nullptr;
     FileChangeBanner *m_fileChangeBanner = nullptr;
+    // Primary read-only degradation signal for Two-Pages mode: a compact
+    // in-context badge (a lock pill) in the permanent status-bar area, next to
+    // the zoom indicator, shown only in Two-Pages mode. It recedes rather than
+    // occupying a full-width strip, per the minimal-UI guideline
+    // (docs/ux-guidelines.md, #116): a state badge on the relevant surface, not
+    // a banner. The full "switch to Single or Continuous to edit" sentence lives
+    // in its tooltip; the per-control disabled tooltips remain the G3 floor
+    // (decision record 2026-07-21-two-page-layout, D2-A). Shown/hidden by
+    // onCurrentDocumentChanged.
+    QLabel *m_readOnlyBadge = nullptr;
     Inspector *m_inspector = nullptr;
     Magnifier *m_magnifier = nullptr;
     MarkupToolbar *m_markupToolbar = nullptr;
@@ -570,6 +580,12 @@ class MainWindow : public QMainWindow {
     QAction *m_singlePageAction = nullptr;
     QAction *m_twoPagesAction = nullptr;
     QAction *m_continuousAction = nullptr;
+    // True while the markup / form toolbar was auto-hidden because the document
+    // entered Two-Pages mode (honest degradation). Lets us restore the user's
+    // prior toolbar visibility when they leave Two-Pages, instead of leaving a
+    // toolbar they had open closed.
+    bool m_markupHiddenForTwoPage = false;
+    bool m_formToolbarHiddenForTwoPage = false;
 
     QAction *m_previousPageAction = nullptr;
     QAction *m_nextPageAction = nullptr;

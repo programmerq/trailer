@@ -1490,8 +1490,12 @@ void TestAdapters::pdfViewReflowsOnResizeInFitInView() {
 
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
     QVERIFY(view != nullptr);
-    auto *pdfView = qobject_cast<QPdfView *>(view.get());
-    QVERIFY2(pdfView != nullptr, "expected createView to return a QPdfView");
+    // Since the two-page AUGMENT wiring (decision record
+    // 2026-07-21-two-page-layout, D1-A), createView returns a QStackedWidget
+    // hosting the QPdfView (Single/Continuous) and the custom TwoPageView, so
+    // reach the QPdfView by search rather than by casting the returned widget.
+    auto *pdfView = view->findChild<QPdfView *>();
+    QVERIFY2(pdfView != nullptr, "expected createView to host a QPdfView");
 
     // Empirical check of QPdfView's behaviour in FitInView mode. As
     // of Qt 6.11, QPdfView::zoomFactor() always returns the
@@ -1509,15 +1513,19 @@ void TestAdapters::pdfViewReflowsOnResizeInFitInView() {
     // default Continuous mode adds inter-page spacing and an
     // inherent extra scroll length unrelated to the fit math.
     pdfView->setPageMode(QPdfView::PageMode::SinglePage);
-    pdfView->show();
-    pdfView->resize(800, 600);
+    // Show/resize through the wrapping QStackedWidget so its stacked layout
+    // sizes the hosted QPdfView to the viewport (a direct child resize would be
+    // overridden by that layout). The QPdfView is the stack's current widget in
+    // SinglePage/Continuous, so it fills the stack.
+    view->show();
+    view->resize(800, 600);
     pdfView->setZoomMode(QPdfView::ZoomMode::FitInView);
     QCoreApplication::processEvents();
     QTest::qWait(50);
     const int largeRange =
         pdfView->verticalScrollBar()->maximum() - pdfView->verticalScrollBar()->minimum();
 
-    pdfView->resize(200, 150);
+    view->resize(200, 150);
     QCoreApplication::processEvents();
     QTest::qWait(50);
     const int smallRange =
@@ -1564,10 +1572,14 @@ void TestAdapters::pdfDownArrowStepsPageImmediatelyInFitMode() {
     doc.setViewMode(ViewMode::SinglePage);
 
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
-    auto *pdfView = qobject_cast<QPdfView *>(view.get());
+    // createView returns a QStackedWidget wrapping the QPdfView since the
+    // two-page AUGMENT wiring (D1-A); find the QPdfView within it.
+    auto *pdfView = view->findChild<QPdfView *>();
     QVERIFY(pdfView != nullptr);
-    pdfView->show();
-    pdfView->resize(800, 600);
+    // Show/resize through the wrapping QStackedWidget so its stacked layout
+    // sizes the hosted QPdfView (its current widget in SinglePage) to 800x600.
+    view->show();
+    view->resize(800, 600);
     QCoreApplication::processEvents();
 
     // Enter fit-to-page mode. In this mode the entire page should

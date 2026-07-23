@@ -23,6 +23,7 @@ class QPdfSearchModel;
 class QPdfBookmarkModel;
 class QIdentityProxyModel;
 class QPdfView;
+class QStackedWidget;
 template <typename T> class QFutureWatcher;
 // tests/test_adapters.cpp — befriended so the desync test seam below
 // stays private instead of shipping as callable production API.
@@ -33,6 +34,7 @@ namespace trailer {
 class AnnotationOverlay;
 class FormOverlay;
 class SelectableTextLayer;
+class TwoPageView;
 
 class PdfDocument : public IDocument {
   public:
@@ -74,6 +76,8 @@ class PdfDocument : public IDocument {
     // auto-OCR / missing-model hint re-derivation react to a real signal
     // instead of polling currentPage() on a timer.
     PageChangeNotifier *pageChangeNotifier() override { return &m_pageChangeNotifier; }
+    int nextPageIndex() const override;
+    int previousPageIndex() const override;
 
     bool supportsSearch() const override { return true; }
     void setSearchQuery(const QString &query) override;
@@ -507,6 +511,19 @@ class PdfDocument : public IDocument {
     QPointer<AnnotationOverlay> m_overlay;
     QPointer<SelectableTextLayer> m_textLayer;
     QPointer<FormOverlay> m_formOverlay;
+    // AUGMENT wiring (decision record 2026-07-21-two-page-layout, D1-A):
+    // createView returns a QStackedWidget holding the QPdfView surface
+    // (Single/Continuous, unchanged) at index 0 and the custom TwoPageView
+    // (Two-Pages mode) at index 1. applyViewMode swaps the visible page.
+    QPointer<QStackedWidget> m_viewStack;
+    QPointer<TwoPageView> m_twoPageView;
+    // Live current page (0-based leading page of the top-most visible spread)
+    // reported by TwoPageView as the user free-scrolls in Two-Pages mode. The
+    // hidden QPdfView navigator can't observe that surface's scrolling, so
+    // currentPage() reads this instead when m_viewMode == TwoPages, keeping the
+    // sidebar current-page highlight live. Updated by a signal, never scrolled
+    // back (no feedback loop).
+    int m_twoPageCurrentPage = 0;
     AnnotationStore m_annotations;
     SelectableTextStore m_selectableText;
     ViewMode m_viewMode = ViewMode::Continuous;

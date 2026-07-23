@@ -628,6 +628,65 @@ completes the placeholder is replaced in place by the real page view.
   item's check mark clears. Esc is the escape hatch for the sticky
   lens mode; Cmd-Tab / app-deactivate clears it the same way.
 
+## Two-page (facing) layout
+
+Ratified in `docs/decision-records/2026-07-21-two-page-layout.md`. The first
+increment (PR1) ships a custom continuous facing-spread view (`TwoPageView`)
+used only in Two-Pages mode; QPdfView keeps driving Single/Continuous. Markup,
+text-selection, and search are honestly degraded (disabled-with-tooltip) in
+Two-Pages mode; parity is the committed PR2 follow-up. Harness:
+`tests/uat/test_uat_two_page.cpp`.
+
+### UAT-VWR-070 — "Two Pages" toggle enablement (G3)
+
+**Preconditions:** App open.
+**Steps:**
+1. Open a multi-page PDF; inspect `View > Two Pages`.
+2. Open a single-page PDF; inspect `View > Two Pages`.
+3. Open an image; inspect `View > Two Pages`.
+**Expected:**
+- Multi-page PDF: enabled.
+- Single-page PDF: disabled with tooltip "This document has only one page."
+- Image: disabled with tooltip "Images don't have pages to face."
+- No enabled-but-inert toggle, no popup-that-says-no.
+
+### UAT-VWR-071 — Cover-alone facing spreads
+
+**Preconditions:** A multi-page (≥5) PDF is open.
+**Steps:**
+1. `View > Two Pages` (⌘3 / Ctrl+3).
+**Expected:**
+- Two pages render side by side in a continuous vertical spread scroll.
+- Cover-alone-ON (default): page 1 alone, then (2,3),(4,5)…; a trailing
+  unpaired page renders alone.
+- The spread canvas is wider than a single page and scrolls vertically
+  through the stacked spreads.
+
+### UAT-VWR-072 — Per-page Actual Size + truthful zoom (dpr matrix)
+
+**Preconditions:** A multi-page PDF is open in Two-Pages mode.
+**Steps:**
+1. `View > Actual Size` (⌘0).
+**Expected:**
+- Each page renders at 1 PDF point → 1 logical pixel (not spread-fits-window).
+- The zoom-% readout is the true per-page zoom (100% here), meaning the same
+  physical page size as Single/Continuous at 100%.
+- Layout holds crisply at devicePixelRatio 1, 1.5, and 2 (pts × zoom × dpr
+  device pixels), verified by running this slot across the dpr matrix.
+
+### UAT-VWR-073 — Honest degradation in Two-Pages mode (D2-A, G3)
+
+**Preconditions:** A multi-page PDF is open.
+**Steps:**
+1. Switch to Two-Pages mode.
+2. Inspect the markup toggle and Find.
+3. Switch back to Continuous.
+**Expected:**
+- In Two-Pages mode, markup and search (Find) are disabled with a tooltip
+  that points back: "Switch to Single Page or Continuous to use this in a
+  facing-page view."
+- Leaving Two-Pages restores markup and search to their normal enabled state.
+
 ---
 
 ## Known gaps

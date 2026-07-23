@@ -523,6 +523,17 @@ Acceptance criteria.**
 - **UI:** `View` menu and toolbar buttons.
 - **Notes:** Continuous Scroll must virtualise — only render pages within and
   near the viewport.
+- **Two Pages spread shape (ratified):** The **cover page is displayed
+  alone**, then pages pair up as facing spreads — page 1 sits by itself, then
+  2·3, 4·5, 6·7, and so on (the "book" rhythm). This is the accepted layout,
+  not an interim approximation. **Rationale — Preview-parity:** it matches
+  macOS Preview's book-spread rhythm, so the recurring questions ("why does
+  page 1 sit alone?", "why are only three pages visible at the start?") are
+  answered by design intent and do not need re-litigating. Two Pages is a
+  **read-only** view in this increment (markup / forms / search are disabled
+  with honest per-control tooltips plus a read-only mode banner); full
+  overlay/search parity is the committed follow-up. See decision record
+  [`docs/decision-records/2026-07-21-two-page-layout.md`](docs/decision-records/2026-07-21-two-page-layout.md).
 - **Acceptance:** Continuous scroll through a 500-page PDF maintains 60 fps on
   a mid-range 2024 laptop.
 

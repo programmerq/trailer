@@ -3,6 +3,7 @@
 #include "ui/AnnotationOverlay.h"
 #include "ui/FormOverlay.h"
 #include "ui/SelectableTextLayer.h"
+#include "ui/TwoPageView.h"
 #include "util/TempPath.h"
 
 #include <QApplication>
@@ -38,6 +39,7 @@
 #include <QSizeF>
 #include <QThread>
 #include <QTimer>
+#include <QStackedWidget>
 #include <QVBoxLayout>
 #include <QtConcurrent>
 
@@ -943,7 +945,54 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
     QObject::connect(formOverlay, &FormOverlay::fieldValueChanged, view,
                      [this](int id, const QString &value) { setFormFieldValue(id, value); });
 
-    return view;
+    // AUGMENT (decision record 2026-07-21-two-page-layout, D1-A): host the
+    // QPdfView surface and a custom TwoPageView in a QStackedWidget. Single and
+    // Continuous keep driving the QPdfView (index 0), unchanged; Two-Pages mode
+    // shows the TwoPageView (index 1). The zoom factor is SHARED — TwoPageView
+    // follows QPdfView::zoomFactorChanged — so the zoom-% readout stays truthful
+    // across all three modes (record clause 3).
+    auto *stack = new QStackedWidget(parent);
+    stack->addWidget(view); // index 0: Single / Continuous
+
+    auto *twoPageView = new TwoPageView(stack);
+    twoPageView->setDocument(m_doc.get());
+    twoPageView->setZoomFactor(view->zoomFactor());
+    stack->addWidget(twoPageView); // index 1: Two-Pages
+    QObject::connect(view, &QPdfView::zoomFactorChanged, twoPageView,
+                     [twoPageView](qreal z) {
+                         if (twoPageView)
+                             twoPageView->setZoomFactor(z);
+                     });
+    // Re-lay-out the spreads whenever the document's page graph changes: an
+    // in-place reload after a page op (rotate / delete / insert / move / crop,
+    // revert, recover) changes pageCount / page sizes, and a deferred/async open
+    // reaches Ready after createView. Without these the cached spreads would keep
+    // drawing the pre-change layout while the user sits in Two-Pages mode.
+    QObject::connect(m_doc.get(), &QPdfDocument::pageCountChanged, twoPageView,
+                     [twoPageView]() {
+                         if (twoPageView)
+                             twoPageView->relayout();
+                     });
+    QObject::connect(m_doc.get(), &QPdfDocument::statusChanged, twoPageView,
+                     [twoPageView](QPdfDocument::Status) {
+                         if (twoPageView)
+                             twoPageView->relayout();
+                     });
+    // Track the visible spread as the user free-scrolls the TwoPageView so the
+    // current-page indicator (sidebar highlight, driven by currentPage()) stays
+    // live in Two-Pages mode instead of freezing on the first spread. We only
+    // record the value — we must NOT scroll the view back or re-navigate, which
+    // would create a feedback loop.
+    QObject::connect(twoPageView, &TwoPageView::currentPageChanged, m_doc.get(),
+                     [this](int leadingPage) { m_twoPageCurrentPage = leadingPage; });
+    m_viewStack = stack;
+    m_twoPageView = twoPageView;
+
+    // Apply the current mode now that both surfaces exist (Continuous by
+    // default → shows the QPdfView).
+    applyViewMode();
+
+    return stack;
 }
 
 void PdfDocument::setAnnotationTool(AnnotationTool tool) {
@@ -973,21 +1022,25 @@ void PdfDocument::applyViewMode() {
     switch (m_viewMode) {
     case ViewMode::SinglePage:
         m_view->setPageMode(QPdfView::PageMode::SinglePage);
+        if (m_viewStack && m_view)
+            m_viewStack->setCurrentWidget(m_view);
         break;
     case ViewMode::TwoPages:
-        // Two-page (facing) layout is not supported: QPdfView::PageMode only
-        // offers SinglePage and MultiPage, neither of which is a real two-up
-        // layout. Deliberately do NOT alias Continuous here — silently showing
-        // a different layout than the label promises is forbidden by policy.
-        // The View > Two Pages action (m_twoPagesAction) is kept disabled with
-        // an explanatory tooltip so this case is unreachable from the UI; this
-        // guard prevents any future code path from regressing into a silent
-        // alias. Leave the current page mode untouched.
-        qWarning("PdfDocument::applyViewMode: ViewMode::TwoPages is unsupported "
-                 "(no facing layout in QPdfView); leaving page mode unchanged");
-        return;
+        // Two-up (facing) layout has no QPdfView::PageMode, so it renders
+        // through the custom TwoPageView (decision record
+        // 2026-07-21-two-page-layout, D1-A AUGMENT). Swap the stack to it and
+        // sync the shared zoom factor so Actual Size / the zoom-% readout mean
+        // the same thing here as in Single/Continuous (clause 3). If the stack
+        // isn't built yet (createView not run) there is nothing to switch.
+        if (m_twoPageView && m_view)
+            m_twoPageView->setZoomFactor(m_view->zoomFactor());
+        if (m_viewStack && m_twoPageView)
+            m_viewStack->setCurrentWidget(m_twoPageView);
+        break;
     case ViewMode::Continuous:
         m_view->setPageMode(QPdfView::PageMode::MultiPage);
+        if (m_viewStack && m_view)
+            m_viewStack->setCurrentWidget(m_view);
         break;
     }
 }
@@ -1027,12 +1080,26 @@ void PdfDocument::zoomActual() {
 void PdfDocument::zoomFitWidth() {
     if (!m_view)
         return;
+    // Two-Pages mode renders through the custom TwoPageView, whose fit must
+    // account for a full facing spread (page1 + gutter + page2) — QPdfView's
+    // per-page FitToWidth would overflow the viewport by a whole page. Route to
+    // the spread-aware fit and apply it through the shared zoom path so the
+    // zoom-% readout stays truthful; QPdfView keeps its own fit for the other
+    // two modes (record clause 3, G3: the visible surface actually fits).
+    if (m_viewMode == ViewMode::TwoPages && m_twoPageView) {
+        applyZoomFactor(m_twoPageView->fitWidthZoom());
+        return;
+    }
     m_view->setZoomMode(QPdfView::ZoomMode::FitToWidth);
 }
 
 void PdfDocument::zoomFitPage() {
     if (!m_view)
         return;
+    if (m_viewMode == ViewMode::TwoPages && m_twoPageView) {
+        applyZoomFactor(m_twoPageView->fitPageZoom());
+        return;
+    }
     m_view->setZoomMode(QPdfView::ZoomMode::FitInView);
 }
 
@@ -1317,6 +1384,12 @@ QImage PdfDocument::renderThumbnail(int pageIndex, QSize targetSize) {
 int PdfDocument::currentPage() const {
     if (!m_view)
         return 0;
+    // In Two-Pages mode the QPdfView is hidden and its navigator only moves on
+    // explicit goToPage(); free-scrolling the custom TwoPageView doesn't touch
+    // it. Return the leading page the TwoPageView reports for the top-most
+    // visible spread so the current-page indicator tracks the scroll position.
+    if (m_viewMode == ViewMode::TwoPages && m_twoPageView)
+        return m_twoPageCurrentPage;
     return m_view->pageNavigator()->currentPage();
 }
 
@@ -1325,6 +1398,34 @@ void PdfDocument::goToPage(int pageIndex) {
         return;
     }
     m_view->pageNavigator()->jump(pageIndex, QPointF{}, m_view->zoomFactor());
+    // In Two-Pages mode the QPdfView is hidden, so also scroll the visible
+    // TwoPageView to the spread holding this page — otherwise Previous/Next Page
+    // and thumbnail-click navigation would silently move only the hidden view
+    // (an inert control, G3). The scroll fires TwoPageView::currentPageChanged,
+    // which updates m_twoPageCurrentPage — the value currentPage() reports in
+    // this mode — so the current-page indicator stays in sync. (The
+    // pageNavigator jump above keeps the hidden QPdfView consistent for when the
+    // user switches back to Single/Continuous.)
+    if (m_viewMode == ViewMode::TwoPages && m_twoPageView) {
+        m_twoPageView->scrollToPage(pageIndex);
+    }
+}
+
+int PdfDocument::nextPageIndex() const {
+    // In Two-Pages mode Next Page must advance by a whole SPREAD relative to the
+    // currently-visible one, not by one page: currentPage()+1 lands on the right
+    // page of the same spread, which scrollToPage() maps straight back to that
+    // spread, so per-page stepping would stick. Ask the layout for the next
+    // spread's leading page instead. Single/Continuous keep single-page steps.
+    if (m_viewMode == ViewMode::TwoPages && m_twoPageView)
+        return m_twoPageView->leadingPageOfNextSpread(currentPage());
+    return currentPage() + 1;
+}
+
+int PdfDocument::previousPageIndex() const {
+    if (m_viewMode == ViewMode::TwoPages && m_twoPageView)
+        return m_twoPageView->leadingPageOfPrevSpread(currentPage());
+    return currentPage() - 1;
 }
 
 void PdfDocument::setSearchQuery(const QString &query) {

@@ -129,6 +129,16 @@ class IDocument {
     // re-derivation connect to it instead of polling currentPage() on a timer.
     virtual PageChangeNotifier *pageChangeNotifier() { return nullptr; }
 
+    // Navigation targets for the Previous/Next Page commands. Default is
+    // single-page stepping (currentPage() ± 1). A view that groups pages into
+    // spreads (Two-Pages mode) overrides these so Next/Previous advance by a
+    // whole SPREAD, not a single page: in a facing-page layout, stepping by one
+    // page maps the right page of a spread back onto that same spread, so
+    // per-page stepping sticks and navigation never advances. Callers pass the
+    // result to goToPage(), which clamps out-of-range indices.
+    virtual int nextPageIndex() const { return currentPage() + 1; }
+    virtual int previousPageIndex() const { return currentPage() - 1; }
+
     virtual bool supportsSearch() const { return false; }
     virtual void setSearchQuery(const QString & /*query*/) {}
     virtual void findNext() {}
