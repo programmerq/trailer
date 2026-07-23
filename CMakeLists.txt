@@ -308,9 +308,21 @@ set(TRAILER_SOURCES
 # the backend-selection rule) builds everywhere; only the native probe and
 # the SCContentSharingPicker capture are per-platform, split below.
 list(APPEND TRAILER_SOURCES src/platform/ScreenCaptureBackend.cpp)
-# Pure Linux/Wayland capture-capability policy (no #ifdef, no native calls) —
-# builds and tests everywhere, like ScreenCaptureBackend.cpp above.
-list(APPEND TRAILER_SOURCES src/platform/LinuxCaptureCapability.cpp)
+
+# XDG screenshot-portal capture backend (Wayland). The real QtDBus
+# implementation is Linux/BSD-only; macOS and Windows link the stub so the
+# shared non-macOS capture path resolves the portal as unavailable and stays
+# on QScreen::grabWindow. Qt6::DBus is linked only where the real one builds.
+if(UNIX AND NOT APPLE)
+    list(APPEND TRAILER_SOURCES src/platform/PortalScreenshot.cpp)
+    # QtDBus is part of qtbase but not in the default component list; the
+    # portal backend is the only consumer, so pull it in only here.
+    find_package(Qt6 6.6 REQUIRED COMPONENTS DBus)
+    set(TRAILER_NEEDS_QTDBUS ON)
+else()
+    list(APPEND TRAILER_SOURCES src/platform/PortalScreenshot_stub.cpp)
+endif()
+list(APPEND TRAILER_SOURCES src/platform/PortalScreenshot.h)
 
 # UX recorder sources are only compiled into recorder-enabled builds.
 # src/uxrecord/UxRecord.h (above) is the always-present facade whose
@@ -394,6 +406,12 @@ target_link_libraries(trailer_core
         tomlplusplus::tomlplusplus
         onnxruntime::onnxruntime
 )
+if(TRAILER_NEEDS_QTDBUS)
+    # Linux/BSD only: the XDG screenshot-portal backend (PortalScreenshot.cpp)
+    # talks to org.freedesktop.portal.Desktop over the session bus.
+    target_link_libraries(trailer_core PUBLIC Qt6::DBus)
+endif()
+
 if(APPLE)
     target_link_libraries(trailer_core PUBLIC "-framework AppKit")
     # PowerSource.cpp uses IOPSGetProvidingPowerSourceType from

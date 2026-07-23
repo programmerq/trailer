@@ -79,4 +79,53 @@ enum class PickerCaptureResult {
 PickerCaptureResult captureViaPickerToPng(const QString &outPngPath, bool wholeDisplay,
                                           QString *errorOut);
 
+// Which still-capture path Trailer drives on Linux/BSD for a whole-screen
+// grab. Selected purely from (is this a Wayland session?) and (is the XDG
+// screenshot portal available?), so the rule is unit-testable off-platform.
+//
+//   QScreenGrab — QScreen::grabWindow(0). Works on X11 (and offscreen/xcb
+//                 test platforms), which permit a client-side root grab.
+//   Portal      — the org.freedesktop.portal.Screenshot desktop portal.
+//                 The only path that yields real pixels under Wayland, where
+//                 a client-side grab is blocked and grabWindow returns null.
+//   Unavailable — Wayland with no screenshot portal running. Capture cannot
+//                 succeed, so the caller must degrade honestly (disabled
+//                 control + tooltip, never a silent null result) per gate G3.
+enum class LinuxScreenshotBackend {
+    QScreenGrab,
+    Portal,
+    Unavailable,
+};
+
+// Pure policy: resolve the whole-screen capture backend on Linux/BSD.
+//   - Not a Wayland session (X11/xcb/offscreen): QScreenGrab — a client-side
+//     grab is permitted there, and the portal (if any) is not needed. This
+//     is deliberately independent of portalAvailable so X11 behaviour is
+//     unchanged whether or not a portal happens to be running.
+//   - Wayland + portal available: Portal.
+//   - Wayland + no portal: Unavailable (honest-degrade signal).
+// No platform calls — testable on any host.
+LinuxScreenshotBackend chooseLinuxScreenshotBackend(bool isWaylandSession, bool portalAvailable);
+
+// Pure detection: is this a Wayland session, judged from the DISPLAY-SERVER
+// signals rather than only Qt's platform-plugin name?
+//
+// The hazard this exists to catch is XWayland: on the common GNOME/KDE Wayland
+// desktop Qt frequently loads the xcb plugin (so platformName()=="xcb") while
+// the real display server is Wayland. A direct QScreen::grabWindow(0) then
+// returns a BLACK pixmap on Mutter/KWin — a silent WRONG result that would be
+// saved as a "screenshot". Keying only off platformName() misses this and takes
+// the black direct-grab path; keying off the session signals routes it to the
+// portal (or the honest disabled+tooltip degrade) instead.
+//
+// A session is Wayland when ANY of:
+//   - platformName starts with "wayland" (native Wayland plugin), OR
+//   - waylandDisplay is non-empty (WAYLAND_DISPLAY — set for XWayland clients,
+//     unset on genuine X11 and under the offscreen/CI plugin), OR
+//   - xdgSessionType equals "wayland" (XDG_SESSION_TYPE, the logind signal).
+// An EMPTY waylandDisplay is not a signal (so a stray empty export can't
+// misclassify genuine X11). Pure — no platform calls, testable on any host.
+bool isWaylandSessionFromSignals(const QString &platformName, const QString &waylandDisplay,
+                                 const QString &xdgSessionType);
+
 } // namespace trailer

@@ -92,7 +92,6 @@ trailer_add_test(test_quit_and_keep_windows test_quit_and_keep_windows.cpp)
 trailer_add_test(test_screen_capture_permission test_screen_capture_permission.cpp)
 trailer_add_test(test_screen_capture_flow test_screen_capture_flow.cpp)
 trailer_add_test(test_capture_backend test_capture_backend.cpp)
-trailer_add_test(test_linux_capture_capability test_linux_capture_capability.cpp)
 
 # Structural, CI-safe performance tests. These assert ordering / counts /
 # thread facts (never wall-clock time) and read the checked-in reference

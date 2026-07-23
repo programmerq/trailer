@@ -34,7 +34,7 @@
 #include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "ml/OcrEngine.h"
-#include "platform/LinuxCaptureCapability.h"
+#include "platform/PortalScreenshot.h"
 #include "platform/QuitMenu.h"
 #include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
@@ -2707,21 +2707,28 @@ void MainWindow::onTakeScreenshot() {
 #ifndef Q_OS_MACOS
     windowRadio->setEnabled(false);
     regionRadio->setEnabled(false);
-    // On a Wayland session (native OR XWayland) grabWindow yields a null/black
-    // pixmap, so even Whole Screen can't act. Gate it consistently with the
-    // File → Screenshot menu (Application::addAcquireItems): disable the
-    // Whole Screen radio (and thus the OK path) and show the honest message
-    // instead of the false "only whole-screen is supported" note. Genuine X11
-    // and offscreen keep Whole Screen enabled and the original note.
-    const bool waylandNoCapture =
-        trailer::linuxCaptureCapability(QGuiApplication::platformName(),
-                                        qEnvironmentVariableIsSet("WAYLAND_DISPLAY"),
-                                        /*portalUsable=*/false) ==
-        trailer::LinuxCaptureCapability::WaylandNoCapture;
+    // On a Wayland session (native OR XWayland) with no screenshot portal even
+    // Whole Screen can't act: a client-side grab yields a null pixmap under
+    // native Wayland and a BLACK pixmap under XWayland. Gate this dialog
+    // consistently with the File → Screenshot menu (Application::addAcquireItems)
+    // — disable the Whole Screen radio with an honest tooltip instead of leaving
+    // it enabled to look actionable, which would make it a lying control (G3).
+    // (The OK button stays enabled; if the user accepts anyway, the capture
+    // choke point resolves to Unavailable and flashes the SAME honest message
+    // rather than producing a null/black file — an honest degrade, never a
+    // silent no-op.) X11/Windows keep Whole Screen enabled and the original note.
+    const bool waylandNoPortal =
+        trailer::chooseLinuxScreenshotBackend(trailer::isWaylandSession(),
+                                              trailer::portalScreenshotAvailable()) ==
+        trailer::LinuxScreenshotBackend::Unavailable;
     QLabel *note = nullptr;
-    if (waylandNoCapture) {
+    if (waylandNoPortal) {
         screenRadio->setEnabled(false);
-        note = new QLabel(trailer::waylandCaptureUnavailableMessage(), &dialog);
+        screenRadio->setToolTip(
+            tr("Screenshot capture needs a desktop screenshot portal, which isn't running."));
+        note = new QLabel(
+            tr("Screenshot capture needs a desktop screenshot portal, which isn't running."),
+            &dialog);
     } else {
         note = new QLabel(tr("Only whole-screen capture is supported on this platform. "
                              "Window and region capture aren't available yet."),
