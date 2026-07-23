@@ -23,12 +23,14 @@
 #include "perf_iodevice.h"
 
 #include "document/DocumentRegistry.h"
+#include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
 
 #include <QByteArray>
 #include <QFile>
 #include <QImage>
 #include <QPdfDocument>
+#include <QTemporaryDir>
 #include <QThread>
 #include <QtTest/QtTest>
 
@@ -48,6 +50,7 @@ class TestPerfGuiThreadIo : public QObject {
   private slots:
     void cleanup() { PdfDocument::setLoadDeviceFactoryForTesting({}); }
     void openIoDoesNotRunOnGuiThread();
+    void imageOpenDefersFullDecodeOffGuiThread();
 };
 
 // THE INVARIANT (backlog 2026-07-15-offthread-pdf-open-placeholder): no read
@@ -105,6 +108,43 @@ void TestPerfGuiThreadIo::openIoDoesNotRunOnGuiThread() {
     for (QThread *t : device->readThreads()) {
         QVERIFY2(t != guiThread, "document-open IO must not run on the GUI thread");
     }
+}
+
+// --- Image path (ADR 0008, accepted for images = Option B). Like the PDF path
+// above (now a live off-thread assertion since the off-thread-PDF-open change
+// retired its QSKIP), an image open performs NO full-pixel decode on the GUI
+// thread: the ctor reads only the header for an immediate contentSizeHint, and
+// the full decode runs on a worker. This is a LIVE structural assertion, not a
+// skip. Independent, additive slot alongside the PDF assertion.
+void TestPerfGuiThreadIo::imageOpenDefersFullDecodeOffGuiThread() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath(QStringLiteral("big.png"));
+    // A non-trivial image so a full decode would be a visible GUI-thread cost.
+    QImage img(1024, 768, QImage::Format_ARGB32);
+    img.fill(Qt::green);
+    QVERIFY(img.save(path, "PNG"));
+
+    DocumentRegistry registry;
+    registry.registerAdapter(std::make_unique<ImageAdapter>());
+    auto doc = registry.open(path);
+    QVERIFY2(doc != nullptr, "registry must return an image document");
+
+    // Proxy 1: the size hint is available immediately from a header-only read,
+    // with no full-pixel decode on this (GUI) thread.
+    QCOMPARE(doc->contentSizeHint(), QSize(1024, 768));
+    QCOMPARE(doc->pageCount(), 1); // known from the header, before any decode
+
+    // Proxy 2: the full-pixel decode has NOT run on the calling thread — it is
+    // still pending on a worker the instant open() returns.
+    auto *imageDoc = dynamic_cast<ImageDocument *>(doc.get());
+    QVERIFY2(imageDoc != nullptr, "expected an ImageDocument");
+    QVERIFY2(imageDoc->isDecodePendingForTest(),
+             "image full-pixel decode must be deferred off the GUI thread, "
+             "not run synchronously at open");
+
+    // Proxy 3: it completes off-thread once the event loop turns.
+    QVERIFY2(imageDoc->awaitDecodeForTest(), "the worker decode must complete");
 }
 
 QTEST_MAIN(TestPerfGuiThreadIo)

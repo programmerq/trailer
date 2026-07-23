@@ -9,6 +9,8 @@
 #include "ui/MainWindow.h"
 #include "ui/SelectableTextLayer.h"
 
+#include <QBuffer>
+#include <QFile>
 #include <QImage>
 #include <QKeyEvent>
 #include <QLabel>
@@ -65,6 +67,10 @@ class TestAdapters : public QObject {
     void imageDocumentLoadsPng();
     void pdfDocumentReportsInvalidForMissingFile();
     void imageDocumentZoomResizesPixmap();
+    void imageDocumentStagedOpenShowsLoadingPlaceholder();
+    void imageDocumentFastDecodeNeverFlashesLoadingText();
+    void imageDocumentReloadSupersedesInFlightDecode();
+    void imageDocumentDecodeFailureReportsNoCapabilities();
     void pdfDocumentAdvertisesCapabilities();
     void pdfDocumentRendersThumbnailsForValidFile();
     void pdfDocumentAcceptsSearchQueryWithoutView();
@@ -227,6 +233,9 @@ void TestAdapters::imageDocumentZoomResizesPixmap() {
 
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
     QVERIFY(view != nullptr);
+    // Staged open (ADR 0008): createView paints a placeholder and the real
+    // pixmap swaps in off-thread. Await the swap before reading the pixmap.
+    QVERIFY(doc.awaitDecodeForTest());
 
     // Find the QLabel inside the QScrollArea that owns the pixmap.
     auto *scroll = qobject_cast<QScrollArea *>(view.get());
@@ -241,6 +250,142 @@ void TestAdapters::imageDocumentZoomResizesPixmap() {
 
     doc.zoomActual();
     QCOMPARE(label->pixmap().size(), original);
+}
+
+void TestAdapters::imageDocumentStagedOpenShowsLoadingPlaceholder() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("loading.png");
+    QImage img(64, 48, QImage::Format_ARGB32);
+    img.fill(Qt::darkGreen);
+    QVERIFY(img.save(path, "PNG"));
+
+    ImageDocument doc(path);
+    // Force the loading text to be deferred well past this test so the grace
+    // window is observable (owner refinement, PR #109).
+    doc.setPlaceholderTextDelayForTest(60000);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
+    QVERIFY(scroll != nullptr);
+    auto *label = qobject_cast<QLabel *>(scroll->widget());
+    QVERIFY(label != nullptr);
+
+    // Staged open (ADR 0008): the window is drawn from the header hint but the
+    // placeholder starts BLANK — no pixmap and no text during the grace window.
+    QVERIFY2(label->pixmap().isNull(), "placeholder must not show a decoded pixmap yet");
+    QVERIFY2(label->text().isEmpty(), "placeholder text must be deferred (blank grace window)");
+    QVERIFY2(doc.placeholderTextTimerActiveForTest(), "the grace timer must be pending");
+
+    // Once the grace elapses (simulated) while the decode is still in flight,
+    // the honest "Loading image…" text appears — a visible loading state, not a
+    // blank/stub the user could mistake for an empty or broken file (G3).
+    doc.triggerPlaceholderTextTimerForTest();
+    QVERIFY2(label->text().contains(QStringLiteral("Loading")),
+             qPrintable(QStringLiteral("expected a loading placeholder, got text '%1'")
+                            .arg(label->text())));
+
+    // The real pixmap swaps in once the worker decode completes.
+    QVERIFY(doc.awaitDecodeForTest());
+    QVERIFY2(!label->pixmap().isNull(), "decoded pixmap must replace the placeholder");
+    QVERIFY(label->text().isEmpty());
+}
+
+void TestAdapters::imageDocumentFastDecodeNeverFlashesLoadingText() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("fast.png");
+    QImage img(48, 48, QImage::Format_ARGB32);
+    img.fill(Qt::magenta);
+    QVERIFY(img.save(path, "PNG"));
+
+    ImageDocument doc(path);
+    // A grace delay far longer than the decode: the fast decode must swap in
+    // and CANCEL the timer, so the loading text is never shown (no one-frame
+    // flash — the owner's PR #109 requirement).
+    doc.setPlaceholderTextDelayForTest(60000);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
+    QVERIFY(scroll != nullptr);
+    auto *label = qobject_cast<QLabel *>(scroll->widget());
+    QVERIFY(label != nullptr);
+    QVERIFY2(label->text().isEmpty(), "grace window must start blank");
+
+    QVERIFY(doc.awaitDecodeForTest());
+    QVERIFY2(!label->pixmap().isNull(), "decoded pixmap must be shown after the fast decode");
+    QVERIFY2(label->text().isEmpty(),
+             "loading text must NEVER appear when the decode beats the grace delay");
+    QVERIFY2(!doc.placeholderTextTimerActiveForTest(),
+             "the fast-decode swap must cancel the pending grace timer");
+}
+
+void TestAdapters::imageDocumentReloadSupersedesInFlightDecode() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("reload.png");
+    QImage red(32, 32, QImage::Format_ARGB32);
+    red.fill(Qt::red);
+    QVERIFY(red.save(path, "PNG"));
+
+    // Open kicks the off-thread decode of the RED image.
+    ImageDocument doc(path);
+    QVERIFY2(doc.isDecodePendingForTest(), "open must defer the decode off-thread");
+
+    // Before the decode lands, the file changes on disk and the user reloads.
+    // The reload must SUPERSEDE the in-flight open decode (#89), not race it.
+    QImage blue(32, 32, QImage::Format_ARGB32);
+    blue.fill(Qt::blue);
+    QVERIFY(blue.save(path, "PNG"));
+    QVERIFY(doc.reloadFromDisk());
+    QVERIFY2(!doc.isDecodePendingForTest(),
+             "reload must supersede the in-flight open decode");
+    // Supersede must also DROP the in-flight watcher + future so the superseded
+    // worker's decoded buffer isn't pinned for the doc's lifetime and its stale
+    // finished callback can't fire (memory-retention finding).
+    QVERIFY2(doc.decodeWatcherClearedForTest(),
+             "reload must drop the superseded decode's watcher, not just guard it");
+
+    // Flush any stale worker finished callback; the generation guard must make
+    // it a no-op so it can never clobber the reloaded (blue) pixels.
+    QVERIFY(doc.awaitDecodeForTest());
+    QCoreApplication::processEvents();
+    QCOMPARE(doc.image().pixelColor(0, 0), QColor(Qt::blue));
+}
+
+void TestAdapters::imageDocumentDecodeFailureReportsNoCapabilities() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("corrupt.ppm");
+    // A PPM whose ASCII header fully specifies the size (QImageReader::size()
+    // succeeds, so the staged open kicks a decode) but whose binary pixel data
+    // is truncated to far fewer than 400*300*3 bytes, so the full decode fails.
+    // This is the "pending, then failed decode" path staged open introduces.
+    {
+        QByteArray ppm = QByteArrayLiteral("P6\n400 300\n255\n");
+        ppm.append(100, '\0');
+        QFile f(path);
+        QVERIFY(f.open(QIODevice::WriteOnly));
+        f.write(ppm);
+    }
+
+    ImageDocument doc(path);
+    // The header parsed → staged decode kicked → capabilities provisionally
+    // report the image as present while it is still decoding.
+    QVERIFY2(doc.isDecodePendingForTest(), "a parseable header must kick the staged decode");
+    QVERIFY(doc.supportsZoom());
+    QCOMPARE(doc.pageCount(), 1);
+
+    // Await the decode; it produces a null image (corrupt body).
+    QVERIFY(doc.awaitDecodeForTest());
+    QVERIFY(doc.image().isNull());
+
+    // Capabilities MUST now be honest: a null decoded image is not
+    // zoomable/editable/searchable and has no page. Otherwise the controls
+    // would stay enabled-but-inert against a null image (G3 — lying controls).
+    QVERIFY2(!doc.supportsZoom(), "failed decode must not report zoom support");
+    QVERIFY2(!doc.supportsEditing(), "failed decode must not report edit support");
+    QVERIFY2(!doc.supportsThumbnails(), "failed decode must not report thumbnails");
+    QVERIFY2(!doc.supportsSelectableText(), "failed decode must not report selectable text");
+    QCOMPARE(doc.pageCount(), 0);
 }
 
 void TestAdapters::pdfDocumentAdvertisesCapabilities() {
@@ -1185,6 +1330,9 @@ void TestAdapters::imageDocumentZoomFitPageEntersFitInViewMode() {
 
     ImageDocument doc(path);
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    // Staged open (ADR 0008): await the off-thread decode swap before the
+    // fit math, which needs the decoded image size.
+    QVERIFY(doc.awaitDecodeForTest());
     auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     // Force a viewport size — without a real show()/event-loop tick
@@ -1206,6 +1354,7 @@ void TestAdapters::imageDocumentZoomFitWidthEntersFitToWidthMode() {
 
     ImageDocument doc(path);
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    QVERIFY(doc.awaitDecodeForTest()); // ADR 0008: await the off-thread decode swap
     auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(500, 100);
@@ -1224,6 +1373,7 @@ void TestAdapters::imageDocumentExplicitZoomReturnsToCustomMode() {
 
     ImageDocument doc(path);
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    QVERIFY(doc.awaitDecodeForTest()); // ADR 0008: await the off-thread decode swap
     auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(200, 200);
@@ -1260,6 +1410,7 @@ void TestAdapters::imageDocumentZoomInStepsByQuarter() {
     ImageDocument doc(path);
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
     QVERIFY(view != nullptr);
+    QVERIFY(doc.awaitDecodeForTest()); // ADR 0008: await the off-thread decode swap
 
     doc.zoomActual();
     QVERIFY(qFuzzyCompare(doc.scaleFactor(), 1.0));
@@ -1301,6 +1452,7 @@ void TestAdapters::imageDocumentReapplyFitModeRefitsOnResize() {
 
     ImageDocument doc(path);
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    QVERIFY(doc.awaitDecodeForTest()); // ADR 0008: await the off-thread decode swap
     auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(200, 200);
@@ -1461,6 +1613,7 @@ void TestAdapters::imageDocumentResizeDoesNothingInCustomMode() {
 
     ImageDocument doc(path);
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    QVERIFY(doc.awaitDecodeForTest()); // ADR 0008: await the off-thread decode swap
     auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(200, 200);
@@ -1489,6 +1642,7 @@ void TestAdapters::imageDocumentResizeEventTriggersRefit() {
 
     ImageDocument doc(path);
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    QVERIFY(doc.awaitDecodeForTest()); // ADR 0008: await the off-thread decode swap
     auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(400, 200);

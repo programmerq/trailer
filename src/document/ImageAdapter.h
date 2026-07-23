@@ -1,17 +1,23 @@
 #pragma once
 
+#include "CapabilityNotifier.h"
 #include "IDocument.h"
 #include "IFormatAdapter.h"
 #include "SelectableTextStore.h"
 #include "annotation/AnnotationStore.h"
 
+#include <QFuture>
+#include <QFutureWatcher>
 #include <QImage>
 #include <QObject>
 #include <QPixmap>
 #include <QPointer>
 #include <QRectF>
+#include <QSize>
 #include <QString>
 #include <QStringList>
+#include <QTimer>
+#include <cmath>
 #include <memory>
 #include <vector>
 
@@ -35,7 +41,12 @@ class ImageDocument : public IDocument {
 
     DocumentType documentType() const override { return DocumentType::Image; }
 
-    bool supportsZoom() const override { return !m_animated && !m_image.isNull(); }
+    // Fires once the staged-open (ADR 0008) async decode + initial fit have
+    // landed, so MainWindow can refresh the zoom readout against the settled
+    // scale (reuses the same wiring PdfDocument uses for its async form probe).
+    CapabilityNotifier *capabilityNotifier() override { return &m_capabilityNotifier; }
+
+    bool supportsZoom() const override { return !m_animated && imageAvailableOrPending(); }
     void zoomIn() override;
     void zoomOut() override;
     void zoomActual() override;
@@ -46,7 +57,20 @@ class ImageDocument : public IDocument {
         // at the size the image occupies on screen at 100%. For a Retina
         // screenshot (device px stamped dpr=2) this is half the raw px —
         // avoiding the "open oversized then shrink to fit" behavior.
-        return m_image.isNull() ? QSize{} : m_image.deviceIndependentSize().toSize();
+        //
+        // Staged open (ADR 0008, image path): before the async full decode
+        // lands, m_image is null but the header-only size read at
+        // construction gives the immediate hint. Ordinary file opens are
+        // dpr 1, so header px == logical px; a capture stamps its dpr via
+        // markCaptureOrigin BEFORE the window is sized, so divide by that
+        // known dpr to land the same logical size the decoded image would.
+        if (!m_image.isNull())
+            return m_image.deviceIndependentSize().toSize();
+        if (m_animated || m_headerSize.isEmpty())
+            return {};
+        const qreal d = m_pendingCaptureDpr > 1.0 ? m_pendingCaptureDpr : 1.0;
+        return QSize(static_cast<int>(std::lround(m_headerSize.width() / d)),
+                     static_cast<int>(std::lround(m_headerSize.height() / d)));
     }
 
     ZoomMode zoomMode() const override { return m_zoomMode; }
@@ -55,7 +79,7 @@ class ImageDocument : public IDocument {
     int scrollY() const override;
     void applyScrollY(int y) override;
 
-    bool supportsPrint() const override { return !m_image.isNull(); }
+    bool supportsPrint() const override { return imageAvailableOrPending(); }
     void print(QWidget *dialogParent) override;
 
     // Search over the image's OCR results (Item A). Unlike PdfDocument —
@@ -85,28 +109,35 @@ class ImageDocument : public IDocument {
         return m_searchMatches.empty() ? std::vector<int>{} : std::vector<int>{0};
     }
 
-    bool supportsThumbnails() const override { return !m_image.isNull() && !m_animated; }
+    bool supportsThumbnails() const override { return !m_animated && imageAvailableOrPending(); }
     QImage renderThumbnail(int pageIndex, QSize targetSize) override;
     // Natural pixel size of the single image page (page 0). Empty for a
     // null image or any other page index. No rendering — used by the
-    // sidebar to size the thumbnail row by aspect.
+    // sidebar to size the thumbnail row by aspect. Uses the header size
+    // read at open while the async decode is still pending, so the sidebar
+    // can size rows before the pixels land (staged open, ADR 0008).
     QSizeF pageSizeHint(int pageIndex) const override {
-        return (pageIndex == 0 && !m_image.isNull()) ? QSizeF(m_image.size())
-                                                     : QSizeF();
+        if (pageIndex != 0)
+            return {};
+        const QSize s = deviceSize();
+        return s.isEmpty() ? QSizeF() : QSizeF(s);
     }
 
     AnnotationStore *annotations() override { return &m_annotations; }
     SelectableTextStore *selectableText() override { return &m_selectableText; }
-    bool supportsSelectableText() const override { return !m_image.isNull() && !m_animated; }
+    bool supportsSelectableText() const override { return !m_animated && imageAvailableOrPending(); }
     QImage renderPageForOcr(int pageIndex) const override {
-        return pageIndex == 0 ? m_image : QImage();
+        if (pageIndex != 0)
+            return QImage();
+        ensureDecoded(); // OCR needs the real pixels — block on the decode
+        return m_image;
     }
     void setAnnotationTool(AnnotationTool tool) override;
     void setAnnotationStyle(const AnnotationStyle &style) override;
     void setPendingAnnotationText(const QString &text) override;
     void setPendingSignaturePath(const QString &path) override;
 
-    bool supportsEditing() const override { return !m_image.isNull() && !m_animated; }
+    bool supportsEditing() const override { return !m_animated && imageAvailableOrPending(); }
     bool isDirty() const override { return m_dirty || !m_annotations.annotations().empty(); }
     bool isUntitled() const override { return m_untitled; }
     // Mark this document as untitled — content-bearing but backed only
@@ -150,12 +181,15 @@ class ImageDocument : public IDocument {
     void flipVertical() override;
     bool resizeImage(int width, int height, bool smoothScaling) override;
     bool cropToRect(int x, int y, int width, int height) override;
-    QSize imagePixelSize() const override { return m_image.size(); }
+    QSize imagePixelSize() const override { return deviceSize(); }
     // Read-only access to the current raster buffer. Used by Phase 6
     // features (background removal, instant alpha, Smart Lasso) that
     // feed pixels into ONNX models. Returns a shallow copy — QImage is
     // copy-on-write, so this is cheap.
-    QImage image() const { return m_image; }
+    QImage image() const {
+        ensureDecoded(); // ML/pixel consumers need the real decoded buffer
+        return m_image;
+    }
     bool adjustColour(double brightness, double contrast, double saturation) override;
     void previewColour(double brightness, double contrast, double saturation);
     void clearColourPreview();
@@ -166,7 +200,7 @@ class ImageDocument : public IDocument {
     bool writeRecoverySnapshot(const QString &sidecarPath) override;
     bool recoverFrom(const QString &sidecarPath) override;
     bool reloadFromDisk() override;
-    int pageCount() const override { return m_image.isNull() ? 0 : 1; }
+    int pageCount() const override { return imageAvailableOrPending() ? 1 : 0; }
 
     bool supportsAnimation() const override { return m_animated && m_frameCount > 1; }
     int frameCount() const override { return m_frameCount; }
@@ -210,6 +244,37 @@ class ImageDocument : public IDocument {
     // dpr > 1 and non-1.0 scale without needing a real widget/event loop.
     QPointF docToViewForTest(QPointF p) const { return mapDocToView(p); }
     QPointF viewToDocForTest(QPointF p) const { return mapViewToDoc(p); }
+    // Staged-open (ADR 0008) test hooks.
+    // True while the off-GUI-thread full decode kicked at open has NOT yet
+    // completed — i.e. the full-pixel decode did not run synchronously on
+    // the calling thread. The structural proxy in test_perf_gui_thread_io
+    // asserts this immediately after open.
+    bool isDecodePendingForTest() const { return m_decodeStarted && !m_decoded; }
+    // Spin the event loop until the async decode has swapped in the real
+    // pixmap (or the timeout elapses). Returns true once decoded. Lets the
+    // view/zoom tests deterministically await the placeholder→pixmap swap
+    // before reading label->pixmap() / scaleFactor().
+    bool awaitDecodeForTest(int timeoutMs = 5000);
+    // True once no in-flight decode watcher is retained — i.e. a
+    // reload/recovery that superseded the open decode dropped it (so the
+    // superseded worker's buffer isn't pinned and its stale callback can't
+    // fire). Also true when no decode was ever started.
+    bool decodeWatcherClearedForTest() const { return m_decodeWatcher.isNull(); }
+    // Override the staged-open grace delay before the "Loading image…" text
+    // appears (see m_placeholderTextDelayMs). Set a large value to force the
+    // fast-decode branch (text never shown) or drive the timer directly with
+    // triggerPlaceholderTextTimerForTest() — deterministic, no wall-clock.
+    // Call before createView(), which starts the timer.
+    void setPlaceholderTextDelayForTest(int ms) { m_placeholderTextDelayMs = ms; }
+    // Synchronously run the grace-timer's slot (as if the delay elapsed), so a
+    // test can force the "loading text while still decoding" state without
+    // sleeping. No-op unless the decode is still in flight.
+    void triggerPlaceholderTextTimerForTest() { showPlaceholderTextIfPending(); }
+    // True while the grace timer is still pending (started, not yet fired or
+    // cancelled) — lets a test assert a fast decode / supersede cancelled it.
+    bool placeholderTextTimerActiveForTest() const {
+        return m_placeholderTextTimer && m_placeholderTextTimer->isActive();
+    }
 
   private:
     // The image's effective devicePixelRatio, clamped to a positive
@@ -219,6 +284,62 @@ class ImageDocument : public IDocument {
         const qreal d = m_image.devicePixelRatio();
         return d > 0.0 ? d : 1.0;
     }
+    // True once the file is known to be a decodable still image — from the
+    // header read at open, before the async full decode lands, and after a
+    // SUCCESSFUL decode. Keyed to available-OR-in-flight so a still image's
+    // capabilities never falsely read as unsupported during the brief
+    // off-thread decode window (ADR 0008, image path). Crucially, once the
+    // decode has FINISHED (m_decoded) the header-size "pending" no longer
+    // counts: a decode that produced a null image (valid header, corrupt
+    // body) is genuinely unavailable, so capabilities go false and the
+    // controls disable rather than stay enabled-but-inert (G3).
+    bool imageAvailableOrPending() const {
+        if (!m_image.isNull())
+            return true;
+        // Only "pending" while a decode is actually still in flight.
+        return !m_animated && m_decodeStarted && !m_decoded && !m_headerSize.isEmpty();
+    }
+    // Device-pixel dimensions of the still image: the decoded size once
+    // available, otherwise the header size read at open. Empty for an
+    // animated image or an unreadable file.
+    QSize deviceSize() const {
+        return !m_image.isNull() ? m_image.size()
+                                 : (m_animated ? QSize() : m_headerSize);
+    }
+    // Kick the full-resolution decode on a worker thread (ADR 0008 Option
+    // B, image path). Records a new decode generation so a superseding
+    // reload/recovery can make the stale finished callback a no-op.
+    void startDecode();
+    // Block on the in-flight worker decode and adopt its pixels. A no-op
+    // once decoded, or when no decode is in flight (empty path / injected
+    // test image / already superseded). Does NOT spin the event loop
+    // (waitForFinished via QFuture::result), so it is re-entrancy-safe;
+    // always called on the GUI thread, so it never races onDecodeFinished.
+    void ensureDecoded() const;
+    // GUI-thread QFutureWatcher::finished slot: adopt the decoded pixels
+    // and, if a view exists and is still showing the placeholder, swap in
+    // the real content. Ignores results from a superseded generation.
+    void onDecodeFinished(int generation);
+    // Create the selectable-text layer + annotation overlay over the view
+    // label, up front at createView time (before the staged-open decode
+    // lands), so MainWindow's open-time overlay wiring finds them. Idempotent.
+    void wireViewLayers();
+    // Build the real pixmap into the view label, refresh the layer geometry,
+    // and schedule the initial fit-zoom. Shared by the synchronous createView
+    // path (already-decoded / injected image) and the async swap. Idempotent
+    // via m_viewPopulated.
+    void installDecodedContent();
+    // Staged-open delayed placeholder (ADR 0008, owner refinement PR #109):
+    // start / cancel the grace timer that defers the "Loading image…" text,
+    // and the slot that shows the text only if the decode is still in flight.
+    void startPlaceholderTextTimer();
+    void cancelPlaceholderTextTimer();
+    void showPlaceholderTextIfPending();
+    // Mark any in-flight open decode as superseded (reload / recovery took
+    // authoritative pixels): bump the generation so the stale finished
+    // callback no-ops, and stop ensureDecoded from blocking on the old
+    // future.
+    void supersedeDecode();
     // Doc<->view coordinate mapping used by the annotation overlay and the
     // selectable-text layer. Doc coordinates are image DEVICE pixels; the
     // view draws at the logical size (device / dpr) times the logical zoom,
@@ -268,7 +389,10 @@ class ImageDocument : public IDocument {
     void applyInitialFitZoom();
 
     QString m_path;
-    QImage m_image;
+    // Mutable so the const ensureDecoded() can adopt the worker's decoded
+    // pixels the first time a const pixel-accessor (image(), exportAs, …)
+    // is reached before the async decode has landed.
+    mutable QImage m_image;
     QPointer<QScrollArea> m_scroll;
     QPointer<QLabel> m_label;
     // The most recent pixmap built for the display label (raw device
@@ -339,6 +463,53 @@ class ImageDocument : public IDocument {
     // the image and default the initial zoom to Actual Size (1:1) rather
     // than fit-capped-at-100%. Ordinary file opens leave this false.
     bool m_captureOrigin = false;
+
+    // --- Staged (async) open state (ADR 0008, image path = Option B) ---
+    // Header-only size read at construction for a still image, used for
+    // the immediate contentSizeHint / placeholder sizing before the
+    // full-pixel decode lands. Empty for animated / unreadable files.
+    QSize m_headerSize;
+    // The off-GUI-thread full-resolution decode and its GUI-thread watcher.
+    QFuture<QImage> m_decodeFuture;
+    QPointer<QFutureWatcher<QImage>> m_decodeWatcher;
+    // Monotonic decode generation. A reload / recovery bumps it so the
+    // stale worker's finished callback no-ops instead of clobbering the
+    // authoritative pixels (#89 supersede-not-race).
+    int m_decodeGeneration = 0;
+    // True once startDecode() has kicked a worker (a still-image file open).
+    bool m_decodeStarted = false;
+    // True once the decoded pixels have been adopted into m_image
+    // (mutable-adopted by ensureDecoded, or by the finished slot, or set
+    // directly for injected/animated/recovered images).
+    mutable bool m_decoded = false;
+    // True once installDecodedContent() has swapped the real pixmap +
+    // overlay/text layer into the view, so a late finished callback no-ops.
+    bool m_viewPopulated = false;
+    // A capture dpr (> 1) recorded by markCaptureOrigin before the decode
+    // landed; stamped onto m_image when the pixels are adopted. 0 for
+    // ordinary opens (dpr 1, no stamp).
+    qreal m_pendingCaptureDpr = 0.0;
+    // Grace timer that defers the staged-open "Loading image…" text; parented
+    // to the view label so it dies with the widget hierarchy.
+    QPointer<QTimer> m_placeholderTextTimer;
+    // Grace delay (ms) before the staged-open "Loading image…" text appears.
+    // Represents how long the header-sized window shows a BLANK placeholder
+    // before the loading text is drawn, so a fast decode swaps in the real
+    // image without the text ever flashing for a single frame — while a
+    // slow/large decode still gets a visible loading state once the grace
+    // elapses (owner request on PR #109, 2026-07-21; ADR 0008 update note).
+    // Range considered: 0 (text immediately — the pre-refinement behaviour that
+    // flashed) up to ~2000 (a slow decode risks looking hung with no feedback);
+    // 1000 ms tracks the NN/g ~1 s "flow" limit cited in
+    // docs/performance-budgets.md. Symptom to change: LOWER if the blank window
+    // reads as a stall on common hardware; RAISE if the text still flashes for
+    // ordinary local opens on the reference machine. Injectable per-document
+    // for deterministic tests via setPlaceholderTextDelayForTest().
+    int m_placeholderTextDelayMs = 1000;
+    // Fires when the async initial fit lands so MainWindow refreshes the zoom
+    // readout (staged open, ADR 0008). Declared last so it outlives nothing
+    // that needs it during teardown.
+    CapabilityNotifier m_capabilityNotifier;
 };
 
 class ImageAdapter : public IFormatAdapter {
