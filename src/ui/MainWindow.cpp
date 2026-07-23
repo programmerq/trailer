@@ -1712,6 +1712,28 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
         tr("Open a document to recognize text."));
     connect(m_recognizeTextAction, &QAction::triggered, this, &MainWindow::onRecognizeText);
 
+    // Re-run entry for single-page docs (backlog 2026-07-15-single-page-
+    // force-rerun): the Recognize Text… dialog hosts the force-rerun
+    // checkbox, but single-page docs skip that dialog, leaving no way to
+    // replace a page's non-empty-but-wrong OCR. This sibling entry reaches
+    // submitUserPages(forceRerun=true) directly. Starts disabled with a
+    // why/where tooltip; refreshRerunRecognizeAction() re-evaluates it.
+    //
+    // The entry doubles as the recognised-text STATUS glyph (owner HITL on
+    // #114 replaced the transient status-bar cue with this): it is made
+    // checkable so the native menu checkmark renders when the current page
+    // has recognised, selectable text — a subtle, in-context glyph rather
+    // than long-form status-bar prose. It is a status indicator, not a user
+    // toggle, so refreshRerunRecognizeAction() always re-derives the checked
+    // state from hasResults() and onRerunRecognizeText() re-asserts it after
+    // the auto-toggle a checkable QAction performs on trigger.
+    m_rerunRecognizeAction = makeDisabledAction(
+        toolsMenu, tr("Re-run Text &Recognition"),
+        tr("Open a single-page document with recognised text to re-run recognition."));
+    m_rerunRecognizeAction->setCheckable(true);
+    connect(m_rerunRecognizeAction, &QAction::triggered, this,
+            &MainWindow::onRerunRecognizeText);
+
     auto *modelsAction = toolsMenu->addAction(tr("Manage &ML Models…"));
     connect(modelsAction, &QAction::triggered, this, [this]() {
         showModelManagerDialog(this, m_app);
@@ -2449,6 +2471,124 @@ void MainWindow::onRecognizeText() {
     const auto pageCount = pages.size();
     m_ocrController->submitUserPages(doc, std::move(pages), forceRerun);
     flashStatus(tr("Recognizing text for %1 page(s)…").arg(pageCount));
+}
+
+void MainWindow::onRerunRecognizeText() {
+    // A checkable QAction auto-toggles its checked state on trigger, BEFORE
+    // this slot runs. The checkmark is a read-only status glyph, not a user
+    // toggle, so immediately re-derive it from the store — this corrects the
+    // auto-toggle on every exit path below (declined download-consent, guard
+    // returns), so a cancelled re-run can never leave the glyph lying about
+    // whether the page still holds recognised text.
+    refreshRerunRecognizeAction();
+
+    auto *doc = m_documentView->currentDocument();
+    if (!doc || !doc->supportsSelectableText())
+        return;
+    // Only fires the invalidate-then-OCR path for the current page. The
+    // action is only enabled for a single-page doc that already has results
+    // (refreshRerunRecognizeAction), so this always targets the page whose
+    // wrong OCR the user wants to replace. submitPage() sees forceRerun=true
+    // and calls store->invalidate(page) — dropping both the results entry and
+    // the attempted-empty memo — before re-recognising.
+    const int page = doc->currentPage();
+
+    // Mirror the missing-model download-consent routing used by the in-context
+    // hint link (setOcrModelDownloadHookForTesting seam) so a headless test can
+    // drive this without spawning a real modal / network download.
+    bool ready;
+    if (m_ocrModelDownloadHook) {
+        ready = m_ocrModelDownloadHook();
+    } else {
+        OcrEngine gateEngine(&m_app->modelRegistry());
+        ready = ensureOcrModelsReady(this, gateEngine);
+    }
+    if (!ready)
+        return;
+
+    m_ocrController->submitUserPages(doc, {page}, /*forceRerun=*/true);
+    // Action feedback on the user's explicit click (mirrors onRecognizeText's
+    // flash) — this is confirmation of an invoked action, not the passive
+    // "now selectable" cue the owner's #114 HITL removed. The glyph was
+    // already re-derived at the top of this slot; submitPage's async
+    // invalidate → pageChanged and the subsequent put() re-derive it again as
+    // the fresh result lands.
+    flashStatus(tr("Re-running text recognition…"));
+}
+
+void MainWindow::refreshRerunRecognizeAction() {
+    if (!m_rerunRecognizeAction)
+        return;
+    auto *doc = m_documentView->currentDocument();
+    const bool canOcr = doc != nullptr && doc->supportsSelectableText();
+    const bool singlePage = doc != nullptr && doc->pageCount() == 1;
+    auto *store = doc ? doc->selectableText() : nullptr;
+    const bool hasResults = store && store->hasResults(doc->currentPage());
+    const bool base = canOcr && singlePage && hasResults;
+
+    // Status glyph: the native menu checkmark is on exactly when the current
+    // page carries recognised, selectable text (owner HITL on #114 — this
+    // replaces the transient status-bar cue). Re-derived here rather than
+    // toggled, so it never lies: it turns on when OCR lands and off when the
+    // text is invalidated. Applies to any single-page doc with results
+    // (single-page images and scanned single-page PDFs alike), not images
+    // only — the same condition (`base`) that makes the entry actionable.
+    m_rerunRecognizeAction->setChecked(base);
+
+    // Same ML-policy gate as applyMlPolicy() for the Recognize entry: if the
+    // recognizer models are set to Never Download and not already present, a
+    // re-run can't run — disable and point at the model manager (never a
+    // popup that just says "no").
+    ModelRegistry &reg = m_app->modelRegistry();
+    bool policyBlocks = false;
+    for (ModelId id : {ModelId::PpOcrDetector, ModelId::PpOcrRecognizerLatin}) {
+        if (reg.isAvailable(id))
+            continue;
+        if (ModelPolicy::isNeverDownload(m_app, id)) {
+            policyBlocks = true;
+            break;
+        }
+    }
+    m_rerunRecognizeAction->setEnabled(base && !policyBlocks);
+
+    // G3 (no lying controls): every disabled reason gets a tooltip that says
+    // WHY and, where there is a next step, WHERE to go. The enabled state gets
+    // a plain what-it-does tooltip.
+    if (base && !policyBlocks) {
+        m_rerunRecognizeAction->setToolTip(
+            tr("Recognise this page again, replacing the current text."));
+    } else if (base && policyBlocks) {
+        m_rerunRecognizeAction->setToolTip(
+            tr("This model is set to Never Download. "
+               "Open Tools → Manage ML Models… to allow it."));
+    } else if (!canOcr) {
+        m_rerunRecognizeAction->setToolTip(
+            tr("Open a single-page document with recognised text to re-run "
+               "recognition."));
+    } else if (!singlePage) {
+        m_rerunRecognizeAction->setToolTip(
+            tr("For multi-page documents, use Recognize Text… and enable "
+               "“Re-run recognition”."));
+    } else {
+        // Single page, no results yet — nothing to replace.
+        m_rerunRecognizeAction->setToolTip(
+            tr("Run Recognize Text first — there is no recognised text to "
+               "re-run yet."));
+    }
+}
+
+void MainWindow::onSelectableTextPageChanged(int page) {
+    Q_UNUSED(page);
+    // OCR results just changed for the active document's page. The
+    // recognised-and-selectable status is surfaced only through the Re-run
+    // Text Recognition menu entry's checkmark glyph + enabled state (owner
+    // HITL on #114: the former transient status-bar cue was distracting long-
+    // form text). refreshRerunRecognizeAction() re-derives that glyph from
+    // hasResults(currentPage()), which flips true when the first OCR pass
+    // lands after open (covers single-page images and scanned single-page
+    // PDFs alike). No status-bar text, no modal — the document stays the
+    // focus.
+    refreshRerunRecognizeAction();
 }
 
 void MainWindow::onExportAs() {
@@ -3403,6 +3543,16 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             connect(store, &AnnotationStore::changed, this,
                     &MainWindow::onActiveAnnotationStoreChanged, Qt::UniqueConnection);
         }
+        // Listen for OCR results landing in this document's selectable-text
+        // store so the single-page re-run affordance's checkmark glyph +
+        // enabled state update the moment text appears. Named slot +
+        // UniqueConnection so repeated doc changes don't stack duplicates
+        // (the store outlives tab switches; a closed doc's store is destroyed,
+        // dropping its connection).
+        if (auto *store = doc->selectableText()) {
+            connect(store, &SelectableTextStore::pageChanged, this,
+                    &MainWindow::onSelectableTextPageChanged, Qt::UniqueConnection);
+        }
         // Re-run the forms-toolbar setup when the doc's async form detection
         // completes. Since PR #63 the qpdf parse behind supportsFormFilling()
         // runs on a background worker, so the forms capability is not known at
@@ -3668,6 +3818,11 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
                      "content.")
                 : tr("Open a document to recognize text."));
     }
+    // The single-page re-run entry gates on hasResults(currentPage()) on top
+    // of the same doc/policy checks; keep it in its own helper because that
+    // state also changes when OCR lands after open (see
+    // onSelectableTextPageChanged).
+    refreshRerunRecognizeAction();
     m_exportAsAction->setEnabled(doc != nullptr && isImage);
     m_exportPasswordProtectedAction->setEnabled(doc && doc->supportsPasswordExport());
     m_reduceFileSizeAction->setEnabled(doc && doc->supportsFileSizeReduction());
