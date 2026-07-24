@@ -1,0 +1,712 @@
+# Nightly release pipeline — full-test, partial-success builds published on
+# a schedule.
+#
+# Unlike dev-build.yml (unsigned, on-demand, uploaded to the RUN, tests
+# non-blocking) and release.yml (tagged, human-triggered, UAT gates the
+# per-OS build matrix as ONE combined signal), Nightly:
+#   - fires on a timer, unattended;
+#   - runs the FULL test suite (unit + UAT, `ctest -L uat`) PER OS, not once
+#     centrally — Linux native, Windows via the existing Wine cross-build
+#     workers, macOS on the owner's self-hosted Apple Silicon runner;
+#   - ships PARTIAL-SUCCESS releases: any OS lane that builds and passes its
+#     full test suite gets its artifact published, even if the other two
+#     lanes are red. A lane's "Stage + upload" step is always its LAST step
+#     (no continue-on-error anywhere above it), so an artifact only exists
+#     to publish if that lane's build + unit tests + UAT all passed —
+#     partial-success semantics fall out of ordinary step `if: success()`
+#     with no extra pass/fail plumbing;
+#   - tags each successful night `nightly-YYYYMMDD` (immutable, one per
+#     night — never a rolling/force-moved tag) and carries a semi-automated
+#     "since last nightly" summary (scripts/release-notes.sh over the
+#     previous nightly-* tag..HEAD) in the release body, alongside a
+#     per-OS ✅/❌ status table so a partial release is honest about what
+#     didn't make it in;
+#   - is a pure SIGNAL channel, not a merge/release gate: it never touches
+#     VERSION, never tags/publishes a v* release, and release.yml /
+#     release-publish.yml / release-autotag.yml are untouched by this file.
+#
+# macOS availability: the self-hosted runner (runs-on: [self-hosted, macOS,
+# ARM64], same labels dev-build.yml's dev-macos job proved out in #120) is a
+# single-instance VM on the owner's laptop and may be offline for hours (see
+# the schedule comment below — a stuck mac lane is exactly why "results
+# ready by morning" is an expectation, not a guarantee). That's fine —
+# nightly-publish `needs` all three lanes with `if: always()`, so it simply
+# waits for macOS to reach a terminal state (success, or GitHub's own ~24h
+# "no runner available" auto-fail of a queued job) before assembling the
+# release from whichever lanes are green.
+#
+# Concurrency: the nightly-date job (below) resolves today's UTC date and a
+# concurrency key ONCE, before any lane starts or waits on anything — so a
+# slow mac-VM wait that straddles midnight can't smear the tag, or the
+# concurrency scope, into the wrong day. Every lane job and nightly-publish
+# carries a job-level `concurrency:` keyed off that value: dry runs each get
+# a unique key (never contend with anything), while REAL runs (the
+# schedule, or an explicit dry_run:false dispatch) on the SAME UTC day
+# share one key per lane — so a stray manual real dispatch can't double-
+# book the single-instance mac runner or double-publish alongside that
+# day's scheduled run. A DIFFERENT day always gets a different key, so one
+# stuck night's mac wait can NEVER block the next (independent) night's
+# Linux/Windows results — a workflow- or day-spanning lock would defeat the
+# whole point of the partial-success design. Idempotent tag/release
+# creation (skip if today's tag already exists — mirroring
+# release-autotag.yml) is the remaining guard for anything outside that
+# same-day-same-mode grouping (see the "Create tag" step's comment on the
+# residual TOCTOU there).
+#
+# Failure surfacing: nightly-publish's LAST step fails the job (and so the
+# whole workflow run) whenever any lane's result isn't `success` — even
+# though the release itself, if any lane went green, was already published
+# by an earlier step in the same job. A red run is what makes GitHub's
+# built-in "scheduled workflow failed" notification fire for repo watchers,
+# with no extra issues:write permission or dedup logic needed.
+#
+# Retention: nightly-* releases (assets) older than ~6 months are deleted by
+# a cleanup step in nightly-publish (`gh release delete`, no `--cleanup-tag`
+# — the git tag itself is NEVER deleted, so `nightly-YYYYMMDD..HEAD` diffing
+# and bisecting stay possible indefinitely; only the multi-hundred-MB binary
+# assets age out).
+#
+# Testing this file: workflow_dispatch defaults `dry_run` to true, which
+# runs every build/test lane exactly as normal but skips the tag, the
+# GitHub Release, and the retention cleanup in nightly-publish — it prints
+# what WOULD have been published to the step summary instead. This lets a
+# manual proof run validate the full pipeline (including a real,
+# hours-long wait for the mac VM) without creating a real nightly-YYYYMMDD
+# tag. Pass dry_run=false on a manual dispatch to cut a real nightly on
+# demand instead of waiting for the 10:00 UTC schedule.
+
+name: Nightly
+
+on:
+  schedule:
+    # 10:00 UTC daily (~03:00 America/Los_Angeles / ~06:00 America/New_York)
+    # — lands after a typical US workday, results USUALLY ready the next
+    # morning. "Usually": an offline mac VM can delay the macOS artifact/
+    # status by hours (see the header) — Linux/Windows still land close to
+    # the schedule time regardless, since a stuck mac lane never blocks them.
+    - cron: '0 10 * * *'
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: git ref/branch/SHA to build (defaults to the triggering ref)
+        required: false
+        type: string
+        default: ''
+      dry_run:
+        description: >-
+          Skip tag + GitHub Release creation and the retention cleanup, so a
+          manual test run never touches the nightly-YYYYMMDD tag chain.
+          Build/unit/UAT lanes still run exactly as normal. Set false to cut
+          a real nightly on demand.
+        required: false
+        type: boolean
+        default: true
+
+# Least privilege at the top; nightly-publish elevates to contents: write
+# for itself only (tag push + release creation), matching release-
+# publish.yml's pattern.
+permissions:
+  contents: read
+
+jobs:
+  nightly-date:
+    name: Resolve nightly date + run mode
+    runs-on: trailer-small
+    timeout-minutes: 2
+    outputs:
+      tag: ${{ steps.resolve.outputs.tag }}
+      dry-run: ${{ steps.resolve.outputs.dry-run }}
+      concurrency-key: ${{ steps.resolve.outputs.concurrency-key }}
+    steps:
+      - id: resolve
+        # Captured ONCE, here, before any lane starts or waits on the mac
+        # VM. Previously nightly-publish computed TAG itself after
+        # `needs:`-waiting on all three lanes — a mac-VM wait that
+        # straddled the UTC day boundary would tag with the COMPLETION
+        # date, not the trigger date, and could silently collide with the
+        # next scheduled run's tag-exists check. Every downstream job
+        # reads this job's outputs instead of recomputing `date -u` late.
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            DRY_RUN=true
+          else
+            DRY_RUN=false
+          fi
+          DATE="$(date -u +%Y%m%d)"
+          TAG="nightly-$DATE"
+          if [ "$DRY_RUN" = "true" ]; then
+            # Dry runs never contend with anything — each gets a unique
+            # key so concurrent test dispatches don't queue behind each
+            # other or behind a real run.
+            KEY="dryrun-${{ github.run_id }}"
+          else
+            # All REAL runs (the schedule, or an explicit dry_run:false
+            # dispatch) on the SAME UTC calendar day share one key, so a
+            # stray manual dispatch can't double-book the single-instance
+            # mac runner (or double-publish) alongside that day's
+            # scheduled run. A DIFFERENT day gets a DIFFERENT key, so a
+            # long mac-VM wait never blocks the next day's run — see the
+            # workflow header.
+            KEY="real-$DATE"
+          fi
+          echo "tag=$TAG"            >> "$GITHUB_OUTPUT"
+          echo "dry-run=$DRY_RUN"    >> "$GITHUB_OUTPUT"
+          echo "concurrency-key=$KEY" >> "$GITHUB_OUTPUT"
+          echo "Resolved: tag=$TAG dry-run=$DRY_RUN concurrency-key=$KEY"
+
+  nightly-linux:
+    name: Linux full lane (build + unit + UAT)
+    needs: [nightly-date]
+    runs-on: trailer-k8s
+    timeout-minutes: 60
+    concurrency:
+      # Same-UTC-day REAL runs (scheduled + any manual dry_run:false
+      # dispatch) serialize against each other, lane by lane; dry runs and
+      # different days never contend — see nightly-date's step comment.
+      group: nightly-lane-linux-${{ needs.nightly-date.outputs.concurrency-key }}
+      cancel-in-progress: false
+    env:
+      # k8s-OOM guard (see release.yml/ci.yml): bare `cmake --build …
+      # --parallel` honors these, and unbounded parallelism OOMKilled the
+      # self-hosted trailer-k8s pods before. Scoped to the k8s-backed
+      # lanes only — the self-hosted macOS lane runs on dedicated
+      # hardware and shouldn't be needlessly throttled by a k8s-specific
+      # guard.
+      CMAKE_BUILD_PARALLEL_LEVEL: 2
+      CTEST_PARALLEL_LEVEL: 2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history: the app's About-box version string is git-derived
+          # (commit count + short SHA) at CMake configure time.
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+
+      - uses: ./.github/actions/setup-linux-build
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          # Share release.yml's linux-build cache prefix for warm hits —
+          # nightly builds the identical recipe plus tests.
+          key: release-${{ runner.os }}-gcc-linux
+          max-size: 500M
+          update-package-index: true
+
+      - name: Configure
+        # Mirrors release.yml's linux-build exactly (no UX-recorder flag —
+        # nightly represents "what would ship", like release, not the dev
+        # opt-in toggles). TRAILER_WERROR stays OFF (Qt/libstdc++/qpdf
+        # system-header noise; see release.yml's header).
+        run: >-
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Unit tests
+        working-directory: build
+        run: ctest -C Release --output-on-failure --label-exclude uat
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: UAT suite
+        # Native Linux needs no Docker layer to run this offscreen — the
+        # setup-linux-build action already installs everything ctest -L uat
+        # needs (the same base ci.yml's wayland-smoke job builds on), so
+        # nightly runs UAT in-job rather than reusing release.yml's
+        # separate Docker-based `uat` job.
+        working-directory: build
+        run: ctest -C Release --output-on-failure -L uat
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Stage Linux artifact
+        # Reached only if build + both test steps above succeeded — that
+        # ordering IS the partial-success gate, no extra bookkeeping.
+        run: |
+          set -euo pipefail
+          mkdir -p dist/trailer-linux-x86_64
+          cp build/trailer dist/trailer-linux-x86_64/
+          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+             dist/trailer-linux-x86_64/
+          cp -r licenses/third-party dist/trailer-linux-x86_64/
+          (cd dist && tar -czf nightly-trailer-linux-x86_64.tar.gz trailer-linux-x86_64)
+
+      - name: Upload Linux artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-trailer-linux-x86_64
+          path: dist/nightly-trailer-linux-x86_64.tar.gz
+          # Short-lived: nightly-publish promotes this into the GitHub
+          # Release within the same run, which is the long-term store.
+          # This copy only exists to debug/recover a failed publish job.
+          retention-days: 7
+
+  nightly-windows:
+    name: Windows full lane (Wine cross-build + unit + UAT)
+    needs: [nightly-date]
+    runs-on: trailer-k8s
+    # release.yml's windows-cross (build + bundle + unit tests only) budgets
+    # 60. UAT adds a second full pass of Wine-emulated test binaries
+    # (~2.5-3s startup each under Wine per ci.yml's own note) on top, so
+    # this gets real headroom rather than a tight squeeze.
+    timeout-minutes: 120
+    concurrency:
+      group: nightly-lane-windows-${{ needs.nightly-date.outputs.concurrency-key }}
+      cancel-in-progress: false
+    env:
+      CMAKE_BUILD_PARALLEL_LEVEL: 2
+      CTEST_PARALLEL_LEVEL: 2
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+
+      - uses: ./.github/actions/setup-windows-cross
+
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2.23
+        with:
+          key: release-windows-cross-mingw
+          max-size: 500M
+          update-package-index: true
+
+      - name: Configure
+        # Identical invocation to release.yml's windows-cross Configure.
+        run: >-
+          cmake -S . -B build-win -G Ninja
+          -DCMAKE_TOOLCHAIN_FILE="$PWD/cmake/toolchain-mingw-w64.cmake"
+          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DCMAKE_PREFIX_PATH="$QT_WIN_DIR;$QPDF_DIR"
+          -DQT_HOST_PATH="$QT_HOST_DIR"
+          -Dqpdf_DIR="$QPDF_DIR/lib/cmake/qpdf"
+          -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_PREBUILT="$ORT_WIN_DIR"
+        env:
+          PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
+
+      - name: Build
+        run: cmake --build build-win --parallel
+
+      - name: Bundle self-contained trailer.exe
+        # Same import-table DLL walk release.yml's windows-cross uses.
+        run: |
+          set -euo pipefail
+          BUILD_DIR="$PWD/build-win" \
+          OUT_DIR="$PWD/dist/trailer-windows-x86_64" \
+          QT_DIR="$QT_WIN_DIR" \
+          QT_HOST_DIR="$QT_HOST_DIR" \
+          QPDF_DIR="$QPDF_DIR" \
+            bash scripts/build-windows.sh --in-container
+          mkdir -p dist/trailer-windows-x86_64/imageformats
+          cp "$QT_WIN_DIR"/plugins/imageformats/*.dll dist/trailer-windows-x86_64/imageformats/
+          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+             dist/trailer-windows-x86_64/
+          cp -r licenses/third-party dist/trailer-windows-x86_64/
+
+      - name: Prep Wine test environment
+        # Shared setup for both test steps below: wine's headless prefix
+        # init, the emulator hookup, and the DLLs/plugins every test .exe
+        # needs sitting beside it. Split out of the (single, combined)
+        # step release.yml/ci.yml use, since nightly runs unit and UAT as
+        # two distinctly-reported steps.
+        run: |
+          set -euo pipefail
+          wine wineboot --init
+          cmake -S . -B build-win -DCMAKE_CROSSCOMPILING_EMULATOR=/usr/bin/wine
+          cp dist/trailer-windows-x86_64/*.dll build-win/
+          cp "$QT_WIN_DIR/bin/Qt6Test.dll" build-win/
+          mkdir -p build-win/platforms build-win/imageformats
+          cp "$QT_WIN_DIR"/plugins/platforms/qoffscreen.dll \
+             "$QT_WIN_DIR"/plugins/platforms/qminimal.dll \
+             "$QT_WIN_DIR"/plugins/platforms/qwindows.dll build-win/platforms/
+          cp "$QT_WIN_DIR"/plugins/imageformats/*.dll build-win/imageformats/
+        env:
+          WINEPREFIX: ${{ runner.temp }}/wineprefix
+          WINEDEBUG: -all
+          PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
+
+      - name: Unit tests (Wine)
+        # Same selector as ci.yml/release.yml's Wine job: `perf` stays
+        # excluded (wall-time budgets are noise under emulation), `uat`
+        # does NOT — this is the one addition nightly makes over CI/release.
+        working-directory: build-win
+        timeout-minutes: 30
+        run: ctest -C Release --label-exclude 'uat|perf' --output-on-failure
+        env:
+          WINEPREFIX: ${{ runner.temp }}/wineprefix
+          WINEDEBUG: -all
+          DISPLAY: ''
+          QT_QPA_PLATFORM: offscreen
+
+      - name: UAT suite (Wine)
+        # New: CI/release exclude `uat` on the Wine lane entirely. The UAT
+        # harness forces QT_QPA_PLATFORM=offscreen unconditionally per-test
+        # (tests/uat/CMakeLists.txt) — it does not actually need a windowed
+        # plugin — and scripts/build-windows-native.ps1 (the disabled MSVC
+        # job's script) already runs `ctest -L uat` as a matter of course,
+        # so running it under Wine too is a reasonable extension, not a
+        # fight with a known hard blocker. If this turns out to be
+        # persistently flaky under Wine specifically, that is itself
+        # useful nightly signal — see the two Wine cross-thread-handle
+        # backlog items (docs/backlog/2026-07-19-wine-cross-thread-editor-
+        # save.md, 2026-07-21-wine-keep-restore-file-move-open-handle.md)
+        # for precedent on Wine-only artifacts worth tracking separately
+        # rather than silently excluding.
+        working-directory: build-win
+        timeout-minutes: 30
+        run: ctest -C Release -L uat --output-on-failure
+        env:
+          WINEPREFIX: ${{ runner.temp }}/wineprefix
+          WINEDEBUG: -all
+          DISPLAY: ''
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Stage Windows artifact
+        run: |
+          set -euo pipefail
+          (cd dist/trailer-windows-x86_64 && 7z a -tzip ../nightly-trailer-windows-x86_64.zip .)
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-trailer-windows-x86_64
+          path: dist/nightly-trailer-windows-x86_64.zip
+          retention-days: 7
+
+  nightly-macos:
+    name: macOS full lane (build + unit + UAT, self-hosted)
+    needs: [nightly-date]
+    # Single-instance VM on the owner's laptop; may be offline for hours —
+    # see the workflow header. nightly-publish waits for this job via
+    # `needs:` + `if: always()` rather than racing it.
+    runs-on: [self-hosted, macOS, ARM64]
+    timeout-minutes: 90
+    concurrency:
+      group: nightly-lane-macos-${{ needs.nightly-date.outputs.concurrency-key }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+
+      - name: Add Homebrew to PATH
+        # Same fix PR #120 landed for dev-build.yml's dev-macos job: the
+        # actions-runner service process doesn't inherit the interactive
+        # shell's PATH, so brew/cmake/ninja are invisible without this.
+        run: echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
+
+      - name: Install Qt
+        # Same pin as release.yml's macos-build / dev-build.yml's dev-macos.
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.11.0'
+          modules: 'qtpdf'
+          cache: true
+
+      - name: Install build deps
+        run: brew install ninja
+
+      - name: Build, bundle, and package
+        # scripts/build-macos.sh builds the WHOLE tree (enable_testing() +
+        # add_subdirectory(tests) in CMakeLists.txt is unconditional), so
+        # the unit + UAT binaries below need no separate configure/build —
+        # this step already produced them alongside Trailer.app.
+        run: scripts/build-macos.sh
+
+      - name: Unit tests
+        # macOS has never run any test suite in CI before this (build-
+        # macos.sh only builds/bundles/packages; `make test` on macOS is
+        # an alias for the same script). This is net-new coverage.
+        working-directory: build-macos
+        run: ctest -C Release --output-on-failure --label-exclude uat
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: UAT suite
+        working-directory: build-macos
+        run: ctest -C Release --output-on-failure -L uat
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Stage macOS artifact
+        # scripts/build-macos.sh always names its DMG dist/trailer-macos-
+        # arm64.dmg (no nightly-specific name). The other two lanes stage
+        # into a nightly-trailer-*-named file BEFORE upload; this lane
+        # previously uploaded the raw build-script filename directly,
+        # which didn't match nightly-publish's rename-map key
+        # (nightly-trailer-macos-arm64.dmg) — the artifact would download
+        # fine but silently fail to rename/count, while the unprefixed
+        # dist/trailer-macos-arm64.dmg still matched that step's
+        # `dist/trailer-*.*` glob and got published under the SAME
+        # filename every night. Staging here, mirroring the other two
+        # lanes exactly, is the fix.
+        run: |
+          set -euo pipefail
+          mv dist/trailer-macos-arm64.dmg dist/nightly-trailer-macos-arm64.dmg
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v7
+        with:
+          name: nightly-trailer-macos-arm64
+          path: dist/nightly-trailer-macos-arm64.dmg
+          retention-days: 7
+
+  nightly-publish:
+    name: Assemble + publish nightly release
+    needs: [nightly-date, nightly-linux, nightly-windows, nightly-macos]
+    # Always run regardless of any lane's outcome — this is what lets a
+    # red macOS lane (or an offline-VM timeout) NOT block the Linux/
+    # Windows artifacts from shipping.
+    if: always()
+    runs-on: trailer-small
+    timeout-minutes: 15
+    concurrency:
+      group: nightly-publish-${{ needs.nightly-date.outputs.concurrency-key }}
+      cancel-in-progress: false
+    permissions:
+      # Needed to push the nightly-YYYYMMDD tag and create/update the
+      # GitHub Release + delete aged-out ones during retention cleanup.
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history + tags: previous nightly-* tags drive both the
+          # since-last-nightly summary and the idempotency/retention checks.
+          fetch-depth: 0
+
+      - name: Find previous nightly tag
+        id: prev
+        run: |
+          set -euo pipefail
+          # Tag names sort lexicographically by date (nightly-YYYYMMDD), so
+          # a plain sort avoids depending on annotated-tag creatordate
+          # metadata. Excludes today's tag implicitly — it doesn't exist
+          # yet at this point in the job.
+          PREV=$(git tag -l 'nightly-*' | sort -r | head -1)
+          echo "tag=$PREV" >> "$GITHUB_OUTPUT"
+          if [ -n "$PREV" ]; then
+            echo "Previous nightly tag: $PREV"
+          else
+            echo "No previous nightly tag found — this is the first nightly."
+          fi
+
+      - name: Build since-last-nightly summary
+        id: changelog
+        run: |
+          set -euo pipefail
+          BODY_FILE="$(mktemp)"
+          PREV="${{ steps.prev.outputs.tag }}"
+          if [ -n "$PREV" ]; then
+            {
+              echo "## Changes since $PREV"
+              echo
+              echo '```'
+            } >> "$BODY_FILE"
+            # scripts/release-notes.sh already does exactly this: a Keep-a-
+            # Changelog-shaped draft from Conventional-Commit prefixes over
+            # an arbitrary git range. Reused as-is rather than reinventing a
+            # second commit-summarizer.
+            scripts/release-notes.sh "$PREV..HEAD" >> "$BODY_FILE"
+            echo '```' >> "$BODY_FILE"
+          else
+            # First nightly: no baseline to diff against, and per the
+            # owner's brief this does NOT need to summarize all project
+            # history — a short placeholder is enough; future nights get
+            # a real diff against this one.
+            echo "## Changes since last nightly" >> "$BODY_FILE"
+            echo >> "$BODY_FILE"
+            echo "First nightly build — no prior nightly baseline to diff against." >> "$BODY_FILE"
+          fi
+          echo "body-file=$BODY_FILE" >> "$GITHUB_OUTPUT"
+          echo "---- summary preview ----"
+          cat "$BODY_FILE"
+          echo "---- end preview ----"
+
+      - name: Download lane artifacts
+        # No `name:` filter — sweep up whichever of the three lane
+        # artifacts exist in THIS run. A failed lane's step never reached
+        # its upload, so its artifact simply isn't there; this download
+        # step does not need per-lane conditionals. continue-on-error
+        # guards the zero-success night (all three lanes failed, so there
+        # is nothing at all to download) — undocumented whether the
+        # action treats "zero artifacts in the run" as a hard failure, so
+        # don't let that possibility take down the rest of this job (the
+        # dry-run preview / red-run failure step still need to run).
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Rename artifacts for the release
+        id: assets
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          ls -la dist/ || true
+          # Count files BEFORE renaming: every downloaded lane artifact
+          # MUST end up renamed below. If the post-rename count is lower,
+          # some lane's actual staged filename doesn't match a key in the
+          # rename map and would otherwise be silently dropped from the
+          # release (exactly the bug the macOS staging step above fixes —
+          # this assertion is the regression guard for that class of bug,
+          # in every mode, not just dry-run).
+          pre_count=$(find dist -maxdepth 1 -type f | wc -l | tr -d ' ')
+          TAG="${{ needs.nightly-date.outputs.tag }}"
+          declare -A renames=(
+            [nightly-trailer-linux-x86_64.tar.gz]="trailer-${TAG}-linux-x86_64.tar.gz"
+            [nightly-trailer-windows-x86_64.zip]="trailer-${TAG}-windows-x86_64.zip"
+            [nightly-trailer-macos-arm64.dmg]="trailer-${TAG}-macos-arm64.dmg"
+          )
+          count=0
+          for src in "${!renames[@]}"; do
+            if [ -f "dist/$src" ]; then
+              mv "dist/$src" "dist/${renames[$src]}"
+              count=$((count + 1))
+            fi
+          done
+          if [ "$count" -ne "$pre_count" ]; then
+            echo "::error::Downloaded $pre_count artifact(s) in dist/ but only renamed $count — a lane's staged filename doesn't match this step's rename map (see the file listing above)."
+            exit 1
+          fi
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+          echo "After rename ($count artifact(s) present):"
+          ls -la dist/
+
+      - name: Build release body
+        id: body
+        run: |
+          set -euo pipefail
+          BODY_FILE="$(mktemp)"
+          {
+            echo "Automated nightly build of Trailer's \`main\` branch. Unsigned,"
+            echo "like dev-build.yml's artifacts — see PHILOSOPHY.md for what to"
+            echo "expect from a 0.x build. A lane below marked ❌ is NOT included;"
+            echo "see its job log in this run for what failed."
+            echo
+            echo "## Build status"
+            echo
+            echo "| OS | Result |"
+            echo "|---|---|"
+            echo "| Linux   | $([ "${{ needs.nightly-linux.result }}" = "success" ] && echo "✅" || echo "❌ (${{ needs.nightly-linux.result }})") |"
+            echo "| Windows | $([ "${{ needs.nightly-windows.result }}" = "success" ] && echo "✅" || echo "❌ (${{ needs.nightly-windows.result }})") |"
+            echo "| macOS   | $([ "${{ needs.nightly-macos.result }}" = "success" ] && echo "✅" || echo "❌ (${{ needs.nightly-macos.result }})") |"
+            echo
+            cat "${{ steps.changelog.outputs.body-file }}"
+          } >> "$BODY_FILE"
+          echo "body-file=$BODY_FILE" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag + GitHub Release
+        # Skipped entirely when: dry-run (manual test proof — see workflow
+        # header), zero lanes succeeded (nothing to publish), or today's
+        # tag already exists (idempotent guard, mirroring release-
+        # autotag.yml's "refuse if tag already exists" check — here a soft
+        # skip rather than a hard failure, since this isn't a human-
+        # triggered release gate). The per-day concurrency group (workflow
+        # header) closes the realistic race — two REAL runs the same day
+        # now serialize instead of racing. A residual TOCTOU still exists
+        # between this check and `git push` for anything OUTSIDE that
+        # grouping (e.g. a maintainer pushing a same-named tag by hand at
+        # the same instant) — that fails LOUDLY at `git push`
+        # (already-exists / non-fast-forward), never silently, so it's an
+        # acceptable residual gap rather than a correctness bug.
+        if: needs.nightly-date.outputs.dry-run != 'true' && steps.assets.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.nightly-date.outputs.tag }}"
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::notice::Tag $TAG already exists — skipping (already published today)."
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Nightly $TAG"
+          git push origin "$TAG"
+          gh release create "$TAG" dist/trailer-*.* \
+            --repo "${{ github.repository }}" \
+            --title "Nightly $TAG" \
+            --prerelease \
+            --notes-file "${{ steps.body.outputs.body-file }}"
+          echo "Published nightly release $TAG"
+
+      - name: Dry-run preview
+        if: needs.nightly-date.outputs.dry-run == 'true'
+        run: |
+          echo "## Nightly dry run — nothing published" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "Would have tagged: \`${{ needs.nightly-date.outputs.tag }}\`" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "Would have attached (${{ steps.assets.outputs.count }}):" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          ls -la dist/ >> "$GITHUB_STEP_SUMMARY" 2>&1 || echo "(none)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "### Release body preview" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          cat "${{ steps.body.outputs.body-file }}" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Retention cleanup (delete releases older than 6 months, keep tags)
+        # ~183 days. Deletes the GitHub Release object (and its assets)
+        # via `gh release delete` WITHOUT --cleanup-tag, so the underlying
+        # git tag is never touched — nightly-YYYYMMDD..HEAD diffing and
+        # bisecting an old nightly both keep working indefinitely. Only
+        # the multi-hundred-MB binary assets age out. Skipped on dry-run
+        # so a test dispatch never deletes real history. Each delete call
+        # is soft-failed (`|| echo "::warning::..."`) rather than letting
+        # `set -e` abort the loop — a release that's already gone, or a
+        # transient API hiccup, is housekeeping noise and must not be
+        # conflated with (or mask) the per-lane failure signal the next
+        # step reports.
+        if: needs.nightly-date.outputs.dry-run != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          CUTOFF=$(date -u -d '183 days ago' +%Y-%m-%d)
+          echo "Deleting nightly-* releases published before $CUTOFF (assets only; tags kept)."
+          # --limit 400 comfortably covers the ~183-day retention window
+          # at one real nightly per day (≈183 releases) plus headroom for
+          # irregular entries; gh release list silently stops paginating
+          # past this limit, so raise it if the daily cadence or window
+          # ever changes.
+          gh release list --repo "${{ github.repository }}" --limit 400 \
+            --json tagName,publishedAt \
+            --jq '.[] | select(.tagName | startswith("nightly-")) | "\(.tagName) \(.publishedAt)"' \
+            | while read -r tag published; do
+                pub_date="${published%%T*}"
+                if [[ "$pub_date" < "$CUTOFF" ]]; then
+                  echo "Deleting $tag (published $pub_date, tag kept)"
+                  gh release delete "$tag" --repo "${{ github.repository }}" --yes \
+                    || echo "::warning::Failed to delete aged-out nightly release $tag (already gone, or a transient API error) — continuing."
+                fi
+              done
+
+      - name: Fail the run if any lane didn't fully pass
+        # This is what surfaces a lane failure: even though the release
+        # (if any lane went green) already published above, this step
+        # makes the WORKFLOW RUN itself red whenever a lane isn't a clean
+        # success — which is what triggers GitHub's built-in "scheduled
+        # workflow failed" notification to repo watchers, no issues:write
+        # permission or dedup logic required. `always()` is required here:
+        # without it, an earlier step failing (e.g. a retention-cleanup
+        # hiccup that somehow still aborted despite the soft-fail above)
+        # would SKIP this step by default, losing the per-lane diagnostic
+        # and conflating an unrelated housekeeping failure with the lane
+        # signal this step exists to report.
+        if: |
+          always() &&
+          (needs.nightly-linux.result != 'success' ||
+           needs.nightly-windows.result != 'success' ||
+           needs.nightly-macos.result != 'success')
+        run: |
+          echo "::error::At least one nightly lane did not fully pass (build + unit + UAT). Linux=${{ needs.nightly-linux.result }} Windows=${{ needs.nightly-windows.result }} macOS=${{ needs.nightly-macos.result }}"
+          exit 1

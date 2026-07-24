@@ -223,6 +223,51 @@ without cutting a tag.
 
 ---
 
+## Nightly builds
+
+[`nightly.yml`](.github/workflows/nightly.yml) is an unattended, scheduled
+(10:00 UTC daily) signal channel — distinct from both dev builds and a
+tagged release:
+
+- It runs the **full test suite** (unit tests **and** UAT, `ctest -L uat`)
+  on **all three OSes** every night: Linux native, Windows via the
+  existing Wine cross-build workers, and macOS on the owner's self-hosted
+  Apple Silicon runner (`[self-hosted, macOS, ARM64]`) — the same runner
+  `dev-build.yml`'s `dev-macos` job targets. macOS UAT and Windows UAT are
+  both **new** coverage nightly adds; neither runs anywhere else today.
+- **Partial success**: an OS lane's artifact is published only if that
+  lane's build **and** both test suites pass. A lane failing does not
+  block the other two lanes' artifacts — the mac runner going offline for
+  hours is expected and never holds up Linux/Windows.
+- Each successful night is tagged `nightly-YYYYMMDD` (immutable, one per
+  night, never rewritten) and published as a **prerelease**, with a
+  per-OS ✅/❌ status table and a `scripts/release-notes.sh`-generated
+  summary of commits since the previous successful nightly in the body.
+  A night with zero successful lanes publishes no release.
+- A lane not fully passing turns the workflow run itself red, which is
+  what surfaces the failure via GitHub's built-in failed-scheduled-
+  workflow notification — no separate issue-filing.
+- Release **assets** for nightly tags are deleted after ~6 months
+  (`gh release delete`, no `--cleanup-tag`); the git tags themselves are
+  never deleted, so `nightly-YYYYMMDD..HEAD` diffing and bisecting stay
+  possible indefinitely.
+- A `nightly-date` job resolves today's UTC date and a concurrency key once,
+  before any lane starts, and every lane + the publish job carry a
+  job-level `concurrency:` keyed off it: same-day real runs (the schedule,
+  or a manual `dry_run:false` dispatch) serialize instead of double-booking
+  the single-instance mac runner; different days never contend, so one
+  night's stuck mac wait can't block the next.
+- Nightly never touches `VERSION`, never tags a `v*` release, and does
+  not modify `release.yml` / `release-publish.yml` / `release-autotag.yml`
+  — it is purely additive.
+- Manual testing: `workflow_dispatch` on `nightly.yml` defaults
+  `dry_run` to `true`, which runs every lane normally but skips the tag,
+  the Release, and the retention cleanup (previewed in the run's step
+  summary instead). Pass `dry_run: false` to cut a real nightly on
+  demand rather than waiting for the schedule.
+
+---
+
 ## Recovery paths
 
 ### "A successful `Release` run wasn't found for this SHA"
