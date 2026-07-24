@@ -274,12 +274,18 @@ jobs:
     if: github.event_name == 'workflow_dispatch' && inputs.build_macos == true
     name: macOS dev .dmg build (Apple Silicon, unsigned)
     # TRIAL (2026-07-24): temporarily targeting the owner's self-hosted
-    # M4 MacBook Pro runner (label runners-Virtual-Machine) instead of
-    # the GitHub-hosted macos-14 fleet, to measure pickup latency and
-    # build time on real hardware. Revert to macos-14 (or make this
-    # configurable) once the trial's findings are reviewed — see the
-    # accompanying PR for the run this produced.
-    runs-on: runners-Virtual-Machine
+    # M4 MacBook Pro runner instead of the GitHub-hosted macos-14 fleet,
+    # to measure pickup latency and build time on real hardware. Revert
+    # to macos-14 (or make this configurable) once the trial's findings
+    # are reviewed — see the accompanying PR for the runs this produced.
+    #
+    # Lesson learned mid-trial: `runners-Virtual-Machine` is this
+    # runner's registered NAME, not a label — `runs-on: runners-Virtual-Machine`
+    # matches nothing and queues forever (see run 30065862397, never
+    # picked up). Self-hosted runners are targeted by their `labels:`
+    # array; this runner's actual labels are self-hosted, macOS, ARM64
+    # (no custom label such as `utm`).
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
