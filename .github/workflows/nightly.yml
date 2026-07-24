@@ -53,6 +53,20 @@
 # same-day-same-mode grouping (see the "Create tag" step's comment on the
 # residual TOCTOU there).
 #
+# k8s pool sharing: nightly-linux and nightly-windows both run on the
+# shared trailer-k8s pool (also used by ci.yml/release.yml). They are
+# SERIALIZED, not parallel — nightly-windows `needs: [nightly-date,
+# nightly-linux]` + `if: always() && needs.nightly-date.result ==
+# 'success'`, so it starts only once Linux's job has finished (success or
+# failure never gates it, only completion-timing does). This was added
+# after bootstrap run 30099999309 (2026-07-24) fired nightly.yml
+# simultaneously with a routine ci.yml PR-validate run, putting FOUR heavy
+# compile jobs on the pool at once; pods were evicted mid-Build on both
+# lanes and the pool stalled for ~90 minutes. Nightly carries no latency
+# requirement, so trading parallelism for peak-footprint safety here is
+# free. The self-hosted macOS lane is unaffected — different runner
+# entirely — and stays fully parallel.
+#
 # Failure surfacing: nightly-publish's LAST step fails the job (and so the
 # whole workflow run) whenever any lane's result isn't `success` — even
 # though the release itself, if any lane went green, was already published
@@ -281,7 +295,18 @@ jobs:
 
   nightly-windows:
     name: Windows full lane (Wine cross-build + unit + UAT)
-    needs: [nightly-date]
+    # Serialized AFTER nightly-linux (see `needs`/`if` below), not parallel
+    # to it. Both share the same trailer-k8s pool; bootstrap run 30099999309
+    # (2026-07-24) fired nightly.yml and ci.yml simultaneously, putting two
+    # full heavy-compile lanes on the pool at once — pods got evicted mid-
+    # Build and the pool stalled ~90 min. `needs: [nightly-date,
+    # nightly-linux]` orders Windows to start only once Linux's job has
+    # finished (success OR failure — `if: always()` below), halving nightly's
+    # peak k8s footprint without making a Linux failure skip Windows. The
+    # mac lane stays fully parallel (different runner entirely). Nightly has
+    # no latency requirement, so the added wall-clock is a non-issue.
+    needs: [nightly-date, nightly-linux]
+    if: always() && needs.nightly-date.result == 'success'
     runs-on: trailer-k8s
     # release.yml's windows-cross (build + bundle + unit tests only) budgets
     # 60. UAT adds a second full pass of Wine-emulated test binaries

@@ -257,6 +257,13 @@ tagged release:
   or a manual `dry_run:false` dispatch) serialize instead of double-booking
   the single-instance mac runner; different days never contend, so one
   night's stuck mac wait can't block the next.
+- Linux and Windows are serialized on the shared `trailer-k8s` pool
+  (Windows `needs:` Linux and waits for it to finish, success or not) —
+  running both simultaneously alongside a routine `ci.yml` PR-validate run
+  evicted pods and stalled the pool for ~90 minutes the first time this
+  ran (2026-07-24). Nightly has no latency requirement, so trading
+  parallelism for a safe peak footprint costs nothing. The self-hosted
+  macOS lane is unaffected and stays fully parallel.
 - Nightly never touches `VERSION`, never tags a `v*` release, and does
   not modify `release.yml` / `release-publish.yml` / `release-autotag.yml`
   — it is purely additive.
