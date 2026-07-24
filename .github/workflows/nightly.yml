@@ -121,25 +121,6 @@ on:
         required: false
         type: boolean
         default: true
-  # TEMPORARY — bootstrap-registration ONLY, remove before this PR is
-  # marked ready-for-review. GitHub will not let `workflow_dispatch` fire
-  # for a workflow that has never existed on the default branch (a
-  # workflow only gets a dispatchable ID once it's on `main`, or once it
-  # has run at least once from somewhere) — see
-  # https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#workflow_dispatch.
-  # This branch-scoped `push:` trigger fires exactly once (this commit),
-  # which registers nightly.yml so `workflow_dispatch --ref
-  # claude/nightly-release-pipeline` starts working afterward, AND
-  # doubles as the actual end-to-end proof run (all three lanes + the
-  # publish job's dry-run preview). It is inherently incapable of
-  # creating a real tag/release/deletion: the DRY-RUN INVARIANT in
-  # nightly-date's resolve step below is default-closed — only `schedule`
-  # or an explicit `workflow_dispatch` dry_run=false count as real, so
-  # this `push` event forces dry-run regardless. Removed once the
-  # bootstrap run is observed and the workflow shows up in `gh workflow
-  # list` / the Actions tab.
-  push:
-    branches: [claude/nightly-release-pipeline]
 
 # Least privilege at the top; nightly-publish elevates to contents: write
 # for itself only (tag push + release creation), matching release-
@@ -172,10 +153,12 @@ jobs:
         # dry_run input is explicitly false). Every other event is FORCED
         # dry-run, with no enumeration of "safe" events to keep in sync.
         # This is deliberately the inverse of "dry-run only when asked" —
-        # it means any trigger this workflow doesn't yet know about (e.g.
-        # a temporary bootstrap `push:` trigger, see the `on:` block) is
-        # safe by construction: it can never create a tag/release/delete
-        # a retained one, because it can never satisfy either REAL branch
+        # it means any trigger this workflow doesn't currently declare
+        # (e.g. the temporary bootstrap `push:` trigger used to register
+        # this workflow with GitHub pre-merge, since removed) is safe by
+        # construction if it's ever added back: it can never create a
+        # tag/release/delete a retained one, because it can never satisfy
+        # either REAL branch
         # below.
         run: |
           set -euo pipefail
@@ -222,12 +205,23 @@ jobs:
     env:
       # k8s-OOM guard (see release.yml/ci.yml): bare `cmake --build …
       # --parallel` honors these, and unbounded parallelism OOMKilled the
-      # self-hosted trailer-k8s pods before. Scoped to the k8s-backed
-      # lanes only — the self-hosted macOS lane runs on dedicated
-      # hardware and shouldn't be needlessly throttled by a k8s-specific
-      # guard.
-      CMAKE_BUILD_PARALLEL_LEVEL: 2
-      CTEST_PARALLEL_LEVEL: 2
+      # self-hosted trailer-k8s pods before. NIGHTLY-SPECIFIC: -j1, not
+      # ci.yml's -j2 — on 2026-07-24, this lane's pod was killed mid-Build
+      # FOUR times in a row (bootstrap runs #1-#3, ~10-13 min into a cold-
+      # ccache full compile at -j2), while ci.yml's warm-cache -j2 jobs on
+      # the same pool survived throughout. Cold-cache + -j2 is the
+      # difference: nightly always compiles from scratch (its own ccache
+      # key never warms, since it never gets a chance to save), so this
+      # lane's peak memory during that compile is the heaviest, most
+      # reliably-reproduced load this pool sees. Halving parallelism here
+      # roughly halves that peak. Nightly has no latency requirement, so
+      # the wall-clock cost is free. Scoped to nightly-linux ONLY — not
+      # ci.yml (its warm-cache -j2 jobs aren't the ones dying) and not
+      # nightly-windows (survived at -j2 twice: bootstrap #2 and #3).
+      # Revisit (raise back to 2) once the trailer-k8s pool is resized —
+      # owner investigating cluster-side.
+      CMAKE_BUILD_PARALLEL_LEVEL: 1
+      CTEST_PARALLEL_LEVEL: 1
     steps:
       - uses: actions/checkout@v7
         with:
