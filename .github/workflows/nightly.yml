@@ -101,6 +101,25 @@ on:
         required: false
         type: boolean
         default: true
+  # TEMPORARY — bootstrap-registration ONLY, remove before this PR is
+  # marked ready-for-review. GitHub will not let `workflow_dispatch` fire
+  # for a workflow that has never existed on the default branch (a
+  # workflow only gets a dispatchable ID once it's on `main`, or once it
+  # has run at least once from somewhere) — see
+  # https://docs.github.com/en/actions/using-workflows/events-that-trigger-workflows#workflow_dispatch.
+  # This branch-scoped `push:` trigger fires exactly once (this commit),
+  # which registers nightly.yml so `workflow_dispatch --ref
+  # claude/nightly-release-pipeline` starts working afterward, AND
+  # doubles as the actual end-to-end proof run (all three lanes + the
+  # publish job's dry-run preview). It is inherently incapable of
+  # creating a real tag/release/deletion: the DRY-RUN INVARIANT in
+  # nightly-date's resolve step below is default-closed — only `schedule`
+  # or an explicit `workflow_dispatch` dry_run=false count as real, so
+  # this `push` event forces dry-run regardless. Removed once the
+  # bootstrap run is observed and the workflow shows up in `gh workflow
+  # list` / the Actions tab.
+  push:
+    branches: [claude/nightly-release-pipeline]
 
 # Least privilege at the top; nightly-publish elevates to contents: write
 # for itself only (tag push + release creation), matching release-
@@ -126,12 +145,26 @@ jobs:
         # date, not the trigger date, and could silently collide with the
         # next scheduled run's tag-exists check. Every downstream job
         # reads this job's outputs instead of recomputing `date -u` late.
+        #
+        # DRY-RUN INVARIANT (default-closed, permanent — not just for
+        # bootstrapping): real (tag/release-creating) mode requires
+        # (event == schedule) OR (event == workflow_dispatch AND the
+        # dry_run input is explicitly false). Every other event is FORCED
+        # dry-run, with no enumeration of "safe" events to keep in sync.
+        # This is deliberately the inverse of "dry-run only when asked" —
+        # it means any trigger this workflow doesn't yet know about (e.g.
+        # a temporary bootstrap `push:` trigger, see the `on:` block) is
+        # safe by construction: it can never create a tag/release/delete
+        # a retained one, because it can never satisfy either REAL branch
+        # below.
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
-            DRY_RUN=true
-          else
+          if [ "${{ github.event_name }}" = "schedule" ]; then
             DRY_RUN=false
+          elif [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "false" ]; then
+            DRY_RUN=false
+          else
+            DRY_RUN=true
           fi
           DATE="$(date -u +%Y%m%d)"
           TAG="nightly-$DATE"
