@@ -9,12 +9,18 @@
 #     centrally — Linux native, Windows via the existing Wine cross-build
 #     workers, macOS on the owner's self-hosted Apple Silicon runner;
 #   - ships PARTIAL-SUCCESS releases: any OS lane that builds and passes its
-#     full test suite gets its artifact published, even if the other two
-#     lanes are red. A lane's "Stage + upload" step is always its LAST step
-#     (no continue-on-error anywhere above it), so an artifact only exists
-#     to publish if that lane's build + unit tests + UAT all passed —
-#     partial-success semantics fall out of ordinary step `if: success()`
-#     with no extra pass/fail plumbing;
+#     GATING checks gets its artifact published, even if the other two
+#     lanes are red. A lane's "Stage + upload" step is always its LAST step,
+#     so an artifact only exists to publish if every step above it that can
+#     fail the job (no `continue-on-error`) succeeded — partial-success
+#     semantics fall out of ordinary step `if: success()` with no extra
+#     pass/fail plumbing. The ONE exception, and it's deliberate: Windows'
+#     "UAT suite (Wine)" step DOES carry `continue-on-error: true` (owner
+#     decision, 2026-07-24) — Wine UAT is informational, not gating, until a
+#     real Windows CI runner exists; see that step's comment and
+#     docs/backlog/2026-07-24-wine-uat-failures-triage.md. Its real pass
+#     count still surfaces, non-silently, in the release body's status
+#     table (never just dropped);
 #   - tags each successful night `nightly-YYYYMMDD` (immutable, one per
 #     night — never a rolling/force-moved tag) and carries a semi-automated
 #     "since last nightly" summary (scripts/release-notes.sh over the
@@ -319,6 +325,12 @@ jobs:
     env:
       CMAKE_BUILD_PARALLEL_LEVEL: 2
       CTEST_PARALLEL_LEVEL: 2
+    outputs:
+      # Wine UAT is non-gating (see the step below) so its outcome doesn't
+      # show up in this job's own `result` — surfaced explicitly here
+      # instead, for nightly-publish's release-body status table.
+      wine-uat-passed: ${{ steps.wine_uat.outputs.passed }}
+      wine-uat-total: ${{ steps.wine_uat.outputs.total }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -409,16 +421,45 @@ jobs:
         # plugin — and scripts/build-windows-native.ps1 (the disabled MSVC
         # job's script) already runs `ctest -L uat` as a matter of course,
         # so running it under Wine too is a reasonable extension, not a
-        # fight with a known hard blocker. If this turns out to be
-        # persistently flaky under Wine specifically, that is itself
-        # useful nightly signal — see the two Wine cross-thread-handle
-        # backlog items (docs/backlog/2026-07-19-wine-cross-thread-editor-
-        # save.md, 2026-07-21-wine-keep-restore-file-move-open-handle.md)
-        # for precedent on Wine-only artifacts worth tracking separately
-        # rather than silently excluding.
+        # fight with a known hard blocker.
+        #
+        # NON-GATING (owner decision, 2026-07-24): bootstrap run 30104846942
+        # found Wine unit tests fully green (57/57) but Wine UAT at 23/40 —
+        # tracked in docs/backlog/2026-07-24-wine-uat-failures-triage.md,
+        # not fixed here. Wine is a stand-in for Windows, not the platform
+        # Trailer ships to, so a UAT regression under Wine emulation
+        # specifically must not block a build+unit-green Windows artifact
+        # from publishing — this becomes a gating step again once a real
+        # Windows CI runner exists. `continue-on-error: true` masks this
+        # step's CONCLUSION to success (so the job's own `result`, and the
+        # `if: success()`-gated staging steps below, are unaffected by a
+        # Wine UAT failure), while the script still captures the REAL
+        # pass/total counts as step outputs (surfaced job-wide via
+        # `outputs:` above) so the count stays visible — informational,
+        # never silent — in nightly-publish's release-body status table.
+        id: wine_uat
+        continue-on-error: true
         working-directory: build-win
         timeout-minutes: 30
-        run: ctest -C Release -L uat --output-on-failure
+        run: |
+          set +e
+          ctest -C Release -L uat --output-on-failure | tee /tmp/wine-uat.log
+          # ctest's own summary line reads e.g. "58% tests passed, 17 tests
+          # failed out of 40". Parse PASSED/TOTAL from it directly rather
+          # than trusting ctest's exit code (masked by continue-on-error
+          # anyway) — falls back to empty (rendered as "unknown" downstream)
+          # if the line is missing, e.g. ctest crashed before any case ran.
+          TOTAL=$(grep -oE 'out of [0-9]+' /tmp/wine-uat.log | grep -oE '[0-9]+' | tail -1)
+          FAILED=$(grep -oE '[0-9]+ tests failed' /tmp/wine-uat.log | grep -oE '^[0-9]+' | tail -1)
+          if [ -n "$TOTAL" ] && [ -n "$FAILED" ]; then
+            PASSED=$((TOTAL - FAILED))
+          else
+            PASSED=""
+            TOTAL=""
+          fi
+          echo "passed=$PASSED" >> "$GITHUB_OUTPUT"
+          echo "total=$TOTAL"   >> "$GITHUB_OUTPUT"
+          echo "Wine UAT: ${PASSED:-unknown}/${TOTAL:-unknown} passed (non-gating)"
         env:
           WINEPREFIX: ${{ runner.temp }}/wineprefix
           WINEDEBUG: -all
@@ -643,18 +684,42 @@ jobs:
         run: |
           set -euo pipefail
           BODY_FILE="$(mktemp)"
+
+          # Windows row carries an extra, NON-GATING annotation: Wine UAT's
+          # pass count (owner decision 2026-07-24 — see nightly-windows'
+          # "UAT suite (Wine)" step and docs/backlog/2026-07-24-wine-uat-
+          # failures-triage.md). A red Windows job result always means
+          # build/bundle/unit failed (Wine UAT can never cause that, per
+          # continue-on-error on that step), so the ❌ branch below never
+          # needs to reference the Wine UAT counts at all.
+          if [ "${{ needs.nightly-windows.result }}" = "success" ]; then
+            WIN_PASSED="${{ needs.nightly-windows.outputs.wine-uat-passed }}"
+            WIN_TOTAL="${{ needs.nightly-windows.outputs.wine-uat-total }}"
+            if [ -n "$WIN_TOTAL" ] && [ "$WIN_PASSED" = "$WIN_TOTAL" ]; then
+              WIN_ROW="✅ build+unit+UAT (Wine UAT $WIN_PASSED/$WIN_TOTAL)"
+            elif [ -n "$WIN_TOTAL" ]; then
+              WIN_ROW="✅ build+unit, ⚠️ Wine UAT $WIN_PASSED/$WIN_TOTAL — informational, non-gating, see docs/backlog/2026-07-24-wine-uat-failures-triage.md"
+            else
+              WIN_ROW="✅ build+unit, ⚠️ Wine UAT count unavailable this run"
+            fi
+          else
+            WIN_ROW="❌ (${{ needs.nightly-windows.result }})"
+          fi
+
           {
             echo "Automated nightly build of Trailer's \`main\` branch. Unsigned,"
             echo "like dev-build.yml's artifacts — see PHILOSOPHY.md for what to"
             echo "expect from a 0.x build. A lane below marked ❌ is NOT included;"
-            echo "see its job log in this run for what failed."
+            echo "see its job log in this run for what failed. Windows' Wine UAT"
+            echo "count (⚠️) is informational only — it never blocks the artifact;"
+            echo "see the linked backlog item."
             echo
             echo "## Build status"
             echo
             echo "| OS | Result |"
             echo "|---|---|"
             echo "| Linux   | $([ "${{ needs.nightly-linux.result }}" = "success" ] && echo "✅" || echo "❌ (${{ needs.nightly-linux.result }})") |"
-            echo "| Windows | $([ "${{ needs.nightly-windows.result }}" = "success" ] && echo "✅" || echo "❌ (${{ needs.nightly-windows.result }})") |"
+            echo "| Windows | $WIN_ROW |"
             echo "| macOS   | $([ "${{ needs.nightly-macos.result }}" = "success" ] && echo "✅" || echo "❌ (${{ needs.nightly-macos.result }})") |"
             echo
             cat "${{ steps.changelog.outputs.body-file }}"

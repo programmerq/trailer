@@ -236,9 +236,16 @@ tagged release:
   `dev-build.yml`'s `dev-macos` job targets. macOS UAT and Windows UAT are
   both **new** coverage nightly adds; neither runs anywhere else today.
 - **Partial success**: an OS lane's artifact is published only if that
-  lane's build **and** both test suites pass. A lane failing does not
+  lane's build **and** its gating tests pass. A lane failing does not
   block the other two lanes' artifacts — the mac runner going offline for
-  hours is expected and never holds up Linux/Windows.
+  hours is expected and never holds up Linux/Windows. One deliberate
+  exception: Windows' Wine UAT is **non-gating** (owner decision,
+  2026-07-24) — a real Windows CI runner doesn't exist yet, Wine is a
+  stand-in, and Wine UAT's own quirks (bootstrap run 30104846942 found
+  17/40 failures — see `docs/backlog/2026-07-24-wine-uat-failures-
+  triage.md`) shouldn't block a build+unit-green Windows artifact. The
+  Wine UAT pass count still surfaces, non-silently, as an informational
+  ⚠️ annotation on the release body's Windows row.
 - Each successful night is tagged `nightly-YYYYMMDD` (immutable, one per
   night, never rewritten) and published as a **prerelease**, with a
   per-OS ✅/❌ status table and a `scripts/release-notes.sh`-generated
