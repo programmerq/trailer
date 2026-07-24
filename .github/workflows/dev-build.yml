@@ -273,7 +273,19 @@ jobs:
     # never evaluates it.)
     if: github.event_name == 'workflow_dispatch' && inputs.build_macos == true
     name: macOS dev .dmg build (Apple Silicon, unsigned)
-    runs-on: macos-14
+    # TRIAL (2026-07-24): temporarily targeting the owner's self-hosted
+    # M4 MacBook Pro runner instead of the GitHub-hosted macos-14 fleet,
+    # to measure pickup latency and build time on real hardware. Revert
+    # to macos-14 (or make this configurable) once the trial's findings
+    # are reviewed — see the accompanying PR for the runs this produced.
+    #
+    # Lesson learned mid-trial: `runners-Virtual-Machine` is this
+    # runner's registered NAME, not a label — `runs-on: runners-Virtual-Machine`
+    # matches nothing and queues forever (see run 30065862397, never
+    # picked up). Self-hosted runners are targeted by their `labels:`
+    # array; this runner's actual labels are self-hosted, macOS, ARM64
+    # (no custom label such as `utm`).
+    runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -284,6 +296,23 @@ jobs:
           # macOS only runs on dispatch, so the ref is always inputs.ref
           # (or its '' default -> the dispatched ref).
           ref: ${{ inputs.ref }}
+
+      - name: Add Homebrew to PATH
+        # TRIAL fix (2026-07-24): the self-hosted runner (an Apple Silicon
+        # M4 VM) has Homebrew installed at its standard arm64 prefix
+        # (/opt/homebrew), but the actions-runner service process's own
+        # environment doesn't inherit the interactive shell's PATH, so
+        # `brew`/`cmake`/`ninja` were all invisible to job steps
+        # ("brew: command not found", exit 127 — see run 30070206290)
+        # even though genuinely installed on the VM. Homebrew symlinks
+        # every formula's binaries into this one prefix, so prepending it
+        # once here covers brew + cmake + ninja for the rest of the job.
+        # GitHub-hosted macos-14 runners don't need this (their images
+        # ship Homebrew already on PATH), so this step is a no-op there
+        # if this job is ever pointed back at macos-14 (`brew --prefix`
+        # on Intel image `/usr/local` — this /opt/homebrew path is
+        # arm64-specific to this runner).
+        run: echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
 
       - name: Install Qt
         # Same pin as release.yml's macos-build / setup-linux-build so
