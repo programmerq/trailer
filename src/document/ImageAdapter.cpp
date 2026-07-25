@@ -775,6 +775,9 @@ void ImageDocument::reapplyFitMode() {
         return;
     if (m_zoomMode == ZoomMode::FitToWidth) {
         applyScale(static_cast<double>(availW) / logical.width());
+        // See the FitInView branch below: the zoom readout must track
+        // every fit recompute, not just the initial one.
+        m_capabilityNotifier.notifyChanged();
         return;
     }
     // FitInView: constrain both dimensions.
@@ -783,6 +786,25 @@ void ImageDocument::reapplyFitMode() {
     const double scaleW = static_cast<double>(availW) / logical.width();
     const double scaleH = static_cast<double>(availH) / logical.height();
     applyScale(std::min(scaleW, scaleH));
+    // Fit-mode scale just changed — notify on EVERY reapply, not only the
+    // one-shot initial fit (applyInitialFitZoom already notifies for that
+    // first tick). FitModeResizeWatcher calls reapplyFitMode() on every
+    // later viewport Resize event too (a window resize, or — on some
+    // platforms — the layout settling in a further pass after the initial
+    // fit already committed a scale). Before this fix that later path
+    // silently rescaled the render without telling MainWindow to refresh
+    // the zoomIndicator label: a real product bug (a "lying control" per
+    // PHILOSOPHY.md), not a test artifact — the status-bar percentage
+    // could freeze at a stale value while the image kept rescaling
+    // underneath it. Caught by
+    // TestImageScale::readoutMatchesRenderAfterAsyncFit failing on the
+    // macOS CI runner, where the two settle-widths straddle a rounding
+    // boundary that Linux/Wine's offscreen geometry happened not to hit.
+    // notifyChanged() is the same signal applyInitialFitZoom() already
+    // fires; MainWindow::onDocumentCapabilitiesChanged() just re-reads
+    // the current zoomFactor(), so firing it more often here is cheap and
+    // idempotent, including across a live resize drag.
+    m_capabilityNotifier.notifyChanged();
 }
 
 namespace {

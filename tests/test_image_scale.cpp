@@ -103,6 +103,7 @@ class TestImageScale : public QObject {
     void ordinaryOpenKeepsFit();
     void smallImageResizeDoesNotUpscale();
     void readoutMatchesRenderAfterAsyncFit();
+    void reapplyFitModeNotifiesOnEveryRescale();
     void pngRoundTripStripsDprThenRecovers();
     void pendingCaptureDprConsumedOncePerBatch();
     void coordinateRoundTripInvertsAtDpr2();
@@ -411,14 +412,29 @@ void TestImageScale::readoutMatchesRenderAfterAsyncFit() {
     // capped at 90% of the offscreen 800x800 screen -> 720x720) and forces
     // the same shrink-to-fit path.
     //
-    // The width (1975) is chosen deliberately: the readout is snapshotted by
-    // updateZoomIndicator when the viewport is 704 px wide, but the render
-    // settles one step later at a 718 px viewport WITHOUT re-notifying the
-    // readout (a documented pre-existing async limitation). At 1975 px both
-    // 704/1975 = 35.65% and 718/1975 = 36.35% round to the SAME 36%, so the
-    // readout and render agree; at 2000 (35.2% vs 35.9%) they straddle 35.5%
-    // and the readout would read 35% against a 36% render. The offscreen
-    // plugin lays out identically under Wine, so this holds in CI too.
+    // The width (1975) still forces the same multi-step layout settle this
+    // test wants to exercise (the viewport can be measured more than once
+    // before it reaches its final size, e.g. 704 px then 718 px). That used
+    // to matter a great deal: reapplyFitMode() (called by
+    // FitModeResizeWatcher on every viewport Resize, not just the first)
+    // recomputed the render scale on the LATER measurement but never told
+    // the zoom readout, which was set once from an EARLIER measurement —
+    // so whether this test passed depended on both widths happening to
+    // round to the same percentage (at 1975 px, 704/1975 = 35.65% and
+    // 718/1975 = 36.35% both round to 36; at 2000 px, 35.2%/35.9% straddle
+    // 35.5% and don't). That was a real product bug (a "lying control"
+    // per PHILOSOPHY.md) masked by this fixture's dimensions, not merely a
+    // test artifact — caught when the self-hosted macOS runner's window
+    // geometry landed on a straddling pair of widths instead of an
+    // agreeing one (docs/backlog/2026-07-24-test-image-scale-macos-failure.md).
+    // Fixed at the source: reapplyFitMode() now calls notifyChanged() on
+    // every rescale (src/document/ImageAdapter.cpp), so the readout always
+    // tracks the CURRENT render scale regardless of how many measurement
+    // passes it took to get there — the exact-1975 choice is no longer
+    // load-bearing for correctness, only for reliably forcing the
+    // shrink-to-fit + multi-step-settle path this test exercises.
+    // reapplyFitModeNotifiesOnEveryRescale() below pins the fix directly,
+    // independent of any particular viewport width.
     QImage big(1975, 1300, QImage::Format_ARGB32);
     big.fill(qRgb(180, 190, 200));
     QVERIFY(big.save(png, "PNG"));
@@ -494,6 +510,72 @@ void TestImageScale::readoutMatchesRenderAfterAsyncFit() {
              qPrintable(QStringLiteral("readout '%1' must match render %2 after async fit")
                             .arg(indicator->text())
                             .arg(expected)));
+}
+
+void TestImageScale::reapplyFitModeNotifiesOnEveryRescale() {
+    // Direct, platform-independent regression for the root cause behind
+    // the macOS CI failure in readoutMatchesRenderAfterAsyncFit() above:
+    // reapplyFitMode() is called by FitModeResizeWatcher on EVERY viewport
+    // Resize event (a live window resize, or -- as on the self-hosted
+    // macOS runner -- a platform's own multi-pass layout settling after
+    // the initial fit already committed a scale), not just once. Before
+    // the fix, only applyInitialFitZoom() called
+    // capabilityNotifier()->notifyChanged() (the signal MainWindow's zoom
+    // readout listens to); a LATER resize-driven re-fit changed
+    // scaleFactor() silently. That is a real product bug -- a "lying
+    // control" per PHILOSOPHY.md, since the status-bar zoom percentage
+    // could freeze at a stale value while the image kept rescaling
+    // underneath it -- not a quirk of any one test fixture's dimensions.
+    // This test forces the exact shape of the race directly (two viewport
+    // widths that give genuinely different fit scales) instead of relying
+    // on incidental window-layout timing, so it holds on every platform,
+    // independent of whatever the OS's real settle widths happen to be.
+    ImageDocument doc{QString()};
+    doc.setImageForTest(makeDprImage(4000, 3000, 1.0), /*captureOrigin=*/false);
+    QWidget *view = doc.createView(nullptr);
+    auto *scroll = qobject_cast<QScrollArea *>(view);
+    QVERIFY(scroll != nullptr);
+    scroll->resize(1200, 800);
+    scroll->show();
+    if (!pumpUntil([&] { return scroll->viewport()->width() > 0; })) {
+        delete view;
+        QSKIP("viewport does not settle under offscreen platform");
+    }
+
+    doc.triggerInitialZoomForTest();
+    QCOMPARE(doc.zoomMode(), ZoomMode::FitInView);
+    const double firstScale = doc.scaleFactor();
+
+    auto *notifier = doc.capabilityNotifier();
+    QVERIFY2(notifier != nullptr, "ImageDocument should expose a CapabilityNotifier");
+    int notifyCount = 0;
+    double scaleAtLastNotify = -1.0;
+    QObject::connect(notifier, &CapabilityNotifier::capabilitiesChanged, [&]() {
+        ++notifyCount;
+        scaleAtLastNotify = doc.scaleFactor();
+    });
+
+    // Simulate the platform settling the viewport to a different size on a
+    // later tick -- the same shape as the macOS runner's 704px -> 718px
+    // second measurement, just forced deterministically instead of hoping
+    // the offscreen layout happens to produce two differing passes.
+    scroll->viewport()->resize(1360, 815);
+    doc.reapplyFitMode();
+
+    QVERIFY2(std::abs(doc.scaleFactor() - firstScale) > 1e-6,
+             qPrintable(QStringLiteral("test setup should force a genuine rescale on the "
+                                       "second resize, got %1 both times")
+                            .arg(doc.scaleFactor())));
+    QVERIFY2(notifyCount >= 1,
+             "reapplyFitMode() must notify (so MainWindow can refresh the zoom readout) "
+             "whenever it changes the render scale, not just on the one-shot initial fit");
+    QVERIFY2(std::abs(scaleAtLastNotify - doc.scaleFactor()) < 1e-9,
+             qPrintable(QStringLiteral("the notified scale (%1) must match the CURRENT "
+                                       "render scale (%2) -- one source of truth")
+                            .arg(scaleAtLastNotify)
+                            .arg(doc.scaleFactor())));
+
+    delete view;
 }
 
 void TestImageScale::pngRoundTripStripsDprThenRecovers() {
