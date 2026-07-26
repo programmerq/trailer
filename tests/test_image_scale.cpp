@@ -32,6 +32,7 @@
 #include <QPixmap>
 #include <QPointF>
 #include <QScrollArea>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QWidget>
 #include <QtTest/QtTest>
@@ -110,6 +111,8 @@ class TestImageScale : public QObject {
     void reapplyFitModeNotifiesOnEveryRescale();
     void reapplyFitModeSkipsNotifyWhenScaleUnchanged();
     void applyInitialFitZoomForcesDecodeForCaptureOrigin();
+    void applyZoomStateSentinelLeavesInitialFitUndecided();
+    void captureOriginIgnoresPersistedTypeDefault();
     void pngRoundTripStripsDprThenRecovers();
     void pendingCaptureDprConsumedOncePerBatch();
     void coordinateRoundTripInvertsAtDpr2();
@@ -706,6 +709,80 @@ void TestImageScale::applyInitialFitZoomForcesDecodeForCaptureOrigin() {
     delete view;
 }
 
+void TestImageScale::applyZoomStateSentinelLeavesInitialFitUndecided() {
+    // Direct regression for the applyZoomState() bug found while tracing
+    // the macOS-only pendingCaptureDprConsumedOncePerBatch failure
+    // (2026-07-26; see docs/backlog for the fuller mechanism). A
+    // (Custom, 0.0) pair is RecentEntry / DocumentTypeDefault's "not
+    // captured" sentinel (RecentEntry.h: "-1 / 0.0 sentinel values mean
+    // 'not yet captured' -- the open path leaves the document at its
+    // natural defaults in that case"). Before the fix, applyZoomState()
+    // set m_initialZoomApplied = true UNCONDITIONALLY before checking the
+    // sentinel, so this call applied nothing yet permanently pre-empted
+    // applyInitialFitZoom() from ever running -- stranding the document
+    // at its raw ZoomMode::Custom constructor default. Root-caused this
+    // as the actual failure: MainWindow::onCurrentDocumentChanged()
+    // applies a leftover, persisted DocumentTypeDefault to every
+    // newly-opened document of that type BEFORE its initial fit tick
+    // runs, and a real default-constructed-but-hasState()-true entry
+    // (e.g. sidebar mode captured, zoom never was) is exactly a
+    // (Custom, 0.0) pair.
+    ImageDocument doc{QString()};
+    doc.setImageForTest(makeDprImage(1600, 1000, 2.0), /*captureOrigin=*/true);
+    QWidget *view = doc.createView(nullptr);
+    QVERIFY(view != nullptr);
+
+    // Simulate exactly what onCurrentDocumentChanged() does with a
+    // "not captured" sentinel.
+    doc.applyZoomState(ZoomMode::Custom, 0.0);
+
+    // The sentinel must be a true no-op: the natural, capture-origin
+    // Actual-Size decision must still be reachable afterward, not
+    // permanently blocked.
+    doc.triggerInitialZoomForTest();
+    QCOMPARE(doc.zoomMode(), ZoomMode::Actual);
+
+    delete view;
+}
+
+void TestImageScale::captureOriginIgnoresPersistedTypeDefault() {
+    // Direct regression for the missing isCaptureOrigin() guard in
+    // MainWindow::onCurrentDocumentChanged() (2026-07-26). Simulates the
+    // exact "poisoned" state the self-hosted macOS runner had --  a
+    // persisted Image-type DocumentTypeDefault with a genuine non-Actual
+    // Custom zoom, as if an unrelated ordinary image had been closed at
+    // 42% -- without needing to actually close a window (which on macOS
+    // would itself require the QSettings::IniFormat fix in this file's
+    // main() to land in the sandboxed store rather than a developer's
+    // real ~/Library/Preferences/ domain). A persisted per-type default
+    // must never override a fresh capture-origin document's forced
+    // Actual-Size default (ImageDocument::applyInitialFitZoom()'s
+    // documented "Screenshot / clipboard-origin images open at Actual
+    // Size... matching Preview's default for screen captures").
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app != nullptr);
+
+    DocumentTypeDefault poisoned;
+    poisoned.zoomMode = ZoomMode::Custom;
+    poisoned.zoomFactor = 0.42;
+    app->documentTypeDefaults().setForType(DocumentType::Image, poisoned);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString capPng = dir.path() + "/cap-poisoned.png";
+    QVERIFY(makeDprImage(1600, 1000, 2.0).save(capPng, "PNG"));
+
+    app->setPendingCaptureDpr(2.0);
+    app->openFiles({capPng});
+    ImageDocument *capDoc = newestImageDoc(app);
+    QVERIFY(capDoc != nullptr);
+    QCOMPARE(capDoc->image().devicePixelRatio(), qreal(2.0));
+    capDoc->triggerInitialZoomForTest();
+    QVERIFY2(capDoc->zoomMode() == ZoomMode::Actual,
+             "a persisted per-type zoom default must never override a "
+             "capture-origin document's forced Actual-Size default");
+}
+
 void TestImageScale::pngRoundTripStripsDprThenRecovers() {
     // The seam that made screenshots blurry/oversized: a capture is saved
     // to PNG, and PNG carries no devicePixelRatio metadata, so the reload
@@ -884,6 +961,22 @@ int main(int argc, char **argv) {
     qputenv("XDG_DATA_HOME", (fakeHome.path() + "/.local/share").toUtf8());
     QDir().mkpath(fakeHome.path() + "/.config/trailer");
     QDir().mkpath(fakeHome.path() + "/.local/share/trailer");
+    // 2026-07-26: Application's DocumentTypeDefaults / RecentFiles use the
+    // plain QSettings(org, app) constructor, which on macOS resolves to
+    // QSettings::NativeFormat -- CFPreferences, keyed off the process's
+    // REAL UID via getpwuid(), not the $HOME env var above. The HOME
+    // sandboxing this file (and several siblings) relies on is therefore a
+    // no-op for this state on macOS: every run reads/writes the SAME real,
+    // persistent ~/Library/Preferences/ domain as every other test binary
+    // and the actual shipped app on that machine, so state from an
+    // unrelated earlier test (or a developer's own Trailer.app) leaks in.
+    // This was the root cause of a macOS-only pendingCaptureDprConsumedOncePerBatch
+    // failure: a leftover Image-type DocumentTypeDefault applied a non-
+    // Actual zoom underneath a fresh capture-origin document. Forcing
+    // IniFormat makes QSettings(org, app) use Qt's own portable backend
+    // (a file under $HOME/.config, which the sandboxing above DOES
+    // control) on every platform, closing the leak.
+    QSettings::setDefaultFormat(QSettings::IniFormat);
 
     trailer::Application app(argc, argv);
     TestImageScale tests;

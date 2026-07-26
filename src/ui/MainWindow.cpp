@@ -3872,6 +3872,26 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // must not bounce back to the saved page.
     if (doc && !doc->filePath().isEmpty() && !m_restoredViewStateDocs.contains(doc)) {
         m_restoredViewStateDocs.insert(doc);
+        // A capture-origin image (screenshot / clipboard paste) has its own
+        // forced-Actual-Size default (ImageDocument::applyInitialFitZoom(),
+        // "Screenshot / clipboard-origin images open at Actual Size...
+        // matching Preview's default for screen captures"). A persisted
+        // per-file or per-type zoom from some UNRELATED earlier document
+        // must never override that documented contract — found 2026-07-26
+        // while tracing a macOS-only CI failure where a leftover
+        // DocumentTypeDefault (persisted via QSettings' native macOS
+        // backend, which the test's HOME-sandboxing did not cover) applied
+        // a non-Actual zoom to a fresh capture-origin document underneath
+        // it. Real users hit the same shape: close an ordinary image at a
+        // Custom zoom, then paste a screenshot, and the persisted per-type
+        // default would apply to the screenshot too. Only the ZOOM
+        // restoration is skipped below -- sidebar/geometry/markup-toolbar
+        // restoration is untouched, since the documented contract is about
+        // zoom only.
+        const bool isCaptureOriginImage = [&] {
+            auto *img = dynamic_cast<ImageDocument *>(doc);
+            return img && img->isCaptureOrigin();
+        }();
         const RecentEntry entry = m_app->recentFiles().findByPath(doc->filePath());
         bool restoredPerFileState = false;
         if (!entry.path.isEmpty() && entry.hasViewState()) {
@@ -3879,7 +3899,8 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             if (entry.currentPage >= 0 && doc->pageCount() > entry.currentPage) {
                 doc->goToPage(entry.currentPage);
             }
-            doc->applyZoomState(entry.zoomMode, entry.zoomFactor);
+            if (!isCaptureOriginImage)
+                doc->applyZoomState(entry.zoomMode, entry.zoomFactor);
             if (entry.scrollY != 0) {
                 doc->applyScrollY(entry.scrollY);
             }
@@ -3905,7 +3926,8 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             const DocumentTypeDefault def =
                 m_app->documentTypeDefaults().forType(doc->documentType());
             if (def.hasState()) {
-                doc->applyZoomState(def.zoomMode, def.zoomFactor);
+                if (!isCaptureOriginImage)
+                    doc->applyZoomState(def.zoomMode, def.zoomFactor);
                 m_sidebar->setMode(static_cast<Sidebar::Mode>(static_cast<int>(def.sidebarMode)));
                 if (!def.windowGeometry.isEmpty()) {
                     restoreGeometry(def.windowGeometry);

@@ -948,6 +948,23 @@ void ImageDocument::applyInitialFitZoom() {
 }
 
 void ImageDocument::applyZoomState(ZoomMode mode, double factor) {
+    // A (Custom, <=0.0) pair is the RecentEntry / DocumentTypeDefault "not
+    // captured" sentinel (see RecentEntry.h's comment: "-1 / 0.0 sentinel
+    // values mean 'not yet captured' -- the open path leaves the document
+    // at its natural defaults in that case"). The bug this guards
+    // (2026-07-26): this method used to set m_initialZoomApplied = true
+    // UNCONDITIONALLY before the switch, so a sentinel pair applied
+    // nothing (the Custom case's body was itself gated on factor > 0.0)
+    // while still permanently marking the initial zoom as "decided" --
+    // silently stranding the document at whatever raw ZoomMode it
+    // happened to already have (its constructor default, Custom, for a
+    // document whose fit hasn't run yet) and pre-empting
+    // applyInitialFitZoom()'s natural fit-to-content / capture-origin
+    // Actual-Size decision forever. Bail out before touching
+    // m_initialZoomApplied so a sentinel truly means "apply nothing,
+    // let the natural default decide" as documented.
+    if (mode == ZoomMode::Custom && factor <= 0.0)
+        return;
     ensureDecoded(); // a restored/explicit zoom must apply even mid-decode
     m_initialZoomApplied = true; // a restored zoom supersedes the initial auto-fit
     switch (mode) {
@@ -961,10 +978,8 @@ void ImageDocument::applyZoomState(ZoomMode mode, double factor) {
         zoomActual();
         return;
     case ZoomMode::Custom:
-        if (factor > 0.0) {
-            m_zoomMode = ZoomMode::Custom;
-            applyScale(factor);
-        }
+        m_zoomMode = ZoomMode::Custom;
+        applyScale(factor);
         return;
     }
 }
