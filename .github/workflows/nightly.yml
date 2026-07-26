@@ -565,13 +565,31 @@ jobs:
         run: |
           set +e
           ctest -C Release --output-on-failure -L uat | tee /tmp/macos-uat.log
-          # Same parse as nightly-windows' "UAT suite (Wine)" step: read
-          # ctest's own summary line rather than trusting its exit code
-          # (masked by continue-on-error anyway). Falls back to empty
-          # (rendered as "unknown" downstream) if the line is missing,
-          # e.g. ctest itself crashed/hung before any case completed.
-          TOTAL=$(grep -oE 'out of [0-9]+' /tmp/macos-uat.log | grep -oE '[0-9]+' | tail -1)
-          FAILED=$(grep -oE '[0-9]+ tests failed' /tmp/macos-uat.log | grep -oE '^[0-9]+' | tail -1)
+          # Read ctest's own summary line rather than trusting its exit
+          # code (masked by continue-on-error anyway). NOT a straight copy
+          # of nightly-windows' "UAT suite (Wine)" parse: this bootstrap
+          # run's own log surfaced a format difference ctest's version
+          # apparently varies on — "N% tests passed, F tests failed out of
+          # T" when F>0, but "N% tests passed out of T" (the "F tests
+          # failed" clause OMITTED entirely) when F=0. This run's own
+          # unit-test step hit exactly that: "100% tests passed out of 62",
+          # no "0 tests failed" clause. Grepping for "[0-9]+ tests failed"
+          # alone (the Wine step's approach) would silently misreport a
+          # full pass as "count unavailable". Only default the failed-count
+          # to 0 when the leading percentage actually reads 100 (not merely
+          # "clause absent") — a garbled/truncated non-100% line must fall
+          # through to "unknown" rather than silently reporting a false
+          # full pass. TOTAL/PASSED fall back to empty (rendered as
+          # "unknown" downstream) whenever "out of T" itself is absent
+          # (e.g. ctest crashed/hung before any case completed) or the
+          # failed-count can't be determined some other way.
+          SUMMARY_LINE=$(grep -E '[0-9]+% tests passed.*out of [0-9]+' /tmp/macos-uat.log | tail -1)
+          PERCENT=$(echo "$SUMMARY_LINE" | grep -oE '[0-9]+% tests passed' | grep -oE '^[0-9]+')
+          TOTAL=$(echo "$SUMMARY_LINE" | grep -oE 'out of [0-9]+' | grep -oE '[0-9]+')
+          FAILED=$(echo "$SUMMARY_LINE" | grep -oE '[0-9]+ tests failed' | grep -oE '^[0-9]+')
+          if [ -z "$FAILED" ] && [ "$PERCENT" = "100" ]; then
+            FAILED=0
+          fi
           if [ -n "$TOTAL" ] && [ -n "$FAILED" ]; then
             PASSED=$((TOTAL - FAILED))
           else

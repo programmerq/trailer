@@ -374,6 +374,23 @@ to which nightly artifacts get published**, not a cosmetic CI tweak — see
 the implementing PR body. It reverts to gating once this item's Threshold
 is met.
 
+**Parsing note found during self-review, fixed before push:** a
+straight copy of the Wine step's ctest-summary parse (`grep -oE '[0-9]+
+tests failed'`) would have silently misreported a clean macOS UAT pass as
+"count unavailable" — this run's own unit-test step logged
+`100% tests passed out of 62`, with the `"N tests failed"` clause omitted
+entirely (apparently a ctest-version-dependent formatting difference; a
+local Linux ctest run in this same PR printed the fuller
+`100% tests passed, 0 tests failed out of 62` for the identical 0-failures
+case). The macOS step's parser (unlike the pre-existing, unmodified Wine
+step) treats a present `"out of T"` with no `"tests failed"` clause as
+`F=0` rather than as missing data; verified against all three observed
+summary shapes (partial pass, full pass with the clause, full pass
+without it). The Wine step's parser still has this latent gap — it has
+simply never been exercised, since Wine UAT has never reached 100% — left
+unmodified here since it's a different file's step, not touched in this
+diff.
+
 ## Recommendation summary
 
 1. **Finding 1 (crash) — do not fix blind.** Get a symbolicated backtrace
