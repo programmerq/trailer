@@ -91,6 +91,27 @@ ImageDocument *newestImageDoc(Application *app) {
 class TestImageScale : public QObject {
     Q_OBJECT
   private slots:
+    // Runs after EVERY test function (QtTest's per-test teardown hook).
+    // readoutMatchesRenderAfterAsyncFit() and
+    // pendingCaptureDprConsumedOncePerBatch() drive real
+    // Application::openFiles() calls, which create genuine MainWindows
+    // with a live, armed FitModeResizeWatcher on each open document's
+    // viewport -- neither test closed its window afterward, so it stayed
+    // alive (and its resize watcher stayed installed and reactive) for
+    // the rest of the process's lifetime, spanning every later test
+    // function in this file. That is a real cross-test isolation gap:
+    // a leftover watcher reacting to a LATER test's window
+    // creation/layout churn is a plausible, if unconfirmed, contributor
+    // to timing-sensitive behaviour differences between platforms (see
+    // the 2026-07-26 investigation into a macOS-only
+    // pendingCaptureDprConsumedOncePerBatch failure that could not be
+    // reproduced locally on Linux). `delete` (not `close()`) tears the
+    // window down directly: `close()` would run MainWindow::closeEvent(),
+    // which persists RecentFiles / DocumentTypeDefaults state -- exactly
+    // the kind of cross-test contamination this cleanup exists to
+    // PREVENT, not introduce, so a plain destroy is used instead.
+    void cleanup();
+
     void contentSizeHintIsLogical_data();
     void contentSizeHintIsLogical();
     void actualSizeIsPixelExact_data();
@@ -109,6 +130,22 @@ class TestImageScale : public QObject {
     void coordinateRoundTripInvertsAtDpr2();
     void resampleBranchRestampsDpr();
 };
+
+void TestImageScale::cleanup() {
+    // See the declaration's comment: destroy (not close()) every
+    // MainWindow left open by the just-finished test so no live
+    // FitModeResizeWatcher, OCR controller, or other per-window state
+    // survives into the next test function. A no-op for the majority of
+    // tests here, which build an ImageDocument directly and never touch
+    // Application::openFiles().
+    auto *app = qobject_cast<Application *>(qApp);
+    if (!app)
+        return;
+    const QList<MainWindow *> windows = app->windows();
+    for (MainWindow *w : windows) {
+        delete w;
+    }
+}
 
 void TestImageScale::contentSizeHintIsLogical_data() {
     QTest::addColumn<int>("deviceW");

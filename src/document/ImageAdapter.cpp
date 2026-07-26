@@ -773,11 +773,21 @@ void ImageDocument::reapplyFitMode() {
     const QSizeF logical = m_image.deviceIndependentSize();
     if (availW <= 0 || logical.width() <= 0.0)
         return;
+    // Notify only when the recompute actually MOVES the scale (2026-07-26
+    // hardening): a resize that lands on the same effective fit percentage
+    // (e.g. a sub-pixel viewport jitter) has nothing new to tell the
+    // readout, and holding the notifyChanged() call to genuine changes
+    // keeps this method's side effects to the minimum the G1 threshold
+    // ("readout matches render") actually requires — it fires no more
+    // often than the render itself changes.
+    const double previousScale = m_scale;
     if (m_zoomMode == ZoomMode::FitToWidth) {
         applyScale(static_cast<double>(availW) / logical.width());
-        // See the FitInView branch below: the zoom readout must track
-        // every fit recompute, not just the initial one.
-        m_capabilityNotifier.notifyChanged();
+        if (std::abs(m_scale - previousScale) > 1e-9) {
+            // See the FitInView branch below: the zoom readout must track
+            // every genuine fit recompute, not just the initial one.
+            m_capabilityNotifier.notifyChanged();
+        }
         return;
     }
     // FitInView: constrain both dimensions.
@@ -786,10 +796,12 @@ void ImageDocument::reapplyFitMode() {
     const double scaleW = static_cast<double>(availW) / logical.width();
     const double scaleH = static_cast<double>(availH) / logical.height();
     applyScale(std::min(scaleW, scaleH));
-    // Fit-mode scale just changed — notify on EVERY reapply, not only the
-    // one-shot initial fit (applyInitialFitZoom already notifies for that
-    // first tick). FitModeResizeWatcher calls reapplyFitMode() on every
-    // later viewport Resize event too (a window resize, or — on some
+    if (std::abs(m_scale - previousScale) <= 1e-9)
+        return;
+    // Fit-mode scale genuinely changed — notify on EVERY reapply, not only
+    // the one-shot initial fit (applyInitialFitZoom already notifies for
+    // that first tick). FitModeResizeWatcher calls reapplyFitMode() on
+    // every later viewport Resize event too (a window resize, or — on some
     // platforms — the layout settling in a further pass after the initial
     // fit already committed a scale). Before this fix that later path
     // silently rescaled the render without telling MainWindow to refresh
@@ -865,7 +877,20 @@ ImageDocument::~ImageDocument() {
 void ImageDocument::applyInitialFitZoom() {
     if (m_initialZoomApplied)
         return;
-    if (!m_scroll || !m_label || m_image.isNull())
+    if (!m_scroll || !m_label)
+        return;
+    // Defensive consistency fix (2026-07-26): every OTHER zoom-mutating
+    // method (zoomIn/zoomOut/zoomActual/zoomFitWidth/zoomFitPage) calls
+    // ensureDecoded() before touching m_image; this one didn't, even
+    // though its only non-production caller (triggerInitialZoomForTest(),
+    // used by unit tests that invoke it directly instead of waiting for
+    // the normal installDecodedContent() -> singleShot(0) chain) has no
+    // guarantee the off-thread decode has landed yet. In real usage this
+    // is called only from that already-decoded chain, so this is a no-op
+    // there (m_decoded is already true); it only changes behaviour for a
+    // direct test call racing the decode.
+    ensureDecoded();
+    if (m_image.isNull())
         return;
     if (m_captureOrigin) {
         // Screenshot / clipboard-origin images open at Actual Size (1:1
