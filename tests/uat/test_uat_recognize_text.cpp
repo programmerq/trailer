@@ -64,6 +64,7 @@
 #include <QStatusBar>
 
 #include <atomic>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QToolButton>
 #include <QWidget>
@@ -1310,6 +1311,10 @@ int main(int argc, char **argv) {
     QDir().mkpath(fakeHome.path() + "/.config/trailer");
     QDir().mkpath(fakeHome.path() + "/.local/share/trailer");
 
+    // See tests/test_image_scale.cpp's main() for why this is needed on
+    // macOS: QSettings(org, app) defaults to NativeFormat there, which
+    // ignores the HOME sandboxing above.
+    QSettings::setDefaultFormat(QSettings::IniFormat);
     Application app(argc, argv);
     TestUatRecognizeText tests;
     return QTest::qExec(&tests, argc, argv);

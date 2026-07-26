@@ -14,13 +14,18 @@
 #     so an artifact only exists to publish if every step above it that can
 #     fail the job (no `continue-on-error`) succeeded — partial-success
 #     semantics fall out of ordinary step `if: success()` with no extra
-#     pass/fail plumbing. The ONE exception, and it's deliberate: Windows'
-#     "UAT suite (Wine)" step DOES carry `continue-on-error: true` (owner
-#     decision, 2026-07-24) — Wine UAT is informational, not gating, until a
-#     real Windows CI runner exists; see that step's comment and
-#     docs/backlog/2026-07-24-wine-uat-failures-triage.md. Its real pass
-#     count still surfaces, non-silently, in the release body's status
-#     table (never just dropped);
+#     pass/fail plumbing. TWO deliberate exceptions: Windows' "UAT suite
+#     (Wine)" step carries `continue-on-error: true` (owner decision,
+#     2026-07-24) — Wine UAT is informational, not gating, until a real
+#     Windows CI runner exists; see that step's comment and
+#     docs/backlog/2026-07-24-wine-uat-failures-triage.md. macOS's "UAT
+#     suite" step carries the same `continue-on-error: true` (owner
+#     decision, 2026-07-26) — the mac lane is brand new (PR #120/#121,
+#     2026-07-24) and its UAT has never once passed, so gating on it would
+#     withhold an otherwise-green macOS build indefinitely; see that step's
+#     comment and docs/backlog/2026-07-26-macos-uat-triage.md. Both lanes'
+#     real pass counts still surface, non-silently, in the release body's
+#     status table (never just dropped);
 #   - tags each successful night `nightly-YYYYMMDD` (immutable, one per
 #     night — never a rolling/force-moved tag) and carries a semi-automated
 #     "since last nightly" summary (scripts/release-notes.sh over the
@@ -481,6 +486,13 @@ jobs:
     concurrency:
       group: nightly-lane-macos-${{ needs.nightly-date.outputs.concurrency-key }}
       cancel-in-progress: false
+    outputs:
+      # macOS UAT is non-gating (see the step below) so its outcome doesn't
+      # show up in this job's own `result` — surfaced explicitly here
+      # instead, for nightly-publish's release-body status table.
+      macos-uat-passed: ${{ steps.macos_uat.outputs.passed }}
+      macos-uat-total: ${{ steps.macos_uat.outputs.total }}
+      macos-uat-crashed: ${{ steps.macos_uat.outputs.crashed }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -521,8 +533,66 @@ jobs:
           QT_QPA_PLATFORM: offscreen
 
       - name: UAT suite
+        # NON-GATING (owner decision, 2026-07-26): this is the first time
+        # macOS UAT has ever run in this project (the mac lane itself only
+        # landed 2026-07-24 via PR #120/#121, and unit tests only started
+        # passing 2026-07-26 via PR #122/#123) — it has never once passed.
+        # Gating an otherwise-green macOS build on a suite that has never
+        # passed would withhold that build indefinitely, exactly the
+        # failure mode already ruled out for Wine UAT (2026-07-24, see
+        # nightly-windows' "UAT suite (Wine)" step and docs/backlog/2026-
+        # 07-24-wine-uat-failures-triage.md). Mirrors that step's mechanism
+        # exactly: `continue-on-error: true` masks this step's CONCLUSION
+        # to success (so the job's own `result` — and the `if:
+        # success()`-gated staging steps below — are unaffected by a macOS
+        # UAT failure), while the real pass/total counts are still
+        # captured and surfaced, non-silently, via job outputs into
+        # nightly-publish's release-body status table. A crash (e.g. the
+        # SegFault the bootstrap run for this triage found in
+        # test_uat_foundations) is categorically more serious than an
+        # ordinary assertion failure — ctest still emits a clean "N tests
+        # passed... out of M" summary line for a crashed run (it marks the
+        # crashing test FAILED and moves on), so the count alone would
+        # under-communicate it; the log is grepped separately for a crash
+        # signature and surfaced as its own flag rather than folded
+        # silently into the N/M count. Tracked in docs/backlog/2026-07-26-
+        # macos-uat-triage.md — which has full billing on the crash found
+        # by the bootstrap run for this change; becomes gating again once
+        # that item closes with the suite green.
+        id: macos_uat
+        continue-on-error: true
         working-directory: build-macos
-        run: ctest -C Release --output-on-failure -L uat
+        run: |
+          set +e
+          ctest -C Release --output-on-failure -L uat | tee /tmp/macos-uat.log
+          # Same parse as nightly-windows' "UAT suite (Wine)" step: read
+          # ctest's own summary line rather than trusting its exit code
+          # (masked by continue-on-error anyway). Falls back to empty
+          # (rendered as "unknown" downstream) if the line is missing,
+          # e.g. ctest itself crashed/hung before any case completed.
+          TOTAL=$(grep -oE 'out of [0-9]+' /tmp/macos-uat.log | grep -oE '[0-9]+' | tail -1)
+          FAILED=$(grep -oE '[0-9]+ tests failed' /tmp/macos-uat.log | grep -oE '^[0-9]+' | tail -1)
+          if [ -n "$TOTAL" ] && [ -n "$FAILED" ]; then
+            PASSED=$((TOTAL - FAILED))
+          else
+            PASSED=""
+            TOTAL=""
+          fi
+          # A crash reads very differently from "some assertions failed" —
+          # surface it as its own signal. ctest's own exception label
+          # ("***Exception: SegFault") and the QtTest crash handler's
+          # "Received signal N (SIGxxx)" line both show up in the log even
+          # when a clean N/M summary line is ALSO present (ctest treats the
+          # crashing test as one more FAILED test and keeps going).
+          if grep -qE '\*\*\*Exception: SegFault|Received signal [0-9]+ \(SIG[A-Z]+\)' /tmp/macos-uat.log; then
+            CRASHED=true
+          else
+            CRASHED=false
+          fi
+          echo "passed=$PASSED"   >> "$GITHUB_OUTPUT"
+          echo "total=$TOTAL"     >> "$GITHUB_OUTPUT"
+          echo "crashed=$CRASHED" >> "$GITHUB_OUTPUT"
+          echo "macOS UAT: ${PASSED:-unknown}/${TOTAL:-unknown} passed, crashed=$CRASHED (non-gating)"
         env:
           QT_QPA_PLATFORM: offscreen
 
@@ -698,13 +768,40 @@ jobs:
             WIN_ROW="❌ (${{ needs.nightly-windows.result }})"
           fi
 
+          # macOS row mirrors the Windows/Wine-UAT row exactly (owner
+          # decision 2026-07-26 — see nightly-macos's "UAT suite" step and
+          # docs/backlog/2026-07-26-macos-uat-triage.md), with one addition:
+          # a crash is called out explicitly (🔥) rather than folded into
+          # an ordinary N/M count, since a SegFault is a categorically more
+          # serious signal than a failing assertion.
+          if [ "${{ needs.nightly-macos.result }}" = "success" ]; then
+            MAC_PASSED="${{ needs.nightly-macos.outputs.macos-uat-passed }}"
+            MAC_TOTAL="${{ needs.nightly-macos.outputs.macos-uat-total }}"
+            MAC_CRASHED="${{ needs.nightly-macos.outputs.macos-uat-crashed }}"
+            if [ "$MAC_CRASHED" = "true" ]; then
+              if [ -n "$MAC_TOTAL" ]; then
+                MAC_ROW="✅ build+unit, 🔥 macOS UAT CRASHED ($MAC_PASSED/$MAC_TOTAL) — informational, non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
+              else
+                MAC_ROW="✅ build+unit, 🔥 macOS UAT crashed (no count available this run) — informational, non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
+              fi
+            elif [ -n "$MAC_TOTAL" ] && [ "$MAC_PASSED" = "$MAC_TOTAL" ]; then
+              MAC_ROW="✅ build+unit+UAT ($MAC_PASSED/$MAC_TOTAL)"
+            elif [ -n "$MAC_TOTAL" ]; then
+              MAC_ROW="✅ build+unit, ⚠️ macOS UAT $MAC_PASSED/$MAC_TOTAL — informational, non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
+            else
+              MAC_ROW="✅ build+unit, ⚠️ macOS UAT count unavailable this run"
+            fi
+          else
+            MAC_ROW="❌ (${{ needs.nightly-macos.result }})"
+          fi
+
           {
             echo "Automated nightly build of Trailer's \`main\` branch. Unsigned,"
             echo "like dev-build.yml's artifacts — see PHILOSOPHY.md for what to"
             echo "expect from a 0.x build. A lane below marked ❌ is NOT included;"
             echo "see its job log in this run for what failed. Windows' Wine UAT"
-            echo "count (⚠️) is informational only — it never blocks the artifact;"
-            echo "see the linked backlog item."
+            echo "and macOS's UAT counts (⚠️/🔥) are informational only — neither"
+            echo "blocks the artifact; see each row's linked backlog item."
             echo
             echo "## Build status"
             echo
@@ -712,7 +809,7 @@ jobs:
             echo "|---|---|"
             echo "| Linux   | $([ "${{ needs.nightly-linux.result }}" = "success" ] && echo "✅" || echo "❌ (${{ needs.nightly-linux.result }})") |"
             echo "| Windows | $WIN_ROW |"
-            echo "| macOS   | $([ "${{ needs.nightly-macos.result }}" = "success" ] && echo "✅" || echo "❌ (${{ needs.nightly-macos.result }})") |"
+            echo "| macOS   | $MAC_ROW |"
             echo
             cat "${{ steps.changelog.outputs.body-file }}"
           } >> "$BODY_FILE"
