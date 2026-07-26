@@ -25,6 +25,7 @@
 #include "ui/SamController.h"
 
 #include <QImage>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -174,6 +175,14 @@ void TestSamController::uat_sam_ctl_030_PurgeDocumentDropsCacheEntries() {
 // binary; QTEST_MAIN constructs a plain QApplication, which conflicts
 // with per-test Application instances on the stack.
 int main(int argc, char *argv[]) {
+    // See tests/test_image_scale.cpp's main() for why this is needed on
+    // macOS: QSettings(org, app) (used by Application's DocumentTypeDefaults
+    // / RecentFiles) defaults to NativeFormat there, which ignores the HOME
+    // sandboxing TestSamController::initTestCase() sets up below. Must be
+    // set before Application is constructed (a process-global QSettings
+    // setting, not tied to the sandboxed HOME itself).
+    QSettings::setDefaultFormat(QSettings::IniFormat);
+
     trailer::Application app(argc, argv);
     TestSamController tc;
     tc.app = &app;
