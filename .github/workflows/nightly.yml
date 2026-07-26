@@ -203,24 +203,22 @@ jobs:
       group: nightly-lane-linux-${{ needs.nightly-date.outputs.concurrency-key }}
       cancel-in-progress: false
     env:
-      # k8s-OOM guard (see release.yml/ci.yml): bare `cmake --build …
-      # --parallel` honors these, and unbounded parallelism OOMKilled the
-      # self-hosted trailer-k8s pods before. NIGHTLY-SPECIFIC: -j1, not
-      # ci.yml's -j2 — on 2026-07-24, this lane's pod was killed mid-Build
-      # FOUR times in a row (bootstrap runs #1-#3, ~10-13 min into a cold-
-      # ccache full compile at -j2), while ci.yml's warm-cache -j2 jobs on
-      # the same pool survived throughout. Cold-cache + -j2 is the
-      # difference: nightly always compiles from scratch (its own ccache
-      # key never warms, since it never gets a chance to save), so this
-      # lane's peak memory during that compile is the heaviest, most
-      # reliably-reproduced load this pool sees. Halving parallelism here
-      # roughly halves that peak. Nightly has no latency requirement, so
-      # the wall-clock cost is free. Scoped to nightly-linux ONLY — not
-      # ci.yml (its warm-cache -j2 jobs aren't the ones dying) and not
-      # nightly-windows (survived at -j2 twice: bootstrap #2 and #3).
-      # Revisit (raise back to 2) once the trailer-k8s pool is resized —
-      # owner investigating cluster-side.
-      CMAKE_BUILD_PARALLEL_LEVEL: 1
+      # k8s-OOM guard (see ci.yml's env comment for the underlying
+      # CMAKE_BUILD_PARALLEL_LEVEL bug). REASSESSED (2026-07-26):
+      # CMAKE_BUILD_PARALLEL_LEVEL raised from 1 back to 2 — the -j1 was
+      # chased against the 2026-07-24 mid-Build kills, but this job's
+      # `cmake --build … --parallel` (below) was bare, so that env var
+      # was never actually enforced (bare `--parallel` ignores it
+      # entirely); the kills happened under fully unbounded parallelism
+      # regardless of the value set here. Now that the step passes the
+      # job count explicitly, 2 matches every other lane in the repo
+      # (ci.yml, release.yml, nightly-windows) and is the reasonable
+      # starting point — see the fix PR for the full history. This does
+      # NOT extend to CTEST_PARALLEL_LEVEL below: ctest has no such bug
+      # (it reads its env var normally regardless of command-line flags),
+      # so the existing 1 there was a real, working cap and is left
+      # unchanged by this fix.
+      CMAKE_BUILD_PARALLEL_LEVEL: 2
       CTEST_PARALLEL_LEVEL: 1
     steps:
       - uses: actions/checkout@v7
@@ -252,7 +250,7 @@ jobs:
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
 
       - name: Unit tests
         working-directory: build
@@ -355,7 +353,7 @@ jobs:
           PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
 
       - name: Build
-        run: cmake --build build-win --parallel
+        run: cmake --build build-win --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
 
       - name: Bundle self-contained trailer.exe
         # Same import-table DLL walk release.yml's windows-cross uses.

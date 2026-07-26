@@ -41,11 +41,21 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Cap build/test parallelism on the self-hosted trailer-k8s pods: the
-# bare `cmake --build … --parallel` steps honor CMAKE_BUILD_PARALLEL_LEVEL
-# when no explicit job count is given, and unbounded parallelism OOMKilled
-# the release linux-build pod. Conservative caps for a green first retry;
-# raise once pod memory headroom is known.
+# Cap build/test parallelism on the self-hosted trailer-k8s pods.
+#
+# CORRECTED (2026-07-26): a bare `cmake --build … --parallel` (no
+# following number) does NOT honor this env var — CMake only consults
+# CMAKE_BUILD_PARALLEL_LEVEL when `--parallel`/`-j` is absent from the
+# command line entirely. Once `--parallel` appears, with or without a
+# value, CMake tells the native build tool to use ITS OWN default —
+# for GNU Make that means a bare `-j`, i.e. UNLIMITED concurrent jobs,
+# which is what was actually OOMKilling pods here even with this env
+# var set. Every `cmake --build` step below now passes the job count
+# explicitly (`--parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"`) so the
+# cap is real regardless of whether the env var is read. See the fix
+# PR (claude/fix-unbounded-build-parallelism) for the `ps --forest`
+# evidence. CTEST_PARALLEL_LEVEL is unaffected — ctest honors its env
+# var normally with or without an explicit `-j` on its command line.
 env:
   CMAKE_BUILD_PARALLEL_LEVEL: 2
   CTEST_PARALLEL_LEVEL: 2
@@ -120,7 +130,7 @@ jobs:
           -DTRAILER_ENABLE_UX_RECORDER=ON
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
 
       - name: Unit tests
         # UAT tests (label `uat`) drive the full Application +
@@ -252,7 +262,7 @@ jobs:
 
       - name: Build trailer binary only
         # Just the app — not the test_* binaries — to keep wall-time modest.
-        run: cmake --build build --parallel --target trailer
+        run: cmake --build build --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}" --target trailer
 
       - name: Wayland launch + screenshot smoke
         # Starts sway headless (pixman), launches build/trailer under
@@ -338,7 +348,7 @@ jobs:
           PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
 
       - name: Build
-        run: cmake --build build-win --parallel
+        run: cmake --build build-win --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
 
       - name: Bundle self-contained trailer.exe
         # Reuse scripts/build-windows.sh's collect_dlls import-table
@@ -484,7 +494,13 @@ jobs:
 
       - name: Build
         shell: pwsh
-        run: cmake --build build --config Release --parallel
+        # PowerShell has no `${VAR:-default}` shorthand; spell the same
+        # "explicit numeric job count, falling back to 2" fallback out
+        # (see the workflow-level env comment for why this can't be a
+        # bare `--parallel`).
+        run: |
+          $jobs = if ($env:CMAKE_BUILD_PARALLEL_LEVEL) { $env:CMAKE_BUILD_PARALLEL_LEVEL } else { '2' }
+          cmake --build build --config Release --parallel $jobs
 
       - name: Unit tests
         # QT_QPA_FONTDIR is set so QPdfWriter has access to Arial etc.

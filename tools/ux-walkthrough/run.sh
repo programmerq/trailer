@@ -104,7 +104,7 @@ if [ ${#missing[@]} -gt 0 ]; then
 fi
 if [ ! -x "$TRAILER_BIN" ]; then
     echo "ERROR: trailer binary not found/executable at: $TRAILER_BIN" >&2
-    echo "Build it: cmake -S . -B build -G Ninja && cmake --build build -j" >&2
+    echo "Build it: cmake -S . -B build -G Ninja && cmake --build build --parallel \"\$(nproc)\"" >&2
     exit 1
 fi
 

@@ -141,8 +141,18 @@ Write-Host "==> cmake configure" -ForegroundColor Green
 & cmake @cmakeArgs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-Write-Host "==> cmake build" -ForegroundColor Green
-& cmake --build $BuildDir --config $Config --parallel
+# Bounded build parallelism. `cmake --build … --parallel` with NO
+# following number does NOT honor CMAKE_BUILD_PARALLEL_LEVEL — CMake
+# only reads that env var when `--parallel` is absent from the command
+# line entirely; once present (bare or not), CMake hands the native
+# tool (Ninja here) ITS OWN default. This script runs on a developer's
+# own Windows box, not a memory-capped CI pod, so honor an explicit
+# CMAKE_BUILD_PARALLEL_LEVEL if the caller set one, otherwise default
+# to the host's logical processor count.
+$buildJobs = if ($env:CMAKE_BUILD_PARALLEL_LEVEL) { $env:CMAKE_BUILD_PARALLEL_LEVEL } else { [Environment]::ProcessorCount }
+
+Write-Host "==> cmake build ($buildJobs jobs)" -ForegroundColor Green
+& cmake --build $BuildDir --config $Config --parallel $buildJobs
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 if ($BuildOnly) {

@@ -35,7 +35,25 @@ run_suite() {
     if [[ ! -d "$BUILD_DIR" ]]; then
         cmake -S . -B "$BUILD_DIR" ${gen_arg[@]+"${gen_arg[@]}"} -DCMAKE_BUILD_TYPE=Release
     fi
-    cmake --build "$BUILD_DIR" -j
+    # Bare `-j` does NOT honor CMAKE_BUILD_PARALLEL_LEVEL — cmake only
+    # reads that env var when `-j`/`--parallel` is absent from the
+    # command line entirely; once present, cmake hands the native tool
+    # its own default. This runs both in CI (release.yml's `uat` job
+    # sets CMAKE_BUILD_PARALLEL_LEVEL via `docker run -e`) and via
+    # --host on a developer's own Linux or macOS box, so honor the env
+    # var when set, else fall back to a portable job count (nproc on
+    # Linux, sysctl on macOS, a conservative constant otherwise).
+    local jobs="${CMAKE_BUILD_PARALLEL_LEVEL:-}"
+    if [[ -z "$jobs" ]]; then
+        if command -v nproc >/dev/null 2>&1; then
+            jobs=$(nproc)
+        elif command -v sysctl >/dev/null 2>&1; then
+            jobs=$(sysctl -n hw.ncpu)
+        else
+            jobs=4
+        fi
+    fi
+    cmake --build "$BUILD_DIR" --parallel "$jobs"
     QT_QPA_PLATFORM=offscreen ctest --test-dir "$BUILD_DIR" \
         -L uat --output-on-failure
 }

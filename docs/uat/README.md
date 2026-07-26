@@ -73,7 +73,9 @@ Guidelines:
 
 ## Running these manually
 
-1. Build a release binary: `cmake --build build --config Release -j`.
+1. Build a release binary: `cmake --build build --config Release --parallel "$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"`.
+   (`-j`/`--parallel` with no number ignores `CMAKE_BUILD_PARALLEL_LEVEL`
+   and can hand the native tool an unbounded job count — always pass one.)
 2. Launch with `./build/trailer` (or the platform-specific path).
 3. Work through a file top to bottom, marking each case pass / fail /
    blocked. A checklist-style spreadsheet is fine; we don't have a

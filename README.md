@@ -32,8 +32,12 @@ COMPONENTS Pdf)` fails, install it via the Qt online installer (check the
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build --parallel
+cmake --build build --parallel "$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 ```
+
+(`--parallel` with no number tells the build tool to use its own
+default rather than your core count — for GNU Make that default is
+unbounded; always pass an explicit job count.)
 
 CI builds with warnings-as-errors **off** by default (both PR CI
 and the release pipeline). Too many warnings fire from inside
@@ -127,7 +131,7 @@ make test-uat       # build + unit + UAT
    cmake -S . -B build -G Ninja ^
        -DCMAKE_BUILD_TYPE=Release ^
        -DCMAKE_PREFIX_PATH=%DEPS%\Qt\6.10.3\msvc2022_64;%DEPS%\qpdf
-   cmake --build build --config Release --parallel
+   cmake --build build --config Release --parallel %NUMBER_OF_PROCESSORS%
    set PATH=%DEPS%\Qt\6.10.3\msvc2022_64\bin;%DEPS%\qpdf\bin;%PATH%
    set QT_QPA_PLATFORM=offscreen
    set QT_QPA_FONTDIR=%SystemRoot%\Fonts

@@ -94,7 +94,7 @@ These are baked into the CI runner image (`docker/runner/Dockerfile`).
 Build the binary first:
 
 ```sh
-cmake -S . -B build -G Ninja && cmake --build build -j
+cmake -S . -B build -G Ninja && cmake --build build --parallel "$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 ```
 
 ## Running it
