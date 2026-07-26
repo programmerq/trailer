@@ -50,6 +50,7 @@
 #include <QPageSize>
 #include <QPdfWriter>
 #include <QRectF>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -1598,6 +1599,17 @@ int main(int argc, char **argv) {
     qputenv("QT_QPA_PLATFORM", "offscreen");
     QDir().mkpath(fakeHome.path() + "/.config/trailer");
     QDir().mkpath(fakeHome.path() + "/.local/share/trailer");
+    // See tests/test_image_scale.cpp's main() for why this is needed on
+    // macOS: QSettings(org, app) (used by DocumentTypeDefaults, NOT
+    // RecentFiles -- see that file's comment) defaults to NativeFormat
+    // there, which ignores the HOME sandboxing above. This binary in
+    // particular closes real MainWindows as part of its quit-flow
+    // testing, which writes DocumentTypeDefaults via
+    // MainWindow::closeEvent() -- on macOS, without this, that state
+    // would land in the REAL, shared ~/Library/Preferences/ domain (this
+    // was the actual leak this class of bug came from, per the
+    // 2026-07-26 investigation).
+    QSettings::setDefaultFormat(QSettings::IniFormat);
 
     Application app(argc, argv);
     TestQuitAndKeepWindows tests;

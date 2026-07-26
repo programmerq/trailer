@@ -31,7 +31,9 @@
 #include <QLabel>
 #include <QPixmap>
 #include <QPointF>
+#include <QScopeGuard>
 #include <QScrollArea>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QWidget>
 #include <QtTest/QtTest>
@@ -91,6 +93,10 @@ ImageDocument *newestImageDoc(Application *app) {
 class TestImageScale : public QObject {
     Q_OBJECT
   private slots:
+    // Runs after EVERY test function (QtTest's per-test teardown hook).
+    // See the definition below for why this exists.
+    void cleanup();
+
     void contentSizeHintIsLogical_data();
     void contentSizeHintIsLogical();
     void actualSizeIsPixelExact_data();
@@ -104,11 +110,47 @@ class TestImageScale : public QObject {
     void smallImageResizeDoesNotUpscale();
     void readoutMatchesRenderAfterAsyncFit();
     void reapplyFitModeNotifiesOnEveryRescale();
+    void reapplyFitModeSkipsNotifyWhenScaleUnchanged();
+    void applyInitialFitZoomForcesDecodeForCaptureOrigin();
+    void applyZoomStateSentinelLeavesInitialFitUndecided();
+    void captureOriginIgnoresPersistedTypeDefault();
     void pngRoundTripStripsDprThenRecovers();
     void pendingCaptureDprConsumedOncePerBatch();
     void coordinateRoundTripInvertsAtDpr2();
     void resampleBranchRestampsDpr();
 };
+
+void TestImageScale::cleanup() {
+    // readoutMatchesRenderAfterAsyncFit() and
+    // pendingCaptureDprConsumedOncePerBatch() drive real
+    // Application::openFiles() calls, which create genuine MainWindows
+    // with a live, armed FitModeResizeWatcher on each open document's
+    // viewport -- neither test closed its window afterward, so it stayed
+    // alive (and its resize watcher stayed installed and reactive) for
+    // the rest of the process's lifetime, spanning every later test
+    // function in this file. That is a real cross-test isolation gap: a
+    // leftover watcher reacting to a LATER test's window creation/layout
+    // churn is a plausible, if unconfirmed, contributor to timing-
+    // sensitive behaviour differences between platforms (see the
+    // 2026-07-26 investigation into a macOS-only
+    // pendingCaptureDprConsumedOncePerBatch failure that could not be
+    // reproduced locally on Linux). Destroying every leftover window
+    // here, after every test, closes that gap for the whole file.
+    //
+    // `delete` (not `close()`) tears the window down directly: `close()`
+    // would run MainWindow::closeEvent(), which persists RecentFiles /
+    // DocumentTypeDefaults state -- exactly the kind of cross-test
+    // contamination this cleanup exists to PREVENT, not introduce. A
+    // no-op for the majority of tests here, which build an ImageDocument
+    // directly and never touch Application::openFiles().
+    auto *app = qobject_cast<Application *>(qApp);
+    if (!app)
+        return;
+    const QList<MainWindow *> windows = app->windows();
+    for (MainWindow *w : windows) {
+        delete w;
+    }
+}
 
 void TestImageScale::contentSizeHintIsLogical_data() {
     QTest::addColumn<int>("deviceW");
@@ -578,6 +620,185 @@ void TestImageScale::reapplyFitModeNotifiesOnEveryRescale() {
     delete view;
 }
 
+void TestImageScale::reapplyFitModeSkipsNotifyWhenScaleUnchanged() {
+    // Direct regression for the "notify only on genuine change" guard
+    // added to reapplyFitMode() (2026-07-26 hardening, reviewed in the
+    // same pass that produced reapplyFitModeNotifiesOnEveryRescale
+    // above): a reapply that recomputes the SAME effective scale (e.g. a
+    // redundant resize event, or a viewport settling back to an
+    // identical size) must not re-fire notifyChanged() -- there is
+    // nothing new for the zoom readout to learn. Before this hardening
+    // (the shape PR #122 originally shipped), every reapply notified
+    // unconditionally regardless of whether the scale actually moved.
+    ImageDocument doc{QString()};
+    doc.setImageForTest(makeDprImage(4000, 3000, 1.0), /*captureOrigin=*/false);
+    QWidget *view = doc.createView(nullptr);
+    auto *scroll = qobject_cast<QScrollArea *>(view);
+    QVERIFY(scroll != nullptr);
+    scroll->resize(1200, 800);
+    scroll->show();
+    if (!pumpUntil([&] { return scroll->viewport()->width() > 0; })) {
+        delete view;
+        QSKIP("viewport does not settle under offscreen platform");
+    }
+
+    doc.triggerInitialZoomForTest();
+    QCOMPARE(doc.zoomMode(), ZoomMode::FitInView);
+
+    auto *notifier = doc.capabilityNotifier();
+    QVERIFY2(notifier != nullptr, "ImageDocument should expose a CapabilityNotifier");
+    int notifyCount = 0;
+    QObject::connect(notifier, &CapabilityNotifier::capabilitiesChanged,
+                      [&]() { ++notifyCount; });
+
+    // Reapply with the SAME viewport size the initial fit already used --
+    // the fit computation must land on the identical scale, so this is a
+    // genuine no-op and must not notify.
+    doc.reapplyFitMode();
+
+    QCOMPARE(notifyCount, 0);
+
+    delete view;
+}
+
+void TestImageScale::applyInitialFitZoomForcesDecodeForCaptureOrigin() {
+    // Direct regression for the ensureDecoded() call added to the top of
+    // applyInitialFitZoom() (2026-07-26 hardening). triggerInitialZoomForTest()
+    // calls applyInitialFitZoom() directly, bypassing the normal
+    // installDecodedContent() -> singleShot(0) chain that guarantees the
+    // off-thread decode has already landed in production use. Without
+    // ensureDecoded(), a capture-origin document whose decode had not yet
+    // completed would hit the (!m_image.isNull()) guard and silently
+    // return, leaving zoomMode stuck at its Custom default instead of the
+    // documented Actual Size -- the same SHAPE of symptom (Custom instead
+    // of Actual) as the reported macOS CI failure in
+    // pendingCaptureDprConsumedOncePerBatch, though that specific test is
+    // NOT itself a repro of this path: it calls capDoc->image() (which
+    // internally calls ensureDecoded()) before triggerInitialZoomForTest(),
+    // so m_image is already non-null by the time this method runs there
+    // (a review-before-push finding on the first version of this fix).
+    // This test constructs the race this fix actually protects against
+    // directly: no decode-forcing accessor is called before
+    // triggerInitialZoomForTest().
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/race.png";
+    QImage img(1200, 900, QImage::Format_ARGB32);
+    img.fill(Qt::darkGray);
+    QVERIFY(img.save(path, "PNG"));
+
+    ImageDocument doc(path); // real file path -> constructor starts async off-thread decode
+    doc.markCaptureOrigin(2.0);
+    QWidget *view = doc.createView(nullptr);
+    QVERIFY(view != nullptr);
+
+    // Deliberately NO ensureDecoded() / image() / awaitDecodeForTest()
+    // call here: call the test-only trigger immediately, maximizing the
+    // chance the off-thread decode has not yet landed. (A thread-pool
+    // context switch takes far longer than the handful of C++ calls
+    // between construction and this line, so this reliably catches the
+    // decode still in flight in practice, though it is inherently a
+    // race rather than a hard guarantee.)
+    doc.triggerInitialZoomForTest();
+
+    QCOMPARE(doc.zoomMode(), ZoomMode::Actual);
+    QVERIFY2(std::abs(doc.scaleFactor() - 1.0) < 1e-6,
+             qPrintable(QStringLiteral("capture-origin should resolve to 100%% Actual "
+                                       "even when the decode raced the trigger, got %1")
+                            .arg(doc.scaleFactor())));
+
+    delete view;
+}
+
+void TestImageScale::applyZoomStateSentinelLeavesInitialFitUndecided() {
+    // Direct regression for the applyZoomState() bug found while tracing
+    // the macOS-only pendingCaptureDprConsumedOncePerBatch failure
+    // (2026-07-26; see docs/backlog for the fuller mechanism). A
+    // (Custom, 0.0) pair is RecentEntry / DocumentTypeDefault's "not
+    // captured" sentinel (RecentEntry.h: "-1 / 0.0 sentinel values mean
+    // 'not yet captured' -- the open path leaves the document at its
+    // natural defaults in that case"). Before the fix, applyZoomState()
+    // set m_initialZoomApplied = true UNCONDITIONALLY before checking the
+    // sentinel, so this call applied nothing yet permanently pre-empted
+    // applyInitialFitZoom() from ever running -- stranding the document
+    // at its raw ZoomMode::Custom constructor default. Root-caused this
+    // as the actual failure: MainWindow::onCurrentDocumentChanged()
+    // applies a leftover, persisted DocumentTypeDefault to every
+    // newly-opened document of that type BEFORE its initial fit tick
+    // runs, and a real default-constructed-but-hasState()-true entry
+    // (e.g. sidebar mode captured, zoom never was) is exactly a
+    // (Custom, 0.0) pair.
+    ImageDocument doc{QString()};
+    doc.setImageForTest(makeDprImage(1600, 1000, 2.0), /*captureOrigin=*/true);
+    QWidget *view = doc.createView(nullptr);
+    QVERIFY(view != nullptr);
+
+    // Simulate exactly what onCurrentDocumentChanged() does with a
+    // "not captured" sentinel.
+    doc.applyZoomState(ZoomMode::Custom, 0.0);
+
+    // The sentinel must be a true no-op: the natural, capture-origin
+    // Actual-Size decision must still be reachable afterward, not
+    // permanently blocked.
+    doc.triggerInitialZoomForTest();
+    QCOMPARE(doc.zoomMode(), ZoomMode::Actual);
+
+    delete view;
+}
+
+void TestImageScale::captureOriginIgnoresPersistedTypeDefault() {
+    // Direct regression for the missing isCaptureOrigin() guard in
+    // MainWindow::onCurrentDocumentChanged() (2026-07-26). Simulates the
+    // exact "poisoned" state the self-hosted macOS runner had --  a
+    // persisted Image-type DocumentTypeDefault with a genuine non-Actual
+    // Custom zoom, as if an unrelated ordinary image had been closed at
+    // 42% -- without needing to actually close a window (which on macOS
+    // would itself require the QSettings::IniFormat fix in this file's
+    // main() to land in the sandboxed store rather than a developer's
+    // real ~/Library/Preferences/ domain). A persisted per-type default
+    // must never override a fresh capture-origin document's forced
+    // Actual-Size default (ImageDocument::applyInitialFitZoom()'s
+    // documented "Screenshot / clipboard-origin images open at Actual
+    // Size... matching Preview's default for screen captures").
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app != nullptr);
+
+    // Correctness-skeptic review finding on an earlier version of this
+    // test: poisoning the SHARED, process-wide documentTypeDefaults()
+    // without resetting it afterward silently corrupted a LATER test in
+    // this same binary (pendingCaptureDprConsumedOncePerBatch's ordDoc
+    // assertion kept passing, but only by accident -- its own
+    // triggerInitialZoomForTest() call became a no-op against the still-
+    // poisoned default, exactly the defect class this whole investigation
+    // is about, reintroduced by this test against the very test that
+    // motivated it). qScopeGuard restores the default-constructed ("no
+    // captured state") value even if a QVERIFY/QCOMPARE below returns
+    // early.
+    const auto resetTypeDefault = qScopeGuard([app]() {
+        app->documentTypeDefaults().setForType(DocumentType::Image, DocumentTypeDefault{});
+    });
+
+    DocumentTypeDefault poisoned;
+    poisoned.zoomMode = ZoomMode::Custom;
+    poisoned.zoomFactor = 0.42;
+    app->documentTypeDefaults().setForType(DocumentType::Image, poisoned);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString capPng = dir.path() + "/cap-poisoned.png";
+    QVERIFY(makeDprImage(1600, 1000, 2.0).save(capPng, "PNG"));
+
+    app->setPendingCaptureDpr(2.0);
+    app->openFiles({capPng});
+    ImageDocument *capDoc = newestImageDoc(app);
+    QVERIFY(capDoc != nullptr);
+    QCOMPARE(capDoc->image().devicePixelRatio(), qreal(2.0));
+    capDoc->triggerInitialZoomForTest();
+    QVERIFY2(capDoc->zoomMode() == ZoomMode::Actual,
+             "a persisted per-type zoom default must never override a "
+             "capture-origin document's forced Actual-Size default");
+}
+
 void TestImageScale::pngRoundTripStripsDprThenRecovers() {
     // The seam that made screenshots blurry/oversized: a capture is saved
     // to PNG, and PNG carries no devicePixelRatio metadata, so the reload
@@ -756,6 +977,27 @@ int main(int argc, char **argv) {
     qputenv("XDG_DATA_HOME", (fakeHome.path() + "/.local/share").toUtf8());
     QDir().mkpath(fakeHome.path() + "/.config/trailer");
     QDir().mkpath(fakeHome.path() + "/.local/share/trailer");
+    // 2026-07-26: Application's DocumentTypeDefaults uses the plain
+    // QSettings(org, app) constructor, which on macOS resolves to
+    // QSettings::NativeFormat -- CFPreferences, keyed off the process's
+    // REAL UID via getpwuid(), not the $HOME env var above. (RecentFiles
+    // is NOT affected -- it persists via QFile/QJsonDocument to a path
+    // AppPaths derives from QDir::homePath(), which DOES respect $HOME on
+    // every platform including macOS, since it's Qt's own portable
+    // implementation rather than a native preferences API.) The HOME
+    // sandboxing this file (and several siblings) relies on is therefore a
+    // no-op for DocumentTypeDefaults on macOS: every run reads/writes the
+    // SAME real, persistent ~/Library/Preferences/ domain as every other
+    // test binary and the actual shipped app on that machine, so state
+    // from an unrelated earlier test (or a developer's own Trailer.app)
+    // leaks in.
+    // This was the root cause of a macOS-only pendingCaptureDprConsumedOncePerBatch
+    // failure: a leftover Image-type DocumentTypeDefault applied a non-
+    // Actual zoom underneath a fresh capture-origin document. Forcing
+    // IniFormat makes QSettings(org, app) use Qt's own portable backend
+    // (a file under $HOME/.config, which the sandboxing above DOES
+    // control) on every platform, closing the leak.
+    QSettings::setDefaultFormat(QSettings::IniFormat);
 
     trailer::Application app(argc, argv);
     TestImageScale tests;

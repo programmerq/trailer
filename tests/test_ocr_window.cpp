@@ -34,6 +34,7 @@
 
 #include <QImage>
 #include <QPolygon>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -340,6 +341,10 @@ int main(int argc, char *argv[]) {
     qputenv("XDG_DATA_HOME", (home.path() + "/.local/share").toUtf8());
     QDir().mkpath(home.path() + "/.config/trailer");
     QDir().mkpath(home.path() + "/.local/share/trailer");
+    // See tests/test_image_scale.cpp's main() for why this is needed on
+    // macOS: QSettings(org, app) defaults to NativeFormat there, which
+    // ignores the HOME sandboxing above.
+    QSettings::setDefaultFormat(QSettings::IniFormat);
 
     trailer::Application app(argc, argv);
     TestOcrWindow tests;

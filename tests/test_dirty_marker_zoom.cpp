@@ -32,6 +32,7 @@
 #include <QPixmap>
 #include <QPainter>
 #include <QPdfWriter>
+#include <QSettings>
 #include <QString>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -380,6 +381,13 @@ int main(int argc, char **argv) {
     qputenv("XDG_DATA_HOME", (fakeHome.path() + "/.local/share").toUtf8());
     QDir().mkpath(fakeHome.path() + "/.config/trailer");
     QDir().mkpath(fakeHome.path() + "/.local/share/trailer");
+    // See tests/test_image_scale.cpp's main() for why this is needed on
+    // macOS: QSettings(org, app) (used by Application's DocumentTypeDefaults
+    // / RecentFiles) defaults to NativeFormat there, which ignores the HOME
+    // sandboxing above (CFPreferences keys off the real UID). IniFormat
+    // uses Qt's own portable backend instead, which the sandboxing does
+    // control.
+    QSettings::setDefaultFormat(QSettings::IniFormat);
 
     trailer::Application app(argc, argv);
     TestDirtyMarkerZoom tests;
