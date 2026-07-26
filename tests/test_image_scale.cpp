@@ -108,6 +108,8 @@ class TestImageScale : public QObject {
     void smallImageResizeDoesNotUpscale();
     void readoutMatchesRenderAfterAsyncFit();
     void reapplyFitModeNotifiesOnEveryRescale();
+    void reapplyFitModeSkipsNotifyWhenScaleUnchanged();
+    void applyInitialFitZoomForcesDecodeForCaptureOrigin();
     void pngRoundTripStripsDprThenRecovers();
     void pendingCaptureDprConsumedOncePerBatch();
     void coordinateRoundTripInvertsAtDpr2();
@@ -609,6 +611,96 @@ void TestImageScale::reapplyFitModeNotifiesOnEveryRescale() {
              qPrintable(QStringLiteral("the notified scale (%1) must match the CURRENT "
                                        "render scale (%2) -- one source of truth")
                             .arg(scaleAtLastNotify)
+                            .arg(doc.scaleFactor())));
+
+    delete view;
+}
+
+void TestImageScale::reapplyFitModeSkipsNotifyWhenScaleUnchanged() {
+    // Direct regression for the "notify only on genuine change" guard
+    // added to reapplyFitMode() (2026-07-26 hardening, reviewed in the
+    // same pass that produced reapplyFitModeNotifiesOnEveryRescale
+    // above): a reapply that recomputes the SAME effective scale (e.g. a
+    // redundant resize event, or a viewport settling back to an
+    // identical size) must not re-fire notifyChanged() -- there is
+    // nothing new for the zoom readout to learn. Before this hardening
+    // (the shape PR #122 originally shipped), every reapply notified
+    // unconditionally regardless of whether the scale actually moved.
+    ImageDocument doc{QString()};
+    doc.setImageForTest(makeDprImage(4000, 3000, 1.0), /*captureOrigin=*/false);
+    QWidget *view = doc.createView(nullptr);
+    auto *scroll = qobject_cast<QScrollArea *>(view);
+    QVERIFY(scroll != nullptr);
+    scroll->resize(1200, 800);
+    scroll->show();
+    if (!pumpUntil([&] { return scroll->viewport()->width() > 0; })) {
+        delete view;
+        QSKIP("viewport does not settle under offscreen platform");
+    }
+
+    doc.triggerInitialZoomForTest();
+    QCOMPARE(doc.zoomMode(), ZoomMode::FitInView);
+
+    auto *notifier = doc.capabilityNotifier();
+    QVERIFY2(notifier != nullptr, "ImageDocument should expose a CapabilityNotifier");
+    int notifyCount = 0;
+    QObject::connect(notifier, &CapabilityNotifier::capabilitiesChanged,
+                      [&]() { ++notifyCount; });
+
+    // Reapply with the SAME viewport size the initial fit already used --
+    // the fit computation must land on the identical scale, so this is a
+    // genuine no-op and must not notify.
+    doc.reapplyFitMode();
+
+    QCOMPARE(notifyCount, 0);
+
+    delete view;
+}
+
+void TestImageScale::applyInitialFitZoomForcesDecodeForCaptureOrigin() {
+    // Direct regression for the ensureDecoded() call added to the top of
+    // applyInitialFitZoom() (2026-07-26 hardening). triggerInitialZoomForTest()
+    // calls applyInitialFitZoom() directly, bypassing the normal
+    // installDecodedContent() -> singleShot(0) chain that guarantees the
+    // off-thread decode has already landed in production use. Without
+    // ensureDecoded(), a capture-origin document whose decode had not yet
+    // completed would hit the (!m_image.isNull()) guard and silently
+    // return, leaving zoomMode stuck at its Custom default instead of the
+    // documented Actual Size -- the same SHAPE of symptom (Custom instead
+    // of Actual) as the reported macOS CI failure in
+    // pendingCaptureDprConsumedOncePerBatch, though that specific test is
+    // NOT itself a repro of this path: it calls capDoc->image() (which
+    // internally calls ensureDecoded()) before triggerInitialZoomForTest(),
+    // so m_image is already non-null by the time this method runs there
+    // (a review-before-push finding on the first version of this fix).
+    // This test constructs the race this fix actually protects against
+    // directly: no decode-forcing accessor is called before
+    // triggerInitialZoomForTest().
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.path() + "/race.png";
+    QImage img(1200, 900, QImage::Format_ARGB32);
+    img.fill(Qt::darkGray);
+    QVERIFY(img.save(path, "PNG"));
+
+    ImageDocument doc(path); // real file path -> constructor starts async off-thread decode
+    doc.markCaptureOrigin(2.0);
+    QWidget *view = doc.createView(nullptr);
+    QVERIFY(view != nullptr);
+
+    // Deliberately NO ensureDecoded() / image() / awaitDecodeForTest()
+    // call here: call the test-only trigger immediately, maximizing the
+    // chance the off-thread decode has not yet landed. (A thread-pool
+    // context switch takes far longer than the handful of C++ calls
+    // between construction and this line, so this reliably catches the
+    // decode still in flight in practice, though it is inherently a
+    // race rather than a hard guarantee.)
+    doc.triggerInitialZoomForTest();
+
+    QCOMPARE(doc.zoomMode(), ZoomMode::Actual);
+    QVERIFY2(std::abs(doc.scaleFactor() - 1.0) < 1e-6,
+             qPrintable(QStringLiteral("capture-origin should resolve to 100%% Actual "
+                                       "even when the decode raced the trigger, got %1")
                             .arg(doc.scaleFactor())));
 
     delete view;
