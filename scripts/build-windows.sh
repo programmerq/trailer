@@ -167,7 +167,14 @@ run_build() {
             -DQT_HOST_PATH="${QT_HOST_DIR:-/opt/qt/6.10.3/gcc_64}" \
             -Dqpdf_DIR="${QPDF_DIR:-/opt/qpdf}/lib/cmake/qpdf"
     fi
-    cmake --build "$BUILD_DIR" -j
+    # Bare `-j` does NOT honor CMAKE_BUILD_PARALLEL_LEVEL — cmake only
+    # reads that env var when `-j`/`--parallel` is absent from the
+    # command line entirely; once present, cmake hands the native tool
+    # (Ninja here) its own default. Invoked both by CI (which always
+    # sets CMAKE_BUILD_PARALLEL_LEVEL at the workflow/job level) and by
+    # a developer running this manually on their own Linux host, so
+    # fall back to nproc (this script is Linux-only per its header).
+    cmake --build "$BUILD_DIR" -j "${CMAKE_BUILD_PARALLEL_LEVEL:-$(nproc)}"
 
     local exe
     exe=$(find "$BUILD_DIR" -maxdepth 2 -name 'trailer.exe' -print -quit)

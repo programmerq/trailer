@@ -293,8 +293,15 @@ value/default changes are backed by records in
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-cmake --build build -j
+cmake --build build --parallel "$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 ```
+
+(`--build … --parallel` / `-j` with no following number does NOT honor
+`CMAKE_BUILD_PARALLEL_LEVEL` — CMake only reads that env var when the
+flag is absent from the command line entirely. Once present, CMake
+hands the native tool its own default, which for GNU Make is an
+unbounded bare `-j`. Always pass an explicit job count, here or in any
+new CI workflow that copies this pattern.)
 
 Requirements: CMake 3.24+, Qt 6.6+ with `Core Gui Widgets Test Pdf
 PdfWidgets PrintSupport`, qpdf 11+, a C++20 compiler. `qtpdf` is a

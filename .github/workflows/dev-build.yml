@@ -79,9 +79,11 @@ concurrency:
   group: dev-build-${{ github.ref }}
   cancel-in-progress: true
 
-# Match release.yml's caps: the bare `cmake --build … --parallel` steps
-# honor CMAKE_BUILD_PARALLEL_LEVEL, and unbounded parallelism OOMKilled
-# the trailer-k8s pods.
+# Match release.yml's caps. See ci.yml's matching env comment for why
+# every `cmake --build` step below passes the job count explicitly
+# (`--parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"`) instead of a bare
+# `--parallel` — the short version: bare `--parallel` does NOT honor
+# this env var, and was the real cause of past OOMKilled pods.
 env:
   CMAKE_BUILD_PARALLEL_LEVEL: 2
   CTEST_PARALLEL_LEVEL: 2
@@ -135,7 +137,7 @@ jobs:
           -DTRAILER_ENABLE_UX_RECORDER=${{ inputs.enable_recorder && 'ON' || 'OFF' }}
 
       - name: Build
-        run: cmake --build build --config Release --parallel
+        run: cmake --build build --config Release --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
 
       - name: Unit tests
         # Dev builds exist to GUI-test WIP code, which may legitimately
@@ -221,7 +223,7 @@ jobs:
           PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
 
       - name: Build
-        run: cmake --build build-win --parallel
+        run: cmake --build build-win --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
 
       - name: Bundle self-contained trailer.exe
         # Reuse scripts/build-windows.sh's collect_dlls import-table walk

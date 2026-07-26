@@ -75,7 +75,13 @@ else ifeq ($(HOST_UNAME),Linux)
 release: test
 test:
 	cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
-	cmake --build build --parallel
+	# Bare `--parallel` (no number) does NOT honor CMAKE_BUILD_PARALLEL_LEVEL
+	# — cmake only reads that env var when `--parallel` is absent entirely;
+	# once present, cmake hands the native tool (GNU Make here) its OWN
+	# default, i.e. an unbounded bare `-j`. This target runs on a
+	# developer's own Linux box, not a memory-capped CI pod, so honor an
+	# explicit CMAKE_BUILD_PARALLEL_LEVEL if set, else default to nproc.
+	cmake --build build --parallel "$${CMAKE_BUILD_PARALLEL_LEVEL:-$$(nproc)}"
 	cd build && QT_QPA_PLATFORM=offscreen ctest --output-on-failure --label-exclude uat
 test-uat:
 	scripts/run-uat.sh --host

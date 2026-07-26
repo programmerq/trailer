@@ -24,7 +24,7 @@ reject any change that introduces an outbound-capable class into
 
 ```sh
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRAILER_ENABLE_UX_RECORDER=ON
-cmake --build build -j
+cmake --build build --parallel "$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 ```
 
 `TRAILER_ENABLE_UX_RECORDER` defaults to **OFF**. Default builds:

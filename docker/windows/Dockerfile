@@ -148,6 +148,13 @@ RUN printf '%s\n' \
 # it, and qpdf needs it for JPEG handling in PDFs. Built static so
 # the result gets folded into qpdf30.dll at link time and we don't
 # ship another runtime DLL.
+#
+# `cmake --build … -j "$(nproc)"` (here and in the qpdf build below):
+# a bare `-j` with no number tells Ninja to use its own default rather
+# than any CMAKE_BUILD_PARALLEL_LEVEL the caller set (that env var is
+# only consulted when `-j`/`--parallel` is absent from the command line
+# entirely) — explicit is safer and matches the rest of the repo's
+# convention after the 2026-07-26 unbounded-parallelism fix.
 ARG LIBJPEG_VERSION=3.0.3
 RUN wget -q https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${LIBJPEG_VERSION}/libjpeg-turbo-${LIBJPEG_VERSION}.tar.gz \
         -O /tmp/jpeg.tar.gz \
@@ -159,7 +166,7 @@ RUN wget -q https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/${L
          -DENABLE_SHARED=OFF \
          -DENABLE_STATIC=ON \
          -DWITH_TURBOJPEG=OFF \
-    && cmake --build /tmp/jpeg-build -j \
+    && cmake --build /tmp/jpeg-build -j "$(nproc)" \
     && cmake --install /tmp/jpeg-build \
     && rm -rf /tmp/libjpeg-turbo-${LIBJPEG_VERSION} /tmp/jpeg.tar.gz /tmp/jpeg-build
 
@@ -210,7 +217,7 @@ RUN wget -q https://github.com/qpdf/qpdf/releases/download/v${QPDF_VERSION}/qpdf
          -DUSE_IMPLICIT_CRYPTO=1 \
          -DBUILD_DOC=0 \
     && cp /usr/x86_64-w64-mingw32/lib/CRT_glob.o /tmp/qpdf-build/CRT_glob.o \
-    && cmake --build /tmp/qpdf-build -j \
+    && cmake --build /tmp/qpdf-build -j "$(nproc)" \
     && cmake --install /tmp/qpdf-build \
     && rm -rf /tmp/qpdf-${QPDF_VERSION} /tmp/qpdf.tar.gz /tmp/qpdf-build
 

@@ -74,6 +74,17 @@ WERROR="${WERROR:-OFF}"
 BUILD_DIR="${BUILD_DIR:-$REPO_ROOT/build-macos}"
 DEPS_DIR="${DEPS_DIR:-$REPO_ROOT/build-macos-deps}"
 DIST_DIR="${DIST_DIR:-$REPO_ROOT/dist}"
+# Bounded build parallelism. `cmake --build … --parallel` with NO
+# following number does NOT honor CMAKE_BUILD_PARALLEL_LEVEL — CMake
+# only reads that env var when `--parallel` is absent from the command
+# line entirely; once present (bare or not), CMake hands the native
+# tool ITS OWN default, which for a plain `-j` can mean unbounded jobs.
+# This script runs on a developer's own Mac (or the release/nightly
+# workflows' self-hosted M4), never a memory-capped CI pod, so honor an
+# explicit CMAKE_BUILD_PARALLEL_LEVEL if the caller set one, otherwise
+# default to the host's own core count via sysctl (nproc doesn't exist
+# on macOS).
+BUILD_JOBS="${CMAKE_BUILD_PARALLEL_LEVEL:-$(sysctl -n hw.ncpu)}"
 
 # UX recorder opt-in (default OFF). Enabled either by env
 # TRAILER_ENABLE_UX_RECORDER=1 or the --enable-ux-recorder flag; when set it
@@ -256,7 +267,7 @@ if [[ ! -f "$JPEG_CONFIG" ]]; then
         -DENABLE_STATIC=ON \
         -DWITH_SIMD=OFF \
         -DWITH_TURBOJPEG=OFF
-    cmake --build "$DEPS_DIR/jpeg-build" --parallel
+    cmake --build "$DEPS_DIR/jpeg-build" --parallel "$BUILD_JOBS"
     cmake --install "$DEPS_DIR/jpeg-build"
 else
     echo "==> Reusing cached libjpeg-turbo install at $JPEG_PREFIX"
@@ -319,7 +330,7 @@ if [[ ! -f "$QPDF_CONFIG" ]]; then
         -DREQUIRE_CRYPTO_OPENSSL=OFF \
         -DREQUIRE_CRYPTO_GNUTLS=OFF \
         -DBUILD_DOC=0
-    cmake --build "$DEPS_DIR/qpdf-build" --parallel
+    cmake --build "$DEPS_DIR/qpdf-build" --parallel "$BUILD_JOBS"
     cmake --install "$DEPS_DIR/qpdf-build"
     # qpdf's pkg_check_modules-based discovery records the bare lib
     # name `jpeg` (not an absolute path) in its exported
@@ -372,8 +383,8 @@ cmake -S . -B "$BUILD_DIR" -G Ninja \
     "$ADAPTIVE_ICON_FLAG" \
     $UX_RECORDER_CMAKE_ARG
 
-echo "==> Building Trailer.app"
-cmake --build "$BUILD_DIR" --parallel
+echo "==> Building Trailer.app ($BUILD_JOBS jobs)"
+cmake --build "$BUILD_DIR" --parallel "$BUILD_JOBS"
 
 # Resolve the .app path. CMake builds an Application Bundle whose
 # directory name follows the target name (`trailer`) by default, but
