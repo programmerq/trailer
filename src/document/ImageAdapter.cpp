@@ -962,8 +962,14 @@ void ImageDocument::applyZoomState(ZoomMode mode, double factor) {
     // applyInitialFitZoom()'s natural fit-to-content / capture-origin
     // Actual-Size decision forever. Bail out before touching
     // m_initialZoomApplied so a sentinel truly means "apply nothing,
-    // let the natural default decide" as documented.
-    if (mode == ZoomMode::Custom && factor <= 0.0)
+    // let the natural default decide" as documented. `!(factor > 0.0)`
+    // rather than `factor <= 0.0` so a NaN factor (unreachable from the
+    // current QSettings/JSON-backed callers today, which default to 0.0
+    // on parse failure, but a real hazard for any future/direct caller)
+    // is also treated as "not a real zoom" and bails out here, instead of
+    // flowing into applyScale(NaN) the way the old inner-guarded Custom
+    // case's removal would otherwise have newly allowed.
+    if (mode == ZoomMode::Custom && !(factor > 0.0))
         return;
     ensureDecoded(); // a restored/explicit zoom must apply even mid-decode
     m_initialZoomApplied = true; // a restored zoom supersedes the initial auto-fit

@@ -31,6 +31,7 @@
 #include <QLabel>
 #include <QPixmap>
 #include <QPointF>
+#include <QScopeGuard>
 #include <QScrollArea>
 #include <QSettings>
 #include <QTemporaryDir>
@@ -762,6 +763,21 @@ void TestImageScale::captureOriginIgnoresPersistedTypeDefault() {
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app != nullptr);
 
+    // Correctness-skeptic review finding on an earlier version of this
+    // test: poisoning the SHARED, process-wide documentTypeDefaults()
+    // without resetting it afterward silently corrupted a LATER test in
+    // this same binary (pendingCaptureDprConsumedOncePerBatch's ordDoc
+    // assertion kept passing, but only by accident -- its own
+    // triggerInitialZoomForTest() call became a no-op against the still-
+    // poisoned default, exactly the defect class this whole investigation
+    // is about, reintroduced by this test against the very test that
+    // motivated it). qScopeGuard restores the default-constructed ("no
+    // captured state") value even if a QVERIFY/QCOMPARE below returns
+    // early.
+    const auto resetTypeDefault = qScopeGuard([app]() {
+        app->documentTypeDefaults().setForType(DocumentType::Image, DocumentTypeDefault{});
+    });
+
     DocumentTypeDefault poisoned;
     poisoned.zoomMode = ZoomMode::Custom;
     poisoned.zoomFactor = 0.42;
@@ -961,15 +977,20 @@ int main(int argc, char **argv) {
     qputenv("XDG_DATA_HOME", (fakeHome.path() + "/.local/share").toUtf8());
     QDir().mkpath(fakeHome.path() + "/.config/trailer");
     QDir().mkpath(fakeHome.path() + "/.local/share/trailer");
-    // 2026-07-26: Application's DocumentTypeDefaults / RecentFiles use the
-    // plain QSettings(org, app) constructor, which on macOS resolves to
+    // 2026-07-26: Application's DocumentTypeDefaults uses the plain
+    // QSettings(org, app) constructor, which on macOS resolves to
     // QSettings::NativeFormat -- CFPreferences, keyed off the process's
-    // REAL UID via getpwuid(), not the $HOME env var above. The HOME
+    // REAL UID via getpwuid(), not the $HOME env var above. (RecentFiles
+    // is NOT affected -- it persists via QFile/QJsonDocument to a path
+    // AppPaths derives from QDir::homePath(), which DOES respect $HOME on
+    // every platform including macOS, since it's Qt's own portable
+    // implementation rather than a native preferences API.) The HOME
     // sandboxing this file (and several siblings) relies on is therefore a
-    // no-op for this state on macOS: every run reads/writes the SAME real,
-    // persistent ~/Library/Preferences/ domain as every other test binary
-    // and the actual shipped app on that machine, so state from an
-    // unrelated earlier test (or a developer's own Trailer.app) leaks in.
+    // no-op for DocumentTypeDefaults on macOS: every run reads/writes the
+    // SAME real, persistent ~/Library/Preferences/ domain as every other
+    // test binary and the actual shipped app on that machine, so state
+    // from an unrelated earlier test (or a developer's own Trailer.app)
+    // leaks in.
     // This was the root cause of a macOS-only pendingCaptureDprConsumedOncePerBatch
     // failure: a leftover Image-type DocumentTypeDefault applied a non-
     // Actual zoom underneath a fresh capture-origin document. Forcing
