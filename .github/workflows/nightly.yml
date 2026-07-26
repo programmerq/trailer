@@ -441,19 +441,13 @@ jobs:
         run: |
           set +e
           ctest -C Release -L uat --output-on-failure | tee /tmp/wine-uat.log
-          # ctest's own summary line reads e.g. "58% tests passed, 17 tests
-          # failed out of 40". Parse PASSED/TOTAL from it directly rather
-          # than trusting ctest's exit code (masked by continue-on-error
-          # anyway) — falls back to empty (rendered as "unknown" downstream)
-          # if the line is missing, e.g. ctest crashed before any case ran.
-          TOTAL=$(grep -oE 'out of [0-9]+' /tmp/wine-uat.log | grep -oE '[0-9]+' | tail -1)
-          FAILED=$(grep -oE '[0-9]+ tests failed' /tmp/wine-uat.log | grep -oE '^[0-9]+' | tail -1)
-          if [ -n "$TOTAL" ] && [ -n "$FAILED" ]; then
-            PASSED=$((TOTAL - FAILED))
-          else
-            PASSED=""
-            TOTAL=""
-          fi
+          # Shared with nightly-macos' "UAT suite" step — see
+          # scripts/parse-ctest-uat-summary.sh for why this isn't a plain
+          # "[0-9]+ tests failed" grep (that silently misreports a full
+          # pass as "count unavailable" the day this item's own goal — a
+          # clean Wine UAT run — is reached; fixed 2026-07-26, see
+          # docs/backlog/2026-07-24-wine-uat-failures-triage.md).
+          eval "$(bash "$GITHUB_WORKSPACE/scripts/parse-ctest-uat-summary.sh" /tmp/wine-uat.log)"
           echo "passed=$PASSED" >> "$GITHUB_OUTPUT"
           echo "total=$TOTAL"   >> "$GITHUB_OUTPUT"
           echo "Wine UAT: ${PASSED:-unknown}/${TOTAL:-unknown} passed (non-gating)"
@@ -565,37 +559,13 @@ jobs:
         run: |
           set +e
           ctest -C Release --output-on-failure -L uat | tee /tmp/macos-uat.log
-          # Read ctest's own summary line rather than trusting its exit
-          # code (masked by continue-on-error anyway). NOT a straight copy
-          # of nightly-windows' "UAT suite (Wine)" parse: this bootstrap
-          # run's own log surfaced a format difference ctest's version
-          # apparently varies on — "N% tests passed, F tests failed out of
-          # T" when F>0, but "N% tests passed out of T" (the "F tests
-          # failed" clause OMITTED entirely) when F=0. This run's own
-          # unit-test step hit exactly that: "100% tests passed out of 62",
-          # no "0 tests failed" clause. Grepping for "[0-9]+ tests failed"
-          # alone (the Wine step's approach) would silently misreport a
-          # full pass as "count unavailable". Only default the failed-count
-          # to 0 when the leading percentage actually reads 100 (not merely
-          # "clause absent") — a garbled/truncated non-100% line must fall
-          # through to "unknown" rather than silently reporting a false
-          # full pass. TOTAL/PASSED fall back to empty (rendered as
-          # "unknown" downstream) whenever "out of T" itself is absent
-          # (e.g. ctest crashed/hung before any case completed) or the
-          # failed-count can't be determined some other way.
-          SUMMARY_LINE=$(grep -E '[0-9]+% tests passed.*out of [0-9]+' /tmp/macos-uat.log | tail -1)
-          PERCENT=$(echo "$SUMMARY_LINE" | grep -oE '[0-9]+% tests passed' | grep -oE '^[0-9]+')
-          TOTAL=$(echo "$SUMMARY_LINE" | grep -oE 'out of [0-9]+' | grep -oE '[0-9]+')
-          FAILED=$(echo "$SUMMARY_LINE" | grep -oE '[0-9]+ tests failed' | grep -oE '^[0-9]+')
-          if [ -z "$FAILED" ] && [ "$PERCENT" = "100" ]; then
-            FAILED=0
-          fi
-          if [ -n "$TOTAL" ] && [ -n "$FAILED" ]; then
-            PASSED=$((TOTAL - FAILED))
-          else
-            PASSED=""
-            TOTAL=""
-          fi
+          # Shared with nightly-windows' "UAT suite (Wine)" step — see
+          # scripts/parse-ctest-uat-summary.sh for the parsing rationale
+          # (ctest omits the "F tests failed" clause when F=0, which a
+          # naive grep would misread as "count unavailable" on a clean
+          # pass — found while writing this step, fixed there for both
+          # lanes rather than duplicating a parser that can drift).
+          eval "$(bash "$GITHUB_WORKSPACE/scripts/parse-ctest-uat-summary.sh" /tmp/macos-uat.log)"
           # A crash reads very differently from "some assertions failed" —
           # surface it as its own signal. ctest's own exception label
           # ("***Exception: SegFault") and the QtTest crash handler's

@@ -95,7 +95,21 @@ member/vtable read, not a wild pointer), and `code SEGV_ACCERR` (the page is
 mapped but access is disallowed — consistent with a near-null read through a
 freed/zeroed object, distinct from a plain unmapped-address `SEGV_MAPERR`).
 No symbols, no backtrace, no core file. That is not enough to *confirm* a
-cause — only to form a hypothesis.
+cause — only to form a hypothesis. `0x28` off null/freed is the textbook
+shape of dereferencing a member at a small offset through a dangling
+pointer — consistent with, though not proof of, the use-after-free
+hypothesis below.
+
+**Why this matters more than a typical crash finding:** the hypothesis below
+concludes the fault is in the *test's* own dereference, not in product code.
+**If that conclusion is wrong** — if the fault instead lies in
+`onAllTabsClosed()`, `closeEvent()`, or anything in the production
+teardown path itself, rather than in the test harness's post-`requestCloseTab`
+assertions — **this would be a real crash a Mac user could hit by closing
+their last dirty tab and choosing Discard**, which materially raises this
+item's priority above "test hygiene." Nothing found here rules that out;
+it is exactly what the symbolicated backtrace / ASan run below would
+settle. Keep this labeled **unconfirmed** either way — do not patch blind.
 
 ### Leading hypothesis (code-reading only — NOT confirmed via a debugger)
 
@@ -374,28 +388,46 @@ to which nightly artifacts get published**, not a cosmetic CI tweak — see
 the implementing PR body. It reverts to gating once this item's Threshold
 is met.
 
-**Parsing note found during self-review, fixed before push:** a
-straight copy of the Wine step's ctest-summary parse (`grep -oE '[0-9]+
-tests failed'`) would have silently misreported a clean macOS UAT pass as
-"count unavailable" — this run's own unit-test step logged
-`100% tests passed out of 62`, with the `"N tests failed"` clause omitted
-entirely (apparently a ctest-version-dependent formatting difference; a
-local Linux ctest run in this same PR printed the fuller
-`100% tests passed, 0 tests failed out of 62` for the identical 0-failures
-case). The macOS step's parser (unlike the pre-existing, unmodified Wine
-step) treats a present `"out of T"` with no `"tests failed"` clause as
-`F=0` rather than as missing data; verified against all three observed
-summary shapes (partial pass, full pass with the clause, full pass
-without it). The Wine step's parser still has this latent gap — it has
-simply never been exercised, since Wine UAT has never reached 100% — left
-unmodified here since it's a different file's step, not touched in this
-diff.
+**Parsing bug found during self-review — fixed in BOTH the macOS and the
+pre-existing Wine step, not just the new one:** a straight copy of the
+Wine step's original ctest-summary parse (`grep -oE '[0-9]+ tests
+failed'`) would have silently misreported a clean macOS UAT pass as
+"count unavailable" — this run's own unit-test step logged `100% tests
+passed out of 62`, with the `"N tests failed"` clause omitted entirely
+(apparently a ctest-version-dependent formatting difference; a local Linux
+ctest run in this same PR printed the fuller `100% tests passed, 0 tests
+failed out of 62` for the identical 0-failures case).
+
+That is not just a new-code risk: the **pre-existing** Wine step
+(`nightly-windows`' "UAT suite (Wine)" step, live on `main` since
+2026-07-24) has the exact same bug, and it is *latent, not dormant* — the
+explicit goal of `docs/backlog/2026-07-24-wine-uat-failures-triage.md` is
+to drive Wine UAT to 100%, and the day it gets there, the old parser's
+`grep -oE '[0-9]+ tests failed'` would match nothing, `FAILED` would go
+empty, and the Windows row would report a broken/"unavailable" count in
+every subsequent nightly release body — a silent failure mode that only
+triggers on success, precisely the moment the count matters most. Fixed
+here, in this same PR, because it's the same code path: both steps now
+call a shared `scripts/parse-ctest-uat-summary.sh` (factored out rather
+than maintaining two copies that can drift), which treats a present
+`"out of T"` with the leading percentage reading exactly `100` as `F=0`,
+and falls through to "unknown" for anything else where the `"tests
+failed"` clause is missing (a defensive branch for a genuinely
+garbled/truncated line, not a real observed ctest format). Verified
+against six scenarios for each step (real captured log, full pass with
+the clause, full pass without it, empty log, garbled non-100% with no
+clause, and a normal partial-fail case) by extracting each step's `run:`
+script and executing it directly against fixture logs.
 
 ## Recommendation summary
 
-1. **Finding 1 (crash) — do not fix blind.** Get a symbolicated backtrace
-   or ASan report on the mac runner first; the current log evidence
-   supports a hypothesis (see above) but not a diagnosis.
+1. **Finding 1 (crash) — do not fix blind, and treat as potentially
+   product-level.** Get a symbolicated backtrace or ASan report on the mac
+   runner first; the current log evidence supports a hypothesis (see
+   above) but not a diagnosis, and — per the "why this matters more"
+   callout above — if the fault turns out to be in production teardown
+   code rather than the test's own dereference, this is a real crash a
+   Mac user could hit, not just a test-hygiene gap.
 2. **Finding 2 (stale `&New` assertion) — trivial, ready for pickup.**
    One-line-ish test edit, fully diagnosed above; deliberately not bundled
    into this PR to keep it scoped to the systemic QSettings fix + the
@@ -403,3 +435,8 @@ diff.
 3. **QSettings/IniFormat family — fixed in this PR**, verified on Linux,
    preventive (didn't cause any failure observed in this run, but closes a
    real persistent-runner pollution risk matching PR #123's precedent).
+4. **ctest-summary parsing bug (Wine + macOS) — fixed in this PR**, in
+   `scripts/parse-ctest-uat-summary.sh`, shared by both nightly lanes;
+   without it, the Wine UAT count would have silently broken the day
+   `docs/backlog/2026-07-24-wine-uat-failures-triage.md`'s own goal (a
+   clean Wine UAT run) was reached.
