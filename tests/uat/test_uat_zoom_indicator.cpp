@@ -21,6 +21,7 @@
 #include <QImage>
 #include <QLabel>
 #include <QPointer>
+#include <QSettings>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
@@ -231,6 +232,10 @@ int main(int argc, char **argv) {
     QDir().mkpath(fakeHome.path() + "/.config/trailer");
     QDir().mkpath(fakeHome.path() + "/.local/share/trailer");
 
+    // See tests/test_image_scale.cpp's main() for why this is needed on
+    // macOS: QSettings(org, app) defaults to NativeFormat there, which
+    // ignores the HOME sandboxing above.
+    QSettings::setDefaultFormat(QSettings::IniFormat);
     Application app(argc, argv);
     TestUatZoomIndicator tests;
     return QTest::qExec(&tests, argc, argv);
