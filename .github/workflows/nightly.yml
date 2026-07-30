@@ -144,6 +144,51 @@
 # and bisecting stay possible indefinitely; only the multi-hundred-MB binary
 # assets age out).
 #
+# Skip-when-unchanged (scripts/resolve-nightly-skip.sh): nightly-date
+# resolves a SKIP decision immediately after computing the date/tag/
+# concurrency-key above — before any lane starts, so a no-op night never
+# spends runner time (especially the single-instance mac VM). The
+# comparison is CODE, not commit count: `git diff --quiet` between the
+# resolved build commit and the commit the PREVIOUS nightly-* tag points
+# at, not a commit-count heuristic (see nightly-20260729, which "rebuilt"
+# on a range release-notes.sh itself reported as "0 non-merge commits" —
+# counting commits is exactly the wrong signal; see the script's header for
+# the full rationale, including why docs-only changes are deliberately NOT
+# skipped). Baseline source is the previous nightly TAG's target commit —
+# chosen over parsing the release body or adding a field to
+# uat-summary.json because it needs no new schema and is definitionally
+# correct: nightly-publish's "Create tag + GitHub Release" step tags the
+# EXACT commit that was built, so the tag *is* the provenance record,
+# already being written, for free. Degrades to BUILD (never skip) on any
+# missing/unresolvable signal — see the script's header. workflow_dispatch
+# carries its own `force` input (independent of `dry_run`) so a human
+# asking for a nightly always gets one, bypassing the skip check entirely;
+# the schedule trigger always defers to the check.
+#
+# Observability on a skip night (no lie-by-omission): every lane job's `if`
+# also requires `needs.nightly-date.outputs.skip != 'true'`, so all three
+# report `skipped` (not `failure`) and the existing "fail the run if any
+# lane didn't fully pass" step is additionally guarded on `skip != 'true'`
+# so a skipped-not-successful lane can't red the run. nightly-publish still
+# runs (`if: always()` — unchanged) and, on a skip night, does ONLY one
+# thing: write a step-summary + `::notice::` line naming the reason and the
+# matched commit. It does not cut a release, attach assets, or run
+# retention cleanup — every other step in that job gets the same
+# `skip != 'true'` guard added to its existing `if:`.
+#
+# UAT ratchet safety on a skip night (the subtle part): nightly-publish's
+# "Find previous nightly tag" step ALREADY walks back to the most recent
+# EXISTING `nightly-*` tag via `git tag -l 'nightly-*' | sort -r | head -1`
+# — it has no assumption that the previous tag is "yesterday's". Because a
+# skip night creates NO tag and NO release, that lookup transparently skips
+# over the gap on the next REAL night and finds the last night that
+# actually published — so the ratchet's baseline is never a hole and never
+# silently degrades to `no_baseline` just because a night in between was
+# skipped. This falls out of the existing lookup with no code change; it
+# only holds because skip nights are deliberately tagless — if a skip night
+# ever grows a placeholder tag/release, this reasoning would need
+# revisiting.
+#
 # Testing this file: workflow_dispatch defaults `dry_run` to true, which
 # runs every build/test lane exactly as normal but skips the tag, the
 # GitHub Release, and the retention cleanup in nightly-publish — it prints
@@ -179,6 +224,17 @@ on:
         required: false
         type: boolean
         default: true
+      force:
+        description: >-
+          Build tonight even if main hasn't changed since the previous
+          nightly (bypasses the skip-when-unchanged check in nightly-date).
+          A human explicitly dispatching this workflow always gets a build
+          regardless of this flag's value combined with dry_run — this only
+          controls whether an UNCHANGED tree still builds. Ignored for the
+          schedule trigger, which always defers to the skip check.
+        required: false
+        type: boolean
+        default: false
 
 # Least privilege at the top; nightly-publish elevates to contents: write
 # for itself only (tag push + release creation), matching release-
@@ -190,12 +246,30 @@ jobs:
   nightly-date:
     name: Resolve nightly date + run mode
     runs-on: trailer-small
-    timeout-minutes: 2
+    # Was 2 when this job was pure shell (no checkout). Now does a
+    # fetch-depth:0 checkout (needed for the skip-when-unchanged diff below)
+    # — mirroring nightly-publish's identical checkout, which budgets 15 on
+    # the same trailer-small runner. 5 gives headroom without hiding a
+    # genuinely stuck checkout for minutes on end.
+    timeout-minutes: 5
     outputs:
       tag: ${{ steps.resolve.outputs.tag }}
       dry-run: ${{ steps.resolve.outputs.dry-run }}
       concurrency-key: ${{ steps.resolve.outputs.concurrency-key }}
+      skip: ${{ steps.skip.outputs.skip }}
+      skip-reason: ${{ steps.skip.outputs.skip-reason }}
+      current-commit: ${{ steps.skip.outputs.current-commit }}
+      prev-nightly-tag: ${{ steps.skip.outputs.prev-nightly-tag }}
+      matched-commit: ${{ steps.skip.outputs.matched-commit }}
     steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history + tags: the skip decision below diffs against the
+          # previous nightly-* tag's target commit, and needs that commit
+          # (and every tag) present locally.
+          fetch-depth: 0
+          ref: ${{ inputs.ref }}
+
       - id: resolve
         # Captured ONCE, here, before any lane starts or waits on the mac
         # VM. Previously nightly-publish computed TAG itself after
@@ -249,9 +323,60 @@ jobs:
           echo "concurrency-key=$KEY" >> "$GITHUB_OUTPUT"
           echo "Resolved: tag=$TAG dry-run=$DRY_RUN concurrency-key=$KEY"
 
+      - id: skip
+        # Skip-when-unchanged (scripts/resolve-nightly-skip.sh — see the
+        # workflow header's "Skip-when-unchanged" section for the full
+        # rationale). Runs BEFORE any lane job starts, so a no-op night
+        # never spends runner time. Every downstream job/step that needs
+        # the verdict reads this job's `skip`/`skip-reason`/`matched-commit`
+        # outputs rather than recomputing it.
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.force }}" = "true" ]; then
+            FORCE=true
+          else
+            FORCE=false
+          fi
+
+          CURRENT_COMMIT="$(git rev-parse HEAD)"
+
+          # Same lookup nightly-publish's "Find previous nightly tag" step
+          # uses (tag names sort lexicographically by date) — kept
+          # independent rather than shared as an output, since nightly-
+          # publish needs the tag name again later regardless (for the
+          # since-last-nightly changelog) after `needs:`-waiting on the
+          # lanes, by which point today's tag may already exist.
+          PREV_TAG="$(git tag -l 'nightly-*' | sort -r | head -1)"
+          PREV_COMMIT=""
+          if [ -n "$PREV_TAG" ]; then
+            PREV_COMMIT="$(git rev-list -n1 "refs/tags/$PREV_TAG" 2>/dev/null || true)"
+          fi
+
+          eval "$(bash scripts/resolve-nightly-skip.sh "$FORCE" "$CURRENT_COMMIT" "$PREV_TAG" "$PREV_COMMIT")"
+
+          echo "skip=$SKIP"                    >> "$GITHUB_OUTPUT"
+          echo "skip-reason=$REASON_CODE"      >> "$GITHUB_OUTPUT"
+          echo "current-commit=$CURRENT_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "prev-nightly-tag=$PREV_TAG"    >> "$GITHUB_OUTPUT"
+          echo "matched-commit=$MATCHED_COMMIT" >> "$GITHUB_OUTPUT"
+          echo "Skip decision: skip=$SKIP reason=$REASON_CODE current=$CURRENT_COMMIT prev_tag=${PREV_TAG:-<none>} prev_commit=${PREV_COMMIT:-<none>} matched=${MATCHED_COMMIT:-<none>}"
+
+          if [ "$SKIP" = "true" ]; then
+            {
+              echo "## Nightly skipped — no code changes"
+              echo
+              echo "\`$CURRENT_COMMIT\` matches the tree $PREV_TAG (\`$MATCHED_COMMIT\`) was built from — nothing changed since the previous nightly, so all three build lanes and the release step are skipped this run."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   nightly-linux:
     name: Linux full lane (build + unit + UAT)
     needs: [nightly-date]
+    # Skipped whenever nightly-date found no code change since the previous
+    # nightly (see the workflow header's "Skip-when-unchanged" section) —
+    # this is the runner-time win the skip check exists for.
+    if: needs.nightly-date.outputs.skip != 'true'
     runs-on: trailer-k8s
     timeout-minutes: 60
     concurrency:
@@ -362,7 +487,9 @@ jobs:
     # mac lane stays fully parallel (different runner entirely). Nightly has
     # no latency requirement, so the added wall-clock is a non-issue.
     needs: [nightly-date, nightly-linux]
-    if: always() && needs.nightly-date.result == 'success'
+    # `always()` so a red Linux lane still lets Windows run (unchanged);
+    # `skip != 'true'` is the new guard — see nightly-linux's comment above.
+    if: always() && needs.nightly-date.result == 'success' && needs.nightly-date.outputs.skip != 'true'
     runs-on: trailer-k8s
     # release.yml's windows-cross (build + bundle + unit tests only) budgets
     # 60. UAT adds a second full pass of Wine-emulated test binaries
@@ -528,6 +655,11 @@ jobs:
     # Single-instance VM on the owner's laptop; may be offline for hours —
     # see the workflow header. nightly-publish waits for this job via
     # `needs:` + `if: always()` rather than racing it.
+    # Skipped whenever nightly-date found no code change — see nightly-
+    # linux's comment above. This is the runner-time win that matters most:
+    # the mac lane is a single-instance self-hosted VM that would otherwise
+    # burn hours rebuilding a tree it already built last night.
+    if: needs.nightly-date.outputs.skip != 'true'
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 90
     concurrency:
@@ -683,8 +815,31 @@ jobs:
           # since-last-nightly summary and the idempotency/retention checks.
           fetch-depth: 0
 
+      - name: Skip summary (no code changes since previous nightly)
+        # The observable, non-failing half of a skip night (see the
+        # workflow header's "Skip-when-unchanged" section): nightly-date
+        # already wrote the same summary line to ITS job summary the
+        # moment the decision was made, before any lane started — this
+        # mirrors it into nightly-publish's summary too, since that's the
+        # job a human checking "did tonight publish?" looks at, and prints
+        # an `::notice::` so it's visible from the Actions run list without
+        # opening the job. No release, no assets, no retention cleanup run
+        # — every step below this one is additionally guarded on
+        # `needs.nightly-date.outputs.skip != 'true'`.
+        if: needs.nightly-date.outputs.skip == 'true'
+        run: |
+          {
+            echo "## Nightly skipped — no code changes"
+            echo
+            echo "\`${{ needs.nightly-date.outputs.current-commit }}\` matches the tree \`${{ needs.nightly-date.outputs.prev-nightly-tag }}\` (\`${{ needs.nightly-date.outputs.matched-commit }}\`) was built from — nothing changed since the previous nightly."
+            echo
+            echo "No release cut, no artifacts attached, retention cleanup not run."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::Nightly skipped — matches ${{ needs.nightly-date.outputs.prev-nightly-tag }} (commit ${{ needs.nightly-date.outputs.matched-commit }}, reason ${{ needs.nightly-date.outputs.skip-reason }})"
+
       - name: Find previous nightly tag
         id: prev
+        if: needs.nightly-date.outputs.skip != 'true'
         run: |
           set -euo pipefail
           # Tag names sort lexicographically by date (nightly-YYYYMMDD), so
@@ -710,7 +865,7 @@ jobs:
         # line of defense on top of the `if/else` below, which already
         # never lets this step exit non-zero.
         id: prev_uat
-        if: steps.prev.outputs.tag != ''
+        if: needs.nightly-date.outputs.skip != 'true' && steps.prev.outputs.tag != ''
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -737,6 +892,7 @@ jobs:
         # counts as worse" rationale; verified by direct execution against
         # a fixture scenario matrix (see the implementing PR body).
         id: uat_compare
+        if: needs.nightly-date.outputs.skip != 'true'
         run: |
           set -euo pipefail
           PREV_FILE="${{ steps.prev_uat.outputs.file }}"
@@ -765,6 +921,7 @@ jobs:
 
       - name: Build since-last-nightly summary
         id: changelog
+        if: needs.nightly-date.outputs.skip != 'true'
         run: |
           set -euo pipefail
           BODY_FILE="$(mktemp)"
@@ -805,6 +962,7 @@ jobs:
         # action treats "zero artifacts in the run" as a hard failure, so
         # don't let that possibility take down the rest of this job (the
         # dry-run preview / red-run failure step still need to run).
+        if: needs.nightly-date.outputs.skip != 'true'
         continue-on-error: true
         uses: actions/download-artifact@v8
         with:
@@ -813,6 +971,7 @@ jobs:
 
       - name: Rename artifacts for the release
         id: assets
+        if: needs.nightly-date.outputs.skip != 'true'
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -848,6 +1007,7 @@ jobs:
 
       - name: Build release body
         id: body
+        if: needs.nightly-date.outputs.skip != 'true'
         run: |
           set -euo pipefail
           BODY_FILE="$(mktemp)"
@@ -1022,7 +1182,7 @@ jobs:
         # the same instant) — that fails LOUDLY at `git push`
         # (already-exists / non-fast-forward), never silently, so it's an
         # acceptable residual gap rather than a correctness bug.
-        if: needs.nightly-date.outputs.dry-run != 'true' && steps.assets.outputs.count != '0'
+        if: needs.nightly-date.outputs.skip != 'true' && needs.nightly-date.outputs.dry-run != 'true' && steps.assets.outputs.count != '0'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1048,7 +1208,7 @@ jobs:
           echo "Published nightly release $TAG"
 
       - name: Dry-run preview
-        if: needs.nightly-date.outputs.dry-run == 'true'
+        if: needs.nightly-date.outputs.skip != 'true' && needs.nightly-date.outputs.dry-run == 'true'
         run: |
           echo "## Nightly dry run — nothing published" >> "$GITHUB_STEP_SUMMARY"
           echo >> "$GITHUB_STEP_SUMMARY"
@@ -1079,8 +1239,11 @@ jobs:
         # `set -e` abort the loop — a release that's already gone, or a
         # transient API hiccup, is housekeeping noise and must not be
         # conflated with (or mask) the per-lane failure signal the next
-        # step reports.
-        if: needs.nightly-date.outputs.dry-run != 'true'
+        # step reports. Also skipped entirely on a skip night — nothing
+        # published tonight, so there is nothing new to age-check, and
+        # running it anyway would just be a no-op API scan on every
+        # no-op night.
+        if: needs.nightly-date.outputs.skip != 'true' && needs.nightly-date.outputs.dry-run != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1115,9 +1278,12 @@ jobs:
         # hiccup that somehow still aborted despite the soft-fail above)
         # would SKIP this step by default, losing the per-lane diagnostic
         # and conflating an unrelated housekeeping failure with the lane
-        # signal this step exists to report.
+        # signal this step exists to report. Also guarded on `skip != 'true'`
+        # — on a skip night the three lanes never ran at all, so their
+        # `result` is `skipped`, not `success`; without this guard a green
+        # skip night would incorrectly red itself here.
         if: |
-          always() &&
+          always() && needs.nightly-date.outputs.skip != 'true' &&
           (needs.nightly-linux.result != 'success' ||
            needs.nightly-windows.result != 'success' ||
            needs.nightly-macos.result != 'success')
@@ -1141,9 +1307,12 @@ jobs:
         # regression, see the script's header) stays green here, matching
         # "the ratchet only tightens" (AGENTS.md). `always()` for the same
         # reason as the step above: an unrelated earlier failure must not
-        # silently skip this diagnostic.
+        # silently skip this diagnostic. `skip != 'true'` is belt-and-
+        # suspenders here — "Compare UAT results" never ran on a skip
+        # night, so its outputs are empty and can't equal 'worse' anyway —
+        # but stated explicitly rather than relied on implicitly.
         if: |
-          always() &&
+          always() && needs.nightly-date.outputs.skip != 'true' &&
           (steps.uat_compare.outputs.wine-verdict == 'worse' ||
            steps.uat_compare.outputs.macos-verdict == 'worse')
         run: |
