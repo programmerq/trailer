@@ -145,12 +145,14 @@ sustain.
   enforced as gate G4 in [`AGENTS.md`](AGENTS.md).
 - **Distribution stays cheap and independent.** Trailer is not enrolled
   in the Apple Developer Program (the $99/yr gate on Developer-ID signing
-  and notarisation), and does not plan to be. A signed auto-update channel
-  is *deferred*, not designed out: the leading candidate is an
-  ed25519-signed channel that does not depend on Developer-ID / Authenticode
-  trust (see [`AGENTS.md`](AGENTS.md) §*Phase status* and DESIGN §12).
-  The requirement is the signed channel; the specific library is not
-  fixed.
+  and notarisation), and does not plan to be. The signed auto-update
+  channel this implies is **shipped for the nightly channel**
+  (2026-07-30): a custom ed25519-verified checker, not Sparkle, that does
+  not depend on Developer-ID / Authenticode trust (see
+  [`AGENTS.md`](AGENTS.md) §*Phase status*, DESIGN §12, and
+  [`docs/decision-records/2026-07-30-nightly-auto-update-channel.md`](docs/decision-records/2026-07-30-nightly-auto-update-channel.md)).
+  The stable (tagged-release) channel is still deferred, not designed
+  out — `release.yml` has no signing step yet.
 
 ## How decisions get made
 

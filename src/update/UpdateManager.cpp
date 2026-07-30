@@ -8,8 +8,13 @@
 #include <QDebug>
 #include <QDir>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QTemporaryFile>
 #include <QUrl>
 
 #include <utility>
@@ -191,19 +196,36 @@ void UpdateManager::installAndRelaunch() {
                  {QStringLiteral("attach"), QStringLiteral("-nobrowse"),
                   QStringLiteral("-readonly"), QStringLiteral("-plist"), m_downloadedPath});
     attach.waitForFinished(30000);
-    const QString attachOutput = QString::fromUtf8(attach.readAllStandardOutput());
-    // Look for the mounted volume path (a line like
-    // "<string>/Volumes/Trailer</string>" in the plist output) rather
-    // than pulling in a full plist parser for one field.
+    const QByteArray attachPlist = attach.readAllStandardOutput();
+
+    // Extract the mounted volume path from hdiutil's plist output via
+    // `plutil -convert json` (a stable Apple system tool) rather than
+    // hand-scanning for a "<string>/Volumes/...</string>" line: a DMG can
+    // have more than one system-entity (e.g. a hidden EFI/partition-map
+    // entry alongside the actual data volume), and only the entity that
+    // was genuinely mounted carries a "mount-point" key — a substring
+    // scan can't distinguish that from an unrelated <string> value
+    // elsewhere in the plist. plutil ships with every macOS install, so
+    // this adds no new dependency.
+    QTemporaryFile plistFile(QDir::tempPath() +
+                             QStringLiteral("/trailer-update-attach-XXXXXX.plist"));
     QString mountPoint;
-    const QStringList lines = attachOutput.split(QLatin1Char('\n'));
-    for (const QString &line : lines) {
-        const QString trimmed = line.trimmed();
-        if (trimmed.startsWith(QStringLiteral("<string>/Volumes/"))) {
-            mountPoint = trimmed;
-            mountPoint.remove(QStringLiteral("<string>"));
-            mountPoint.remove(QStringLiteral("</string>"));
-            break;
+    if (plistFile.open()) {
+        plistFile.write(attachPlist);
+        plistFile.close();
+        QProcess plutil;
+        plutil.start(QStringLiteral("/usr/bin/plutil"),
+                     {QStringLiteral("-convert"), QStringLiteral("json"), QStringLiteral("-o"),
+                      QStringLiteral("-"), plistFile.fileName()});
+        plutil.waitForFinished(10000);
+        const QJsonDocument doc = QJsonDocument::fromJson(plutil.readAllStandardOutput());
+        const QJsonArray entities = doc.object().value(QStringLiteral("system-entities")).toArray();
+        for (const QJsonValue &v : entities) {
+            const QString mp = v.toObject().value(QStringLiteral("mount-point")).toString();
+            if (!mp.isEmpty()) {
+                mountPoint = mp;
+                break;
+            }
         }
     }
     if (mountPoint.isEmpty()) {

@@ -6,12 +6,15 @@
       instruction. Reopen only with a funding plan attached.
 - [ ] ~~Add notarytool call to scripts/build-macos.sh for
       notarization~~ — gated on the above; same deferral.
-- [ ] Wire an ed25519-signed auto-update channel. Sparkle 2 + WinSparkle
-      is the leading candidate (shared appcast XML + ed25519 pubkey
-      across macOS + Windows). The requirement is the signed channel
-      itself; the library is open. See [ROADMAP.md](ROADMAP.md) Now
-      item 1 for the full requirement. Velopack is **not** a fit
-      under the current no-Apple-Dev policy.
+- [x] ~~Wire an ed25519-signed auto-update channel.~~ **Shipped for
+      the nightly channel** (2026-07-30) — a custom checker
+      (`src/update/`), not Sparkle; see
+      [`docs/decision-records/2026-07-30-nightly-auto-update-channel.md`](docs/decision-records/2026-07-30-nightly-auto-update-channel.md).
+      **Follow-ups still open:** the owner has not yet generated the
+      real signing keypair (ROADMAP.md's key-management risk note —
+      the shipped public key is a throwaway dev placeholder); the
+      stable channel (`release.yml`) has no signing step; Windows/
+      Linux have no install step yet (ROADMAP "Next" item 7).
 - [ ] ~~Add macOS packaging step to CI once signing secrets are
       set up~~ — n/a until / unless Developer ID enrollment is
       reopened; current macOS DMG pipeline produces an unsigned,

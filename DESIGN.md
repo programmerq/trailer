@@ -1122,6 +1122,7 @@ A single settings window with the following panes:
 | **Forms** | Manage saved AutoFill cards |
 | **Signatures** | List, rename, delete saved signatures; export / import signatures (file-based, no sync) |
 | **Maps** | Tile provider URL; offline tile bundle (when available) |
+| **Updates** | Channel (Nightly / Stable — Stable present-but-disabled until `release.yml` grows its own signed feed, see `docs/decision-records/2026-07-30-nightly-auto-update-channel.md`); "Automatically check for updates" toggle (off by default — an update check is an outbound network call, gated per PHILOSOPHY's explicit-opt-in rule); live status + Check Now / Download & Install / Install & Relaunch. Help → Check for Updates… (always enabled, independent of the toggle) opens straight to this pane. See §12 and `src/update/`. |
 | **Privacy** | Wipe recent files; wipe version history; wipe signatures; wipe OCR cache; one-click "wipe everything" |
 | **Advanced** | Custom Quartz-equivalent filters folder; ICC profiles folder; plugin directory |
 | **Shortcuts** | View / customise keyboard shortcuts |
@@ -1537,16 +1538,24 @@ work, primarily Apple Developer Program decisions). Summary:
 - **Release cadence:** No fixed cadence yet — releases happen when
   there's something to ship.
 - **Update mechanism:**
-  - macOS: Sparkle is the long-term target (see
-    [TODO-packaging.md](TODO-packaging.md)). The
-    `claude/friendly-haslett-8bdd21` branch explored a Sigstore-
-    keyless alternative that sidesteps the Apple Developer Program
-    dependency for update signing; both options are still on the
-    table.
-  - Windows: Planned. The native MSVC build (`build-windows-native.ps1`)
-    ships today; the installer + auto-updater path is open.
+  - macOS: **Shipped for the nightly channel** (2026-07-30, see
+    [`docs/decision-records/2026-07-30-nightly-auto-update-channel.md`](docs/decision-records/2026-07-30-nightly-auto-update-channel.md)).
+    A custom checker (`src/update/`) — not Sparkle — against GitHub's
+    public Releases API, verifying an ed25519-signed feed
+    (`appcast-nightly.json`, published as a release asset by
+    `.github/workflows/nightly.yml`) before trusting anything in it.
+    The stable channel is not wired yet (`release.yml` has no signed-
+    feed step); the Preferences → Updates channel selector shows
+    "Stable" present-but-disabled until it is.
+  - Windows: Planned (ROADMAP "Next"). The checker itself
+    (`src/update/UpdateChecker.{h,cpp}`) is already platform-agnostic;
+    only the install step (currently macOS-only DMG-mount-and-swap) is
+    unwritten. The native MSVC build (`build-windows-native.ps1`) ships
+    today; the installer + auto-updater path is open.
   - Linux: DEB + RPM packages shipping today (`build-linux-deb.sh`,
-    `build-linux-rpm.sh`); leave updates to the distribution.
+    `build-linux-rpm.sh`); leave updates to the distribution. The
+    checker degrades honestly here too (reveals the verified download
+    rather than pretending to install it — G3).
 - **Code signing:** macOS uses adhoc signing today —
   Apple-Developer-Program-signed + notarised `.dmg` is gated on the
   $99/yr program decision. Windows installer signing is similarly

@@ -1207,6 +1207,79 @@ jobs:
             --notes-file "${{ steps.body.outputs.body-file }}"
           echo "Published nightly release $TAG"
 
+      - name: Build + sign nightly update feed (appcast-nightly.json)
+        # The nightly channel's signed appcast — see
+        # docs/decision-records/2026-07-30-nightly-auto-update-channel.md
+        # and src/update/UpdateChecker.cpp. Reuses THIS job's existing
+        # publishing surface: the feed is uploaded as an additional asset
+        # on the SAME nightly release the step above just created/confirmed
+        # (`gh release upload`), exactly like uat-summary.json already is —
+        # no new hosting mechanism, no GitHub Pages deploy.
+        #
+        # Gating mirrors "Create tag + GitHub Release" (skip / dry-run /
+        # zero-assets all mean no release exists to attach a feed to), plus
+        # three independent soft-skips inside the step itself — see the
+        # inline `::notice::`/`::warning::` messages for exactly why each
+        # one fires. All are non-fatal: a missing feed this run just means
+        # UpdateChecker's "newest prerelease WITH an appcast-nightly.json
+        # asset" scan (see that file) falls back to the last night that DID
+        # publish one, which — since nightly release assets are retained
+        # ~6 months (see the retention-cleanup step below) — is virtually
+        # always still fetchable.
+        #
+        # #128 ("skip identical nights") means a night can now legitimately
+        # have NO release at all; this step's `skip` check already covers
+        # that (nothing new built, nothing new to sign — the previous
+        # feed stands).
+        if: needs.nightly-date.outputs.skip != 'true' && needs.nightly-date.outputs.dry-run != 'true' && steps.assets.outputs.count != '0'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Base64-encoded ed25519 PRIVATE key PEM (see
+          # src/update/UpdatePublicKey.h for the matching public key and the
+          # exact `openssl genpkey` / `base64` commands to generate and
+          # store this secret). Absent on a fork or before the owner
+          # provisions it — the soft-skip below handles that, not a hard
+          # failure, so PRs from forks (which never see repo secrets) don't
+          # break on this step.
+          TRAILER_UPDATE_SIGNING_KEY_B64: ${{ secrets.TRAILER_UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.nightly-date.outputs.tag }}"
+          MACOS_DMG="dist/trailer-${TAG}-macos-arm64.dmg"
+
+          if [ ! -f "$MACOS_DMG" ]; then
+            echo "::notice::No macOS artifact this run (mac lane didn't publish tonight) — skipping the signed update feed. UpdateChecker falls back to the previous night's feed automatically."
+            exit 0
+          fi
+          if [ -z "${TRAILER_UPDATE_SIGNING_KEY_B64:-}" ]; then
+            echo "::warning::TRAILER_UPDATE_SIGNING_KEY secret is not set — skipping the signed update feed for tonight. See docs/decision-records/2026-07-30-nightly-auto-update-channel.md for the exact key-generation and secret-storage commands."
+            exit 0
+          fi
+          # "Create tag + GitHub Release" above may have exited early (its
+          # own idempotent guard) if today's tag/release already existed
+          # from an earlier real run today — confirm the release actually
+          # exists before trying to attach an asset to it.
+          if ! gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "::warning::No GitHub Release found for $TAG — skipping the signed update feed."
+            exit 0
+          fi
+
+          KEY_FILE="$RUNNER_TEMP/update-signing-key.pem"
+          printf '%s' "$TRAILER_UPDATE_SIGNING_KEY_B64" | base64 -d > "$KEY_FILE"
+          trap 'rm -f "$KEY_FILE"' EXIT
+
+          PAYLOAD_FILE="$RUNNER_TEMP/appcast-payload.json"
+          TAG="$TAG" \
+          BUILD_NUMBER="$(git rev-list --count HEAD)" \
+          PUBLISHED_AT="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+          MACOS_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/trailer-${TAG}-macos-arm64.dmg" \
+          MACOS_SHA="$(sha256sum "$MACOS_DMG" | awk '{print $1}')" \
+          python3 scripts/build-nightly-appcast-payload.py "$PAYLOAD_FILE"
+
+          scripts/sign-update-feed.sh "$PAYLOAD_FILE" "$KEY_FILE" dist/appcast-nightly.json
+          gh release upload "$TAG" dist/appcast-nightly.json --repo "${{ github.repository }}" --clobber
+          echo "Published signed update feed for $TAG (build $(git rev-list --count HEAD))"
+
       - name: Dry-run preview
         if: needs.nightly-date.outputs.skip != 'true' && needs.nightly-date.outputs.dry-run == 'true'
         run: |

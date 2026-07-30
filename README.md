@@ -262,10 +262,17 @@ policy — Trailer is not enrolled in the Apple Developer Program.
 The release body documents the one-time Gatekeeper quarantine
 bypass users need to run on first launch (`xattr -dr
 com.apple.quarantine /Applications/Trailer.app`). An ed25519-signed
-auto-update channel (Sparkle 2 is the leading candidate) is
-tracked separately in [ROADMAP.md](ROADMAP.md) — those signatures
-protect the update channel itself and don't require Apple
-enrollment.
+auto-update channel — a custom checker, not Sparkle — is **shipped
+for the nightly channel** (Help → Check for Updates…, or Preferences
+→ Updates; see
+[`docs/decision-records/2026-07-30-nightly-auto-update-channel.md`](docs/decision-records/2026-07-30-nightly-auto-update-channel.md)).
+Those signatures protect the update channel itself and don't require
+Apple enrollment — Gatekeeper's quarantine gate is a separate system
+and still applies on every install, updates included; the updater
+clears the quarantine bit on its own downloads, but this has not yet
+been verified against real Gatekeeper enforcement on-device (see the
+decision record and the implementing PR). The stable (tagged-release)
+channel is not wired yet — tracked in [ROADMAP.md](ROADMAP.md).
 
 **Dev builds.** For pre-merge dogfooding, the on-demand
 `.github/workflows/dev-build.yml` workflow (`workflow_dispatch`, or a

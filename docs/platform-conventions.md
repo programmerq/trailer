@@ -79,7 +79,19 @@ menu button).
 | **Edit** | Undo (⌘Z / Ctrl+Z), Redo (⇧⌘Z / Ctrl+Shift+Z), Cut/Copy/Paste, **Select All** (⌘A / Ctrl+A — what it selects defers to ADR 0001), Find items. Undo/Redo labels name their target ("Undo Rotate Page"). | Apple HIG — The menu bar; Menus |
 | **View** | Present even for a subset of view functions; each show/hide item's title reflects current state ("Show Sidebar" vs "Hide Sidebar"). Carries zoom (in / out / fit / actual size). | Apple HIG — The menu bar |
 | **Window** (macOS) | Present even with a single window; includes Minimize (⌘M) and Zoom so Full Keyboard Access users can reach them. | Apple HIG — The menu bar |
-| **Help** | A Help menu is present; **⌘? opens it on macOS** and it exposes a **searchable** help field. | Apple HIG — Keyboards; NN/g heuristic 10 |
+| **Help** | A Help menu is present; **⌘? opens it on macOS** and it exposes a **searchable** help field. Carries **Check for Updates…** (always enabled, independent of the Preferences → Updates auto-check toggle — G3) and **Feedback Report…**, same placement on all three platforms — see below. | Apple HIG — Keyboards; NN/g heuristic 10 |
+
+**Check for Updates… placement (2026-07-30):** lives in the **Help** menu
+identically on macOS, Windows, and Linux (`src/ui/MainWindow.cpp`'s
+`buildMenus()`), not the macOS App menu. This is a deliberate uniform
+choice, not a per-OS adaptation: Sparkle-integrated Mac apps conventionally
+put "Check for Updates…" in the App menu because Sparkle injects it there
+automatically, but Trailer's update checker (`src/update/`, see
+`docs/decision-records/2026-07-30-nightly-auto-update-channel.md`) is
+custom, not Sparkle — putting the action in Help keeps one code path and
+one menu-construction site serving all three platforms rather than an
+App-menu special case for macOS alone. Revisit only if user testing shows
+Mac users don't find it there.
 
 Checkable roll-up: on macOS the App/File/Edit/View/Window/Help menus exist
 in that order; on Windows/Linux the same File/Edit/View/Help groups exist in
