@@ -65,6 +65,17 @@ class MainWindow : public QMainWindow {
     // `*out = nullptr` on out-of-range or missing widget. Used by
     // Application::onAboutToQuit to enumerate open paths.
     int documentAt(int index, IDocument **out) const;
+    // Index of the current tab in this window's DocumentView, or -1 if
+    // no tabs are open. Used by the diagnostics/feedback report to
+    // record which open document the user was looking at.
+    int currentDocumentIndex() const;
+
+    // Read-only chrome-visibility accessors for the diagnostics/feedback
+    // report (src/diagnostics/FeedbackReport.cpp). Each mirrors the
+    // QWidget::isVisible() of the corresponding chrome piece.
+    bool isSidebarVisible() const;
+    bool isMarkupToolbarVisible() const;
+    bool isFormToolbarVisible() const;
 
     // Lightweight status-bar feedback. Replaces operation-failure
     // QMessageBox::warning calls so the user is not punched in the

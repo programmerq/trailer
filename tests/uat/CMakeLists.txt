@@ -260,3 +260,12 @@ trailer_add_uat_test(test_uat_window_menu_maximize test_uat_window_menu_maximize
 # Drives PreferencesDialog + Application + MainWindow with an image document
 # (PNG via QImage), so no Qt6::Pdf link is needed.
 trailer_add_uat_test(test_uat_preferences test_uat_preferences.cpp)
+
+# Feedback / Diagnostic Report (Help menu). Guards the menu item is always
+# enabled (G3 — there is no "unavailable" state, the report degrades
+# instead), the report text is fully visible (never clipboard-only), the
+# "Include full file paths" checkbox defaults off and toggles live, and
+# Copy to Clipboard matches the visible text exactly. Emits the curated G2
+# evidence (with-document + empty-state dialog) to
+# $TRAILER_FEEDBACK_EVIDENCE_DIR when set.
+trailer_add_uat_test(test_uat_feedback test_uat_feedback.cpp)

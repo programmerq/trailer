@@ -172,6 +172,8 @@ set(TRAILER_SOURCES
     src/app/Application.h
     src/app/CommandLine.cpp
     src/app/CommandLine.h
+    src/diagnostics/FeedbackReport.cpp
+    src/diagnostics/FeedbackReport.h
     src/cards/CardStore.cpp
     src/cards/CardStore.h
     src/cards/MyCard.cpp
@@ -244,6 +246,8 @@ set(TRAILER_SOURCES
     src/ui/DocumentView.h
     src/ui/EmptyStateWidget.cpp
     src/ui/EmptyStateWidget.h
+    src/ui/FeedbackDialog.cpp
+    src/ui/FeedbackDialog.h
     src/ui/FileChangeBanner.cpp
     src/ui/FileChangeBanner.h
     src/ui/MainWindow.cpp

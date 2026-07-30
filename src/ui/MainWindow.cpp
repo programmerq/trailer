@@ -17,6 +17,7 @@
 #include "PreferencesDialog.h"
 #include "SignaturePicker.h"
 #include "SignaturesDialog.h"
+#include "FeedbackDialog.h"
 #include "FileChangeBanner.h"
 #include "cards/CardStore.h"
 #include "cards/MyCard.h"
@@ -969,6 +970,17 @@ void MainWindow::buildMenus() {
     auto *aboutAction = helpMenu->addAction(tr("&About Trailer"));
     aboutAction->setMenuRole(QAction::AboutRole);
     connect(aboutAction, &QAction::triggered, this, &MainWindow::onAbout);
+
+    // Local-only diagnostic report (no network call, ever — see
+    // src/diagnostics/FeedbackReport.h). Always enabled: it degrades
+    // to header + platform info rather than needing anything to be
+    // "ready" first (G3 — no lying controls; there's nothing here that
+    // can be unavailable).
+    helpMenu->addSeparator();
+    auto *feedbackAction = helpMenu->addAction(tr("&Feedback Report…"));
+    feedbackAction->setMenuRole(QAction::ApplicationSpecificRole);
+    connect(feedbackAction, &QAction::triggered, this,
+            [this]() { showFeedbackReportDialog(this, m_app); });
 
     buildMainToolbar();
 }
@@ -4764,6 +4776,22 @@ int MainWindow::documentCount() const {
 
 int MainWindow::documentAt(int index, IDocument **out) const {
     return m_documentView->documentAt(index, out);
+}
+
+int MainWindow::currentDocumentIndex() const {
+    return m_documentView->currentIndex();
+}
+
+bool MainWindow::isSidebarVisible() const {
+    return m_sidebar && m_sidebar->isVisible();
+}
+
+bool MainWindow::isMarkupToolbarVisible() const {
+    return m_markupToolbar && m_markupToolbar->isVisible();
+}
+
+bool MainWindow::isFormToolbarVisible() const {
+    return m_formToolbar && m_formToolbar->isVisible();
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event) {
