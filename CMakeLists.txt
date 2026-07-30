@@ -26,6 +26,32 @@ string(REGEX MATCH "^[0-9]+\\.[0-9]+\\.[0-9]+" TRAILER_VERSION_NUMERIC
 # Default: the full string is the base, unchanged (release / RC / tarball).
 set(TRAILER_VERSION_STRING "${TRAILER_VERSION_BASE}")
 
+# TRAILER_BUILD_COMMIT_COUNT: the git commit count on the checked-out
+# HEAD, independent of the VERSION suffix. Nightly builds (nightly.yml)
+# always build off main HEAD, and main's commit count only ever goes up,
+# so this is the update channel's version-compare key (see
+# src/update/UpdateManager.cpp and docs/decision-records/2026-07-30-
+# nightly-auto-update-channel.md) — a plain integer compare, no date
+# parsing, no ambiguity about two builds on the same calendar day.
+# Defaults to 0 for a .git-less source tarball (never a valid "newer"
+# build, so the update checker can never mistake it for one).
+set(TRAILER_GIT_COMMIT_COUNT 0)
+if(EXISTS "${CMAKE_SOURCE_DIR}/.git")
+    find_package(Git QUIET)
+    if(GIT_FOUND)
+        execute_process(
+            COMMAND "${GIT_EXECUTABLE}" rev-list --count HEAD
+            WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
+            OUTPUT_VARIABLE _trailer_commit_count
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+            RESULT_VARIABLE _trailer_commit_count_rc)
+        if(_trailer_commit_count_rc EQUAL 0 AND _trailer_commit_count)
+            set(TRAILER_GIT_COMMIT_COUNT "${_trailer_commit_count}")
+        endif()
+    endif()
+endif()
+
 # Only a bare "-dev" base opts into git-derived build metadata. A -dev.N
 # counter, -rcN, or clean X.Y.Z is left alone.
 if(TRAILER_VERSION_BASE MATCHES "-dev$" AND EXISTS "${CMAKE_SOURCE_DIR}/.git")
@@ -90,7 +116,10 @@ endif()
 project(Trailer
     VERSION ${TRAILER_VERSION_NUMERIC}
     DESCRIPTION "Cross-platform PDF and image workbench"
-    LANGUAGES CXX
+    # C is enabled solely for the vendored TweetNaCl source
+    # (third_party/tweetnacl/tweetnacl.c — see its NOTICE.md); every
+    # other Trailer source is C++.
+    LANGUAGES CXX C
 )
 
 configure_file(
@@ -302,6 +331,17 @@ set(TRAILER_SOURCES
     src/ui/SignaturesDialog.h
     src/ui/ThumbnailModel.cpp
     src/ui/ThumbnailModel.h
+    src/update/Ed25519.cpp
+    src/update/Ed25519.h
+    src/update/UpdateChecker.cpp
+    src/update/UpdateChecker.h
+    src/update/UpdateFeedParser.cpp
+    src/update/UpdateFeedParser.h
+    src/update/UpdateManager.cpp
+    src/update/UpdateManager.h
+    src/update/UpdatePublicKey.h
+    src/update/UpdateTypes.cpp
+    src/update/UpdateTypes.h
     src/util/TempPath.h
     src/platform/Share.h
     src/platform/QuitMenu.h
@@ -389,6 +429,26 @@ else()
     list(APPEND TRAILER_SOURCES src/platform/QuitMenu_stub.cpp)
 endif()
 
+# TweetNaCl (public domain, vendored verbatim — see
+# third_party/tweetnacl/NOTICE.md) provides the ed25519 signature
+# verification behind the nightly update channel (src/update/Ed25519.*).
+# Built as its own tiny static lib, in C, with warnings suppressed: it's
+# unmodified upstream source, so Trailer's own -Wall/-Werror posture
+# (trailer_set_warnings) doesn't apply to it and would just generate
+# noise to ignore forever.
+add_library(tweetnacl STATIC third_party/tweetnacl/tweetnacl.c)
+target_include_directories(tweetnacl PUBLIC third_party/tweetnacl)
+# Plain C, no Qt macros — qt_standard_project_setup() turns AUTOMOC/
+# AUTOUIC/AUTORCC on project-wide, which is harmless-but-pointless here;
+# switch them off explicitly for clarity.
+set_target_properties(tweetnacl PROPERTIES
+    AUTOMOC OFF AUTOUIC OFF AUTORCC OFF)
+if(MSVC)
+    target_compile_options(tweetnacl PRIVATE /w)
+else()
+    target_compile_options(tweetnacl PRIVATE -w)
+endif()
+
 add_library(trailer_core STATIC ${TRAILER_SOURCES} resources/trailer.qrc)
 target_include_directories(trailer_core
     PUBLIC
@@ -409,6 +469,7 @@ target_link_libraries(trailer_core
         qpdf::libqpdf
         tomlplusplus::tomlplusplus
         onnxruntime::onnxruntime
+        tweetnacl
 )
 if(TRAILER_NEEDS_QTDBUS)
     # Linux/BSD only: the XDG screenshot-portal backend (PortalScreenshot.cpp)

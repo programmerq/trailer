@@ -5,3 +5,9 @@
 // The release-candidate CI gate fails fast if this still carries a
 // "-dev" suffix at the time the release-candidate label is applied.
 #define TRAILER_VERSION_STRING "@TRAILER_VERSION_STRING@"
+
+// Git commit count on the checked-out HEAD (0 for a .git-less source
+// tarball). Consumed by src/update/UpdateManager.cpp as the update
+// channel's monotonic version-compare key — see the comment next to
+// TRAILER_GIT_COMMIT_COUNT in the top-level CMakeLists.txt.
+#define TRAILER_BUILD_COMMIT_COUNT @TRAILER_GIT_COMMIT_COUNT@

@@ -1,5 +1,7 @@
 #include "PreferencesDialog.h"
 
+#include "update/UpdateManager.h"
+
 #include <QCheckBox>
 #include <QComboBox>
 #include <QDialogButtonBox>
@@ -10,6 +12,8 @@
 #include <QPalette>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QStandardItem>
+#include <QStandardItemModel>
 #include <QTabWidget>
 #include <QToolButton>
 #include <QVBoxLayout>
@@ -37,6 +41,12 @@ constexpr int kResetButtonSize = 22;
 const QChar kRevertGlyph(0x21BA);
 
 void selectComboByData(QComboBox *combo, int value) {
+    const int index = combo->findData(value);
+    if (index >= 0)
+        combo->setCurrentIndex(index);
+}
+
+void selectComboByData(QComboBox *combo, const QString &value) {
     const int index = combo->findData(value);
     if (index >= 0)
         combo->setCurrentIndex(index);
@@ -89,6 +99,7 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
 
     auto *outer = new QVBoxLayout(this);
     auto *tabs = new QTabWidget(this);
+    m_tabs = tabs;
     tabs->setObjectName(QStringLiteral("tabWidget"));
     // Tabs grow with settings: only add a tab once it has >=1 real, wired,
     // operable control — never an empty placeholder. Each addTab() below
@@ -298,6 +309,108 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
         tabs->addTab(page, tr("Machine Learning"));
     }
 
+    // ---- Updates -----------------------------------------------------
+    // See DESIGN.md §6.13 (Updates row added 2026-07-30) and
+    // docs/decision-records/2026-07-30-nightly-auto-update-channel.md.
+    // Auto-check defaults OFF (PHILOSOPHY: no new outbound network call
+    // without an explicit, off-by-default toggle); the channel and
+    // auto-check checkbox are ordinary batched-on-OK settings, but Check
+    // Now / Download & Install / Install & Relaunch are LIVE actions
+    // (like Manage Models…) that call straight into UpdateManager —
+    // wired via setUpdateManager(), disabled with an explanatory tooltip
+    // until then (G3).
+    {
+        auto *page = new QWidget(this);
+        auto *form = new QFormLayout(page);
+
+        m_updatesChannelCombo = new QComboBox(page);
+        m_updatesChannelCombo->setObjectName(QStringLiteral("updatesChannelCombo"));
+        m_updatesChannelCombo->addItem(tr("Nightly"), QStringLiteral("nightly"));
+        m_updatesChannelCombo->addItem(tr("Stable"), QStringLiteral("stable"));
+        // Stable has no signed feed yet (release.yml doesn't publish one
+        // — only nightly.yml does today). Present-but-disabled rather
+        // than absent, so the control's shape doesn't need to change
+        // when the stable feed is wired (G3: the tooltip states why AND
+        // where the status lives).
+        const auto *stableModel = m_updatesChannelCombo->model();
+        const int stableIndex = m_updatesChannelCombo->findData(QStringLiteral("stable"));
+        if (stableIndex >= 0) {
+            auto *itemModel = qobject_cast<QStandardItemModel *>(
+                const_cast<QAbstractItemModel *>(stableModel));
+            if (itemModel) {
+                if (QStandardItem *item = itemModel->item(stableIndex)) {
+                    item->setEnabled(false);
+                    item->setToolTip(tr("Stable-channel updates aren't published yet — "
+                                        "see ROADMAP.md \"Signed-update channel\". "
+                                        "Nightly is available today."));
+                }
+            }
+        }
+        connect(m_updatesChannelCombo, &QComboBox::currentIndexChanged, this,
+                &PreferencesDialog::refreshResetButtons);
+        addFieldRow(
+            form, tr("Channel"), m_updatesChannelCombo, QStringLiteral("reset_updatesChannel"),
+            [this]() {
+                selectComboByData(m_updatesChannelCombo, m_defaults.updatesChannel());
+            },
+            [this]() {
+                return m_updatesChannelCombo->currentData().toString() ==
+                       m_defaults.updatesChannel();
+            },
+            SettingsKeys::UpdatesChannel);
+
+        m_updatesAutoCheckCheck =
+            new QCheckBox(tr("Automatically check for updates (opt-in; off by default)"), page);
+        m_updatesAutoCheckCheck->setObjectName(QStringLiteral("updatesAutoCheckCheck"));
+        m_updatesAutoCheckCheck->setToolTip(
+            tr("When on, Trailer checks the nightly update feed at startup and at most "
+               "once every 24 hours. This never downloads or installs anything "
+               "automatically — it only checks. Downloading and installing an update "
+               "always requires clicking a button below."));
+        connect(m_updatesAutoCheckCheck, &QCheckBox::toggled, this,
+                &PreferencesDialog::refreshResetButtons);
+        addCheckRow(
+            form, m_updatesAutoCheckCheck, QStringLiteral("reset_updatesAutoCheck"),
+            [this]() {
+                m_updatesAutoCheckCheck->setChecked(m_defaults.updatesAutoCheckEnabled());
+            },
+            [this]() {
+                return m_updatesAutoCheckCheck->isChecked() ==
+                       m_defaults.updatesAutoCheckEnabled();
+            },
+            SettingsKeys::UpdatesAutoCheckEnabled);
+
+        m_updatesStatusLabel = new QLabel(page);
+        m_updatesStatusLabel->setObjectName(QStringLiteral("updatesStatusLabel"));
+        m_updatesStatusLabel->setWordWrap(true);
+        form->addRow(m_updatesStatusLabel);
+
+        m_updatesActionButton = new QPushButton(tr("Check Now"), page);
+        m_updatesActionButton->setObjectName(QStringLiteral("updatesActionButton"));
+        m_updatesActionButton->setEnabled(false); // enabled once setUpdateManager() is called
+        m_updatesActionButton->setToolTip(tr("Updates are unavailable in this context."));
+        connect(m_updatesActionButton, &QPushButton::clicked, this, [this]() {
+            if (!m_updateManager)
+                return;
+            using State = Update::UpdateManager::State;
+            switch (m_updateManager->state()) {
+            case State::UpdateAvailable:
+                m_updateManager->startDownload();
+                break;
+            case State::ReadyToInstall:
+                m_updateManager->installAndRelaunch();
+                break;
+            default:
+                m_updateManager->checkNow();
+                break;
+            }
+        });
+        form->addRow(m_updatesActionButton);
+
+        m_updatesTabIndex = tabs->addTab(page, tr("Updates"));
+        refreshUpdatesStatus();
+    }
+
     // ---- Advanced --------------------------------------------------
     {
         auto *page = new QWidget(this);
@@ -354,6 +467,83 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
     syncControlsFromSettings();
 }
 
+void PreferencesDialog::selectUpdatesTab() {
+    if (m_tabs && m_updatesTabIndex >= 0)
+        m_tabs->setCurrentIndex(m_updatesTabIndex);
+}
+
+void PreferencesDialog::setUpdateManager(Update::UpdateManager *manager) {
+    m_updateManager = manager;
+    if (m_updatesActionButton) {
+        const bool enabled = m_updateManager != nullptr;
+        m_updatesActionButton->setEnabled(enabled);
+        if (enabled)
+            m_updatesActionButton->setToolTip(QString());
+    }
+    if (m_updateManager) {
+        connect(m_updateManager, &Update::UpdateManager::stateChanged, this,
+                &PreferencesDialog::refreshUpdatesStatus);
+    }
+    refreshUpdatesStatus();
+}
+
+void PreferencesDialog::refreshUpdatesStatus() {
+    if (!m_updatesStatusLabel || !m_updatesActionButton)
+        return;
+    if (!m_updateManager) {
+        m_updatesStatusLabel->setText(tr("Updates are unavailable in this context."));
+        return;
+    }
+    using State = Update::UpdateManager::State;
+    switch (m_updateManager->state()) {
+    case State::Idle:
+        m_updatesStatusLabel->setText(tr("Never checked."));
+        m_updatesActionButton->setText(tr("Check Now"));
+        m_updatesActionButton->setEnabled(true);
+        break;
+    case State::Checking:
+        // Discloses the exact URL about to be fetched, before the fetch
+        // completes — same consent framing as ModelDownloader's
+        // show-the-URL-before-downloading dialog (AGENTS.md
+        // "Networking"). checkStarted (which sets lastCheckUrl) fires
+        // before UpdateChecker issues the actual GET, so this text is
+        // in place before any bytes move.
+        m_updatesStatusLabel->setText(
+            tr("Checking for updates…\nFetching: %1").arg(m_updateManager->lastCheckUrl()));
+        m_updatesActionButton->setEnabled(false);
+        break;
+    case State::UpToDate:
+        m_updatesStatusLabel->setText(tr("You're up to date."));
+        m_updatesActionButton->setText(tr("Check Now"));
+        m_updatesActionButton->setEnabled(true);
+        break;
+    case State::UpdateAvailable:
+        m_updatesStatusLabel->setText(
+            tr("Update available: %1").arg(m_updateManager->latestEntry().tag));
+        m_updatesActionButton->setText(tr("Download && Install"));
+        m_updatesActionButton->setEnabled(true);
+        break;
+    case State::Downloading:
+        m_updatesStatusLabel->setText(
+            tr("Downloading update…\nFetching: %1").arg(m_updateManager->lastDownloadUrl()));
+        m_updatesActionButton->setEnabled(false);
+        break;
+    case State::ReadyToInstall:
+        m_updatesStatusLabel->setText(
+            tr("Downloaded and verified: %1. Ready to install.")
+                .arg(m_updateManager->latestEntry().tag));
+        m_updatesActionButton->setText(tr("Install && Relaunch"));
+        m_updatesActionButton->setEnabled(true);
+        break;
+    case State::Error:
+        m_updatesStatusLabel->setText(
+            tr("Could not check for updates: %1").arg(m_updateManager->lastError()));
+        m_updatesActionButton->setText(tr("Check Now"));
+        m_updatesActionButton->setEnabled(true);
+        break;
+    }
+}
+
 void PreferencesDialog::setManageModelsCallback(std::function<void()> cb) {
     m_manageModelsCallback = std::move(cb);
     if (m_manageModelsButton) {
@@ -388,6 +578,9 @@ void PreferencesDialog::syncControlsFromSettings() {
     m_mlPreloadSegCheck->setChecked(m_settings.mlPreloadSegmentationOnToolActivation());
     m_mlRunOnBatteryCheck->setChecked(m_settings.mlRunOnBattery());
 
+    selectComboByData(m_updatesChannelCombo, m_settings.updatesChannel());
+    m_updatesAutoCheckCheck->setChecked(m_settings.updatesAutoCheckEnabled());
+
     // Snapshot the values as they now sit IN the widgets (post-clamp), so
     // an untouched OK writes nothing back for a field the user never
     // edited.
@@ -399,6 +592,8 @@ void PreferencesDialog::syncControlsFromSettings() {
     m_baseline.mlRecognizeText = m_mlRecognizeTextCheck->isChecked();
     m_baseline.mlPreloadSeg = m_mlPreloadSegCheck->isChecked();
     m_baseline.mlRunOnBattery = m_mlRunOnBatteryCheck->isChecked();
+    m_baseline.updatesChannel = m_updatesChannelCombo->currentData().toString();
+    m_baseline.updatesAutoCheck = m_updatesAutoCheckCheck->isChecked();
 
     refreshResetButtons();
 }
@@ -433,6 +628,13 @@ void PreferencesDialog::applyToSettings() {
 
     if (m_mlRunOnBatteryCheck->isChecked() != m_baseline.mlRunOnBattery)
         m_settings.setMlRunOnBattery(m_mlRunOnBatteryCheck->isChecked());
+
+    const QString channel = m_updatesChannelCombo->currentData().toString();
+    if (channel != m_baseline.updatesChannel)
+        m_settings.setUpdatesChannel(channel);
+
+    if (m_updatesAutoCheckCheck->isChecked() != m_baseline.updatesAutoCheck)
+        m_settings.setUpdatesAutoCheckEnabled(m_updatesAutoCheckCheck->isChecked());
 }
 
 void PreferencesDialog::restoreEditableDefaults() {
@@ -449,6 +651,9 @@ void PreferencesDialog::restoreEditableDefaults() {
     m_mlRecognizeTextCheck->setChecked(m_defaults.mlRecognizeTextInBackground());
     m_mlPreloadSegCheck->setChecked(m_defaults.mlPreloadSegmentationOnToolActivation());
     m_mlRunOnBatteryCheck->setChecked(m_defaults.mlRunOnBattery());
+
+    selectComboByData(m_updatesChannelCombo, m_defaults.updatesChannel());
+    m_updatesAutoCheckCheck->setChecked(m_defaults.updatesAutoCheckEnabled());
 
     refreshResetButtons();
 }

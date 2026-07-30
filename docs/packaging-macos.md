@@ -111,4 +111,10 @@ Tracked TODOs:
 - [ ] Add Apple Developer Team ID + signing identity to
       `scripts/build-macos.sh`
 - [ ] Add `notarytool` submission + `stapler staple` to the script
-- [ ] Integrate Sparkle for auto-updates (see DESIGN.md §12)
+- [x] ~~Integrate Sparkle for auto-updates~~ — **shipped for the
+      nightly channel** (2026-07-30) via a custom checker
+      (`src/update/`), not Sparkle; see DESIGN.md §12 and
+      `docs/decision-records/2026-07-30-nightly-auto-update-channel.md`.
+      Note: the update-signing keypair is separate from Apple
+      Developer ID signing above — it protects the *update channel*,
+      not the app bundle, and needs no Apple enrollment.

@@ -20,6 +20,8 @@ class TestSettings : public QObject {
     void sessionRoundTrips();
     void mlSchedulerDefaults();
     void mlSchedulerRoundTrip();
+    void updatesDefaults();
+    void updatesRoundTrip();
 };
 
 void TestSettings::defaults() {
@@ -161,6 +163,37 @@ void TestSettings::mlSchedulerRoundTrip() {
     QCOMPARE(reloaded.mlRecognizeTextInBackground(), false);
     QCOMPARE(reloaded.mlPreloadSegmentationOnToolActivation(), false);
     QCOMPARE(reloaded.mlRunOnBattery(), true);
+}
+
+void TestSettings::updatesDefaults() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    Settings s(dir.filePath("missing.toml"));
+    s.load();
+    // Off by default — see SettingsKeys::UpdatesAutoCheckEnabled: an
+    // update check is an outbound network call, so a fresh install (or
+    // any missing settings.toml) must never auto-check.
+    QCOMPARE(s.updatesAutoCheckEnabled(), false);
+    QCOMPARE(s.updatesChannel(), QStringLiteral("nightly"));
+    QVERIFY(s.updatesLastCheckedUtc().isEmpty());
+}
+
+void TestSettings::updatesRoundTrip() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("settings.toml");
+    {
+        Settings s(path);
+        s.setUpdatesAutoCheckEnabled(true);
+        s.setUpdatesChannel(QStringLiteral("stable"));
+        s.setUpdatesLastCheckedUtc(QStringLiteral("2026-07-30T10:00:00Z"));
+        s.save();
+    }
+    Settings reloaded(path);
+    reloaded.load();
+    QCOMPARE(reloaded.updatesAutoCheckEnabled(), true);
+    QCOMPARE(reloaded.updatesChannel(), QStringLiteral("stable"));
+    QCOMPARE(reloaded.updatesLastCheckedUtc(), QStringLiteral("2026-07-30T10:00:00Z"));
 }
 
 QTEST_MAIN(TestSettings)

@@ -61,6 +61,9 @@ void TestSettingsVolatility::registryCoversEveryPersistedKey() {
     s.setMlRecognizeTextInBackground(false);
     s.setMlPreloadSegmentationOnToolActivation(false);
     s.setMlRunOnBattery(true);
+    s.setUpdatesAutoCheckEnabled(true);
+    s.setUpdatesChannel(QStringLiteral("nightly"));
+    s.setUpdatesLastCheckedUtc(QStringLiteral("2026-07-30T10:00:00Z"));
     s.save();
     QVERIFY(QFile::exists(path));
 
@@ -101,6 +104,9 @@ void TestSettingsVolatility::allCurrentKeysAreLive() {
         SettingsKeys::MlRecognizeTextInBackground,
         SettingsKeys::MlPreloadSegmentationOnToolActivation,
         SettingsKeys::MlRunOnBattery,
+        SettingsKeys::UpdatesAutoCheckEnabled,
+        SettingsKeys::UpdatesChannel,
+        SettingsKeys::UpdatesLastCheckedUtc,
     };
     for (const QLatin1StringView key : liveKeys) {
         const std::optional<Settings::Volatility> v = Settings::volatilityOf(key);

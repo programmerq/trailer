@@ -42,6 +42,9 @@ std::optional<Settings::Volatility> Settings::volatilityOf(QAnyStringView key) {
         {SettingsKeys::MlRecognizeTextInBackground, Volatility::Live},
         {SettingsKeys::MlPreloadSegmentationOnToolActivation, Volatility::Live},
         {SettingsKeys::MlRunOnBattery, Volatility::Live},
+        {SettingsKeys::UpdatesAutoCheckEnabled, Volatility::Live},
+        {SettingsKeys::UpdatesChannel, Volatility::Live},
+        {SettingsKeys::UpdatesLastCheckedUtc, Volatility::Live},
         // Test seam (never persisted); see SettingsKeys::RestartProbe.
         {SettingsKeys::RestartProbe, Volatility::RestartRequired},
     };
@@ -217,6 +220,17 @@ void Settings::load() {
             m_mlRunOnBattery = *v;
         }
     }
+    if (auto *updates = tbl["updates"].as_table()) {
+        if (auto v = (*updates)["auto_check_enabled"].value<bool>()) {
+            m_updatesAutoCheckEnabled = *v;
+        }
+        if (auto v = (*updates)["channel"].value<std::string>()) {
+            m_updatesChannel = fromStd(*v);
+        }
+        if (auto v = (*updates)["last_checked_utc"].value<std::string>()) {
+            m_updatesLastCheckedUtc = fromStd(*v);
+        }
+    }
 }
 
 void Settings::save() const {
@@ -249,6 +263,14 @@ void Settings::save() const {
         {"scheduler", std::move(mlSchedulerTbl)},
     };
 
+    toml::table updatesTbl{
+        {"auto_check_enabled", m_updatesAutoCheckEnabled},
+        {"channel", toStd(m_updatesChannel)},
+    };
+    if (!m_updatesLastCheckedUtc.isEmpty()) {
+        updatesTbl.insert("last_checked_utc", toStd(m_updatesLastCheckedUtc));
+    }
+
     toml::table tbl{
         {"general", std::move(generalTbl)},
         {"files",
@@ -263,6 +285,7 @@ void Settings::save() const {
          }},
         {"first_use", std::move(firstUse)},
         {"ml", std::move(mlTbl)},
+        {"updates", std::move(updatesTbl)},
     };
 
     AppPaths::ensureDirExists(QFileInfo(m_filePath).absolutePath());
@@ -314,6 +337,18 @@ void Settings::setMlPreloadSegmentationOnToolActivation(bool value) {
 
 void Settings::setMlRunOnBattery(bool value) {
     m_mlRunOnBattery = value;
+}
+
+void Settings::setUpdatesAutoCheckEnabled(bool value) {
+    m_updatesAutoCheckEnabled = value;
+}
+
+void Settings::setUpdatesChannel(const QString &value) {
+    m_updatesChannel = value;
+}
+
+void Settings::setUpdatesLastCheckedUtc(const QString &value) {
+    m_updatesLastCheckedUtc = value;
 }
 
 void Settings::setFirstUseAcknowledged(const QString &key, bool value) {

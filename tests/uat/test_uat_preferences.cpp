@@ -32,6 +32,7 @@
 #include "settings/Settings.h"
 #include "ui/MainWindow.h"
 #include "ui/PreferencesDialog.h"
+#include "update/UpdateManager.h"
 
 #include <QAbstractButton>
 #include <QCheckBox>
@@ -41,6 +42,7 @@
 #include <QImage>
 #include <QLabel>
 #include <QPalette>
+#include <QPushButton>
 #include <QSpinBox>
 #include <QStyleHints>
 #include <QTabWidget>
@@ -145,6 +147,7 @@ class TestUatPreferences : public QObject {
 
     void uat_pref_010_themeControlEnabledAndHelperLabelGone();
     void uat_pref_020_everyVisibleTabHasEnabledOperableControl();
+    void uat_pref_030_updatesTabReflectsManagerState();
     void uat_pref_090_evidenceShots();
 
   private:
@@ -202,6 +205,51 @@ void TestUatPreferences::uat_pref_020_everyVisibleTabHasEnabledOperableControl()
     }
 }
 
+// Updates pane (docs/decision-records/2026-07-30-nightly-auto-update-
+// channel.md): the status label + action button text/enabled-state track
+// UpdateManager's state directly — this is the regression lock for that
+// wiring, independent of the curated G2 screenshots below. Uses
+// debugForceStateForTesting (a documented test-only seam on UpdateManager)
+// so every state is reachable without a real network round-trip.
+void TestUatPreferences::uat_pref_030_updatesTabReflectsManagerState() {
+    QVERIFY(m_scratch.isValid());
+    Settings s(m_scratch.filePath(QStringLiteral("pref030.toml")));
+    Update::UpdateManager mgr(s);
+    PreferencesDialog dlg(s);
+    dlg.setUpdateManager(&mgr);
+
+    auto *status = dlg.findChild<QLabel *>(QStringLiteral("updatesStatusLabel"));
+    auto *action = dlg.findChild<QPushButton *>(QStringLiteral("updatesActionButton"));
+    QVERIFY2(status, "Preferences must host an updatesStatusLabel");
+    QVERIFY2(action, "Preferences must host an updatesActionButton");
+
+    // Idle (never checked): action button enabled, reads "Check Now".
+    QVERIFY(action->isEnabled());
+    QCOMPARE(action->text(), QStringLiteral("Check Now"));
+
+    Update::FeedEntry entry;
+    entry.tag = QStringLiteral("nightly-20260730");
+    entry.buildNumber = 4821;
+
+    mgr.debugForceStateForTesting(Update::UpdateManager::State::Checking);
+    QVERIFY(!action->isEnabled());
+    QVERIFY(status->text().contains(QStringLiteral("Checking")));
+
+    mgr.debugForceStateForTesting(Update::UpdateManager::State::UpdateAvailable, entry);
+    QVERIFY(action->isEnabled());
+    QVERIFY(status->text().contains(entry.tag));
+    QVERIFY(action->text().contains(QStringLiteral("Download")));
+
+    mgr.debugForceStateForTesting(Update::UpdateManager::State::UpToDate);
+    QVERIFY(action->isEnabled());
+    QVERIFY(status->text().contains(QStringLiteral("up to date"), Qt::CaseInsensitive));
+
+    mgr.debugForceStateForTesting(Update::UpdateManager::State::Error, {},
+                                  QStringLiteral("Could not reach GitHub: offline"));
+    QVERIFY(action->isEnabled());
+    QVERIFY(status->text().contains(QStringLiteral("offline")));
+}
+
 // Curated G2 evidence (only when TRAILER_PREF_EVIDENCE_DIR is set): the
 // Preferences General tab with the enabled Theme combo in light and dark,
 // and the running app in light (default appearance) and dark (new
@@ -245,6 +293,51 @@ void TestUatPreferences::uat_pref_090_evidenceShots() {
 
         setTheme(Theme::Dark);
         QVERIFY(dlg.grab().save(dir + "/pref-general-after-dark.png"));
+    }
+
+    // --- Updates pane: idle / checking / update-available / up-to-date /
+    // error (docs/decision-records/2026-07-30-nightly-auto-update-channel.md,
+    // G2 evidence for the new Updates row in DESIGN §6.13). One dialog
+    // instance, one UpdateManager driven through debugForceStateForTesting
+    // so every state is reachable deterministically offscreen. ---
+    {
+        Settings s(m_scratch.filePath(QStringLiteral("pref090-updates.toml")));
+        Update::UpdateManager mgr(s);
+        PreferencesDialog dlg(s);
+        dlg.setManageModelsCallback([]() {});
+        dlg.setResetAllCallback([]() {});
+        dlg.setUpdateManager(&mgr);
+        dlg.selectUpdatesTab();
+        dlg.resize(560, 360);
+        dlg.show();
+        setTheme(Theme::Light);
+
+        QApplication::processEvents();
+        QVERIFY(dlg.grab().save(dir + "/pref-updates-idle.png"));
+
+        mgr.debugForceStateForTesting(
+            Update::UpdateManager::State::Checking, {}, {},
+            QStringLiteral(
+                "https://api.github.com/repos/programmerq/trailer/releases?per_page=10"));
+        QApplication::processEvents();
+        QVERIFY(dlg.grab().save(dir + "/pref-updates-checking.png"));
+
+        Update::FeedEntry entry;
+        entry.tag = QStringLiteral("nightly-20260730");
+        entry.buildNumber = 4821;
+        mgr.debugForceStateForTesting(Update::UpdateManager::State::UpdateAvailable, entry);
+        QApplication::processEvents();
+        QVERIFY(dlg.grab().save(dir + "/pref-updates-available.png"));
+
+        mgr.debugForceStateForTesting(Update::UpdateManager::State::UpToDate);
+        QApplication::processEvents();
+        QVERIFY(dlg.grab().save(dir + "/pref-updates-uptodate.png"));
+
+        mgr.debugForceStateForTesting(
+            Update::UpdateManager::State::Error, {},
+            QStringLiteral("No nightly release with a signed update feed was found."));
+        QApplication::processEvents();
+        QVERIFY(dlg.grab().save(dir + "/pref-updates-error.png"));
     }
 
     // --- Running app (same window + document) in light then dark ---

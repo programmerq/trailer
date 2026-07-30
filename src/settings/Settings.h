@@ -39,6 +39,19 @@ inline constexpr QLatin1StringView MlRecognizeTextInBackground{
 inline constexpr QLatin1StringView MlPreloadSegmentationOnToolActivation{
     "ml.scheduler.preload_segmentation_on_tool_activation"};
 inline constexpr QLatin1StringView MlRunOnBattery{"ml.scheduler.run_on_battery"};
+// [updates] table — see PreferencesDialog's Updates pane and
+// src/update/UpdateManager.h. autoCheckEnabled is OFF by default: an
+// update check is an outbound network call, and PHILOSOPHY requires
+// "no new outbound network calls without an explicit, off-by-default
+// user toggle." The "Check for Updates…" menu action itself is not
+// gated by this setting — it always runs a one-shot check with the
+// same URL-disclosure consent framing as ModelDownloader; this toggle
+// only controls whether Trailer checks automatically in the
+// background. See docs/decision-records/2026-07-30-nightly-auto-
+// update-channel.md.
+inline constexpr QLatin1StringView UpdatesAutoCheckEnabled{"updates.auto_check_enabled"};
+inline constexpr QLatin1StringView UpdatesChannel{"updates.channel"};
+inline constexpr QLatin1StringView UpdatesLastCheckedUtc{"updates.last_checked_utc"};
 // Dynamic key group: arbitrary boolean acknowledgements are persisted
 // under the [first_use] table with hand-chosen leaf names, so the
 // registry classifies the whole group by this prefix rather than key
@@ -161,6 +174,27 @@ class Settings {
     bool mlRunOnBattery() const { return m_mlRunOnBattery; }
     void setMlRunOnBattery(bool value);
 
+    // [updates] — see SettingsKeys::UpdatesAutoCheckEnabled above for the
+    // consent rationale. Default false: Trailer never phones home to
+    // check for updates until the user opts in via Preferences → Updates.
+    bool updatesAutoCheckEnabled() const { return m_updatesAutoCheckEnabled; }
+    void setUpdatesAutoCheckEnabled(bool value);
+
+    // "nightly" or "stable" (see trailer::Update::channelToString /
+    // channelFromString in src/update/UpdateTypes.h — stored as a plain
+    // string here rather than that enum so Settings has no dependency on
+    // src/update/). Only "nightly" is wired end-to-end today; "stable"
+    // is accepted and persisted so a future release.yml feed can be
+    // switched on without a settings-format change.
+    QString updatesChannel() const { return m_updatesChannel; }
+    void setUpdatesChannel(const QString &value);
+
+    // ISO-8601 UTC timestamp of the last completed check (any outcome:
+    // up to date, update found, or error), or empty if never checked.
+    // Surfaced in the Preferences Updates pane.
+    QString updatesLastCheckedUtc() const { return m_updatesLastCheckedUtc; }
+    void setUpdatesLastCheckedUtc(const QString &value);
+
     // Whether the user has seen the one-time "redaction is not
     // defence-grade" warning (DESIGN §6.11.6). True = do not show
     // again; false = show on next redaction attempt. Convenience
@@ -212,6 +246,10 @@ class Settings {
     bool m_mlRecognizeTextInBackground = true;
     bool m_mlPreloadSegmentationOnToolActivation = true;
     bool m_mlRunOnBattery = false;
+    // Off by default — see SettingsKeys::UpdatesAutoCheckEnabled.
+    bool m_updatesAutoCheckEnabled = false;
+    QString m_updatesChannel = QStringLiteral("nightly");
+    QString m_updatesLastCheckedUtc;
 };
 
 QString themeToString(Theme value);

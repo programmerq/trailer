@@ -105,22 +105,19 @@ file.
 
 Pickable in this order.
 
-1. **Signed-update channel for macOS** (Sparkle 2 is the leading
-   candidate). The requirement, not the implementation: existing
-   installs can discover and pull new releases over a
-   cryptographically signed channel that does **not** require
-   Apple Developer Program enrollment. Sparkle 2's ed25519-signed
-   appcast fits cleanly and is mature. Alternatives that qualify:
-   a thin custom checker against GitHub's `/releases/latest` API
-   with our own ed25519 verification on the download. Velopack
-   does **not** qualify — its trust model leans on Apple Developer
-   ID / Microsoft Authenticode, which the no-Apple-Dev policy
-   rules out. Needs: ed25519 keypair + safekeeping, signed feed
-   hosted on GitHub Pages (or equivalent), library linkage into
-   the macOS bundle, "Check for Updates…" menu item, RELEASING.md
-   amendment. The point of all this is: when our release pipeline
-   is compromised, existing users don't get malware as an
-   "update."
+1. ~~**Signed-update channel for macOS.**~~ **Shipped for the
+   nightly channel** (2026-07-30, see
+   [`docs/decision-records/2026-07-30-nightly-auto-update-channel.md`](docs/decision-records/2026-07-30-nightly-auto-update-channel.md)).
+   Owner picked the custom-checker option over Sparkle 2 (a thin
+   checker against GitHub's Releases API with our own ed25519
+   verification, `src/update/`) and a GitHub-Release-asset feed over
+   GitHub Pages hosting. Needs an ed25519 keypair the owner
+   generates and stores (see `src/update/UpdatePublicKey.h` for the
+   exact commands — the shipped public key is a throwaway dev
+   placeholder until then); "Check for Updates…" lives in the Help
+   menu on all three platforms. **Stable-channel signing is NOT
+   done** — `release.yml` has no feed-signing step yet, tracked as a
+   Next item below.
 2. ~~**Workstream G — SAM preload via `MlScheduler`.**~~ **Shipped
    locally (`5bd27de`).** Instant Alpha / Smart Lasso activation now
    submits `SamController::prepareForActive()` for the current image
@@ -161,13 +158,17 @@ Pickable in this order.
 
 Planned, not yet started.
 
-7. **Signed-update channel for Windows.** Same requirement as
-   Now item 1. If we pick Sparkle 2 for macOS, **WinSparkle** is
-   the sibling library that shares the appcast XML format and
-   ed25519 pubkey — one signed feed serves both desktops. If we
-   pick a different macOS implementation, the Windows side
-   follows whatever shape that takes (e.g. a custom GitHub-
-   Releases checker would generalise across both OSes for free).
+7. **Signed-update channel for Windows/Linux, and stable-channel
+   signing.** Two related follow-ons to the shipped macOS/nightly
+   channel (2026-07-30 decision record): (a) `src/update/
+   UpdateChecker.{h,cpp}` is already platform-agnostic — only the
+   install step (`UpdateManager::installAndRelaunch()`, currently a
+   macOS-only DMG-mount-and-swap) needs a Windows/Linux
+   implementation, generalising the custom-checker choice "for
+   free" per the original ROADMAP framing; (b) `release.yml` needs
+   its own feed-signing step (mirroring `nightly.yml`'s "Build +
+   sign nightly update feed") before the Preferences → Updates
+   "Stable" channel option can be enabled.
 8. **Preferences pane.** Three new `[ml.scheduler]` settings landed
    in PR #24 but have no UI; Reset Trailer Settings, AutoFill,
    Manage ML Models live in scattered menu locations. A unified
@@ -311,15 +312,22 @@ Explicitly off the table so they stop eating planning oxygen.
   gestures exhibited "Cmd-Z unwinds the wrong thing" symptoms.
   **Resolved:** *Now* item 4 shipped the unified chronological log
   (both adapters) and retired the heuristic.
-- **Update-signing key management.** Whichever ed25519
-  implementation we pick (Sparkle's appcast, WinSparkle's
-  matching feed, or a custom checker), the private key needs to
-  be (a) safely stored — losing it strands every existing user
-  on whatever version they have, and (b) reachable from CI to
-  sign each release. **Mitigation:** store in a password manager
-  *and* a GitHub Actions secret; document recovery in
-  RELEASING.md once the updater lands; consider a "new pubkey"
-  entry signed by the old key for rotation.
+- **Update-signing key management.** The custom checker's ed25519
+  private key needs to be (a) safely stored — losing it strands
+  every existing user on whatever version they have, and (b)
+  reachable from CI to sign each nightly. **Still open:** the
+  shipped public key (`src/update/UpdatePublicKey.h`) is a
+  throwaway dev placeholder — the owner has NOT yet generated and
+  stored the real keypair. **Mitigation (commands in
+  `UpdatePublicKey.h`):** `openssl genpkey -algorithm ed25519`,
+  store the PEM in a password manager *and* as the
+  `TRAILER_UPDATE_SIGNING_KEY` GitHub Actions secret
+  (base64-encoded) that `nightly.yml`'s signing step reads;
+  document recovery in RELEASING.md once the real key is
+  provisioned; consider a "new pubkey" entry signed by the old key
+  for rotation. Until the owner completes this, `nightly.yml`'s
+  feed-signing step soft-skips (warns, does not fail the run) —
+  see that step's comment.
 - **Continuous-mode overlay drift may be Qt-PDF-blocked.** The
   view-geometry information needed for a correct fix may not be
   exposed by Qt PDF's current API. **Mitigation:** scope before

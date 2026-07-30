@@ -347,12 +347,23 @@ build is failing and you keep pushing fixes:
 
 ## Things to keep an eye on
 
-- **Auto-updater integration.** Once wired (Sparkle 2 is the
-  leading candidate — see [ROADMAP.md](ROADMAP.md) Now item 1
-  for the requirement, which is "ed25519-signed update channel,"
-  not the specific library), each release will need to sign and
-  publish a feed entry. Likely a new step between (7) and (8)
-  above; revisit this doc when the implementation lands.
+- **Auto-updater integration.** **Wired for the nightly channel**
+  (2026-07-30, see
+  [`docs/decision-records/2026-07-30-nightly-auto-update-channel.md`](docs/decision-records/2026-07-30-nightly-auto-update-channel.md)):
+  a custom checker (`src/update/`), not Sparkle, verifying an
+  ed25519-signed feed. `nightly.yml`'s "Build + sign nightly update
+  feed" step (right after "Create tag + GitHub Release") signs and
+  uploads `appcast-nightly.json` as a release asset on the same
+  nightly release. **The tagged-release path (`release.yml`) does
+  not do this yet** — the Preferences → Updates channel selector
+  shows "Stable" present-but-disabled until a signing step is added
+  here, mirroring nightly's, likely between (7) and (8) above. When
+  that lands: the same `scripts/sign-update-feed.sh` /
+  `scripts/build-nightly-appcast-payload.py` pattern applies (rename
+  or generalize the payload builder), and the private key secret
+  (`TRAILER_UPDATE_SIGNING_KEY`, see `src/update/UpdatePublicKey.h`
+  for provisioning commands) needs to be available to
+  `release-publish.yml` as well as `nightly.yml`.
 - **Notarized macOS builds.** Off the table indefinitely — Trailer
   is not in the Apple Developer Program. If that ever changes, a
   signing + notarization step plugs in between `make release` and
