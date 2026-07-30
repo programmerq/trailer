@@ -177,6 +177,10 @@ run on the same Ubuntu runner as the Linux build.
 
 Drag files onto the running window to open them.
 
+To make double-clicking a PDF or image open Trailer instead of your OS's
+default viewer, see
+[docs/set-as-default-app.md](docs/set-as-default-app.md).
+
 ## Test
 
 ```sh
@@ -317,6 +321,7 @@ project intends to stay that way.
 | [docs/in-flight-merge-plan.md](docs/in-flight-merge-plan.md) | Historical: the merge plan for PR #24 (the 4-wave HITL merge — landed 2026-05-20). The three CONVENTIONS sections it drafted are now applied as CONVENTIONS §§11-13; the doc is retained as the dependency / risk record. |
 | [docs/audit-2026-05-19.md](docs/audit-2026-05-19.md) | Multi-perspective audit (privacy / cross-platform / accessibility / failure-mode) with findings + an action register grouping what to do with each. |
 | [docs/packaging-macos.md](docs/packaging-macos.md) | macOS bundling/release reference. |
+| [docs/set-as-default-app.md](docs/set-as-default-app.md) | Per-OS steps to make Trailer the default PDF/image handler (macOS/Windows/Linux), for dogfooding on your own machine. |
 | [docs/icon-guidelines.md](docs/icon-guidelines.md) | Icon-family design brief. |
 | [docs/uat/](docs/uat/) | UAT case specs by area (foundations, viewer, PDF pages, image editing, annotations, cross-cutting, security). Each pairs 1:1 with a slot in `tests/uat/`. |
 | [AGENTS.md](AGENTS.md) | Entry point for AI coding agents. `CLAUDE.md` symlinks here. |
