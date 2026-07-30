@@ -390,3 +390,70 @@ TODO.md.
 - `settings.toml` is still valid; the app launches normally.
 - Recent files list is intact up to the last persisted write.
 - No partial / truncated file is left behind.
+
+---
+
+## Feedback / diagnostic report
+
+`Help > Feedback Report…` — a local-only diagnostic report the owner can
+generate while dogfooding and hand to a coding agent or paste into a
+GitHub issue. Never transmits anything (PHILOSOPHY.md "No telemetry"):
+the report is generated, shown to the user in full, and copied only on
+an explicit click. Driven by `tests/uat/test_uat_feedback.cpp` (topical
+prefix `uat_fbk_*`, plus two slots that mirror their spec IDs directly —
+see docs/uat/README.md's two-naming-axis note).
+
+### UAT-XCT-071 — Feedback Report menu item is always enabled
+
+**Preconditions:** None — any app state, including zero windows/documents.
+**Steps:**
+1. Open the Help menu with no document open.
+2. Open the Help menu with a document open.
+**Expected:**
+- `Feedback Report…` is present in the Help menu on both platforms'
+  command surface (macOS global menu bar; Windows/Linux in-window menu
+  bar) and is **enabled** in every case (G3 — there is no "unavailable"
+  state to gate on; the report degrades to header + platform info
+  instead of the control ever going grey).
+
+Driven by `uat_xct_071_menuItemAlwaysEnabled`.
+
+### UAT-XCT-072 — Report is fully visible and omits full paths by default
+
+**Preconditions:** A document is open.
+**Steps:**
+1. `Help > Feedback Report…`.
+**Expected:**
+- The dialog shows the ENTIRE report as read-only text the user can
+  scroll and read — not a "click to copy" black box.
+- The report carries the stable header (app name, version, commit,
+  generated timestamp, build type, platform, Qt version), an App state
+  section (theme, auto-save, open-files-in, recent-files count), an ML
+  section (scheduler flags + per-model downloaded/never-download state),
+  and a Windows/documents section (per open document: type, page,
+  zoom, view mode, text-layer flag).
+- The "Include full file paths" checkbox is present and **unchecked by
+  default**; with it unchecked, no full on-disk path appears anywhere in
+  the report — only bare file names — and the report says so explicitly
+  ("Full file paths omitted…").
+
+Driven by `uat_xct_072_reportIsFullyVisibleAndOmitsPathsByDefault`.
+G2 evidence: `feedback-dialog-with-document.png` (paths off, a document
+open) and `feedback-dialog-empty-state.png` (zero documents — the
+Windows/Linux empty-state case).
+
+### UAT-XCT-073 — Paths checkbox toggles live; Copy matches the visible text
+
+**Preconditions:** A document is open; the Feedback Report dialog is open.
+**Steps:**
+1. Check "Include full file paths".
+2. Click "Copy to Clipboard".
+**Expected:**
+- Checking the box immediately re-renders the report text to include the
+  document's full on-disk path (no restart/reopen needed).
+- The clipboard contents after Copy are byte-identical to what's
+  currently shown in the text view — never a stale or different report
+  than what the user reviewed.
+
+Driven by `uat_xct_073_checkboxTogglesPathsAndCopyMatchesVisibleText`.
+G2 evidence: `feedback-dialog-full-paths-checked.png`.
