@@ -78,12 +78,65 @@
 # free. The self-hosted macOS lane is unaffected — different runner
 # entirely — and stays fully parallel.
 #
-# Failure surfacing: nightly-publish's LAST step fails the job (and so the
-# whole workflow run) whenever any lane's result isn't `success` — even
-# though the release itself, if any lane went green, was already published
-# by an earlier step in the same job. A red run is what makes GitHub's
-# built-in "scheduled workflow failed" notification fire for repo watchers,
-# with no extra issues:write permission or dedup logic needed.
+# Failure surfacing: nightly-publish's LAST-but-one step fails the job (and
+# so the whole workflow run) whenever any lane's result isn't `success` —
+# even though the release itself, if any lane went green, was already
+# published by an earlier step in the same job. A red run is what makes
+# GitHub's built-in "scheduled workflow failed" notification fire for repo
+# watchers, with no extra issues:write permission or dedup logic needed.
+#
+# The UAT ratchet (added after nightly-20260729 shipped all-green with a
+# macOS UAT crash and Wine at 21/40 — continue-on-error on those two lanes'
+# UAT steps means a bad-but-non-crashing job `result` is `success`, so the
+# per-lane check above stayed silent): a SEPARATE, final step reds the run
+# when Wine UAT or macOS UAT is WORSE than the immediately PREVIOUS
+# nightly's, closing the gap without restoring the gate — the release still
+# publishes exactly as it does today in every case; only the run's signal
+# changes. Mechanism:
+#   - Baseline source: a small `uat-summary.json` asset attached to every
+#     REAL nightly release ("Build release body" writes it, "Create tag +
+#     GitHub Release" publishes it alongside the binaries). Chosen over a
+#     committed docs/uat-baselines.json (would need this job to push a
+#     commit to main on every run — more privilege, more risk, and
+#     unrelated-to-source noise in git history) and over an Actions cache
+#     (best-effort/evictable, not human-inspectable, not versioned with
+#     what actually shipped that night). A release asset is atomic with the
+#     artifacts it describes and trivially fetched by tag.
+#   - "Worse" axis (scripts/compare-uat-baseline.sh — a standalone,
+#     directly-executable script, unit-tested against a fixture matrix; see
+#     its header comment and the implementing PR for the full rationale and
+#     verification output): crash state is checked first and dominates —
+#     a newly-crashing lane is always worse regardless of counts, a newly-
+#     clean lane always better. When crash state is unchanged, pass counts
+#     are compared as a RATIO (integer cross-multiplication, no float
+#     epsilon), not a raw passed-count delta — a raw-count comparison
+#     misbehaves once the suite grows (21/40 → 22/45 is more passing tests
+#     but a lower ratio, and is correctly not read as an improvement).
+#   - Degrade gracefully, always: no previous release, no asset on it, an
+#     asset that fails to parse, or a previous night where the lane itself
+#     wasn't green — all collapse to `no_baseline`, which is never `worse`.
+#     This is what makes the very first ratcheted run print green with no
+#     separate "first run" special case: yesterday's pre-ratchet release
+#     simply has no asset to download.
+#   - Ratchets forward automatically: THIS run's own counts are written to
+#     the summary regardless of verdict, becoming tomorrow's baseline — an
+#     improved night raises the floor. Comparison is against the single
+#     immediately-previous nightly (a sliding window), not a historical
+#     high-water mark, so a long-standing, already-triaged bad count (e.g.
+#     Wine's steady ~21/40) reads as `same` and stays green night after
+#     night instead of alarming forever for a known, already-backlogged
+#     issue — the same reasoning that made these two lanes non-gating in
+#     the first place.
+#   - A lane going from present to ABSENT (job cancelled, mac VM offline,
+#     etc.) is UNCHANGED behaviour: the pre-existing "any lane result !=
+#     success" check below already reds the run for that (see e.g. the
+#     2026-07-28 mac-lane cancellation) — the ratchet's own comparison
+#     short-circuits to `not_applicable` in that case and adds nothing
+#     (and nothing conflicting).
+#   - The release body's per-OS table states the comparison outcome in
+#     words (e.g. "unchanged vs nightly-20260728", "REGRESSED from 40/40")
+#     alongside the existing ✅/⚠️/🔥 count — the release stays the human-
+#     readable record, per G2's spirit.
 #
 # Retention: nightly-* releases (assets) older than ~6 months are deleted by
 # a cleanup step in nightly-publish (`gh release delete`, no `--cleanup-tag`
@@ -646,6 +699,70 @@ jobs:
             echo "No previous nightly tag found — this is the first nightly."
           fi
 
+      - name: Fetch previous nightly's UAT summary
+        # The ratchet's baseline (see the workflow header). Downloads the
+        # PREVIOUS nightly release's uat-summary.json asset, if any. Any
+        # failure here — no previous tag, no release for that tag, no
+        # asset on it (e.g. it predates this feature) — degrades to "no
+        # baseline" rather than erroring: `file=` stays empty, and
+        # scripts/compare-uat-baseline.sh treats an empty/missing path as
+        # `no_baseline` (never a regression). continue-on-error is a second
+        # line of defense on top of the `if/else` below, which already
+        # never lets this step exit non-zero.
+        id: prev_uat
+        if: steps.prev.outputs.tag != ''
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          PREV="${{ steps.prev.outputs.tag }}"
+          OUT="$RUNNER_TEMP/prev-uat-summary.json"
+          if gh release download "$PREV" --repo "${{ github.repository }}" \
+               -p uat-summary.json -O "$OUT" --clobber 2>"$RUNNER_TEMP/prev-uat-summary.err"; then
+            echo "file=$OUT" >> "$GITHUB_OUTPUT"
+            echo "Downloaded uat-summary.json from $PREV"
+          else
+            echo "file=" >> "$GITHUB_OUTPUT"
+            echo "No uat-summary.json on $PREV (predates the ratchet, or the asset is missing) — treating as no baseline."
+            cat "$RUNNER_TEMP/prev-uat-summary.err" || true
+          fi
+
+      - name: Compare UAT results against previous nightly
+        # Runs scripts/compare-uat-baseline.sh once per non-gating lane
+        # (Wine, macOS) — Linux UAT is already fully gating (no
+        # continue-on-error on its step), so a Linux regression already
+        # fails that job outright and needs no ratchet. See the workflow
+        # header and the script's own header comment for the full "what
+        # counts as worse" rationale; verified by direct execution against
+        # a fixture scenario matrix (see the implementing PR body).
+        id: uat_compare
+        run: |
+          set -euo pipefail
+          PREV_FILE="${{ steps.prev_uat.outputs.file }}"
+
+          eval "$(bash scripts/compare-uat-baseline.sh wine_uat "$PREV_FILE" \
+            "${{ needs.nightly-windows.result }}" \
+            "${{ needs.nightly-windows.outputs.wine-uat-passed }}" \
+            "${{ needs.nightly-windows.outputs.wine-uat-total }}" \
+            "false")"
+          echo "wine-verdict=$VERDICT"           >> "$GITHUB_OUTPUT"
+          echo "wine-reason=$REASON_CODE"        >> "$GITHUB_OUTPUT"
+          echo "wine-prev-passed=$PREV_PASSED"   >> "$GITHUB_OUTPUT"
+          echo "wine-prev-total=$PREV_TOTAL"     >> "$GITHUB_OUTPUT"
+          echo "Wine UAT verdict vs previous nightly: $VERDICT ($REASON_CODE)"
+
+          eval "$(bash scripts/compare-uat-baseline.sh macos_uat "$PREV_FILE" \
+            "${{ needs.nightly-macos.result }}" \
+            "${{ needs.nightly-macos.outputs.macos-uat-passed }}" \
+            "${{ needs.nightly-macos.outputs.macos-uat-total }}" \
+            "${{ needs.nightly-macos.outputs.macos-uat-crashed }}")"
+          echo "macos-verdict=$VERDICT"          >> "$GITHUB_OUTPUT"
+          echo "macos-reason=$REASON_CODE"       >> "$GITHUB_OUTPUT"
+          echo "macos-prev-passed=$PREV_PASSED"  >> "$GITHUB_OUTPUT"
+          echo "macos-prev-total=$PREV_TOTAL"    >> "$GITHUB_OUTPUT"
+          echo "macOS UAT verdict vs previous nightly: $VERDICT ($REASON_CODE)"
+
       - name: Build since-last-nightly summary
         id: changelog
         run: |
@@ -734,6 +851,43 @@ jobs:
         run: |
           set -euo pipefail
           BODY_FILE="$(mktemp)"
+          PREV_TAG="${{ steps.prev.outputs.tag }}"
+
+          # Renders one UAT ratchet verdict (from the "Compare UAT results
+          # against previous nightly" step, see scripts/compare-uat-
+          # baseline.sh) as the human-readable clause appended to each row
+          # below — e.g. "unchanged vs nightly-20260728" / "REGRESSED from
+          # 40/40 (nightly-20260728)". Keeps the release body the readable
+          # record of what the ratchet decided, not just the raw counts.
+          render_compare() {
+            local verdict="$1" prev_passed="$2" prev_total="$3"
+            case "$verdict" in
+              worse)
+                if [ -n "$prev_total" ]; then
+                  echo "REGRESSED from $prev_passed/$prev_total ($PREV_TAG)"
+                else
+                  echo "REGRESSED vs $PREV_TAG"
+                fi ;;
+              better)
+                if [ -n "$prev_total" ]; then
+                  echo "IMPROVED from $prev_passed/$prev_total ($PREV_TAG)"
+                else
+                  echo "IMPROVED vs $PREV_TAG"
+                fi ;;
+              same)
+                echo "unchanged vs $PREV_TAG" ;;
+              no_baseline)
+                if [ -n "$PREV_TAG" ]; then
+                  echo "no baseline to compare (first ratcheted run, or $PREV_TAG has none)"
+                else
+                  echo "no baseline to compare (first-ever nightly)"
+                fi ;;
+              unknown)
+                echo "comparison skipped (count unavailable this run or in baseline)" ;;
+              *)
+                echo "" ;;
+            esac
+          }
 
           # Windows row carries an extra, NON-GATING annotation: Wine UAT's
           # pass count (owner decision 2026-07-24 — see nightly-windows'
@@ -742,15 +896,19 @@ jobs:
           # build/bundle/unit failed (Wine UAT can never cause that, per
           # continue-on-error on that step), so the ❌ branch below never
           # needs to reference the Wine UAT counts at all.
+          WIN_PASSED=""
+          WIN_TOTAL=""
           if [ "${{ needs.nightly-windows.result }}" = "success" ]; then
             WIN_PASSED="${{ needs.nightly-windows.outputs.wine-uat-passed }}"
             WIN_TOTAL="${{ needs.nightly-windows.outputs.wine-uat-total }}"
+            WIN_COMPARE="$(render_compare "${{ steps.uat_compare.outputs.wine-verdict }}" \
+              "${{ steps.uat_compare.outputs.wine-prev-passed }}" "${{ steps.uat_compare.outputs.wine-prev-total }}")"
             if [ -n "$WIN_TOTAL" ] && [ "$WIN_PASSED" = "$WIN_TOTAL" ]; then
-              WIN_ROW="✅ build+unit+UAT (Wine UAT $WIN_PASSED/$WIN_TOTAL)"
+              WIN_ROW="✅ build+unit+UAT (Wine UAT $WIN_PASSED/$WIN_TOTAL) — $WIN_COMPARE"
             elif [ -n "$WIN_TOTAL" ]; then
-              WIN_ROW="✅ build+unit, ⚠️ Wine UAT $WIN_PASSED/$WIN_TOTAL — informational, non-gating, see docs/backlog/2026-07-24-wine-uat-failures-triage.md"
+              WIN_ROW="✅ build+unit, ⚠️ Wine UAT $WIN_PASSED/$WIN_TOTAL — $WIN_COMPARE — non-gating, see docs/backlog/2026-07-24-wine-uat-failures-triage.md"
             else
-              WIN_ROW="✅ build+unit, ⚠️ Wine UAT count unavailable this run"
+              WIN_ROW="✅ build+unit, ⚠️ Wine UAT count unavailable this run — $WIN_COMPARE"
             fi
           else
             WIN_ROW="❌ (${{ needs.nightly-windows.result }})"
@@ -762,22 +920,27 @@ jobs:
           # a crash is called out explicitly (🔥) rather than folded into
           # an ordinary N/M count, since a SegFault is a categorically more
           # serious signal than a failing assertion.
+          MAC_PASSED=""
+          MAC_TOTAL=""
+          MAC_CRASHED=""
           if [ "${{ needs.nightly-macos.result }}" = "success" ]; then
             MAC_PASSED="${{ needs.nightly-macos.outputs.macos-uat-passed }}"
             MAC_TOTAL="${{ needs.nightly-macos.outputs.macos-uat-total }}"
             MAC_CRASHED="${{ needs.nightly-macos.outputs.macos-uat-crashed }}"
+            MAC_COMPARE="$(render_compare "${{ steps.uat_compare.outputs.macos-verdict }}" \
+              "${{ steps.uat_compare.outputs.macos-prev-passed }}" "${{ steps.uat_compare.outputs.macos-prev-total }}")"
             if [ "$MAC_CRASHED" = "true" ]; then
               if [ -n "$MAC_TOTAL" ]; then
-                MAC_ROW="✅ build+unit, 🔥 macOS UAT CRASHED ($MAC_PASSED/$MAC_TOTAL) — informational, non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
+                MAC_ROW="✅ build+unit, 🔥 macOS UAT CRASHED ($MAC_PASSED/$MAC_TOTAL) — $MAC_COMPARE — informational, non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
               else
-                MAC_ROW="✅ build+unit, 🔥 macOS UAT crashed (no count available this run) — informational, non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
+                MAC_ROW="✅ build+unit, 🔥 macOS UAT crashed (no count available this run) — $MAC_COMPARE — informational, non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
               fi
             elif [ -n "$MAC_TOTAL" ] && [ "$MAC_PASSED" = "$MAC_TOTAL" ]; then
-              MAC_ROW="✅ build+unit+UAT ($MAC_PASSED/$MAC_TOTAL)"
+              MAC_ROW="✅ build+unit+UAT ($MAC_PASSED/$MAC_TOTAL) — $MAC_COMPARE"
             elif [ -n "$MAC_TOTAL" ]; then
-              MAC_ROW="✅ build+unit, ⚠️ macOS UAT $MAC_PASSED/$MAC_TOTAL — informational, non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
+              MAC_ROW="✅ build+unit, ⚠️ macOS UAT $MAC_PASSED/$MAC_TOTAL — $MAC_COMPARE — non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
             else
-              MAC_ROW="✅ build+unit, ⚠️ macOS UAT count unavailable this run"
+              MAC_ROW="✅ build+unit, ⚠️ macOS UAT count unavailable this run — $MAC_COMPARE"
             fi
           else
             MAC_ROW="❌ (${{ needs.nightly-macos.result }})"
@@ -789,7 +952,10 @@ jobs:
             echo "expect from a 0.x build. A lane below marked ❌ is NOT included;"
             echo "see its job log in this run for what failed. Windows' Wine UAT"
             echo "and macOS's UAT counts (⚠️/🔥) are informational only — neither"
-            echo "blocks the artifact; see each row's linked backlog item."
+            echo "blocks the artifact; see each row's linked backlog item. The"
+            echo "'REGRESSED'/'IMPROVED'/'unchanged' clause is the UAT ratchet —"
+            echo "see the workflow's header comment — and DOES gate the run's own"
+            echo "pass/fail signal (never the artifact) when a lane regresses."
             echo
             echo "## Build status"
             echo
@@ -802,6 +968,45 @@ jobs:
             cat "${{ steps.changelog.outputs.body-file }}"
           } >> "$BODY_FILE"
           echo "body-file=$BODY_FILE" >> "$GITHUB_OUTPUT"
+
+          # Write THIS run's own uat-summary.json — becomes tomorrow's
+          # ratchet baseline once published below, regardless of tonight's
+          # verdict (an improved night ratchets the floor forward; a
+          # regressed night still records its own, worse number, so a
+          # long-standing plateau at that level reads `same` afterward
+          # rather than alarming every night — see the workflow header).
+          json_num_or_null() { if [ -n "$1" ]; then echo "$1"; else echo "null"; fi; }
+          json_bool_or_null() {
+            case "$1" in
+              true|false) echo "$1" ;;
+              *) echo "null" ;;
+            esac
+          }
+          mkdir -p dist
+          cat > dist/uat-summary.json <<EOF
+          {
+            "schema_version": 1,
+            "tag": "${{ needs.nightly-date.outputs.tag }}",
+            "generated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "lanes": {
+              "wine_uat": {
+                "job_result": "${{ needs.nightly-windows.result }}",
+                "passed": $(json_num_or_null "$WIN_PASSED"),
+                "total": $(json_num_or_null "$WIN_TOTAL"),
+                "crashed": false
+              },
+              "macos_uat": {
+                "job_result": "${{ needs.nightly-macos.result }}",
+                "passed": $(json_num_or_null "$MAC_PASSED"),
+                "total": $(json_num_or_null "$MAC_TOTAL"),
+                "crashed": $(json_bool_or_null "$MAC_CRASHED")
+              }
+            }
+          }
+          EOF
+          echo "---- uat-summary.json preview ----"
+          cat dist/uat-summary.json
+          echo "---- end preview ----"
 
       - name: Create tag + GitHub Release
         # Skipped entirely when: dry-run (manual test proof — see workflow
@@ -831,7 +1036,11 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git tag -a "$TAG" -m "Nightly $TAG"
           git push origin "$TAG"
-          gh release create "$TAG" dist/trailer-*.* \
+          # dist/uat-summary.json (written unconditionally by "Build
+          # release body", regardless of dry-run) is included alongside
+          # the binaries so it becomes TOMORROW's ratchet baseline — see
+          # scripts/compare-uat-baseline.sh and the workflow header.
+          gh release create "$TAG" dist/trailer-*.* dist/uat-summary.json \
             --repo "${{ github.repository }}" \
             --title "Nightly $TAG" \
             --prerelease \
@@ -853,6 +1062,11 @@ jobs:
           echo "### Release body preview" >> "$GITHUB_STEP_SUMMARY"
           echo >> "$GITHUB_STEP_SUMMARY"
           cat "${{ steps.body.outputs.body-file }}" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "### UAT ratchet verdict (would still gate the RUN even in dry-run)" >> "$GITHUB_STEP_SUMMARY"
+          echo >> "$GITHUB_STEP_SUMMARY"
+          echo "- Wine UAT: \`${{ steps.uat_compare.outputs.wine-verdict }}\` (${{ steps.uat_compare.outputs.wine-reason }})" >> "$GITHUB_STEP_SUMMARY"
+          echo "- macOS UAT: \`${{ steps.uat_compare.outputs.macos-verdict }}\` (${{ steps.uat_compare.outputs.macos-reason }})" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Retention cleanup (delete releases older than 6 months, keep tags)
         # ~183 days. Deletes the GitHub Release object (and its assets)
@@ -909,4 +1123,29 @@ jobs:
            needs.nightly-macos.result != 'success')
         run: |
           echo "::error::At least one nightly lane did not fully pass (build + unit + UAT). Linux=${{ needs.nightly-linux.result }} Windows=${{ needs.nightly-windows.result }} macOS=${{ needs.nightly-macos.result }}"
+          exit 1
+
+      - name: Fail the run if UAT regressed vs the previous nightly
+        # THE RATCHET (see the workflow header and scripts/compare-uat-
+        # baseline.sh): Wine UAT and macOS UAT are non-gating per-lane
+        # (continue-on-error, see those steps' comments), so a lane's job
+        # `result` can be `success` here even when its UAT count is bad or
+        # its crash flag is set — that's intentional, and the step above
+        # doesn't (and shouldn't) catch it. This step adds the missing
+        # signal: it reds the RUN — never the lane, never the artifact,
+        # which already published above regardless — specifically when
+        # `scripts/compare-uat-baseline.sh` (run in "Compare UAT results
+        # against previous nightly") judged a lane WORSE than the
+        # immediately previous nightly's published result. Equal-or-better
+        # (including `no_baseline`/`unknown` — never treated as a
+        # regression, see the script's header) stays green here, matching
+        # "the ratchet only tightens" (AGENTS.md). `always()` for the same
+        # reason as the step above: an unrelated earlier failure must not
+        # silently skip this diagnostic.
+        if: |
+          always() &&
+          (steps.uat_compare.outputs.wine-verdict == 'worse' ||
+           steps.uat_compare.outputs.macos-verdict == 'worse')
+        run: |
+          echo "::error::UAT regressed vs the previous nightly — see the release body's per-OS table for the counts. Wine=${{ steps.uat_compare.outputs.wine-verdict }} (${{ steps.uat_compare.outputs.wine-reason }}) macOS=${{ steps.uat_compare.outputs.macos-verdict }} (${{ steps.uat_compare.outputs.macos-reason }})"
           exit 1
