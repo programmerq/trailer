@@ -8,6 +8,7 @@
 #include "settings/DocumentTypeDefaults.h"
 #include "settings/SessionDraftStore.h"
 #include "settings/Settings.h"
+#include "update/UpdateManager.h"
 
 #include <QApplication>
 #include <QByteArray>
@@ -206,6 +207,7 @@ class Application : public QApplication {
     RecoveryStore &recoveryStore() { return m_recoveryStore; }
     ModelRegistry &modelRegistry() { return m_modelRegistry; }
     MlScheduler &mlScheduler() { return m_mlScheduler; }
+    Update::UpdateManager &updateManager() { return *m_updateManager; }
 
     // Return the first existing window, or spawn one if none exist.
     // Idempotent: callers can use it to "make sure there's a window".
@@ -289,6 +291,14 @@ class Application : public QApplication {
     QList<QPointer<QAction>> m_clipboardActions;
 
     Settings m_settings;
+    // Owns the update channel's single QNetworkAccessManager (via
+    // UpdateChecker). Lives for the whole app so the opt-in auto-check
+    // timer keeps working across window open/close, matching
+    // MlScheduler's shared-singleton shape just below. std::unique_ptr
+    // because it needs m_settings to already exist at construction —
+    // built in the Application constructor body, not as a default
+    // member initializer.
+    std::unique_ptr<Update::UpdateManager> m_updateManager;
     RecentFiles m_recent;
     DocumentTypeDefaults m_typeDefaults;
     DocumentRegistry m_registry;

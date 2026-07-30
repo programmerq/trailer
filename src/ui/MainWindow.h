@@ -261,6 +261,13 @@ class MainWindow : public QMainWindow {
     // Apply a crop from the overlay's page-space keep-rectangle.
     void onCropRectCommitted(const QRectF &docRect, int page);
     void onAbout();
+    // Help → Check for Updates… (see docs/platform-conventions.md for
+    // the per-OS menu placement note). Always enabled regardless of the
+    // Preferences → Updates auto-check toggle (G3: never a dead
+    // control) — runs one manual check, disclosing the URL it's about
+    // to fetch before firing, then reports the outcome (update found /
+    // up to date / error) in a small modal.
+    void onCheckForUpdates();
     void onAutoFillCurrentForm();
     void onManageMyCard();
     void onManageSignatures();

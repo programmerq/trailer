@@ -132,6 +132,16 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
     m_recent.load();
     m_typeDefaults.load();
 
+    // Built after settings.load() so the auto-check-enabled / last-
+    // checked state it reads is the persisted value, not the default.
+    // maybeAutoCheck() is a no-op unless the user opted in via
+    // Preferences → Updates (off by default — see
+    // SettingsKeys::UpdatesAutoCheckEnabled) AND at least 24h have
+    // passed since the last check, so this line performs NO outbound
+    // network call on a fresh install or with auto-check off.
+    m_updateManager = std::make_unique<Update::UpdateManager>(m_settings, this);
+    m_updateManager->maybeAutoCheck();
+
     // Apply the persisted theme before any window is built, so the first
     // window's toolbar icons are tinted for the active colour scheme. For
     // Theme::System this hands control to Qt (tracks the OS); the

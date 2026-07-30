@@ -1,6 +1,7 @@
 #pragma once
 
 #include "settings/Settings.h"
+#include "update/UpdateTypes.h"
 
 #include <QDialog>
 #include <functional>
@@ -12,9 +13,14 @@ class QDialogButtonBox;
 class QLabel;
 class QPushButton;
 class QSpinBox;
+class QTabWidget;
 class QToolButton;
 
 namespace trailer {
+
+namespace Update {
+class UpdateManager;
+}
 
 // Unified Preferences editor (Edit → Preferences…, Ctrl+, / ⌘,).
 //
@@ -54,6 +60,20 @@ class PreferencesDialog : public QDialog {
     // disabled. Safe to call before or after construction.
     void setManageModelsCallback(std::function<void()> cb);
     void setResetAllCallback(std::function<void()> cb);
+
+    // Wires the Updates tab's live actions (Check Now / Download &
+    // Install / Install & Relaunch) to a real UpdateManager. Until
+    // called, those controls stay disabled with an explanatory tooltip
+    // (G3) — same pattern as setManageModelsCallback. The channel
+    // selector and auto-check checkbox work regardless (they only
+    // touch Settings), so this only gates the network-driving buttons.
+    // Does not take ownership; `manager` must outlive the dialog.
+    void setUpdateManager(Update::UpdateManager *manager);
+
+    // Switches the tab widget to the Updates pane. Used by Help → Check
+    // for Updates… so the manual-check entry point lands the user
+    // exactly where the live status/result renders.
+    void selectUpdatesTab();
 
     // Restart-hint factory (and test seam). Returns a muted, word-wrapped
     // "Requires restart to take effect" QLabel (objectName "restartHint")
@@ -114,6 +134,18 @@ class PreferencesDialog : public QDialog {
     QCheckBox *m_mlRunOnBatteryCheck = nullptr;
     QPushButton *m_manageModelsButton = nullptr;
 
+    QComboBox *m_updatesChannelCombo = nullptr;
+    QCheckBox *m_updatesAutoCheckCheck = nullptr;
+    QLabel *m_updatesStatusLabel = nullptr;
+    QPushButton *m_updatesActionButton = nullptr; // Check Now / Download & Install / Install & Relaunch
+    Update::UpdateManager *m_updateManager = nullptr;
+    QTabWidget *m_tabs = nullptr;
+    int m_updatesTabIndex = -1;
+    // Refreshes m_updatesStatusLabel + m_updatesActionButton text/handler
+    // from m_updateManager's current state. Called on setUpdateManager()
+    // and on every UpdateManager::stateChanged while the dialog is open.
+    void refreshUpdatesStatus();
+
     QPushButton *m_resetAllButton = nullptr;
 
     // Per-control baseline (the value actually placed INTO each widget at
@@ -128,6 +160,8 @@ class PreferencesDialog : public QDialog {
         bool mlRecognizeText = true;
         bool mlPreloadSeg = true;
         bool mlRunOnBattery = false;
+        bool updatesAutoCheck = false;
+        QString updatesChannel = QStringLiteral("nightly");
     } m_baseline;
 
     // Reset button + "is this control at its default?" predicate, so a

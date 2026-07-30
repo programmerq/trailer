@@ -39,6 +39,7 @@
 #include "platform/QuitMenu.h"
 #include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
+#include "update/UpdateManager.h"
 #include "platform/Share.h"
 #include "settings/AppPaths.h"
 #include "uxrecord/UxRecord.h"
@@ -971,12 +972,21 @@ void MainWindow::buildMenus() {
     aboutAction->setMenuRole(QAction::AboutRole);
     connect(aboutAction, &QAction::triggered, this, &MainWindow::onAbout);
 
+    helpMenu->addSeparator();
+
+    // Help menu on every platform (macOS/Windows/Linux) — see
+    // docs/platform-conventions.md's per-OS shape note for this action.
+    // Always enabled: this is the manual one-shot check path, independent
+    // of the Preferences → Updates auto-check toggle (G3).
+    auto *checkForUpdatesAction = helpMenu->addAction(tr("Check for &Updates…"));
+    checkForUpdatesAction->setObjectName(QStringLiteral("action.help.checkForUpdates"));
+    connect(checkForUpdatesAction, &QAction::triggered, this, &MainWindow::onCheckForUpdates);
+
     // Local-only diagnostic report (no network call, ever — see
     // src/diagnostics/FeedbackReport.h). Always enabled: it degrades
     // to header + platform info rather than needing anything to be
     // "ready" first (G3 — no lying controls; there's nothing here that
     // can be unavailable).
-    helpMenu->addSeparator();
     auto *feedbackAction = helpMenu->addAction(tr("&Feedback Report…"));
     feedbackAction->setMenuRole(QAction::ApplicationSpecificRole);
     connect(feedbackAction, &QAction::triggered, this,
@@ -4829,6 +4839,7 @@ void MainWindow::onOpenPreferences() {
     PreferencesDialog dlg(m_app->settings(), this);
     dlg.setManageModelsCallback([this]() { showModelManagerDialog(this, m_app); });
     dlg.setResetAllCallback([this]() { onResetTrailerSettings(); });
+    dlg.setUpdateManager(&m_app->updateManager());
     // Re-apply the settings that are not read live when the user saves
     // preferences:
     //   • recent_max — consumed once at startup, re-applied to the live cap.
@@ -4838,6 +4849,27 @@ void MainWindow::onOpenPreferences() {
         m_app->recentFiles().setMaxEntries(m_app->settings().recentMax());
         m_app->applyTheme(m_app->settings().theme());
     });
+    dlg.exec();
+}
+
+void MainWindow::onCheckForUpdates() {
+    // Opens the same Preferences → Updates pane the auto-check policy
+    // and manual check both render into, so there is exactly one place
+    // in the UI that shows "checking / up to date / update available /
+    // error" (easier to keep honest than a second, parallel modal
+    // flow). The URL about to be fetched is disclosed via
+    // UpdateManager::checkStarted before the request fires, matching
+    // ModelDownloader's consent framing (AGENTS.md "Networking").
+    PreferencesDialog dlg(m_app->settings(), this);
+    dlg.setManageModelsCallback([this]() { showModelManagerDialog(this, m_app); });
+    dlg.setResetAllCallback([this]() { onResetTrailerSettings(); });
+    dlg.setUpdateManager(&m_app->updateManager());
+    dlg.selectUpdatesTab();
+    connect(&dlg, &PreferencesDialog::settingsApplied, this, [this]() {
+        m_app->recentFiles().setMaxEntries(m_app->settings().recentMax());
+        m_app->applyTheme(m_app->settings().theme());
+    });
+    m_app->updateManager().checkNow();
     dlg.exec();
 }
 
