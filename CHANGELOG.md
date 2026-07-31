@@ -29,6 +29,13 @@ entries terse and user-visible; CI / infrastructure churn lives in the
   zoom unchanged, spilling a page off-screen and populating a scrollbar.
   It now recomputes a spread-aware fit, matching Fit Page's own meaning
   for a facing spread.
+- **Search now scrolls to the match it selects.** The position-aware seed
+  and Find Next / Find Previous already picked the right match; the
+  viewport now actually scrolls there instead of leaving it selected but
+  off-screen.
+- **Shift+Enter in the search field now means Find Previous**, matching
+  every other find-bar's convention. Previously it behaved like a plain
+  Enter (Find Next).
 
 ### Infrastructure
 

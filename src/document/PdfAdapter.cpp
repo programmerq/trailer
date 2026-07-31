@@ -1556,7 +1556,7 @@ void PdfDocument::setSearchQuery(const QString &query) {
             const int seed = firstResultIndexAtOrAfter(m_seedFromPage);
             m_currentResult = seed;
             m_provisionalSeedIndex = seed;
-            m_view->setCurrentSearchResultIndex(seed);
+            applySearchResultIndex(seed);
         }
     }
     // Push the (possibly empty) match list to the overlay so an
@@ -1598,7 +1598,7 @@ void PdfDocument::onSearchResultsPopulated() {
     const int seed = firstResultIndexAtOrAfter(m_seedFromPage);
     m_currentResult = seed;
     m_provisionalSeedIndex = seed;
-    m_view->setCurrentSearchResultIndex(seed);
+    applySearchResultIndex(seed);
     refreshSearchHighlights();
 }
 
@@ -1687,6 +1687,17 @@ void PdfDocument::refreshSearchHighlights() {
     m_overlay->setSearchHighlights(std::move(highlights));
 }
 
+void PdfDocument::applySearchResultIndex(int index) {
+    if (!m_view)
+        return;
+    m_view->setCurrentSearchResultIndex(index);
+    if (!m_searchModel || index < 0 || index >= m_searchModel->rowCount({}))
+        return;
+    const QPdfLink link = m_searchModel->resultAtIndex(index);
+    if (link.isValid())
+        m_view->pageNavigator()->jump(link);
+}
+
 void PdfDocument::findNext() {
     if (!m_view || !m_searchModel)
         return;
@@ -1694,7 +1705,7 @@ void PdfDocument::findNext() {
     if (count <= 0)
         return;
     m_currentResult = (m_currentResult + 1) % count;
-    m_view->setCurrentSearchResultIndex(m_currentResult);
+    applySearchResultIndex(m_currentResult);
     refreshSearchHighlights();
 }
 
@@ -1705,7 +1716,7 @@ void PdfDocument::findPrevious() {
     if (count <= 0)
         return;
     m_currentResult = (m_currentResult - 1 + count) % count;
-    m_view->setCurrentSearchResultIndex(m_currentResult);
+    applySearchResultIndex(m_currentResult);
     refreshSearchHighlights();
 }
 

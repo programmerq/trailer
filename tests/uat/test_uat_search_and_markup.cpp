@@ -44,6 +44,7 @@
 #include <QMouseEvent>
 #include <QPageSize>
 #include <QPainter>
+#include <QPdfPageNavigator>
 #include <QPdfSearchModel>
 #include <QPdfView>
 #include <QPdfWriter>
@@ -408,6 +409,9 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_vwr_068_searchSeedsFirstMatchAtOrAfterCurrentPage();
     void uat_vwr_069_searchSeedPreservesWholeDocumentCoverage();
     void uat_vwr_070_searchSeedTieBreakEarliestOnPage();
+    void uat_vwr_103_searchSeedScrollsViewportToMatch();
+    void uat_vwr_104_findNextPreviousScrollViewportToMatch();
+    void uat_vwr_105_shiftEnterTriggersFindPrevious();
     void uat_vwr_083_magnifierEscapeDeactivates();
     void uat_ann_010_rectangleToolCreatesAnnotation();
     void uat_ann_012_lineToolCreatesAnnotation();
@@ -950,6 +954,229 @@ void TestUatSearchAndMarkup::uat_vwr_070_searchSeedTieBreakEarliestOnPage() {
     QCOMPARE(doc->currentSearchMatchIndex(), expectedSeedIndex + 1); // 1-based counter
 
     grabTo(mw, QStringLiteral("vwr070_tiebreak_earliest_on_page.png"));
+}
+
+// UAT-VWR-103 — real dogfooding bug: "text highlighting works, but it
+// starts at match 1 being highlighted, even though I'm on page 161."
+// ADR 0006 already made the SEED position-aware (uat_vwr_068/069/070
+// pin that the MODEL's recorded seed index/page is correct), but none of
+// those assert the VIEWPORT actually moved there — only that the search
+// model's own Page role for the seeded index is right. A match that is
+// selected in the model but never brought on screen is functionally
+// invisible to the user, which reads exactly like "it started at match 1"
+// even when the model seeded correctly. This closes that gap: after
+// seeding from a middle page, the document's OWN current page (what the
+// sidebar and the visible QPdfView report) must equal the seeded match's
+// page — not just the model's Page role for that row.
+void TestUatSearchAndMarkup::uat_vwr_103_searchSeedScrollsViewportToMatch() {
+    QVERIFY(m_scratch.isValid());
+    const QString keyword = QStringLiteral("zephyrquux");
+    const QList<int> matchPages{2, 5, 8, 11};
+    const int totalPages = 13;
+    const QString pdfPath = writePdfWithKeywordOnPages(
+        m_scratch.filePath(QStringLiteral("uat_vwr_103.pdf")), keyword, matchPages, totalPages);
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+
+    QAction *findAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Find…"));
+    QVERIFY(findAction);
+    findAction->trigger();
+    QApplication::processEvents();
+
+    auto *searchBar = mw->findChild<SearchBar *>();
+    QVERIFY(searchBar);
+    auto *lineEdit = searchBar->findChild<QLineEdit *>();
+    QVERIFY(lineEdit);
+    auto *view = mw->findChild<QPdfView *>();
+    QVERIFY(view);
+
+    const int knownTotal = static_cast<int>(matchPages.size());
+
+    // Reading page 9 on a doc whose matches sit on {2,5,8,11}: the seed is
+    // page 11's match (first page >= 9).
+    doc->goToPage(9);
+    QApplication::processEvents();
+    QTRY_COMPARE_WITH_TIMEOUT(doc->currentPage(), 9, 2000);
+
+    lineEdit->setText(keyword);
+    QApplication::processEvents();
+    QTRY_VERIFY_WITH_TIMEOUT(view->searchModel() != nullptr &&
+                                 view->searchModel()->rowCount(QModelIndex()) == knownTotal,
+                             5000);
+    QTRY_VERIFY_WITH_TIMEOUT(view->currentSearchResultIndex() >= 0, 5000);
+
+    // The model's own seed bookkeeping is already covered by uat_vwr_068;
+    // the point of THIS assertion is that the document's ACTUAL current
+    // page — what the sidebar highlights and what the visible QPdfView
+    // paints — followed the seed to page 11, not left sitting on page 9.
+    QCOMPARE(currentSeedPage(view), 11);
+    QVERIFY2(doc->currentPage() == 11,
+             qPrintable(QStringLiteral("seeding to a match on a different page must scroll "
+                                       "the viewport there; doc->currentPage() is %1, "
+                                       "expected 11 (the match a user reading page 9 would "
+                                       "actually see)")
+                            .arg(doc->currentPage())));
+    QCOMPARE(view->pageNavigator()->currentPage(), 11);
+}
+
+// UAT-VWR-104 — real dogfooding bug: "When I hit enter, it selects the
+// next match, but doesn't jump me to the next match." Find Next / Find
+// Previous already advance m_currentResult and the highlight correctly
+// (uat_vwr_062 pins the index wrap); this pins that advancing to a match
+// on a DIFFERENT page also moves the document's current page — the
+// selected-but-invisible-match class of bug, the same root cause as
+// uat_vwr_103's seed gap.
+void TestUatSearchAndMarkup::uat_vwr_104_findNextPreviousScrollViewportToMatch() {
+    QVERIFY(m_scratch.isValid());
+    const QString keyword = QStringLiteral("zephyrquux");
+    const QList<int> matchPages{2, 5, 8, 11};
+    const int totalPages = 13;
+    const QString pdfPath = writePdfWithKeywordOnPages(
+        m_scratch.filePath(QStringLiteral("uat_vwr_104.pdf")), keyword, matchPages, totalPages);
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+
+    QAction *findAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Find…"));
+    QVERIFY(findAction);
+    findAction->trigger();
+    QApplication::processEvents();
+
+    auto *searchBar = mw->findChild<SearchBar *>();
+    QVERIFY(searchBar);
+    auto *lineEdit = searchBar->findChild<QLineEdit *>();
+    QVERIFY(lineEdit);
+    auto *view = mw->findChild<QPdfView *>();
+    QVERIFY(view);
+
+    const int knownTotal = static_cast<int>(matchPages.size());
+
+    // Seed from page 0: the first match at/after page 0 is page 2's.
+    lineEdit->setText(keyword);
+    QApplication::processEvents();
+    QTRY_VERIFY_WITH_TIMEOUT(view->searchModel() != nullptr &&
+                                 view->searchModel()->rowCount(QModelIndex()) == knownTotal,
+                             5000);
+    QTRY_VERIFY_WITH_TIMEOUT(view->currentSearchResultIndex() >= 0, 5000);
+    QCOMPARE(currentSeedPage(view), 2);
+    QCOMPARE(doc->currentPage(), 2);
+
+    // Find Next three times walks 5, 8, 11 — each one a DIFFERENT page —
+    // and doc->currentPage() must follow every step, not stay parked.
+    const QList<int> expectedForward{5, 8, 11};
+    for (int expectedPage : expectedForward) {
+        emit searchBar->findNextRequested();
+        QApplication::processEvents();
+        QCOMPARE(currentSeedPage(view), expectedPage);
+        QVERIFY2(doc->currentPage() == expectedPage,
+                 qPrintable(QStringLiteral("Find Next selected the match on page %1 but the "
+                                           "viewport is still on page %2 — pressing Enter "
+                                           "must jump to the next match, not just select it")
+                                .arg(expectedPage)
+                                .arg(doc->currentPage())));
+    }
+
+    // Find Previous walks back down: 8, 5, 2.
+    const QList<int> expectedBackward{8, 5, 2};
+    for (int expectedPage : expectedBackward) {
+        emit searchBar->findPreviousRequested();
+        QApplication::processEvents();
+        QCOMPARE(currentSeedPage(view), expectedPage);
+        QVERIFY2(doc->currentPage() == expectedPage,
+                 qPrintable(QStringLiteral("Find Previous selected the match on page %1 but "
+                                           "the viewport is still on page %2")
+                                .arg(expectedPage)
+                                .arg(doc->currentPage())));
+    }
+}
+
+// UAT-VWR-105 — real dogfooding bug: "When I do shift+enter when doing
+// search, that should do 'previous match' instead of next match."
+// QLineEdit::returnPressed carries no modifier information, so a plain
+// connection to it (SearchBar's original wiring) fires findNextRequested
+// for Shift+Enter too. This drives a REAL synthesized Shift+Return key
+// event into the SearchBar's QLineEdit (not a direct signal emit — the
+// bug lives in key handling, so the test must exercise the same path a
+// keystroke does) and asserts ONLY findPreviousRequested fires, never
+// findNextRequested, for that one key press.
+void TestUatSearchAndMarkup::uat_vwr_105_shiftEnterTriggersFindPrevious() {
+    QVERIFY(m_scratch.isValid());
+    const QString keyword = QStringLiteral("hippogryph");
+    const QString pdfPath = writePdfWithKeywordTimes(
+        m_scratch.filePath(QStringLiteral("uat_vwr_105.pdf")), keyword, 3);
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+
+    QAction *findAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Find…"));
+    QVERIFY(findAction);
+    findAction->trigger();
+    QApplication::processEvents();
+
+    auto *searchBar = mw->findChild<SearchBar *>();
+    QVERIFY(searchBar);
+    auto *lineEdit = searchBar->findChild<QLineEdit *>();
+    QVERIFY(lineEdit);
+    lineEdit->setText(keyword);
+    QApplication::processEvents();
+
+    QSignalSpy nextSpy(searchBar, &SearchBar::findNextRequested);
+    QSignalSpy prevSpy(searchBar, &SearchBar::findPreviousRequested);
+
+    QKeyEvent shiftReturnPress(QEvent::KeyPress, Qt::Key_Return, Qt::ShiftModifier);
+    QApplication::sendEvent(lineEdit, &shiftReturnPress);
+    QKeyEvent shiftReturnRelease(QEvent::KeyRelease, Qt::Key_Return, Qt::ShiftModifier);
+    QApplication::sendEvent(lineEdit, &shiftReturnRelease);
+    QApplication::processEvents();
+
+    QVERIFY2(prevSpy.count() == 1,
+             qPrintable(QStringLiteral("Shift+Enter must emit findPreviousRequested exactly "
+                                       "once; got %1")
+                            .arg(prevSpy.count())));
+    QVERIFY2(nextSpy.count() == 0,
+             qPrintable(QStringLiteral("Shift+Enter must NOT also emit findNextRequested "
+                                       "(the pre-fix behaviour: QLineEdit::returnPressed "
+                                       "ignores modifiers); got %1")
+                            .arg(nextSpy.count())));
+
+    // A plain Enter right after still does Find Next — the fix must not
+    // have broken the unmodified case.
+    QKeyEvent plainReturnPress(QEvent::KeyPress, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(lineEdit, &plainReturnPress);
+    QKeyEvent plainReturnRelease(QEvent::KeyRelease, Qt::Key_Return, Qt::NoModifier);
+    QApplication::sendEvent(lineEdit, &plainReturnRelease);
+    QApplication::processEvents();
+    QCOMPARE(nextSpy.count(), 1);
+    QCOMPARE(prevSpy.count(), 1); // unchanged by the plain Enter
 }
 
 // UAT-VWR-063 — Escape clears the active query and any match

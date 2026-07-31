@@ -521,6 +521,46 @@ distinct, known pages is open. (ADR 0006, accepted — Option B.)
 - Find Previous from the seed reaches the earlier-page matches, so
   coverage is unchanged; only the initial seed index moved.
 
+### UAT-VWR-103 — Search seed scrolls the viewport to the match, not just the model
+
+**Preconditions:** As UAT-VWR-068 (matches on distinct, known pages).
+**Steps:**
+1. Navigate to a middle page `k` with no match of its own.
+2. `Edit > Find…` and type the keyword.
+**Expected:**
+- Beyond UAT-VWR-068 (which pins the search MODEL's recorded seed page),
+  the document's own current page — what the sidebar highlights and what
+  the visible page surface actually paints — also lands on the seeded
+  match's page. A match selected in the model but not scrolled into view
+  is functionally invisible and reads as "search doesn't do anything" —
+  the real dogfooding report ("it starts at match 1 being highlighted,
+  even though I'm on page 161").
+
+### UAT-VWR-104 — Find Next / Find Previous scroll the viewport to the match
+
+**Preconditions:** A multi-page PDF with matches on several distinct pages
+is open; Find is seeded on the first match.
+**Steps:**
+1. Press Enter (Find Next) repeatedly.
+2. Press Shift+Enter (Find Previous) repeatedly.
+**Expected:**
+- Each press that advances to a match on a DIFFERENT page moves the
+  document's current page there — not just the highlighted index/counter.
+  Real dogfooding report: "When I hit enter, it selects the next match,
+  but doesn't jump me to the next match."
+
+### UAT-VWR-105 — Shift+Enter in the search field triggers Find Previous
+
+**Preconditions:** The search bar has focus with a query that has matches.
+**Steps:**
+1. Press Shift+Enter.
+**Expected:**
+- Find Previous fires (the current match index moves backward), NOT Find
+  Next. A plain Enter right after still fires Find Next — the fix does not
+  disturb the unmodified case. Real dogfooding report: "When I do
+  shift+enter when doing search, that should do 'previous match' instead
+  of next match."
+
 ---
 
 ## Print
