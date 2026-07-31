@@ -67,3 +67,90 @@ lost by folding it in here. Root-cause history for the orphaned dark asset lives
 in ADR 0009.
 
 Related: `docs/decision-records/0009-macos-adaptive-app-icon-mechanism.md`.
+
+## Investigation update (2026-07-31, macOS Dock-menu-and-icon session)
+
+Re-investigated per the owner's "look at git history, or take a fresh look"
+request. Two findings, neither closes this item — both sharpen it.
+
+**1. Git history confirms there is no prior *working* build to regress
+from.** `9b9063f` shipped ADR 0009 Option A (luminosity `.xcassets` →
+`actool` → `Assets.car`, `CFBundleIconName=AppIcon`); `111e798`/`39aa542`
+fixed the `actool` invocation itself (missing
+`--output-partial-info-plist`, an invalid BYPRODUCTS genex) so the compile
+step actually produces `Assets.car`. That's the full history — Option A was
+never *observed* driving the Dock swap before the 2026-07-17 dogfood found
+it doesn't. The owner's "did a previous build work" is answered: no — what
+shipped was build-integration-correct (verified via `assetutil`) but the
+*visual* half was never checked until the Tahoe dogfood found it fails.
+Nothing regressed; the mechanism was unconfirmed from day one, exactly as
+ADR 0009's own "needs-live-verification" list already flagged.
+
+**2. Fresh research surfaced real, citable instability in this whole area
+across 2025–2026 — but nothing that pins today's exact root cause without
+real-hardware access.** Sources: [Michael Tsai's actool/Tahoe-icon
+thread](https://mjtsai.com/blog/2025/08/08/separate-icons-for-macos-tahoe-vs-earlier/)
+(running commentary Aug 2025 → Feb 2026), [Apple Developer Forums thread
+797463](https://developer.apple.com/forums/thread/797463) ("macOS 26 Beta
+Dark Mode Icons Fallback Removed"), and
+[successfulsoftware.net's Tahoe icon writeup](https://successfulsoftware.net/2025/09/26/updating-application-icons-for-macos-26-tahoe-and-liquid-glass/)
+(the same URL ADR 0009 already cites as evidence for Option A — re-reading
+it closely, its actual worked example compiles a **`.icon` file** via
+`actool --app-icon Icon --include-all-app-icons`, i.e. it demonstrates
+**Option B**'s mechanism, not Option A's plain-bitmap luminosity catalog;
+ADR 0009's citation of it as Option-A evidence should be read with that
+correction — not retracted, since the shared-build-wiring point it
+supports still holds, but "an app just like ours confirmed the plain
+luminosity path works" is not what it actually shows).
+
+Concretely: (a) macOS 26 betas 1–3 auto-generated a fallback dark
+appearance for icons with no developer-supplied dark asset; that fallback
+was removed at beta 4 and confirmed gone as of beta 7, so by GA an app
+*with* a real dark asset (which Trailer ships) is exactly the case Apple
+says should now render correctly — this cuts *against* assuming Option A
+is structurally broken. (b) Conversely, `actool`'s app-icon compile path
+has an undocumented `--enable-icon-stack-fallback-generation` flag whose
+default behaviour silently substitutes actool's own generated icon in
+place of the developer's `.xcassets` bitmaps under some conditions, and
+multiple developers report the exact matching/precedence behaviour
+changing between Xcode 26.0 and 26.1, with Apple confirming a "by design"
+change mid-stream. Neither (a) nor (b) was tested against Trailer's
+*specific* shape (a `.icon`-free `.xcassets` `AppIcon` with `luminosity:
+dark` variants) by any source found — this is exactly the kind of claim
+ADR 0009 already fences off as **real-Mac-tier, not adjudicable from
+docs**, and that fence is confirmed to still be the right call rather than
+guessing further.
+
+**What this PR does NOT do, and why:** it does not change the `actool`
+invocation (e.g. adding the undocumented flag above) — landing an
+unverified flag flip on an already-broken, actively-shifting mechanism
+risks a false "should be fixed now" claim, which is exactly the
+half-shipped outcome the owner's brief for this session rules out. What it
+DOES add, low-risk and inspectable without a Mac:
+
+- `scripts/build-macos.sh`'s existing `assetutil --info` build-integration
+  check now also greps for a luminosity/dark marker in the *compiled*
+  catalog (not just the source `.xcassets`, which the actool
+  auto-substitution behaviour above means can diverge from what's
+  actually compiled in) — informational only, never fails the build, so
+  it can't itself regress a passing pipeline. Gives the next real-Mac pass
+  concrete build-log evidence instead of requiring a manual `assetutil`
+  invocation.
+
+**Two cheap checks for the owner's next real-Mac pass, before spending
+Icon-Composer authoring effort:**
+1. **Rule out icon-cache staleness** — a `.icns`/`Assets.car` swap on an
+   already-installed `.app` at the same bundle path is a well-known macOS
+   gotcha where the Dock/Finder keep rendering a cached icon. Before
+   judging Option A broken: `killall Dock; killall Finder`, or move
+   `Trailer.app` to a new path once, and re-observe. This is unrelated to
+   the Tahoe-specific uncertainty above and costs ten seconds.
+2. **Confirm the Xcode/Icon-Composer version, not just "full Xcode."**
+   Icon Composer (Option B's authoring tool) requires **Xcode 26+**
+   specifically — an older full Xcode install (pre-26) has no Icon
+   Composer and its `actool` won't recognise a `.icon` source at all.
+   Check with `xcodebuild -version` on the M4 VM before assuming Option B
+   is tooling-ready there.
+
+Priority and status unchanged (P3, open) — this remains a real-Mac-tier
+item; nothing above is a substitute for the Threshold's live observation.

@@ -4,6 +4,7 @@
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
 #include "platform/QuitMenu.h"
+#include "platform/DockRecents.h"
 #include "platform/PortalScreenshot.h"
 #include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
@@ -178,6 +179,13 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
 #ifdef Q_OS_MACOS
     installNoWindowMenuBar();
 #endif
+    // Seed the Dock menu + system Recent Documents store from whatever
+    // RecentFiles.load() (above) just restored, so a relaunch's Dock
+    // right-click shows the prior session's recents immediately rather
+    // than waiting for the first file open of the new session. Not
+    // ifdef'd (see refreshDockRecents()'s comment): cheap and inert
+    // off macOS.
+    refreshDockRecents();
 }
 
 Application::~Application() = default;
@@ -486,12 +494,14 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
     }
     m_recent.save();
     notifyWindowsRecentChanged();
+    refreshDockRecents();
 }
 
 void Application::clearRecent() {
     m_recent.clear();
     m_recent.save();
     notifyWindowsRecentChanged();
+    refreshDockRecents();
 }
 
 void Application::applyTheme(Theme theme) {
@@ -516,6 +526,78 @@ void Application::notifyWindowsRecentChanged() {
             ptr->rebuildRecentMenu();
         }
     }
+}
+
+// Builds/refreshes the two macOS-native recents surfaces (Dock right-click
+// menu while running; system Recent Documents store while not). The BODY
+// is deliberately NOT ifdef'd to Q_OS_MACOS as a whole, even though only
+// macOS ever renders either surface — mirroring the platform/*.mm + stub
+// split's whole point (see QuitMenu.h, Share.h): the platform difference
+// lives behind DockRecents' CMake-selected .mm/_stub.cpp. The one
+// exception is QMenu::setAsDockMenu() itself, a handful of lines below —
+// Qt declares that specific method ONLY under Q_OS_MACOS (qmenu.h has no
+// cross-platform no-op overload), so that one call is individually
+// ifdef'd; everything around it (list selection, QMenu construction,
+// QAction population, DockRecents::syncSystemRecents) is not. Keeping the
+// rest un-ifdef'd means:
+//   - the list-selection logic (RecentFiles::existingEntries) and the
+//     QMenu construction below run identically on every platform, so a
+//     Linux/Windows/CI build exercises the exact same code the macOS
+//     build does, and
+//   - a headless UAT slot can grab() the constructed QMenu for G2
+//     evidence without needing Q_OS_MACOS at all (see
+//     tests/uat/test_uat_dock_recents.cpp).
+// The only OS-observable EFFECT is macOS-only (Dock chrome + Launch
+// Services); the construction is shared. This is the shared entry-point
+// G4 asks a single-host PR to name.
+void Application::refreshDockRecents() {
+    // Existence-filtered, capped, most-recent-first — see
+    // RecentFiles::existingEntries for why the filter belongs here and
+    // not in the in-app Open Recent menu (rebuildRecentMenu keeps
+    // showing missing entries; opening one surfaces a normal error).
+    const auto entries = m_recent.existingEntries(DockRecents::kMaxSystemRecents);
+
+    // 1. The live Dock menu (while Trailer IS running). Built once —
+    // QMenu::setAsDockMenu() can't be un-set — then cleared and
+    // repopulated in place on every call, mirroring
+    // MainWindow::rebuildRecentMenu()'s own clear()-and-rebuild shape.
+    if (!m_dockMenu) {
+        m_dockMenu = new QMenu();
+    }
+    m_dockMenu->clear();
+    QStringList paths;
+    paths.reserve(entries.size());
+    for (const RecentEntry &entry : entries) {
+        paths.append(entry.path);
+        QAction *action = m_dockMenu->addAction(entry.displayName);
+        action->setToolTip(entry.path);
+        const QString path = entry.path;
+        connect(action, &QAction::triggered, this, [this, path] { openFiles({path}); });
+    }
+    // No entries: leave the menu empty rather than adding an "(Empty)"
+    // placeholder. Unlike the in-app Open Recent submenu (a pull-down
+    // the user explicitly opened, which would look broken totally blank),
+    // an empty custom Dock menu is normal — the Dock still shows its own
+    // Show/Hide/Quit items regardless, so there is nothing to explain.
+    //
+    // setAsDockMenu() itself IS ifdef'd (unlike the construction above):
+    // QMenu only declares it under Q_OS_MACOS (qmenu.h) — there is no
+    // cross-platform no-op overload to call unconditionally. Everything
+    // else in this function stays un-ifdef'd on purpose (see the
+    // function-level comment) so the shared construction is still built
+    // and headlessly grab()-able on every platform; only the actual
+    // Dock-attachment call is macOS-only.
+#ifdef Q_OS_MACOS
+    if (!m_dockMenuInstalled) {
+        m_dockMenu->setAsDockMenu();
+        m_dockMenuInstalled = true;
+    }
+#endif
+
+    // 2. The system Recent Documents store (while Trailer is NOT
+    // running). This is a SEPARATE list from #1 and from Trailer's own
+    // RecentFiles — see DockRecents.h for the full three-list picture.
+    DockRecents::syncSystemRecents(paths);
 }
 
 void Application::onWindowDestroyed(QObject *window) {

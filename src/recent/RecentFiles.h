@@ -85,6 +85,20 @@ class RecentFiles {
     // Returns a default-constructed entry (path empty) if no match.
     RecentEntry findByPath(const QString &path) const;
 
+    // Most-recent-first entries whose path currently exists on disk,
+    // capped to `limit`. For native OS recents surfaces (the macOS Dock
+    // icon menu / system Recent Documents list — see
+    // src/platform/DockRecents.h) that can't grey out or tooltip a dead
+    // entry the way Trailer's own File > Open Recent menu does (G3):
+    // offering a path Trailer already knows is gone would be a lying
+    // control in chrome Trailer doesn't render. Trailer's own in-app menu
+    // deliberately keeps missing entries as-is (entries()) — opening one
+    // surfaces a normal "file not found" error, which is an acceptable
+    // popup for a genuinely missing file, not a disabled-control case.
+    // Entries are already de-duplicated by add()'s own invariant, so no
+    // further de-dup happens here. `limit <= 0` returns an empty list.
+    QList<RecentEntry> existingEntries(int limit) const;
+
     QList<RecentEntry> entries() const { return m_entries; }
 
     int maxEntries() const { return m_maxEntries; }

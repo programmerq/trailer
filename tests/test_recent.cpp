@@ -18,6 +18,12 @@ class TestRecent : public QObject {
     void viewStateUpdateNoOpsForUnknownPath();
     void extendedViewStateRoundTrips();
     void legacyViewStateLoadsGracefully();
+    void existingEntriesCapsToLimit();
+    void existingEntriesFiltersMissingFiles();
+    void existingEntriesPreservesMostRecentFirstOrder();
+    void existingEntriesZeroLimitIsEmpty();
+    void existingEntriesLimitAboveSizeReturnsAll();
+    void existingEntriesEmptyListIsEmpty();
 };
 
 namespace {
@@ -212,6 +218,87 @@ void TestRecent::legacyViewStateLoadsGracefully() {
     QCOMPARE(e.markupToolbarVisible, false);
     QVERIFY(e.windowGeometry.isEmpty());
     QVERIFY(e.windowState.isEmpty());
+}
+
+void TestRecent::existingEntriesCapsToLimit() {
+    // Mirrors the macOS Dock-menu / system Recent-Documents cap
+    // (DockRecents::kMaxSystemRecents == 10) without depending on
+    // src/platform/ — the cap value itself is passed in by the caller.
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    RecentFiles r(dir.filePath("recent.json"));
+    for (int i = 0; i < 15; ++i) {
+        r.add(touch(dir, QString("f%1.txt").arg(i)));
+    }
+    QCOMPARE(r.entries().size(), 15); // Trailer's own list is uncapped here.
+
+    const auto capped = r.existingEntries(10);
+    QCOMPARE(capped.size(), 10);
+    // Most-recent-first: f14 was added last.
+    QCOMPARE(QFileInfo(capped.first().path).fileName(), QStringLiteral("f14.txt"));
+    QCOMPARE(QFileInfo(capped.last().path).fileName(), QStringLiteral("f5.txt"));
+}
+
+void TestRecent::existingEntriesFiltersMissingFiles() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    RecentFiles r(dir.filePath("recent.json"));
+    const QString a = touch(dir, "a.txt");
+    const QString b = dir.filePath("missing-b.txt"); // never created
+    const QString c = touch(dir, "c.txt");
+    r.add(a);
+    r.add(b);
+    r.add(c);
+    QCOMPARE(r.entries().size(), 3); // Trailer's own list keeps the dead entry.
+
+    const auto existing = r.existingEntries(10);
+    QCOMPARE(existing.size(), 2);
+    QCOMPARE(QFileInfo(existing[0].path).fileName(), QStringLiteral("c.txt"));
+    QCOMPARE(QFileInfo(existing[1].path).fileName(), QStringLiteral("a.txt"));
+}
+
+void TestRecent::existingEntriesPreservesMostRecentFirstOrder() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    RecentFiles r(dir.filePath("recent.json"));
+    const QString a = touch(dir, "a.txt");
+    const QString b = touch(dir, "b.txt");
+    const QString c = touch(dir, "c.txt");
+    r.add(a);
+    r.add(b);
+    r.add(c);
+    r.add(a); // re-opening a moves it back to the front.
+
+    const auto existing = r.existingEntries(10);
+    QCOMPARE(existing.size(), 3);
+    QCOMPARE(QFileInfo(existing[0].path).fileName(), QStringLiteral("a.txt"));
+    QCOMPARE(QFileInfo(existing[1].path).fileName(), QStringLiteral("c.txt"));
+    QCOMPARE(QFileInfo(existing[2].path).fileName(), QStringLiteral("b.txt"));
+}
+
+void TestRecent::existingEntriesZeroLimitIsEmpty() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    RecentFiles r(dir.filePath("recent.json"));
+    r.add(touch(dir, "a.txt"));
+    QVERIFY(r.existingEntries(0).isEmpty());
+    QVERIFY(r.existingEntries(-1).isEmpty());
+}
+
+void TestRecent::existingEntriesLimitAboveSizeReturnsAll() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    RecentFiles r(dir.filePath("recent.json"));
+    r.add(touch(dir, "a.txt"));
+    r.add(touch(dir, "b.txt"));
+    QCOMPARE(r.existingEntries(1000).size(), 2);
+}
+
+void TestRecent::existingEntriesEmptyListIsEmpty() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    RecentFiles r(dir.filePath("recent.json"));
+    QVERIFY(r.existingEntries(10).isEmpty());
 }
 
 QTEST_MAIN(TestRecent)

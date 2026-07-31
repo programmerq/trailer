@@ -510,6 +510,50 @@ default opener for the test file type, or reachable via Finder's
 - The file opens in the running Trailer instance (via `QFileOpenEvent`).
 - Identical routing to Finder Open With.
 
+### UAT-FND-063 — Dock icon right-click shows the 10 most recent files (while running)
+
+**Preconditions:** Trailer is running with more than 10 files in its
+recent list (some files may have since been moved/deleted).
+**Steps:**
+1. Right-click (or Control-click, or click-and-hold) the Trailer Dock
+   icon.
+**Expected:**
+- The Dock menu shows up to the **10** most-recently-opened files,
+  most-recent-first, above the standard Show/Hide/Quit items.
+- Files no longer present on disk are **not** listed (no dead entries in
+  system chrome Trailer can't grey out or tooltip — see
+  `RecentFiles::existingEntries`).
+- Choosing an entry opens that file in the running instance, identical to
+  `File > Open Recent`.
+- Clearing recents (`File > Open Recent > Clear Menu`) empties the Dock
+  menu too — both surfaces are driven by the same `RecentFiles` model
+  (`Application::refreshDockRecents`).
+- **Evidence tier:** the menu's *construction* (item count, order,
+  existence-filtering) is covered headlessly by `uat_fnd_063_*` in
+  `tests/uat/test_uat_dock_recents.cpp` via `grab()` of the constructed
+  `QMenu`; the menu's live *attachment to the real Dock* is native
+  Dock-chrome and needs a real Mac to confirm visually (`grab()` cannot
+  render Dock chrome).
+
+### UAT-FND-064 — Dock icon recents survive Trailer quitting (Known gap: real-Mac required)
+
+**Preconditions:** Trailer has opened at least one file, then fully quit
+(`⌘Q`, not just all windows closed).
+**Steps:**
+1. With Trailer NOT running, right-click the Trailer Dock icon.
+**Expected:**
+- The same recents list from UAT-FND-063 still appears, sourced from the
+  macOS system Recent Documents store (`NSDocumentController`,
+  `src/platform/DockRecents.mm`) rather than Trailer's own in-process
+  state — Trailer's process is dead, so nothing in Trailer is serving
+  this menu; it is macOS/Launch Services rendering what Trailer last
+  registered via `noteNewRecentDocumentURL:`.
+- Choosing an entry launches Trailer with that file open.
+- **Evidence tier: real-Mac required.** This is exactly the surface a
+  headless/offscreen harness cannot exercise (there is no live process to
+  drive, by definition) — see the owner verification checklist in the PR
+  that introduced this case.
+
 ### UAT-FND-062 — Command-menu reparenting
 
 **Preconditions:** Trailer running on macOS.

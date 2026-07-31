@@ -345,6 +345,7 @@ set(TRAILER_SOURCES
     src/util/TempPath.h
     src/platform/Share.h
     src/platform/QuitMenu.h
+    src/platform/DockRecents.h
     src/uxrecord/UxRecord.h
 )
 
@@ -443,6 +444,20 @@ else()
     list(APPEND TRAILER_SOURCES src/platform/ReducedMotion_stub.cpp)
 endif()
 list(APPEND TRAILER_SOURCES src/platform/ReducedMotion.cpp src/platform/ReducedMotion.h)
+
+# Per-platform Dock-icon "recents while not running" shim. macOS uses
+# Objective-C++ to register opened documents with NSDocumentController so
+# Launch Services can render them in the Dock icon's right-click menu even
+# with Trailer's process dead; everything else links the no-op stub (the
+# in-app File > Open Recent menu works unchanged without it — see
+# src/platform/DockRecents.h for the full mechanism writeup).
+if(APPLE)
+    list(APPEND TRAILER_SOURCES src/platform/DockRecents.mm)
+    set_source_files_properties(src/platform/DockRecents.mm PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc")
+else()
+    list(APPEND TRAILER_SOURCES src/platform/DockRecents_stub.cpp)
+endif()
 
 # TweetNaCl (public domain, vendored verbatim — see
 # third_party/tweetnacl/NOTICE.md) provides the ed25519 signature
