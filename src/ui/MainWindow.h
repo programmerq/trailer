@@ -15,11 +15,14 @@
 #include <vector>
 
 class QCloseEvent;
+class QResizeEvent;
 class QTimer;
 
 class QAction;
+class QGraphicsOpacityEffect;
 class QLabel;
 class QMenu;
+class QPropertyAnimation;
 class QStackedWidget;
 class QToolButton;
 
@@ -107,6 +110,15 @@ class MainWindow : public QMainWindow {
     // chooseSaveAsPath() returns this instead of showing the native file
     // dialog, letting the harness drive the untitled-document Save flow.
     void setSaveAsPathForTesting(const QString &path) { m_saveAsPathForTesting = path; }
+    // Test-only seam (DR 2026-07-31-transient-zoom-readout): shrinks the
+    // zoom indicator's visible-hold and fade durations so UAT coverage of
+    // the reveal/fade sequence runs on fake, fast, deterministic timing
+    // instead of sleeping through the real hand-tuned (~1.5s) production
+    // duration. See kZoomIndicatorVisibleMs/-FadeMs in the constructor.
+    void setZoomIndicatorTimingForTesting(int visibleMs, int fadeMs) {
+        m_zoomIndicatorVisibleMs = visibleMs;
+        m_zoomIndicatorFadeMs = fadeMs;
+    }
 
     // Test seam (ADR 0002 review item 13; no-op in production). When set,
     // replaces the ensureOcrModelsReady() call made when the user activates
@@ -212,6 +224,10 @@ class MainWindow : public QMainWindow {
     // action can retitle itself ("Maximize" ↔ "Restore" on Win/Linux;
     // static "Zoom" on macOS). Falls through to the base implementation.
     void changeEvent(QEvent *event) override;
+    // Reposition the floating zoom-% HUD (m_zoomIndicator) so it stays
+    // anchored to the bottom-right of the document area across window
+    // resizes. See repositionZoomIndicator().
+    void resizeEvent(QResizeEvent *event) override;
     // Suppress Qt's built-in right-click toolbar/dock context menu.
     // That menu lets the user accidentally hide a toolbar with no
     // discoverable way to bring it back — the source of the
@@ -410,13 +426,30 @@ class MainWindow : public QMainWindow {
     void updateLargeDocOcrHint();
     void updateUndoRedoActions(IDocument *doc);
     // Refresh the status-bar zoom-% readout from the current document's
-    // zoomFactor(). Pushed from the zoom call sites and the doc-changed
-    // path because IDocument is not a QObject, so there's no
-    // zoomFactorChanged signal to subscribe to. Known limitation:
-    // resize-driven refits change the scale inside the document without
-    // notifying us, so the number won't live-tick during a window drag in
-    // a fit mode until the next explicit zoom action.
-    void updateZoomIndicator();
+    // zoomFactor(), and keep the zoom actions' tooltips carrying the live
+    // percent. Pushed from the zoom call sites and the doc-changed path
+    // because IDocument is not a QObject, so there's no zoomFactorChanged
+    // signal to subscribe to.
+    //
+    // The readout itself is TRANSIENT (DR 2026-07-31-transient-zoom-
+    // readout): `reveal=true` (the five explicit zoom-action triggers)
+    // shows it at full opacity and (re)starts the fade-out hold;
+    // `reveal=false` (doc-open, doc-switch, the async initial-fit landing,
+    // and any resize-driven re-fit) only updates the cached text/tooltips
+    // without disturbing visibility, so opening a file never flashes
+    // chrome the user didn't ask to see. The on-demand "what zoom am I
+    // at" answer, even while the label is hidden or mid-fade, is the
+    // always-current tooltip on Zoom In/Out/Actual Size/Fit Page/Fit to
+    // Width.
+    void updateZoomIndicator(bool reveal = false);
+    // Show the transient readout at full opacity and (re)start its
+    // fade-out hold timer. Called only from updateZoomIndicator(true).
+    void revealZoomIndicatorTransient();
+    // Position the floating m_zoomIndicator HUD relative to the current
+    // window size (bottom-right of the document area, clear of the
+    // status bar and any corner size-grip). Called on construction and
+    // on every resizeEvent().
+    void repositionZoomIndicator();
     int selectedPageForEdit(IDocument *doc) const;
     // Size the window to fit the first document opened. Clamped to a
     // 1100×750 floor and a 90%-of-screen ceiling so very small docs
@@ -654,11 +687,31 @@ class MainWindow : public QMainWindow {
     // happening" affordance for the user.
     QLabel *m_mlIndicator = nullptr;
 
-    // Permanent status-bar readout of the current zoom level (e.g.
-    // "120%"). Hidden when the active document doesn't support zoom.
-    // Updated via updateZoomIndicator() from the zoom actions and the
-    // doc-changed path.
+    // TRANSIENT zoom-% HUD (e.g. "120%") -- DR 2026-07-31-transient-
+    // zoom-readout. A FLOATING overlay label parented directly to the
+    // MainWindow, NOT a status-bar permanent widget (G10 spatial
+    // constancy: a status-bar box widget's visibility change reflows
+    // every OTHER permanent widget in that same box, since Qt keeps the
+    // box right-anchored regardless of insertion order -- confirmed by
+    // uat_zoom_ind_070's measured sibling-shift before this was fixed).
+    // Hidden at rest; an explicit zoom action reveals it and (re)starts
+    // the fade-out hold. Hidden unconditionally when the active document
+    // doesn't support zoom. Repositioned on resizeEvent() via
+    // repositionZoomIndicator(). Updated via updateZoomIndicator() from
+    // the zoom actions and the doc-changed path.
     QLabel *m_zoomIndicator = nullptr;
+    // Opacity effect the fade animation drives; owned by m_zoomIndicator
+    // via setGraphicsEffect().
+    QGraphicsOpacityEffect *m_zoomIndicatorOpacity = nullptr;
+    QPropertyAnimation *m_zoomIndicatorFadeAnim = nullptr;
+    // Single-shot: fires kZoomIndicatorVisibleMs after a reveal, starting
+    // the fade (or, with Reduce Motion, an instant hide).
+    QTimer *m_zoomIndicatorFadeTimer = nullptr;
+    // Hand-tuned hold/fade durations, set from kZoomIndicatorVisibleMs /
+    // kZoomIndicatorFadeMs (MainWindow.cpp constructor) and overridable by
+    // setZoomIndicatorTimingForTesting() for deterministic UAT coverage.
+    int m_zoomIndicatorVisibleMs = 0;
+    int m_zoomIndicatorFadeMs = 0;
 
     // ADR 0002 status-bar affordances. m_mlProgress is the richer
     // progress+cancel widget for foreground ML ops (OCR batches;

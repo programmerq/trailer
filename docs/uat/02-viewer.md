@@ -330,6 +330,84 @@ fit at 100% are shown at actual size rather than upscaling. Use
 - The action is disabled, or triggering it is a no-op.
 - The animation continues to play.
 
+### UAT-VWR-103 — Zoom action reveals the floating zoom-% HUD, then it fades
+
+Owner directive (2026-07-31): the zoom-% readout is no longer permanent
+chrome — it appears only on an explicit zoom change and fades out
+afterward, so it doesn't compete with the document for attention.
+Implemented as a small floating HUD pill near the bottom-right of the
+document area (not a status-bar widget — see UAT-VWR-106 for why). See
+decision record
+[2026-07-31-transient-zoom-readout](decision-records/2026-07-31-transient-zoom-readout.md).
+
+**Preconditions:** A zoomable document is open; the readout is currently
+hidden (its resting state).
+**Steps:**
+1. Trigger any zoom action — `View > Zoom In`, `Zoom Out`, `Actual
+   Size`, `Fit Page`, or `Fit to Width`.
+2. Observe the document area immediately, then again after a few
+   seconds with no further zoom action.
+**Expected:**
+- Immediately after the trigger: the readout is visible (bottom-right
+  of the document area) and shows the correct percentage.
+- After the hold period with no further zoom action: the readout fades
+  out (or, with Reduce Motion on, disappears instantly — see
+  UAT-VWR-105) and returns to hidden.
+- At every moment — visible, fading, or hidden — hovering any of the
+  zoom toolbar buttons or `View` menu zoom entries shows a tooltip with
+  the current percentage: the readout fading away never strands the
+  answer to "what zoom am I at."
+
+### UAT-VWR-104 — Opening or switching documents never flashes the readout
+
+**Preconditions:** None.
+**Steps:**
+1. Open a zoomable document (or switch between two already-open tabs).
+**Expected:**
+- The zoom readout stays hidden through the open/switch — opening a
+  file is not, itself, an explicit zoom command. This holds even when
+  the document's natural open zoom differs from a previous document's
+  (e.g. a small image landing at 100% after a large PDF was showing
+  45%).
+- The on-demand tooltip path (UAT-VWR-103) already reflects the new
+  document's correct percentage without the readout ever having been
+  shown.
+
+### UAT-VWR-105 — Reduce Motion skips the fade
+
+**Preconditions:** The OS (or in-app) Reduce Motion setting is on.
+**Steps:**
+1. Trigger a zoom action as in UAT-VWR-103 and wait past the hold
+   period.
+**Expected:**
+- The readout still appears immediately on the trigger.
+- At the end of the hold period it disappears instantly — no animated
+  opacity fade plays.
+
+### UAT-VWR-106 — Toggling the readout never shifts an existing control (G10)
+
+Gate G10 (AGENTS.md, spatial constancy): an existing control must never
+change on-screen position as a side effect of unrelated state changing.
+The zoom readout is a floating overlay parented directly to the main
+window, positioned by explicit coordinates — not a member of the status
+bar's (or any other) shared box layout — so revealing/hiding it can
+never displace anything else. (An earlier implementation placed it as
+the rightmost status-bar `addPermanentWidget()` entry on the theory that
+"rightmost" would insulate its siblings; that was empirically wrong —
+Qt keeps the whole permanent-widget row right-anchored as one block, so
+growing the last member still shifts everyone in it. See the decision
+record's G10 addendum.)
+
+**Preconditions:** Another permanent status-bar widget (e.g. the
+Two-Pages read-only badge) is visible.
+**Steps:**
+1. Note the position of the other status-bar widget.
+2. Trigger a zoom action to reveal the readout, then let it fade back
+   out.
+**Expected:**
+- The other widget's on-screen position is identical before the
+  reveal, while the readout is visible, and after it fades back out.
+
 ---
 
 ## Sidebar — Pages tab
