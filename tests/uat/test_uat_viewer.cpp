@@ -14,16 +14,22 @@
 
 #include "app/Application.h"
 #include "document/IDocument.h"
+#include "document/ImageAdapter.h"
+#include "settings/DocumentTypeDefaults.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
 
 #include <QDir>
+#include <QElapsedTimer>
+#include <QImage>
 #include <QKeyEvent>
+#include <QMainWindow>
 #include <QPageSize>
 #include <QPainter>
 #include <QPdfView>
 #include <QPdfWriter>
 #include <QRect>
+#include <QScopeGuard>
 #include <QScrollBar>
 #include <QString>
 #include <QSettings>
@@ -66,6 +72,8 @@ class TestUatViewer : public QObject {
     void init();
 
     void uat_vwr_025_continuousArrowStepsByViewport();
+    void uat_vwr_101_smallImageIgnoresStalePerTypeZoom();
+    void uat_vwr_102_smallImageIgnoresStalePerTypeWindowGeometry();
 
   private:
     QTemporaryDir m_scratch;
@@ -220,6 +228,108 @@ void TestUatViewer::uat_vwr_025_continuousArrowStepsByViewport() {
                                 .arg(singleStep)
                                 .arg(step)));
     }
+}
+
+// UAT-VWR-101 — Small image ignores a stale per-type Custom zoom
+// default. Owner dogfooding report (2026-07-31): a fresh 504x375 JPEG
+// opened at "Zoom: Custom (80%)" because an earlier, unrelated, larger
+// image's manual zoom had become the per-type Image default. See DR
+// 2026-07-31-per-type-restore-excludes-content-relative-state.
+void TestUatViewer::uat_vwr_101_smallImageIgnoresStalePerTypeZoom() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    const auto resetTypeDefault = qScopeGuard([app]() {
+        app->documentTypeDefaults().setForType(DocumentType::Image, DocumentTypeDefault{});
+    });
+    DocumentTypeDefault poisoned;
+    poisoned.zoomMode = ZoomMode::Custom;
+    poisoned.zoomFactor = 0.8;
+    app->documentTypeDefaults().setForType(DocumentType::Image, poisoned);
+
+    QImage img(504, 375, QImage::Format_RGB32);
+    img.fill(qRgb(210, 220, 230));
+    const QString jpgPath = m_scratch.filePath(QStringLiteral("uat_vwr_101.jpg"));
+    QVERIFY(img.save(jpgPath, "JPEG"));
+
+    app->openFiles({jpgPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->show();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    auto *doc = dynamic_cast<ImageDocument *>(dv->currentDocument());
+    QVERIFY(doc);
+
+    QElapsedTimer timer;
+    timer.start();
+    while (doc->zoomMode() == ZoomMode::Custom && timer.elapsed() < 2000) {
+        QTest::qWait(20);
+    }
+
+    QCOMPARE(doc->zoomMode(), ZoomMode::Actual);
+    QVERIFY2(std::abs(doc->zoomFactor() - 1.0) < 1e-6,
+             qPrintable(QStringLiteral("expected natural Actual Size (100%%), got %1%%")
+                            .arg(doc->zoomFactor() * 100.0)));
+}
+
+// UAT-VWR-102 — Small image ignores a stale per-type window-geometry
+// default. Same report as UAT-VWR-101: the window also opened HUGE
+// because an unrelated image's window geometry had become the per-type
+// Image default, clobbering applyInitialWindowSize()'s already-computed
+// content-fit size.
+void TestUatViewer::uat_vwr_102_smallImageIgnoresStalePerTypeWindowGeometry() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    const auto resetTypeDefault = qScopeGuard([app]() {
+        app->documentTypeDefaults().setForType(DocumentType::Image, DocumentTypeDefault{});
+    });
+
+    QMainWindow probe;
+    probe.resize(2400, 1500);
+    const QByteArray hugeGeometry = probe.saveGeometry();
+    QVERIFY(!hugeGeometry.isEmpty());
+
+    DocumentTypeDefault poisoned;
+    poisoned.windowGeometry = hugeGeometry;
+    app->documentTypeDefaults().setForType(DocumentType::Image, poisoned);
+
+    QImage img(504, 375, QImage::Format_RGB32);
+    img.fill(qRgb(210, 220, 230));
+    const QString jpgPath = m_scratch.filePath(QStringLiteral("uat_vwr_102.jpg"));
+    QVERIFY(img.save(jpgPath, "JPEG"));
+
+    app->openFiles({jpgPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->show();
+    QApplication::processEvents();
+
+    // Same-environment comparison (see the unit-test counterpart in
+    // tests/test_image_scale.cpp for the full rationale): the offscreen
+    // platform's own small, fixed virtual screen makes an absolute pixel
+    // threshold unable to discriminate "restored the huge geometry" from
+    // "computed a content-fit size", since both get clamped by the tiny
+    // screen. Measure what restoring the poisoned geometry directly
+    // produces under this same screen and assert the real window
+    // doesn't match it.
+    QMainWindow referenceRestore;
+    referenceRestore.restoreGeometry(hugeGeometry);
+    referenceRestore.show();
+    QApplication::processEvents();
+
+    QVERIFY2(mw->size() != referenceRestore.size(),
+             qPrintable(QStringLiteral("a 504x375 image must not inherit an unrelated "
+                                       "document's huge per-type window geometry; got %1x%2, "
+                                       "matching a direct restore of the poisoned geometry")
+                            .arg(mw->width())
+                            .arg(mw->height())));
 }
 
 int main(int argc, char **argv) {

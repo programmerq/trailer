@@ -587,6 +587,59 @@ completes the placeholder is replaced in place by the real page view.
 - No document-open file read is performed on the GUI thread
   (guarded structurally by `tests/test_perf_gui_thread_io.cpp`).
 
+### UAT-VWR-101 — Small image ignores a stale per-type Custom zoom default
+
+Owner dogfooding report (2026-07-31): a fresh, small image opened at a
+leftover "Custom 80%" zoom instead of its own natural fit, because an
+earlier, larger image's manual zoom had become the per-type Image
+default and was reapplied unconditionally. See decision record
+[2026-07-31-per-type-restore-excludes-content-relative-state](decision-records/2026-07-31-per-type-restore-excludes-content-relative-state.md).
+
+**Preconditions:** No per-file view state for the file about to be
+opened; the per-type Image default carries `zoomMode == Custom` from
+some unrelated, previously-closed image (e.g. the user zoomed a large
+photo to 80% and closed it).
+**Steps:**
+1. Open a small image (comfortably smaller than the window) that has
+   never been opened in Trailer before.
+**Expected:**
+- The image opens at its own natural fit — Actual Size (100%) for an
+  image that fits the viewport at full size — never the unrelated
+  stale Custom percentage.
+- `FitInView` / `FitToWidth` / `Actual` per-type defaults (recomputed
+  against the new document, not a fixed percentage) are unaffected and
+  continue to apply as before.
+- Reopening a file the user *has* already viewed before (a per-file
+  `RecentEntry` with captured zoom) restores that file's own remembered
+  Custom zoom exactly as today — this case is about the per-*type*
+  fallback only.
+
+### UAT-VWR-102 — Small image ignores a stale per-type window-geometry default
+
+Same report as UAT-VWR-101: the same small image also opened in a HUGE
+window, because a previous, unrelated image's window geometry
+(maximized, or resized for a much larger document) had become the
+per-type Image default and was restored, clobbering the content-fit
+size the window had already been given moments earlier in the same
+open. See the same decision record as UAT-VWR-101.
+
+**Preconditions:** No per-file view state for the file about to be
+opened; the per-type Image default carries a captured `windowGeometry`
+from a previous, much larger/maximized window.
+**Steps:**
+1. Open a small image (e.g. 504×375 px) that has never been opened in
+   Trailer before, in a fresh window.
+**Expected:**
+- The window is sized to comfortably fit the image (the existing
+  1100×750 floor / 90%-of-screen ceiling from `applyInitialWindowSize`),
+  not the unrelated document's leftover size.
+- Opening a very large image still caps the window at the 90%-of-screen
+  ceiling (unaffected — this case only changes what happens when a
+  stale per-type default would otherwise override that computation).
+- Reopening a file the user has already viewed (a per-file `RecentEntry`
+  with captured geometry) restores that file's own remembered window
+  size/position exactly as today.
+
 ---
 
 ## Magnifier

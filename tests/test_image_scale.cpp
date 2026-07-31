@@ -118,6 +118,15 @@ class TestImageScale : public QObject {
     void pendingCaptureDprConsumedOncePerBatch();
     void coordinateRoundTripInvertsAtDpr2();
     void resampleBranchRestampsDpr();
+
+    // 2026-07-31 owner dogfooding report: a fresh 504x375 image opened
+    // at a stale per-type "Custom 80%" zoom in a huge window. See DR
+    // 2026-07-31-per-type-restore-excludes-content-relative-state.
+    void ordinaryOpenIgnoresPersistedCustomTypeDefaultZoom();
+    void ordinaryOpenIgnoresPersistedTypeDefaultWindowGeometry();
+    void closingAtCustomZoomDoesNotPoisonTypeDefault();
+    void smallReportedImageNaturalFitIsActual_data();
+    void smallReportedImageNaturalFitIsActual();
 };
 
 void TestImageScale::cleanup() {
@@ -952,6 +961,222 @@ void TestImageScale::resampleBranchRestampsDpr() {
     QCOMPARE(pm.devicePixelRatio(), qreal(2.0));
     QCOMPARE(pm.width(), int(std::lround(deviceW * 0.5)));
     QCOMPARE(pm.height(), int(std::lround(deviceH * 0.5)));
+
+    delete view;
+}
+
+void TestImageScale::ordinaryOpenIgnoresPersistedCustomTypeDefaultZoom() {
+    // Direct regression for the reported bug (owner dogfooding,
+    // 2026-07-31): a fresh 504x375 JPEG opened at "Zoom: Custom (80%)"
+    // per the in-app Feedback Report, with 34 recent files -- an
+    // earlier, larger image's manual 80% zoom had become the per-type
+    // Image default and was blindly reapplied to this unrelated, much
+    // smaller image. A corroborating second report showed a DIFFERENT
+    // image landing at Custom (64%) -- confirming the value drifts with
+    // whatever the last-closed image happened to be at, not a frozen
+    // constant. See DR 2026-07-31-per-type-restore-excludes-content-
+    // relative-state.
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app != nullptr);
+
+    const auto resetTypeDefault = qScopeGuard([app]() {
+        app->documentTypeDefaults().setForType(DocumentType::Image, DocumentTypeDefault{});
+    });
+
+    DocumentTypeDefault poisoned;
+    poisoned.zoomMode = ZoomMode::Custom;
+    poisoned.zoomFactor = 0.8; // exactly the reported "Custom (80%)"
+    app->documentTypeDefaults().setForType(DocumentType::Image, poisoned);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString jpgPath = dir.path() + "/report-504x375.jpg";
+    // Exact dimensions from the report: 504x375 px.
+    QImage img(504, 375, QImage::Format_RGB32);
+    img.fill(qRgb(210, 220, 230));
+    QVERIFY(img.save(jpgPath, "JPEG"));
+
+    app->openFiles({jpgPath});
+    ImageDocument *doc = newestImageDoc(app);
+    QVERIFY(doc != nullptr);
+
+    // Let the async initial fit land (staged open, ADR 0008). Under the
+    // pre-fix code this never resolves -- applyZoomState(Custom, 0.8)
+    // strands the document at Custom forever -- so this pump times out
+    // and the test fails there rather than at a wrong-value QCOMPARE.
+    QVERIFY2(pumpUntil([&] { return doc->zoomMode() != ZoomMode::Custom; }),
+             "the poisoned Custom 80% per-type default must not strand the "
+             "document at Custom -- the natural fit must be allowed to run");
+
+    QCOMPARE(doc->zoomMode(), ZoomMode::Actual);
+    QVERIFY2(std::abs(doc->scaleFactor() - 1.0) < 1e-6,
+             qPrintable(QStringLiteral("504x375 comfortably fits any real window; expected "
+                                       "natural Actual Size (100%%), got %1%% (an unrelated "
+                                       "document's stale per-type Custom 80%% default would "
+                                       "land here)")
+                            .arg(doc->scaleFactor() * 100.0)));
+}
+
+void TestImageScale::ordinaryOpenIgnoresPersistedTypeDefaultWindowGeometry() {
+    // Direct regression for the window-sizing half of the same reported
+    // bug: a fresh 504x375 image opened in a HUGE window because a
+    // previous, unrelated Image-type close's window geometry (simulating
+    // a maximized/large-document session) was blindly restored,
+    // clobbering applyInitialWindowSize()'s already-computed content-fit
+    // size. See DR 2026-07-31-per-type-restore-excludes-content-relative-
+    // state.
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app != nullptr);
+
+    const auto resetTypeDefault = qScopeGuard([app]() {
+        app->documentTypeDefaults().setForType(DocumentType::Image, DocumentTypeDefault{});
+    });
+
+    // A generously large saved geometry, as a maximized/large-document
+    // window would leave behind.
+    QMainWindow probe;
+    probe.resize(2400, 1500);
+    const QByteArray hugeGeometry = probe.saveGeometry();
+    QVERIFY(!hugeGeometry.isEmpty());
+
+    DocumentTypeDefault poisoned;
+    poisoned.windowGeometry = hugeGeometry;
+    app->documentTypeDefaults().setForType(DocumentType::Image, poisoned);
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString jpgPath = dir.path() + "/report-504x375-window.jpg";
+    QImage img(504, 375, QImage::Format_RGB32);
+    img.fill(qRgb(210, 220, 230));
+    QVERIFY(img.save(jpgPath, "JPEG"));
+
+    app->openFiles({jpgPath});
+    ImageDocument *doc = newestImageDoc(app);
+    QVERIFY(doc != nullptr);
+
+    MainWindow *mw = nullptr;
+    for (MainWindow *w : app->windows()) {
+        if (w && w->documentCount() > 0)
+            mw = w;
+    }
+    QVERIFY2(mw != nullptr, "the opened document's window should be found");
+
+    // The offscreen test platform's own virtual screen is small and
+    // fixed (observed 800x800), so an absolute pixel threshold can't
+    // discriminate "restored the huge geometry" from "computed a
+    // content-fit size" -- BOTH get clamped well under any generous
+    // absolute bound by the tiny screen alone. Instead, measure what
+    // actually restoring the poisoned geometry produces UNDER THIS SAME
+    // SCREEN via a reference window, and assert the real window's size
+    // does NOT match it -- a same-environment comparison that stays
+    // meaningful regardless of the test platform's screen size.
+    QMainWindow referenceRestore;
+    referenceRestore.restoreGeometry(hugeGeometry);
+    referenceRestore.show();
+    QApplication::processEvents();
+    const QSize buggyWouldBe = referenceRestore.size();
+
+    QVERIFY2(mw->size() != buggyWouldBe,
+             qPrintable(QStringLiteral("a 504x375 image must not inherit an unrelated "
+                                       "document's huge per-type window geometry -- got "
+                                       "%1x%2, matching what restoring the poisoned "
+                                       "geometry directly produces under this screen")
+                            .arg(mw->width())
+                            .arg(mw->height())));
+}
+
+void TestImageScale::closingAtCustomZoomDoesNotPoisonTypeDefault() {
+    // Direct regression for the WRITE side of the same fix: closing a
+    // document at a manual Custom zoom must not write that value into
+    // the per-type default in the first place (symmetric with the
+    // restore-side guard above) -- this is what actually produces the
+    // "poisoned" state the other two tests simulate directly, in real
+    // usage. See DR 2026-07-31-per-type-restore-excludes-content-
+    // relative-state's write-side trace.
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app != nullptr);
+
+    const auto resetTypeDefault = qScopeGuard([app]() {
+        app->documentTypeDefaults().setForType(DocumentType::Image, DocumentTypeDefault{});
+    });
+    app->documentTypeDefaults().setForType(DocumentType::Image, DocumentTypeDefault{});
+
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString jpgPath = dir.path() + "/closes-at-custom-zoom.jpg";
+    QImage img(900, 700, QImage::Format_RGB32);
+    img.fill(qRgb(200, 200, 200));
+    QVERIFY(img.save(jpgPath, "JPEG"));
+
+    app->openFiles({jpgPath});
+    ImageDocument *doc = newestImageDoc(app);
+    QVERIFY(doc != nullptr);
+    QVERIFY(pumpUntil([&] { return doc->zoomMode() != ZoomMode::Custom; }));
+
+    MainWindow *mw = nullptr;
+    for (MainWindow *w : app->windows()) {
+        if (w && w->documentCount() > 0)
+            mw = w;
+    }
+    QVERIFY(mw != nullptr);
+
+    // A manual zoom to an arbitrary Custom percentage, exactly as a real
+    // pinch/scroll/keyboard zoom would leave the document.
+    doc->applyZoomState(ZoomMode::Custom, 0.64); // the second report's 64%
+    QCOMPARE(doc->zoomMode(), ZoomMode::Custom);
+
+    // close() (not delete) is what actually runs MainWindow::closeEvent()
+    // and its state-capture path; the C++ object is left alive (Qt does
+    // not delete-on-close here) for the shared cleanup() teardown below.
+    mw->close();
+
+    const DocumentTypeDefault def = app->documentTypeDefaults().forType(DocumentType::Image);
+    QVERIFY2(def.zoomMode != ZoomMode::Custom || !(def.zoomFactor > 0.0),
+             qPrintable(QStringLiteral("closing at a manual Custom zoom (64%%) must not "
+                                       "write into the per-type default; got mode=%1 "
+                                       "factor=%2")
+                            .arg(int(def.zoomMode))
+                            .arg(def.zoomFactor)));
+}
+
+void TestImageScale::smallReportedImageNaturalFitIsActual_data() {
+    QTest::addColumn<qreal>("dpr");
+    QTest::newRow("dpr1") << qreal(1.0);
+    QTest::newRow("dpr2") << qreal(2.0);
+}
+
+void TestImageScale::smallReportedImageNaturalFitIsActual() {
+    // Companion to ordinaryOpenIgnoresPersistedCustomTypeDefaultZoom:
+    // confirms the CORRECT natural-fit outcome (Actual Size, 100%) for
+    // the exact reported dimensions holds regardless of the image's own
+    // devicePixelRatio -- i.e. this is not a DPR bug. The owner's
+    // Retina display was the strongest environmental lead named in the
+    // investigation, but an ordinary file open always decodes at dpr 1
+    // on disk (PNG/JPEG round-trip strips any stamp -- see
+    // pngRoundTripStripsDprThenRecovers above); dpr 2 is exercised here
+    // directly via setImageForTest to rule out any dpr-dependent path in
+    // the fit computation itself, independent of that on-disk fact.
+    QFETCH(qreal, dpr);
+    ImageDocument doc{QString()};
+    // 504x375 DEVICE px at the given dpr -> logical size is 504/dpr x
+    // 375/dpr, still comfortably smaller than any real viewport.
+    doc.setImageForTest(makeDprImage(504, 375, dpr), /*captureOrigin=*/false);
+    QWidget *view = doc.createView(nullptr);
+    auto *scroll = qobject_cast<QScrollArea *>(view);
+    QVERIFY(scroll != nullptr);
+    scroll->resize(1400, 900);
+    scroll->show();
+    if (!pumpUntil([&] { return scroll->viewport()->width() > 0; })) {
+        delete view;
+        QSKIP("viewport does not settle under offscreen platform");
+    }
+
+    doc.triggerInitialZoomForTest();
+    QCOMPARE(doc.zoomMode(), ZoomMode::Actual);
+    QVERIFY2(std::abs(doc.scaleFactor() - 1.0) < 1e-6,
+             qPrintable(QStringLiteral("dpr=%1: expected natural Actual Size (100%%), got %2%%")
+                            .arg(dpr)
+                            .arg(doc.scaleFactor() * 100.0)));
 
     delete view;
 }

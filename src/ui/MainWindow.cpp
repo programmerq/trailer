@@ -3946,15 +3946,36 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
         } else if (doc->documentType() != DocumentType::Unknown) {
             // Per-type fallback: apply the last-closed defaults for
             // this document's type, if any.
+            //
+            // DR 2026-07-31-per-type-restore-excludes-content-relative-state:
+            // per-type restore is a "last-closed-of-type" convenience, not a
+            // promise about THIS document, so it only carries
+            // content-INDEPENDENT state forward -- sidebar mode,
+            // markup-toolbar visibility, dock/toolbar layout (windowState),
+            // and the semantic fit modes (FitInView/FitToWidth/Actual, which
+            // recompute against whatever document they're applied to).
+            // Custom zoom (a raw percentage chosen to fit ONE document's
+            // pixel dimensions) and windowGeometry (a size/position chosen
+            // for ONE document's content, or simply whatever the window
+            // happened to be at close) are never restored here -- closeEvent
+            // below symmetrically never WRITES them into the per-type
+            // default either, so `def.zoomMode` can only be a semantic mode
+            // and `def.windowGeometry` is always empty; the checks here are
+            // the load-bearing guard against an already-installed default
+            // from before this fix, or a future regression.
+            // applyInitialWindowSize(), called earlier in this same
+            // function, already computed a content-fit window size for this
+            // document; leaving that stand is the correct default. Reported
+            // bug: a 504x375 image (and, corroborating, a second unrelated
+            // image) opened at a stale Custom 80%/64% zoom in a window sized
+            // for whatever large document/session last closed of the same
+            // type.
             const DocumentTypeDefault def =
                 m_app->documentTypeDefaults().forType(doc->documentType());
             if (def.hasState()) {
-                if (!isCaptureOriginImage)
+                if (!isCaptureOriginImage && def.zoomMode != ZoomMode::Custom)
                     doc->applyZoomState(def.zoomMode, def.zoomFactor);
                 m_sidebar->setMode(static_cast<Sidebar::Mode>(static_cast<int>(def.sidebarMode)));
-                if (!def.windowGeometry.isEmpty()) {
-                    restoreGeometry(def.windowGeometry);
-                }
                 if (!def.windowState.isEmpty()) {
                     restoreState(def.windowState);
                 }
@@ -5005,13 +5026,38 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         // Capture a snapshot for the per-type defaults too. Last-
         // closed-of-type wins; the loop overwrites typeSnapshot
         // each iteration so the final doc's state is what lands.
+        //
+        // DR 2026-07-31-per-type-restore-excludes-content-relative-state:
+        // zoomMode/zoomFactor and windowGeometry are content-relative --
+        // meaningful only for the document that produced them -- so they
+        // are deliberately NOT captured here, symmetric with
+        // onCurrentDocumentChanged() never restoring them from a per-type
+        // default. This answers "should an automatic fit ever write to a
+        // persisted per-type preference" directly: neither an automatic
+        // fit (which never leaves a document at ZoomMode::Custom -- see
+        // ImageDocument::applyInitialFitZoom()/reapplyFitMode(), which only
+        // ever park FitInView/FitToWidth/Actual) nor an explicit manual
+        // zoom (which does produce Custom) is captured into the per-type
+        // slot; only the semantic fit modes are, because those recompute
+        // correctly against whatever document they're later applied to.
+        // Leaving zoomMode/zoomFactor at typeSnapshot's default-constructed
+        // (Custom, 0.0) is exactly RecentEntry.h's documented "not
+        // captured" sentinel, and windowGeometry stays empty ("not yet
+        // captured", per DocumentTypeDefault's own field comment) --
+        // both fall through cleanly to def.hasState()'s existing check.
+        // Per-file state (RecentEntry, above) is unaffected: it captures
+        // and restores zoomMode/zoomFactor/windowGeometry unconditionally,
+        // because "reopen this exact file where I left it" is meaningful
+        // regardless of whether that state was reached by an explicit
+        // zoom action or an automatic fit.
         if (doc->documentType() != DocumentType::Unknown) {
             lastCapturedType = doc->documentType();
-            typeSnapshot.zoomMode = state.zoomMode;
-            typeSnapshot.zoomFactor = state.zoomFactor;
+            if (state.zoomMode != ZoomMode::Custom) {
+                typeSnapshot.zoomMode = state.zoomMode;
+                typeSnapshot.zoomFactor = state.zoomFactor;
+            }
             typeSnapshot.sidebarMode = state.sidebarMode;
             typeSnapshot.markupToolbarVisible = state.markupToolbarVisible;
-            typeSnapshot.windowGeometry = state.windowGeometry;
             typeSnapshot.windowState = state.windowState;
         }
     }
