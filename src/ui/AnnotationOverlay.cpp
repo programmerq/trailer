@@ -3,6 +3,8 @@
 #include "SamController.h"
 #include "annotation/AnnotationStore.h"
 
+#include <QApplication>
+#include <QClipboard>
 #include <QContextMenuEvent>
 #include <QEvent>
 #include <QEventPoint>
@@ -188,6 +190,14 @@ void AnnotationOverlay::setPageAtViewPoint(PageAtView fn) {
 
 void AnnotationOverlay::setTextSelectionProvider(TextSelectionProvider fn) {
     m_textSelection = std::move(fn);
+}
+
+void AnnotationOverlay::setTextSelectionTextProvider(TextSelectionTextProvider fn) {
+    m_textSelectionText = std::move(fn);
+}
+
+void AnnotationOverlay::setPointOverTextProvider(PointOverTextProvider fn) {
+    m_pointOverText = std::move(fn);
 }
 
 void AnnotationOverlay::setSourceSampler(SourceSampler fn) {
@@ -1103,6 +1113,13 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent *event) {
             update();
         }
         m_pendingSelection.clear();
+        // This is the start of a text-selection drag (see the Tool-
+        // precedence rule note above setActiveTool()). Grab focus
+        // explicitly — QApplication's synthetic-event delivery in tests
+        // (and some native paths) doesn't run the implicit click-focus
+        // pass ClickFocus normally gets from a real windowing system — so
+        // that Ctrl+C reaches keyPressEvent() once the drag ends.
+        setFocus(Qt::MouseFocusReason);
     }
     m_dragPage = pageAt(event->position());
     m_dragStartDoc = toDoc(event->position(), m_dragPage);
@@ -1205,9 +1222,32 @@ void AnnotationOverlay::mouseMoveEvent(QMouseEvent *event) {
         update();
         return;
     }
-    if (!m_dragging)
+    if (!m_dragging) {
+        // Hover-only I-beam cursor (Tool-precedence rule, case 2 — see
+        // the note above setActiveTool()). Only ever an HONEST signal:
+        // m_pointOverText is unset for documents with no text-selection
+        // wiring (raster images), so the cursor stays the plain arrow
+        // rather than promising an interaction that can't happen (G3).
+        if (m_tool == AnnotationTool::Select && m_pointOverText) {
+            const int page = pageAt(event->position());
+            setCursor(m_pointOverText(event->position(), page) ? Qt::IBeamCursor
+                                                                 : Qt::ArrowCursor);
+        }
         return;
+    }
     m_dragCurrentDoc = toDoc(event->position(), m_dragPage);
+    if (m_tool == AnnotationTool::Select) {
+        // Live-update the highlight while the drag is still in progress —
+        // previously this only ran in mouseReleaseEvent, so the user saw
+        // no feedback at all until they lifted the mouse button (owner
+        // dogfood report, 2026-07-31). update() repaints immediately;
+        // the highlight fill lives in paintEvent's Select-tool branch.
+        if (m_textSelection) {
+            m_pendingSelection = m_textSelection(m_dragStartDoc, m_dragCurrentDoc, m_dragPage);
+        }
+        update();
+        return;
+    }
     if (m_tool == AnnotationTool::Ink) {
         // Remember the live-stroke tail before appending so we can clip
         // the repaint to just the new segment below (Bug 2).
@@ -1332,10 +1372,22 @@ void AnnotationOverlay::mouseReleaseEvent(QMouseEvent *event) {
     const QPointF end = toDoc(event->position(), m_dragPage);
 
     if (m_tool == AnnotationTool::Select) {
+        // Re-resolve against the exact release point. mouseMoveEvent
+        // already live-updates m_pendingSelection on every drag sample
+        // (see the Tool-precedence rule note above setActiveTool()); this
+        // is the authoritative last word in case the final move landed
+        // exactly on the release pixel without an intervening move event.
         m_pendingSelection.clear();
         if (m_textSelection) {
             m_pendingSelection = m_textSelection(m_dragStartDoc, end, m_dragPage);
         }
+        // Keep m_dragCurrentDoc in lockstep with `end` — Ctrl+C
+        // (keyPressEvent) reads m_dragCurrentDoc, not `end`, and a
+        // release can in principle land a pixel or two away from the
+        // preceding move sample. Without this, a copy immediately after
+        // release could (in a rare case) resolve a hair short of what
+        // was just painted.
+        m_dragCurrentDoc = end;
         m_page = m_dragPage;
         update();
         return;
@@ -1665,6 +1717,29 @@ void AnnotationOverlay::keyPressEvent(QKeyEvent *event) {
         if (m_tool == AnnotationTool::SmartLasso &&
             (event->key() == Qt::Key_Return || event->key() == Qt::Key_Enter)) {
             commitSmartLasso();
+            event->accept();
+            return;
+        }
+    }
+    // Select-tool text selection (Tool-precedence rule, case 2 — see the
+    // note above setActiveTool()). Runs before the m_selectedAnnotationId
+    // guard below because a pending TEXT selection has no annotation id;
+    // gating on that guard would silently swallow Ctrl+C / Esc here.
+    if (m_tool == AnnotationTool::Select && !m_pendingSelection.empty()) {
+        if (event->matches(QKeySequence::Copy)) {
+            if (m_textSelectionText) {
+                const QString text =
+                    m_textSelectionText(m_dragStartDoc, m_dragCurrentDoc, m_dragPage);
+                if (!text.isEmpty()) {
+                    QApplication::clipboard()->setText(text);
+                }
+            }
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_Escape) {
+            m_pendingSelection.clear();
+            update();
             event->accept();
             return;
         }

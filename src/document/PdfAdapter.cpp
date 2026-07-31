@@ -829,6 +829,65 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
             }
             return out;
         });
+    // Copy-able text for the same span, backing Select-tool Ctrl+C / Cmd+C
+    // (Tool-precedence rule, AnnotationOverlay.h). getSelection().text() is
+    // render-mode-agnostic — it reads the same Tj operators whether the
+    // glyphs paint visibly or not, so this covers invisible-text-layer
+    // (scanned + OCR'd) PDFs the same way it covers born-digital ones;
+    // verified against a synthetic Tr-3 (invisible render mode) fixture in
+    // pdfDocumentInvisibleRenderModeTextIsIngestedAndSelectable
+    // (tests/test_adapters.cpp).
+    overlay->setTextSelectionTextProvider(
+        [this](QPointF startDoc, QPointF endDoc, int page) -> QString {
+            if (!m_doc || page < 0)
+                return {};
+            return m_doc->getSelection(page, startDoc, endDoc).text();
+        });
+    // Point-over-text hover test for the Select-tool I-beam cursor (Tool-
+    // precedence rule, case 2 — AnnotationOverlay.h). Reuses the same
+    // per-page line-level blocks ingestNativeTextLayer() feeds
+    // SelectableTextStore for the None-tool path, rather than
+    // SelectableTextLayer::isPointOverText(): that helper tracks a single
+    // "current page", which would misreport for a second page partially
+    // visible during Continuous-mode scroll. Page-parameterised here
+    // (fed by the same per-point pageAt() the overlay already resolves on
+    // every mouse move) stays correct for every visible page, not just
+    // the "current" one. ingestNativeTextLayer() is idempotent
+    // (hasResults() short-circuits), so calling it on every hover is a
+    // cheap no-op after the first for that page.
+    //
+    // Frugality note: this rebuilds the page's view-space polygons on
+    // EVERY hover call rather than caching them the way SelectableText
+    // Layer::rebuildViewBlocks() does. Deliberate for now — a page's
+    // line count is tens, not thousands, so the per-hover cost is a
+    // handful of QPolygonF allocations, not a hot loop over the whole
+    // document. Revisit with a real (page, zoom)-keyed cache if profiling
+    // ever shows this on a dense multi-column page (PHILOSOPHY "frugal by
+    // construction": named trade, not an accidental one).
+    overlay->setPointOverTextProvider([this, pageOriginInView](QPointF viewPt, int page) -> bool {
+        if (!m_view || !m_doc || page < 0)
+            return false;
+        ingestNativeTextLayer(page);
+        const auto &blocks = m_selectableText.blocks(page);
+        if (blocks.empty())
+            return false;
+        const double z = m_view->zoomFactor();
+        const QPointF origin = pageOriginInView(page);
+        for (const auto &b : blocks) {
+            QPolygonF view;
+            view.reserve(b.polygon.size());
+            for (const QPoint &pt : b.polygon) {
+                view << QPointF(origin.x() + pt.x() * z, origin.y() + pt.y() * z);
+            }
+            if (view.isEmpty())
+                continue;
+            if (view.boundingRect().contains(viewPt) &&
+                view.containsPoint(viewPt, Qt::OddEvenFill)) {
+                return true;
+            }
+        }
+        return false;
+    });
     overlay->setGeometry(view->viewport()->rect());
     overlay->show();
     m_overlay = overlay;

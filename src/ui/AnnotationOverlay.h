@@ -29,6 +29,36 @@ class AnnotationOverlay : public QWidget {
     explicit AnnotationOverlay(QWidget *parent = nullptr);
 
     void setStore(AnnotationStore *store);
+
+    // --- Tool-precedence rule (owner ruling, 2026-07-31; the crux of the
+    // text-selection fix) ---
+    // With NO explicit markup tool armed, click-drag over text selects it
+    // (I-beam cursor, live highlight, Ctrl+C / Cmd+C copies); the moment
+    // the user arms an explicit tool (pen, highlighter, rectangle, ...)
+    // that tool owns the pointer instead and click-drag does the tool's
+    // thing. This is expressed in exactly two places, both anchored on
+    // `m_tool`, so the rule is never re-decided per gesture:
+    //   1. AnnotationTool::None (nothing armed, the toolbar-never-touched
+    //      state) makes the WHOLE overlay Qt::WA_TransparentForMouseEvents
+    //      (see setActiveTool below) — every mouse/key event skips this
+    //      widget entirely and reaches SelectableTextLayer underneath,
+    //      which owns cursor + drag + copy for that state.
+    //   2. AnnotationTool::Select (the toolbar's own "nothing armed, but
+    //      the markup toolbar is visible" state — MainWindow parks the
+    //      toolbar on Select whenever it hides, and after every one-shot
+    //      tool commit) keeps the overlay opaque, because Select ALSO
+    //      owns the drag-to-quads plumbing that seeds the Highlight /
+    //      Underline / StrikeOut context menu. For Select, THIS class is
+    //      the text-selection surface: mousePressEvent/mouseMoveEvent/
+    //      mouseReleaseEvent/keyPressEvent branch on `m_tool ==
+    //      AnnotationTool::Select` to hover-cursor (m_pointOverText),
+    //      live-highlight (m_textSelection, called on every move, not
+    //      just release), and copy (m_textSelectionText) — the same three
+    //      guarantees SelectableTextLayer gives the None state.
+    // Any OTHER tool value is an explicit, user-armed tool: it always
+    // wins (drag draws/stamps/etc.), matching case 2's "opaque overlay"
+    // shape but taking a completely different branch once inside the
+    // handler.
     void setActiveTool(AnnotationTool tool);
     AnnotationTool activeTool() const { return m_tool; }
     // When non-empty, Text annotations drop with this preset content
@@ -61,11 +91,34 @@ class AnnotationOverlay : public QWidget {
     void setPageAtViewPoint(PageAtView fn);
 
     // Supplies per-run text rects (in doc coords) for a selection between two
-    // points on a page. Used by the Highlight/Underline/StrikeOut tools. If
-    // unset or it returns empty, the markup falls back to the drag bbox.
+    // points on a page. Used by the Highlight/Underline/StrikeOut tools AND
+    // (owner dogfood report, 2026-07-31) as the live drag-selection preview
+    // when the Select tool's press/move lands on selectable text — see the
+    // "Tool-precedence rule" note above setActiveTool(). If unset or it
+    // returns empty, the markup falls back to the drag bbox.
     using TextSelectionProvider =
         std::function<std::vector<QRectF>(QPointF startDoc, QPointF endDoc, int page)>;
     void setTextSelectionProvider(TextSelectionProvider fn);
+
+    // Returns the joined, reading-order text a selection between two doc-
+    // space points on `page` would copy — the same span
+    // TextSelectionProvider resolves into paintable quads, but as a
+    // copy-able string. Backs Ctrl+C / Cmd+C while the Select tool holds a
+    // pending text selection (see "Tool-precedence rule" above
+    // setActiveTool()). If unset, Copy is a no-op while Select is active.
+    using TextSelectionTextProvider =
+        std::function<QString(QPointF startDoc, QPointF endDoc, int page)>;
+    void setTextSelectionTextProvider(TextSelectionTextProvider fn);
+
+    // True iff `viewPt` (overlay-local pixels, the same space
+    // mousePressEvent/mouseMoveEvent receive via event->position()) lands
+    // on selectable text on `page`. The ONLY consumer is the Select-tool
+    // hover cursor (see "Tool-precedence rule" above setActiveTool()) — it
+    // never gates whether a click/drag is routed, only what cursor glyph
+    // is honest to show. If unset, the cursor never claims text is
+    // selectable (G3): Select falls back to the plain arrow.
+    using PointOverTextProvider = std::function<bool(QPointF viewPt, int page)>;
+    void setPointOverTextProvider(PointOverTextProvider fn);
 
     // Samples the underlying document at (docRect, page) and returns an
     // image of the requested pixel size. Used by ZoomLens to draw a
@@ -119,6 +172,18 @@ class AnnotationOverlay : public QWidget {
     int searchHighlightCountForTest() const {
         return static_cast<int>(m_searchHighlights.size());
     }
+
+    // Convenience for tests: how many text-selection quads the Select
+    // tool currently has pending (see the Tool-precedence rule note above
+    // setActiveTool()). Non-zero mid-drag proves the highlight is live,
+    // not only computed on release.
+    int pendingTextSelectionCountForTest() const {
+        return static_cast<int>(m_pendingSelection.size());
+    }
+    // The current cursor shape, exposed so tests can assert the honest
+    // I-beam-over-text / arrow-elsewhere behaviour without a real
+    // windowing system to read the OS cursor from.
+    Qt::CursorShape cursorShapeForTest() const { return cursor().shape(); }
 
     // The id of the currently-selected annotation (0 = none). Public
     // so MainWindow can wire keyboard shortcuts (Delete, arrows) and
@@ -281,6 +346,8 @@ class AnnotationOverlay : public QWidget {
     ViewToDoc m_viewToDoc;
     PageAtView m_pageAtView;
     TextSelectionProvider m_textSelection;
+    TextSelectionTextProvider m_textSelectionText;
+    PointOverTextProvider m_pointOverText;
     SourceSampler m_sourceSampler;
 
     // SAM tool plumbing. The overlay does not own the controller —
