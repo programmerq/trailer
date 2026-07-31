@@ -66,6 +66,14 @@ rejected, regardless of how cleanly it implements its stated feature.
   and [`docs/ux-guidelines.md`](docs/ux-guidelines.md) for the applied
   minimal-UI-surface checklist (subtle affordances over dialogs / popups /
   progress bars).
+- **Deference and spatial constancy.** Chrome helps the user work with
+  the document, never competes with it (*deference*, Apple HIG) or
+  demands attention it hasn't earned (*calm technology*, Weiser & Seely
+  Brown); a control's on-screen position never moves as a side effect of
+  unrelated state (*spatial constancy* — a distinct property; fixing one
+  doesn't give you the other). **"The document is the subject; the
+  furniture doesn't move."** Enforced as gate G10; detail in
+  [`docs/ux-guidelines.md`](docs/ux-guidelines.md).
 
 If a feature you're asked to implement seems to brush against any of
 these, stop and ask in the PR description before writing code.
@@ -288,6 +296,47 @@ value/default changes are backed by records in
   moves them (a new dependency, a bundled asset). **This gate is
   PROPOSED** — the budget numbers await owner ratification; until then it
   is advisory, not blocking.
+
+### G10 — Deference and spatial constancy
+
+- **Rule:** A PR does not add persistent chrome that reports state the
+  user can already perceive on the document itself, and does not change
+  the on-screen position of an existing control as a side effect of
+  unrelated state changing.
+- **Test:** For any diff touching user-visible UI — anything under
+  `src/ui/`, or otherwise adding/reshaping on-screen chrome or control
+  layout — the PR body answers both questions explicitly:
+  1. *What did this add to the permanent, always-visible surface, and
+     why must it be permanent* rather than a glyph, tooltip, hover
+     state, status-bar item, or menu entry the user only sees on
+     demand? (**deference**)
+  2. *Does any existing control change on-screen position when
+     unrelated state changes* — a toolbar reflowing when a sibling
+     toolbar's visibility toggles, a menu reordering its items by which
+     mode is active? (**spatial constancy**)
+  A PR that adds permanent chrome duplicating document-visible state, or
+  answers yes to question 2 without fixing it, fails the gate.
+  Internals-only PRs — no `src/ui/` diff, no reshaped or relocated
+  control — trip neither question and are out of scope, per the gates
+  preamble above.
+- **Evidence:** The two answers, stated in the PR body. For question 2,
+  prefer a geometry assertion in a test (compare a control's
+  `pos()`/`geometry()` before and after the unrelated state change) over
+  a screenshot — position is objectively checkable, and a regression
+  test is stronger evidence than a still image; a screenshot may
+  accompany it but does not substitute for it.
+- **Boundary with G3:** distinct gates, not overlapping ones. G3 is about
+  controls that **lie** — inert without being disabled, or a requested
+  action silently swapped for a different one. G10 is about chrome that
+  is truthful but **unnecessary** (deference), and controls that work
+  correctly but **relocate without cause** (spatial constancy). A
+  control can pass G3 and fail G10, or vice versa; fixing one does not
+  satisfy the other.
+- **Names and detail:** [`docs/ux-guidelines.md`](docs/ux-guidelines.md)
+  leads with these terms and the concrete violations that motivated this
+  gate (a status-bar zoom readout, an autosave success toast, a sidebar
+  labelled "sidebar", toolbar reflow on sibling-visibility toggle,
+  view-mode menu reordering).
 
 ## Build
 
