@@ -1353,6 +1353,28 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     // moved off the digit row (Cmd-0 Actual Size, Cmd-9 Fit Page) to
     // make room. Cmd-1 → Continuous (Trailer's default mode), Cmd-2 →
     // Single Page, Cmd-3 → Two Pages.
+    //
+    // Insertion order below is deliberately Cmd-1, Cmd-2, Cmd-3 top-to-
+    // bottom (Continuous, Single Page, Two Pages) — NOT the order the
+    // three actions happen to be discussed in comments or wired up
+    // elsewhere. Gate G10 (spatial constancy, AGENTS.md) forbids a menu
+    // whose item order depends on which mode is active — a fixed order
+    // here, driven only by insertion sequence, is what keeps the position
+    // constant regardless of doc->viewMode(); which item is checked is a
+    // separate, orthogonal concern (see syncViewModeActions()). Do not
+    // reorder these three blocks to "match" some other grouping — that is
+    // exactly the regression uat_fnd_093 pins.
+    m_continuousAction = viewMenu->addAction(tr("Continuous"));
+    m_continuousAction->setObjectName(QStringLiteral("action.view.continuous"));
+    m_continuousAction->setCheckable(true);
+    m_continuousAction->setShortcut(QKeySequence(tr("Ctrl+1")));
+    connect(m_continuousAction, &QAction::triggered, this, [this]() {
+        if (auto *doc = m_documentView->currentDocument()) {
+            doc->setViewMode(ViewMode::Continuous);
+            onCurrentDocumentChanged(doc);
+        }
+    });
+
     m_singlePageAction = viewMenu->addAction(tr("Single Page"));
     m_singlePageAction->setObjectName(QStringLiteral("action.view.singlePage"));
     m_singlePageAction->setCheckable(true);
@@ -1378,17 +1400,6 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_twoPagesAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument()) {
             doc->setViewMode(ViewMode::TwoPages);
-            onCurrentDocumentChanged(doc);
-        }
-    });
-
-    m_continuousAction = viewMenu->addAction(tr("Continuous"));
-    m_continuousAction->setObjectName(QStringLiteral("action.view.continuous"));
-    m_continuousAction->setCheckable(true);
-    m_continuousAction->setShortcut(QKeySequence(tr("Ctrl+1")));
-    connect(m_continuousAction, &QAction::triggered, this, [this]() {
-        if (auto *doc = m_documentView->currentDocument()) {
-            doc->setViewMode(ViewMode::Continuous);
             onCurrentDocumentChanged(doc);
         }
     });

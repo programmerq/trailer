@@ -201,6 +201,22 @@ QString writeTinyPdf(const QString &path) {
     return path;
 }
 
+// Multi-page variant so tests that need View > Two Pages ENABLED (it's
+// disabled-with-tooltip for single-page docs, G3) have a fixture that
+// qualifies.
+QString writeMultiPagePdf(const QString &path, int pages) {
+    QPdfWriter writer(path);
+    writer.setPageSize(QPageSize(QPageSize::A4));
+    QPainter p(&writer);
+    for (int i = 0; i < pages; ++i) {
+        p.drawText(100, 100, QStringLiteral("UAT fixture page %1").arg(i + 1));
+        if (i < pages - 1)
+            writer.newPage();
+    }
+    p.end();
+    return path;
+}
+
 // Write an unmistakably NON-blank image (bold, saturated colored content —
 // never white/empty) to `path`. Used for evidence grabs that must show a
 // REAL pasted image inside an "Untitled" document rather than reading as
@@ -283,6 +299,7 @@ class TestUatFoundations : public QObject {
     void uat_fnd_041_shareDisabledWithTooltipWhenUnavailable();
     void uat_fnd_042_twoPagesActionDisabledWithTooltip();
     void uat_fnd_043_everyMenuWithDisabledTooltipActionRendersTooltips();
+    void uat_fnd_093_pageModeMenuItemsKeepFixedOrder();
     void uat_fnd_050_fileOpenEventOpensWindow();
     void uat_fnd_070_copyPageAsImageToClipboard();
 
@@ -1532,6 +1549,101 @@ void TestUatFoundations::
     QVERIFY2(disabledExplainedActions > 0,
              "Expected at least one disabled+explained action to sweep; the "
              "test would be vacuous otherwise");
+}
+
+// UAT-FND-093 — the View menu's page-mode entries (Single Page / Two Pages
+// / Continuous) keep a FIXED top-to-bottom order regardless of which mode
+// is active — gate G10 (spatial constancy, AGENTS.md), which names "a menu
+// reordering its items by which mode is active" as its own motivating
+// example. Investigated: no code path in MainWindow rebuilds or reorders
+// the View menu at runtime — QActionGroup's exclusivity only toggles
+// isChecked(), it never moves an action's position, and syncViewModeActions
+// (called after every mode switch) only calls setChecked(). The concrete,
+// provable defect was the STATIC insertion order in buildViewMenu(): the
+// three actions were added Single Page, Two Pages, Continuous — top-to-
+// bottom position 1, 2, 3 — while their keyboard shortcuts are Cmd-2,
+// Cmd-3, Cmd-1. A menu whose visual position doesn't match its own digit
+// shortcuts breaks the muscle-memory contract those shortcuts exist for,
+// which is the checkable form of "the furniture doesn't move" here: the
+// fix pins insertion order to Cmd-1/2/3 (Continuous, Single Page, Two
+// Pages) and this test asserts that order is identical before ANY mode is
+// selected and after every one of them is, in turn — the regression this
+// pins is a menu whose order tracks the active mode, not merely "some
+// static order."
+void TestUatFoundations::uat_fnd_093_pageModeMenuItemsKeepFixedOrder() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    // Multi-page so Two Pages is enabled (G3) and can actually be triggered
+    // as one of the states cycled below.
+    const QString pdfPath =
+        writeMultiPagePdf(m_scratch.filePath(QStringLiteral("uat_fnd_093.pdf")), 4);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+
+    QAction *continuous =
+        findMenuAction(mw->menuBar(), QStringLiteral("&View"), QStringLiteral("Continuous"));
+    QAction *singlePage =
+        findMenuAction(mw->menuBar(), QStringLiteral("&View"), QStringLiteral("Single Page"));
+    QAction *twoPages =
+        findMenuAction(mw->menuBar(), QStringLiteral("&View"), QStringLiteral("Two Pages"));
+    QVERIFY2(continuous && singlePage && twoPages,
+             "Continuous / Single Page / Two Pages actions must all exist in the View menu");
+
+    // Cluster 1.3 — the shortcuts themselves: Cmd-1 Continuous, Cmd-2
+    // Single Page, Cmd-3 Two Pages (ROADMAP.md's "page-mode shortcuts
+    // Cmd-1/2/3, zoom moved to Cmd-0/9").
+    QCOMPARE(continuous->shortcut(), QKeySequence(QStringLiteral("Ctrl+1")));
+    QCOMPARE(singlePage->shortcut(), QKeySequence(QStringLiteral("Ctrl+2")));
+    QCOMPARE(twoPages->shortcut(), QKeySequence(QStringLiteral("Ctrl+3")));
+
+    QMenu *viewMenu = menuContainingAction(mw->menuBar(), continuous);
+    QVERIFY2(viewMenu, "Could not locate the View menu");
+    QCOMPARE(menuContainingAction(mw->menuBar(), singlePage), viewMenu);
+    QCOMPARE(menuContainingAction(mw->menuBar(), twoPages), viewMenu);
+
+    // Fixed order matching the Cmd-1/2/3 shortcuts, top to bottom:
+    // Continuous, Single Page, Two Pages.
+    auto orderIndex = [&](QAction *action) { return viewMenu->actions().indexOf(action); };
+    auto assertFixedOrder = [&](const char *when) {
+        const int ci = orderIndex(continuous);
+        const int si = orderIndex(singlePage);
+        const int ti = orderIndex(twoPages);
+        QVERIFY2(ci >= 0 && si >= 0 && ti >= 0,
+                 qPrintable(QStringLiteral("[%1] all three actions must still be present in "
+                                           "the View menu").arg(when)));
+        QVERIFY2(ci < si && si < ti,
+                 qPrintable(QStringLiteral("[%1] View menu order must stay Continuous < "
+                                           "Single Page < Two Pages (Cmd-1/2/3 order); got "
+                                           "indices %2, %3, %4")
+                                .arg(when)
+                                .arg(ci)
+                                .arg(si)
+                                .arg(ti)));
+    };
+
+    assertFixedOrder("before any trigger");
+
+    // Cycle through every mode and re-assert the SAME order after each —
+    // the regression this pins is order tracking the active mode, so
+    // checking only once (before any selection) would miss it.
+    singlePage->trigger();
+    QApplication::processEvents();
+    QVERIFY(singlePage->isChecked());
+    assertFixedOrder("after Single Page selected");
+
+    twoPages->trigger();
+    QApplication::processEvents();
+    QVERIFY(twoPages->isChecked());
+    assertFixedOrder("after Two Pages selected");
+
+    continuous->trigger();
+    QApplication::processEvents();
+    QVERIFY(continuous->isChecked());
+    assertFixedOrder("after Continuous selected");
 }
 
 // UAT-FND-050 — Synthesize the QFileOpenEvent macOS dispatches when

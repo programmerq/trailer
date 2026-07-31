@@ -36,6 +36,9 @@ entries terse and user-visible; CI / infrastructure churn lives in the
 - **Shift+Enter in the search field now means Find Previous**, matching
   every other find-bar's convention. Previously it behaved like a plain
   Enter (Find Next).
+- **View menu's Continuous / Single Page / Two Pages items keep a fixed
+  order** matching their Cmd-1/2/3 shortcuts, regardless of which mode is
+  active.
 
 ### Infrastructure
 

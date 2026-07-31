@@ -214,6 +214,21 @@ tab title starts with `• `).
 **Expected:**
 - The Inspector dock shows and hides. Menu item state toggles.
 
+### UAT-FND-093 — View menu page-mode items keep a fixed order (G10)
+
+**Preconditions:** A multi-page PDF is open (so Two Pages is enabled).
+**Steps:**
+1. Note the top-to-bottom order of Continuous / Single Page / Two Pages in
+   the View menu.
+2. Select Single Page, then Two Pages, then Continuous, checking the order
+   after each.
+**Expected:**
+- The three items always appear in Cmd-1/2/3 order — Continuous, Single
+  Page, Two Pages — top to bottom, regardless of which one is active.
+  Selecting a mode changes which item is checked, never its position.
+  Gate G10 (spatial constancy, AGENTS.md) names exactly this — "a menu
+  reordering its items by which mode is active" — as a violation.
+
 ---
 
 ## Settings persistence
