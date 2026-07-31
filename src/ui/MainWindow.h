@@ -329,6 +329,15 @@ class MainWindow : public QMainWindow {
     // search field. Built last so every action it surfaces has
     // already been created by the menu builders above.
     void buildMainToolbar();
+    // Re-pins the ADR-0007 canonical toolbar order (main first / its own
+    // row; markup and form each on their own separate row below) after a
+    // QMainWindow::restoreState() call. restoreState() restores toolbar
+    // area order + row breaks from the blob (matched by object name),
+    // which can silently reinstate an older/foreign arrangement — see
+    // the call sites in onCurrentDocumentChanged(). None of the three
+    // toolbars are user-movable, so there is never a legitimate reason
+    // for a persisted blob to win over the construction-time order.
+    void reassertToolbarLayout();
     // Repopulate the Window menu's dynamic window list before it
     // shows. The static items (Minimize / Zoom / Bring All to
     // Front) stay; the per-window check-actions get rebuilt from

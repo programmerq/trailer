@@ -1179,6 +1179,53 @@ void MainWindow::buildMainToolbar() {
     }
 }
 
+void MainWindow::reassertToolbarLayout() {
+    // QMainWindow::restoreState() restores the top toolbar area's order
+    // and row-break placement from the blob, matched to our toolbars by
+    // object name (MainToolbar / MarkupToolbar / FormToolbar) — it does
+    // not know or care that ADR 0007 fixed the construction-time order
+    // in buildMainToolbar(). A blob captured under an older arrangement
+    // (or any future arrangement change we haven't made yet) silently
+    // wins over the canonical order the moment restoreState() runs,
+    // reproducing exactly the "form toolbar shoves main toolbar right"
+    // bug ADR 0007 fixed at construction time, but from persisted state
+    // instead. None of the three toolbars are user-movable/floatable
+    // (see MarkupToolbar/FormToolbar ctors and buildMainToolbar()  —
+    // placement is intentional, not user-configurable), so a persisted
+    // blob never has a legitimate reason to override the order. Call
+    // this immediately after every restoreState() so the canonical
+    // order — main alone on row 1; markup and form each on their own
+    // separate row below, collapsing to zero height when hidden — always
+    // wins regardless of what the blob said. Mirrors, for layout, the
+    // same "explicit call after restoreState() wins" pattern already
+    // used for markup-toolbar visibility a few lines below each call
+    // site.
+    //
+    // removeToolBar() releases each toolbar from the area layout (and,
+    // per QMainWindow's own contract, can affect its visible state), so
+    // visibility is snapshotted before and reapplied after — this
+    // method changes ORDER only, never visibility, which stays exactly
+    // whatever the caller (restoreState(), or the constructor) set it
+    // to.
+    const bool mainVisible = m_mainToolbar->isVisible();
+    const bool markupVisible = m_markupToolbar->isVisible();
+    const bool formVisible = m_formToolbar->isVisible();
+
+    removeToolBar(m_mainToolbar);
+    removeToolBar(m_markupToolbar);
+    removeToolBar(m_formToolbar);
+
+    addToolBar(Qt::TopToolBarArea, m_markupToolbar);
+    addToolBar(Qt::TopToolBarArea, m_formToolbar);
+    insertToolBarBreak(m_formToolbar);
+    insertToolBar(m_markupToolbar, m_mainToolbar);
+    insertToolBarBreak(m_markupToolbar);
+
+    m_mainToolbar->setVisible(mainVisible);
+    m_markupToolbar->setVisible(markupVisible);
+    m_formToolbar->setVisible(formVisible);
+}
+
 void MainWindow::buildEditMenu(QMenu *editMenu) {
     // Tooltips on disabled entries (e.g. Copy Page as Image) are enabled by
     // makeDisabledAction() when that action is created below, so the greyed-
@@ -3937,6 +3984,10 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             }
             if (!entry.windowState.isEmpty()) {
                 restoreState(entry.windowState);
+                // Re-pin the ADR-0007 canonical toolbar order — see
+                // reassertToolbarLayout() for why the blob can never be
+                // trusted to carry it correctly.
+                reassertToolbarLayout();
             }
             if (entry.markupToolbarVisible) {
                 m_markupToolbar->show();
@@ -3957,6 +4008,10 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
                 }
                 if (!def.windowState.isEmpty()) {
                     restoreState(def.windowState);
+                    // Re-pin the ADR-0007 canonical toolbar order — see
+                    // reassertToolbarLayout() for why the blob can never
+                    // be trusted to carry it correctly.
+                    reassertToolbarLayout();
                 }
                 if (def.markupToolbarVisible) {
                     m_markupToolbar->show();

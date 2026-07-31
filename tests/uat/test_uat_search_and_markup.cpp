@@ -34,11 +34,13 @@
 #include <QDir>
 #include <QDockWidget>
 #include <QFont>
+#include <QHash>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLayout>
 #include <QLineEdit>
 #include <QListWidget>
+#include <QMainWindow>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMouseEvent>
@@ -446,6 +448,10 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_hn_011_highlightsModeEnabledAfterAddingNote();
     void uat_hn_012_listFiltersToTextContentTypes();
     void uat_xct_070_toolbarAnchoringAndOverflow();
+    void uat_xct_074_formActivationWhileMarkupVisibleKeepsMainAnchored();
+    void uat_xct_075_staleWindowStateBlobDoesNotResurrectOldToolbarOrder();
+    void uat_xct_076_toggleAnyToolbarNeverMovesAnotherToolbarsActions();
+    void uat_xct_077_staleWindowStateBlobViaPerTypeDefaultAlsoReasserted();
 
   private:
     QTemporaryDir m_scratch;
@@ -3353,6 +3359,346 @@ void TestUatSearchAndMarkup::uat_xct_070_toolbarAnchoringAndOverflow() {
              "the main toolbar's OWN overflow chevron must NOT appear when Find is opened "
              "at the window minimum width — the opened search must fit the primary row");
     grabTo(mw, QStringLiteral("xct070_open_search_min_width.png"));
+}
+
+// UAT-XCT-074 — Reserved toolbar positions survive the reported live
+// transition: the markup toolbar is visible, then the user manually
+// activates the form toolbar (View → Show Form Filling Toolbar, or its
+// toolbar button). Two things the owner's dogfood report named as one
+// bug are really two: (a) markup auto-hiding is a DELIBERATE mutual-
+// exclusion (different workflows; see the comment at the connect() call
+// in MainWindow's ctor) and (b) that hide must never smuggle a position
+// change for the main toolbar along with it. This case pins (b): main's
+// on-screen origin must be bit-identical before and after the
+// transition, and markup/form visibility must reflect the deliberate
+// exclusion.
+void TestUatSearchAndMarkup::uat_xct_074_formActivationWhileMarkupVisibleKeepsMainAnchored() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_xct_074.pdf")), QStringLiteral("fixture"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto *mainTb = mw->findChild<QToolBar *>(QStringLiteral("MainToolbar"));
+    auto *markupTb = mw->findChild<MarkupToolbar *>();
+    auto *formTb = mw->findChild<FormToolbar *>();
+    QVERIFY(mainTb && markupTb && formTb);
+
+    formTb->hide();
+    markupTb->show();
+    QApplication::processEvents();
+    const QPoint originMarkupVisible = mainTb->mapTo(mw, QPoint(0, 0));
+    grabTo(mw, QStringLiteral("xct074_markup_visible.png"));
+
+    QAction *formToggle = nullptr;
+    for (QAction *a : mw->findChildren<QAction *>()) {
+        if (a->objectName() == QStringLiteral("action.view.formToolbar")) {
+            formToggle = a;
+            break;
+        }
+    }
+    QVERIFY2(formToggle, "action.view.formToolbar not found");
+    formToggle->trigger(); // simulates the owner's manual "activate form toolbar"
+    QApplication::processEvents();
+    grabTo(mw, QStringLiteral("xct074_form_activated_markup_hidden.png"));
+
+    // (a) The mutual exclusion is deliberate product behaviour, not an
+    // accident — confirm it still fires: activating form hides markup.
+    QVERIFY2(!markupTb->isVisible(),
+             "activating the form toolbar must hide markup (deliberate mutual exclusion)");
+    QVERIFY2(formTb->isVisible(), "the form toolbar must be visible after activation");
+
+    // (b) The position invariant the owner actually reported broken:
+    // the main toolbar's origin must not move by even one pixel across
+    // that transition.
+    const QPoint originFormActive = mainTb->mapTo(mw, QPoint(0, 0));
+    QVERIFY2(originFormActive == originMarkupVisible,
+             qPrintable(QStringLiteral("main toolbar moved when form was activated while markup "
+                                       "was visible: markup-visible=(%1,%2) form-active=(%3,%4)")
+                            .arg(originMarkupVisible.x())
+                            .arg(originMarkupVisible.y())
+                            .arg(originFormActive.x())
+                            .arg(originFormActive.y())));
+}
+
+// UAT-XCT-075 — A persisted per-file windowState blob captured under an
+// older toolbar arrangement must never resurrect that arrangement.
+// QMainWindow::restoreState() restores the top toolbar area's order and
+// row-break placement from the blob (matched by object name), which is
+// a *different* channel than the explicit markupToolbarVisible bool
+// RecentEntry also carries — restoreState() runs first and can silently
+// overwrite the construction-time order ADR 0007 established, even
+// though none of the three toolbars are user-movable and there is
+// therefore never a legitimate reason for the blob to carry a different
+// order. This reproduces exactly that: a blob saved under the PRE-ADR-
+// 0007 order (markup, form+break, main with NO break — main a tenant on
+// form's row) is planted as this document's persisted view-state, then
+// the document is opened for real. Before the fix
+// (MainWindow::reassertToolbarLayout()), opening this document left
+// main looking fine until the form toolbar was shown — at which point
+// main jumped ~184px right, exactly the ADR 0007 "~183px" bug,
+// resurrected from disk on a build that already has the construction-
+// time fix.
+void TestUatSearchAndMarkup::uat_xct_075_staleWindowStateBlobDoesNotResurrectOldToolbarOrder() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_xct_075.pdf")), QStringLiteral("fixture"));
+
+    // Build a throwaway QMainWindow that mimics the PRE-fix construction
+    // order exactly (see ADR 0007 "what ships today"): markup added,
+    // form added with a break before it, main added LAST with NO break
+    // before it (so main tenants on form's row).
+    QMainWindow legacy;
+    auto *legacyMain = new QToolBar(QStringLiteral("Main"), &legacy);
+    legacyMain->setObjectName(QStringLiteral("MainToolbar"));
+    auto *legacyMarkup = new QToolBar(QStringLiteral("Markup"), &legacy);
+    legacyMarkup->setObjectName(QStringLiteral("MarkupToolbar"));
+    auto *legacyForm = new QToolBar(QStringLiteral("Form"), &legacy);
+    legacyForm->setObjectName(QStringLiteral("FormToolbar"));
+
+    legacy.addToolBar(Qt::TopToolBarArea, legacyMarkup);
+    legacy.addToolBar(Qt::TopToolBarArea, legacyForm);
+    legacy.insertToolBarBreak(legacyForm);
+    legacy.addToolBar(Qt::TopToolBarArea, legacyMain); // appended LAST, no break: tenant
+    legacyMarkup->hide();
+    legacyForm->hide();
+    legacy.resize(1100, 750);
+
+    const QByteArray staleBlob = legacy.saveState();
+    QVERIFY(!staleBlob.isEmpty());
+
+    RecentEntry state;
+    state.currentPage = 0;
+    state.zoomMode = ZoomMode::Custom;
+    state.zoomFactor = 1.0;
+    state.sidebarMode = SidebarMode::Hidden;
+    state.markupToolbarVisible = false;
+    state.windowState = staleBlob;
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->recentFiles().add(pdfPath);
+    app->recentFiles().updateViewState(pdfPath, state);
+
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    // Hold the window at a fixed, generous size (mirrors UAT-XCT-070/074)
+    // so the comparison isolates toolbar order, not incidental overflow
+    // from a narrow default window.
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto *mainTb = mw->findChild<QToolBar *>(QStringLiteral("MainToolbar"));
+    auto *formTb = mw->findChild<FormToolbar *>();
+    QVERIFY(mainTb && formTb);
+
+    const QPoint mainOriginAfterOpen = mainTb->mapTo(mw, QPoint(0, 0));
+    QCOMPARE(mainOriginAfterOpen.x(), 0);
+    grabTo(mw, QStringLiteral("xct075_stale_blob_after_open.png"));
+
+    formTb->show();
+    QApplication::processEvents();
+    const QPoint mainOriginFormShown = mainTb->mapTo(mw, QPoint(0, 0));
+    grabTo(mw, QStringLiteral("xct075_stale_blob_form_shown.png"));
+    QVERIFY2(mainOriginFormShown == mainOriginAfterOpen,
+             qPrintable(QStringLiteral("a stale windowState blob resurrected the pre-ADR-0007 "
+                                       "toolbar order: main moved from (%1,%2) to (%3,%4) when "
+                                       "the form toolbar was shown")
+                            .arg(mainOriginAfterOpen.x())
+                            .arg(mainOriginAfterOpen.y())
+                            .arg(mainOriginFormShown.x())
+                            .arg(mainOriginFormShown.y())));
+}
+
+// UAT-XCT-076 — General reserved-position sweep: toggling ANY one
+// toolbar's visibility never moves another toolbar's actions. Where
+// UAT-XCT-070/074/075 each pin one specific transition, this case is
+// the general invariant: it records the on-screen geometry of a set of
+// individual MAIN-toolbar action widgets (not just the toolbar's own
+// origin — the actions inside it) at a hidden-contextual-bars baseline,
+// then sweeps every show/hide combination of markup and form and
+// re-asserts those exact widget geometries after each step. A toolbar
+// that only *looks* anchored because its own top-left corner didn't
+// move, while an individual action inside it silently reflowed (e.g.
+// icon-only overflow state churn), would still fail this case.
+void TestUatSearchAndMarkup::uat_xct_076_toggleAnyToolbarNeverMovesAnotherToolbarsActions() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_xct_076.pdf")), QStringLiteral("fixture"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto *mainTb = mw->findChild<QToolBar *>(QStringLiteral("MainToolbar"));
+    auto *markupTb = mw->findChild<MarkupToolbar *>();
+    auto *formTb = mw->findChild<FormToolbar *>();
+    QVERIFY(mainTb && markupTb && formTb);
+
+    markupTb->hide();
+    formTb->hide();
+    QApplication::processEvents();
+    mainTb->layout()->activate();
+    QApplication::processEvents();
+
+    // Every realised main-toolbar action's widget — spanning leading
+    // (zoom/rotate), middle (markup/form toggles), and trailing (near
+    // search) — must keep its exact geometry across every toggle below.
+    QList<QAction *> mainActions;
+    for (QAction *a : mainTb->actions()) {
+        if (mainTb->widgetForAction(a))
+            mainActions.append(a);
+    }
+    QVERIFY2(mainActions.size() >= 3, "main toolbar must expose at least 3 realised actions");
+
+    QHash<QAction *, QRect> baseline;
+    for (QAction *a : mainActions) {
+        QWidget *w = mainTb->widgetForAction(a);
+        baseline.insert(a, QRect(w->mapTo(mw, QPoint(0, 0)), w->size()));
+    }
+
+    auto assertUnchanged = [&](const QString &stepLabel) {
+        for (QAction *a : mainActions) {
+            QWidget *w = mainTb->widgetForAction(a);
+            QVERIFY2(w, qPrintable(QStringLiteral("action widget vanished after: %1").arg(stepLabel)));
+            const QRect now(w->mapTo(mw, QPoint(0, 0)), w->size());
+            const QRect expected = baseline.value(a);
+            QVERIFY2(now == expected,
+                     qPrintable(QStringLiteral("main-toolbar action moved after '%1': "
+                                               "expected %2,%3 %4x%5, got %6,%7 %8x%9")
+                                    .arg(stepLabel)
+                                    .arg(expected.x())
+                                    .arg(expected.y())
+                                    .arg(expected.width())
+                                    .arg(expected.height())
+                                    .arg(now.x())
+                                    .arg(now.y())
+                                    .arg(now.width())
+                                    .arg(now.height())));
+        }
+    };
+
+    // Sweep: show markup alone; hide it; show form alone; hide it; show
+    // markup then switch to form (mutual exclusion); back to baseline.
+    markupTb->show();
+    QApplication::processEvents();
+    assertUnchanged(QStringLiteral("markup shown"));
+
+    markupTb->hide();
+    QApplication::processEvents();
+    assertUnchanged(QStringLiteral("markup hidden again"));
+
+    formTb->show();
+    QApplication::processEvents();
+    assertUnchanged(QStringLiteral("form shown"));
+
+    formTb->hide();
+    QApplication::processEvents();
+    assertUnchanged(QStringLiteral("form hidden again"));
+
+    markupTb->show();
+    QApplication::processEvents();
+    assertUnchanged(QStringLiteral("markup shown (2nd time)"));
+
+    formTb->show(); // triggers the mutual-exclusion hide of markup
+    QApplication::processEvents();
+    QVERIFY2(!markupTb->isVisible(), "form activation must still hide markup (deliberate)");
+    assertUnchanged(QStringLiteral("form activated while markup was visible"));
+
+    markupTb->show(); // triggers the mutual-exclusion hide of form
+    QApplication::processEvents();
+    QVERIFY2(!formTb->isVisible(), "markup activation must still hide form (deliberate)");
+    assertUnchanged(QStringLiteral("markup activated while form was visible"));
+}
+
+// UAT-XCT-077 — The PER-TYPE fallback restore path (a brand-new document
+// of a type Trailer has seen before, with no per-file RecentEntry of its
+// own) calls the same restoreState()/reassertToolbarLayout() pair as the
+// per-file path in UAT-XCT-075, through a structurally parallel but
+// distinct branch (DocumentTypeDefaults rather than RecentFiles). This
+// is very likely the MORE common real-world trigger — it fires on every
+// "first time opening this particular PDF" as long as the user has
+// closed some other PDF before — so it gets its own direct test rather
+// than relying on code-reading to infer the per-file case covers it.
+void TestUatSearchAndMarkup::uat_xct_077_staleWindowStateBlobViaPerTypeDefaultAlsoReasserted() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_xct_077.pdf")), QStringLiteral("fixture"));
+
+    // Same throwaway pre-ADR-0007-order QMainWindow as UAT-XCT-075.
+    QMainWindow legacy;
+    auto *legacyMain = new QToolBar(QStringLiteral("Main"), &legacy);
+    legacyMain->setObjectName(QStringLiteral("MainToolbar"));
+    auto *legacyMarkup = new QToolBar(QStringLiteral("Markup"), &legacy);
+    legacyMarkup->setObjectName(QStringLiteral("MarkupToolbar"));
+    auto *legacyForm = new QToolBar(QStringLiteral("Form"), &legacy);
+    legacyForm->setObjectName(QStringLiteral("FormToolbar"));
+
+    legacy.addToolBar(Qt::TopToolBarArea, legacyMarkup);
+    legacy.addToolBar(Qt::TopToolBarArea, legacyForm);
+    legacy.insertToolBarBreak(legacyForm);
+    legacy.addToolBar(Qt::TopToolBarArea, legacyMain);
+    legacyMarkup->hide();
+    legacyForm->hide();
+    legacy.resize(1100, 750);
+
+    const QByteArray staleBlob = legacy.saveState();
+    QVERIFY(!staleBlob.isEmpty());
+
+    DocumentTypeDefault def;
+    def.zoomMode = ZoomMode::Custom;
+    def.zoomFactor = 1.0;
+    def.sidebarMode = SidebarMode::Hidden;
+    def.markupToolbarVisible = false;
+    def.windowState = staleBlob;
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    // No RecentEntry for this path at all — forces the per-type fallback
+    // branch (entry.hasViewState() false) rather than the per-file one.
+    app->documentTypeDefaults().setForType(DocumentType::Pdf, def);
+
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto *mainTb = mw->findChild<QToolBar *>(QStringLiteral("MainToolbar"));
+    auto *formTb = mw->findChild<FormToolbar *>();
+    QVERIFY(mainTb && formTb);
+
+    const QPoint mainOriginAfterOpen = mainTb->mapTo(mw, QPoint(0, 0));
+    formTb->show();
+    QApplication::processEvents();
+    const QPoint mainOriginFormShown = mainTb->mapTo(mw, QPoint(0, 0));
+    QVERIFY2(mainOriginFormShown == mainOriginAfterOpen,
+             qPrintable(QStringLiteral("per-type restore path: a stale windowState blob "
+                                       "resurrected the pre-ADR-0007 toolbar order: main moved "
+                                       "from (%1,%2) to (%3,%4) when the form toolbar was shown")
+                            .arg(mainOriginAfterOpen.x())
+                            .arg(mainOriginAfterOpen.y())
+                            .arg(mainOriginFormShown.x())
+                            .arg(mainOriginFormShown.y())));
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG

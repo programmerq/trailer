@@ -350,6 +350,130 @@ toolbars are meaningful). Contextual bars start hidden.
 Driven by
 `tests/uat/test_uat_search_and_markup.cpp::uat_xct_070_toolbarAnchoringAndOverflow`.
 
+### UAT-XCT-074 — Activating the form toolbar while markup is visible keeps the main toolbar anchored
+
+**Context.** Dogfood report (2026-07-31, macOS nightly): "Activating form
+filling toolbar manually when the markup toolbar is visible makes the
+markup toolbar go away. It also puts the form filling toolbar at the top
+left. So now the main toolbar moves up and to the right instead of just
+up and down." Two things reported as one bug are actually two: markup
+auto-hiding when form is activated is **deliberate** (mutual exclusion —
+different workflows, `MainWindow.cpp`'s `visibilityChanged` connections
+either side of the markup/form construction), and is not itself a
+defect. The defect is any accompanying position change.
+
+**Preconditions:** An editable document is open. Window held at a fixed
+size across the transition.
+**Steps:**
+1. Show the markup toolbar; record the main toolbar's on-screen origin.
+2. Activate the form toolbar (View → Show Form Filling Toolbar, or its
+   toolbar button) while markup is still visible.
+**Expected:**
+- The markup toolbar hides (confirms the deliberate mutual exclusion
+  still fires) and the form toolbar becomes visible.
+- The main toolbar's origin is **bit-identical** before and after —
+  neither the "up" (row) nor the "right" (horizontal tenancy on the
+  form bar's row) displacement the report describes occurs.
+
+G2 grabs: `xct074_markup_visible.png`, `xct074_form_activated_markup_hidden.png`.
+Driven by
+`tests/uat/test_uat_search_and_markup.cpp::uat_xct_074_formActivationWhileMarkupVisibleKeepsMainAnchored`.
+
+### UAT-XCT-075 — A stale persisted windowState blob does not resurrect the pre-ADR-0007 toolbar order
+
+**Context.** `MainWindow::onCurrentDocumentChanged`'s per-file and
+per-type view-state restore both call `QMainWindow::restoreState()` on a
+`QByteArray` captured by a previous `closeEvent()`'s `saveState()`. That
+blob encodes toolbar area **order and row-break placement**, matched
+back to our toolbars by object name — a different channel than the
+explicit `markupToolbarVisible` bool the same `RecentEntry` /
+`DocumentTypeDefault` structs carry. Because none of the three toolbars
+are user-movable (`setMovable(false)` / `setFloatable(false)` on all
+three — placement is intentional, not user-configurable), there is never
+a legitimate reason for a persisted blob to carry a *different* order
+than the construction-time one ADR 0007 established — but nothing
+stopped it from doing so. A blob saved by an older build (before ADR
+0007's fix), or by any future rearrangement, silently overwrites the
+canonical order the moment `restoreState()` runs, which resurrects the
+"form toolbar shoves main toolbar right" bug from disk on a binary that
+already has the construction-time fix — this is why the owner still saw
+the bug on the latest nightly. Fixed by
+`MainWindow::reassertToolbarLayout()`, called immediately after every
+`restoreState()`.
+
+**Preconditions:** A document has a persisted `RecentEntry` whose
+`windowState` blob was captured under the pre-ADR-0007 arrangement
+(markup toolbar, then form toolbar with a row break before it, then the
+main toolbar appended last with **no** break — main a tenant on the form
+toolbar's row).
+**Steps:**
+1. Open that document.
+2. Show the form toolbar.
+**Expected:** the main toolbar's origin is identical before and after
+step 2 — the stale blob's order is overridden by
+`reassertToolbarLayout()` regardless of what it encodes. Before the fix,
+step 2 moved the main toolbar ~184px right (the same magnitude ADR 0007
+describes for the original construction-time bug), reproduced here
+purely from persisted state.
+
+G2 grabs: `xct075_stale_blob_after_open.png`, `xct075_stale_blob_form_shown.png`.
+Driven by
+`tests/uat/test_uat_search_and_markup.cpp::uat_xct_075_staleWindowStateBlobDoesNotResurrectOldToolbarOrder`.
+
+### UAT-XCT-076 — General invariant: toggling any one toolbar never moves another toolbar's actions
+
+**Context.** The single durable regression guard for the owner's stated
+principle ("toolbars should always have a reserved location so that when
+visibility is toggled they never offset/move other toolbars"), phrased
+as a geometry assertion rather than a screenshot diff so it holds
+forever, not just for the specific transitions UAT-XCT-070/074/075 name.
+Where those cases check the main toolbar's own top-left origin, this
+case checks the geometry of the **individual action widgets inside it**
+(zoom, rotate, the markup/form toggle buttons, search) — a stricter
+check, since a toolbar could keep its own origin while an action inside
+it silently reflowed.
+
+**Preconditions:** An editable document is open. Window held at a fixed
+size for the whole sweep.
+**Steps (all offscreen, geometry-asserted after each):**
+1. Record every main-toolbar action widget's on-screen rect with markup
+   and form both hidden (baseline).
+2. Show markup → assert unchanged. Hide markup → assert unchanged.
+3. Show form → assert unchanged. Hide form → assert unchanged.
+4. Show markup, then show form (triggers the mutual-exclusion hide of
+   markup) → assert unchanged, and assert markup did hide.
+5. Show markup again (triggers the mutual-exclusion hide of form) →
+   assert unchanged, and assert form did hide.
+
+**Expected:** every main-toolbar action's rect is bit-identical to the
+baseline after every one of the five steps above.
+
+Driven by
+`tests/uat/test_uat_search_and_markup.cpp::uat_xct_076_toggleAnyToolbarNeverMovesAnotherToolbarsActions`.
+
+### UAT-XCT-077 — Stale windowState blob is also reasserted via the per-type fallback path
+
+**Context.** UAT-XCT-075 covers the per-**file** restore branch
+(`RecentEntry`). `onCurrentDocumentChanged` has a second, structurally
+parallel branch — the per-**type** fallback (`DocumentTypeDefault`) —
+that fires whenever a document has no per-file state of its own but
+Trailer has seen another document of the same type before (i.e. most
+"first time opening this particular PDF" opens). Both branches call
+`restoreState()` then `reassertToolbarLayout()`; this case exercises the
+per-type branch directly rather than relying on code-reading to infer
+it from UAT-XCT-075, since it is arguably the more common real-world
+trigger.
+
+**Preconditions:** No `RecentEntry` exists for the document being
+opened; a `DocumentTypeDefault` for PDFs carries a `windowState` blob
+captured under the pre-ADR-0007 arrangement.
+**Steps:** Open the document; show the form toolbar.
+**Expected:** the main toolbar's origin is identical before and after —
+same invariant as UAT-XCT-075, proven through the other branch.
+
+Driven by
+`tests/uat/test_uat_search_and_markup.cpp::uat_xct_077_staleWindowStateBlobViaPerTypeDefaultAlsoReasserted`.
+
 ---
 
 ## Process lifecycle
