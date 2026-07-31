@@ -1,6 +1,7 @@
 #include "diagnostics/FeedbackReport.h"
 
 #include "app/Application.h"
+#include "document/SelectableTextStore.h"
 #include "ml/ModelRegistry.h"
 #include "recent/RecentFiles.h"
 #include "settings/Settings.h"
@@ -130,6 +131,15 @@ DocumentSnapshot snapshotDocument(IDocument *doc) {
         }
     }
 
+    // Current-page text kind (see the field comments in FeedbackReport.h
+    // for the full caveat) — meaningful only for the two document types
+    // that can carry page content at all.
+    if (snap.type == DocumentType::Pdf || snap.type == DocumentType::Image) {
+        snap.currentPageHasExtractableText = doc->pageHasText(snap.currentPage);
+        if (SelectableTextStore *store = doc->selectableText())
+            snap.currentPageHasSelectableTextBlocks = store->hasResults(snap.currentPage);
+    }
+
     return snap;
 }
 
@@ -245,6 +255,32 @@ void appendDocumentLine(QString &out, const DocumentSnapshot &doc, int index,
     if (doc.supportsViewModes)
         out += QStringLiteral("     - View mode: %1\n").arg(viewModeToString(doc.viewMode));
     out += QStringLiteral("     - Has text layer: %1\n").arg(yesNo(doc.hasTextLayer));
+
+    // Current-page text kind — see FeedbackReport.h for the full caveat on
+    // why this can't distinguish visible native text from an invisible
+    // OCR layer baked into the page by an external tool. Only rendered
+    // for the two types that can carry page content at all.
+    if (doc.type == DocumentType::Pdf || doc.type == DocumentType::Image) {
+        out += QStringLiteral("     - Current page text: ");
+        if (doc.currentPageHasExtractableText && doc.currentPageHasSelectableTextBlocks) {
+            out += QStringLiteral(
+                "extractable PDF text, ingested into Trailer's selection layer "
+                "(NOTE: this cannot be told apart from an invisible OCR text "
+                "layer baked into the page by an external tool — PDF text "
+                "render mode isn't inspected — both read identically here)");
+        } else if (!doc.currentPageHasExtractableText && doc.currentPageHasSelectableTextBlocks) {
+            out += QStringLiteral(
+                "from Trailer's own on-device OCR (no extractable native PDF "
+                "text on this page)");
+        } else if (doc.currentPageHasExtractableText && !doc.currentPageHasSelectableTextBlocks) {
+            out += QStringLiteral(
+                "extractable PDF text present, not yet ingested into Trailer's "
+                "selection layer");
+        } else {
+            out += QStringLiteral("none detected on this page");
+        }
+        out += QStringLiteral("\n");
+    }
 
     // Natural/intrinsic geometry — kept units-explicit (px for images, pt
     // for PDF pages) so a bare number can never be misread as the other.

@@ -59,6 +59,13 @@ class TestFeedbackReport : public QObject {
     void windowAndScreenGeometryAreRendered();
     void invalidGeometryIsOmittedNotFaked();
     void imageDimensionsDoNotLeakPathWhenPathsOmitted();
+    void currentPageTextNoneDetected();
+    void currentPageTextFromTrailerOcr();
+    void currentPageTextExtractableAndIngestedCarriesInvisibleCaveat();
+    void currentPageTextExtractableNotYetIngested();
+    void currentPageTextOmittedForNonTextBearingDocType();
+    void currentPageTextFromTrailerOcrAppliesToImagesToo();
+    void currentPageTextAbsentWithNoDocumentOpen();
 };
 
 void TestFeedbackReport::headerCarriesStableGreppableFields() {
@@ -374,6 +381,148 @@ void TestFeedbackReport::imageDimensionsDoNotLeakPathWhenPathsOmitted() {
     QVERIFY(md.contains(QStringLiteral("Image devicePixelRatio: 2")));
     QVERIFY(!md.contains(QStringLiteral("/home/alice")));
     QVERIFY(!md.contains(QStringLiteral("private-client")));
+}
+
+void TestFeedbackReport::currentPageTextNoneDetected() {
+    // Neither extractable PDF text nor selectable-text blocks: a bare
+    // scan page nobody has OCR'd yet.
+    AppSnapshot s = minimalSnapshot();
+    WindowSnapshot w;
+    DocumentSnapshot d;
+    d.displayName = QStringLiteral("scan-only.pdf");
+    d.type = DocumentType::Pdf;
+    d.pageCount = 1;
+    d.currentPage = 0;
+    d.currentPageHasExtractableText = false;
+    d.currentPageHasSelectableTextBlocks = false;
+    w.documents.append(d);
+    s.windows.append(w);
+
+    const QString md = formatMarkdown(s);
+    QVERIFY(md.contains(QStringLiteral("Current page text: none detected on this page")));
+}
+
+void TestFeedbackReport::currentPageTextFromTrailerOcr() {
+    // No extractable native PDF text, but the selection overlay has
+    // blocks anyway — they can only have come from Trailer's own OCR.
+    AppSnapshot s = minimalSnapshot();
+    WindowSnapshot w;
+    DocumentSnapshot d;
+    d.displayName = QStringLiteral("scanned-then-ocrd.pdf");
+    d.type = DocumentType::Pdf;
+    d.pageCount = 1;
+    d.currentPage = 0;
+    d.currentPageHasExtractableText = false;
+    d.currentPageHasSelectableTextBlocks = true;
+    w.documents.append(d);
+    s.windows.append(w);
+
+    const QString md = formatMarkdown(s);
+    QVERIFY(md.contains(
+        QStringLiteral("Current page text: from Trailer's own on-device OCR")));
+}
+
+void TestFeedbackReport::currentPageTextExtractableAndIngestedCarriesInvisibleCaveat() {
+    // The owner's actual bug shape: extractable text present AND already
+    // ingested into the selection layer. This is the ambiguous case — it
+    // covers both a normal born-digital page AND a scanned page with an
+    // invisible OCR text layer baked in by an external tool, and the
+    // report must say so rather than claim to know which.
+    AppSnapshot s = minimalSnapshot();
+    WindowSnapshot w;
+    DocumentSnapshot d;
+    d.displayName = QStringLiteral("manual-page-12.pdf");
+    d.type = DocumentType::Pdf;
+    d.pageCount = 365;
+    d.currentPage = 11;
+    d.currentPageHasExtractableText = true;
+    d.currentPageHasSelectableTextBlocks = true;
+    w.documents.append(d);
+    s.windows.append(w);
+
+    const QString md = formatMarkdown(s);
+    QVERIFY(md.contains(QStringLiteral(
+        "Current page text: extractable PDF text, ingested into Trailer's "
+        "selection layer")));
+    QVERIFY(md.contains(QStringLiteral("cannot be told apart from an invisible OCR text")));
+}
+
+void TestFeedbackReport::currentPageTextExtractableNotYetIngested() {
+    // Extractable PDF text exists but hasn't landed in the selection
+    // overlay yet (the transient window before ingestNativeTextLayer runs).
+    AppSnapshot s = minimalSnapshot();
+    WindowSnapshot w;
+    DocumentSnapshot d;
+    d.displayName = QStringLiteral("just-opened.pdf");
+    d.type = DocumentType::Pdf;
+    d.pageCount = 1;
+    d.currentPage = 0;
+    d.currentPageHasExtractableText = true;
+    d.currentPageHasSelectableTextBlocks = false;
+    w.documents.append(d);
+    s.windows.append(w);
+
+    const QString md = formatMarkdown(s);
+    QVERIFY(md.contains(QStringLiteral(
+        "Current page text: extractable PDF text present, not yet ingested "
+        "into Trailer's selection layer")));
+}
+
+void TestFeedbackReport::currentPageTextOmittedForNonTextBearingDocType() {
+    // Unknown/stub document type: no "Current page text" line at all —
+    // matches the existing pattern of omitting Zoom/View-mode lines for
+    // capabilities that don't apply, rather than printing a hollow
+    // "none detected" for a type that was never asked the question.
+    AppSnapshot s = minimalSnapshot();
+    WindowSnapshot w;
+    DocumentSnapshot d;
+    d.displayName = QStringLiteral("mystery-file");
+    d.type = DocumentType::Unknown;
+    w.documents.append(d);
+    s.windows.append(w);
+
+    const QString md = formatMarkdown(s);
+    QVERIFY(!md.contains(QStringLiteral("Current page text:")));
+}
+
+void TestFeedbackReport::currentPageTextFromTrailerOcrAppliesToImagesToo() {
+    // Image docs can never have PDF-native extractable text, so only
+    // "none" or "from Trailer's own on-device OCR" are reachable for
+    // them — verify the Image branch reaches the same OCR label as PDF.
+    AppSnapshot s = minimalSnapshot();
+    WindowSnapshot w;
+    DocumentSnapshot d;
+    d.displayName = QStringLiteral("receipt.jpg");
+    d.type = DocumentType::Image;
+    d.imagePixelSize = QSize(504, 375);
+    d.currentPageHasExtractableText = false;
+    d.currentPageHasSelectableTextBlocks = true;
+    w.documents.append(d);
+    s.windows.append(w);
+
+    const QString md = formatMarkdown(s);
+    QVERIFY(md.contains(
+        QStringLiteral("Current page text: from Trailer's own on-device OCR")));
+}
+
+void TestFeedbackReport::currentPageTextAbsentWithNoDocumentOpen() {
+    // The no-document case: zero windows, and a window with zero
+    // documents (the Windows/Linux empty state). Neither path has a
+    // DocumentSnapshot to derive a "Current page text" line from, so the
+    // report must never emit that label at all — not even a hollow
+    // "none detected" for a page that doesn't exist.
+    {
+        const AppSnapshot s = minimalSnapshot(); // no windows appended
+        const QString md = formatMarkdown(s);
+        QVERIFY(!md.contains(QStringLiteral("Current page text:")));
+    }
+    {
+        AppSnapshot s = minimalSnapshot();
+        WindowSnapshot w; // a real window, zero documents
+        s.windows.append(w);
+        const QString md = formatMarkdown(s);
+        QVERIFY(!md.contains(QStringLiteral("Current page text:")));
+    }
 }
 
 QTEST_MAIN(TestFeedbackReport)
