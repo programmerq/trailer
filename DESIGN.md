@@ -1173,9 +1173,12 @@ the standard shortcuts inside text inputs.)
 | Full screen | *Planned* — `F11` (Win/Linux) / `Ctrl+⌘+F` (Mac) intended; feature not implemented, see §6.1.7 |
 | Zoom in | `Ctrl/⌘+=` (and the platform `QKeySequence::ZoomIn`) |
 | Zoom out | `Ctrl/⌘+-` (the platform `QKeySequence::ZoomOut`) |
-| Fit page | `Ctrl/⌘+0` |
-| Actual size | `Ctrl/⌘+1` |
-| Fit width | `Ctrl/⌘+2` |
+| Actual size | `Ctrl/⌘+0` |
+| Fit page | `Ctrl/⌘+9` |
+| Fit width | *(menu-only; no digit shortcut — ⌘2 is Single Page below)* |
+| Continuous | `Ctrl/⌘+1` |
+| Single Page | `Ctrl/⌘+2` |
+| Two Pages | `Ctrl/⌘+3` |
 
 **Go (page navigation)**
 

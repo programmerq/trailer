@@ -36,6 +36,7 @@
 #include <QLabel>
 #include <QPageSize>
 #include <QPainter>
+#include <QPdfPageNavigator>
 #include <QPdfView>
 #include <QPdfWriter>
 #include <QRect>
@@ -241,6 +242,8 @@ class TestUatTwoPage : public QObject {
     void uat_vwr_080_dprBackingResolution();
     void uat_vwr_081_nextPageWalksAllSpreads();
     void uat_vwr_082_oversizedSpreadTracking();
+    void uat_vwr_101_modeSwitchPreservesCurrentPage();
+    void uat_vwr_102_twoPagesEntryRefitsSpreadFromFitPage();
 
   private:
     QTemporaryDir m_scratch;
@@ -1256,6 +1259,215 @@ void TestUatTwoPage::uat_vwr_082_oversizedSpreadTracking() {
                             .arg(doc->currentPage())));
     if (spy.count() > 0)
         QCOMPARE(spy.last().at(0).toInt(), 0);
+}
+
+// UAT-VWR-101 — real dogfooding bug: switching view modes (Cmd-1/2/3) used
+// to leave the document model (currentPage(), which the sidebar reads) and
+// the actual visible surface disagreeing — the owner's report: "if I start
+// in 'single page' mode, and then do cmd+1 to go to continuous mode, the
+// thumbnail sidebar shows I'm still on page 161, but it's displaying page
+// 1." The model was right and the view was wrong. This walks every mode
+// pair reachable via Cmd-1/2/3 (View menu actions, the user's real path)
+// from a page far from the start of a 24-page document and asserts BOTH
+// sides agree after every switch: doc->currentPage() (the model /
+// sidebar's source of truth) AND the QPdfView pageNavigator's own
+// currentPage() (what Single/Continuous actually paint). Two-Pages mode is
+// checked via doc->currentPage() (TwoPageView has no QPdfView surface) plus
+// the hidden QPdfView navigator, which goToPage() keeps in sync so a
+// switch back to Single/Continuous lands correctly too.
+void TestUatTwoPage::uat_vwr_101_modeSwitchPreservesCurrentPage() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    // 24 pages is enough to have a "current page" far from page 1 without
+    // needing a synthetic hundreds-of-pages fixture (test-shape principle,
+    // TODO.md). Page 15 (0-based) is a cover-alone SPREAD-LEADING page
+    // (1-based page 16, an even page opens a facing pair), so entering
+    // Two-Pages mode from it lands on that same page without extra
+    // spread-arithmetic in the assertions below.
+    const QString pdf =
+        writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_101.pdf")), 24);
+    MainWindow *mw = openFreshWindow(app, pdf);
+    QVERIFY(mw);
+    mw->resize(1000, 700);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+
+    auto *single = findAction(mw, QStringLiteral("action.view.singlePage"));
+    auto *continuous = findAction(mw, QStringLiteral("action.view.continuous"));
+    auto *twoPages = findAction(mw, QStringLiteral("action.view.twoPages"));
+    QVERIFY2(single && continuous && twoPages, "view-mode actions must exist");
+
+    auto *view = mw->findChild<QPdfView *>();
+    QVERIFY(view);
+
+    const int targetPage = 15;
+    doc->goToPage(targetPage);
+    QApplication::processEvents();
+    QCOMPARE(doc->currentPage(), targetPage);
+
+    // Start in Single Page mode at the target page.
+    single->trigger();
+    QApplication::processEvents();
+    QCOMPARE(doc->viewMode(), ViewMode::SinglePage);
+    QCOMPARE(doc->currentPage(), targetPage);
+    QCOMPARE(view->pageNavigator()->currentPage(), targetPage);
+
+    // Single -> Continuous (Cmd-1): the exact owner-reported transition.
+    // Model and the actual QPdfView surface must agree.
+    continuous->trigger();
+    QApplication::processEvents();
+    QCOMPARE(doc->viewMode(), ViewMode::Continuous);
+    QVERIFY2(doc->currentPage() == targetPage,
+             qPrintable(QStringLiteral("Single -> Continuous: model currentPage() must stay "
+                                       "%1; got %2")
+                            .arg(targetPage)
+                            .arg(doc->currentPage())));
+    QVERIFY2(view->pageNavigator()->currentPage() == targetPage,
+             qPrintable(QStringLiteral("Single -> Continuous: the QPdfView surface must "
+                                       "actually be showing page %1, not silently reset to "
+                                       "page 1; got %2")
+                            .arg(targetPage)
+                            .arg(view->pageNavigator()->currentPage())));
+
+    // Continuous -> Single (Cmd-2): the reverse direction, for symmetry.
+    single->trigger();
+    QApplication::processEvents();
+    QCOMPARE(doc->currentPage(), targetPage);
+    QCOMPARE(view->pageNavigator()->currentPage(), targetPage);
+
+    // Single -> Two Pages (Cmd-3): the page must land on the spread that
+    // contains it, not reset to the cover.
+    twoPages->trigger();
+    QApplication::processEvents();
+    QCOMPARE(doc->viewMode(), ViewMode::TwoPages);
+    QVERIFY2(doc->currentPage() == targetPage,
+             qPrintable(QStringLiteral("Single -> Two Pages: currentPage() must land on the "
+                                       "spread containing page %1; got %2")
+                            .arg(targetPage)
+                            .arg(doc->currentPage())));
+
+    // Two Pages -> Continuous (Cmd-1): the page survives the round trip
+    // back through the QPdfView surface.
+    continuous->trigger();
+    QApplication::processEvents();
+    QVERIFY2(doc->currentPage() == targetPage,
+             qPrintable(QStringLiteral("Two Pages -> Continuous: page must round-trip back to "
+                                       "%1; got %2")
+                            .arg(targetPage)
+                            .arg(doc->currentPage())));
+    QCOMPARE(view->pageNavigator()->currentPage(), targetPage);
+}
+
+// UAT-VWR-102 — real dogfooding bug: "going to 'two page' mode makes the
+// page 1 spill halfway off the document area and it populates a
+// scrollbar" — entering Two-Pages mode from Single Page while the zoom
+// MODE is Fit Page (QPdfView's FitInView, computed for ONE page) used to
+// carry that per-page zoom factor straight into the two-page spread
+// unchanged, so two pages side by side at a one-page-fit zoom overflow the
+// viewport width by roughly a whole page. The rule this pins: entering
+// Two-Pages while a FIT zoom mode is active RE-FITS to the spread
+// (TwoPageView::fitPageZoom / fitWidthZoom), so the spread that's actually
+// on screen is what gets fit — never a number computed for a different
+// layout. A literal Custom/Actual zoom is unaffected (that case is already
+// covered by uat_vwr_072).
+void TestUatTwoPage::uat_vwr_102_twoPagesEntryRefitsSpreadFromFitPage() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    const QString pdf =
+        writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_102.pdf")), 6);
+    MainWindow *mw = openFreshWindow(app, pdf);
+    QVERIFY(mw);
+    // Narrow enough that a single A4 page's Fit-Page zoom, carried unchanged
+    // into a two-page spread (page + gutter + page), clearly overflows the
+    // viewport width — the precondition asserted below turns this into a
+    // measured fact rather than an assumption about the window size.
+    mw->resize(650, 850);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+
+    auto *single = findAction(mw, QStringLiteral("action.view.singlePage"));
+    auto *twoPages = findAction(mw, QStringLiteral("action.view.twoPages"));
+    QVERIFY2(single && twoPages, "view-mode actions must exist");
+
+    single->trigger();
+    QApplication::processEvents();
+    // The zoomFitPage() action has no stable objectName; drive the
+    // document API directly (doc->zoomFitPage() IS the action handler's
+    // body — see MainWindow::buildViewMenu), matching the owner's
+    // diagnostic report of "Zoom: Fit Page" precisely.
+    doc->zoomFitPage();
+    QApplication::processEvents();
+    QCOMPARE(doc->zoomMode(), ZoomMode::FitInView);
+    const double singlePageFitZoom = doc->zoomFactor();
+    QVERIFY2(singlePageFitZoom > 0.0, "single-page Fit Page zoom must be positive");
+
+    // Precondition: at that single-page fit zoom, two pages + the gutter
+    // really would overflow a 650px-wide viewport — otherwise this window
+    // size doesn't actually exercise the bug.
+    auto *twoPage = mw->findChild<TwoPageView *>(QStringLiteral("view.twoPage"));
+    QVERIFY(twoPage);
+    const double onePageWidthPts = doc->pageSizeHint(0).width();
+    QVERIFY2(onePageWidthPts * 2.0 * singlePageFitZoom > double(mw->width()),
+             "precondition: two pages at the single-page fit zoom must overflow the window");
+
+    // G2 evidence (before-switch state). Writes a PNG only when
+    // TRAILER_TWO_PAGE_EVIDENCE_DIR is set (mirrors uat_vwr_074's pattern
+    // above); otherwise this exercises the same grab() path as a plain
+    // no-op so the slot is a real test in CI either way.
+    const QByteArray evidenceDir = qgetenv("TRAILER_TWO_PAGE_EVIDENCE_DIR");
+    auto saveEvidence = [&](const QString &name) {
+        if (evidenceDir.isEmpty())
+            return;
+        QDir().mkpath(QString::fromLocal8Bit(evidenceDir));
+        mw->grab().save(QString::fromLocal8Bit(evidenceDir) + QDir::separator() + name);
+    };
+    saveEvidence(QStringLiteral("vwr102-before-single-fitpage.png"));
+
+    QVERIFY2(twoPages->isEnabled(), "Two Pages must be enabled for this multi-page PDF");
+    twoPages->trigger();
+    QApplication::processEvents();
+    QCOMPARE(doc->viewMode(), ViewMode::TwoPages);
+    // G2 evidence (after-switch state) — the shot that shows the fix: the
+    // spread fits with no horizontal scrollbar, versus the pre-fix capture
+    // committed at docs/uat/images/2026-07-31-two-page-zoom-refit-*.png
+    // (page 1 spilled off the right edge with a populated scrollbar).
+    saveEvidence(QStringLiteral("vwr102-after-twopages.png"));
+
+    // The spread must actually fit: no horizontal scrollbar populated by a
+    // page silently spilling off the document area.
+    QVERIFY2(twoPage->horizontalScrollBar()->maximum() <= 1,
+             qPrintable(QStringLiteral("entering Two-Pages from Fit Page must re-fit the "
+                                       "spread, not spill it off-screen; hbar max = %1")
+                            .arg(twoPage->horizontalScrollBar()->maximum())));
+
+    // The re-fit zoom must be smaller than the single-page fit it would
+    // otherwise have inherited — proof the spread was actually refit, not
+    // coincidentally unchanged.
+    QVERIFY2(doc->zoomFactor() < singlePageFitZoom,
+             qPrintable(QStringLiteral("Two-Pages entry must recompute a spread-fit zoom "
+                                       "smaller than the single-page fit %1; got %2")
+                            .arg(singlePageFitZoom)
+                            .arg(doc->zoomFactor())));
+
+    // The readout stays truthful: doc->zoomFactor() must equal what the
+    // visible TwoPageView is actually rendering at (mirrors uat_vwr_072/079
+    // for the entry path specifically, since this is a mode SWITCH, not an
+    // explicit zoom action).
+    QVERIFY2(qFuzzyCompare(doc->zoomFactor(), twoPage->zoomFactor()),
+             qPrintable(QStringLiteral("zoom readout %1 must match the TwoPageView render "
+                                       "zoom %2")
+                            .arg(doc->zoomFactor())
+                            .arg(twoPage->zoomFactor())));
 }
 
 int main(int argc, char **argv) {

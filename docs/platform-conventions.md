@@ -126,7 +126,8 @@ out in Notes.
 | Find Next / Previous | ⌘G / ⇧⌘G | Ctrl+G / Ctrl+Shift+G | Windows also F3 / Shift+F3 by convention. |
 | Zoom in | ⌘= | Ctrl+= | Viewer-critical. `+` accepted where a keyboard produces it without Shift. |
 | Zoom out | ⌘- | Ctrl+- | Viewer-critical. |
-| Zoom reset (default view) | ⌘0 | Ctrl+0 | Viewer-critical. Trailer binds ⌘0/Ctrl+0 to **Fit page**; **Actual size** is ⌘1/Ctrl+1 (DESIGN §7). |
+| Zoom reset (default view) | ⌘0 | Ctrl+0 | Viewer-critical. Trailer binds ⌘0/Ctrl+0 to **Actual size**; **Fit page** is ⌘9/Ctrl+9 — the digit row 1/2/3 is reserved for page mode (below), so zoom moved off it (DESIGN §7). |
+| Page mode: Continuous / Single Page / Two Pages | ⌘1 / ⌘2 / ⌘3 | Ctrl+1 / Ctrl+2 / Ctrl+3 | Trailer binding, not a platform default (DESIGN §7). View-menu order top-to-bottom matches this Cmd-1/2/3 numbering and never reorders by which mode is active (gate G10 — spatial constancy). |
 | Cancel current operation | ⌘. | Esc | ⌘. is the macOS cancel; Esc is the Windows/Linux cancel — this is the one row that is **not** a plain modifier swap. |
 | Preferences / Settings | ⌘, | Edit/Tools → Preferences (Ctrl+, on Linux) | macOS app-menu Settings…; app-level settings only. |
 | Minimize window | ⌘M | Ctrl+M | |

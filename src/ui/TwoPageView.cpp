@@ -195,8 +195,18 @@ void TwoPageView::scrollToPage(int pageIndex) {
     double y = kOuterMargin;
     for (const Spread &s : m_spreads) {
         if (s.left == page1 || s.right == page1) {
-            verticalScrollBar()->setValue(std::min(
-                static_cast<int>(y - kOuterMargin), verticalScrollBar()->maximum()));
+            // Round (not truncate) to the nearest logical pixel. A plain
+            // static_cast<int> always rounds toward zero, which can lose up
+            // to just under 1px of the target offset; topVisibleLeadingPage()
+            // reconstructs the scrolled-to spread's top from this same value
+            // with only a 0.5px epsilon (kProbeEpsilon), so a truncation-only
+            // rounding here could silently under-shoot enough to make the
+            // reconstruction land ONE SPREAD SHORT of the page just navigated
+            // to (currentPage() reporting the previous spread right after a
+            // successful scrollToPage — the real regression this fixes:
+            // Cmd-3 into Two-Pages mode on a page deep in the document).
+            const int target = static_cast<int>(std::lround(y - kOuterMargin));
+            verticalScrollBar()->setValue(std::min(target, verticalScrollBar()->maximum()));
             viewport()->update();
             return;
         }
