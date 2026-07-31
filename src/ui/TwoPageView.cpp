@@ -1,5 +1,7 @@
 #include "TwoPageView.h"
 
+#include "util/DocumentSurroundColor.h"
+
 #include <QPaintEvent>
 #include <QPainter>
 #include <QPdfDocument>
@@ -33,6 +35,11 @@ TwoPageView::TwoPageView(QWidget *parent) : QAbstractScrollArea(parent) {
     // Stable selector for the UAT harness and any AT-SPI/QTest tier, so lookups
     // survive label / IA renames (matches the action-objectName convention).
     setObjectName(QStringLiteral("view.twoPage"));
+    // Cosmetic only — paintEvent() below fills the exposed rect explicitly
+    // on every repaint via documentSurroundColor(), which is the actual
+    // source of truth. This backgroundRole just avoids a flash of the
+    // style's default fill before the first paintEvent runs; the exact
+    // static role doesn't matter since it's immediately painted over.
     viewport()->setBackgroundRole(QPalette::Dark);
     setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
@@ -312,7 +319,21 @@ QImage TwoPageView::renderPageImage(int pageIndex) const {
 
 void TwoPageView::paintEvent(QPaintEvent *event) {
     QPainter painter(viewport());
-    painter.fillRect(event->rect(), viewport()->palette().color(QPalette::Dark));
+    // The canvas surrounding a spread that doesn't fill the viewport uses
+    // documentSurroundColor() (util/DocumentSurroundColor.h) — the SAME
+    // shared rule PdfDocument pins its QPdfView's ::Dark role to
+    // (PdfAdapter.cpp, applyViewPalette), so the two PDF-shaped surfaces
+    // can never independently drift apart per theme; see that header's
+    // comment for the full rationale (prefers ::Dark — the recessed-canvas
+    // convention every mainstream PDF viewer follows against a typically-
+    // white page — but falls back to ::Base whenever ::Dark would resolve
+    // LIGHTER than it, which is the reported "grey that's too light in
+    // dark mode" bug: DR 2026-07-31-document-surround-colour-follows-base).
+    // Read live off the palette every paint (no cached/pinned colour), so a
+    // runtime theme flip (PR #105) needs no extra refresh plumbing here —
+    // unlike QPdfView, which pins the role and must be told to re-derive it
+    // (see PdfDocument::refreshViewPalette).
+    painter.fillRect(event->rect(), documentSurroundColor(viewport()->palette()));
     if (!m_doc || m_spreads.empty() || m_doc->status() != QPdfDocument::Status::Ready)
         return;
 

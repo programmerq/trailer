@@ -3,12 +3,16 @@
 #include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
+#include <QDockWidget>
 #include <QFile>
+#include <QHBoxLayout>
 #include <QMenu>
 #include <QPainter>
 #include <QPalette>
 #include <QPixmap>
+#include <QStyle>
 #include <QSvgRenderer>
+#include <QToolButton>
 #include <QWidget>
 
 namespace trailer {
@@ -151,6 +155,35 @@ QAction* makeDisabledAction(QMenu* menu, const QString& text,
     // attached to a menu that would swallow its tooltip.
     menu->setToolTipsVisible(true);
     return action;
+}
+
+QWidget* buildTextlessDockTitleBar(QDockWidget* dock) {
+    auto* bar = new QWidget(dock);
+    auto* layout = new QHBoxLayout(bar);
+    layout->setContentsMargins(4, 2, 4, 2);
+    layout->addStretch();
+    // Native ordering: float toggle (if the dock supports it) left of close,
+    // both right-aligned — matches the stock QDockWidget title-bar layout.
+    if (dock->features().testFlag(QDockWidget::DockWidgetFloatable)) {
+        auto* floatButton = new QToolButton(bar);
+        floatButton->setAutoRaise(true);
+        floatButton->setIcon(bar->style()->standardIcon(QStyle::SP_TitleBarNormalButton));
+        floatButton->setToolTip(QDockWidget::tr("Float"));
+        floatButton->setAccessibleName(QDockWidget::tr("Float %1").arg(dock->windowTitle()));
+        QObject::connect(floatButton, &QToolButton::clicked, dock,
+                         [dock]() { dock->setFloating(!dock->isFloating()); });
+        layout->addWidget(floatButton);
+    }
+    if (dock->features().testFlag(QDockWidget::DockWidgetClosable)) {
+        auto* closeButton = new QToolButton(bar);
+        closeButton->setAutoRaise(true);
+        closeButton->setIcon(bar->style()->standardIcon(QStyle::SP_TitleBarCloseButton));
+        closeButton->setToolTip(QDockWidget::tr("Close"));
+        closeButton->setAccessibleName(QDockWidget::tr("Close %1").arg(dock->windowTitle()));
+        QObject::connect(closeButton, &QToolButton::clicked, dock, &QDockWidget::close);
+        layout->addWidget(closeButton);
+    }
+    return bar;
 }
 
 }  // namespace trailer

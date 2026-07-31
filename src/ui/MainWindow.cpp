@@ -914,10 +914,26 @@ void MainWindow::autoSaveDirtyDocs() {
     if (m_externalChangeMonitor)
         m_externalChangeMonitor->mute(false);
     if (savedAny) {
-        // The document is deliberately still dirty — nothing was written to
-        // the backing file. Signal that recovery is protected, not that the
-        // file was saved.
-        flashSuccess(tr("Recovery snapshot saved."));
+        // G10 (deference): a "Recovery Snapshot Saved" status-bar toast is
+        // permanent-surface chrome narrating routine background work the
+        // user didn't ask about and can't act on — this is the exact
+        // motivating example named in docs/ux-guidelines.md's anti-pattern
+        // list for this gate, and see DR
+        // 2026-07-31-recovery-snapshot-toast-silent. Never-worry-save means
+        // the snapshot itself is silent-by-design (PHILOSOPHY.md); the
+        // toast about it was the app narrating that it did its job. The
+        // document's unsaved-work signal the user actually needs stays
+        // visible without it: the title-bar "•" dirty marker
+        // (updateTitleForDocument, guarded by tests/test_dirty_marker_zoom.cpp)
+        // and the Feedback Report's "(unsaved changes)" line
+        // (src/diagnostics/FeedbackReport.cpp) both read isDirty() directly
+        // and are unaffected by this change. The local session-recording
+        // trail (uxrecord — never shown to the user, never sent anywhere;
+        // active only during an owner-run HITL capture) still logs the
+        // event so a review pass can see when a snapshot protected work.
+        uxrecord::recordEvent(QStringLiteral("operation_succeeded"),
+                              QJsonObject{{QStringLiteral("message"),
+                                           QStringLiteral("Recovery snapshot saved.")}});
     }
 }
 
@@ -5078,6 +5094,21 @@ void MainWindow::refreshThemedIcons() {
     // document (updateRemoveBackgroundBadge), so it is not in the binder;
     // re-run it for the current document so the badge, if showing, re-tints.
     updateRemoveBackgroundBadge(m_documentView ? m_documentView->currentDocument() : nullptr);
+    // Re-derive any theme-locked palette role a document's view pinned at
+    // construction (e.g. PdfDocument's QPdfView canvas-surround colour, DR
+    // 2026-07-31-document-surround-colour-follows-base) — Qt's palette-
+    // change cascade skips a role a widget explicitly set via setPalette(),
+    // so it would otherwise go stale on a live theme flip. Every open tab
+    // in this window, not just the current one — refreshViewPalette() is a
+    // no-op default for adapters (image, stub) that never pin a role.
+    if (m_documentView) {
+        const int total = m_documentView->documentCount();
+        for (int i = 0; i < total; ++i) {
+            IDocument *doc = nullptr;
+            if (m_documentView->documentAt(i, &doc) && doc)
+                doc->refreshViewPalette();
+        }
+    }
 }
 
 void MainWindow::onOpenPreferences() {

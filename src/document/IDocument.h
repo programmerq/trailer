@@ -67,6 +67,23 @@ class IDocument {
     virtual QString filePath() const = 0;
     virtual QWidget *createView(QWidget *parent) = 0;
 
+    // Re-apply any theme-DERIVED palette role a document's view pinned
+    // explicitly at construction time. Most adapters need no override here:
+    // a plain QWidget re-reads its palette live on every paint, so Qt's
+    // QEvent::PaletteChange cascade (QStyleHints::setColorScheme, live since
+    // PR #105) already keeps it correct with zero extra work — see
+    // ImageDocument's QScrollArea (QPalette::Base, ImageAdapter.cpp) and
+    // TwoPageView (same role, TwoPageView.cpp). The cascade skips any
+    // *individual role* a widget explicitly set via setPalette(), though —
+    // those stay pinned to whatever colour was current at the time. An
+    // adapter that must pin a role because it wraps a third-party widget
+    // with no other seam to influence (PdfDocument's QPdfView canvas
+    // surround, DR 2026-07-31-document-surround-colour-follows-base)
+    // overrides this to recompute and re-pin that role. Called by
+    // MainWindow::refreshThemedIcons() for every open document in every
+    // open window on every theme change (explicit or a live OS flip).
+    virtual void refreshViewPalette() {}
+
     // Coarse type classification used by DocumentTypeDefaults. Defaults
     // to Unknown so adapters that don't override (StubAdapter) are
     // simply ignored by the persistence layer.

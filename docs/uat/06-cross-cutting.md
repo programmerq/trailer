@@ -54,6 +54,51 @@ Symmetric to UAT-XCT-002.
 - Invalid value is either preserved in the file or replaced with the
   default on next save.
 
+### UAT-XCT-005 — Document surround colour is one source of truth and follows a live theme change
+
+The colour behind a page/image that doesn't fill the document area (the
+"canvas" or "letterbox") must never look LIGHTER than the page/image it
+surrounds — the PDF viewer's canvas was reported "too light" in dark
+mode — and must re-derive on a **live** theme switch (Preferences →
+Theme, or a System-mode OS flip), not only be correct at the moment the
+document was opened. It is **not** required to be pixel-identical between
+PDF and image documents in every theme: in light mode the PDF canvas is
+deliberately a visible grey (matching Preview / Acrobat / Chrome's PDF
+viewer convention — a page is typically white, so a white canvas would
+make its boundary invisible), same as it always has been; only the
+previously-broken dark-mode case is required to match the image viewer's
+colour exactly.
+
+**Preconditions:** A PDF and an image open (in the same or different
+windows).
+**Steps:**
+1. Look at the canvas behind the PDF page in light mode. It should read as
+   a visible grey, clearly darker than the (white) page — not the same
+   white as the page itself.
+2. Switch to Dark (Preferences → General → Theme, or flip the OS while on
+   System).
+3. Look at the canvas behind the PDF page again.
+**Expected:**
+- Light mode: PDF canvas is a visible grey, distinct from and darker than
+  the page — unchanged from before this fix.
+- Dark mode: PDF canvas is at least as dark as the image viewer's own
+  canvas colour — never the washed-out light grey previously reported.
+  Where Trailer's synthesized dark palette makes `QPalette::Dark` resolve
+  lighter than `QPalette::Base` (the root cause — no hand-built dark
+  `QPalette` of our own; see
+  DR 2026-07-31-document-surround-colour-follows-base), the PDF canvas
+  falls back to `QPalette::Base` and matches the image viewer's canvas
+  colour exactly.
+- Switching theme while the PDF is already open re-colours its canvas
+  live, without reopening the document.
+
+Automated: `uat_xct_005_documentSurroundColourFollowsPaletteLive` in
+`tests/uat/test_uat_preferences.cpp` (constructs a dark palette with
+`QPalette::Dark` deliberately inverted lighter than `QPalette::Base`, to
+exercise the fallback deterministically rather than relying on the
+offscreen QPA plugin's inability to derive a real dark palette on its
+own).
+
 ---
 
 ## Screenshot (Tools > Take Screenshot)
