@@ -1,5 +1,6 @@
 #include "Inspector.h"
 
+#include "IconHelper.h"
 #include "annotation/AnnotationStore.h"
 #include "document/IDocument.h"
 
@@ -79,9 +80,26 @@ void applySwatch(QToolButton *btn, QColor c) {
 
 } // namespace
 
+// G10 (deference): no visible "Inspector" caption — same defect class, and
+// same fix, as Sidebar's "Sidebar" caption (Sidebar.cpp; DR
+// 2026-07-31-dock-panel-labels-removed-accessible-names-kept; filed as
+// backlog item docs/backlog/2026-07-31-inspector-dock-title-names-itself.md
+// by the concurrent G10 audit, PR #134, closed here). windowTitle() stays
+// "Inspector" (below, unchanged) — a QDockWidget's built-in accessibility
+// interface reads it directly for the screen-reader name and does NOT fall
+// back to accessibleName() the way most widgets do (verified empirically;
+// see Sidebar.cpp's constructor comment for the full explanation) — and
+// only the painted caption is replaced, via the same
+// buildTextlessDockTitleBar() helper Sidebar uses (IconHelper.{h,cpp}).
+// Inspector, unlike Sidebar, keeps Qt's DEFAULT dock features (this class
+// never called setFeatures()), which include DockWidgetFloatable, so the
+// shared helper also gives it a float button — full parity with the native
+// title bar it replaces, not just the close button.
 Inspector::Inspector(QWidget *parent) : QDockWidget(tr("Inspector"), parent) {
     setObjectName(QStringLiteral("trailer.inspector"));
+    setAccessibleName(tr("Inspector"));
     setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+    setTitleBarWidget(buildTextlessDockTitleBar(this));
 
     m_tabs = new QTabWidget(this);
 

@@ -1,5 +1,6 @@
 #include "Sidebar.h"
 
+#include "IconHelper.h"
 #include "ThumbnailModel.h"
 #include "ThumbnailPaint.h"
 #include "annotation/AnnotationStore.h"
@@ -252,10 +253,46 @@ class ThumbnailListView : public QListView {
 
 } // namespace
 
+// G10 (deference): no visible "Sidebar" caption — a label that describes
+// the chrome instead of what it contains is the chrome announcing itself
+// (docs/ux-guidelines.md's motivating example for this gate; DR
+// 2026-07-31-dock-panel-labels-removed-accessible-names-kept). The panel's
+// own content (page thumbnails, search results, table of contents) already
+// makes its purpose obvious.
+//
+// IMPORTANT (verified empirically, not assumed — see the DR above): a
+// QDockWidget's built-in accessibility interface reads windowTitle()
+// DIRECTLY for its screen-reader Name, NOT accessibleName() — unlike
+// almost every other widget (QPushButton, QGroupBox, ...), which check
+// accessibleName() first. Blanking windowTitle() and calling
+// setAccessibleName() instead — the obvious-looking fix — silently
+// produces an EMPTY accessible name (confirmed with a standalone
+// QAccessible::queryAccessibleInterface probe against this Qt build), the
+// exact "cleanup that quietly breaks screen-reader users" trap this change
+// has to avoid. So windowTitle() stays "Sidebar" (below, unchanged) —
+// keeping the native accessibility path intact — and only the VISUAL
+// caption is replaced with a textless custom title bar (a stretch + the
+// existing close button, re-created from the platform style, shared with
+// Inspector — buildTextlessDockTitleBar(), IconHelper.{h,cpp}) via
+// setTitleBarWidget() further down. setAccessibleName() is also set, as
+// defence-in-depth for any AT bridge that reads the property directly
+// rather than through Qt's interface, but it is not what makes this work.
+//
+// Spatial constancy (G10): the custom title bar keeps the same features
+// (DockWidgetMovable | DockWidgetClosable — Sidebar does NOT carry
+// DockWidgetFloatable, so the shared helper omits the float button for it;
+// the close button still works, Qt forwards title-bar-area mouse handling
+// to a custom title bar widget same as the native one) and a comparable
+// strip height, so the sidebar's CONTENT (m_stack, set as the dock's
+// central widget) does not shift position — this is a direct, deliberate
+// consequence of replacing the caption row's content, not a reflow
+// triggered by unrelated state.
 Sidebar::Sidebar(QWidget *parent) : QDockWidget(tr("Sidebar"), parent) {
     setObjectName(QStringLiteral("trailer.sidebar"));
+    setAccessibleName(tr("Sidebar"));
     setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
     setFeatures(QDockWidget::DockWidgetMovable | QDockWidget::DockWidgetClosable);
+    setTitleBarWidget(buildTextlessDockTitleBar(this));
 
     m_stack = new QStackedWidget(this);
 

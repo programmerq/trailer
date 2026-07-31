@@ -32,7 +32,9 @@
 #include "settings/Settings.h"
 #include "ui/MainWindow.h"
 #include "ui/PreferencesDialog.h"
+#include "ui/TwoPageView.h"
 #include "update/UpdateManager.h"
+#include "util/DocumentSurroundColor.h"
 
 #include <QAbstractButton>
 #include <QCheckBox>
@@ -41,8 +43,14 @@
 #include <QDir>
 #include <QImage>
 #include <QLabel>
+#include <QPageSize>
+#include <QPainter>
 #include <QPalette>
+#include <QPdfView>
+#include <QPdfWriter>
 #include <QPushButton>
+#include <QScopeGuard>
+#include <QScrollArea>
 #include <QSpinBox>
 #include <QStyleHints>
 #include <QTabWidget>
@@ -148,6 +156,7 @@ class TestUatPreferences : public QObject {
     void uat_pref_010_themeControlEnabledAndHelperLabelGone();
     void uat_pref_020_everyVisibleTabHasEnabledOperableControl();
     void uat_pref_030_updatesTabReflectsManagerState();
+    void uat_xct_005_documentSurroundColourFollowsPaletteLive();
     void uat_pref_090_evidenceShots();
 
   private:
@@ -248,6 +257,165 @@ void TestUatPreferences::uat_pref_030_updatesTabReflectsManagerState() {
                                   QStringLiteral("Could not reach GitHub: offline"));
     QVERIFY(action->isEnabled());
     QVERIFY(status->text().contains(QStringLiteral("offline")));
+}
+
+// UAT-XCT-005 — PdfDocument's QPdfView and TwoPageView both derive their
+// document-surround colour from the ONE shared rule,
+// trailer::documentSurroundColor() (util/DocumentSurroundColor.h), instead
+// of two independently-hand-picked palette roles that can drift apart —
+// and that derivation is LIVE (PR #105), re-run on a runtime theme change,
+// not fixed at open time. See DR
+// 2026-07-31-document-surround-colour-follows-base.
+//
+// documentSurroundColor() is intentionally NOT "always ::Base": it prefers
+// ::Dark (a visibly recessed canvas behind a typically-white page — the
+// convention every mainstream PDF viewer follows) and only falls back to
+// ::Base when ::Dark would resolve LIGHTER than it. In Trailer's real
+// stock light palette ::Dark (#9f9f9f) is already darker than ::Base
+// (#ffffff), so light mode is a deliberate NO-OP for this fix — this test
+// locks that as an invariant, not just an implementation detail: an
+// earlier draft of this fix used ::Base unconditionally and made a light-
+// mode PDF page invisible against its own canvas (caught by the
+// pre-existing uat_vwr_079_zoomReadoutMatchesRenderScale, which measures a
+// page by scanning for contrast against the canvas and depends on that
+// contrast existing). Dark mode is where ::Dark can end up inverted
+// (Trailer's dark palette is synthesized entirely by
+// QStyleHints::setColorScheme, no hand-built dark QPalette of our own) —
+// this test constructs that inversion deliberately (rather than hoping
+// Qt's own dark-palette synthesis reproduces it, which the offscreen QPA
+// plugin can't derive on its own — see darkPalette()'s comment above) so
+// the fallback-to-::Base branch is exercised for real, proving the PDF
+// surround self-heals to match the image viewer's ::Base exactly in
+// precisely the case that was reported broken.
+void TestUatPreferences::uat_xct_005_documentSurroundColourFollowsPaletteLive() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    const QPalette lightPalette = qApp->palette();
+
+    QPdfWriter writer(m_scratch.filePath(QStringLiteral("xct005.pdf")));
+    writer.setPageSize(QPageSize(QPageSize::A4));
+    {
+        QPainter p(&writer);
+        p.drawText(72, 72, QStringLiteral("UAT-XCT-005 fixture"));
+    }
+    const QString pdfPath = m_scratch.filePath(QStringLiteral("xct005.pdf"));
+    const QString imgPath = writeStaticImage(m_scratch.filePath(QStringLiteral("xct005.png")));
+    // A second PDF, opened as a second tab, so the multi-document loop in
+    // MainWindow::refreshThemedIcons() (every open document in the window,
+    // not just the current tab) is genuinely exercised below — not just
+    // the single-document case.
+    QPdfWriter writer2(m_scratch.filePath(QStringLiteral("xct005b.pdf")));
+    writer2.setPageSize(QPageSize(QPageSize::A4));
+    {
+        QPainter p2(&writer2);
+        p2.drawText(72, 72, QStringLiteral("UAT-XCT-005 second-tab fixture"));
+    }
+    const QString pdfPath2 = m_scratch.filePath(QStringLiteral("xct005b.pdf"));
+
+    // Force all documents into ONE window (default OpenFilesIn is
+    // NewWindow for a mixed PDF+image batch — isImageBatch() only
+    // special-cases an all-image batch, Application.cpp) so both views are
+    // reachable from the same MainWindow via findChild below. Restored on
+    // the way out so this test doesn't leak state into a later slot.
+    const OpenFilesIn priorOpenFilesIn = app->settings().openFilesIn();
+    app->settings().setOpenFilesIn(OpenFilesIn::SameWindow);
+    auto restoreOpenFilesIn =
+        qScopeGuard([&] { app->settings().setOpenFilesIn(priorOpenFilesIn); });
+
+    app->openFiles({pdfPath, imgPath, pdfPath2});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+
+    // findChildren (plural) for QPdfView — there are TWO open PDF tabs, and
+    // the multi-document loop in MainWindow::refreshThemedIcons() (every
+    // open document in the window, not just the current tab) needs BOTH
+    // exercised, not just the first one findChild would return.
+    const QList<QPdfView *> pdfViews = mw->findChildren<QPdfView *>();
+    QVERIFY2(pdfViews.size() == 2,
+             qPrintable(QStringLiteral("expected 2 QPdfView instances (one per PDF tab), found %1")
+                            .arg(pdfViews.size())));
+    auto *scroll = mw->findChild<QScrollArea *>();
+    QVERIFY2(scroll, "image scroll area not found — did ImageDocument::createView change?");
+    auto *twoPage = mw->findChild<TwoPageView *>();
+    QVERIFY2(twoPage, "TwoPageView not found — PdfDocument builds it eagerly alongside QPdfView");
+
+    // Every PDF-shaped surface — BOTH tabs' QPdfViews, and TwoPageView —
+    // must apply the SAME shared-rule output as the app's current palette,
+    // whatever it is: the "one source of truth, can't drift apart"
+    // invariant, tested by calling the real rule as the oracle rather than
+    // duplicating its logic by hand, and across every open tab rather than
+    // only the current one.
+    //
+    // QPdfView is checked via its palette PROPERTY directly — PdfDocument
+    // pins ::Dark to the rule's output via setPalette() (applyViewPalette),
+    // so the stored property IS the tested value, no paint needed.
+    //
+    // TwoPageView is checked by GRABBING its viewport and sampling a corner
+    // pixel instead — unlike QPdfView it pins nothing; paintEvent() calls
+    // documentSurroundColor() fresh against viewport()->palette() on every
+    // repaint (TwoPageView.cpp), so there is no stored property to read and
+    // the only faithful test is the actual painted output. (0, 0) sits
+    // inside kOuterMargin regardless of scroll position or whether a spread
+    // is loaded, so it is always canvas, never page content.
+    auto checkBothMatchSharedRule = [&]() {
+        const QColor expected = documentSurroundColor(qApp->palette());
+        for (QPdfView *pv : pdfViews)
+            QCOMPARE(pv->palette().color(QPalette::Dark), expected);
+
+        twoPage->viewport()->update();
+        QApplication::processEvents();
+        const QImage grabbed = twoPage->viewport()->grab().toImage();
+        QVERIFY2(!grabbed.isNull(), "TwoPageView viewport grab failed");
+        // .rgb(), not a bare QColor QCOMPARE — QColor::operator== also
+        // compares the internal colour SPEC (Rgb / ExtendedRgb / ...), so a
+        // pixel sampled from a QImage can print the identical hex as a
+        // QPalette-derived QColor and still fail == on spec alone.
+        QCOMPARE(grabbed.pixelColor(0, 0).rgb(), expected.rgb());
+    };
+
+    // --- Light theme: the REAL, un-doctored default palette. ---
+    app->applyTheme(Theme::Light);
+    QApplication::processEvents();
+    checkBothMatchSharedRule();
+    const QColor pdfSurroundLight = pdfViews.first()->palette().color(QPalette::Dark);
+    // The fix must NOT touch the already-correct light-mode appearance:
+    // the canvas stays darker than a white page (Dark genuinely IS darker
+    // than Base in Trailer's stock light palette), never matching Base
+    // outright the way an unconditional-::Base fix would have.
+    QVERIFY2(pdfSurroundLight.lightness() <
+                 scroll->palette().color(QPalette::Base).lightness(),
+             "light-mode PDF/TwoPage canvas must stay darker than a white "
+             "page (the pre-existing, un-complained-about appearance) — "
+             "not collapse to the same white as the page itself");
+
+    // --- Dark theme, with ::Dark deliberately synthesized LIGHTER than
+    // ::Base — reproducing the reported bug on purpose, rather than hoping
+    // Qt's own (here, undeliverable) dark-palette synthesis happens to
+    // invert them. ---
+    QPalette invertedDarkPalette = darkPalette();
+    invertedDarkPalette.setColor(QPalette::Dark, QColor(0xd0, 0xd0, 0xd4));
+    qApp->setPalette(invertedDarkPalette);
+    app->applyTheme(Theme::Dark);
+    QApplication::processEvents();
+    checkBothMatchSharedRule();
+    const QColor pdfSurroundDark = pdfViews.first()->palette().color(QPalette::Dark);
+    // The self-heal, made explicit: with ::Dark inverted, the PDF surround
+    // now matches the image viewer's ::Base EXACTLY — "make the PDF
+    // surround match the image one," precisely in the case it was wrong.
+    QCOMPARE(pdfSurroundDark, scroll->palette().color(QPalette::Base));
+
+    // Prove this is a LIVE re-derivation on the SAME already-open document,
+    // not a construction-time value.
+    QVERIFY2(pdfSurroundLight != pdfSurroundDark,
+             "the theme flip did not actually change the surround colour — "
+             "either the palette swap or the refresh path is not wired");
+
+    // Restore the ambient light palette / scheme for any later slot.
+    qApp->setPalette(lightPalette);
+    app->applyTheme(Theme::System);
+    QApplication::processEvents();
 }
 
 // Curated G2 evidence (only when TRAILER_PREF_EVIDENCE_DIR is set): the

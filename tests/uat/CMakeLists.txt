@@ -270,8 +270,21 @@ trailer_add_uat_test(test_uat_dock_recents test_uat_dock_recents.cpp)
 # operable control. Also emits the curated G2 before/after evidence (enabled
 # Theme combo + app in light/dark) to $TRAILER_PREF_EVIDENCE_DIR when set.
 # Drives PreferencesDialog + Application + MainWindow with an image document
-# (PNG via QImage), so no Qt6::Pdf link is needed.
+# (PNG via QImage) AND, for UAT-XCT-005 (document-surround colour tracks a
+# live theme change), a PDF document too — hence the Qt6::Pdf/PdfWidgets
+# link below.
 trailer_add_uat_test(test_uat_preferences test_uat_preferences.cpp)
+target_link_libraries(test_uat_preferences PRIVATE Qt6::Pdf Qt6::PdfWidgets)
+
+# G2 before/after evidence generator for the "deference" PR (G10): PDF
+# surround colour, the silenced recovery-snapshot toast, and the textless
+# Sidebar/Inspector title bars. Deliberately calls only stable pre-existing
+# API (no new symbol this PR introduces) so this same file produces a true
+# before/after pair when built against the tree before and after the fix —
+# see the file's header comment. No-op (QSKIP, no assertions) unless
+# $TRAILER_DEFERENCE_EVIDENCE_DIR is set.
+trailer_add_uat_test(test_uat_deference_evidence test_uat_deference_evidence.cpp)
+target_link_libraries(test_uat_deference_evidence PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 
 # Feedback / Diagnostic Report (Help menu). Guards the menu item is always
 # enabled (G3 — there is no "unavailable" state, the report degrades

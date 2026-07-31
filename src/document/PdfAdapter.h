@@ -44,6 +44,7 @@ class PdfDocument : public IDocument {
     QString displayName() const override;
     QString filePath() const override;
     QWidget *createView(QWidget *parent) override;
+    void refreshViewPalette() override;
 
     DocumentType documentType() const override { return DocumentType::Pdf; }
 
@@ -452,6 +453,11 @@ class PdfDocument : public IDocument {
 
     void applyViewMode();
     void applyZoomFactor(double factor);
+    // Sets the QPdfView's search-highlight colour AND pins its ::Dark
+    // canvas-surround role to the current ::Base colour (see
+    // refreshViewPalette()). Called at construction (buildRealView) and
+    // again whenever the app theme changes, so the pin never goes stale.
+    static void applyViewPalette(QPdfView *view);
     // Fit the freshly-opened doc into the viewport on first show.
     // Caps at 100% — small documents stay at actual size rather than
     // being upscaled. One-shot: subsequent currentDocumentChanged

@@ -14,6 +14,7 @@
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
 
+#include <QAccessible>
 #include <QAction>
 #include <QAbstractButton>
 #include <QClipboard>
@@ -21,6 +22,7 @@
 #include <QDockWidget>
 #include <QFile>
 #include <QFileOpenEvent>
+#include <QLabel>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -35,6 +37,7 @@
 #include <QTemporaryDir>
 #include <QTemporaryFile>
 #include <QToolBar>
+#include <QToolButton>
 #include <QtTest/QtTest>
 
 #include <memory>
@@ -261,9 +264,11 @@ class TestUatFoundations : public QObject {
     void uat_fnd_010_menuStructure();
     void uat_fnd_011_macosNoWindowMenuProvidesFileActions();
     void uat_fnd_016_toggleSidebar();
+    void uat_fnd_019_dockPanelsHaveNoVisibleCaptionButKeepAccessibleName();
     void uat_fnd_020_flashErrorRoutesToStatusBarNotModal();
     void uat_fnd_030_autoSaveWritesRecoverySidecarNotBackingFile();
     void uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs();
+    void uat_fnd_032_recoverySnapshotNeverFlashesStatusBarMessage();
     // UAT-FND-014 — closing a dirty tab prompts Save/Discard/Cancel
     // instead of silently discarding unsaved edits. One slot per row of
     // the threshold matrix.
@@ -574,6 +579,83 @@ void TestUatFoundations::uat_fnd_016_toggleSidebar() {
     QVERIFY2(!sidebar->isVisible(), "Second trigger should hide the Sidebar");
 }
 
+// UAT-FND-019 — G10 (deference): the Sidebar and Inspector dock panels
+// carry no visible title-bar CAPTION text ("Sidebar" / "Inspector" would be
+// the chrome announcing itself — docs/ux-guidelines.md's motivating example
+// for this gate) but still expose the correct name to assistive
+// technology. This is the accessible-name-preserved invariant the PR
+// description calls out: a QDockWidget's built-in accessibility interface
+// reads windowTitle() directly and does NOT fall back to accessibleName()
+// the way most widgets do, so the regression this guards against is
+// specifically "blanked the visible caption by blanking windowTitle(),
+// which silently blanked the screen-reader name too" — the trap, not the
+// fix. Also confirms the close affordance the native title bar offered
+// still exists (a QToolButton in the custom title bar wired to close()).
+void TestUatFoundations::uat_fnd_019_dockPanelsHaveNoVisibleCaptionButKeepAccessibleName() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureWindow();
+    QVERIFY(mw);
+
+    auto checkDock = [](QDockWidget *dock, const QString &expectedName) {
+        QVERIFY2(dock, qPrintable(QStringLiteral("%1 dock not found").arg(expectedName)));
+
+        // windowTitle() is unchanged — it is what a QDockWidget's built-in
+        // QAccessibleInterface reads for its Name, so it must stay populated.
+        QCOMPARE(dock->windowTitle(), expectedName);
+
+        // The screen-reader-visible name resolves to the panel's name, via
+        // Qt's real accessibility bridge (not just the accessibleName()
+        // property in isolation — querying the actual interface is what
+        // proves an AT client would hear the right thing).
+        QAccessibleInterface *iface = QAccessible::queryAccessibleInterface(dock);
+        QVERIFY2(iface, qPrintable(QStringLiteral("%1: no accessible interface").arg(expectedName)));
+        QCOMPARE(iface->text(QAccessible::Name), expectedName);
+        // Defence-in-depth property is also set, per the PR description.
+        QCOMPARE(dock->accessibleName(), expectedName);
+
+        // No visible caption: the custom title bar has no QLabel (the only
+        // widget type that would paint the panel's name as text).
+        QWidget *titleBar = dock->titleBarWidget();
+        QVERIFY2(titleBar, qPrintable(QStringLiteral("%1: no custom title bar installed — "
+                                                      "would fall back to the native captioned one")
+                                          .arg(expectedName)));
+        QVERIFY2(titleBar->findChildren<QLabel *>().isEmpty(),
+                 qPrintable(QStringLiteral("%1: title bar has a QLabel — a caption is being painted")
+                                .arg(expectedName)));
+
+        // Functional parity: the close affordance the native title bar
+        // offered still exists and still works. Identified by tooltip, not
+        // position — Inspector (default features, DockWidgetFloatable
+        // included) also gets a float button from the shared helper, and
+        // relying on button order would silently test the wrong one.
+        QToolButton *closeButton = nullptr;
+        for (QToolButton *btn : titleBar->findChildren<QToolButton *>()) {
+            if (btn->toolTip() == QDockWidget::tr("Close")) {
+                closeButton = btn;
+                break;
+            }
+        }
+        QVERIFY2(closeButton,
+                 qPrintable(QStringLiteral("%1: no close button found in the title bar")
+                                .arg(expectedName)));
+        if (!dock->isVisible())
+            dock->show();
+        QApplication::processEvents();
+        QVERIFY2(dock->isVisible(),
+                 qPrintable(QStringLiteral("%1: could not show dock to test close").arg(expectedName)));
+        closeButton->click();
+        QApplication::processEvents();
+        QVERIFY2(!dock->isVisible(),
+                 qPrintable(QStringLiteral("%1: close button did not hide the dock").arg(expectedName)));
+    };
+
+    checkDock(mw->findChild<QDockWidget *>(QStringLiteral("trailer.sidebar")),
+              QStringLiteral("Sidebar"));
+    checkDock(mw->findChild<QDockWidget *>(QStringLiteral("trailer.inspector")),
+              QStringLiteral("Inspector"));
+}
+
 // UAT-FND-020 — flashError routes operation-failure feedback into the
 // status bar instead of popping a QMessageBox::warning modal. The
 // 2026-04-29 polish pass replaced a dozen-plus operation-failure
@@ -705,6 +787,74 @@ void TestUatFoundations::uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs() {
     QApplication::processEvents();
     QVERIFY2(!mw->statusBar()->currentMessage().contains(QStringLiteral("Auto-saved")),
              "When autoSave setting is off, no save should happen");
+}
+
+// UAT-FND-032 — G10 (deference) regression guard: a successful recovery
+// snapshot must NOT flash a "Recovery snapshot saved" (or any) status-bar
+// toast — this is the exact anti-pattern named in docs/ux-guidelines.md
+// (a permanent-surface announcement of routine background work the user
+// didn't ask about) and DR 2026-07-31-recovery-snapshot-toast-silent. The
+// user's actual unsaved-work signal — the title-bar dirty marker
+// (tests/test_dirty_marker_zoom.cpp) — must still be present and
+// unaffected, proving nothing the user needs was silently dropped along
+// with the toast.
+void TestUatFoundations::uat_fnd_032_recoverySnapshotNeverFlashesStatusBarMessage() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writeTinyPdf(m_scratch.filePath("uat_fnd_032.pdf"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->settings().setAutoSave(true);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    auto *dvCast = mw->findChild<DocumentView *>();
+    QVERIFY(dvCast);
+    IDocument *idoc = dvCast->currentDocument();
+    QVERIFY(idoc);
+
+    // Dirty the doc through the REAL command path (Tools > Rotate Left),
+    // not IDocument::rotatePage() directly — the title-bar dirty-dot
+    // refresh is called explicitly from MainWindow::onRotateLeft
+    // (updateTitleForDocument), not reactively from the document, so a
+    // direct rotatePage() call would under-test this (see
+    // tests/test_dirty_marker_zoom.cpp for the same real-action pattern).
+    QAction *rotateLeft =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Tools"), QStringLiteral("Rotate &Left"));
+    QVERIFY2(rotateLeft, "Tools > Rotate Left action not found");
+    QVERIFY2(rotateLeft->isEnabled(), "Rotate Left should be enabled for a valid PDF");
+    rotateLeft->trigger();
+    QApplication::processEvents();
+    QVERIFY2(idoc->isDirty(), "rotating a page should make the document dirty");
+
+    // The dirty marker is up before auto-save runs — establishes it as the
+    // real, pre-existing unsaved-work signal, not something this change
+    // introduces.
+    const QString kDot = QString::fromUtf8("\xE2\x80\xA2");
+    QVERIFY2(mw->windowTitle().contains(kDot),
+             "dirty marker should already be showing before auto-save runs");
+
+    mw->statusBar()->clearMessage();
+    QApplication::processEvents();
+    QVERIFY2(mw->statusBar()->currentMessage().isEmpty(), "status bar should start clear");
+
+    mw->autoSaveDirtyDocs();
+    QApplication::processEvents();
+
+    // The snapshot genuinely happened (auto-save did real work) ...
+    QVERIFY2(app->recoveryStore().pendingRecovery(pdfPath).has_value(),
+             "auto-save must still protect the work in a recovery sidecar");
+    // ... but nothing was flashed to the status bar about it.
+    QVERIFY2(mw->statusBar()->currentMessage().isEmpty(),
+             qPrintable(QStringLiteral("auto-save must not flash any status-bar message; got '%1'")
+                            .arg(mw->statusBar()->currentMessage())));
+
+    // The signal the user actually needs is unaffected: still dirty, still
+    // marked in the title.
+    QVERIFY2(idoc->isDirty(), "auto-save must leave the document dirty (nothing written to disk)");
+    QVERIFY2(mw->windowTitle().contains(kDot), "dirty marker must still show after auto-save");
 }
 
 // UAT-FND-014 — Cancel on the close prompt keeps the dirty document: the
