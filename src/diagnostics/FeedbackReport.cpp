@@ -10,6 +10,7 @@
 #include <QDateTime>
 #include <QGuiApplication>
 #include <QRegularExpression>
+#include <QScreen>
 #include <QStyleHints>
 #include <QSysInfo>
 #include <QtGlobal>
@@ -112,6 +113,23 @@ DocumentSnapshot snapshotDocument(IDocument *doc) {
     snap.supportsViewModes = doc->supportsViewModes();
     snap.viewMode = doc->viewMode();
     snap.hasTextLayer = doc->hasTextLayer();
+
+    if (snap.type == DocumentType::Image) {
+        snap.imagePixelSize = doc->imagePixelSize();
+        snap.imageSizePending = doc->contentSizePending();
+        snap.imageDpr = doc->imageDevicePixelRatio();
+    } else if (snap.type == DocumentType::Pdf) {
+        // pageCount()/currentPage() above already forced PdfDocument's
+        // deferred open to settle (ensureDocLoaded), so this reads the
+        // real page geometry rather than blocking again.
+        snap.pdfPageSizePts = doc->pageSizeHint(snap.currentPage);
+        if (snap.pageCount > 1 && !snap.pdfPageSizePts.isEmpty()) {
+            const QSizeF firstPage = doc->pageSizeHint(0);
+            if (!firstPage.isEmpty())
+                snap.pdfPageSizeVariesByPage = (firstPage != snap.pdfPageSizePts);
+        }
+    }
+
     return snap;
 }
 
@@ -129,6 +147,17 @@ WindowSnapshot snapshotWindow(MainWindow *win) {
     // (gatherSnapshot) fills it in from MainWindow::currentDocumentIndex()
     // since that's a MainWindow query, not something snapshotWindow's
     // per-document loop above touches.
+
+    snap.windowGeometry = win->geometry();
+    snap.isMaximized = win->isMaximized();
+    snap.isFullScreen = win->isFullScreen();
+    if (QScreen *screen = win->screen()) {
+        snap.screenGeometry = screen->geometry();
+        snap.screenAvailableGeometry = screen->availableGeometry();
+        snap.screenDevicePixelRatio = screen->devicePixelRatio();
+    }
+    snap.documentViewportSize = win->currentDocumentViewportSize();
+
     return snap;
 }
 
@@ -216,6 +245,49 @@ void appendDocumentLine(QString &out, const DocumentSnapshot &doc, int index,
     if (doc.supportsViewModes)
         out += QStringLiteral("     - View mode: %1\n").arg(viewModeToString(doc.viewMode));
     out += QStringLiteral("     - Has text layer: %1\n").arg(yesNo(doc.hasTextLayer));
+
+    // Natural/intrinsic geometry — kept units-explicit (px for images, pt
+    // for PDF pages) so a bare number can never be misread as the other.
+    if (doc.type == DocumentType::Image) {
+        out += QStringLiteral("     - Image size: ");
+        if (!doc.imagePixelSize.isEmpty()) {
+            out += QStringLiteral("%1 x %2 px")
+                       .arg(doc.imagePixelSize.width())
+                       .arg(doc.imagePixelSize.height());
+            if (doc.imageSizePending) {
+                out += QStringLiteral(" (from file header; full decode still pending)");
+            } else if (doc.pageCount == 0) {
+                // Header read succeeded (imagePixelSize is non-empty) but the
+                // full pixel decode subsequently FAILED — ImageDocument::
+                // imageAvailableOrPending() (and therefore pageCount()) goes
+                // false once a finished-but-unsuccessful decode is adopted,
+                // even though deviceSize() keeps reporting the header size.
+                // Flag this explicitly rather than presenting a stale header
+                // number as a confirmed, decoded size.
+                out += QStringLiteral(" (from file header only — pixel decode failed)");
+            }
+        } else if (doc.imageSizePending) {
+            out += QStringLiteral("not yet decoded");
+        } else {
+            out += QStringLiteral("unknown (image could not be decoded)");
+        }
+        out += QStringLiteral("\n");
+        if (doc.imageDpr > 0.0)
+            out += QStringLiteral("     - Image devicePixelRatio: %1\n").arg(doc.imageDpr);
+    } else if (doc.type == DocumentType::Pdf && doc.pageCount > 0) {
+        out += QStringLiteral("     - Page size: ");
+        if (!doc.pdfPageSizePts.isEmpty()) {
+            out += QStringLiteral("%1 x %2 pt (page %3)")
+                       .arg(qRound(doc.pdfPageSizePts.width()))
+                       .arg(qRound(doc.pdfPageSizePts.height()))
+                       .arg(doc.currentPage + 1);
+            if (doc.pdfPageSizeVariesByPage)
+                out += QStringLiteral(" — differs from page 1's size");
+        } else {
+            out += QStringLiteral("unavailable");
+        }
+        out += QStringLiteral("\n");
+    }
 }
 
 } // namespace
@@ -275,6 +347,39 @@ QString formatMarkdown(const AppSnapshot &snapshot, bool includeFullPaths) {
         for (int w = 0; w < snapshot.windows.size(); ++w) {
             const WindowSnapshot &win = snapshot.windows[w];
             out += QStringLiteral("### Window %1\n\n").arg(w + 1);
+            // Window/screen geometry — the owner's real complaint ("it
+            // chose a HUGE window size") needs both numbers to settle:
+            // window size alone can't say whether it was actually
+            // oversized relative to the screen it landed on. Omitted
+            // (rather than printed as a misleading "0x0") when the
+            // geometry could not be queried — see the QRect default in
+            // FeedbackReport.h.
+            if (win.windowGeometry.isValid()) {
+                out += QStringLiteral("- Window geometry: %1x%2 at (%3, %4)%5\n")
+                           .arg(win.windowGeometry.width())
+                           .arg(win.windowGeometry.height())
+                           .arg(win.windowGeometry.x())
+                           .arg(win.windowGeometry.y())
+                           .arg(win.isFullScreen
+                                    ? QStringLiteral(" [fullscreen]")
+                                    : (win.isMaximized ? QStringLiteral(" [maximized]")
+                                                        : QString()));
+            }
+            if (win.screenGeometry.isValid()) {
+                out += QStringLiteral(
+                           "- Screen geometry: %1x%2 (available %3x%4), "
+                           "devicePixelRatio %5\n")
+                           .arg(win.screenGeometry.width())
+                           .arg(win.screenGeometry.height())
+                           .arg(win.screenAvailableGeometry.width())
+                           .arg(win.screenAvailableGeometry.height())
+                           .arg(win.screenDevicePixelRatio);
+            }
+            if (!win.documentViewportSize.isEmpty()) {
+                out += QStringLiteral("- Document viewport size: %1 x %2 px\n")
+                           .arg(win.documentViewportSize.width())
+                           .arg(win.documentViewportSize.height());
+            }
             out += QStringLiteral("- Sidebar visible: %1\n").arg(yesNo(win.sidebarVisible));
             out += QStringLiteral("- Markup toolbar visible: %1\n")
                        .arg(yesNo(win.markupToolbarVisible));

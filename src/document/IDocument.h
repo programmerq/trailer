@@ -104,6 +104,27 @@ class IDocument {
     // zoom. Used by MainWindow to size the window to fit on first
     // open. Default empty — non-display docs (stub adapter) opt out.
     virtual QSize contentSizeHint() const { return {}; }
+    // True while this document's natural content size is known only
+    // provisionally (e.g. a raster image's file-header size before the
+    // staged-open async decode, ADR 0008, has landed) rather than settled.
+    // imagePixelSize() / contentSizeHint() still return their best current
+    // estimate; this flag tells a caller (the diagnostics/feedback report)
+    // whether to present that estimate as final. Default false — most
+    // adapters resolve their content size synchronously at open (PdfDocument
+    // forces its own deferred open to settle before answering
+    // contentSizeHint()/pageCount(), so it never reports pending here).
+    virtual bool contentSizePending() const { return false; }
+    // The devicePixelRatio stamped on the document's raw pixel content, if
+    // that concept applies. 0.0 (the default) means "not applicable" — a
+    // PDF page has no pixel dpr, nor does a document with no readable
+    // content yet. Raster adapters return the dpr their decoded (or still-
+    // decoding) image carries: 1.0 for an ordinary file open, or the
+    // capture dpr (>1) stamped on a screenshot/clipboard grab (see
+    // ImageDocument::markCaptureOrigin). Surfaced by the diagnostics/
+    // feedback report to catch the class of HiDPI zoom bug this codebase
+    // has a documented history of — see tests/test_image_scale.cpp and its
+    // dpr1/dpr1_5/dpr2 UAT variants.
+    virtual double imageDevicePixelRatio() const { return 0.0; }
 
     virtual bool supportsViewModes() const { return false; }
     virtual ViewMode viewMode() const { return ViewMode::SinglePage; }
