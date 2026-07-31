@@ -85,20 +85,38 @@ two passes cover different failure classes. Pick from these three:
   error/return-value handling, missing or weak tests, off-by-one, resource
   leaks, undo-stack correctness. Assume the code is wrong until the diff proves
   otherwise.
-- **(2) HIG-polish critic** — platform-native feel and the UX gates **G2-G5**:
-  screenshots of every affected state (G2), no lying controls / disabled +
-  tooltip (G3), platform-native shape with no feature dropped (G4), correct
-  empty state (G5). Flags anything that would make a persona hesitate or that
-  reads as non-native.
+- **(2) HIG-polish critic** — platform-native feel and the UX gates
+  **G2-G5 and G10**: screenshots of every affected state (G2), no lying
+  controls / disabled + tooltip (G3), platform-native shape with no
+  feature dropped (G4), correct empty state (G5), and — distinct from
+  G3 — permanent chrome that only restates state the document already
+  shows, or a control that changed on-screen position as a side effect of
+  unrelated state (G10: deference and spatial constancy). Flags anything
+  that would make a persona hesitate, reads as non-native, or moves
+  furniture that shouldn't have moved.
 - **(3) Frugality auditor** — scope creep, unrequested features, new
   dependencies or binary/asset bloat, and the **G9** frugality budget
   (binary size + RSS envelopes in `docs/performance-budgets.md`). Asks "does
   this change need to be this big, and does it move a budget row?"
 
 **How many to run (minimum):**
-- **Code change →** persona **(1) + (3)** minimum.
-- **UI / user-visible change →** add persona **(2)** (so 1 + 2 + 3).
+- **Code change, no `src/ui/` diff →** persona **(1) + (3)** minimum.
+- **Any diff touching `src/ui/`, or otherwise adding/reshaping on-screen
+  chrome or control layout →** persona **(2) is MANDATORY**, in addition
+  to (1) + (3) — so all three run. This is stronger than "add it if the
+  change feels UI-ish": per AGENTS.md gate G10, a `src/ui/` diff that
+  reaches Step 4 without a persona-(2) pass is not ready to push.
 - Docs-only change → one lighter pass is enough.
+
+**No subagent-spawning tool available? Run the persona yourself, and say
+so.** Some sessions have no tool that can spin up a subagent. That does
+not waive persona (2) for a `src/ui/` diff — it means running the
+HIG-polish-critic pass yourself: read the diff adopting that persona's
+lens deliberately (not as a mental aside while doing something else), and
+disclose the substitution in the PR body — e.g. "Persona (2) run
+in-session; no subagent-spawning tool was available this run." A
+disclosed self-run pass satisfies this step; a silently skipped one does
+not, and looks identical to negligence to the next reviewer.
 
 ### 3. Collect and disposition EVERY finding
 Gather the passes and analyze them. Each finding gets exactly one disposition:
@@ -133,7 +151,8 @@ curated, referenced images are committed.
 - [ ] Identified push base; computed `git diff <base>..HEAD`.
 - [ ] Ran reviewer #1 (correctness skeptic).
 - [ ] Ran reviewer #3 (frugality auditor).      ← code change minimum
-- [ ] Ran reviewer #2 (HIG-polish critic).      ← required if UI/user-visible
+- [ ] Ran reviewer #2 (HIG-polish critic) — MANDATORY for any `src/ui/` diff (self-run + disclosed in the PR body if no subagent-spawning tool was available).
+- [ ] `src/ui/` diff: G10's two questions answered in the PR body (what was added to the permanent surface and why; whether any existing control's on-screen position changed).
 - [ ] Every finding dispositioned: fix / justify / defer-with-Decision-Record.
 - [ ] All "fix" items applied; "justify" reasons written down; "defer" records opened.
 - [ ] UI change: curated UAT evidence committed under `docs/uat/images/` and referenced inline in the PR body (throwaway captures left gitignored).
