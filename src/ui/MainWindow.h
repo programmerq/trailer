@@ -76,6 +76,14 @@ class MainWindow : public QMainWindow {
     bool isSidebarVisible() const;
     bool isMarkupToolbarVisible() const;
     bool isFormToolbarVisible() const;
+    // Current tab's document-view VIEWPORT size, in logical pixels — the
+    // area fit-to-window math (FitInView/FitToWidth) actually sizes
+    // against, distinct from the window's outer geometry (which also
+    // includes toolbars/menus/chrome). Empty when there is no current
+    // document, or its view widget isn't a QAbstractScrollArea (the stub
+    // adapter's placeholder). Read-only accessor for the diagnostics/
+    // feedback report, same pattern as the visibility getters above.
+    QSize currentDocumentViewportSize() const;
 
     // Lightweight status-bar feedback. Replaces operation-failure
     // QMessageBox::warning calls so the user is not punched in the

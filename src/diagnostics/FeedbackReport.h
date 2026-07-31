@@ -16,6 +16,9 @@
 #include "document/IDocument.h"
 
 #include <QList>
+#include <QRect>
+#include <QSize>
+#include <QSizeF>
 #include <QString>
 
 namespace trailer {
@@ -47,6 +50,49 @@ struct DocumentSnapshot {
     bool supportsViewModes = false;
     ViewMode viewMode = ViewMode::SinglePage;
     bool hasTextLayer = false;
+
+    // --- geometry (owner request: "the report should include image
+    // dimensions" after a 504x375 JPEG-at-80%-zoom bug needed a separate
+    // `mediainfo` run to diagnose) -----------------------------------
+    // Natural pixel size for an Image document. Empty (QSize::isEmpty())
+    // when genuinely unknown — either the async decode (ADR 0008) hasn't
+    // produced even a header-size estimate yet, or the file failed to
+    // decode. Always empty for non-Image documents; PDFs report their page
+    // size in POINTS below instead, deliberately kept in a separate field
+    // so formatMarkdown can never print an ambiguous bare "612 x 792" that
+    // a reader can't tell is px or pt.
+    QSize imagePixelSize;
+    // True while imagePixelSize is a provisional estimate read from the
+    // file header — IDocument::contentSizePending() — because the async
+    // full-resolution decode hasn't landed yet. Only ever true for Image
+    // documents; always false once the decode has settled (success or
+    // failure) or for a document type that never stages its open. NOTE:
+    // when this is false but pageCount is still 0 for an Image document
+    // with a non-empty imagePixelSize, the header read succeeded but the
+    // full pixel decode subsequently FAILED (a valid-header, corrupt-body
+    // file) — formatMarkdown flags that case explicitly rather than
+    // presenting the header size as a confirmed, decoded result.
+    bool imageSizePending = false;
+    // IDocument::imageDevicePixelRatio(): 0.0 means not applicable (non-
+    // Image document); otherwise the image's own devicePixelRatio — 1.0
+    // for an ordinary file open, >1 for a screenshot/clipboard capture
+    // (ImageDocument::markCaptureOrigin). This is the field the owner's
+    // real bug needed: a PDF at 80% zoom in an oversized window reads very
+    // differently once you know whether the image itself carries a DPR
+    // stamp.
+    double imageDpr = 0.0;
+    // Current page's size in PDF points (1/72"), for a Pdf document.
+    // Empty when unavailable (locked/password-protected doc, no pages, or
+    // a non-PDF document) — pageCount above already governs whether the
+    // page-count text renders, and this field follows the same gate in
+    // formatMarkdown.
+    QSizeF pdfPageSizePts;
+    // True when page 0's point size differs from the CURRENT page's —
+    // flags a PDF with mixed page geometry (a scanned exhibit stapled
+    // into a born-digital brief, a mix of portrait and landscape pages)
+    // so a reader doesn't assume pdfPageSizePts describes every page.
+    // Always false for a single-page document or when the sizes agree.
+    bool pdfPageSizeVariesByPage = false;
 };
 
 // One open MainWindow.
@@ -56,6 +102,32 @@ struct WindowSnapshot {
     bool markupToolbarVisible = false;
     bool formToolbarVisible = false;
     QList<DocumentSnapshot> documents;
+
+    // --- window & screen geometry (same "image dimensions" ask — the
+    // owner's other complaint was "it chose a HUGE window size", which a
+    // report with no window/screen numbers can't settle either) --------
+    // Outer frame geometry (position + size) in logical pixels, exactly
+    // QWidget::geometry(). Left at the default-constructed (invalid,
+    // zero-area) QRect when unknown; formatMarkdown omits the line rather
+    // than print a misleading "0x0 at (0, 0)".
+    QRect windowGeometry;
+    bool isMaximized = false;
+    bool isFullScreen = false;
+    // Full and available (excludes taskbar/menu bar/dock) geometry of the
+    // screen this window currently sits on, in logical pixels. Same
+    // "omit rather than fake" rule as windowGeometry.
+    QRect screenGeometry;
+    QRect screenAvailableGeometry;
+    // devicePixelRatio of that screen. 1.0 on an ordinary display; 2.0 on
+    // the owner's Retina Mac, while CI/offscreen runs typically report
+    // 1.0 — exactly the kind of gap that hides DPR bugs (see
+    // tests/test_image_scale.cpp and its dpr1/dpr1_5/dpr2 UAT variants).
+    double screenDevicePixelRatio = 1.0;
+    // Current tab's document-view VIEWPORT size in logical pixels — the
+    // area fit-to-window math (FitInView/FitToWidth) actually sizes
+    // against, distinct from windowGeometry (which also includes
+    // toolbars/menus/chrome). Empty when there is no current document.
+    QSize documentViewportSize;
 };
 
 // One ONNX model the ML feature set depends on.

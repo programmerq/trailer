@@ -430,8 +430,14 @@ Driven by `uat_xct_071_menuItemAlwaysEnabled`.
   generated timestamp, build type, platform, Qt version), an App state
   section (theme, auto-save, open-files-in, recent-files count), an ML
   section (scheduler flags + per-model downloaded/never-download state),
-  and a Windows/documents section (per open document: type, page,
-  zoom, view mode, text-layer flag).
+  and a Windows/documents section: per window, its outer geometry
+  (maximized/fullscreen flag), the screen geometry + devicePixelRatio it
+  sits on, and the current document's viewport size; per open document,
+  type, page, zoom, view mode, text-layer flag, and natural geometry —
+  pixel size + devicePixelRatio for an image (or "not yet decoded" /
+  "unknown" while the staged-open decode is still in flight or failed),
+  current page size in points for a PDF (2026-07-31, owner request after
+  a 504x375-JPEG-at-80%-zoom bug needed a separate `mediainfo` run).
 - The "Include full file paths" checkbox is present and **unchecked by
   default**; with it unchecked, no full on-disk path appears anywhere in
   the report — only bare file names — and the report says so explicitly

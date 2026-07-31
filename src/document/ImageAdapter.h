@@ -182,6 +182,26 @@ class ImageDocument : public IDocument {
     bool resizeImage(int width, int height, bool smoothScaling) override;
     bool cropToRect(int x, int y, int width, int height) override;
     QSize imagePixelSize() const override { return deviceSize(); }
+    // See IDocument::contentSizePending. True only while the off-thread
+    // full-resolution decode (ADR 0008) is genuinely in flight — i.e.
+    // imagePixelSize() is currently answering from m_headerSize rather than
+    // the decoded QImage. Never true for an animated GIF (decoded
+    // synchronously at construction) or once the decode has settled
+    // (success or failure).
+    bool contentSizePending() const override {
+        return !m_animated && m_decodeStarted && !m_decoded;
+    }
+    // See IDocument::imageDevicePixelRatio. Mirrors the divide-by-dpr logic
+    // in contentSizeHint() above: once decoded, the real image's dpr;
+    // before that, the capture dpr staged by markCaptureOrigin if any
+    // (still accurate — the dpr is known immediately at capture time,
+    // independent of when the pixel decode finishes), else the ordinary
+    // 1.0 default. Never forces a decode.
+    double imageDevicePixelRatio() const override {
+        if (!m_image.isNull())
+            return imageDpr();
+        return m_pendingCaptureDpr > 1.0 ? m_pendingCaptureDpr : 1.0;
+    }
     // Read-only access to the current raster buffer. Used by Phase 6
     // features (background removal, instant alpha, Smart Lasso) that
     // feed pixels into ONNX models. Returns a shallow copy — QImage is

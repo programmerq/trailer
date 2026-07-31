@@ -50,6 +50,15 @@ class TestFeedbackReport : public QObject {
     void emptyStateWindowIsDescribed();
     void modelPolicyAndAvailabilityAreRendered();
     void documentFieldsRoundTripIntoText();
+    void imageDimensionsAndDprAreRenderedWithUnits();
+    void pendingImageDecodeIsReportedHonestly();
+    void undecodableImageIsReportedHonestlyNotAsZero();
+    void failedPixelDecodeIsFlaggedNotPresentedAsSettled();
+    void pdfPageSizeIsRenderedInPoints();
+    void pdfPageSizeVarianceAcrossPagesIsFlagged();
+    void windowAndScreenGeometryAreRendered();
+    void invalidGeometryIsOmittedNotFaked();
+    void imageDimensionsDoNotLeakPathWhenPathsOmitted();
 };
 
 void TestFeedbackReport::headerCarriesStableGreppableFields() {
@@ -180,6 +189,191 @@ void TestFeedbackReport::documentFieldsRoundTripIntoText() {
     QVERIFY(md.contains(QStringLiteral("Sidebar visible: yes")));
     QVERIFY(md.contains(QStringLiteral("Markup toolbar visible: yes")));
     QVERIFY(md.contains(QStringLiteral("Form toolbar visible: no")));
+}
+
+void TestFeedbackReport::imageDimensionsAndDprAreRenderedWithUnits() {
+    // The owner's real bug: a 504x375 JPEG opened at 80% zoom in an
+    // oversized window. Reproduce that shape and assert the report now
+    // carries every number that used to require a separate `mediainfo`
+    // run.
+    AppSnapshot s = minimalSnapshot();
+    WindowSnapshot w;
+    DocumentSnapshot d;
+    d.displayName = QStringLiteral("photo.jpg");
+    d.type = DocumentType::Image;
+    d.supportsZoom = true;
+    d.zoomMode = ZoomMode::Custom;
+    d.zoomFactor = 0.8;
+    d.imagePixelSize = QSize(504, 375);
+    d.imageSizePending = false;
+    d.imageDpr = 2.0;
+    w.documents.append(d);
+    s.windows.append(w);
+
+    const QString md = formatMarkdown(s);
+    QVERIFY(md.contains(QStringLiteral("Image size: 504 x 375 px")));
+    QVERIFY(md.contains(QStringLiteral("Image devicePixelRatio: 2")));
+    QVERIFY(md.contains(QStringLiteral("Zoom: Custom (80%)")));
+    // Units must be unambiguous — never a bare "504 x 375" a reader could
+    // mistake for points.
+    QVERIFY(!md.contains(QStringLiteral("504 x 375\n")));
+}
+
+void TestFeedbackReport::pendingImageDecodeIsReportedHonestly() {
+    // ADR 0008 staged open: the async full-resolution decode hasn't
+    // landed yet, but the file header already gave a size estimate.
+    AppSnapshot s = minimalSnapshot();
+    WindowSnapshot w;
+    DocumentSnapshot d;
+    d.displayName = QStringLiteral("big-scan.png");
+    d.type = DocumentType::Image;
+    d.imagePixelSize = QSize(4000, 3000); // header-only estimate
+    d.imageSizePending = true;
+    d.imageDpr = 1.0;
+    w.documents.append(d);
+    s.windows.append(w);
+
+    const QString md = formatMarkdown(s);
+    QVERIFY(md.contains(QStringLiteral("Image size: 4000 x 3000 px")));
+    QVERIFY(md.contains(QStringLiteral("full decode still pending")));
+}
+
+void TestFeedbackReport::undecodableImageIsReportedHonestlyNotAsZero() {
+    // A corrupt/unreadable file: no header size, decode never started.
+    // Must never print a misleading "0 x 0".
+    AppSnapshot s = minimalSnapshot();
+    WindowSnapshot w;
+    DocumentSnapshot d;
+    d.displayName = QStringLiteral("corrupt.png");
+    d.type = DocumentType::Image;
+    d.imagePixelSize = QSize(); // unknown
+    d.imageSizePending = false;
+    w.documents.append(d);
+    s.windows.append(w);
+
+    const QString md = formatMarkdown(s);
+    QVERIFY(md.contains(QStringLiteral("Image size: unknown (image could not be decoded)")));
+    QVERIFY(!md.contains(QStringLiteral("0 x 0")));
+}
+
+void TestFeedbackReport::failedPixelDecodeIsFlaggedNotPresentedAsSettled() {
+    // A valid-header, corrupt-body file: ImageDocument's header read
+    // succeeded (imagePixelSize is non-empty) but the async full-pixel
+    // decode subsequently FAILED, so imageAvailableOrPending()/pageCount()
+    // go false even though deviceSize() still reports the header size.
+    // The report must not present that header number as a confirmed,
+    // decoded result.
+    AppSnapshot s = minimalSnapshot();
+    WindowSnapshot w;
+    DocumentSnapshot d;
+    d.displayName = QStringLiteral("truncated.jpg");
+    d.type = DocumentType::Image;
+    d.pageCount = 0; // imageAvailableOrPending() == false after the failed decode
+    d.imagePixelSize = QSize(1920, 1080); // still the header-read estimate
+    d.imageSizePending = false; // the decode DID finish — it just failed
+    w.documents.append(d);
+    s.windows.append(w);
+
+    const QString md = formatMarkdown(s);
+    QVERIFY(md.contains(QStringLiteral("Image size: 1920 x 1080 px")));
+    QVERIFY(md.contains(QStringLiteral("pixel decode failed")));
+}
+
+void TestFeedbackReport::pdfPageSizeIsRenderedInPoints() {
+    AppSnapshot s = minimalSnapshot();
+    WindowSnapshot w;
+    DocumentSnapshot d;
+    d.displayName = QStringLiteral("brief.pdf");
+    d.type = DocumentType::Pdf;
+    d.pageCount = 3;
+    d.currentPage = 0;
+    d.pdfPageSizePts = QSizeF(612.0, 792.0); // US Letter
+    w.documents.append(d);
+    s.windows.append(w);
+
+    const QString md = formatMarkdown(s);
+    QVERIFY(md.contains(QStringLiteral("Page size: 612 x 792 pt (page 1)")));
+    // Never print an ambiguous bare "612 x 792" — pt must be explicit.
+    QVERIFY(!md.contains(QStringLiteral("612 x 792\n")));
+}
+
+void TestFeedbackReport::pdfPageSizeVarianceAcrossPagesIsFlagged() {
+    AppSnapshot s = minimalSnapshot();
+    WindowSnapshot w;
+    DocumentSnapshot d;
+    d.displayName = QStringLiteral("mixed-sizes.pdf");
+    d.type = DocumentType::Pdf;
+    d.pageCount = 2;
+    d.currentPage = 1;
+    d.pdfPageSizePts = QSizeF(792.0, 612.0); // landscape page 2
+    d.pdfPageSizeVariesByPage = true;
+    w.documents.append(d);
+    s.windows.append(w);
+
+    const QString md = formatMarkdown(s);
+    QVERIFY(md.contains(QStringLiteral("Page size: 792 x 612 pt (page 2)")));
+    QVERIFY(md.contains(QStringLiteral("differs from page 1's size")));
+}
+
+void TestFeedbackReport::windowAndScreenGeometryAreRendered() {
+    // The owner's other complaint: "it chose a HUGE window size." The
+    // report now carries both the window's geometry and the screen it
+    // sits on, so a reader can tell whether that's actually oversized.
+    AppSnapshot s = minimalSnapshot();
+    WindowSnapshot w;
+    w.windowGeometry = QRect(50, 60, 2400, 1800);
+    w.isMaximized = false;
+    w.isFullScreen = false;
+    w.screenGeometry = QRect(0, 0, 2560, 1440);
+    w.screenAvailableGeometry = QRect(0, 25, 2560, 1415);
+    w.screenDevicePixelRatio = 2.0;
+    w.documentViewportSize = QSize(2380, 1700);
+    s.windows.append(w);
+
+    const QString md = formatMarkdown(s);
+    QVERIFY(md.contains(QStringLiteral("Window geometry: 2400x1800 at (50, 60)")));
+    QVERIFY(md.contains(
+        QStringLiteral("Screen geometry: 2560x1440 (available 2560x1415), devicePixelRatio 2")));
+    QVERIFY(md.contains(QStringLiteral("Document viewport size: 2380 x 1700 px")));
+    QVERIFY(!md.contains(QStringLiteral("[maximized]")));
+    QVERIFY(!md.contains(QStringLiteral("[fullscreen]")));
+}
+
+void TestFeedbackReport::invalidGeometryIsOmittedNotFaked() {
+    // No windows.size()==0 test already covers the zero-windows case;
+    // this covers a WindowSnapshot present but with geometry never
+    // populated (e.g. an old snapshot round-tripped without the new
+    // fields) — must omit the line, not print a fake "0x0 at (0, 0)".
+    AppSnapshot s = minimalSnapshot();
+    WindowSnapshot w; // windowGeometry/screenGeometry left default (invalid)
+    s.windows.append(w);
+
+    const QString md = formatMarkdown(s);
+    QVERIFY(!md.contains(QStringLiteral("Window geometry:")));
+    QVERIFY(!md.contains(QStringLiteral("Screen geometry:")));
+    QVERIFY(!md.contains(QStringLiteral("Document viewport size:")));
+}
+
+void TestFeedbackReport::imageDimensionsDoNotLeakPathWhenPathsOmitted() {
+    // Dimensions are not sensitive and belong in the default output, but
+    // adding them must not reopen the path-privacy hole the existing
+    // pathsOmittedByDefault test guards.
+    AppSnapshot s = minimalSnapshot();
+    WindowSnapshot w;
+    DocumentSnapshot d;
+    d.displayName = QStringLiteral("photo.jpg");
+    d.filePath = QStringLiteral("/home/alice/Documents/private-client/photo.jpg");
+    d.type = DocumentType::Image;
+    d.imagePixelSize = QSize(504, 375);
+    d.imageDpr = 2.0;
+    w.documents.append(d);
+    s.windows.append(w);
+
+    const QString md = formatMarkdown(s); // default includeFullPaths = false
+    QVERIFY(md.contains(QStringLiteral("504 x 375 px")));
+    QVERIFY(md.contains(QStringLiteral("Image devicePixelRatio: 2")));
+    QVERIFY(!md.contains(QStringLiteral("/home/alice")));
+    QVERIFY(!md.contains(QStringLiteral("private-client")));
 }
 
 QTEST_MAIN(TestFeedbackReport)

@@ -54,6 +54,7 @@
 #include "document/ImageAdapter.h"
 #include "document/SelectableTextStore.h"
 
+#include <QAbstractScrollArea>
 #include <QAction>
 #include <QDebug>
 #include <QDragEnterEvent>
@@ -4802,6 +4803,21 @@ bool MainWindow::isMarkupToolbarVisible() const {
 
 bool MainWindow::isFormToolbarVisible() const {
     return m_formToolbar && m_formToolbar->isVisible();
+}
+
+QSize MainWindow::currentDocumentViewportSize() const {
+    QWidget *w = m_documentView ? m_documentView->currentWidget() : nullptr;
+    if (!w)
+        return {};
+    // Both current view widgets (QScrollArea for images, QPdfView for PDFs)
+    // are QAbstractScrollArea subclasses; their viewport() is the area
+    // fit-to-window math sizes against (see installResizeWatcher's comment
+    // in ImageAdapter.cpp and applyInitialFitZoom's viewport() read in
+    // PdfAdapter.cpp), which excludes scrollbars — unlike the tab page
+    // widget's own size().
+    if (auto *scrollArea = qobject_cast<QAbstractScrollArea *>(w))
+        return scrollArea->viewport()->size();
+    return w->size();
 }
 
 void MainWindow::dragEnterEvent(QDragEnterEvent *event) {
