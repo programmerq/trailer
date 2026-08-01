@@ -321,3 +321,50 @@ sign-off; or a superseding decision record. A bare taste for "one cleaner row" i
 not such evidence; it is already rejected above as a naked preference, its
 admissible cost (drifting primary controls, primary items hidden on narrow
 windows) captured by the objections Option A answers.
+
+## Addendum (2026-07-31) — persisted `windowState` could resurrect the pre-fix order
+
+Dogfood report (owner, macOS nightly, 2026-07-31): activating the form toolbar
+while the markup toolbar was visible still moved the main toolbar "up and to the
+right," despite the R1 construction-time fix above already being on `main` since
+2026-07-15 (`4ddabc2`). Investigation found the construction-time order was
+correct, but **invariant #1 was not actually held**, because of a second channel
+this record did not account for: `MainWindow::onCurrentDocumentChanged`'s
+per-file and per-type view-state restore paths call
+`QMainWindow::restoreState(entry.windowState)` / `restoreState(def.windowState)`
+on a `QByteArray` captured by a previous `closeEvent()`'s `saveState()`.
+`QMainWindow::saveState()`/`restoreState()` serialise the **toolbar area's order
+and row-break placement**, matched back to toolbars by object name — a different
+channel than the explicit `markupToolbarVisible` bool the same structs also
+carry (which the restore code already re-applies *after* `restoreState()`, per
+the comment at the call site — but only for visibility, not order). A blob
+captured under an older arrangement — including, concretely, any blob saved by
+a build that predates this record's R1 fix — silently overwrites the
+construction-time canonical order the instant `restoreState()` runs, on every
+subsequent build regardless of how correct that build's constructor is. Because
+none of the three toolbars are user-movable/floatable (`setMovable(false)` /
+`setFloatable(false)` on all three — placement is intentional, not
+user-configurable), the blob never has a legitimate reason to carry a different
+order, so there is no tradeoff in overriding it unconditionally.
+
+Reproduced and fixed in the same change: `tests/uat/test_uat_search_and_markup.cpp`
+`uat_xct_075_staleWindowStateBlobDoesNotResurrectOldToolbarOrder` plants a blob
+saved under the pre-R1 arrangement (markup, form+break, main with no break) as a
+document's persisted `RecentEntry::windowState` and shows the main toolbar
+jumping ~184px right when the form toolbar is shown — the same magnitude as the
+original bug, resurrected purely from disk. Fixed by
+`MainWindow::reassertToolbarLayout()` (`src/ui/MainWindow.cpp`), called
+immediately after both `restoreState()` call sites: it snapshots each
+toolbar's current visibility, re-runs the exact same `addToolBar` /
+`insertToolBar` / `insertToolBarBreak` sequence the constructor uses, then
+reapplies the snapshotted visibility — so ORDER is always the canonical one
+from this record regardless of what any blob (past, present, or future) encodes,
+while VISIBILITY continues to come from whatever the caller set it to. A second,
+paired case (`uat_xct_074_formActivationWhileMarkupVisibleKeepsMainAnchored`)
+confirms the live, no-persisted-state transition the owner also described —
+markup visible, then form activated manually — was already correct on `main`;
+only the persisted-state channel was the residual gap. This addendum documents
+the completion of invariant #1 as originally accepted; it does not reopen or
+change the accepted verdict, and needs no separate decision record (AGENTS.md
+G6) because it closes a gap in fulfilling an already-accepted threshold rather
+than establishing a new one.
