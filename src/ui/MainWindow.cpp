@@ -124,6 +124,83 @@ QString kToolbarExtensionPinStyle() {
     return QStringLiteral(
         "QToolBarExtension#qt_toolbar_ext_button { min-width: 20px; max-width: 20px; }");
 }
+
+// G10 (spatial constancy, AGENTS.md; SC-CRIT-1,
+// docs/audit-2026-07-31-g10-deference.md): QStatusBar::addPermanentWidget()
+// packs every permanent widget into ONE right-anchored box layout, so any
+// member's width changing -- including a hide/show collapsing it to or from
+// zero -- shifts every OTHER member, regardless of insertion order. This is
+// the exact mechanism the m_zoomIndicator floating-overlay fix documents at
+// its own construction site (DR 2026-07-31-transient-zoom-readout): that
+// fix removed ONE widget (the zoom readout) from the chain by floating it,
+// but the remaining permanent widgets -- m_mlIndicator, the large-doc/
+// missing-model OCR hints, m_readOnlyBadge, m_mlProgress -- still toggle
+// independently of each other (ML activity, OCR-hint dismissal, Two-Pages
+// mode, OCR batch progress), so any one can nudge a sibling the user is
+// looking at. Concretely: switching to Two-Pages while an OCR batch runs
+// slid the ML progress bar's Cancel button sideways -- a control the user
+// may be mid-click on.
+//
+// Fix: wrap each permanent widget in a fixed-width slot that is ALWAYS
+// present in the status bar's layout (added once here, never itself
+// hidden). `content`'s own setVisible() calls keep working exactly as
+// before -- they blank the SLOT's content, not collapse the slot -- so the
+// slot's width, and therefore every sibling's position, never depends on
+// any OTHER widget's visibility.
+//
+// Reserved-space-vs-wasted-space tradeoff, resolved explicitly (PR #135
+// precedent for the analogous toolbar-row question: "reserved ORDER, not
+// reserved PIXELS"). That trick relied on toolbars stacking VERTICALLY, so
+// a hidden toolbar's row collapses to literally zero height without
+// disturbing a sibling on a DIFFERENT row. These five widgets share ONE
+// horizontal status-bar row -- there is no zero-cost axis to collapse
+// along, so guaranteeing a visible widget's position never depends on a
+// sibling's visibility requires reserving that sibling's width whether or
+// not it is currently shown. That is a real, deliberate cost, not an
+// oversight: each slot below is sized to the widget's actual measured
+// maximum content (see each call site's comment), not a round-number
+// guess, and the two widest widgets -- the large-doc-OCR hint and the
+// missing-model hint -- are PROVABLY mutually exclusive
+// (OcrController::evaluateAutoOcrModel's `!isLargeDoc()` guard means the
+// missing-model hint only ever evaluates true for a document with
+// pageCount() <= kLargeDocPageThreshold, while the large-doc hint requires
+// isLargeDoc() -- i.e. pageCount() > the same threshold; the two
+// conditions are mutually exclusive by construction, not by observation),
+// so they share ONE reserved slot below rather than two, roughly halving
+// the worst-case reserved width. The remaining worst case (an ML task
+// running AND one of the two OCR hints AND Two-Pages mode AND a revealed
+// OCR batch, all at once) is a few hundred pixels -- bounded, and a rare
+// conjunction rather than the common case, which shows an all-blank
+// permanent-widget region exactly as it did before this change.
+QWidget *reserveStatusBarSlot(QWidget *content, int width) {
+    auto *slot = new QWidget(content->parentWidget());
+    slot->setFixedWidth(width);
+    auto *layout = new QHBoxLayout(slot);
+    layout->setContentsMargins(0, 0, 0, 0);
+    layout->setSpacing(0);
+    layout->addWidget(content);
+    layout->addStretch(1);
+    return slot;
+}
+
+// CROSS-PLATFORM CORRECTNESS (2026-08-01): each slot's width call site
+// originally passed a pixel LITERAL measured once via an offscreen probe
+// on Linux (DejaVu Sans). That was wrong the same way MlProgressWidget's
+// own literal elision caps were wrong (see that class's maxWidth() doc
+// comment for the CI failure this caused): a width measured against one
+// platform's font does not predict another platform's rendering of the
+// same short, fixed string (Windows/Wine resolve a different font, at
+// minimum, and possibly a different point size). `slotWidthFor()`
+// measures `content`'s OWN real sizeHint() on whatever platform is
+// actually running -- so a slot is always sized to what THIS platform's
+// fonts need for this exact widget, not a number baked from one platform's
+// measurement. kSlotSafetyMargin absorbs sub-pixel hinting/rounding at
+// the boundary itself (not cross-platform variance -- sizeHint() already
+// IS the cross-platform-correct measurement).
+constexpr int kSlotSafetyMargin = 20;
+int slotWidthFor(QWidget *content) {
+    return content->sizeHint().width() + kSlotSafetyMargin;
+}
 }
 
 MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent), m_app(app) {
@@ -518,10 +595,16 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // worker thread; the lambda runs on the GUI thread and is safe
     // to touch QLabel state. No-op when the scheduler is idle.
     m_mlIndicator = new QLabel(QStringLiteral("ML"), this);
+    m_mlIndicator->setObjectName(QStringLiteral("mlIndicator"));
     m_mlIndicator->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
     m_mlIndicator->setMargin(2);
     m_mlIndicator->setVisible(false);
-    statusBar()->addPermanentWidget(m_mlIndicator);
+    // G10/SC-CRIT-1 (see reserveStatusBarSlot()'s and slotWidthFor()'s
+    // comments): reserves this label's own measured sizeHint ("ML" +
+    // frame/margin, on whatever font THIS platform resolves) with a safety
+    // buffer, so toggling it never nudges a sibling permanent widget, and
+    // no sibling toggling ever nudges it.
+    statusBar()->addPermanentWidget(reserveStatusBarSlot(m_mlIndicator, slotWidthFor(m_mlIndicator)));
     auto refreshMlIndicator = [this]() {
         const auto stats = m_app->mlScheduler().stats();
         // Idle priority is reserved for "we don't care if this never
@@ -601,8 +684,69 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     hintLayout->addWidget(hintLink);
     hintLayout->addWidget(hintDismiss);
     hint->setVisible(false);
-    statusBar()->addPermanentWidget(hint);
     m_largeDocOcrHint = hint;
+
+    // ADR 0002 §3: non-modal in-context hint shown when auto-OCR would run
+    // but the language model is absent. Benefit-first wording, no jargon;
+    // the link enters the sanctioned one-time-consent download flow (the
+    // only popup allowed here). State-driven via autoOcrModelMissing()
+    // (wired further down, once m_ocrController's other connections are in
+    // scope). Built immediately after m_largeDocOcrHint, not where ADR 0002
+    // originally placed it, because the two share ONE reserved status-bar
+    // slot below (SC-CRIT-1 / G10) and are easier to audit as a pair.
+    m_ocrModelMissingHint = new QLabel(
+        tr("This document's text isn't searchable — "
+           "<a href=\"#install\">install language pack</a> to recognise it."),
+        this);
+    m_ocrModelMissingHint->setObjectName(QStringLiteral("ocrModelMissingHint"));
+    m_ocrModelMissingHint->setTextFormat(Qt::RichText);
+    m_ocrModelMissingHint->setOpenExternalLinks(false);
+    m_ocrModelMissingHint->setVisible(false);
+    connect(m_ocrModelMissingHint, &QLabel::linkActivated, this, [this](const QString &) {
+        // The hint link routes into the sanctioned one-time download-consent
+        // flow (ensureOcrModelsReady → requestModelDownload). A test seam may
+        // intercept it so the routing can be verified without a real modal.
+        bool ready;
+        if (m_ocrModelDownloadHook) {
+            ready = m_ocrModelDownloadHook();
+        } else {
+            OcrEngine gateEngine(&m_app->modelRegistry());
+            ready = ensureOcrModelsReady(this, gateEngine);
+        }
+        if (ready) {
+            // Model now present — re-derive so the hint hides and auto-OCR
+            // resumes for the visible page.
+            auto *doc = m_documentView->currentDocument();
+            if (doc && doc->supportsSelectableText())
+                m_ocrController->onVisiblePageChanged(doc->currentPage());
+        }
+    });
+
+    // G10/SC-CRIT-1 (see reserveStatusBarSlot()'s and slotWidthFor()'s
+    // comments above): one reserved slot hosts BOTH OCR hints rather than
+    // one each. They are provably mutually exclusive
+    // (OcrController::evaluateAutoOcrModel's `!isLargeDoc()` guard), so at
+    // most one is ever visible at a time — sharing a slot costs nothing
+    // extra and roughly halves the worst-case reserved width versus giving
+    // each its own. The slot is sized to the wider of the two hints' own
+    // measured sizeHints (on whatever font THIS platform resolves), not a
+    // literal baked from one platform's measurement — see slotWidthFor()'s
+    // cross-platform note; each hint's own setVisible() is unchanged (still
+    // driven by updateLargeDocOcrHint() / autoOcrModelMissing()) and just
+    // blanks its own content within the shared slot rather than collapsing
+    // it, so toggling either hint never moves any other permanent widget.
+    const int kOcrHintSlotWidth =
+        qMax(hint->sizeHint().width(), m_ocrModelMissingHint->sizeHint().width()) +
+        kSlotSafetyMargin;
+    auto *ocrHintSlot = new QWidget(this);
+    ocrHintSlot->setFixedWidth(kOcrHintSlotWidth);
+    auto *ocrHintSlotLayout = new QHBoxLayout(ocrHintSlot);
+    ocrHintSlotLayout->setContentsMargins(0, 0, 0, 0);
+    ocrHintSlotLayout->setSpacing(0);
+    ocrHintSlotLayout->addWidget(hint);
+    ocrHintSlotLayout->addWidget(m_ocrModelMissingHint);
+    ocrHintSlotLayout->addStretch(1);
+    statusBar()->addPermanentWidget(ocrHintSlot);
     refreshMlIndicator();
 
     // TRANSIENT zoom-% HUD (DR 2026-07-31-transient-zoom-readout).
@@ -688,9 +832,11 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
 
     // Two-Pages read-only badge (decision record 2026-07-21-two-page-layout,
     // D2-A; gate G3; minimal-UI guideline docs/ux-guidelines.md, #116). A
-    // compact lock pill sitting with the permanent status-bar widgets, next to
-    // the zoom readout — the ambient-status surface the guideline blesses. It is
-    // the always-visible PRIMARY read-only signal, but it RECEDES (a small
+    // compact lock pill sitting with the other permanent status-bar widgets —
+    // the ambient-status surface the guideline blesses. (The zoom readout is
+    // no longer one of those siblings — DR 2026-07-31-transient-zoom-readout
+    // made it a floating overlay outside this shared row.) It is the
+    // always-visible PRIMARY read-only signal, but it RECEDES (a small
     // badge, not a full-width banner). The full "switch to Single or Continuous
     // to edit" sentence lives in its tooltip; the per-control disabled tooltips
     // stay as the G3 floor. Shown only in Two-Pages mode by
@@ -703,14 +849,24 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         "#twoPageReadOnlyBadge { background-color: #fff4d6; border: 1px solid "
         "#e6c86a; border-radius: 4px; color: #5a4a12; padding: 1px 6px; }"));
     m_readOnlyBadge->setVisible(false);
-    statusBar()->addPermanentWidget(m_readOnlyBadge);
+    // G10/SC-CRIT-1: reserves this badge's own measured, styled sizeHint
+    // (including its stylesheet's border/padding, on whatever font THIS
+    // platform resolves) with a safety buffer — see reserveStatusBarSlot()'s
+    // and slotWidthFor()'s comments above.
+    statusBar()->addPermanentWidget(reserveStatusBarSlot(m_readOnlyBadge, slotWidthFor(m_readOnlyBadge)));
 
     // ADR 0002: richer progress+cancel widget for foreground ML ops.
     // Sits next to the ambient m_mlIndicator dot (which stays untouched).
     // OcrController's batch signals drive it; the reveal is delayed so
     // sub-threshold batches never flicker it. See wiring below.
     m_mlProgress = new MlProgressWidget(this);
-    statusBar()->addPermanentWidget(m_mlProgress);
+    // G10/SC-CRIT-1: this is the widget the audit's concrete repro names —
+    // its Cancel button is a control the user may be mid-click on, so its
+    // reserved slot (m_mlProgress->maxWidth(), computed from THIS
+    // platform's live font metrics at construction time — see that
+    // method's doc comment for why a hardcoded literal broke Windows-
+    // cross-build-under-Wine CI) must never move for any sibling's sake.
+    statusBar()->addPermanentWidget(reserveStatusBarSlot(m_mlProgress, m_mlProgress->maxWidth()));
     // ADR 0002 §1: elapsed-time reassurance for INDETERMINATE reveals.
     // Ticks once a second while a single-page / unknown-length op is
     // revealed and appends "· Ns" past 10s. Started in the indeterminate
@@ -786,38 +942,11 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
             &OcrController::cancelActiveBatch);
     addAction(m_cancelMlAction);
 
-    // ADR 0002 §3: non-modal in-context hint shown when auto-OCR would run
-    // but the language model is absent. Benefit-first wording, no jargon;
-    // the link enters the sanctioned one-time-consent download flow (the
-    // only popup allowed here). State-driven via autoOcrModelMissing().
-    m_ocrModelMissingHint = new QLabel(
-        tr("This document's text isn't searchable — "
-           "<a href=\"#install\">install language pack</a> to recognise it."),
-        this);
-    m_ocrModelMissingHint->setObjectName(QStringLiteral("ocrModelMissingHint"));
-    m_ocrModelMissingHint->setTextFormat(Qt::RichText);
-    m_ocrModelMissingHint->setOpenExternalLinks(false);
-    m_ocrModelMissingHint->setVisible(false);
-    connect(m_ocrModelMissingHint, &QLabel::linkActivated, this, [this](const QString &) {
-        // The hint link routes into the sanctioned one-time download-consent
-        // flow (ensureOcrModelsReady → requestModelDownload). A test seam may
-        // intercept it so the routing can be verified without a real modal.
-        bool ready;
-        if (m_ocrModelDownloadHook) {
-            ready = m_ocrModelDownloadHook();
-        } else {
-            OcrEngine gateEngine(&m_app->modelRegistry());
-            ready = ensureOcrModelsReady(this, gateEngine);
-        }
-        if (ready) {
-            // Model now present — re-derive so the hint hides and auto-OCR
-            // resumes for the visible page.
-            auto *doc = m_documentView->currentDocument();
-            if (doc && doc->supportsSelectableText())
-                m_ocrController->onVisiblePageChanged(doc->currentPage());
-        }
-    });
-    statusBar()->addPermanentWidget(m_ocrModelMissingHint);
+    // m_ocrModelMissingHint is constructed earlier, alongside
+    // m_largeDocOcrHint (see that block) — the two share ONE reserved
+    // status-bar slot (SC-CRIT-1 / G10) because they are provably mutually
+    // exclusive; building them adjacently keeps that pairing legible
+    // instead of splitting it across two distant constructor blocks.
     connect(m_ocrController, &OcrController::autoOcrModelMissing, this,
             [this](bool missing) { m_ocrModelMissingHint->setVisible(missing); });
 
@@ -914,10 +1043,26 @@ void MainWindow::autoSaveDirtyDocs() {
     if (m_externalChangeMonitor)
         m_externalChangeMonitor->mute(false);
     if (savedAny) {
-        // The document is deliberately still dirty — nothing was written to
-        // the backing file. Signal that recovery is protected, not that the
-        // file was saved.
-        flashSuccess(tr("Recovery snapshot saved."));
+        // G10 (deference): a "Recovery Snapshot Saved" status-bar toast is
+        // permanent-surface chrome narrating routine background work the
+        // user didn't ask about and can't act on — this is the exact
+        // motivating example named in docs/ux-guidelines.md's anti-pattern
+        // list for this gate, and see DR
+        // 2026-07-31-recovery-snapshot-toast-silent. Never-worry-save means
+        // the snapshot itself is silent-by-design (PHILOSOPHY.md); the
+        // toast about it was the app narrating that it did its job. The
+        // document's unsaved-work signal the user actually needs stays
+        // visible without it: the title-bar "•" dirty marker
+        // (updateTitleForDocument, guarded by tests/test_dirty_marker_zoom.cpp)
+        // and the Feedback Report's "(unsaved changes)" line
+        // (src/diagnostics/FeedbackReport.cpp) both read isDirty() directly
+        // and are unaffected by this change. The local session-recording
+        // trail (uxrecord — never shown to the user, never sent anywhere;
+        // active only during an owner-run HITL capture) still logs the
+        // event so a review pass can see when a snapshot protected work.
+        uxrecord::recordEvent(QStringLiteral("operation_succeeded"),
+                              QJsonObject{{QStringLiteral("message"),
+                                           QStringLiteral("Recovery snapshot saved.")}});
     }
 }
 
@@ -4245,16 +4390,31 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // its results stored back into the document. Redact stays
     // available on plain images — it operates on pixel rectangles, not
     // glyphs.
+    //
+    // G10/SC-CRIT-2 (docs/decision-records/2026-08-01-markup-toolbar-disable-not-hide.md):
+    // disabled-with-tooltip, not hidden. Hiding collapsed each tool's slot
+    // in the shared toolbar row, shifting Redact / Stroke / Fill / Width /
+    // Dash every time the current document's text-layer capability
+    // changed — e.g. switching tabs between an OCR'd PDF and a plain
+    // image — a G10 spatial-constancy violation this record reverses the
+    // prior hide-based call to fix. The tooltip states why and where to
+    // go, matching the Tools menu's own Recognize Text… entry.
     const bool hasText = doc && doc->hasTextLayer();
-    m_markupToolbar->setToolVisible(AnnotationTool::Underline, hasText);
-    m_markupToolbar->setToolVisible(AnnotationTool::Highlight, hasText);
-    m_markupToolbar->setToolVisible(AnnotationTool::StrikeOut, hasText);
+    const QString textAwareTip =
+        tr("Available once this page has recognisable text — "
+           "Tools → Recognize Text…");
+    m_markupToolbar->setToolEnabled(AnnotationTool::Underline, hasText, textAwareTip);
+    m_markupToolbar->setToolEnabled(AnnotationTool::Highlight, hasText, textAwareTip);
+    m_markupToolbar->setToolEnabled(AnnotationTool::StrikeOut, hasText, textAwareTip);
 
     // SAM tools (Instant Alpha / Smart Lasso): image-only, and only
     // when the MobileSAM models are reachable (cached on disk, or
-    // policy allows downloading them). PHILOSOPHY: a tool the user
-    // cannot act on is hidden, not greyed — the markup toolbar
-    // shouldn't carry buttons that just pop up "actually no" tooltips.
+    // policy allows downloading them). Same G10 reasoning as the
+    // text-aware trio above; the wording mirrors the Tools-menu entries
+    // for these same two features (m_instantAlphaAction /
+    // m_smartLassoAction, gated by applyMlPolicy() above in this same
+    // function) so the toolbar buttons and the menu agree on both
+    // availability and phrasing.
     const bool samImageEligible = canEdit && isImage;
     bool samPolicyAllows = true;
     if (samImageEligible) {
@@ -4266,9 +4426,19 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             }
         }
     }
-    const bool samToolsVisible = samImageEligible && samPolicyAllows;
-    m_markupToolbar->setToolVisible(AnnotationTool::InstantAlpha, samToolsVisible);
-    m_markupToolbar->setToolVisible(AnnotationTool::SmartLasso, samToolsVisible);
+    const bool samToolsEnabled = samImageEligible && samPolicyAllows;
+    // G3: state why, and where to go only when there is a next step. A
+    // non-image document (a PDF, or any format SAM can't run against) has
+    // nowhere to go — the format itself can't support the operation, so
+    // "why" alone suffices. A blocked download policy DOES have a next
+    // step, so that tooltip names it, verbatim-matching applyMlPolicy()'s
+    // own Tools-menu wording above.
+    const QString samTip = !samImageEligible
+        ? tr("Available for images only")
+        : tr("This model is set to Never Download. "
+             "Open Tools → Manage ML Models… to allow it.");
+    m_markupToolbar->setToolEnabled(AnnotationTool::InstantAlpha, samToolsEnabled, samTip);
+    m_markupToolbar->setToolEnabled(AnnotationTool::SmartLasso, samToolsEnabled, samTip);
 
     // Sidebar TOC picker entry: enabled iff the active document has
     // an outline. If we were already in TableOfContents mode and the
@@ -5078,6 +5248,21 @@ void MainWindow::refreshThemedIcons() {
     // document (updateRemoveBackgroundBadge), so it is not in the binder;
     // re-run it for the current document so the badge, if showing, re-tints.
     updateRemoveBackgroundBadge(m_documentView ? m_documentView->currentDocument() : nullptr);
+    // Re-derive any theme-locked palette role a document's view pinned at
+    // construction (e.g. PdfDocument's QPdfView canvas-surround colour, DR
+    // 2026-07-31-document-surround-colour-follows-base) — Qt's palette-
+    // change cascade skips a role a widget explicitly set via setPalette(),
+    // so it would otherwise go stale on a live theme flip. Every open tab
+    // in this window, not just the current one — refreshViewPalette() is a
+    // no-op default for adapters (image, stub) that never pin a role.
+    if (m_documentView) {
+        const int total = m_documentView->documentCount();
+        for (int i = 0; i < total; ++i) {
+            IDocument *doc = nullptr;
+            if (m_documentView->documentAt(i, &doc) && doc)
+                doc->refreshViewPalette();
+        }
+    }
 }
 
 void MainWindow::onOpenPreferences() {

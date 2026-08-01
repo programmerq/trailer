@@ -214,6 +214,47 @@ tab title starts with `• `).
 **Expected:**
 - The Inspector dock shows and hides. Menu item state toggles.
 
+### UAT-FND-019 — Sidebar / Inspector docks: no visible caption, accessible name kept (G10)
+
+**Preconditions:** App launched, Sidebar and Inspector both shown (`View >
+Toggle Sidebar` / `Toggle Inspector`).
+**Steps:**
+1. Look at the title-bar strip atop each dock.
+2. Query each dock's accessible name (e.g. via a screen reader, or
+   `QAccessible::queryAccessibleInterface(dock)->text(QAccessible::Name)`
+   in a debugger/test).
+3. Click the close (✕) button in each dock's title-bar strip.
+**Expected:**
+- Neither strip shows the word "Sidebar" or "Inspector" as visible text —
+  the panel's own content already makes its purpose obvious
+  (docs/ux-guidelines.md's motivating example for gate G10).
+- Each dock's accessible name still resolves to "Sidebar" / "Inspector"
+  respectively — a screen-reader user hears the panel named correctly
+  despite the blank visible caption.
+- The close button still hides the corresponding dock (functional parity
+  with the native captioned title bar it replaced).
+
+Automated: `uat_fnd_019_dockPanelsHaveNoVisibleCaptionButKeepAccessibleName`
+in `tests/uat/test_uat_foundations.cpp`.
+
+### UAT-FND-032 — Recovery snapshot never flashes a status-bar message (G10)
+
+**Preconditions:** App launched, `autoSave` on, a PDF open with an
+unsaved edit (dirty via a page rotate or an annotation).
+**Steps:**
+1. Let (or force) an auto-save tick run.
+**Expected:**
+- A recovery snapshot is written (crash safety is preserved) — but no
+  status-bar toast ("Recovery snapshot saved." or otherwise) appears.
+  This is the anti-pattern named in docs/ux-guidelines.md: routine
+  background work does not narrate itself.
+- The document's actual unsaved-work signal — the title-bar "•" dirty
+  marker — is present both before and after the snapshot, so the user
+  still has a way to tell the document has unsaved changes.
+
+Automated: `uat_fnd_032_recoverySnapshotNeverFlashesStatusBarMessage` in
+`tests/uat/test_uat_foundations.cpp`.
+
 ### UAT-FND-093 — View menu page-mode items keep a fixed order (G10)
 
 **Preconditions:** A multi-page PDF is open (so Two Pages is enabled).

@@ -4,6 +4,7 @@
 #include "ui/FormOverlay.h"
 #include "ui/SelectableTextLayer.h"
 #include "ui/TwoPageView.h"
+#include "util/DocumentSurroundColor.h"
 #include "util/TempPath.h"
 
 #include <QApplication>
@@ -703,15 +704,7 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
     // small-doc upscale guard is the spec: docs that already fit at
     // 100% stay at 100% rather than blowing up to fill the window.
     QTimer::singleShot(0, view, [this, view]() { applyInitialFitZoom(view); });
-    // QPdfView paints search matches using the palette's Highlight
-    // role. Override to a translucent yellow so matches look like
-    // a marker-pen highlighter instead of a system selection.
-    // (Qt versions that ignore the role for PDF render fall back
-    // gracefully — the change is harmless.)
-    QPalette pdfPalette = view->palette();
-    pdfPalette.setColor(QPalette::Highlight, QColor(255, 235, 50, 160));
-    pdfPalette.setColor(QPalette::HighlightedText, Qt::black);
-    view->setPalette(pdfPalette);
+    applyViewPalette(view);
     m_view = view;
     if (m_searchModel) {
         view->setSearchModel(m_searchModel.get());
@@ -1060,6 +1053,62 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
     applyViewMode();
 
     return stack;
+}
+
+// static
+void PdfDocument::applyViewPalette(QPdfView *view) {
+    if (!view)
+        return;
+    QPalette pal = view->palette();
+    // QPdfView paints the canvas surrounding a page that doesn't fill the
+    // viewport using QPalette::Dark. Pin it to documentSurroundColor()
+    // (util/DocumentSurroundColor.h) — the shared rule TwoPageView also
+    // uses (TwoPageView.cpp) — so this can never independently drift from
+    // it, and so the reported "grey that's too light in dark mode" (::Dark
+    // resolving lighter than ::Base in Trailer's synthesized dark palette)
+    // self-heals to match ImageDocument's QPalette::Base surround
+    // (ImageAdapter.cpp) exactly, while the light-mode canvas — already
+    // correct, and relied on by uat_vwr_079_zoomReadoutMatchesRenderScale's
+    // page-vs-canvas contrast measurement — is untouched. See
+    // DR 2026-07-31-document-surround-colour-follows-base and that
+    // header's comment for why ImageDocument itself is NOT switched to
+    // this helper. Recomputed here (not just at construction, from
+    // buildRealView) because setPalette() pins the role: Qt's
+    // QEvent::PaletteChange cascade on a live theme flip (PR #105) skips
+    // any role a widget explicitly set, so a stale pin would survive a
+    // theme change unless refreshViewPalette() (below) re-derives it and
+    // calls back in here.
+    //
+    // Read from QApplication::palette(), NOT view->palette() — a widget's
+    // OWN resolved palette updates only once Qt delivers the (POSTED, not
+    // sent) QEvent::PaletteChange for a QApplication::setPalette /
+    // QStyleHints::setColorScheme change, so reading view->palette() here
+    // (called synchronously from Application::applyTheme, in the same call
+    // stack as the scheme change, before any event-loop turn) can observe a
+    // STALE palette. QApplication::palette() itself updates synchronously,
+    // so it is the reliable, race-free source — verified empirically (a
+    // standalone probe showed QApplication::palette() reflects a new
+    // setPalette() immediately while a widget's own .palette() lags until
+    // processEvents()).
+    pal.setColor(QPalette::Dark, documentSurroundColor(QApplication::palette()));
+    // QPdfView paints search matches using the palette's Highlight role.
+    // Override to a translucent yellow so matches look like a marker-pen
+    // highlighter instead of a system selection. (Qt versions that ignore
+    // the role for PDF render fall back gracefully — the change is
+    // harmless.) Theme-independent by design (a highlighter colour, not a
+    // surround colour), so re-setting it on every refresh is harmless too.
+    pal.setColor(QPalette::Highlight, QColor(255, 235, 50, 160));
+    pal.setColor(QPalette::HighlightedText, Qt::black);
+    view->setPalette(pal);
+}
+
+void PdfDocument::refreshViewPalette() {
+    // TwoPageView needs no call here — it reads QPalette::Base straight off
+    // its viewport on every paint (TwoPageView.cpp), so Qt's own palette-
+    // change cascade already keeps it correct with no pinned role to go
+    // stale.
+    if (m_view)
+        applyViewPalette(m_view);
 }
 
 void PdfDocument::setAnnotationTool(AnnotationTool tool) {

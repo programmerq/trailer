@@ -659,6 +659,26 @@ rearranged.
 > already tracked, unrelated to this fix, in
 > `docs/backlog/2026-07-21-two-page-overlay-search-parity.md`.
 
+> **Update 2026-08-01 (G10 audit, SC-CRIT-2).** The "Contextual tool
+> availability... hides (rather than disables)" call above is
+> **superseded**. `docs/audit-2026-07-31-g10-deference.md` found that
+> hiding a tool action collapses its slot in the shared markup-toolbar
+> row, shifting Redact / Stroke / Fill / Width / Dash every time the
+> current document's text-layer or SAM-eligibility capability changes —
+> a gate-G10 (spatial constancy) violation switching tabs between an
+> OCR'd PDF and a plain image reproduces directly. `MarkupToolbar::
+> setToolVisible` is now `setToolEnabled`: the text-aware trio and the
+> SAM pair stay visible, disabled-with-tooltip (G3) instead of hidden,
+> so every action keeps its on-screen position. The separator-hiding
+> half of the old behaviour is gone too — with every action always
+> visible, a separator is never left bounding an empty region, so there
+> is nothing left to hide. See
+> `docs/decision-records/2026-08-01-markup-toolbar-disable-not-hide.md`
+> for the full reasoning (G10, an accepted gate, outweighs the earlier
+> "hidden, not greyed" call for tool actions sharing one toolbar row).
+> Pinned by `test_markup_toolbar` and
+> `uat_ann_082_textCentricToolsDisabledOnPlainImage`.
+
 ### Annotation editing — selection, move, resize, restyle
 
 - ~~**Annotations must be re-selectable after creation.**~~ Done.

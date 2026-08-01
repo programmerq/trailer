@@ -28,6 +28,11 @@ class SearchBar : public QWidget {
     // arrow buttons. Pass total = 0 to clear (no query yet).
     // Pass current = 0 with total > 0 for "no current match
     // selected" — common while the search is still running.
+    //
+    // G10 (spatial constancy, AGENTS.md; SC-MOD-1,
+    // docs/audit-2026-07-31-g10-deference.md): the counter never hides —
+    // see the constructor comment on m_counter's fixed width — so Prev /
+    // Next / Close never move as the match count crosses zero.
     void setMatchCounter(int current, int total);
 
   signals:
@@ -46,6 +51,11 @@ class SearchBar : public QWidget {
     QToolButton *m_prev = nullptr;
     QToolButton *m_next = nullptr;
     QToolButton *m_close = nullptr;
+    // m_counter's fixed width, in px. Computed once in the constructor from
+    // THIS platform's live font metrics (see the constructor comment) —
+    // not a literal, so setMatchCounter()'s elision threshold always
+    // matches the slot m_counter actually occupies.
+    int m_counterWidth = 0;
 };
 
 } // namespace trailer

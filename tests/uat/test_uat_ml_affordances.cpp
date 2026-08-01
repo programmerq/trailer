@@ -201,6 +201,7 @@ class TestUatMlAffordances : public QObject {
     void uat_ml_g5_autoOcrMissingModelShowsInContextHint();
     void uat_ml_g6_explicitMenuTooltipUsesBenefitLanguage();
     void uat_ml_batchIdentityStragglersDoNotInflateNextBatch();
+    void uat_xct_078_statusBarPermanentWidgetsNeverReflowEachOther();
 
   private:
     QTemporaryDir m_scratch;
@@ -720,6 +721,126 @@ void TestUatMlAffordances::uat_ml_batchIdentityStragglersDoNotInflateNextBatch()
         QVERIFY2(lastDone <= 2, "batch B's completion count must never exceed its own total");
     }
     QCOMPARE(lastDone, 2);
+    app->mlScheduler().waitForIdle(3000);
+}
+
+// UAT-XCT-078 / SC-CRIT-1 (docs/audit-2026-07-31-g10-deference.md; gate
+// G10, AGENTS.md): the status bar's permanent widgets — m_mlIndicator,
+// the large-doc/missing-model OCR hint pair, m_readOnlyBadge, and
+// m_mlProgress — each toggle visibility on independent triggers.
+// QStatusBar::addPermanentWidget() used to pack all of them into one
+// right-anchored box layout, so any one appearing/disappearing shifted
+// every sibling — concretely, switching to Two-Pages view while an OCR
+// batch ran slid the Cancel button (a control the user may be mid-click
+// on) sideways. This drives a REAL, gated OCR batch to reveal the real
+// m_mlProgress (mirroring uat_ml_g1real's technique), then toggles every
+// OTHER permanent widget in turn, asserting the Cancel button's absolute
+// position never moves — the audit's exact named repro, plus the general
+// sweep (any widget toggling must not move any other).
+void TestUatMlAffordances::uat_xct_078_statusBarPermanentWidgetsNeverReflowEachOther() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdf = writeSamplePdf(m_scratch.filePath(QStringLiteral("xct078.pdf")), 4);
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdf});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+    IDocument *doc = mw->findChild<DocumentView *>()->currentDocument();
+    QVERIFY(doc);
+
+    auto *controller = mw->findChild<OcrController *>();
+    QVERIFY(controller);
+    auto *progress = mw->findChild<MlProgressWidget *>();
+    QVERIFY2(progress, "MainWindow must own a real MlProgressWidget");
+    controller->setProgressRevealDelayMs(0);
+    auto gate = std::make_shared<QSemaphore>();
+    controller->setRecognizerForTesting(gatedRecognizer(gate));
+
+    controller->submitUserPages(doc, {0, 1, 2, 3}, /*forceRerun=*/true);
+    gate->release(2);
+    QTRY_VERIFY(progress->isDeterminate() && progress->value() == 2);
+    QVERIFY2(progress->cancelVisible(), "sanity: the Cancel button must be showing");
+
+    auto *cancelBtn = progress->findChild<QToolButton *>();
+    QVERIFY2(cancelBtn, "MlProgressWidget must own a Cancel QToolButton");
+    const QPoint cancelBaseline = cancelBtn->mapTo(mw, QPoint(0, 0));
+    saveEvidence(mw, QStringLiteral("xct078_before_badge.png"));
+
+    auto *mlIndicator = mw->findChild<QLabel *>(QStringLiteral("mlIndicator"));
+    auto *largeDocHint = mw->findChild<QWidget *>(QStringLiteral("largeDocOcrHint"));
+    auto *modelMissingHint = mw->findChild<QLabel *>(QStringLiteral("ocrModelMissingHint"));
+    auto *readOnlyBadge = mw->findChild<QLabel *>(QStringLiteral("twoPageReadOnlyBadge"));
+    QVERIFY(mlIndicator && largeDocHint && modelMissingHint && readOnlyBadge);
+
+    auto assertCancelUnchanged = [&](const char *step) {
+        QVERIFY2(cancelBtn->mapTo(mw, QPoint(0, 0)) == cancelBaseline, step);
+    };
+
+    // SC-CRIT-1's named concrete repro: the Two-Pages read-only badge
+    // appearing while the OCR batch's Cancel button is showing.
+    readOnlyBadge->setVisible(true);
+    QApplication::processEvents();
+    assertCancelUnchanged("read-only badge shown");
+    saveEvidence(mw, QStringLiteral("xct078_after_badge.png"));
+    readOnlyBadge->setVisible(false);
+    QApplication::processEvents();
+    assertCancelUnchanged("read-only badge hidden again");
+
+    // The remaining three, each independently — the audit's second named
+    // repro (dismissing the large-doc hint shifted three siblings).
+    mlIndicator->setVisible(true);
+    QApplication::processEvents();
+    assertCancelUnchanged("ML indicator shown");
+    mlIndicator->setVisible(false);
+    QApplication::processEvents();
+    assertCancelUnchanged("ML indicator hidden");
+
+    largeDocHint->setVisible(true);
+    QApplication::processEvents();
+    assertCancelUnchanged("large-doc OCR hint shown");
+    largeDocHint->setVisible(false);
+    QApplication::processEvents();
+    assertCancelUnchanged("large-doc OCR hint hidden");
+
+    modelMissingHint->setVisible(true);
+    QApplication::processEvents();
+    assertCancelUnchanged("missing-model hint shown");
+    modelMissingHint->setVisible(false);
+    QApplication::processEvents();
+    assertCancelUnchanged("missing-model hint hidden");
+
+    // Reverse direction: m_mlProgress's OWN reveal/hide must not move any
+    // of the other permanent widgets either. Force the REALISTIC worst
+    // case visible first — mlIndicator, readOnlyBadge, and ONE of the two
+    // OCR hints (never both: they are provably mutually exclusive, see
+    // reserveStatusBarSlot()'s comment in MainWindow.cpp — forcing both
+    // at once would assert an invariant across a combination the
+    // production code guarantees can never occur, since they deliberately
+    // share one sub-layout). An invisible widget's geometry is not
+    // meaningfully comparable either (Qt does not guarantee it tracks
+    // layout changes while excluded from space allocation), so only a
+    // widget the user can actually see is a valid position baseline. Then
+    // let the batch complete and move to its terminal state, a real width
+    // change for m_mlProgress itself, since the bar and Cancel button
+    // hide while the completion message shows.
+    mlIndicator->setVisible(true);
+    largeDocHint->setVisible(true);
+    readOnlyBadge->setVisible(true);
+    QApplication::processEvents();
+    const QPoint mlIndicatorBaseline = mlIndicator->mapTo(mw, QPoint(0, 0));
+    const QPoint largeDocHintBaseline = largeDocHint->mapTo(mw, QPoint(0, 0));
+    const QPoint readOnlyBadgeBaseline = readOnlyBadge->mapTo(mw, QPoint(0, 0));
+
+    gate->release(2);
+    QTRY_COMPARE(progress->state(), MlProgressWidget::Terminal);
+    QApplication::processEvents();
+    QCOMPARE(mlIndicator->mapTo(mw, QPoint(0, 0)), mlIndicatorBaseline);
+    QCOMPARE(largeDocHint->mapTo(mw, QPoint(0, 0)), largeDocHintBaseline);
+    QCOMPARE(readOnlyBadge->mapTo(mw, QPoint(0, 0)), readOnlyBadgeBaseline);
+
     app->mlScheduler().waitForIdle(3000);
 }
 

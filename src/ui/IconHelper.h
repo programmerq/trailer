@@ -10,6 +10,7 @@
 class QWidget;
 class QAbstractButton;
 class QAction;
+class QDockWidget;
 class QMenu;
 
 namespace trailer {
@@ -68,6 +69,25 @@ QIcon themedActionIcon(const QString& resource, const QWidget* widget = nullptr)
 // status bar. Returns the QAction* so callers keep full control.
 QAction* makeDisabledAction(QMenu* menu, const QString& text,
                             const QString& whyTooltip);
+
+// Replacement for a QDockWidget's native title-bar STRIP that shows no
+// caption text — a stretch plus the same close (and, if the dock carries
+// QDockWidget::DockWidgetFloatable, float) button a stock title bar would
+// render, rebuilt from the platform style rather than a baked icon so it
+// tracks the current theme/OS look. Install with
+// `dock->setTitleBarWidget(buildTextlessDockTitleBar(dock))`.
+//
+// Deliberately does NOT touch `dock->windowTitle()` — leave that set to the
+// panel's name. A QDockWidget's built-in accessibility interface reads
+// windowTitle() directly for its screen-reader name (verified empirically:
+// it does NOT consult accessibleName() the way most other widgets do), so
+// blanking windowTitle() to hide the caption would silently blank the
+// accessible name too. This helper only replaces the PAINTED layer; pair it
+// with an explicit `dock->setAccessibleName(...)` at the call site as
+// defence-in-depth for any AT bridge that reads the property directly. See
+// Sidebar.cpp / Inspector.cpp constructors and DR
+// 2026-07-31-dock-panel-labels-removed-accessible-names-kept.
+QWidget* buildTextlessDockTitleBar(QDockWidget* dock);
 
 // Records the (target, resource, tint-source) triples that themedActionIcon
 // bakes into fixed-colour pixmaps, so they can be re-tinted after a *live*
