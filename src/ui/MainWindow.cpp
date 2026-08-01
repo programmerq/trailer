@@ -182,6 +182,25 @@ QWidget *reserveStatusBarSlot(QWidget *content, int width) {
     layout->addStretch(1);
     return slot;
 }
+
+// CROSS-PLATFORM CORRECTNESS (2026-08-01): each slot's width call site
+// originally passed a pixel LITERAL measured once via an offscreen probe
+// on Linux (DejaVu Sans). That was wrong the same way MlProgressWidget's
+// own literal elision caps were wrong (see that class's maxWidth() doc
+// comment for the CI failure this caused): a width measured against one
+// platform's font does not predict another platform's rendering of the
+// same short, fixed string (Windows/Wine resolve a different font, at
+// minimum, and possibly a different point size). `slotWidthFor()`
+// measures `content`'s OWN real sizeHint() on whatever platform is
+// actually running -- so a slot is always sized to what THIS platform's
+// fonts need for this exact widget, not a number baked from one platform's
+// measurement. kSlotSafetyMargin absorbs sub-pixel hinting/rounding at
+// the boundary itself (not cross-platform variance -- sizeHint() already
+// IS the cross-platform-correct measurement).
+constexpr int kSlotSafetyMargin = 20;
+int slotWidthFor(QWidget *content) {
+    return content->sizeHint().width() + kSlotSafetyMargin;
+}
 }
 
 MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent), m_app(app) {
@@ -580,11 +599,12 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_mlIndicator->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
     m_mlIndicator->setMargin(2);
     m_mlIndicator->setVisible(false);
-    // G10/SC-CRIT-1 (see reserveStatusBarSlot()'s comment): 44px reserves
-    // this label's measured sizeHint (27px for "ML" + frame/margin) with a
-    // safety buffer, so toggling it never nudges a sibling permanent
-    // widget, and no sibling toggling ever nudges it.
-    statusBar()->addPermanentWidget(reserveStatusBarSlot(m_mlIndicator, 44));
+    // G10/SC-CRIT-1 (see reserveStatusBarSlot()'s and slotWidthFor()'s
+    // comments): reserves this label's own measured sizeHint ("ML" +
+    // frame/margin, on whatever font THIS platform resolves) with a safety
+    // buffer, so toggling it never nudges a sibling permanent widget, and
+    // no sibling toggling ever nudges it.
+    statusBar()->addPermanentWidget(reserveStatusBarSlot(m_mlIndicator, slotWidthFor(m_mlIndicator)));
     auto refreshMlIndicator = [this]() {
         const auto stats = m_app->mlScheduler().stats();
         // Idle priority is reserved for "we don't care if this never
@@ -702,18 +722,22 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         }
     });
 
-    // G10/SC-CRIT-1 (see reserveStatusBarSlot()'s comment above): one
-    // reserved slot hosts BOTH OCR hints rather than one each. They are
-    // provably mutually exclusive (OcrController::evaluateAutoOcrModel's
-    // `!isLargeDoc()` guard), so at most one is ever visible at a time —
-    // sharing a slot costs nothing extra and roughly halves the worst-case
-    // reserved width versus giving each its own. 480px reserves the wider
-    // of the two measured sizeHints (the missing-model hint, ~465px) with
-    // a safety buffer; each hint's own setVisible() is unchanged (still
+    // G10/SC-CRIT-1 (see reserveStatusBarSlot()'s and slotWidthFor()'s
+    // comments above): one reserved slot hosts BOTH OCR hints rather than
+    // one each. They are provably mutually exclusive
+    // (OcrController::evaluateAutoOcrModel's `!isLargeDoc()` guard), so at
+    // most one is ever visible at a time — sharing a slot costs nothing
+    // extra and roughly halves the worst-case reserved width versus giving
+    // each its own. The slot is sized to the wider of the two hints' own
+    // measured sizeHints (on whatever font THIS platform resolves), not a
+    // literal baked from one platform's measurement — see slotWidthFor()'s
+    // cross-platform note; each hint's own setVisible() is unchanged (still
     // driven by updateLargeDocOcrHint() / autoOcrModelMissing()) and just
     // blanks its own content within the shared slot rather than collapsing
     // it, so toggling either hint never moves any other permanent widget.
-    constexpr int kOcrHintSlotWidth = 480;
+    const int kOcrHintSlotWidth =
+        qMax(hint->sizeHint().width(), m_ocrModelMissingHint->sizeHint().width()) +
+        kSlotSafetyMargin;
     auto *ocrHintSlot = new QWidget(this);
     ocrHintSlot->setFixedWidth(kOcrHintSlotWidth);
     auto *ocrHintSlotLayout = new QHBoxLayout(ocrHintSlot);
@@ -825,10 +849,11 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         "#twoPageReadOnlyBadge { background-color: #fff4d6; border: 1px solid "
         "#e6c86a; border-radius: 4px; color: #5a4a12; padding: 1px 6px; }"));
     m_readOnlyBadge->setVisible(false);
-    // G10/SC-CRIT-1: 100px reserves this badge's measured, styled sizeHint
-    // (82px including its stylesheet's border/padding) with a safety
-    // buffer — see reserveStatusBarSlot()'s comment above.
-    statusBar()->addPermanentWidget(reserveStatusBarSlot(m_readOnlyBadge, 100));
+    // G10/SC-CRIT-1: reserves this badge's own measured, styled sizeHint
+    // (including its stylesheet's border/padding, on whatever font THIS
+    // platform resolves) with a safety buffer — see reserveStatusBarSlot()'s
+    // and slotWidthFor()'s comments above.
+    statusBar()->addPermanentWidget(reserveStatusBarSlot(m_readOnlyBadge, slotWidthFor(m_readOnlyBadge)));
 
     // ADR 0002: richer progress+cancel widget for foreground ML ops.
     // Sits next to the ambient m_mlIndicator dot (which stays untouched).
@@ -837,10 +862,11 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_mlProgress = new MlProgressWidget(this);
     // G10/SC-CRIT-1: this is the widget the audit's concrete repro names —
     // its Cancel button is a control the user may be mid-click on, so its
-    // reserved slot (MlProgressWidget::kMaxWidth, sized and documented on
-    // the widget itself since it owns the arithmetic) must never move for
-    // any sibling's sake.
-    statusBar()->addPermanentWidget(reserveStatusBarSlot(m_mlProgress, MlProgressWidget::kMaxWidth));
+    // reserved slot (m_mlProgress->maxWidth(), computed from THIS
+    // platform's live font metrics at construction time — see that
+    // method's doc comment for why a hardcoded literal broke Windows-
+    // cross-build-under-Wine CI) must never move for any sibling's sake.
+    statusBar()->addPermanentWidget(reserveStatusBarSlot(m_mlProgress, m_mlProgress->maxWidth()));
     // ADR 0002 §1: elapsed-time reassurance for INDETERMINATE reveals.
     // Ticks once a second while a single-page / unknown-length op is
     // revealed and appends "· Ns" past 10s. Started in the indeterminate
