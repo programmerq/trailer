@@ -631,6 +631,34 @@ rearranged.
   see two adjacent dividers around nothing. Pinned by
   `test_markup_toolbar`.
 
+> **Update 2026-07-31 (owner dogfood report).** The "Done" above wired
+> the Select-tool drag → `m_pendingSelection` quads, but two things were
+> still missing/broken, reported as "click-drag does nothing" on macOS:
+> (1) `m_pendingSelection` was only recomputed in `mouseReleaseEvent`, so
+> the highlight never appeared *during* the drag — the user got zero
+> feedback until they lifted the mouse button; (2) there was no I-beam
+> cursor at all (`setActiveTool(Select)` set a static arrow on the false
+> assumption the overlay was transparent and `SelectableTextLayer`'s
+> cursor showed through — Select actually keeps the overlay opaque so it
+> can own the Highlight/Underline/StrikeOut drag-to-quads plumbing); and
+> (3) there was no keyboard Copy at all for a Select-tool text selection
+> (only the right-click Highlight/Underline/StrikeOut menu existed).
+> Fixed: `mouseMoveEvent` now live-recomputes `m_pendingSelection` on
+> every drag sample; a new `PointOverTextProvider` backs an honest
+> hover-only I-beam; a new `TextSelectionTextProvider` backs Ctrl+C /
+> Cmd+C. The "does nothing at all" half of the report turned out to be
+> the *same* two defects on a PDF with an **invisible** (OCR-style,
+> genuine PDF `3 Tr` render mode) text layer — `QPdfDocument::
+> getAllText()` / `getSelection()` are render-mode-agnostic, so no
+> separate fix was needed for that case; a synthetic Tr-3 fixture in
+> `tests/test_adapters.cpp` / `tests/uat/test_uat_search_and_markup.cpp`
+> (`pdfDocumentInvisibleRenderModeTextIsIngestedAndSelectable` /
+> `UAT-ANN-145`) regression-guards it. See `AnnotationOverlay.h`'s
+> "Tool-precedence rule" comment (above `setActiveTool`) for the full
+> None-vs-Select routing story. Two-Pages mode remains out of scope —
+> already tracked, unrelated to this fix, in
+> `docs/backlog/2026-07-21-two-page-overlay-search-parity.md`.
+
 ### Annotation editing — selection, move, resize, restyle
 
 - ~~**Annotations must be re-selectable after creation.**~~ Done.

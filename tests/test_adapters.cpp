@@ -16,6 +16,8 @@
 #include <QLabel>
 #include <QObject>
 #include <QPainter>
+#include <QPdfDocument>
+#include <QPdfSelection>
 #include <QPdfView>
 #include <QPdfWriter>
 #include <QResizeEvent>
@@ -55,6 +57,54 @@ QRect darkPixelBBox(const QImage &imgIn) {
     return QRect(QPoint(minX, minY), QPoint(maxX, maxY));
 }
 
+// Hand-writes a minimal one-page PDF whose text uses the PDF spec's
+// genuine invisible text-rendering mode (`3 Tr`) — the construct real OCR
+// pipelines (ocrmypdf, Acrobat's "searchable image" OCR, pdfsandwich)
+// actually emit: a scanned raster with a machine-readable text layer laid
+// on top that paints nothing. QPainter/QPdfWriter have no API for text
+// render mode (they always emit the default `0 Tr` fill), so the fixture
+// writes the object graph directly — object table, xref, and trailer by
+// hand — to get a real `3 Tr` operator into the content stream. This is
+// deliberately NOT the same trick as writeOcrLayerPdf() in
+// tests/uat/test_uat_search_and_markup.cpp (an alpha=0 PEN, still `0 Tr`
+// fill text): that fixture proves QPdfSearchModel tolerates invisible
+// ink; this one proves QPdfDocument's SELECTION api tolerates the actual
+// invisible RENDER MODE, which is a different code path in pdfium.
+QString writeInvisibleRenderModePdf(const QString &path, const QString &text) {
+    const QByteArray content = "BT /F1 24 Tf 100 700 Td 3 Tr (" + text.toLatin1() + ") Tj ET";
+    QList<QByteArray> objects;
+    objects << "<< /Type /Catalog /Pages 2 0 R >>";
+    objects << "<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
+    objects << "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+               "/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>";
+    objects << "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+    objects << "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content +
+                   "\nendstream";
+
+    QByteArray out = "%PDF-1.4\n";
+    QList<int> offsets;
+    for (int i = 0; i < objects.size(); ++i) {
+        offsets << static_cast<int>(out.size());
+        out += QByteArray::number(i + 1) + " 0 obj\n" + objects[i] + "\nendobj\n";
+    }
+    const int xrefOffset = static_cast<int>(out.size());
+    const int n = static_cast<int>(objects.size()) + 1;
+    out += "xref\n0 " + QByteArray::number(n) + "\n";
+    out += "0000000000 65535 f \n";
+    for (int off : offsets) {
+        out += QByteArray::number(off).rightJustified(10, '0') + " 00000 n \n";
+    }
+    out += "trailer\n<< /Size " + QByteArray::number(n) + " /Root 1 0 R >>\n";
+    out += "startxref\n" + QByteArray::number(xrefOffset) + "\n%%EOF";
+
+    QFile f(path);
+    [[maybe_unused]] const bool opened = f.open(QIODevice::WriteOnly);
+    Q_ASSERT(opened);
+    f.write(out);
+    f.close();
+    return path;
+}
+
 } // namespace
 
 class TestAdapters : public QObject {
@@ -79,6 +129,7 @@ class TestAdapters : public QObject {
     void pdfDocumentNativeTextDragSelectsRealString();
     void pdfDocumentNativeTextAlignsWithRenderedGlyphs();
     void pdfDocumentNativeTextMultiLineOrdering();
+    void pdfDocumentInvisibleRenderModeTextIsIngestedAndSelectable();
     void printSupportReflectsValidity();
     void pdfDocumentRotationMarksDirtyAndSaveClears();
     void pdfDocumentDeletePagesRemovesAndMarksDirty();
@@ -730,6 +781,63 @@ void TestAdapters::pdfDocumentNativeTextMultiLineOrdering() {
              "first line must render above the second");
     QVERIFY2(alphaR.bottom() <= betaR.top(),
              "line rects must not overlap vertically");
+}
+
+// Owner dogfood report (2026-07-31): a scanned PDF with an invisible OCR
+// text layer ("Has text layer: yes"; Find could locate text in it) did
+// not respond to click-drag at all. Root-cause investigation: Qt's own
+// getAllText()/getSelection() are RENDER-MODE-AGNOSTIC — real invisible
+// text (`3 Tr`, what actual OCR tools emit) round-trips through both APIs
+// exactly like normal visible text, verified against writeInvisibleRender
+// ModePdf() below. Neither the ingestion path (ingestNativeTextLayer, the
+// None-tool / SelectableTextLayer route) nor the getSelection()-based
+// path (the Select-tool route AnnotationOverlay uses, PdfAdapter.cpp
+// setTextSelectionProvider/setTextSelectionTextProvider) special-cases
+// render mode, so this fixture is a REGRESSION GUARD, not a demonstration
+// of a fix: if a future Qt/pdfium upgrade ever regresses invisible-text
+// extraction, this fails loudly instead of silently reproducing the
+// user's report. (The user's own 365-page document may still have a
+// document-specific quirk this synthetic fixture can't reproduce without
+// the file — see the PR description.)
+void TestAdapters::pdfDocumentInvisibleRenderModeTextIsIngestedAndSelectable() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("invisible.pdf");
+    writeInvisibleRenderModePdf(path, QStringLiteral("InvisibleTrThreeKeyword"));
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+
+    // Ingestion path (None-tool / SelectableTextLayer route).
+    doc.ingestNativeTextLayer(0);
+    auto *store = doc.selectableText();
+    QVERIFY(store && store->hasResults(0));
+    const auto &blocks = store->blocks(0);
+    QVERIFY(!blocks.empty());
+    QStringList parts;
+    for (const auto &b : blocks)
+        parts << b.text;
+    const QString joined = parts.join(QLatin1Char(' '));
+    QVERIFY2(joined.contains(QStringLiteral("InvisibleTrThreeKeyword")),
+             qPrintable(QStringLiteral("invisible-text ingestion missed the word, got: ") + joined));
+
+    // getSelection()-based path (Select-tool route). A tight rect around
+    // the ingested block's own bounds — the same shape PdfAdapter's
+    // setTextSelectionTextProvider drag lambda drives in production —
+    // must resolve to non-empty, matching text. Loads its own QPdfDocument
+    // (PdfDocument doesn't expose the underlying Qt object) — cheap for a
+    // one-page fixture and keeps this a black-box check of the same Qt API
+    // AnnotationOverlay's provider calls.
+    const QRect region = blocks.front().polygon.boundingRect();
+    QVERIFY(!region.isEmpty());
+    QPdfDocument qdoc;
+    QCOMPARE(qdoc.load(path), QPdfDocument::Error::None);
+    const QPdfSelection sel =
+        qdoc.getSelection(0, QPointF(region.topLeft()) + QPointF(1, 1),
+                          QPointF(region.bottomRight()) - QPointF(1, 1));
+    QVERIFY2(sel.isValid(), "getSelection() must succeed over an invisible (3 Tr) text run");
+    QVERIFY2(sel.text().contains(QStringLiteral("InvisibleTrThreeKeyword")),
+             qPrintable(QStringLiteral("getSelection() missed the word, got: ") + sel.text()));
 }
 
 void TestAdapters::printSupportReflectsValidity() {

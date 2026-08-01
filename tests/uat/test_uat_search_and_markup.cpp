@@ -19,6 +19,7 @@
 #include "annotation/AnnotationStore.h"
 #include "app/Application.h"
 #include "document/IDocument.h"
+#include "document/SelectableTextStore.h"
 #include "recent/RecentFiles.h"
 #include "settings/DocumentTypeDefaults.h"
 #include "ui/AnnotationOverlay.h"
@@ -30,9 +31,11 @@
 #include "ui/Sidebar.h"
 
 #include <QAction>
+#include <QClipboard>
 #include <QColorDialog>
 #include <QDir>
 #include <QDockWidget>
+#include <QFile>
 #include <QFont>
 #include <QHash>
 #include <QKeyEvent>
@@ -51,6 +54,7 @@
 #include <QPdfWriter>
 #include <QPlainTextEdit>
 #include <QPointingDevice>
+#include <QScrollBar>
 #include <QTabletEvent>
 #include <QSettings>
 #include <QTemporaryDir>
@@ -59,6 +63,8 @@
 #include <QToolButton>
 #include <QTreeView>
 #include <QtTest/QtTest>
+
+#include <algorithm>
 
 #include <qpdf/QPDF.hh>
 #include <qpdf/QPDFObjectHandle.hh>
@@ -358,6 +364,72 @@ QString writeOcrLayerPdf(const QString &path, const QString &keyword) {
     return path;
 }
 
+// Hand-writes a minimal one-page PDF whose text uses the PDF spec's
+// genuine invisible text-rendering mode (`3 Tr`) — the construct real OCR
+// pipelines (ocrmypdf, Acrobat's "searchable image" OCR, pdfsandwich)
+// actually emit, distinct from writeOcrLayerPdf's alpha=0-pen approximation
+// above. QPainter/QPdfWriter have no API for text render mode (they always
+// emit the default `0 Tr` fill), so this writes the object table, xref,
+// and trailer by hand to get a real `3 Tr` operator into the content
+// stream. Twin of the same-named helper in tests/test_adapters.cpp, which
+// carries the full root-cause writeup for why this matters (owner dogfood
+// report, 2026-07-31): Qt's getAllText()/getSelection() turned out to be
+// render-mode-agnostic, so this is a regression guard, not a fix
+// demonstration, and this copy exercises it through the REAL MainWindow /
+// PdfAdapter wiring end to end rather than the bare QPdfDocument API.
+QString writeInvisibleRenderModePdf(const QString &path, const QString &text) {
+    const QByteArray content = "BT /F1 24 Tf 100 700 Td 3 Tr (" + text.toLatin1() + ") Tj ET";
+    QList<QByteArray> objects;
+    objects << "<< /Type /Catalog /Pages 2 0 R >>";
+    objects << "<< /Type /Pages /Kids [3 0 R] /Count 1 >>";
+    objects << "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
+               "/Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>";
+    objects << "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+    objects << "<< /Length " + QByteArray::number(content.size()) + " >>\nstream\n" + content +
+                   "\nendstream";
+
+    QByteArray out = "%PDF-1.4\n";
+    QList<int> offsets;
+    for (int i = 0; i < objects.size(); ++i) {
+        offsets << static_cast<int>(out.size());
+        out += QByteArray::number(i + 1) + " 0 obj\n" + objects[i] + "\nendobj\n";
+    }
+    const int xrefOffset = static_cast<int>(out.size());
+    const int n = static_cast<int>(objects.size()) + 1;
+    out += "xref\n0 " + QByteArray::number(n) + "\n";
+    out += "0000000000 65535 f \n";
+    for (int off : offsets) {
+        out += QByteArray::number(off).rightJustified(10, '0') + " 00000 n \n";
+    }
+    out += "trailer\n<< /Size " + QByteArray::number(n) + " /Root 1 0 R >>\n";
+    out += "startxref\n" + QByteArray::number(xrefOffset) + "\n%%EOF";
+
+    QFile f(path);
+    [[maybe_unused]] const bool opened = f.open(QIODevice::WriteOnly);
+    Q_ASSERT(opened);
+    f.write(out);
+    f.close();
+    return path;
+}
+
+// Reproduces PdfDocument::createView()'s pageOriginInView lambda
+// (PdfAdapter.cpp) for the SinglePage / one-page case, using only
+// QPdfView's public API — lets a UAT test convert a doc-space point into
+// the exact view-pixel point the real adapter places it at, without
+// reaching into PdfAdapter's private lambda captures.
+QPointF singlePageOriginInView(QPdfView *view, QSizeF pagePointSize) {
+    const double z = view->zoomFactor();
+    const QMargins m = view->documentMargins();
+    const QSize vp = view->viewport()->size();
+    const double pw = pagePointSize.width() * z;
+    const double contentW = pw + m.left() + m.right();
+    const double contentH = pagePointSize.height() * z + m.top() + m.bottom();
+    const double extraX = std::max(0.0, (vp.width() - contentW) / 2.0);
+    const double extraY = std::max(0.0, (vp.height() - contentH) / 2.0);
+    return QPointF(extraX + m.left() - view->horizontalScrollBar()->value(),
+                   extraY + m.top() - view->verticalScrollBar()->value());
+}
+
 // Sends a synthesized QKeyEvent directly to `target`. Same rationale
 // as sendMouse below — offscreen is happier with sendEvent than the
 // QTest::keyClick helpers.
@@ -441,6 +513,11 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_ann_133_boundedToolsDrawFirstOverExisting();
     void uat_ann_134_boundedToolsAreStickyViaToolbar();
     void uat_ann_140_interleavedUndoIsChronological();
+    void uat_ann_141_selectDragHighlightsLiveNotJustOnRelease();
+    void uat_ann_142_selectToolShowsIBeamOverTextArrowElsewhere();
+    void uat_ann_143_selectToolCtrlCCopiesSelectedText();
+    void uat_ann_144_explicitToolTakesPrecedenceOverTextSelection();
+    void uat_ann_145_selectDragWorksOnInvisibleOcrLayerPdf();
     void uat_toc_010_outlineDisabledOnPlainPdf();
     void uat_toc_011_outlineExposedForPdfWithBookmarks();
     void uat_toc_012_clickingOutlineEntryNavigatesToPage();
@@ -3106,6 +3183,286 @@ void TestUatSearchAndMarkup::uat_ann_140_interleavedUndoIsChronological() {
     QApplication::processEvents();
     QCOMPARE(doc->pageCount(), 1);
     QCOMPARE(store->count(), 1);
+}
+
+// UAT-ANN-141 — Select-tool text-selection highlight is LIVE during the
+// drag, not only painted once the mouse button is released.
+//
+// Owner dogfood report (2026-07-31): on a native-text PDF, dragging did
+// select text, but the highlight only appeared after lifting the mouse
+// button — no feedback while dragging. mouseReleaseEvent already computed
+// m_pendingSelection; mouseMoveEvent did not, so mid-drag the paint used
+// stale (usually empty) state. Fixed by recomputing on every move sample.
+void TestUatSearchAndMarkup::uat_ann_141_selectDragHighlightsLiveNotJustOnRelease() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_141.pdf")), QStringLiteral("fixture"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
+    QVERIFY(overlay);
+    overlay->setActiveTool(AnnotationTool::Select);
+    // Stub the provider so this test is about the overlay's OWN
+    // live-update wiring, not glyph geometry (same technique
+    // UAT-ANN-036 already uses for the release-time path).
+    overlay->setTextSelectionProvider([](QPointF, QPointF, int) {
+        return std::vector<QRectF>{QRectF(40, 60, 160, 14)};
+    });
+
+    QCOMPARE(overlay->pendingTextSelectionCountForTest(), 0);
+
+    // Press + move WITHOUT releasing — the drag is still in progress.
+    sendMouse(overlay, QEvent::MouseButtonPress, QPoint(200, 250), Qt::LeftButton);
+    sendMouse(overlay, QEvent::MouseMove, QPoint(320, 320), Qt::LeftButton);
+    QApplication::processEvents();
+
+    QVERIFY2(overlay->pendingTextSelectionCountForTest() > 0,
+             "The selection highlight must appear DURING the drag, not only on release");
+
+    sendMouse(overlay, QEvent::MouseButtonRelease, QPoint(320, 320), Qt::LeftButton);
+    QApplication::processEvents();
+    QVERIFY(overlay->pendingTextSelectionCountForTest() > 0);
+}
+
+// UAT-ANN-142 — Select-tool cursor is an honest I-beam over selectable
+// text and the plain arrow everywhere else (G3: never a lying cursor).
+//
+// Owner dogfood report (2026-07-31): the cursor never changed to an
+// I-beam at all, even while actively selecting. setActiveTool(Select) set
+// a static Qt::ArrowCursor on the assumption the overlay was transparent
+// and SelectableTextLayer's cursor would show through underneath — but
+// Select keeps the overlay OPAQUE (it owns the Highlight/Underline/
+// StrikeOut drag-to-quads plumbing), so that assumption never held.
+void TestUatSearchAndMarkup::uat_ann_142_selectToolShowsIBeamOverTextArrowElsewhere() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_142.pdf")), QStringLiteral("fixture"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
+    QVERIFY(overlay);
+    overlay->setActiveTool(AnnotationTool::Select);
+
+    // No point-over-text provider wired yet: the cursor must stay the
+    // honest arrow — G3 forbids an I-beam that promises an interaction
+    // that can't happen.
+    sendMouse(overlay, QEvent::MouseMove, QPoint(250, 250), Qt::NoButton);
+    QApplication::processEvents();
+    QCOMPARE(overlay->cursorShapeForTest(), Qt::ArrowCursor);
+
+    const QRect textRectView(200, 240, 150, 20);
+    overlay->setPointOverTextProvider(
+        [textRectView](QPointF viewPt, int) { return textRectView.contains(viewPt.toPoint()); });
+
+    sendMouse(overlay, QEvent::MouseMove, textRectView.center(), Qt::NoButton);
+    QApplication::processEvents();
+    QCOMPARE(overlay->cursorShapeForTest(), Qt::IBeamCursor);
+
+    sendMouse(overlay, QEvent::MouseMove, QPoint(50, 600), Qt::NoButton);
+    QApplication::processEvents();
+    QCOMPARE(overlay->cursorShapeForTest(), Qt::ArrowCursor);
+}
+
+// UAT-ANN-143 — Ctrl+C / Cmd+C copies the Select-tool's pending text
+// selection to the clipboard.
+//
+// This is the actual point of the feature (owner brief, 2026-07-31:
+// "minimum viable scope: selecting and copying text is the point").
+void TestUatSearchAndMarkup::uat_ann_143_selectToolCtrlCCopiesSelectedText() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_143.pdf")), QStringLiteral("fixture"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
+    QVERIFY(overlay);
+    overlay->setActiveTool(AnnotationTool::Select);
+    overlay->setTextSelectionProvider([](QPointF, QPointF, int) {
+        return std::vector<QRectF>{QRectF(40, 60, 160, 14)};
+    });
+    overlay->setTextSelectionTextProvider(
+        [](QPointF, QPointF, int) { return QStringLiteral("copied selection text"); });
+
+    QApplication::clipboard()->clear();
+    dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 320));
+    QVERIFY2(overlay->hasFocus(), "the drag must grab focus so Ctrl+C reaches keyPressEvent");
+    QVERIFY(overlay->pendingTextSelectionCountForTest() > 0);
+
+    QKeyEvent copy(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier);
+    QApplication::sendEvent(overlay, &copy);
+
+    QCOMPARE(QApplication::clipboard()->text(), QStringLiteral("copied selection text"));
+
+    // Escape clears the selection (parity with SelectableTextLayer, the
+    // None-tool path's equivalent surface).
+    QKeyEvent esc(QEvent::KeyPress, Qt::Key_Escape, Qt::NoModifier);
+    QApplication::sendEvent(overlay, &esc);
+    QCOMPARE(overlay->pendingTextSelectionCountForTest(), 0);
+}
+
+// UAT-ANN-144 — Tool-precedence rule: an explicit tool always wins over
+// text selection, even when the drag lands on selectable text.
+//
+// The crux of the owner's brief (2026-07-31): "If I manually activate a
+// tool like the pen tool, that should take precedence." Rectangle stands
+// in for "any explicit tool" here — the same m_tool != Select/None branch
+// every drawing tool already takes.
+void TestUatSearchAndMarkup::uat_ann_144_explicitToolTakesPrecedenceOverTextSelection() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_ann_144.pdf")), QStringLiteral("fixture"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+    AnnotationStore *store = doc->annotations();
+    QVERIFY(store);
+
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
+    QVERIFY(overlay);
+    overlay->setActiveTool(AnnotationTool::Rectangle);
+    // Wire providers that would report "text everywhere" — proving the
+    // tool, not the providers, is what decides the outcome.
+    overlay->setTextSelectionProvider([](QPointF, QPointF, int) {
+        return std::vector<QRectF>{QRectF(40, 60, 160, 14)};
+    });
+    overlay->setPointOverTextProvider([](QPointF, int) { return true; });
+
+    // Cursor: the explicit tool's cross cursor wins, never an I-beam.
+    sendMouse(overlay, QEvent::MouseMove, QPoint(250, 250), Qt::NoButton);
+    QApplication::processEvents();
+    QCOMPARE(overlay->cursorShapeForTest(), Qt::CrossCursor);
+
+    const int before = store->count();
+    dragOnOverlay(overlay, QPoint(200, 250), QPoint(320, 340));
+
+    QCOMPARE(store->count(), before + 1);
+    QCOMPARE(store->annotations().back().type, AnnotationType::Rectangle);
+    QCOMPARE(overlay->pendingTextSelectionCountForTest(), 0);
+}
+
+// UAT-ANN-145 — Drag-select works on a PDF whose text layer is invisible
+// (genuine PDF render mode `3 Tr` — what real OCR pipelines emit), driven
+// through the REAL MainWindow / PdfAdapter wiring end to end (no stubbed
+// providers). Companion to UAT-VWR-061b (search already worked on this
+// construct); this closes the selection gap the owner's dogfood report
+// named for a scanned + OCR'd document.
+void TestUatSearchAndMarkup::uat_ann_145_selectDragWorksOnInvisibleOcrLayerPdf() {
+    QVERIFY(m_scratch.isValid());
+    const QString keyword = QStringLiteral("invisibledrag");
+    const QString pdfPath = writeInvisibleRenderModePdf(
+        m_scratch.filePath(QStringLiteral("uat_ann_145.pdf")), keyword);
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+    QApplication::processEvents(); // flush the deferred fit-zoom singleShot(0)
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 900);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    IDocument *doc = dv->currentDocument();
+    QVERIFY(doc);
+
+    // Select is the neutral / no-explicit-tool state the markup toolbar
+    // parks on (Tool-precedence rule, AnnotationOverlay.h).
+    auto *overlay = mw->findChild<AnnotationOverlay *>();
+    QVERIFY(overlay);
+    overlay->setActiveTool(AnnotationTool::Select);
+
+    auto *view = mw->findChild<QPdfView *>();
+    QVERIFY(view);
+
+    // The store must already carry the invisible text — the adapter
+    // ingests it proactively when the view is built (ingestNativeText
+    // Layer), the same as any other born-digital PDF; render mode plays
+    // no part in that path.
+    auto *store = doc->selectableText();
+    QVERIFY(store);
+    QTRY_VERIFY_WITH_TIMEOUT(store->hasResults(0), 2000);
+    const auto &blocks = store->blocks(0);
+    QVERIFY(!blocks.empty());
+    QString joined;
+    for (const auto &b : blocks)
+        joined += b.text;
+    QVERIFY2(joined.contains(keyword), qPrintable(joined));
+
+    const QRectF docBounds = blocks.front().polygon.boundingRect();
+    QVERIFY(!docBounds.isEmpty());
+
+    const QPointF origin = singlePageOriginInView(view, QSizeF(612, 792));
+    const double z = view->zoomFactor();
+    auto toView = [&](QPointF docPt) { return origin + QPointF(docPt.x() * z, docPt.y() * z); };
+    const QPoint startView = toView(docBounds.topLeft() + QPointF(1, 1)).toPoint();
+    const QPoint endView = toView(docBounds.bottomRight() - QPointF(1, 1)).toPoint();
+
+    // Hover first: I-beam over the invisible-but-selectable text (the
+    // exact symptom the owner named — "cursor never changed to an
+    // I-beam").
+    sendMouse(overlay, QEvent::MouseMove, startView, Qt::NoButton);
+    QApplication::processEvents();
+    QCOMPARE(overlay->cursorShapeForTest(), Qt::IBeamCursor);
+
+    QApplication::clipboard()->clear();
+    sendMouse(overlay, QEvent::MouseButtonPress, startView, Qt::LeftButton);
+    sendMouse(overlay, QEvent::MouseMove, endView, Qt::LeftButton);
+    QApplication::processEvents();
+    QVERIFY2(overlay->pendingTextSelectionCountForTest() > 0,
+             "Drag over invisible (OCR-style) text must select it live, mid-drag");
+
+    sendMouse(overlay, QEvent::MouseButtonRelease, endView, Qt::LeftButton);
+    QApplication::processEvents();
+    QVERIFY(overlay->hasFocus());
+
+    QKeyEvent copy(QEvent::KeyPress, Qt::Key_C, Qt::ControlModifier);
+    QApplication::sendEvent(overlay, &copy);
+    QVERIFY2(QApplication::clipboard()->text().contains(keyword),
+             qPrintable(QStringLiteral("clipboard: ") + QApplication::clipboard()->text()));
+
+    grabTo(mw, QStringLiteral("uat_ann_145_invisible_text_selected.png"));
 }
 
 // UAT-XCT-070 — Toolbar anchoring & overflow (ADR 0007, Option A).
