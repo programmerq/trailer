@@ -253,6 +253,18 @@ trailer_add_uat_test(test_uat_empty_state_recent test_uat_empty_state_recent.cpp
 # set.
 trailer_add_uat_test(test_uat_window_menu_maximize test_uat_window_menu_maximize.cpp)
 
+# macOS Dock icon recents (UAT-FND-063/064). Exercises the SHARED,
+# cross-platform Dock-menu construction (Application::refreshDockRecents) —
+# ordering, the 10-item cap, missing-file exclusion, Clear Menu, and that a
+# chosen entry opens via the same Application::openFiles path as File > Open
+# Recent. Writes a grab() of the constructed QMenu (empty vs populated) to
+# $TRAILER_DOCKRECENTS_EVIDENCE_DIR when set. Does NOT and cannot cover
+# whether macOS actually attaches/renders this menu on a real Dock icon, or
+# the separate NSDocumentController "not running" path — see the file header
+# and the PR's owner verification checklist. PDF fixtures use QPdfWriter
+# (QtGui), so no Qt6::Pdf link is needed.
+trailer_add_uat_test(test_uat_dock_recents test_uat_dock_recents.cpp)
+
 # Preferences pane UAT (theme live-wire + tabs-grow-with-settings). Guards
 # that the Theme control is enabled and every visible tab has >=1 enabled
 # operable control. Also emits the curated G2 before/after evidence (enabled

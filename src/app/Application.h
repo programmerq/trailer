@@ -174,6 +174,14 @@ class Application : public QApplication {
     void setSessionDraftStoreDirForTesting(const QString &dir) {
         m_draftStore = SessionDraftStore(dir);
     }
+    // The constructed Dock-menu QMenu (see refreshDockRecents()). Exposed
+    // read-only so a UAT slot can grab() it for G2 evidence and assert its
+    // action list without a real Dock to attach it to — the menu's
+    // CONSTRUCTION is identical on every platform; only whether macOS's
+    // Dock ever renders it differs. May be null before the first
+    // refreshDockRecents() call (there isn't one — the constructor always
+    // calls it once — but tests should still null-check defensively).
+    QMenu *dockMenuForTesting() const { return m_dockMenu.data(); }
 
     // Begin a local UX recording session. Called from main.cpp before
     // any window exists so the first window already carries the
@@ -285,6 +293,24 @@ class Application : public QApplication {
     // instead; captureScreenshot picks the right one by context.
     void showScreenRecordingNeededModal();
 #endif
+    // Keep two native macOS surfaces in sync with RecentFiles, both capped
+    // to DockRecents::kMaxSystemRecents (10): the live Dock icon's
+    // right-click menu (a plain QMenu, attached via QMenu::setAsDockMenu()
+    // — pure Qt, no Cocoa needed, though Qt only declares that one method
+    // under Q_OS_MACOS) and the macOS system Recent Documents store
+    // (DockRecents::syncSystemRecents, Objective-C++), which is what lets
+    // the Dock render a recents menu even when Trailer isn't running.
+    // Called once at startup (after m_recent.load()) and again after
+    // every RecentFiles mutation (openFiles, clearRecent) — see
+    // notifyWindowsRecentChanged, which
+    // this parallels for the two native-Dock surfaces instead of the
+    // per-window in-app menu.
+    //
+    // Deliberately NOT under #ifdef Q_OS_MACOS — see the definition's
+    // comment in Application.cpp for why running it everywhere is both
+    // safe and useful (headless UAT coverage of the shared QMenu
+    // construction on every platform).
+    void refreshDockRecents();
 
     // New-from-Clipboard actions across every File menu (per-window +
     // the macOS no-window bar). Kept in sync by refreshClipboardActions.
@@ -333,6 +359,18 @@ class Application : public QApplication {
 #ifdef Q_OS_MACOS
     QPointer<QMenuBar> m_noWindowMenuBar;
 #endif
+    // The Dock icon's right-click menu. Built and populated on every
+    // platform (see refreshDockRecents()'s comment for why), but only
+    // actually attached to the Dock via QMenu::setAsDockMenu() under
+    // Q_OS_MACOS (Qt docs: "it is not possible to remove a dock menu
+    // that has been set" — hence m_dockMenuInstalled guards a one-time
+    // call). Its actions are cleared and rebuilt in place on every
+    // refreshDockRecents() call — the same clear()-and-repopulate shape
+    // as MainWindow::rebuildRecentMenu(). Never shown off macOS (nothing
+    // ever calls setAsDockMenu() there — Qt doesn't even declare that
+    // method outside Q_OS_MACOS), but harmless to construct.
+    QPointer<QMenu> m_dockMenu;
+    bool m_dockMenuInstalled = false;
 #ifdef TRAILER_UX_RECORDER
     // Live for the rest of the process once --ux-record started it;
     // stop() is driven by aboutToQuit (self-connected) and the

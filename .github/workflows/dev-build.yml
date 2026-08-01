@@ -60,6 +60,20 @@ on:
         required: false
         type: boolean
         default: false
+      run_macos_verification:
+        description: >-
+          On top of build_macos, also run the macOS on-demand verification
+          steps: the GUI/WindowServer session capability probe (scripts/
+          probe-macos-gui-session.sh), the Dock-recents system-store
+          integration test (NSDocumentController round trip), and the
+          adaptive-icon Assets.car dark/luminosity assertion (scripts/
+          assert-adaptive-icon-variant.sh). No-op unless build_macos is
+          also true (these steps live in the dev-macos job and need its
+          build output). See the dev-macos job's steps for what each
+          proves and does NOT prove.
+        required: false
+        type: boolean
+        default: false
   pull_request:
     # `labeled` re-fires the workflow when a label is added to an
     # existing PR, so a dev-build doesn't require a fresh push after
@@ -289,6 +303,14 @@ jobs:
     # (no custom label such as `utm`).
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 60
+    outputs:
+      # Populated only when run_macos_verification is true (the steps that
+      # set them are `if:`-gated below); empty string otherwise. Read back
+      # by whichever process dispatched this run (via the Actions API) to
+      # compose a findings report — see the macOS Dock-menu-and-icon PR.
+      gui_probe_summary: ${{ steps.gui_probe.outputs.summary }}
+      dock_recents_integration_result: ${{ steps.dock_recents_integration.outputs.result }}
+      icon_variant_assertion_result: ${{ steps.icon_variant_assertion.outputs.result }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -343,6 +365,115 @@ jobs:
         run: scripts/build-macos.sh
         env:
           TRAILER_ENABLE_UX_RECORDER: ${{ inputs.enable_recorder }}
+
+      # --- On-demand macOS verification (run_macos_verification opt-in) ---
+      # Three independent, on-demand checks added for the macOS Dock-menu-
+      # and-icon PR, kept opt-in (not part of every dev-macos dispatch)
+      # because they change real, persistent state on the single-instance
+      # self-hosted runner (the GUI probe compiles+runs a throwaway helper;
+      # the Dock-recents test writes-then-restores the runner's REAL system
+      # Recent Documents list — see its own test-file comment) or take
+      # meaningfully longer than a plain build. Each step is independently
+      # useful beyond this one PR — see each step's own comment for what it
+      # proves and does not prove.
+      - name: GUI/WindowServer session capability probe
+        # Standing infrastructure question, not PR-specific: does this
+        # runner have a real Aqua session (unlocking on-screen UI testing,
+        # real screenshots, real Dock/Gatekeeper behaviour), or does it run
+        # headless/daemon-only (offscreen stays mandatory for everything
+        # GUI)? Never fails the job — see the script's own header for the
+        # five signals it reports and why none of them gates.
+        if: inputs.run_macos_verification == true
+        id: gui_probe
+        run: |
+          set -uo pipefail
+          scripts/probe-macos-gui-session.sh "build-macos/tests/test_dock_recents" \
+            | tee /tmp/gui_probe.log
+          {
+            echo "summary<<TRAILER_EOF"
+            cat /tmp/gui_probe.log
+            echo "TRAILER_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Dock-recents system-store integration test (opt-in, real state)
+        # Priority-1 automation per the owner's ask: mechanically proves
+        # Part 1's "works when Trailer isn't running" claim by writing to,
+        # then reading back from, the REAL NSDocumentController system
+        # Recent Documents store (tests/test_dock_recents.cpp's
+        # macosSystemRecentsRoundTrip, gated by
+        # TRAILER_MACOS_TOUCH_SYSTEM_RECENTS=1). Does NOT prove the Dock
+        # actually renders the menu (native Dock chrome — unobservable
+        # here); proves the persisted data it would render from is
+        # correct. The test itself snapshots and restores this machine's
+        # real prior state regardless of pass/fail (see its
+        # SystemRecentsRestoreGuard), so this step is safe to run on the
+        # shared runner — but is still opt-in here because it is the most
+        # state-touching step in this job.
+        if: inputs.run_macos_verification == true
+        id: dock_recents_integration
+        # Non-gating for THIS job (still uploads the .dmg either way) —
+        # the failure/pass signal is what this dispatch exists to surface,
+        # not something that should also swallow the build artifact.
+        continue-on-error: true
+        working-directory: build-macos
+        run: |
+          set +e
+          QT_QPA_PLATFORM=offscreen TRAILER_MACOS_TOUCH_SYSTEM_RECENTS=1 \
+            ./tests/test_dock_recents 2>&1 | tee /tmp/dock_recents_integration.log
+          RC=${PIPESTATUS[0]}
+          {
+            echo "### Dock-recents system-store integration test"
+            echo
+            echo '```'
+            cat /tmp/dock_recents_integration.log
+            echo '```'
+            echo
+            echo "Exit code: $RC"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$RC" -eq 0 ]; then
+            echo "result=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=fail (exit $RC)" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$RC"
+
+      - name: Adaptive-icon Assets.car dark/luminosity assertion (opt-in)
+        # Priority-2 automation per the owner's ask: promotes the
+        # mechanical half of scripts/build-macos.sh's existing informational
+        # check to a real, hard assertion — see scripts/assert-adaptive-
+        # icon-variant.sh's header for the load-bearing distinction (proves
+        # the ARTIFACT contains a dark/luminosity marker; does NOT prove
+        # macOS renders it). Kept out of scripts/build-macos.sh itself (and
+        # so out of every real release/nightly build) because the exact
+        # assetutil key/value shape this asserts on was never empirically
+        # confirmed against real Tahoe actool output before now — this
+        # step both confirms/corrects it AND is the assertion in one place.
+        if: inputs.run_macos_verification == true
+        id: icon_variant_assertion
+        # Non-gating for THIS job, same rationale as the step above.
+        continue-on-error: true
+        run: |
+          set +e
+          scripts/assert-adaptive-icon-variant.sh \
+            "build-macos/Trailer.app/Contents/Resources/Assets.car" \
+            2>&1 | tee /tmp/icon_variant.log
+          RC=${PIPESTATUS[0]}
+          {
+            echo "### Adaptive-icon Assets.car assertion"
+            echo
+            echo '```'
+            cat /tmp/icon_variant.log
+            echo '```'
+            echo
+            echo "Exit code: $RC"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$RC" -eq 0 ]; then
+            echo "result=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=fail (exit $RC)" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$RC"
+      # --- End on-demand macOS verification ---
 
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v7

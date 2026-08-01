@@ -251,6 +251,20 @@ RecentEntry RecentFiles::findByPath(const QString &path) const {
     return {};
 }
 
+QList<RecentEntry> RecentFiles::existingEntries(int limit) const {
+    QList<RecentEntry> result;
+    if (limit <= 0)
+        return result;
+    for (const RecentEntry &entry : m_entries) {
+        if (result.size() >= limit)
+            break;
+        if (QFileInfo::exists(entry.path)) {
+            result.append(entry);
+        }
+    }
+    return result;
+}
+
 void RecentFiles::setMaxEntries(int value) {
     m_maxEntries = value > 0 ? value : 1;
     trim();

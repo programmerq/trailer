@@ -12,6 +12,20 @@
 > bundle floor is `14.0` (`resources/macos/Info.plist.in`,
 > `scripts/build-macos.sh`, `CMakeLists.txt` `TRAILER_ICON_MIN_MACOS`).
 
+> **Update 2026-07-31:** the owner's real-Tahoe dogfood (2026-07-17,
+> `docs/backlog/2026-07-17-adaptive-dock-icon-option-b.md`) confirmed
+> Option A does not drive the Dock swap on the owner's Tahoe machine. A
+> follow-up research pass (same backlog file, "Investigation
+> update" section) found the `successfulsoftware.net` citation below
+> actually demonstrates **Option B**'s `.icon`-compile mechanism, not a
+> plain luminosity `.xcassets` catalog like Trailer's — read that citation
+> with the correction noted there. No new evidence resolved
+> needs-live-verification point 1 (pre-Tahoe) or established a Tahoe-GA
+> equivalent; both remain real-Mac-tier. This record's Option A verdict is
+> unchanged pending that live pass; see the backlog file for two cheap
+> non-Icon-Composer checks (icon-cache staleness, Xcode/Icon-Composer
+> version) to run before committing to Option B's authoring effort.
+
 ## Context
 
 The v0.3.0 real-Mac dogfood pass (2026-07-13) found that Trailer's dark app-icon
