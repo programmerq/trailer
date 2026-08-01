@@ -52,6 +52,22 @@ class DockRecents {
     //
     // No-op off macOS.
     static void syncSystemRecents(const QStringList &pathsMostRecentFirst);
+
+    // Testing-only readback of what syncSystemRecents() actually persisted
+    // — NSDocumentController.recentDocumentURLs, most-recent-first,
+    // converted to plain file paths. Exists so a real-Mac CI run can
+    // ASSERT the "works when Trailer isn't running" claim mechanically
+    // (this is the system store the Dock/Launch Services read from with
+    // Trailer's process dead — see the class comment) instead of only
+    // trusting that syncSystemRecents() didn't crash. See
+    // tests/test_dock_recents.cpp's Q_OS_MACOS-guarded integration case
+    // (opt-in via TRAILER_MACOS_TOUCH_SYSTEM_RECENTS=1 — it mutates this
+    // process's real, persistent system Recent Documents list, so it is
+    // NOT part of the default test run; see that test's own comment for
+    // the snapshot/restore discipline it follows).
+    //
+    // Returns an empty list off macOS — nothing to read back.
+    static QStringList systemRecentsForTesting();
 };
 
 } // namespace trailer

@@ -13,4 +13,9 @@ void DockRecents::syncSystemRecents(const QStringList & /*pathsMostRecentFirst*/
     // Nothing to register off macOS.
 }
 
+QStringList DockRecents::systemRecentsForTesting() {
+    // Nothing to read back off macOS.
+    return {};
+}
+
 } // namespace trailer

@@ -52,4 +52,21 @@ void DockRecents::syncSystemRecents(const QStringList &pathsMostRecentFirst) {
     }
 }
 
+QStringList DockRecents::systemRecentsForTesting() {
+    QStringList out;
+    NSDocumentController *controller = [NSDocumentController sharedDocumentController];
+    // recentDocumentURLs is documented as most-recent-first (the same
+    // order the Dock/Open Recent menu would render), matching
+    // pathsMostRecentFirst's contract on the write side.
+    NSArray<NSURL *> *urls = [controller recentDocumentURLs];
+    for (NSURL *url in urls) {
+        if (![url isFileURL])
+            continue;
+        NSString *path = [url path];
+        if (path)
+            out.append(QString::fromUtf8([path UTF8String]));
+    }
+    return out;
+}
+
 } // namespace trailer
