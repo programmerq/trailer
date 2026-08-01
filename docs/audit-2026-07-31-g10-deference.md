@@ -10,6 +10,26 @@
 > per-lens letters, since this pass has exactly one lens with two named
 > principles.
 
+> **2026-08-01 process note.** This document originally shipped as its own
+> docs-only PR (#134), which filed three backlog items for SC-CRIT-1,
+> SC-CRIT-2, and DEF-MOD-1 (see the *Backlog items filed* section below).
+> The owner correctly flagged that shape as too small to be its own PR —
+> it doesn't deliver anything — and, checking the files, it was worse
+> than a shape preference: those three backlog items would have landed
+> already-obsolete, since all three findings are fixed elsewhere. #134 is
+> being folded into the PR that fixes SC-CRIT-1/SC-CRIT-2/SC-MOD-1
+> (originally #141, `fix: eliminate status-bar, markup-toolbar, and
+> search-bar reflow`, stacked onto this branch so the audit and its fixes
+> land as one deliverable), which also fixes DEF-MOD-1 in a sibling PR
+> (#140, `UI deference polish`). All three backlog items are deleted in
+> this same PR, closing them the way `docs/backlog/README.md` requires
+> (deletion in git, citing the item id) — see each finding's own
+> **Fixed** note below and the updated **Action register** for exactly
+> which PR closed which. The findings themselves, the confirmed-good
+> positives, and the G10-wording assessment are otherwise unchanged from
+> the original audit — they remain the record of what was found and why
+> it matters, independent of how the fixes shipped.
+
 **Scope.** All of `src/ui/` read against G10's two questions — *does this
 add permanent chrome that duplicates what the document already shows?* and
 *does an existing control move on screen as a side effect of unrelated
@@ -134,6 +154,17 @@ perturb the other status-bar residents. A geometry-assertion UAT slot
 widget's rect is unaffected by any other permanent widget's visibility
 toggle" would be the checkable G1 threshold and the regression guard.
 
+**Fixed (2026-08-01, this PR).** Option (a) shipped: each of the five
+permanent widgets is now wrapped in a `reserveStatusBarSlot()` container
+(`src/ui/MainWindow.cpp`) sized to the widget's own measured `sizeHint()`
+at runtime; `setVisible()` blanks the slot's content instead of
+collapsing it, so no widget's position depends on any other's
+visibility. Regression guard: `uat_xct_078_statusBarPermanentWidgetsNeverReflowEachOther`
+(`tests/uat/test_uat_ml_affordances.cpp`) — exactly the geometry-assertion
+UAT slot suggested above, verified to fail against the pre-fix code.
+Backlog item `2026-07-31-status-bar-permanent-widget-reflow-chain`
+closed (deleted) in this PR.
+
 ---
 
 ### SC-CRIT-2: MarkupToolbar's tool buttons shift position on every document/tab switch
@@ -193,6 +224,21 @@ blanks the icon without collapsing the layout. (a) is the smaller diff
 but is itself a G3/G10 trade-off the arbiter should make explicitly,
 which is why this is flagged rather than fixed here.
 
+**Fixed (2026-08-01, this PR).** Option (a) shipped, as the trade-off this
+finding flagged: `MarkupToolbar::setToolVisible()` became `setToolEnabled()`
+— the five tool actions stay always-visible and disable-with-tooltip
+instead of hiding, reversing the "hidden, not greyed" default named
+above specifically for this shared, position-sensitive row (decision
+record `docs/decision-records/2026-08-01-markup-toolbar-disable-not-hide.md`,
+status `accepted`, since this is a recorded-default reversal per G6).
+Regression guards: `tests/test_markup_toolbar.cpp`'s
+`toolPositionsNeverMoveAcrossEnableDisableToggles` (isolated-widget level)
+and `uat_xct_079_markupToolbarActionsStayPutAcrossDocumentTypeSwitch`
+(`tests/uat/test_uat_search_and_markup.cpp`, integrated MainWindow level)
+— both verified to fail against the pre-fix code. Backlog item
+`2026-07-31-markup-toolbar-tool-visibility-reflow` closed (deleted) in
+this PR.
+
 ---
 
 ### SC-MOD-1: SearchBar's match counter shifts the prev/next/close buttons — flagged, not filed (overlap risk)
@@ -216,16 +262,34 @@ effect of anything the user did to those buttons.
 **Where.** `src/ui/SearchBar.cpp:24-28` (layout order), `:55-67`
 (`setMatchCounter`).
 
-**Not filed as a backlog item.** `claude/mode-switch-and-search-nav`'s
+**Not filed as a backlog item — at the time.** `claude/mode-switch-and-search-nav`'s
 branch name pairs "mode-switch" with "search-nav"; the coordinator's
 known-in-flight list names only the view-mode-menu-reordering half of
 that branch, so it's genuinely unclear whether "search-nav" already
 covers this. Filing a backlog item risked a silent duplicate per
 `docs/backlog/README.md`'s own stated failure mode ("slightly-different
-slugs for the same work"), so this is recorded here only, with the
+slugs for the same work"), so this was recorded here only, with the
 recommendation that whoever picks up `claude/mode-switch-and-search-nav`
 check this file:line before starting new work, and that it be filed
 separately only if that branch's scope turns out not to include it.
+
+**Fixed (2026-08-01, this PR).** The overlap risk above was checked
+directly rather than left open: `claude/mode-switch-and-search-nav` (PR
+#139, merged into `main` before this PR branched) was read diff-by-diff —
+its `SearchBar.cpp`/`.h` changes add **only** a Shift+Enter `eventFilter()`
+for Find Previous, zero lines touching `setMatchCounter()` or the layout
+order. No overlap, so this was fixed here rather than filed as a separate
+item. `SearchBar`'s counter never `hide()`s now — it stays visible at a
+fixed width (derived from the running platform's own live font metrics,
+not a literal — see the CI-fix history on the implementing PR for why
+that distinction mattered), blank when there is nothing to report, so
+Prev/Next/Close never move as the match count crosses zero. Primary
+regression guard: `tests/test_search_bar.cpp`'s
+`navButtonsStayPutAsMatchCountCrossesZero` (a bare, unconstrained
+`SearchBar` instance — the `MainWindow`-embedded one carries a
+`setMaximumWidth(360)` that happens to absorb the defect at the app's
+default window size and so does not independently catch it); secondary
+integrated coverage: `uat_xct_080_searchBarNavButtonsStayPutAsMatchCountCrossesZero`.
 
 ---
 
@@ -258,6 +322,24 @@ known-in-flight list (`Sidebar.cpp:255`), so there is a real risk the
 instance survives untouched. Filed as a backlog item (below) precisely
 because it is not named in the brief and is easy to miss if the in-flight
 PR's diff is scoped narrowly to the reported instance.
+
+**Fixed (2026-08-01, PR #140, `UI deference polish`) — not by this PR.**
+The named risk above materialised exactly as predicted (a concurrent
+agent implementing the Sidebar fix on a scope limited to the reported
+instance), except it was caught rather than missed: #140's own PR body
+records finding this audit's DEF-MOD-1 finding mid-implementation and
+sweeping Inspector into the same fix rather than leaving the sibling
+instance behind. Both docks now use a shared `buildTextlessDockTitleBar()`
+helper (`src/ui/IconHelper.h`/`.cpp`) — `windowTitle()` stays "Inspector"
+(unchanged, since `QDockWidget`'s built-in accessibility interface reads
+it directly rather than `accessibleName()` — verified empirically, per
+that PR's own writeup) but the *painted* title bar is now a textless
+strip with the same close/float affordances a stock title bar would
+show. Pinned by `uat_fnd_019_dockPanelsHaveNoVisibleCaptionButKeepAccessibleName`.
+Backlog item `2026-07-31-inspector-dock-title-names-itself` closed
+(deleted) in this PR, crediting #140 as the fix, since stacking this
+audit doc onto the PR that fixes SC-CRIT-1/SC-CRIT-2 does not itself
+touch `Inspector.cpp`.
 
 ---
 
@@ -305,24 +387,36 @@ the gate wants, in some cases with real engineering behind them:
 
 ---
 
-## Backlog items filed
+## Backlog items filed (historical — all closed as of this PR)
 
-Two items, both genuinely independent, checkable, and not already
-in-flight under the names given:
+At the time this audit first shipped as PR #134, three items were filed,
+each genuinely independent, checkable, and not already in-flight under
+the names given:
 
-- [`docs/backlog/2026-07-31-status-bar-permanent-widget-reflow-chain.md`](backlog/2026-07-31-status-bar-permanent-widget-reflow-chain.md)
+- `docs/backlog/2026-07-31-status-bar-permanent-widget-reflow-chain.md`
   — SC-CRIT-1.
-- [`docs/backlog/2026-07-31-markup-toolbar-tool-visibility-reflow.md`](backlog/2026-07-31-markup-toolbar-tool-visibility-reflow.md)
+- `docs/backlog/2026-07-31-markup-toolbar-tool-visibility-reflow.md`
   — SC-CRIT-2.
-- [`docs/backlog/2026-07-31-inspector-dock-title-names-itself.md`](backlog/2026-07-31-inspector-dock-title-names-itself.md)
+- `docs/backlog/2026-07-31-inspector-dock-title-names-itself.md`
   — DEF-MOD-1.
 
-**Deliberately not filed:**
+**All three are deleted in this PR** — closed the way
+`docs/backlog/README.md` requires (deletion in git, not a status edit),
+because all three findings are now fixed: SC-CRIT-1 and SC-CRIT-2 by this
+PR (stacked with the audit doc itself), DEF-MOD-1 by #140. See each
+finding's own **Fixed** note above for the specifics; `git log` over each
+deleted path recovers this closure and, further back, the original filed
+item's full text. (No links to the files remain here, since they no
+longer exist — see the *Action register* below for the current,
+non-stale status of every finding.)
 
-- SC-MOD-1 (SearchBar counter shift) — real naming-overlap risk with
-  `claude/mode-switch-and-search-nav`'s "search-nav" half; recorded above
-  instead, per `docs/backlog/README.md`'s own warning against
-  silent-duplicate slugs.
+**Deliberately not filed, then or since:**
+
+- SC-MOD-1 (SearchBar counter shift) — originally recorded rather than
+  filed, due to a real naming-overlap risk with
+  `claude/mode-switch-and-search-nav`'s "search-nav" half. That risk was
+  checked directly and fixed rather than filed once resolved — see
+  SC-MOD-1's own **Fixed** note above.
 - The five known-in-flight items — already tracked on their named
   branches; filing a backlog item would either duplicate that work or,
   worse, get picked up by an eighth agent racing the branch already
@@ -330,9 +424,9 @@ in-flight under the names given:
 - Every item under *Confirmed-good positives* — nothing to track, no
   action needed.
 
-Three findings total beyond the known-in-flight set; three filed as
-backlog items, one recorded-only. This audit intentionally did not
-produce a long tail of minor findings — see *Prioritisation* below.
+Three findings total beyond the known-in-flight set; all three are now
+fixed, none remain open. This audit intentionally did not produce a long
+tail of minor findings — see *Prioritisation* below.
 
 ---
 
@@ -445,9 +539,9 @@ the worked examples already live.
 
 | Finding | Action | Status |
 |---|---|---|
-| SC-CRIT-1 | Backlog item filed | Open |
-| SC-CRIT-2 | Backlog item filed | Open |
-| SC-MOD-1 | Recorded here only — check for overlap with `claude/mode-switch-and-search-nav` before filing | Open, unfiled |
-| DEF-MOD-1 | Backlog item filed | Open |
+| SC-CRIT-1 | Fixed — `reserveStatusBarSlot()`, this PR. Backlog item `2026-07-31-status-bar-permanent-widget-reflow-chain` closed (deleted) in this PR. | **Closed** |
+| SC-CRIT-2 | Fixed — `MarkupToolbar::setToolEnabled()` + decision record `2026-08-01-markup-toolbar-disable-not-hide`, this PR. Backlog item `2026-07-31-markup-toolbar-tool-visibility-reflow` closed (deleted) in this PR. | **Closed** |
+| SC-MOD-1 | Fixed — `SearchBar`'s counter stays visible at a fixed width, this PR. Checked `claude/mode-switch-and-search-nav` (#139)'s diff directly: no overlap, so fixed here rather than filed. Never had a backlog item to close. | **Closed** |
+| DEF-MOD-1 | Fixed — textless dock title bar (`buildTextlessDockTitleBar()`), **PR #140**, not this PR. Backlog item `2026-07-31-inspector-dock-title-names-itself` closed (deleted) in this PR, crediting #140 as the fix. | **Closed** |
 | G10 wording ambiguities (3) | Proposed as `docs/ux-guidelines.md` self-check additions above | Awaiting owner/arbiter |
 | 5 known-in-flight items | Confirmed present, left to their named branches | In progress elsewhere |
