@@ -37,6 +37,7 @@
 #include "ml/OcrEngine.h"
 #include "platform/PortalScreenshot.h"
 #include "platform/QuitMenu.h"
+#include "platform/ReducedMotion.h"
 #include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
 #include "update/UpdateManager.h"
@@ -71,6 +72,7 @@
 #include <QInputDialog>
 #include <QToolButton>
 #include <QFormLayout>
+#include <QGraphicsOpacityEffect>
 #include <QGuiApplication>
 #include <QHBoxLayout>
 #include <QImageWriter>
@@ -86,8 +88,10 @@
 #include <QPixmap>
 #include <QProcess>
 #include <QProgressDialog>
+#include <QPropertyAnimation>
 #include <QPushButton>
 #include <QRadioButton>
+#include <QResizeEvent>
 #include <QScopeGuard>
 #include <QScreen>
 #include <QSlider>
@@ -601,13 +605,86 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_largeDocOcrHint = hint;
     refreshMlIndicator();
 
-    // Permanent zoom-% readout. Sits with the other permanent status-bar
-    // widgets; hidden until a zoomable document is active. Driven by
-    // updateZoomIndicator() from the zoom actions and doc-changed path.
+    // TRANSIENT zoom-% HUD (DR 2026-07-31-transient-zoom-readout).
+    // Hidden at rest -- an explicit zoom action reveals it, then it
+    // fades back out. Driven by updateZoomIndicator() from the zoom
+    // actions and doc-changed path.
+    //
+    // G10 (spatial constancy): this was FIRST built as a status-bar
+    // addPermanentWidget() entry (placed last, hoping "rightmost" would
+    // insulate its siblings). That did not hold up: Qt's QStatusBar
+    // keeps the whole permanent-widget row right-anchored as one block,
+    // so ANY member's width changing -- including the last one growing
+    // from 0 (hidden) to its text width (revealed) -- shifts the
+    // block's left edge, and therefore every OTHER permanent widget in
+    // it, regardless of insertion order. uat_zoom_ind_070 caught this
+    // directly (a sibling badge measured moving ~41px). Fixed by taking
+    // it out of that shared layout entirely: m_zoomIndicator is a
+    // FLOATING overlay parented straight to the MainWindow, positioned
+    // by repositionZoomIndicator() (bottom-right of the document area,
+    // called on construction and resizeEvent()), not managed by any
+    // box layout -- so its own visibility can never move a sibling.
+    // This is also why it is a genuine reveal-then-hide and not a
+    // permanently-reserved-but-blank slot: hidden means zero footprint
+    // anywhere, not an invisible placeholder occupying layout space.
     m_zoomIndicator = new QLabel(this);
     m_zoomIndicator->setObjectName(QStringLiteral("zoomIndicator"));
+    m_zoomIndicator->setAlignment(Qt::AlignCenter);
+    // Never intercepts clicks/hover -- purely an informational overlay,
+    // like the OS-level volume/brightness HUD it mirrors.
+    m_zoomIndicator->setAttribute(Qt::WA_TransparentForMouseEvents);
+    // A small pill, dark-translucent in both themes, so the percentage
+    // stays legible over arbitrary document content (light or dark
+    // pages) rather than only over the status bar's own background.
+    m_zoomIndicator->setStyleSheet(QStringLiteral(
+        "QLabel#zoomIndicator { background-color: rgba(32, 32, 36, 200); "
+        "color: white; border-radius: 8px; padding: 3px 10px; "
+        "font-weight: 600; }"));
     m_zoomIndicator->setVisible(false);
-    statusBar()->addPermanentWidget(m_zoomIndicator);
+
+    // Reveal-then-fade machinery. kZoomIndicatorVisibleMs/-FadeMs are
+    // hand-tuned (PHILOSOPHY.md "Hand-tuned values stay hand-tuned"):
+    // 1500ms mirrors the dwell of macOS's own volume/brightness HUD --
+    // long enough to read a 2-3 digit percentage without feeling nagged;
+    // 400ms is fast enough not to feel laggy while still reading as a
+    // deliberate dismissal rather than a hard cut. Revisit if dogfooding
+    // finds the readout vanishing before it can be read (raise the hold)
+    // or lingering as unwanted chrome (lower either).
+    constexpr int kZoomIndicatorVisibleMs = 1500;
+    constexpr int kZoomIndicatorFadeMs = 400;
+    m_zoomIndicatorVisibleMs = kZoomIndicatorVisibleMs;
+    m_zoomIndicatorFadeMs = kZoomIndicatorFadeMs;
+    m_zoomIndicatorOpacity = new QGraphicsOpacityEffect(m_zoomIndicator);
+    m_zoomIndicatorOpacity->setOpacity(1.0);
+    m_zoomIndicator->setGraphicsEffect(m_zoomIndicatorOpacity);
+    m_zoomIndicatorFadeAnim =
+        new QPropertyAnimation(m_zoomIndicatorOpacity, "opacity", this);
+    connect(m_zoomIndicatorFadeAnim, &QPropertyAnimation::finished, this, [this]() {
+        if (!m_zoomIndicator)
+            return;
+        m_zoomIndicator->setVisible(false);
+        if (m_zoomIndicatorOpacity)
+            m_zoomIndicatorOpacity->setOpacity(1.0);
+    });
+    m_zoomIndicatorFadeTimer = new QTimer(this);
+    m_zoomIndicatorFadeTimer->setSingleShot(true);
+    connect(m_zoomIndicatorFadeTimer, &QTimer::timeout, this, [this]() {
+        if (!m_zoomIndicator || !m_zoomIndicator->isVisible())
+            return;
+        if (platform::prefersReducedMotion()) {
+            // Reduce Motion: snap-hide, no animated fade (docs/
+            // accessibility-checklist.md row A6).
+            m_zoomIndicator->setVisible(false);
+            if (m_zoomIndicatorOpacity)
+                m_zoomIndicatorOpacity->setOpacity(1.0);
+            return;
+        }
+        m_zoomIndicatorFadeAnim->stop();
+        m_zoomIndicatorFadeAnim->setDuration(m_zoomIndicatorFadeMs);
+        m_zoomIndicatorFadeAnim->setStartValue(1.0);
+        m_zoomIndicatorFadeAnim->setEndValue(0.0);
+        m_zoomIndicatorFadeAnim->start();
+    });
 
     // Two-Pages read-only badge (decision record 2026-07-21-two-page-layout,
     // D2-A; gate G3; minimal-UI guideline docs/ux-guidelines.md, #116). A
@@ -1485,7 +1562,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_zoomInAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomIn();
-        updateZoomIndicator();
+        updateZoomIndicator(/*reveal=*/true);
     });
 
     m_zoomOutAction = viewMenu->addAction(tr("Zoom &Out"));
@@ -1495,7 +1572,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_zoomOutAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomOut();
-        updateZoomIndicator();
+        updateZoomIndicator(/*reveal=*/true);
     });
 
     // Zoom shortcuts keep the digit row clear for the page-layout
@@ -1513,7 +1590,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_zoomFitPageAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomFitPage();
-        updateZoomIndicator();
+        updateZoomIndicator(/*reveal=*/true);
     });
 
     m_zoomActualAction = viewMenu->addAction(tr("&Actual Size"));
@@ -1524,7 +1601,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_zoomActualAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomActual();
-        updateZoomIndicator();
+        updateZoomIndicator(/*reveal=*/true);
     });
 
     m_zoomFitAction = viewMenu->addAction(tr("&Fit to Width"));
@@ -1532,7 +1609,7 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     connect(m_zoomFitAction, &QAction::triggered, this, [this]() {
         if (auto *doc = m_documentView->currentDocument())
             doc->zoomFitWidth();
-        updateZoomIndicator();
+        updateZoomIndicator(/*reveal=*/true);
     });
 
     viewMenu->addSeparator();
@@ -3273,17 +3350,82 @@ void MainWindow::updateUndoRedoActions(IDocument *doc) {
     m_redoAction->setEnabled(doc && doc->canRedo());
 }
 
-void MainWindow::updateZoomIndicator() {
+void MainWindow::revealZoomIndicatorTransient() {
+    if (!m_zoomIndicator)
+        return;
+    m_zoomIndicatorFadeTimer->stop();
+    m_zoomIndicatorFadeAnim->stop();
+    if (m_zoomIndicatorOpacity)
+        m_zoomIndicatorOpacity->setOpacity(1.0);
+    // adjustSize() before positioning: the label's natural size depends
+    // on its text (set by the caller just before this runs), and a
+    // floating widget outside any layout doesn't auto-resize on its own.
+    m_zoomIndicator->adjustSize();
+    repositionZoomIndicator();
+    m_zoomIndicator->setVisible(true);
+    m_zoomIndicator->raise();
+    m_zoomIndicatorFadeTimer->start(m_zoomIndicatorVisibleMs);
+}
+
+void MainWindow::repositionZoomIndicator() {
+    if (!m_zoomIndicator)
+        return;
+    // Bottom-right of the document area, clear of the status bar and
+    // the corner size-grip -- the same corner macOS's own transient
+    // HUDs (volume/brightness) favour. Margins are small, fixed offsets
+    // (not hand-tuned magic numbers in the PHILOSOPHY sense -- purely
+    // cosmetic breathing room, not a threshold anything depends on).
+    constexpr int kMarginRight = 16;
+    constexpr int kMarginBottom = 16;
+    const int statusBarHeight = statusBar() && statusBar()->isVisible() ? statusBar()->height() : 0;
+    const int x = width() - m_zoomIndicator->width() - kMarginRight;
+    const int y = height() - statusBarHeight - m_zoomIndicator->height() - kMarginBottom;
+    m_zoomIndicator->move(std::max(0, x), std::max(0, y));
+}
+
+void MainWindow::resizeEvent(QResizeEvent *event) {
+    QMainWindow::resizeEvent(event);
+    repositionZoomIndicator();
+}
+
+void MainWindow::updateZoomIndicator(bool reveal) {
     if (!m_zoomIndicator)
         return;
     auto *doc = m_documentView->currentDocument();
+    // Keep the zoom actions' tooltips naming the live percent regardless
+    // of the transient readout's own visibility, so "what zoom am I at"
+    // has an always-reachable, on-demand answer (DR 2026-07-31-
+    // transient-zoom-readout) even while the status-bar label is hidden
+    // or mid-fade.
+    auto applyZoomTooltips = [this](const QString &percent) {
+        const auto withPercent = [&percent](const QString &base) {
+            return percent.isEmpty() ? base : base + QStringLiteral(" (%1)").arg(percent);
+        };
+        if (m_zoomInAction)
+            m_zoomInAction->setToolTip(withPercent(tr("Zoom In")));
+        if (m_zoomOutAction)
+            m_zoomOutAction->setToolTip(withPercent(tr("Zoom Out")));
+        if (m_zoomActualAction)
+            m_zoomActualAction->setToolTip(withPercent(tr("Actual Size")));
+        if (m_zoomFitPageAction)
+            m_zoomFitPageAction->setToolTip(withPercent(tr("Fit Page")));
+        if (m_zoomFitAction)
+            m_zoomFitAction->setToolTip(withPercent(tr("Fit to Width")));
+    };
     if (!doc || !doc->supportsZoom()) {
+        m_zoomIndicatorFadeTimer->stop();
+        m_zoomIndicatorFadeAnim->stop();
         m_zoomIndicator->setVisible(false);
+        if (m_zoomIndicatorOpacity)
+            m_zoomIndicatorOpacity->setOpacity(1.0);
+        applyZoomTooltips(QString());
         return;
     }
-    m_zoomIndicator->setText(
-        tr("%1%").arg(qRound(doc->zoomFactor() * 100.0)));
-    m_zoomIndicator->setVisible(true);
+    const QString percent = tr("%1%").arg(qRound(doc->zoomFactor() * 100.0));
+    m_zoomIndicator->setText(percent);
+    applyZoomTooltips(percent);
+    if (reveal)
+        revealZoomIndicatorTransient();
 }
 
 void MainWindow::onCopyPageAsImage() {
@@ -3997,15 +4139,36 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
         } else if (doc->documentType() != DocumentType::Unknown) {
             // Per-type fallback: apply the last-closed defaults for
             // this document's type, if any.
+            //
+            // DR 2026-07-31-per-type-restore-excludes-content-relative-state:
+            // per-type restore is a "last-closed-of-type" convenience, not a
+            // promise about THIS document, so it only carries
+            // content-INDEPENDENT state forward -- sidebar mode,
+            // markup-toolbar visibility, dock/toolbar layout (windowState),
+            // and the semantic fit modes (FitInView/FitToWidth/Actual, which
+            // recompute against whatever document they're applied to).
+            // Custom zoom (a raw percentage chosen to fit ONE document's
+            // pixel dimensions) and windowGeometry (a size/position chosen
+            // for ONE document's content, or simply whatever the window
+            // happened to be at close) are never restored here -- closeEvent
+            // below symmetrically never WRITES them into the per-type
+            // default either, so `def.zoomMode` can only be a semantic mode
+            // and `def.windowGeometry` is always empty; the checks here are
+            // the load-bearing guard against an already-installed default
+            // from before this fix, or a future regression.
+            // applyInitialWindowSize(), called earlier in this same
+            // function, already computed a content-fit window size for this
+            // document; leaving that stand is the correct default. Reported
+            // bug: a 504x375 image (and, corroborating, a second unrelated
+            // image) opened at a stale Custom 80%/64% zoom in a window sized
+            // for whatever large document/session last closed of the same
+            // type.
             const DocumentTypeDefault def =
                 m_app->documentTypeDefaults().forType(doc->documentType());
             if (def.hasState()) {
-                if (!isCaptureOriginImage)
+                if (!isCaptureOriginImage && def.zoomMode != ZoomMode::Custom)
                     doc->applyZoomState(def.zoomMode, def.zoomFactor);
                 m_sidebar->setMode(static_cast<Sidebar::Mode>(static_cast<int>(def.sidebarMode)));
-                if (!def.windowGeometry.isEmpty()) {
-                    restoreGeometry(def.windowGeometry);
-                }
                 if (!def.windowState.isEmpty()) {
                     restoreState(def.windowState);
                     // Re-pin the ADR-0007 canonical toolbar order — see
@@ -5060,13 +5223,38 @@ void MainWindow::closeEvent(QCloseEvent *event) {
         // Capture a snapshot for the per-type defaults too. Last-
         // closed-of-type wins; the loop overwrites typeSnapshot
         // each iteration so the final doc's state is what lands.
+        //
+        // DR 2026-07-31-per-type-restore-excludes-content-relative-state:
+        // zoomMode/zoomFactor and windowGeometry are content-relative --
+        // meaningful only for the document that produced them -- so they
+        // are deliberately NOT captured here, symmetric with
+        // onCurrentDocumentChanged() never restoring them from a per-type
+        // default. This answers "should an automatic fit ever write to a
+        // persisted per-type preference" directly: neither an automatic
+        // fit (which never leaves a document at ZoomMode::Custom -- see
+        // ImageDocument::applyInitialFitZoom()/reapplyFitMode(), which only
+        // ever park FitInView/FitToWidth/Actual) nor an explicit manual
+        // zoom (which does produce Custom) is captured into the per-type
+        // slot; only the semantic fit modes are, because those recompute
+        // correctly against whatever document they're later applied to.
+        // Leaving zoomMode/zoomFactor at typeSnapshot's default-constructed
+        // (Custom, 0.0) is exactly RecentEntry.h's documented "not
+        // captured" sentinel, and windowGeometry stays empty ("not yet
+        // captured", per DocumentTypeDefault's own field comment) --
+        // both fall through cleanly to def.hasState()'s existing check.
+        // Per-file state (RecentEntry, above) is unaffected: it captures
+        // and restores zoomMode/zoomFactor/windowGeometry unconditionally,
+        // because "reopen this exact file where I left it" is meaningful
+        // regardless of whether that state was reached by an explicit
+        // zoom action or an automatic fit.
         if (doc->documentType() != DocumentType::Unknown) {
             lastCapturedType = doc->documentType();
-            typeSnapshot.zoomMode = state.zoomMode;
-            typeSnapshot.zoomFactor = state.zoomFactor;
+            if (state.zoomMode != ZoomMode::Custom) {
+                typeSnapshot.zoomMode = state.zoomMode;
+                typeSnapshot.zoomFactor = state.zoomFactor;
+            }
             typeSnapshot.sidebarMode = state.sidebarMode;
             typeSnapshot.markupToolbarVisible = state.markupToolbarVisible;
-            typeSnapshot.windowGeometry = state.windowGeometry;
             typeSnapshot.windowState = state.windowState;
         }
     }

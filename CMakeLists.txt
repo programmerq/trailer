@@ -429,6 +429,21 @@ else()
     list(APPEND TRAILER_SOURCES src/platform/QuitMenu_stub.cpp)
 endif()
 
+# Per-platform "Reduce Motion" accessibility query (docs/accessibility-
+# checklist.md row A6). macOS reads the real NSWorkspace toggle;
+# everything else falls back to a documented best-effort Qt UI-effect
+# proxy (see ReducedMotion_stub.cpp). ReducedMotion.cpp is the
+# cross-platform override wrapper used by every caller and is always
+# built, mirroring the Share.mm / Share_stub.cpp pattern.
+if(APPLE)
+    list(APPEND TRAILER_SOURCES src/platform/ReducedMotion.mm)
+    set_source_files_properties(src/platform/ReducedMotion.mm PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc")
+else()
+    list(APPEND TRAILER_SOURCES src/platform/ReducedMotion_stub.cpp)
+endif()
+list(APPEND TRAILER_SOURCES src/platform/ReducedMotion.cpp src/platform/ReducedMotion.h)
+
 # TweetNaCl (public domain, vendored verbatim — see
 # third_party/tweetnacl/NOTICE.md) provides the ed25519 signature
 # verification behind the nightly update channel (src/update/Ed25519.*).
