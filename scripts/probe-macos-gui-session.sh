@@ -105,12 +105,22 @@ COCOA_RC="skipped"
 if [[ -n "$QT_TEST_BINARY" && -x "$QT_TEST_BINARY" ]]; then
     echo
     echo "== Signal 5: real (-platform cocoa) Qt process boot, 20s bound =="
-    (
-        unset QT_QPA_PLATFORM
-        timeout 20 "$QT_TEST_BINARY" -platform cocoa 2>&1 | tail -40
-    )
+    # NOT `timeout 20 ...` — stock macOS ships BSD userland with no
+    # timeout(1) (that's GNU coreutils; Homebrew's coreutils formula
+    # installs it as `gtimeout`, not guaranteed present). Hand-rolled
+    # background-process + watchdog bound instead, portable to any bash.
+    unset QT_QPA_PLATFORM
+    "$QT_TEST_BINARY" -platform cocoa > /tmp/trailer-cocoa-probe-$$.log 2>&1 &
+    QT_PID=$!
+    ( sleep 20 && kill -9 "$QT_PID" 2>/dev/null ) &
+    WATCHDOG_PID=$!
+    wait "$QT_PID" 2>/dev/null
     COCOA_RC=$?
-    echo "exit code: $COCOA_RC (124 = timed out — treat as NO real session)"
+    kill "$WATCHDOG_PID" 2>/dev/null
+    wait "$WATCHDOG_PID" 2>/dev/null
+    tail -40 /tmp/trailer-cocoa-probe-$$.log
+    rm -f /tmp/trailer-cocoa-probe-$$.log
+    echo "exit code: $COCOA_RC (137 = killed by the 20s watchdog — treat as NO/hung real session)"
 fi
 
 {
