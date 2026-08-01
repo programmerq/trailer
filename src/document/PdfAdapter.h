@@ -458,6 +458,17 @@ class PdfDocument : public IDocument {
     // events leave the user's zoom alone.
     void applyInitialFitZoom(QPdfView *view);
     bool reloadViewerFromEditor();
+    // Make `index` the highlighted search result AND bring it on screen.
+    // setCurrentSearchResultIndex alone only changes which rectangle the
+    // overlay paints as "current" — it does not move the viewport, so a
+    // match outside the current page/scroll position is selected but
+    // invisible (the real dogfooding bug: "it selects the next match but
+    // doesn't jump me to the next match"). QPdfSearchModel::resultAtIndex
+    // returns a QPdfLink; QPdfPageNavigator::jump(QPdfLink) is the same
+    // navigation primitive goToPage()/goToOutlineEntry() use, so advancing a
+    // search match behaves exactly like any other page-change. No-op when
+    // index is out of range (including -1, used to clear the selection).
+    void applySearchResultIndex(int index);
     // Called from the search model's rowsInserted signal on the GUI
     // thread once the asynchronous search produces at least one hit.
     // Pushes m_currentResult into the view so the match is highlighted

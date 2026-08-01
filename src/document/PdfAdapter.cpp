@@ -1017,11 +1017,19 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
     twoPageView->setDocument(m_doc.get());
     twoPageView->setZoomFactor(view->zoomFactor());
     stack->addWidget(twoPageView); // index 1: Two-Pages
-    QObject::connect(view, &QPdfView::zoomFactorChanged, twoPageView,
-                     [twoPageView](qreal z) {
-                         if (twoPageView)
-                             twoPageView->setZoomFactor(z);
-                     });
+    // A literal Custom/Actual zoom (a % the user chose) is pushed into
+    // twoPageView EXPLICITLY by applyZoomFactor() below, not mirrored via
+    // QPdfView::zoomFactorChanged — that signal only fires when the
+    // property's NUMERIC VALUE changes, and it does not when switching
+    // FROM a fit mode whose last-computed value happens to already equal
+    // the new literal factor (e.g. Actual Size right after Fit Page had
+    // already settled at exactly 1.0 because the page fully fit the
+    // viewport): the mode's MEANING changed (dynamic fit -> a value that
+    // must now stay fixed and mode-stable) even though the number didn't,
+    // and a property-changed signal can't see that. FitInView/FitToWidth
+    // zoom is never mirrored here at all — see applyViewMode()'s TwoPages
+    // case, which computes the spread's own fit instead of reusing a
+    // number computed for a single page.
     // Re-lay-out the spreads whenever the document's page graph changes: an
     // in-place reload after a page op (rotate / delete / insert / move / crop,
     // revert, recover) changes pageCount / page sizes, and a deferred/async open
@@ -1087,14 +1095,49 @@ void PdfDocument::applyViewMode() {
     case ViewMode::TwoPages:
         // Two-up (facing) layout has no QPdfView::PageMode, so it renders
         // through the custom TwoPageView (decision record
-        // 2026-07-21-two-page-layout, D1-A AUGMENT). Swap the stack to it and
-        // sync the shared zoom factor so Actual Size / the zoom-% readout mean
-        // the same thing here as in Single/Continuous (clause 3). If the stack
-        // isn't built yet (createView not run) there is nothing to switch.
-        if (m_twoPageView && m_view)
-            m_twoPageView->setZoomFactor(m_view->zoomFactor());
+        // 2026-07-21-two-page-layout, D1-A AUGMENT). Swap the stack to it.
+        //
+        // Zoom: a literal Custom/Actual zoom (a % the user chose, or "Actual
+        // Size") must mean the same physical page size in every mode (record
+        // clause 3), so it carries over unchanged. A FIT zoom mode is
+        // different: QPdfView's FitInView/FitToWidth factor is computed for a
+        // SINGLE page, and blindly applying that same number to a two-page
+        // spread overflows the viewport by roughly a whole page — the real
+        // dogfooding bug (entering Two-Pages from Single Page + Fit Page
+        // spilled page 1 half off-screen and populated a scrollbar the user
+        // never asked for). A fit mode instead recomputes its OWN fit for the
+        // spread here, exactly like zoomFitPage()/zoomFitWidth() already do
+        // when invoked directly while already in this mode — "fit" means "fit
+        // what's actually on screen," not "reuse a number computed for a
+        // different layout." If the stack isn't built yet (createView not
+        // run) there is nothing to switch.
+        //
+        // Order matters here: QStackedWidget only lays out (resizes) the
+        // page that is actually CURRENT — a hidden page keeps whatever
+        // stale/default geometry it had (e.g. its never-shown construction-
+        // time viewport size), so computing fitPageZoom()/fitWidthZoom()
+        // BEFORE the swap would fit against a bogus tiny viewport and
+        // produce a wildly wrong zoom (the near-zero-zoom variant of the
+        // same spillage-class bug — everything shrinks to fit an 84x14
+        // viewport instead of the real one). setCurrentWidget() first makes
+        // TwoPageView's real geometry current synchronously, so the fit
+        // below measures the viewport the user is actually looking at.
         if (m_viewStack && m_twoPageView)
             m_viewStack->setCurrentWidget(m_twoPageView);
+        if (m_twoPageView && m_view) {
+            switch (zoomMode()) {
+            case ZoomMode::FitInView:
+                m_twoPageView->setZoomFactor(m_twoPageView->fitPageZoom());
+                break;
+            case ZoomMode::FitToWidth:
+                m_twoPageView->setZoomFactor(m_twoPageView->fitWidthZoom());
+                break;
+            case ZoomMode::Custom:
+            case ZoomMode::Actual:
+                m_twoPageView->setZoomFactor(m_view->zoomFactor());
+                break;
+            }
+        }
         break;
     case ViewMode::Continuous:
         m_view->setPageMode(QPdfView::PageMode::MultiPage);
@@ -1105,8 +1148,22 @@ void PdfDocument::applyViewMode() {
 }
 
 void PdfDocument::setViewMode(ViewMode mode) {
+    if (mode == m_viewMode) {
+        return; // nothing moved; re-navigating would be a redundant jump.
+    }
+    // Real dogfooding bug: switching modes (Cmd-1/2/3) used to leave the
+    // NEW surface sitting at its own default scroll position (page 1 for a
+    // freshly-shown QPdfView / TwoPageView) while the document model — and
+    // the sidebar reading currentPage() off it — kept reporting the page the
+    // user was actually on. The model was right and the view was wrong,
+    // which is its own lying-UI bug independent of the jump itself. Capture
+    // the page BEFORE swapping surfaces and explicitly re-navigate the new
+    // one to it, through the same goToPage() every other page-change uses,
+    // so the model and the view can never disagree after a mode switch.
+    const int fromPage = currentPage();
     m_viewMode = mode;
     applyViewMode();
+    goToPage(fromPage);
 }
 
 void PdfDocument::applyZoomFactor(double factor) {
@@ -1118,6 +1175,17 @@ void PdfDocument::applyZoomFactor(double factor) {
     m_view->setZoomFactor(clamped);
     QScrollBar *hbar = m_view->horizontalScrollBar();
     hbar->setValue((hbar->minimum() + hbar->maximum()) / 2);
+    // Push the literal zoom into the two-page surface explicitly (see the
+    // rationale at the zoomFactorChanged-removal note in createView()) —
+    // this is the canonical Custom/Actual zoom path shared by zoomIn/
+    // zoomOut/zoomActual/applyZoomState, so it is the single place that
+    // needs to know about TwoPageView. Only while Two-Pages is the active
+    // mode: applyViewMode() already does its own fresh Custom/Actual push
+    // on every entry into that mode, so syncing here while some OTHER mode
+    // is active would just be a wasted relayout() on a hidden widget for
+    // every zoom action in Single/Continuous mode.
+    if (m_twoPageView && m_viewMode == ViewMode::TwoPages)
+        m_twoPageView->setZoomFactor(clamped);
 }
 
 void PdfDocument::zoomIn() {
@@ -1231,6 +1299,14 @@ ZoomMode PdfDocument::zoomMode() const {
 }
 
 double PdfDocument::zoomFactor() const {
+    // In Two-Pages mode the visible surface is the custom TwoPageView, which
+    // — for a FIT zoom mode — runs an independently-computed spread fit that
+    // can diverge from QPdfView's single-page fit (see applyViewMode()).
+    // Read the readout from whichever surface is actually on screen so the
+    // number can never lie about the painted scale (mirrors currentPage()'s
+    // existing per-mode branch just below).
+    if (m_viewMode == ViewMode::TwoPages && m_twoPageView)
+        return m_twoPageView->zoomFactor();
     return m_view ? m_view->zoomFactor() : 1.0;
 }
 
@@ -1539,7 +1615,7 @@ void PdfDocument::setSearchQuery(const QString &query) {
             const int seed = firstResultIndexAtOrAfter(m_seedFromPage);
             m_currentResult = seed;
             m_provisionalSeedIndex = seed;
-            m_view->setCurrentSearchResultIndex(seed);
+            applySearchResultIndex(seed);
         }
     }
     // Push the (possibly empty) match list to the overlay so an
@@ -1581,7 +1657,7 @@ void PdfDocument::onSearchResultsPopulated() {
     const int seed = firstResultIndexAtOrAfter(m_seedFromPage);
     m_currentResult = seed;
     m_provisionalSeedIndex = seed;
-    m_view->setCurrentSearchResultIndex(seed);
+    applySearchResultIndex(seed);
     refreshSearchHighlights();
 }
 
@@ -1670,6 +1746,17 @@ void PdfDocument::refreshSearchHighlights() {
     m_overlay->setSearchHighlights(std::move(highlights));
 }
 
+void PdfDocument::applySearchResultIndex(int index) {
+    if (!m_view)
+        return;
+    m_view->setCurrentSearchResultIndex(index);
+    if (!m_searchModel || index < 0 || index >= m_searchModel->rowCount({}))
+        return;
+    const QPdfLink link = m_searchModel->resultAtIndex(index);
+    if (link.isValid())
+        m_view->pageNavigator()->jump(link);
+}
+
 void PdfDocument::findNext() {
     if (!m_view || !m_searchModel)
         return;
@@ -1677,7 +1764,7 @@ void PdfDocument::findNext() {
     if (count <= 0)
         return;
     m_currentResult = (m_currentResult + 1) % count;
-    m_view->setCurrentSearchResultIndex(m_currentResult);
+    applySearchResultIndex(m_currentResult);
     refreshSearchHighlights();
 }
 
@@ -1688,7 +1775,7 @@ void PdfDocument::findPrevious() {
     if (count <= 0)
         return;
     m_currentResult = (m_currentResult - 1 + count) % count;
-    m_view->setCurrentSearchResultIndex(m_currentResult);
+    applySearchResultIndex(m_currentResult);
     refreshSearchHighlights();
 }
 

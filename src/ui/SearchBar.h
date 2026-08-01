@@ -2,6 +2,7 @@
 
 #include <QWidget>
 
+class QEvent;
 class QLabel;
 class QLineEdit;
 class QToolButton;
@@ -37,6 +38,7 @@ class SearchBar : public QWidget {
 
   protected:
     void keyPressEvent(QKeyEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 
   private:
     QLineEdit *m_input = nullptr;

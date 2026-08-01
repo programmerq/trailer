@@ -20,6 +20,26 @@ entries terse and user-visible; CI / infrastructure churn lives in the
 
 ### Fixed
 
+- **View-mode switching now preserves the current page.** Switching between
+  Single Page, Continuous, and Two Pages (Cmd-1/2/3) used to silently reset
+  the visible page to the start of the document while the sidebar kept
+  reporting the page you were actually on. The view now follows the model.
+- **Two-Pages mode re-fits a Fit Page zoom to the spread.** Entering
+  Two-Pages mode while Fit Page was active used to carry the single-page
+  zoom unchanged, spilling a page off-screen and populating a scrollbar.
+  It now recomputes a spread-aware fit, matching Fit Page's own meaning
+  for a facing spread.
+- **Search now scrolls to the match it selects.** The position-aware seed
+  and Find Next / Find Previous already picked the right match; the
+  viewport now actually scrolls there instead of leaving it selected but
+  off-screen.
+- **Shift+Enter in the search field now means Find Previous**, matching
+  every other find-bar's convention. Previously it behaved like a plain
+  Enter (Find Next).
+- **View menu's Continuous / Single Page / Two Pages items keep a fixed
+  order** matching their Cmd-1/2/3 shortcuts, regardless of which mode is
+  active.
+
 ### Infrastructure
 
 ## [0.3.0] - 2026-07-12

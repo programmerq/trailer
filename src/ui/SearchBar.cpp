@@ -18,6 +18,14 @@ SearchBar::SearchBar(QWidget *parent) : QWidget(parent) {
     m_input->setClearButtonEnabled(true);
     connect(m_input, &QLineEdit::textChanged, this, &SearchBar::queryChanged);
     connect(m_input, &QLineEdit::returnPressed, this, &SearchBar::findNextRequested);
+    // QLineEdit::returnPressed carries no modifier information, so Shift+Enter
+    // needs to be intercepted BEFORE it reaches the line edit's own Return
+    // handling (which would fire returnPressed → findNextRequested regardless
+    // of Shift). An event filter on the child is the standard pattern for a
+    // parent observing events a child widget would otherwise consume
+    // (docs/CONVENTIONS.md §6) — SearchBar::keyPressEvent alone can't see this
+    // key press because QLineEdit accepts Return itself.
+    m_input->installEventFilter(this);
 
     // "X of Y" counter that lives between the input and the
     // arrows. Hidden until the document has populated match data.
@@ -86,6 +94,23 @@ void SearchBar::keyPressEvent(QKeyEvent *event) {
         return;
     }
     QWidget::keyPressEvent(event);
+}
+
+bool SearchBar::eventFilter(QObject *watched, QEvent *event) {
+    if (watched == m_input && event->type() == QEvent::KeyPress) {
+        auto *keyEvent = static_cast<QKeyEvent *>(event);
+        if ((keyEvent->key() == Qt::Key_Return || keyEvent->key() == Qt::Key_Enter) &&
+            (keyEvent->modifiers() & Qt::ShiftModifier)) {
+            // Shift+Enter = previous match, mirroring the Find bar convention
+            // most viewers use for reverse-direction search. Consume the
+            // event so the line edit never sees it — otherwise it would
+            // additionally fire returnPressed (findNextRequested) for the
+            // same key press.
+            emit findPreviousRequested();
+            return true;
+        }
+    }
+    return QWidget::eventFilter(watched, event);
 }
 
 } // namespace trailer

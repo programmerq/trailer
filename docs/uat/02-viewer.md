@@ -179,15 +179,14 @@ active view mode.
 - Second returns to the original page.
 - Navigating past the last or before the first page is a no-op.
 
-### UAT-VWR-024 — Two-Page mode (Known gap)
+### UAT-VWR-024 — Two-Page mode (Superseded)
 
-**Preconditions:** Multi-page PDF is open.
-**Steps:**
-1. `View > Two Pages`.
-**Expected (future):** two facing pages render side-by-side.
-**Current:** menu item is disabled with a tooltip explaining the gap.
-Selecting it is impossible; the Continuous/Single actions remain
-functional.
+**Superseded by** the "Two-page (facing) layout" section below
+(UAT-VWR-070..073 in that section, plus UAT-VWR-101/102) — the real
+facing-page `TwoPageView` shipped in PR #113 (0a78b7c). This entry is kept,
+not deleted, per this doc's append-only ID rule; it no longer describes
+current behaviour. Two Pages is enabled for multi-page PDFs and renders a
+real side-by-side spread, not a disabled placeholder.
 
 ### UAT-VWR-025 — Continuous-mode keyboard scroll steps by a screenful
 
@@ -600,6 +599,46 @@ distinct, known pages is open. (ADR 0006, accepted — Option B.)
 - Find Previous from the seed reaches the earlier-page matches, so
   coverage is unchanged; only the initial seed index moved.
 
+### UAT-VWR-103 — Search seed scrolls the viewport to the match, not just the model
+
+**Preconditions:** As UAT-VWR-068 (matches on distinct, known pages).
+**Steps:**
+1. Navigate to a middle page `k` with no match of its own.
+2. `Edit > Find…` and type the keyword.
+**Expected:**
+- Beyond UAT-VWR-068 (which pins the search MODEL's recorded seed page),
+  the document's own current page — what the sidebar highlights and what
+  the visible page surface actually paints — also lands on the seeded
+  match's page. A match selected in the model but not scrolled into view
+  is functionally invisible and reads as "search doesn't do anything" —
+  the real dogfooding report ("it starts at match 1 being highlighted,
+  even though I'm on page 161").
+
+### UAT-VWR-104 — Find Next / Find Previous scroll the viewport to the match
+
+**Preconditions:** A multi-page PDF with matches on several distinct pages
+is open; Find is seeded on the first match.
+**Steps:**
+1. Press Enter (Find Next) repeatedly.
+2. Press Shift+Enter (Find Previous) repeatedly.
+**Expected:**
+- Each press that advances to a match on a DIFFERENT page moves the
+  document's current page there — not just the highlighted index/counter.
+  Real dogfooding report: "When I hit enter, it selects the next match,
+  but doesn't jump me to the next match."
+
+### UAT-VWR-105 — Shift+Enter in the search field triggers Find Previous
+
+**Preconditions:** The search bar has focus with a query that has matches.
+**Steps:**
+1. Press Shift+Enter.
+**Expected:**
+- Find Previous fires (the current match index moves backward), NOT Find
+  Next. A plain Enter right after still fires Find Next — the fix does not
+  disturb the unmodified case. Real dogfooding report: "When I do
+  shift+enter when doing search, that should do 'previous match' instead
+  of next match."
+
 ---
 
 ## Print
@@ -817,6 +856,42 @@ Two-Pages mode; parity is the committed PR2 follow-up. Harness:
   that points back: "Switch to Single Page or Continuous to use this in a
   facing-page view."
 - Leaving Two-Pages restores markup and search to their normal enabled state.
+
+### UAT-VWR-101 — Switching view modes preserves the current page
+
+**Preconditions:** A multi-page PDF is open, scrolled/paged to a page far
+from the start (real dogfooding report: page 161 of a 365-page PDF).
+**Steps:**
+1. From Single Page mode, `View > Continuous` (Cmd-1).
+2. From Continuous, `View > Single Page` (Cmd-2).
+3. From Single Page, `View > Two Pages` (Cmd-3).
+4. From Two Pages, `View > Continuous` (Cmd-1).
+**Expected:**
+- After every switch, the current-page indicator (sidebar highlight,
+  `currentPage()`) and the actual visible surface agree — both report the
+  SAME page the user was on before the switch. Neither resets to page 1.
+- This was a real bug: the model (and sidebar) kept reporting the old page
+  while the QPdfView surface silently reset to page 1 on a mode switch — a
+  lying-UI disagreement between the model and the view. The view now
+  follows the model, established as the source of truth.
+
+### UAT-VWR-102 — Entering Two-Pages mode re-fits a Fit-Page zoom to the spread
+
+**Preconditions:** A multi-page PDF is open in Single Page mode with
+`View > Fit Page` (Cmd-9) active — a real dogfooding report's exact state.
+**Steps:**
+1. `View > Two Pages` (Cmd-3).
+**Expected:**
+- The facing spread fits the viewport width; no horizontal scrollbar is
+  populated by a page spilling off the document area.
+- The re-fit zoom is smaller than the single-page Fit-Page zoom it would
+  otherwise have inherited unchanged — proof the spread was actually
+  refit for two pages, not left at a number computed for one.
+- The zoom-% readout still matches what's actually painted (truthful
+  across the mode switch, not just when a zoom action is used directly —
+  UAT-VWR-072/079 cover the latter).
+- A literal Custom/Actual zoom (a % the user explicitly chose) is
+  unaffected — it still carries over unchanged (UAT-VWR-072).
 
 ---
 
