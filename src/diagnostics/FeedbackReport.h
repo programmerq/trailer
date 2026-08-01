@@ -93,6 +93,44 @@ struct DocumentSnapshot {
     // so a reader doesn't assume pdfPageSizePts describes every page.
     // Always false for a single-page document or when the sizes agree.
     bool pdfPageSizeVariesByPage = false;
+
+    // --- current-page text kind (owner follow-up, 2026-07-31) -----------
+    // The plain `hasTextLayer` bool above was true for BOTH a normal
+    // born-digital PDF page AND a scanned page carrying an invisible OCR
+    // text layer baked in by an external tool — search found the text in
+    // both cases, but click-drag selection only worked for one, and the
+    // report gave no way to tell them apart. The owner hit this on a
+    // 365-page manual that mixes native and scanned pages. These two
+    // fields are the per-page (not per-document) decomposition —
+    // deliberately scoped to what is cheaply and reliably computable; see
+    // formatMarkdown for how they combine into a labeled inference, and
+    // docs/backlog/2026-07-31-pdf-text-render-mode-detection.md for the
+    // deeper (deferred) question these do NOT answer.
+    //
+    // IDocument::pageHasText() for the CURRENTLY DISPLAYED page: true iff
+    // Qt's PDF text extraction (QPdfDocument::getAllText) returns
+    // non-empty text for this page. PDF-only — always false for Image
+    // docs (no native PDF text object to extract). CAVEAT: this is a bare
+    // "did extraction return something" probe. Standard PDF text
+    // extraction does not consult the text render mode, so it reads
+    // IDENTICALLY for genuinely visible text and for an invisible (PDF
+    // render mode 3) OCR layer over a scan — this field alone cannot
+    // tell them apart. Qt PDF's public API (QPdfDocument / QPdfSelection)
+    // exposes no render-mode information at all; reading it would mean
+    // walking the page's raw content-stream operators via qpdf, judged
+    // disproportionate for an on-demand diagnostic field.
+    bool currentPageHasExtractableText = false;
+    // SelectableTextStore::hasResults() for the CURRENTLY DISPLAYED page:
+    // true iff Trailer's OWN selection/search overlay currently has block
+    // geometry for this page, from EITHER source the store accepts —
+    // native-text ingestion or Trailer's own on-device OCR (the store is
+    // a shared sink for both; see PdfDocument::ingestNativeTextLayer's
+    // "never clobber real OCR output" guard). This is the most direct
+    // available answer to "would click-drag select or Find actually find
+    // something on this page right now" — though it cannot rule out the
+    // specific selection malfunction the owner hit; it reports the INPUT
+    // state, not whether on-screen selection is visually correct.
+    bool currentPageHasSelectableTextBlocks = false;
 };
 
 // One open MainWindow.
