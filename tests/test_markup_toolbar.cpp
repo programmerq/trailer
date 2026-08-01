@@ -17,6 +17,7 @@
 #include "ui/MarkupToolbar.h"
 
 #include <QAction>
+#include <QLayout>
 #include <QMetaType>
 #include <QSignalSpy>
 #include <QtTest/QtTest>
@@ -117,7 +118,21 @@ void TestMarkupToolbar::toolPositionsNeverMoveAcrossEnableDisableToggles() {
     MarkupToolbar bar;
     bar.resize(900, 40);
     bar.show();
-    QVERIFY(QTest::qWaitForWindowExposed(&bar));
+    // Best-effort readiness signal, NOT a correctness gate for this test:
+    // Wine's offscreen QPA plugin (2026-08-01, PR #141 CI failure under
+    // "Windows cross-build + Wine unit tests") does not reliably fire a
+    // window-exposed event within the default 5s timeout, even though the
+    // toolbar's own layout is already fully computed by the time show()
+    // returns. Hard-failing on the wait would fail a platform quirk
+    // unrelated to the invariant this test protects: SC-CRIT-2 is a
+    // DIFFERENTIAL property (a widget's position is unchanged across state
+    // transitions), which needs a settled layout, not a confirmed
+    // window-manager paint. So: wait, but don't assert on the result, and
+    // force layout settlement explicitly below regardless of whether the
+    // wait timed out.
+    (void)QTest::qWaitForWindowExposed(&bar);
+    bar.layout()->activate();
+    QApplication::processEvents();
 
     QAction* redact = find(&bar, QStringLiteral("Redact"));
     QAction* instantAlpha = find(&bar, QStringLiteral("Instant Alpha"));

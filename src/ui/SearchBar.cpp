@@ -11,13 +11,23 @@
 namespace trailer {
 
 namespace {
-// Hand-tuned (PHILOSOPHY.md): wide enough for "9999 matches"-scale text
-// (86px measured) with a small margin, without reserving so much that the
-// counter dwarfs the input field on the toolbar's collapsed-search
-// layout. Longer counts elide (see setMatchCounter()) rather than push
-// this wider — revisit if a real document is reported with a match count
-// that elides in normal use.
-constexpr int kCounterWidth = 92;
+// Cross-platform correctness (2026-08-01, PR #141 CI failure under
+// Windows-cross-build-under-Wine): this used to be a `constexpr int
+// kCounterWidth = 92` measured once via an offscreen probe on Linux
+// (DejaVu Sans, "9999 matches"-scale text at 86px + a small margin). A
+// pixel width measured against one platform's font does not predict
+// another platform's rendering of the same string (Windows/Wine resolve a
+// different font, at minimum) — see MlProgressWidget::maxWidth()'s doc
+// comment for the class of bug this caused elsewhere in the same PR.
+// Fixed the same way: measured from THIS platform's real, live font
+// metrics in the constructor, against the same representative worst-case
+// string ("9999 matches" — a document with four-digit match counts is
+// already an extreme case), rather than a literal baked from one
+// platform's measurement. kCounterWidthPad absorbs centered-alignment
+// rounding at the elision boundary itself (not cross-platform variance —
+// the live QFontMetrics call already IS the cross-platform-correct
+// measurement).
+constexpr int kCounterWidthPad = 8;
 } // namespace
 
 SearchBar::SearchBar(QWidget *parent) : QWidget(parent) {
@@ -51,7 +61,10 @@ SearchBar::SearchBar(QWidget *parent) : QWidget(parent) {
     // there is nothing to report — see setMatchCounter().
     m_counter = new QLabel(this);
     m_counter->setForegroundRole(QPalette::Mid);
-    m_counter->setFixedWidth(kCounterWidth);
+    const QFontMetrics counterFm(m_counter->font());
+    m_counterWidth =
+        counterFm.horizontalAdvance(QStringLiteral("9999 matches")) + kCounterWidthPad;
+    m_counter->setFixedWidth(m_counterWidth);
     m_counter->setAlignment(Qt::AlignCenter);
 
     m_prev = new QToolButton(this);
@@ -91,11 +104,12 @@ void SearchBar::setMatchCounter(int current, int total) {
                                        : tr("%1 of %2").arg(current).arg(total);
     // Elide rather than let an extreme match count grow past the fixed
     // width — a real count would have to be very large to trigger this
-    // (kCounterWidth already covers "9999 matches"-scale text), but a
-    // truncated-with-tooltip label beats one that silently forces the
-    // reserved slot wider and reopens the reflow this fix closes.
+    // (m_counterWidth already covers "9999 matches"-scale text on this
+    // platform's own font), but a truncated-with-tooltip label beats one
+    // that silently forces the reserved slot wider and reopens the reflow
+    // this fix closes.
     const QFontMetrics fm(m_counter->font());
-    const QString elided = fm.elidedText(text, Qt::ElideRight, kCounterWidth);
+    const QString elided = fm.elidedText(text, Qt::ElideRight, m_counterWidth);
     m_counter->setText(elided);
     m_counter->setToolTip(elided == text ? QString() : text);
 }
