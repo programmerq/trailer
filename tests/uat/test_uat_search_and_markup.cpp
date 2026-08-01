@@ -22,6 +22,7 @@
 #include "document/SelectableTextStore.h"
 #include "recent/RecentFiles.h"
 #include "settings/DocumentTypeDefaults.h"
+#include "settings/Settings.h"
 #include "ui/AnnotationOverlay.h"
 #include "ui/DocumentView.h"
 #include "ui/FormToolbar.h"
@@ -33,11 +34,14 @@
 #include <QAction>
 #include <QClipboard>
 #include <QColorDialog>
+#include <QComboBox>
 #include <QDir>
 #include <QDockWidget>
+#include <QDoubleSpinBox>
 #include <QFile>
 #include <QFont>
 #include <QHash>
+#include <QImage>
 #include <QKeyEvent>
 #include <QLabel>
 #include <QLayout>
@@ -55,6 +59,7 @@
 #include <QPdfWriter>
 #include <QPlainTextEdit>
 #include <QPointingDevice>
+#include <QScopeGuard>
 #include <QScrollBar>
 #include <QTabletEvent>
 #include <QSettings>
@@ -533,6 +538,8 @@ class TestUatSearchAndMarkup : public QObject {
     void uat_xct_075_staleWindowStateBlobDoesNotResurrectOldToolbarOrder();
     void uat_xct_076_toggleAnyToolbarNeverMovesAnotherToolbarsActions();
     void uat_xct_077_staleWindowStateBlobViaPerTypeDefaultAlsoReasserted();
+    void uat_xct_079_markupToolbarActionsStayPutAcrossDocumentTypeSwitch();
+    void uat_xct_080_searchBarNavButtonsStayPutAsMatchCountCrossesZero();
 
   private:
     QTemporaryDir m_scratch;
@@ -776,8 +783,9 @@ void TestUatSearchAndMarkup::uat_vwr_067_searchShowsMatchCounter() {
                                  view->searchModel()->rowCount(QModelIndex()) >= copies,
                              5000);
 
-    // The counter is the SearchBar's only QLabel; it stays hidden until
-    // the document reports matches, then shows "<n> of <total>".
+    // The counter is the SearchBar's only QLabel; it is always visible
+    // (G10/SC-MOD-1 — see SearchBar.cpp), blank until the document reports
+    // matches, then showing "<n> of <total>".
     auto *counter = searchBar->findChild<QLabel *>();
     QVERIFY2(counter, "SearchBar match-counter label not found");
     QTRY_VERIFY_WITH_TIMEOUT(counter->isVisible() &&
@@ -2011,6 +2019,18 @@ void TestUatSearchAndMarkup::uat_ann_082_textCentricToolsDisabledOnPlainImage() 
     QVERIFY2(!strike->isEnabled(), "Strikeout must be disabled on a plain image");
     QVERIFY2(redact->isEnabled(), "Redact must remain available on a plain image");
     QVERIFY2(rect->isEnabled(), "Rectangle (and other shape tools) remain available on images");
+
+    // G10/SC-CRIT-2 (docs/decision-records/2026-08-01-markup-toolbar-disable-not-hide.md):
+    // a disabled tool stays VISIBLE (in its normal toolbar slot) — it is no
+    // longer hidden, which is what used to collapse the slot and shift
+    // every action after it. G3: the disabled tool carries a non-empty
+    // tooltip explaining why.
+    QVERIFY2(underline->isVisible(), "G10: a disabled tool stays in the toolbar, not hidden");
+    QVERIFY2(highlight->isVisible(), "G10: a disabled tool stays in the toolbar, not hidden");
+    QVERIFY2(strike->isVisible(), "G10: a disabled tool stays in the toolbar, not hidden");
+    QVERIFY2(!underline->toolTip().isEmpty(), "G3: a disabled control states why");
+    QVERIFY2(!highlight->toolTip().isEmpty(), "G3: a disabled control states why");
+    QVERIFY2(!strike->toolTip().isEmpty(), "G3: a disabled control states why");
 }
 
 // UAT-ANN-100 — Dropping a Text annotation no longer pops a modal
@@ -4283,6 +4303,182 @@ void TestUatSearchAndMarkup::uat_xct_077_staleWindowStateBlobViaPerTypeDefaultAl
                             .arg(mainOriginAfterOpen.y())
                             .arg(mainOriginFormShown.x())
                             .arg(mainOriginFormShown.y())));
+}
+
+// UAT-XCT-079 / SC-CRIT-2 (docs/audit-2026-07-31-g10-deference.md; gate
+// G10, AGENTS.md): MarkupToolbar::setToolVisible() used to hide individual
+// tool QActions (Underline/Highlight/StrikeOut on hasTextLayer(); Instant
+// Alpha/Smart Lasso on image+SAM eligibility). Hiding an action inside a
+// QToolBar collapses its slot, shifting every action after it — Redact,
+// Stroke, Fill, Width, and Dash all moved switching between an OCR'd PDF
+// tab and a plain-image tab. Fixed by MarkupToolbar::setToolEnabled()
+// (disable-with-tooltip, never hide — see
+// docs/decision-records/2026-08-01-markup-toolbar-disable-not-hide.md).
+// This drives the exact repro: two tabs in one window, one with a text
+// layer and one without, and asserts every trailing control's absolute
+// position across both directions of the switch.
+void TestUatSearchAndMarkup::uat_xct_079_markupToolbarActionsStayPutAcrossDocumentTypeSwitch() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    // Two docs in ONE window (tabs) so the switch exercises the same
+    // toolbar instance — NewWindow would give each its own MarkupToolbar
+    // and moot the reflow question.
+    const OpenFilesIn priorOpenFilesIn = app->settings().openFilesIn();
+    const auto restoreOpenFilesIn =
+        qScopeGuard([&] { app->settings().setOpenFilesIn(priorOpenFilesIn); });
+    app->settings().setOpenFilesIn(OpenFilesIn::NewTab);
+
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_xct_079.pdf")), QStringLiteral("fixture"));
+    // A simple text-less PNG — hasTextLayer() is false, so the text-aware
+    // trio must disable on this tab (mirrors uat_ann_082's fixture).
+    const QString imgPath = m_scratch.filePath(QStringLiteral("uat_xct_079.png"));
+    {
+        QImage img(200, 100, QImage::Format_RGB32);
+        img.fill(Qt::white);
+        QVERIFY(img.save(imgPath, "PNG"));
+    }
+
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 750);
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    app->openFiles({imgPath});
+    QApplication::processEvents();
+    QCOMPARE(dv->documentCount(), 2);
+
+    // Tab 0 is the PDF (opened first); tab 1 is the plain image.
+    dv->setCurrentIndex(0);
+    QApplication::processEvents();
+
+    auto *markup = mw->findChild<MarkupToolbar *>();
+    QVERIFY(markup);
+    if (!markup->isVisible()) {
+        markup->show();
+        QApplication::processEvents();
+    }
+
+    QAction *redactAction = findToolAction(markup, QStringLiteral("Redact"));
+    QVERIFY(redactAction);
+    QWidget *redactWidget = markup->widgetForAction(redactAction);
+    QVERIFY(redactWidget);
+
+    auto findButtonByText = [markup](const QString &text) -> QToolButton * {
+        const auto buttons = markup->findChildren<QToolButton *>();
+        for (QToolButton *b : buttons) {
+            if (b->text() == text)
+                return b;
+        }
+        return nullptr;
+    };
+    QToolButton *strokeBtn = findButtonByText(QStringLiteral("Stroke"));
+    QToolButton *fillBtn = findButtonByText(QStringLiteral("Fill"));
+    auto *widthSpin = markup->findChild<QDoubleSpinBox *>();
+    auto *dashCombo = markup->findChild<QComboBox *>();
+    QVERIFY(strokeBtn && fillBtn && widthSpin && dashCombo);
+
+    auto pos = [mw](QWidget *w) { return w->mapTo(mw, QPoint(0, 0)); };
+    const QPoint redactBaseline = pos(redactWidget);
+    const QPoint strokeBaseline = pos(strokeBtn);
+    const QPoint fillBaseline = pos(fillBtn);
+    const QPoint widthBaseline = pos(widthSpin);
+    const QPoint dashBaseline = pos(dashCombo);
+    grabTo(mw, QStringLiteral("xct079_pdf_tab.png"));
+
+    QAction *underline = findToolAction(markup, QStringLiteral("Underline"));
+    QVERIFY(underline);
+    QVERIFY2(underline->isEnabled(), "sanity: text-aware tools enabled on a text-layer PDF");
+
+    // Switch to the plain-image tab — disables the text-aware trio.
+    dv->setCurrentIndex(1);
+    QApplication::processEvents();
+    QVERIFY2(!underline->isEnabled(), "text-aware tools must disable on a plain image");
+    QVERIFY2(underline->isVisible(), "G10: a disabled tool stays in the toolbar, not hidden");
+    QVERIFY2(!underline->toolTip().isEmpty(), "G3: a disabled control states why");
+    QCOMPARE(pos(redactWidget), redactBaseline);
+    QCOMPARE(pos(strokeBtn), strokeBaseline);
+    QCOMPARE(pos(fillBtn), fillBaseline);
+    QCOMPARE(pos(widthSpin), widthBaseline);
+    QCOMPARE(pos(dashCombo), dashBaseline);
+    grabTo(mw, QStringLiteral("xct079_image_tab.png"));
+
+    // Switch back — re-enables the trio, and nothing moved either way.
+    dv->setCurrentIndex(0);
+    QApplication::processEvents();
+    QVERIFY2(underline->isEnabled(), "text-aware tools must re-enable back on the PDF tab");
+    QCOMPARE(pos(redactWidget), redactBaseline);
+    QCOMPARE(pos(strokeBtn), strokeBaseline);
+    QCOMPARE(pos(fillBtn), fillBaseline);
+    QCOMPARE(pos(widthSpin), widthBaseline);
+    QCOMPARE(pos(dashCombo), dashBaseline);
+}
+
+// UAT-XCT-080 / SC-MOD-1 (docs/audit-2026-07-31-g10-deference.md; gate
+// G10, AGENTS.md): SearchBar's match counter used to hide() with no
+// query and show() once matches existed, shifting Prev/Next/Close
+// sideways by the counter's own width the moment the match count crossed
+// zero. Fixed by never hiding the counter (SearchBar.cpp) — it stays at a
+// fixed width, blank when there is nothing to report. This drives
+// setMatchCounter() directly (no real search backend needed) and asserts
+// the three buttons' absolute positions across both directions of the
+// zero-match crossing.
+void TestUatSearchAndMarkup::uat_xct_080_searchBarNavButtonsStayPutAsMatchCountCrossesZero() {
+    QVERIFY(m_scratch.isValid());
+    const QString pdfPath = writePdfWithKeyword(
+        m_scratch.filePath(QStringLiteral("uat_xct_080.pdf")), QStringLiteral("fixture"));
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    QAction *findAction =
+        findMenuAction(mw->menuBar(), QStringLiteral("&Edit"), QStringLiteral("&Find…"));
+    QVERIFY(findAction);
+    findAction->trigger();
+    QApplication::processEvents();
+
+    auto *searchBar = mw->findChild<SearchBar *>();
+    QVERIFY(searchBar);
+
+    auto findButtonByTooltip = [searchBar](const QString &tip) -> QToolButton * {
+        const auto buttons = searchBar->findChildren<QToolButton *>();
+        for (QToolButton *b : buttons) {
+            if (b->toolTip() == tip)
+                return b;
+        }
+        return nullptr;
+    };
+    QToolButton *prev = findButtonByTooltip(QStringLiteral("Previous match"));
+    QToolButton *next = findButtonByTooltip(QStringLiteral("Next match"));
+    QToolButton *close = findButtonByTooltip(QStringLiteral("Close search"));
+    QVERIFY(prev && next && close);
+
+    auto pos = [mw](QWidget *w) { return w->mapTo(mw, QPoint(0, 0)); };
+
+    searchBar->setMatchCounter(0, 0);
+    QApplication::processEvents();
+    const QPoint prevBaseline = pos(prev);
+    const QPoint nextBaseline = pos(next);
+    const QPoint closeBaseline = pos(close);
+
+    searchBar->setMatchCounter(1, 3);
+    QApplication::processEvents();
+    QCOMPARE(pos(prev), prevBaseline);
+    QCOMPARE(pos(next), nextBaseline);
+    QCOMPARE(pos(close), closeBaseline);
+
+    searchBar->setMatchCounter(0, 0);
+    QApplication::processEvents();
+    QCOMPARE(pos(prev), prevBaseline);
+    QCOMPARE(pos(next), nextBaseline);
+    QCOMPARE(pos(close), closeBaseline);
 }
 
 // Custom main mirrors test_uat_foundations.cpp: sandbox HOME / XDG

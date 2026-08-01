@@ -27,19 +27,35 @@ class MarkupToolbar : public QToolBar {
     // only if the tool actually changed.
     void setActiveTool(AnnotationTool tool);
 
-    // Hide or show a single tool's QAction. Used by MainWindow to
-    // gate text-aware tools (Underline / Highlight / StrikeOut) on
-    // documents without a text layer. Hiding (rather than disabling)
-    // visibly shrinks the toolbar — at the 18 px icon size a disabled
-    // glyph is more noise than information. If the currently-active
-    // tool is hidden, the toolbar automatically falls back to Select.
+    // Enable or disable a single tool's QAction, in place. Used by
+    // MainWindow to gate text-aware tools (Underline / Highlight /
+    // StrikeOut) on documents without a text layer, and the SAM tools
+    // (Instant Alpha / Smart Lasso) on non-image documents or a blocked
+    // model policy. `disabledTooltip` is required whenever `enabled` is
+    // false and states why the tool can't act right now (G3 — a control
+    // that can't act is disabled with a tooltip, never silently absent);
+    // it is ignored when `enabled` is true, since the action reverts to
+    // its plain label tooltip.
     //
-    // If hiding leaves a separator-bounded group with no visible
-    // tools, the preceding separator is hidden too so the user doesn't
-    // see a pair of adjacent dividers around nothing. (Currently the
-    // text-aware trio is the only group with this treatment — other
-    // groups stay populated for every document type.)
-    void setToolVisible(AnnotationTool tool, bool visible);
+    // G10 (spatial constancy, AGENTS.md; SC-CRIT-2,
+    // docs/audit-2026-07-31-g10-deference.md) is why this disables rather
+    // than hides: every tool action keeps its on-screen slot regardless of
+    // document capability, so Redact / Stroke / Fill / Width / Dash never
+    // shift when the current document changes. This supersedes the prior
+    // hide-based design — see
+    // docs/decision-records/2026-08-01-markup-toolbar-disable-not-hide.md
+    // for why G10 (a later, accepted, binding gate) outweighs the earlier
+    // "hidden, not greyed" call for tool actions specifically. If the
+    // currently-active tool is disabled, the toolbar automatically falls
+    // back to Select so the overlay isn't stuck consuming click-drags for
+    // a tool the user can no longer engage.
+    //
+    // Because every action stays visible, a separator between two groups
+    // is never left bounding an empty region — the "two adjacent dividers
+    // around nothing" concern the old hide-based design solved for no
+    // longer arises, so there is no separate separator-visibility step.
+    void setToolEnabled(AnnotationTool tool, bool enabled,
+                        const QString &disabledTooltip = QString());
 
     // Re-tint the toolbar's themed tool icons from the current palette,
     // called by MainWindow after a live theme (colour-scheme) change.
@@ -58,14 +74,6 @@ class MarkupToolbar : public QToolBar {
     AnnotationTool m_tool = AnnotationTool::None;
     AnnotationStyle m_style;
     QHash<AnnotationTool, QAction *> m_toolActions;
-    // Separator immediately before the text-aware tool group
-    // (Underline / Highlight / StrikeOut). Tracked so we can hide it
-    // when every tool in that group is hidden — see setToolVisible.
-    QAction *m_textAwareSeparator = nullptr;
-    // Separator immediately before the SAM tool group
-    // (InstantAlpha / SmartLasso). Tracked so we can hide it on
-    // PDF or animated documents where neither tool can run.
-    QAction *m_samSeparator = nullptr;
 };
 
 } // namespace trailer
