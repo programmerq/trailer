@@ -474,6 +474,130 @@ same invariant as UAT-XCT-075, proven through the other branch.
 Driven by
 `tests/uat/test_uat_search_and_markup.cpp::uat_xct_077_staleWindowStateBlobViaPerTypeDefaultAlsoReasserted`.
 
+### UAT-XCT-078 — Status-bar permanent widgets never reflow each other (G10 / SC-CRIT-1)
+
+**Context.** `docs/audit-2026-07-31-g10-deference.md` SC-CRIT-1:
+`QStatusBar::addPermanentWidget()` packs every permanent widget into one
+right-anchored box layout, so any member's width changing — including a
+hide/show collapsing it to or from zero — shifts every OTHER member,
+regardless of insertion order. Five widgets in Trailer's status bar toggle
+independently (ML scheduler activity, OCR-hint dismissal, Two-Pages mode,
+OCR batch progress, missing-model state); the audit's concrete repro is
+switching to Two-Pages view while an OCR batch runs, which slid the ML
+progress bar's Cancel button — a control the user may be mid-click on —
+sideways. Fixed by wrapping each permanent widget in a fixed-width slot
+(`reserveStatusBarSlot()`, `src/ui/MainWindow.cpp`) that stays in the
+status bar's layout regardless of the widget's own visibility; the two
+widest widgets (the large-doc and missing-model OCR hints) share ONE
+reserved slot because they are provably mutually exclusive
+(`OcrController::evaluateAutoOcrModel`'s `!isLargeDoc()` guard).
+
+**Preconditions:** A document is open; a real, gated OCR batch has
+revealed `m_mlProgress` mid-run (Cancel button visible).
+**Steps (all offscreen, geometry-asserted after each):**
+1. Record the Cancel button's absolute position.
+2. Show, then hide, the Two-Pages read-only badge — assert unchanged
+   after each.
+3. Show, then hide, the ML indicator — assert unchanged after each.
+4. Show, then hide, the large-doc OCR hint — assert unchanged after each.
+5. Show, then hide, the missing-model hint — assert unchanged after each.
+6. Reverse direction: let the OCR batch reach its terminal (completed)
+   state, which changes `m_mlProgress`'s own width (the bar and Cancel
+   button hide while the completion message shows) — assert the OTHER
+   four widgets' positions are unchanged.
+
+**Expected:** the Cancel button's position is bit-identical across every
+step in 2–5, and the other four widgets' positions are bit-identical
+across step 6. Before the fix, step 2 alone reproduced the audit's named
+defect.
+
+G2 grabs: `xct078_before_badge.png`, `xct078_after_badge.png`.
+Driven by
+`tests/uat/test_uat_ml_affordances.cpp::uat_xct_078_statusBarPermanentWidgetsNeverReflowEachOther`.
+
+### UAT-XCT-079 — Markup toolbar tool actions never reflow on document-type switch (G10 / SC-CRIT-2)
+
+**Context.** `docs/audit-2026-07-31-g10-deference.md` SC-CRIT-2:
+`MarkupToolbar::setToolVisible()` hid individual tool `QAction`s
+(Underline/Highlight/StrikeOut on `hasTextLayer()`; Instant Alpha/Smart
+Lasso on image+SAM eligibility) from `onCurrentDocumentChanged()`. Hiding
+an action inside a `QToolBar` collapses its slot, shifting every action
+after it — Redact, the SAM separator, Instant Alpha/Smart Lasso, and the
+trailing Stroke/Fill/Width/Dash controls all moved when switching between
+an OCR'd PDF tab and a plain-image tab. Fixed by
+`MarkupToolbar::setToolEnabled()` (disable-with-tooltip, G3, never hide);
+see `docs/decision-records/2026-08-01-markup-toolbar-disable-not-hide.md`
+for why this supersedes the prior hide-based design.
+
+**Preconditions:** Two documents are open as tabs in one window — one PDF
+with a native text layer, one plain image with none.
+**Steps (all offscreen, geometry-asserted after each):**
+1. On the text-layer PDF tab, record Redact / Stroke / Fill / Width /
+   Dash's absolute positions.
+2. Switch to the plain-image tab (text-aware trio becomes disabled) —
+   assert every recorded position unchanged.
+3. Switch back to the PDF tab (text-aware trio re-enabled) — assert
+   unchanged again.
+
+**Expected:** every recorded control's position is bit-identical across
+both switches. Additionally, the text-aware trio stays `isVisible() ==
+true` throughout (disabled, not hidden) and carries a non-empty tooltip
+while disabled.
+
+G2 grabs: `xct079_pdf_tab.png`, `xct079_image_tab.png`.
+Driven by
+`tests/uat/test_uat_search_and_markup.cpp::uat_xct_079_markupToolbarActionsStayPutAcrossDocumentTypeSwitch`.
+
+### UAT-XCT-080 — Search bar's Prev/Next/Close never move as the match count crosses zero (G10 / SC-MOD-1)
+
+**Context.** `docs/audit-2026-07-31-g10-deference.md` SC-MOD-1: `SearchBar`
+lays out `[input, stretch=1][counter][prev][next][close]`. The counter
+used to `hide()` with no query and `show()` once the query had ≥1 match,
+which collapsed/restored its slot in the shared `QHBoxLayout` and shifted
+Prev/Next/Close sideways by the counter's width the moment the match
+count crossed zero — typing the first matching character, or clearing the
+query, moved the buttons under the user's mouse. The audit flagged this
+as a candidate finding but deliberately did not file it, pending a check
+of whether `claude/mode-switch-and-search-nav` (PR #139) already touched
+`SearchBar` layout. That branch's diff was read directly: it adds a
+Shift+Enter event filter to `SearchBar::eventFilter()` only — no change to
+`setMatchCounter()` or the layout order — so this case was fixed here,
+not left to that branch.
+
+**Preconditions:** The Find bar is open on a document.
+**Steps (all offscreen, geometry-asserted after each):**
+1. Record Prev/Next/Close's absolute positions with no query typed
+   (`setMatchCounter(0, 0)`).
+2. Set a query with ≥1 match (`setMatchCounter` reporting `total > 0`) —
+   assert the three buttons' positions are unchanged.
+3. Clear the query back to no matches (`setMatchCounter(0, 0)`) — assert
+   unchanged again.
+
+**Expected:** Prev/Next/Close's positions are bit-identical across every
+step.
+
+**Verification note.** The integrated UAT above, driven through the real
+`MainWindow`-embedded `SearchBar` (which carries `setMaximumWidth(360)`),
+does **not** reproduce the pre-fix defect at the app's default window
+width: `m_input`'s stretch factor absorbs the counter's width change
+within that fixed ceiling, so Prev/Next/Close happen not to move in this
+specific embedding/size combination even against the un-fixed code. The
+defect is real and was confirmed with a bare, unconstrained `SearchBar`
+instance (mirroring `test_markup_toolbar.cpp`'s bare-widget pattern) —
+`tests/test_search_bar.cpp`'s
+`navButtonsStayPutAsMatchCountCrossesZero`, which lets the widget settle
+to its own natural size after each change rather than pinning it to an
+external width. That unit test fails against the pre-fix code (Prev
+measured moving 66px) and passes with the fix; both tests are kept as
+regression guards — the unit test is the one that actually catches a
+regression in `SearchBar`'s own layout, the UAT test guards the
+integrated embedding.
+
+Driven by `tests/test_search_bar.cpp::navButtonsStayPutAsMatchCountCrossesZero`
+(primary regression guard) and
+`tests/uat/test_uat_search_and_markup.cpp::uat_xct_080_searchBarNavButtonsStayPutAsMatchCountCrossesZero`
+(integrated coverage).
+
 ---
 
 ## Process lifecycle

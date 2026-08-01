@@ -1,5 +1,6 @@
 #include "MlProgressWidget.h"
 
+#include <QFontMetrics>
 #include <QFrame>
 #include <QHBoxLayout>
 #include <QLabel>
@@ -21,7 +22,7 @@ MlProgressWidget::MlProgressWidget(QWidget *parent) : QWidget(parent) {
 
     m_bar = new QProgressBar(this);
     m_bar->setTextVisible(false);
-    m_bar->setFixedWidth(120);
+    m_bar->setFixedWidth(kBarWidth);
     // A compact bar sits comfortably in the status bar's fixed height.
     m_bar->setMaximumHeight(14);
 
@@ -39,6 +40,19 @@ MlProgressWidget::MlProgressWidget(QWidget *parent) : QWidget(parent) {
     m_terminalTimer = new QTimer(this);
     m_terminalTimer->setSingleShot(true);
     connect(m_terminalTimer, &QTimer::timeout, this, &MlProgressWidget::goIdle);
+
+    // G10 (spatial constancy): pin the widget's own HEIGHT, not just its
+    // reserved status-bar WIDTH (MainWindow.cpp's reserveStatusBarSlot()).
+    // finishWithMessage() hides m_bar/m_cancel for the Terminal state,
+    // which — left alone — shrinks this widget's sizeHint().height() by a
+    // few px (the Cancel QToolButton is taller than the plain label),
+    // which shrinks the WHOLE status bar's height (it sizes to its
+    // tallest child) and shifts every OTHER permanent widget vertically.
+    // Measuring sizeHint() here, with every child still nominally visible
+    // (only `this` is hidden below, which does not affect a widget's own
+    // sizeHint), captures the tallest — Running — state once, so Terminal
+    // narrows in width only, never in height.
+    setFixedHeight(sizeHint().height());
 
     // Start hidden — an idle status bar stays clean.
     setVisible(false);
@@ -79,7 +93,7 @@ void MlProgressWidget::beginIndeterminate(const QString &label) {
     m_bar->setRange(0, 0); // busy
     m_bar->setVisible(true);
     m_cancel->setVisible(true);
-    m_label->setText(label);
+    setLabelText(label, kRunningLabelMaxWidth);
     setVisible(true);
 }
 
@@ -96,9 +110,9 @@ void MlProgressWidget::setElapsedSeconds(int s) {
         return;
     m_elapsed = s;
     if (s >= 10) {
-        m_label->setText(m_baseLabel + tr(" · %1s").arg(s));
+        setLabelText(m_baseLabel + tr(" · %1s").arg(s), kRunningLabelMaxWidth);
     } else {
-        m_label->setText(m_baseLabel);
+        setLabelText(m_baseLabel, kRunningLabelMaxWidth);
     }
 }
 
@@ -106,7 +120,9 @@ void MlProgressWidget::finishWithMessage(const QString &msg) {
     m_state = Terminal;
     m_bar->setVisible(false);
     m_cancel->setVisible(false);
-    m_label->setText(msg);
+    // Terminal: the bar and cancel button are hidden, so the label can use
+    // the wider Terminal cap (see kTerminalLabelMaxWidth's comment).
+    setLabelText(msg, kTerminalLabelMaxWidth);
     setVisible(true);
     if (m_terminalHoldMs <= 0) {
         goIdle();
@@ -136,10 +152,21 @@ QString MlProgressWidget::labelText() const {
 
 void MlProgressWidget::updateDeterminateLabel() {
     if (m_determinate) {
-        m_label->setText(tr("%1 — %2 / %3 pages").arg(m_baseLabel).arg(m_done).arg(m_total));
+        setLabelText(tr("%1 — %2 / %3 pages").arg(m_baseLabel).arg(m_done).arg(m_total),
+                     kRunningLabelMaxWidth);
     } else {
-        m_label->setText(m_baseLabel);
+        setLabelText(m_baseLabel, kRunningLabelMaxWidth);
     }
+}
+
+void MlProgressWidget::setLabelText(const QString &text, int maxWidth) {
+    const QFontMetrics fm(m_label->font());
+    const QString elided = fm.elidedText(text, Qt::ElideRight, maxWidth);
+    m_label->setText(elided);
+    // Full text stays reachable on hover whenever elision actually
+    // truncated something; clearing the tooltip otherwise avoids a
+    // no-op hover affordance on short messages.
+    m_label->setToolTip(elided == text ? QString() : text);
 }
 
 } // namespace trailer

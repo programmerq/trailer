@@ -28,6 +28,11 @@ class SearchBar : public QWidget {
     // arrow buttons. Pass total = 0 to clear (no query yet).
     // Pass current = 0 with total > 0 for "no current match
     // selected" — common while the search is still running.
+    //
+    // G10 (spatial constancy, AGENTS.md; SC-MOD-1,
+    // docs/audit-2026-07-31-g10-deference.md): the counter never hides —
+    // see the constructor comment on m_counter's fixed width — so Prev /
+    // Next / Close never move as the match count crosses zero.
     void setMatchCounter(int current, int total);
 
   signals:

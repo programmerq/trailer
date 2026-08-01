@@ -56,6 +56,7 @@ trailer_add_test(test_freehand_selection_precedence test_freehand_selection_prec
 trailer_add_test(test_form_toolbar test_form_toolbar.cpp)
 trailer_add_test(test_icon_resources test_icon_resources.cpp)
 trailer_add_test(test_markup_toolbar test_markup_toolbar.cpp)
+trailer_add_test(test_search_bar test_search_bar.cpp)
 trailer_add_test(test_dark_icon_contrast test_dark_icon_contrast.cpp)
 trailer_add_test(test_crop_pages_dialog test_crop_pages_dialog.cpp)
 trailer_add_test(test_crop_direct_manipulation test_crop_direct_manipulation.cpp)

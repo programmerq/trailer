@@ -1,5 +1,6 @@
 #include "SearchBar.h"
 
+#include <QFontMetrics>
 #include <QHBoxLayout>
 #include <QKeyEvent>
 #include <QLabel>
@@ -8,6 +9,16 @@
 #include <QToolButton>
 
 namespace trailer {
+
+namespace {
+// Hand-tuned (PHILOSOPHY.md): wide enough for "9999 matches"-scale text
+// (86px measured) with a small margin, without reserving so much that the
+// counter dwarfs the input field on the toolbar's collapsed-search
+// layout. Longer counts elide (see setMatchCounter()) rather than push
+// this wider — revisit if a real document is reported with a match count
+// that elides in normal use.
+constexpr int kCounterWidth = 92;
+} // namespace
 
 SearchBar::SearchBar(QWidget *parent) : QWidget(parent) {
     auto *layout = new QHBoxLayout(this);
@@ -27,13 +38,21 @@ SearchBar::SearchBar(QWidget *parent) : QWidget(parent) {
     // key press because QLineEdit accepts Return itself.
     m_input->installEventFilter(this);
 
-    // "X of Y" counter that lives between the input and the
-    // arrows. Hidden until the document has populated match data.
+    // "X of Y" counter that lives between the input and the arrows.
+    //
+    // G10 (spatial constancy, AGENTS.md; SC-MOD-1,
+    // docs/audit-2026-07-31-g10-deference.md): this used to hide() with no
+    // query and show() once matches existed, which collapsed/restored its
+    // slot in this shared QHBoxLayout and shifted Prev/Next/Close sideways
+    // by its own width the moment the match count crossed zero — typing
+    // the first matching character, or clearing the query, moved the
+    // buttons the user's mouse was tracking. Fixed by never hiding it:
+    // it stays visible at a FIXED width (kCounterWidth) always, blank when
+    // there is nothing to report — see setMatchCounter().
     m_counter = new QLabel(this);
     m_counter->setForegroundRole(QPalette::Mid);
-    m_counter->setMinimumWidth(60);
+    m_counter->setFixedWidth(kCounterWidth);
     m_counter->setAlignment(Qt::AlignCenter);
-    m_counter->hide();
 
     m_prev = new QToolButton(this);
     m_prev->setIcon(style()->standardIcon(QStyle::SP_ArrowUp));
@@ -61,17 +80,24 @@ SearchBar::SearchBar(QWidget *parent) : QWidget(parent) {
 }
 
 void SearchBar::setMatchCounter(int current, int total) {
+    // G10/SC-MOD-1: m_counter is always visible at a fixed width (see the
+    // constructor comment) — blank it rather than hide() it so Prev/Next/
+    // Close never move as the count crosses zero.
     if (total <= 0) {
         m_counter->clear();
-        m_counter->hide();
         return;
     }
-    if (current <= 0) {
-        m_counter->setText(tr("%1 matches").arg(total));
-    } else {
-        m_counter->setText(tr("%1 of %2").arg(current).arg(total));
-    }
-    m_counter->show();
+    const QString text = current <= 0 ? tr("%1 matches").arg(total)
+                                       : tr("%1 of %2").arg(current).arg(total);
+    // Elide rather than let an extreme match count grow past the fixed
+    // width — a real count would have to be very large to trigger this
+    // (kCounterWidth already covers "9999 matches"-scale text), but a
+    // truncated-with-tooltip label beats one that silently forces the
+    // reserved slot wider and reopens the reflow this fix closes.
+    const QFontMetrics fm(m_counter->font());
+    const QString elided = fm.elidedText(text, Qt::ElideRight, kCounterWidth);
+    m_counter->setText(elided);
+    m_counter->setToolTip(elided == text ? QString() : text);
 }
 
 void SearchBar::focusInput() {

@@ -63,11 +63,7 @@ MarkupToolbar::MarkupToolbar(QWidget *parent) : QToolBar(parent) {
     makeToolAction(tr("Zoom Lens"), AnnotationTool::ZoomLens,
                    QStringLiteral(":/icons/actions/tool-zoom-lens.svg"));
 
-    // Captured so we can hide it when the entire text-aware group is
-    // hidden (e.g. on a bare image with no OCR results — the three
-    // tools below are disabled there). Avoids two adjacent separators
-    // around nothing on those documents.
-    m_textAwareSeparator = addSeparator();
+    addSeparator();
 
     makeToolAction(tr("Highlight"), AnnotationTool::Highlight,
                    QStringLiteral(":/icons/actions/tool-highlight.svg"));
@@ -83,9 +79,7 @@ MarkupToolbar::MarkupToolbar(QWidget *parent) : QToolBar(parent) {
     redactAction->setToolTip(tr("Redact — paint a permanent black block. Content is rasterised "
                                 "on save. Not a defence-grade redaction tool."));
 
-    // Captured so we can hide the group on documents the SAM tools
-    // can't run against (PDFs, animated GIFs, missing models).
-    m_samSeparator = addSeparator();
+    addSeparator();
 
     auto *instantAlphaAction =
         makeToolAction(tr("Instant Alpha"), AnnotationTool::InstantAlpha,
@@ -211,45 +205,30 @@ void MarkupToolbar::setActiveTool(AnnotationTool tool) {
     it.value()->setChecked(true);
 }
 
-void MarkupToolbar::setToolVisible(AnnotationTool tool, bool visible) {
+void MarkupToolbar::setToolEnabled(AnnotationTool tool, bool enabled,
+                                   const QString &disabledTooltip) {
     auto it = m_toolActions.find(tool);
     if (it == m_toolActions.end())
         return;
     QAction *action = it.value();
-    if (action->isVisible() == visible)
-        return;
-    action->setVisible(visible);
-    // If we just hid the active tool, fall back to Select so the
-    // overlay isn't stuck consuming click-drags for a tool whose
-    // button is no longer reachable.
-    if (!visible && tool == m_tool) {
+    // No early-return-if-unchanged guard here (unlike the old setToolVisible):
+    // two different documents can both leave a tool disabled for DIFFERENT
+    // reasons (e.g. Instant Alpha disabled on a PDF — "images only" — vs.
+    // disabled on an image with a blocked download policy — "Never
+    // Download..."). Skipping the update whenever isEnabled() happens not to
+    // change would leave the FIRST reason's tooltip stale on the second
+    // document. setEnabled()/setToolTip() are cheap no-ops when the value is
+    // already correct, so calling them unconditionally costs nothing.
+    action->setEnabled(enabled);
+    // G3: a disabled control carries a tooltip stating why. An enabled
+    // action reverts to its plain label (set once in makeToolAction() and
+    // never otherwise touched — action->text() is always that label).
+    action->setToolTip(enabled ? action->text() : disabledTooltip);
+    // If the active tool is (now, or still) disabled, fall back to Select
+    // so the overlay isn't stuck consuming click-drags for a tool the user
+    // can no longer engage. setActiveTool() no-ops if already Select.
+    if (!enabled && tool == m_tool) {
         setActiveTool(AnnotationTool::Select);
-    }
-    // Text-aware group: when every tool in it is hidden, also hide
-    // the preceding separator. Otherwise we leave two adjacent
-    // dividers wrapping an empty region. The check runs on every
-    // change so re-showing one tool brings the separator back.
-    auto visibleByTool = [this](AnnotationTool t) {
-        auto i = m_toolActions.find(t);
-        return i != m_toolActions.end() && i.value()->isVisible();
-    };
-    const bool isTextAware = tool == AnnotationTool::Highlight ||
-                             tool == AnnotationTool::Underline || tool == AnnotationTool::StrikeOut;
-    if (isTextAware && m_textAwareSeparator) {
-        const bool anyVisible = visibleByTool(AnnotationTool::Highlight) ||
-                                visibleByTool(AnnotationTool::Underline) ||
-                                visibleByTool(AnnotationTool::StrikeOut);
-        m_textAwareSeparator->setVisible(anyVisible);
-    }
-    // SAM group: identical pattern. The MainWindow hides both on
-    // PDFs / animated docs / when the SAM models policy is "Never
-    // Download" so a non-actionable button never appears.
-    const bool isSam =
-        tool == AnnotationTool::InstantAlpha || tool == AnnotationTool::SmartLasso;
-    if (isSam && m_samSeparator) {
-        const bool anyVisible = visibleByTool(AnnotationTool::InstantAlpha) ||
-                                visibleByTool(AnnotationTool::SmartLasso);
-        m_samSeparator->setVisible(anyVisible);
     }
 }
 
