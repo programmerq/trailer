@@ -1,7 +1,7 @@
 ---
 id: 2026-08-02-uat-fontdir-broken-on-cross-build
 title: QT_QPA_FONTDIR resolves to /Fonts on the Windows cross-build (SystemRoot read on the Linux host)
-priority: P2
+priority: TBD
 status: open
 source: Wine UAT triage pass, 2026-08-02 (docs/backlog/2026-07-24-wine-uat-failures-triage.md)
 created: 2026-08-02

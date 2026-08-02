@@ -1,7 +1,7 @@
 ---
 id: 2026-08-02-uat-ratchet-per-test-identity
 title: UAT ratchet compares counts, not test identity — a regression can hide behind a new passing test
-priority: P3
+priority: TBD
 status: open
 source: follow-on from the 2026-08-02 ratchet rule fix (ratio → absolute passed count)
 created: 2026-08-02
