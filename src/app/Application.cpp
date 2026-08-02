@@ -3,12 +3,14 @@
 #include "TrailerVersion.h"
 #include "document/ImageAdapter.h"
 #include "document/PdfAdapter.h"
+#include "platform/ClipboardScale.h"
 #include "platform/QuitMenu.h"
 #include "platform/DockRecents.h"
 #include "platform/PortalScreenshot.h"
 #include "platform/ScreenCaptureBackend.h"
 #include "platform/ScreenCapturePermission.h"
 #include "ui/MainWindow.h"
+#include "util/CaptureScale.h"
 #include "util/TempPath.h"
 #ifdef TRAILER_UX_RECORDER
 #include "uxrecord/UxPlatformCapture.h"
@@ -1251,36 +1253,25 @@ void Application::newFromClipboard() {
         const QString path = transientImportPath("clipboard", "png");
         if (image.save(path, "PNG")) {
             // Recover a devicePixelRatio for the paste. The PNG round-trip
-            // (and most clipboard sources) drop the dpr stamp, so we must
-            // decide whether this paste is a HiDPI full-screen grab that
-            // should open 1:1 — WITHOUT shrinking ordinary pastes.
+            // (and most clipboard sources) drop the dpr stamp, so the paste
+            // path has to decide whether these pixels are a HiDPI capture
+            // that should open at its true size — WITHOUT shrinking ordinary
+            // pastes (a blanket "stamp the screen dpr" was tried and reverted
+            // for exactly that: it halved every copied logo on Retina).
             //
-            // Conservative heuristic: a blanket "stamp the primary screen's
-            // dpr whenever dpr<=1" was a regression — on Retina it halved the
-            // logical size of EVERY ordinary paste (a copied logo, diagram,
-            // pixel art). Instead:
-            //   1. If the clipboard image already carries dpr > 1.0, honor it.
-            //   2. Else if the raw pixel size EXACTLY equals some connected
-            //      screen's device resolution (size() * devicePixelRatio(),
-            //      i.e. a full-screen grab), stamp THAT screen's dpr.
-            //   3. Else leave it at dpr 1 — an ordinary paste opens at its
-            //      natural logical size (fit-capped as before), no regression.
-            // A region screenshot pasted from the clipboard that doesn't match
-            // a full screen size will open at device size (no worse than
-            // pre-fix), pending owner confirmation on Retina hardware.
-            double dpr = image.devicePixelRatio();
-            if (dpr <= 1.0) {
-                dpr = 1.0;
-                const QSize raw = image.size();
-                for (const QScreen *scr : QGuiApplication::screens()) {
-                    const QSize deviceRes =
-                        (QSizeF(scr->size()) * scr->devicePixelRatio()).toSize();
-                    if (raw == deviceRes) {
-                        dpr = scr->devicePixelRatio();
-                        break;
-                    }
-                }
-            }
+            // The whole policy — which signals count as *declared* and which
+            // are guesses, and what the known limits are — lives in
+            // util/CaptureScale.h. Read it before widening anything here.
+            //
+            // 2026-08-02 owner dogfooding: this previously matched only a
+            // whole-screen grab, so a macOS *window* screenshot fell through
+            // to dpr 1 and opened 2x too large at a reported 100%. The
+            // clipboard's own declared scale (platform/ClipboardScale.h) is
+            // the signal that closes that gap.
+            const double declaredScale =
+                platform::clipboardImageDeclaredScale(image.size());
+            const double dpr =
+                recoverCaptureDpr(image, declaredScale, connectedScreenScales());
             setPendingCaptureDpr(dpr);
             openFiles({path}, /*markUntitled=*/true);
             return;

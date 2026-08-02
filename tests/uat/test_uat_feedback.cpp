@@ -103,6 +103,7 @@ class TestUatFeedback : public QObject {
     void uat_xct_071_menuItemAlwaysEnabled();
     void uat_xct_072_reportIsFullyVisibleAndOmitsPathsByDefault();
     void uat_xct_073_checkboxTogglesPathsAndCopyMatchesVisibleText();
+    void uat_xct_081_feedbackItemDoesNotAccumulateAcrossWindows();
     void uat_fbk_090_evidenceShots();
 
   private:
@@ -193,6 +194,61 @@ void TestUatFeedback::uat_xct_073_checkboxTogglesPathsAndCopyMatchesVisibleText(
     QCOMPARE(QGuiApplication::clipboard()->text(), dlg.reportText());
 }
 
+// UAT-XCT-081 (docs/uat/06-cross-cutting.md) — "Feedback Report…" does not
+// accumulate in the command surface as windows are opened and closed.
+//
+// Owner dogfooding, 2026-08-02 (macOS Retina): FOUR identical "Feedback
+// Report…" items stacked in the application menu after four MainWindows had
+// been constructed in one session; two of those windows were already
+// closed. Cause: the item carried QAction::ApplicationSpecificRole, which
+// on macOS moves it into the single shared application menu — and unlike
+// About / Settings / Quit, that role is not merged, so each window
+// contributes its own copy.
+//
+// The native macOS merge is not observable offscreen (menuRole() does
+// nothing off macOS), so this guards the structural precondition the Cocoa
+// bridge reacts to: nothing is promoted into the shared application menu,
+// and each window's Help menu holds exactly one item.
+void TestUatFeedback::uat_xct_081_feedbackItemDoesNotAccumulateAcrossWindows() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    QList<MainWindow *> opened;
+    for (int i = 0; i < 4; ++i) {
+        MainWindow *mw = app->ensureFreshWindow();
+        QVERIFY(mw);
+        opened << mw;
+    }
+    // Close two — the owner's session shape (4 constructed, 2 still open).
+    opened.takeLast()->close();
+    opened.takeLast()->close();
+    QApplication::processEvents();
+
+    const QList<MainWindow *> live = app->windows();
+    QCOMPARE(live.size(), 2);
+
+    for (MainWindow *mw : live) {
+        int inHelp = 0;
+        int promotedToAppMenu = 0;
+        for (QAction *a : mw->findChildren<QAction *>()) {
+            if (a->objectName() == QStringLiteral("action.help.feedbackReport"))
+                ++inHelp;
+            if (a->menuRole() == QAction::ApplicationSpecificRole)
+                ++promotedToAppMenu;
+        }
+        QCOMPARE(inHelp, 1);
+        QVERIFY2(promotedToAppMenu == 0,
+                 "no per-window action may claim ApplicationSpecificRole — each one becomes a "
+                 "separate item in the shared macOS application menu");
+        // And it is reachable where docs/platform-conventions.md §2 says it
+        // is: the Help menu, on every platform.
+        QAction *fromMenu =
+            findMenuAction(mw->menuBar(), QStringLiteral("&Help"), QStringLiteral("&Feedback Report…"));
+        QVERIFY2(fromMenu, "Feedback Report… is not in the Help menu");
+        QVERIFY(fromMenu->isEnabled());
+    }
+}
+
 // Curated G2 evidence (only when TRAILER_FEEDBACK_EVIDENCE_DIR is set):
 // the dialog with a document open (default state, paths omitted) and the
 // dialog reachable from a zero-document window (the empty-state case).
@@ -255,6 +311,40 @@ void TestUatFeedback::uat_fbk_090_evidenceShots() {
         QApplication::processEvents();
         QVERIFY(dlg.grab().save(dir + "/feedback-dialog-empty-state.png"));
         dlg.close();
+    }
+
+    // --- The Help menu itself (UAT-XCT-081 before/after pair) ---
+    //
+    // On Windows and Linux this capture is expected to be IDENTICAL before
+    // and after the ApplicationSpecificRole removal: QAction::menuRole() is
+    // a macOS-only property, so the item was already in the Help menu on
+    // these platforms. That identity IS the evidence for those platforms —
+    // the fix does not reshape their command surface. The macOS half (the
+    // item moving out of the shared application menu) cannot be captured
+    // offscreen; see UAT-XCT-081's "known coverage limit".
+    {
+        for (auto *w : QApplication::topLevelWidgets()) {
+            if (qobject_cast<MainWindow *>(w))
+                w->close();
+        }
+        QApplication::processEvents();
+        MainWindow *mw = app->ensureFreshWindow();
+        QVERIFY(mw);
+        mw->resize(900, 600);
+        mw->show();
+        QApplication::processEvents();
+
+        QMenu *help = nullptr;
+        for (QAction *top : mw->menuBar()->actions()) {
+            if (top->text() == QStringLiteral("&Help"))
+                help = top->menu();
+        }
+        QVERIFY(help);
+        help->popup(QPoint(0, 0));
+        QApplication::processEvents();
+        QVERIFY(help->grab().save(dir + "/help-menu.png"));
+        help->close();
+        QApplication::processEvents();
     }
 }
 

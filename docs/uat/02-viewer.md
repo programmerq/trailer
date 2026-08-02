@@ -407,6 +407,53 @@ Two-Pages read-only badge) is visible.
 - The other widget's on-screen position is identical before the
   reveal, while the readout is visible, and after it fades back out.
 
+### UAT-VWR-110 — The zoom ladder stops exactly at the pixel-exact factor
+
+**Context.** Owner dogfooding, 2026-08-02 (nightly `0.3.1-dev+768.gce56b4b8`,
+macOS Retina): a pasted macOS **window** screenshot opened at a reported
+**100%** but drew visibly **2x too large**, because its devicePixelRatio
+could not be recovered (see UAT-FND-071 and
+`docs/decision-records/2026-08-02-pasted-capture-scale-and-pixel-exact-zoom-stop.md`).
+Correcting it by hand was impossible to do crisply: zoom-out steps by a
+fixed 1.25 ratio, so from 100% the ladder walks 80% -> 64% -> **51%** and
+never passes through the exact 1:2 mapping the image needed. At 51% the
+image is resampled, so it reads blurry.
+
+**Preconditions:** An image whose devicePixelRatio differs from the screen
+it is shown on — e.g. a dpr-1 capture on a 2x screen (pixel-exact at 50%),
+or a dpr-2 capture on a 1x screen (pixel-exact at 200%).
+**Steps:**
+1. Note the zoom readout at Actual Size (100%).
+2. Tap Zoom Out (or Zoom In, for the dpr-2-on-1x case) three times.
+**Expected:**
+- The third tap lands on the **pixel-exact factor** — `imageDpr /
+  screenDpr` — exactly. The readout shows `50%` (not `51%`) or `200%`
+  (not `195%`).
+- At that factor the image is drawn from its source pixels with **no
+  resample**: the built pixmap's pixel size equals the source's, stamped
+  with the screen's devicePixelRatio.
+- A further tap leaves the stop and resumes the geometric ladder, so the
+  stop is a detent, not a trap.
+- Actual Size (100%) is likewise a detent, so a user who corrected down to
+  the pixel-exact factor can tap back to exactly 100%.
+- When the image and the screen share a devicePixelRatio the pixel-exact
+  factor **is** 100%, and the ladder is unchanged from the pure geometric
+  one (80% / 64% / 51.2% / 41%…) — this change is inert for everyone not
+  on a mismatched pair.
+
+Driven by `uat_zoom_ind_080_ladderStopsAtThePixelExactFactor`, plus the
+unit-level ladder and render assertions in `tests/test_image_scale.cpp`.
+G2 evidence: `docs/uat/images/2026-08-02-zoom-pixel-exact-before.png` /
+`docs/uat/images/2026-08-02-zoom-pixel-exact-after.png` (the same window and
+document after the same three zoom-in taps: `195%` before, `200%` after).
+
+**Known coverage limit.** The offscreen harness runs at devicePixelRatio 1,
+so the case it drives end-to-end is the mirror of the owner's (dpr-2 image
+on a dpr-1 screen, pixel-exact at 200%). The owner's own orientation
+(dpr-1 image on a 2x screen, pixel-exact at 50%) is covered at the
+arithmetic level in `tests/test_image_scale.cpp`
+(`zoomOutLadderStopsExactlyAtHalfOnA2xScreen`), not end-to-end.
+
 ---
 
 ## Sidebar — Pages tab

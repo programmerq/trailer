@@ -1,5 +1,6 @@
 #include "ImageAdapter.h"
 
+#include "ZoomStops.h"
 #include "annotation/AnnotationStore.h"
 #include "filters/ImageFilter.h"
 #include "ui/AnnotationOverlay.h"
@@ -80,16 +81,39 @@ constexpr size_t kMaxUndoSteps = 32;
 // resample at all, so 1 source device px maps 1:1 to 1 screen device px
 // (pixel-exact "Actual Size"). A no-op at dpr == 1.
 //
+// `screenDpr` is the dpr of the screen this view is on. It matters only
+// when it differs from the image's own dpr — the case where "Actual Size"
+// is NOT pixel-exact. There the source pixels map 1:1 onto screen device
+// pixels at logicalScale == imageDpr / screenDpr instead (ZoomStops.h), and
+// this build must pass the source through unresampled at that factor too.
+// Without it the owner's 2026-08-02 case had no crisp stop at all: a dpr-1
+// screenshot on a 2x screen was resampled to half size and then upscaled
+// back 2x by the compositor — a double resample, permanently soft, exactly
+// the blur they reported at 51%.
+//
+// Only that one extra factor is special-cased. Rebuilding *every* factor at
+// screen resolution would quadruple the pixmap for a magnified view with no
+// added detail (the source has no more pixels to give), so the general
+// resample branch is deliberately left as it was.
+//
 // This duplicates the scale-to-logical technique in
 // src/ui/ThumbnailPaint.h (scaleToLogicalWidth, PR #70, currently
 // unmerged); when that PR lands, consider consolidating on the shared
 // helper. See docs/backlog/2026-07-16-hidpi-uat-harness.md.
-QPixmap buildDisplayPixmap(const QImage &img, double logicalScale) {
+QPixmap buildDisplayPixmap(const QImage &img, double logicalScale, double screenDpr) {
     const qreal dpr = img.devicePixelRatio() > 0.0 ? img.devicePixelRatio() : 1.0;
+    const double pixelExact = trailer::pixelExactZoomFactor(dpr, screenDpr);
     QPixmap pm;
     if (std::abs(logicalScale - 1.0) < 1e-9) {
         // Actual Size: no resample — device pixels pass straight through.
         pm = QPixmap::fromImage(img);
+    } else if (std::abs(logicalScale - pixelExact) < 1e-9) {
+        // Pixel-exact on THIS screen: hand the source through unresampled
+        // and stamp the screen's dpr, so its logical size is rawPx /
+        // screenDpr and every source pixel lands on one device pixel.
+        pm = QPixmap::fromImage(img);
+        pm.setDevicePixelRatio(screenDpr);
+        return pm;
     } else {
         // Raw device-pixel target = logical target * dpr = raw source px
         // * logicalScale. KeepAspectRatio guards against off-by-one on
@@ -497,7 +521,7 @@ void ImageDocument::installDecodedContent() {
     // can't fire after the swap.
     cancelPlaceholderTextTimer();
 
-    m_lastBuiltPixmap = buildDisplayPixmap(m_image, m_scale);
+    m_lastBuiltPixmap = buildDisplayPixmap(m_image, m_scale, viewDevicePixelRatio());
     m_label->setPixmap(m_lastBuiltPixmap);
     m_label->adjustSize();
     // The view chrome was wired at open over the placeholder-sized label;
@@ -630,6 +654,12 @@ QWidget *ImageDocument::createView(QWidget *parent) {
     return scroll;
 }
 
+qreal ImageDocument::viewDevicePixelRatio() const {
+    // See the declaration in ImageAdapter.h for why this is read live from
+    // the widget rather than cached.
+    return m_label ? m_label->devicePixelRatioF() : qreal(1.0);
+}
+
 void ImageDocument::applyScale(double factor) {
     if (!m_label || m_image.isNull()) {
         return;
@@ -638,7 +668,7 @@ void ImageDocument::applyScale(double factor) {
     // device px / dpr). buildDisplayPixmap produces a dpr-stamped pixmap
     // so the image draws crisp on HiDPI, pixel-exact at 100%.
     m_scale = std::clamp(factor, kZoomMin, kZoomMax);
-    m_lastBuiltPixmap = buildDisplayPixmap(m_image, m_scale);
+    m_lastBuiltPixmap = buildDisplayPixmap(m_image, m_scale, viewDevicePixelRatio());
     m_label->setPixmap(m_lastBuiltPixmap);
     m_label->adjustSize();
     if (m_overlay) {
@@ -727,14 +757,24 @@ void ImageDocument::zoomIn() {
     // the user is asking for a specific factor, not "track the
     // viewport". Mirrors PdfDocument::applyZoomFactor's behaviour.
     m_zoomMode = ZoomMode::Custom;
-    applyScale(m_scale * kZoomStep);
+    applyScale(steppedZoom(/*zoomIn=*/true));
 }
 
 void ImageDocument::zoomOut() {
     ensureDecoded();
     m_initialZoomApplied = true;
     m_zoomMode = ZoomMode::Custom;
-    applyScale(m_scale / kZoomStep);
+    applyScale(steppedZoom(/*zoomIn=*/false));
+}
+
+double ImageDocument::steppedZoom(bool zoomIn) const {
+    // The geometric ladder, with the two detents from ZoomStops.h: Actual
+    // Size, and the factor at which this image's pixels land 1:1 on this
+    // screen's device pixels. When the image and the screen share a dpr the
+    // second collapses onto the first and the ladder is unchanged, so this
+    // is a no-op for the ordinary same-dpr case.
+    return steppedZoomFactor(m_scale, zoomIn, kZoomStep,
+                             pixelExactZoomFactor(imageDpr(), viewDevicePixelRatio()));
 }
 
 void ImageDocument::zoomActual() {
@@ -1268,7 +1308,7 @@ void ImageDocument::previewColour(double brightness, double contrast, double sat
     const QImage preview = applyColourTransform(m_image, brightness, contrast, saturation);
     // applyColourTransform preserves the source devicePixelRatio, so the
     // preview scales through the same logical/dpr-aware path as applyScale.
-    m_label->setPixmap(buildDisplayPixmap(preview, m_scale));
+    m_label->setPixmap(buildDisplayPixmap(preview, m_scale, viewDevicePixelRatio()));
 }
 
 void ImageDocument::clearColourPreview() {

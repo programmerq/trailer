@@ -22,7 +22,9 @@
 #include "app/Application.h"
 #include "document/IDocument.h"
 #include "document/ImageAdapter.h"
+#include "document/ZoomStops.h"
 #include "ui/MainWindow.h"
+#include "util/CaptureScale.h"
 
 #include <QApplication>
 #include <QDir>
@@ -127,6 +129,24 @@ class TestImageScale : public QObject {
     void closingAtCustomZoomDoesNotPoisonTypeDefault();
     void smallReportedImageNaturalFitIsActual_data();
     void smallReportedImageNaturalFitIsActual();
+
+    // 2026-08-02 owner dogfooding report: a pasted macOS *window*
+    // screenshot opened at a reported 100% but rendered 2x too large, and
+    // manual correction landed on 51% (blurry) because the ladder has no
+    // exact 1/dpr stop. See DR 2026-08-02-pasted-capture-scale-and-pixel-
+    // exact-zoom-stop.
+    void pixelExactFactorIsImageDprOverScreenDpr_data();
+    void pixelExactFactorIsImageDprOverScreenDpr();
+    void zoomOutLadderStopsExactlyAtHalfOnA2xScreen();
+    void zoomInLadderReturnsExactlyToActualSize();
+    void sameDprLadderIsUnchanged();
+    void zoomLadderStopsAtPixelExactForADpr2ImageOnADpr1Screen();
+    void pixelExactStopRendersWithoutResampling();
+    void windowSizedRetinaPasteRecoversItsDeclaredScale();
+    void declaredScaleMatchingNoConnectedScreenIsIgnored();
+    void ordinaryPasteWithNothingDeclaredStaysAtDpr1();
+    void alreadyStampedDprWinsOverEverythingElse();
+    void wholeScreenGrabStillRecoversItsScreenDpr();
 };
 
 void TestImageScale::cleanup() {
@@ -1179,6 +1199,235 @@ void TestImageScale::smallReportedImageNaturalFitIsActual() {
                             .arg(doc.scaleFactor() * 100.0)));
 
     delete view;
+}
+
+// ---------------------------------------------------------------------------
+// 2026-08-02 owner dogfooding report — pasted capture scale + zoom ladder.
+//
+// Reported: a macOS window screenshot pasted with New from Clipboard opened
+// at a reported 100% zoom but drew 2x too large on a Retina display, and
+// tapping Cmd+- to fix it landed on 51% — a resampled, blurry factor —
+// because the geometric ladder (x1.25) never passes through 50% exactly.
+//
+// Two separable defects, pinned separately below:
+//   (a) the dpr recovery only matched a WHOLE-SCREEN grab, so a window-sized
+//       capture fell through to dpr 1 (util/CaptureScale.h);
+//   (b) the ladder had no exact 1/dpr stop, so even manual correction could
+//       not be crisp (document/ZoomStops.h).
+// ---------------------------------------------------------------------------
+
+void TestImageScale::pixelExactFactorIsImageDprOverScreenDpr_data() {
+    QTest::addColumn<double>("imageDpr");
+    QTest::addColumn<double>("screenDpr");
+    QTest::addColumn<double>("expected");
+    // The owner's case: a capture whose dpr could not be recovered (1) shown
+    // on a 2x Retina screen is pixel-exact at 50%.
+    QTest::newRow("dpr1-image-on-2x-screen") << 1.0 << 2.0 << 0.5;
+    // The mirror image, and the one this Linux/offscreen harness can drive
+    // end-to-end: a Retina capture on a 1x screen is pixel-exact at 200%.
+    QTest::newRow("dpr2-image-on-1x-screen") << 2.0 << 1.0 << 2.0;
+    // Matched pair — Actual Size already IS pixel-exact, so the new detent
+    // collapses onto the existing one and the ladder is untouched.
+    QTest::newRow("matched-2x") << 2.0 << 2.0 << 1.0;
+    QTest::newRow("matched-1x") << 1.0 << 1.0 << 1.0;
+    QTest::newRow("fractional-1.5x") << 1.0 << 1.5 << (1.0 / 1.5);
+    // Degenerate inputs fall back to the Actual-Size detent alone.
+    QTest::newRow("no-screen-yet") << 1.0 << 0.0 << 1.0;
+}
+
+void TestImageScale::pixelExactFactorIsImageDprOverScreenDpr() {
+    QFETCH(double, imageDpr);
+    QFETCH(double, screenDpr);
+    QFETCH(double, expected);
+    QVERIFY(std::abs(pixelExactZoomFactor(imageDpr, screenDpr) - expected) < 1e-12);
+}
+
+void TestImageScale::zoomOutLadderStopsExactlyAtHalfOnA2xScreen() {
+    // The owner's exact keystrokes. Pre-fix the third tap produced
+    // 0.512 -> a "51%" readout and a resampled, blurry image; 50% was
+    // unreachable by any number of taps.
+    const double pixelExact = pixelExactZoomFactor(/*imageDpr=*/1.0, /*screenDpr=*/2.0);
+    QCOMPARE(pixelExact, 0.5);
+
+    double f = 1.0;
+    f = steppedZoomFactor(f, /*zoomIn=*/false, 1.25, pixelExact);
+    QVERIFY(std::abs(f - 0.8) < 1e-12);
+    f = steppedZoomFactor(f, /*zoomIn=*/false, 1.25, pixelExact);
+    QVERIFY(std::abs(f - 0.64) < 1e-12);
+    f = steppedZoomFactor(f, /*zoomIn=*/false, 1.25, pixelExact);
+    // The plain step would land on 0.512. The detent wins.
+    QVERIFY2(std::abs(f - 0.5) < 1e-12,
+             qPrintable(QStringLiteral("expected the ladder to stop at 0.5, got %1").arg(f, 0, 'g', 17)));
+    // And the ladder carries on past the detent on the next tap.
+    f = steppedZoomFactor(f, /*zoomIn=*/false, 1.25, pixelExact);
+    QVERIFY(std::abs(f - 0.4) < 1e-12);
+}
+
+void TestImageScale::zoomInLadderReturnsExactlyToActualSize() {
+    // Once you have been snapped off the exact powers of 1.25, the pure
+    // geometric ladder can never return to 100% exactly (0.5 -> 0.625 ->
+    // 0.78125 -> 0.9765625 -> 1.2207...). The Actual-Size detent fixes that,
+    // so a user who corrected down to pixel-exact can get back.
+    const double pixelExact = 0.5;
+    double f = 0.5;
+    f = steppedZoomFactor(f, /*zoomIn=*/true, 1.25, pixelExact);
+    QVERIFY(std::abs(f - 0.625) < 1e-12);
+    f = steppedZoomFactor(f, /*zoomIn=*/true, 1.25, pixelExact);
+    QVERIFY(std::abs(f - 0.78125) < 1e-12);
+    // The plain step would land on 0.9765625 — within half a step of 100%,
+    // so the detent takes it.
+    f = steppedZoomFactor(f, /*zoomIn=*/true, 1.25, pixelExact);
+    QVERIFY2(std::abs(f - 1.0) < 1e-12,
+             qPrintable(QStringLiteral("expected the ladder to stop at 1.0, got %1").arg(f, 0, 'g', 17)));
+    // ...and the next tap leaves it, so 100% is a stop, not a trap.
+    f = steppedZoomFactor(f, /*zoomIn=*/true, 1.25, pixelExact);
+    QVERIFY(std::abs(f - 1.25) < 1e-12);
+}
+
+void TestImageScale::sameDprLadderIsUnchanged() {
+    // The regression guard for everyone who is NOT on a mismatched dpr: when
+    // the image and screen share a dpr the pixel-exact detent collapses onto
+    // 1.0, and the ladder must be bit-identical to the pure geometric one.
+    const double pixelExact = pixelExactZoomFactor(1.0, 1.0);
+    QCOMPARE(pixelExact, 1.0);
+    double f = 1.0;
+    for (const double expect : {0.8, 0.64, 0.512, 0.4096}) {
+        f = steppedZoomFactor(f, /*zoomIn=*/false, 1.25, pixelExact);
+        QVERIFY(std::abs(f - expect) < 1e-12);
+    }
+    f = 1.0;
+    for (const double expect : {1.25, 1.5625, 1.953125}) {
+        f = steppedZoomFactor(f, /*zoomIn=*/true, 1.25, pixelExact);
+        QVERIFY(std::abs(f - expect) < 1e-12);
+    }
+}
+
+void TestImageScale::zoomLadderStopsAtPixelExactForADpr2ImageOnADpr1Screen() {
+    // End-to-end through the real ImageDocument, driven on the offscreen
+    // (dpr 1) harness: a dpr-2 capture is pixel-exact at 200%, and three
+    // zoom-in taps must land there exactly rather than at 1.953125.
+    ImageDocument doc{QString()};
+    doc.setImageForTest(makeDprImage(1200, 800, 2.0), /*captureOrigin=*/true);
+    QWidget *view = doc.createView(nullptr);
+    QVERIFY(view != nullptr);
+    QCOMPARE(qreal(view->devicePixelRatioF()), qreal(1.0)); // harness precondition
+
+    doc.zoomActual();
+    QCOMPARE(doc.zoomFactor(), 1.0);
+    doc.zoomIn();
+    QVERIFY(std::abs(doc.zoomFactor() - 1.25) < 1e-9);
+    doc.zoomIn();
+    QVERIFY(std::abs(doc.zoomFactor() - 1.5625) < 1e-9);
+    doc.zoomIn();
+    QVERIFY2(std::abs(doc.zoomFactor() - 2.0) < 1e-9,
+             qPrintable(QStringLiteral("expected the pixel-exact stop at 200%%, got %1%%")
+                            .arg(doc.zoomFactor() * 100.0)));
+    // The zoom readout MainWindow shows is qRound(factor*100) — so this is
+    // literally "200%", not "195%".
+    QCOMPARE(qRound(doc.zoomFactor() * 100.0), 200);
+
+    delete view;
+}
+
+void TestImageScale::pixelExactStopRendersWithoutResampling() {
+    // The other half of "can't be corrected crisply": landing on the right
+    // NUMBER is worthless if the pixmap is still resampled. At the
+    // pixel-exact stop the source must pass through untouched, stamped with
+    // the SCREEN's dpr so one source pixel covers one device pixel.
+    //
+    // Pre-fix this branch did not exist: buildDisplayPixmap resampled to
+    // round(1200 * 2.0) = 2400 px wide and stamped the IMAGE's dpr (2), so
+    // the view drew a 4x-larger buffer that carried no extra detail.
+    const int deviceW = 1200;
+    const int deviceH = 800;
+    ImageDocument doc{QString()};
+    doc.setImageForTest(makeDprImage(deviceW, deviceH, 2.0), /*captureOrigin=*/true);
+    QWidget *view = doc.createView(nullptr);
+    QVERIFY(view != nullptr);
+
+    doc.applyZoomState(ZoomMode::Custom, 2.0); // == pixelExact on a dpr-1 screen
+    const QPixmap pm = doc.labelPixmapForTest();
+    QVERIFY(!pm.isNull());
+    QCOMPARE(pm.size(), QSize(deviceW, deviceH));   // no resample at all
+    QCOMPARE(pm.devicePixelRatio(), qreal(1.0));    // == the screen's dpr
+    // ...and the logical size is still what a 200% zoom of a 600x400-point
+    // image should be, so nothing about the layout changed.
+    QCOMPARE(pm.deviceIndependentSize().toSize(), QSize(deviceW, deviceH));
+
+    delete view;
+}
+
+void TestImageScale::windowSizedRetinaPasteRecoversItsDeclaredScale() {
+    // The reported bug. A macOS window screenshot is 2x device pixels but
+    // matches NO screen's full device resolution, so the old size-match rule
+    // fell through and left it at dpr 1 -> "Actual Size" drew it twice as
+    // large as the window it captured. The pasteboard declares the scale;
+    // honour it when it names one of the attached screens.
+    const QList<ScreenScale> screens = {
+        ScreenScale{QSize(3420, 2224), 2.0}, // a Retina MacBook panel
+        ScreenScale{QSize(1920, 1080), 1.0}, // an attached 1x monitor
+    };
+    QImage windowShot(2048, 1330, QImage::Format_ARGB32_Premultiplied);
+    windowShot.fill(Qt::white); // dpr 1 — the PNG/clipboard round-trip stripped it
+    QCOMPARE(windowShot.devicePixelRatio(), qreal(1.0));
+    // Sanity: it is NOT a full-screen grab, which is why the old rule missed.
+    for (const ScreenScale &s : screens)
+        QVERIFY(windowShot.size() != s.deviceResolution);
+
+    QCOMPARE(recoverCaptureDpr(windowShot, /*declaredScale=*/2.0, screens), 2.0);
+    // ...and with no declared scale the same image is still left alone,
+    // which is the pre-fix behaviour this test contrasts against.
+    QCOMPARE(recoverCaptureDpr(windowShot, /*declaredScale=*/0.0, screens), 1.0);
+}
+
+void TestImageScale::declaredScaleMatchingNoConnectedScreenIsIgnored() {
+    // The clamp that keeps rule 2 from becoming a guess: a 300-dpi print
+    // image declares 300/72 = 4.167 px per point, which names no attached
+    // screen, so it must open at its natural size rather than at a quarter.
+    const QList<ScreenScale> screens = {ScreenScale{QSize(3420, 2224), 2.0}};
+    QImage scan(2400, 3000, QImage::Format_ARGB32_Premultiplied);
+    scan.fill(Qt::white);
+    QCOMPARE(recoverCaptureDpr(scan, /*declaredScale=*/300.0 / 72.0, screens), 1.0);
+    // A nonsense/negative declaration is likewise ignored, not propagated.
+    QCOMPARE(recoverCaptureDpr(scan, /*declaredScale=*/-3.0, screens), 1.0);
+}
+
+void TestImageScale::ordinaryPasteWithNothingDeclaredStaysAtDpr1() {
+    // The regression this whole area is fenced against: a blanket "stamp the
+    // screen dpr" halved every copied logo/diagram on Retina. Nothing
+    // declared => 1.0, full stop.
+    const QList<ScreenScale> screens = {ScreenScale{QSize(3420, 2224), 2.0}};
+    QImage logo(512, 512, QImage::Format_ARGB32_Premultiplied);
+    logo.fill(Qt::white);
+    QCOMPARE(recoverCaptureDpr(logo, /*declaredScale=*/0.0, screens), 1.0);
+    QCOMPARE(recoverCaptureDpr(logo, /*declaredScale=*/1.0, screens), 1.0);
+}
+
+void TestImageScale::alreadyStampedDprWinsOverEverythingElse() {
+    // Rule 1: if the source told us outright, believe it — no screen list
+    // required, and a bogus declared scale cannot override it.
+    QImage stamped = makeDprImage(1000, 600, 3.0);
+    QCOMPARE(recoverCaptureDpr(stamped, /*declaredScale=*/0.0, {}), 3.0);
+    QCOMPARE(recoverCaptureDpr(stamped, /*declaredScale=*/2.0,
+                               {ScreenScale{QSize(3420, 2224), 2.0}}),
+             3.0);
+}
+
+void TestImageScale::wholeScreenGrabStillRecoversItsScreenDpr() {
+    // Regression guard for the rule that already shipped: a whole-screen
+    // grab whose raw pixels match a screen's device resolution keeps working
+    // with nothing declared.
+    const QList<ScreenScale> screens = {
+        ScreenScale{QSize(1920, 1080), 1.0},
+        ScreenScale{QSize(2880, 1800), 2.0},
+    };
+    QImage fullScreen(2880, 1800, QImage::Format_ARGB32_Premultiplied);
+    fullScreen.fill(Qt::white);
+    QCOMPARE(recoverCaptureDpr(fullScreen, /*declaredScale=*/0.0, screens), 2.0);
+    // A 1x screen's full grab declares nothing HiDPI and stays at 1.0.
+    QImage fullScreen1x(1920, 1080, QImage::Format_ARGB32_Premultiplied);
+    fullScreen1x.fill(Qt::white);
+    QCOMPARE(recoverCaptureDpr(fullScreen1x, /*declaredScale=*/0.0, screens), 1.0);
 }
 
 // Custom main: construct the real Application (a QApplication subclass) so

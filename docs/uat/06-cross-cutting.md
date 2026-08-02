@@ -756,3 +756,49 @@ Windows/Linux empty-state case).
 
 Driven by `uat_xct_073_checkboxTogglesPathsAndCopyMatchesVisibleText`.
 G2 evidence: `feedback-dialog-full-paths-checked.png`.
+
+### UAT-XCT-081 — "Feedback Report…" does not accumulate in the command surface
+
+**Context.** Owner dogfooding, 2026-08-02 (nightly `0.3.1-dev+768.gce56b4b8`,
+macOS Retina): the Trailer **application** menu showed **four** identical
+`Feedback Report…` items between `Settings…` and `Services`. The attached
+diagnostic report listed 2 open windows; 4 MainWindows had been constructed
+that session. The list grows over time and closing a window does not
+reliably remove its entry.
+
+Cause: the item was built with `QAction::ApplicationSpecificRole`. Every
+MainWindow builds its own menu bar, and on macOS that role moves the item
+out of the window's Help menu into the single **shared** application menu.
+Qt's Cocoa bridge merges the well-known roles (About / Preferences / Quit)
+into fixed application-menu slots — which is why those appear once — but
+`ApplicationSpecificRole` items are keyed on the per-`QAction`
+`QCocoaMenuItem` pointer and appended one per window.
+
+**Preconditions:** None.
+**Steps:**
+1. Open four windows (`File > New Window` / open four files).
+2. Close two of them.
+3. Inspect the command surface: on macOS the application menu and the
+   Help menu; on Windows/Linux the in-window Help menu.
+**Expected:**
+- Exactly **one** `Feedback Report…` item is reachable — it lives in the
+  **Help** menu on all three platforms (`docs/platform-conventions.md` §2),
+  and nothing is promoted into the shared macOS application menu.
+- Checkable invariant: across every live window, the count of `QAction`s
+  whose `menuRole()` is `ApplicationSpecificRole` is **0**, and each
+  window's Help menu holds exactly one `action.help.feedbackReport`.
+- The item stays enabled in every state (UAT-XCT-071 is unchanged).
+
+Driven by `uat_xct_081_feedbackItemDoesNotAccumulateAcrossWindows`, plus
+`tests/test_menu_placement.cpp` at unit level.
+G2 evidence: `docs/uat/images/2026-08-02-help-menu-feedback-linux.png` —
+byte-identical before and after the fix, which is the point: `menuRole()`
+is macOS-only, so the Windows/Linux command surface is untouched.
+
+**Known coverage limit (stated, not papered over).** `QAction::menuRole()`
+does nothing off macOS, and the offscreen harness cannot render a native
+Cocoa menu bar, so no test here observes the *merged application menu*
+itself. What is asserted is the structural precondition the Cocoa bridge
+reacts to: with zero `ApplicationSpecificRole` actions in the tree, the
+bridge has nothing to append, so the duplication cannot occur. Confirming
+the rendered macOS menu remains an owner/real-Mac check.

@@ -23,6 +23,50 @@ Three recurring sources feed this file:
   [`docs/audit-2026-05-19.md`](docs/audit-2026-05-19.md) for the
   current snapshot.
 
+## 2026-08-02 owner dogfooding report (nightly `0.3.1-dev+768.gce56b4b8`, macOS Retina)
+
+Two findings from live use on macOS, both fixed in one PR
+(`claude/dogfood-menu-dup-and-paste-dpr`). Recorded here because the
+*diagnosis* is worth keeping even though the items themselves are closed.
+
+1. **"Feedback Report…" accumulated in the macOS application menu.** Four
+   identical items stacked between `Settings…` and `Services`; the attached
+   diagnostic report showed 2 open windows, and 4 MainWindows had been
+   constructed that session. Cause: the item carried
+   `QAction::ApplicationSpecificRole`. Every MainWindow builds its own menu
+   bar; on macOS that role relocates the item into the single **shared**
+   application menu, and unlike `AboutRole` / `PreferencesRole` / `QuitRole`
+   (which the Cocoa bridge merges into fixed slots — hence About and
+   Settings appearing exactly once) `ApplicationSpecificRole` items are
+   keyed on the per-`QAction` `QCocoaMenuItem` pointer and appended one per
+   window. Closing the window does not reliably remove its copy.
+   Fix: the item stays in the **Help** menu on all three platforms, which is
+   what `docs/platform-conventions.md` §2 already prescribed — the role was
+   a deviation from the documented convention, not just a Qt trap. General
+   rule now written down and pinned: **no per-window `QAction` may carry
+   `ApplicationSpecificRole`** (`tests/test_menu_placement.cpp`,
+   UAT-XCT-081).
+
+2. **A pasted macOS window screenshot opened 2x too large, and could not be
+   corrected crisply.** Reported 100% zoom, drew at twice the size of the
+   window it captured; ⌘− a few times landed on **51%**, i.e. resampled and
+   blurry, because 50% is not on the ×1.25 ladder. Two separable defects:
+   - the dpr recovery in `Application::newFromClipboard()` only matched a
+     **whole-screen** grab, so a window/region capture fell through to
+     dpr 1;
+   - the zoom ladder had no fixed stops at all, so neither the pixel-exact
+     factor *nor 100% itself* was reachable once you had left it.
+   Fix and, importantly, its **limits**: see
+   `docs/decision-records/2026-08-02-pasted-capture-scale-and-pixel-exact-zoom-stop.md`.
+   Trailer now reads the scale the source *declares* (the macOS pasteboard's
+   own bitmap resolution — the same fact Preview uses) and refuses to guess
+   when nothing declares one. On Windows and Linux nothing trustworthy is
+   available through Qt, so a HiDPI window screenshot pasted there still
+   opens at dpr 1; the pixel-exact zoom stop is the one-keystroke remedy.
+   Two follow-ups are tracked in `docs/backlog/`:
+   `2026-08-02-macos-paste-scale-realhw-verify` and
+   `2026-08-02-image-pixmap-rebuild-on-screen-dpr-change`.
+
 ## 2026-05-20 HITL pass (post-#25, on `main`)
 
 Captured from a live walkthrough after PR #25 (Post-0.1.0 docs +

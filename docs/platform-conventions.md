@@ -93,6 +93,25 @@ one menu-construction site serving all three platforms rather than an
 App-menu special case for macOS alone. Revisit only if user testing shows
 Mac users don't find it there.
 
+**Feedback Report… placement, and the ApplicationSpecificRole rule
+(2026-08-02):** "Feedback Report…" likewise lives in the **Help** menu on
+all three platforms. No per-window `QAction` may carry
+`QAction::ApplicationSpecificRole`. On macOS that role moves the item out
+of the window's own menu and into the single shared *application* menu;
+Qt's Cocoa bridge merges the well-known roles (About / Preferences / Quit)
+into fixed slots, but appends each `ApplicationSpecificRole` item
+separately — it keys them on the per-`QAction` `QCocoaMenuItem` pointer, so
+every window that builds its own menus contributes another copy, and
+closing the window does not reliably remove it. Owner dogfooding on
+2026-08-02 (build `0.3.1-dev+768.gce56b4b8`) found **four** identical
+"Feedback Report…" items stacked between "Settings…" and "Services". The
+checkable rule: **across every live window, the count of actions whose
+`menuRole()` is `ApplicationSpecificRole` is zero**, and each window's Help
+menu holds exactly one `action.help.feedbackReport`. Pinned by
+`tests/test_menu_placement.cpp` and UAT-XCT-081. If a future feature really
+does need one app-wide item, it must be a single `QAction` owned by
+`Application` and installed once — not one per window.
+
 Checkable roll-up: on macOS the App/File/Edit/View/Window/Help menus exist
 in that order; on Windows/Linux the same File/Edit/View/Help groups exist in
 the in-window menu bar / header-bar menu, and no group present on one OS is
