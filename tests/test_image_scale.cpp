@@ -1428,6 +1428,18 @@ void TestImageScale::wholeScreenGrabStillRecoversItsScreenDpr() {
     QImage fullScreen1x(1920, 1080, QImage::Format_ARGB32_Premultiplied);
     fullScreen1x.fill(Qt::white);
     QCOMPARE(recoverCaptureDpr(fullScreen1x, /*declaredScale=*/0.0, screens), 1.0);
+
+    // Ambiguous: two attached screens share a device resolution at different
+    // scales, so a 1920x1080 paste could be either. Resolve downward — an
+    // ambiguous match must never shrink the image. (Enumeration order must
+    // not decide this, so assert both orderings.)
+    const QList<ScreenScale> ambiguous = {
+        ScreenScale{QSize(1920, 1080), 1.0}, // a 1080p monitor
+        ScreenScale{QSize(1920, 1080), 2.0}, // a 960x540-point 2x panel
+    };
+    QCOMPARE(recoverCaptureDpr(fullScreen1x, /*declaredScale=*/0.0, ambiguous), 1.0);
+    const QList<ScreenScale> ambiguousReversed = {ambiguous[1], ambiguous[0]};
+    QCOMPARE(recoverCaptureDpr(fullScreen1x, /*declaredScale=*/0.0, ambiguousReversed), 1.0);
 }
 
 // Custom main: construct the real Application (a QApplication subclass) so

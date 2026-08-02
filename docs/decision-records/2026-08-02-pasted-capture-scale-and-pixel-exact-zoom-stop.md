@@ -146,7 +146,10 @@ unresampled at that stop.
    in order: the image's own stamp when > 1; the scale the platform
    clipboard declares, **only when it equals a connected screen's
    devicePixelRatio**; an exact match between the raw pixel size and a
-   screen's full device resolution. Otherwise **1.0**. Concretely: a
+   screen's full device resolution (ties across screens resolving to the
+   **lowest** matching dpr, so an ambiguous match never shrinks the image
+   and the answer never depends on monitor enumeration order). Otherwise
+   **1.0**. Concretely: a
    2048x1330 image with a declared scale of 2.0 on a host with a 2x screen
    recovers 2.0; the same image with nothing declared recovers 1.0; a
    512x512 image with nothing declared recovers 1.0; a declared scale of

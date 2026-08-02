@@ -43,7 +43,9 @@ QList<ScreenScale> connectedScreenScales();
 //      4.167) matches no screen and is left alone; a screen capture's
 //      declared scale is by construction one of the attached screens'.
 //   3. The raw pixel size exactly equals a connected screen's device
-//      resolution — a whole-screen grab. Stamp that screen's dpr.
+//      resolution — a whole-screen grab. Stamp that screen's dpr; when more
+//      than one screen matches, the LOWEST such dpr, so an ambiguous match
+//      never shrinks the image.
 //   4. Otherwise 1.0.
 //
 // KNOWN LIMITS, stated rather than papered over:

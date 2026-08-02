@@ -19,7 +19,7 @@ namespace trailer {
 // blurry instead of sitting crisp at the exact 1:2 device mapping it needed.
 // 50% was unreachable.
 //
-// The fix is two detents the ladder snaps to when a step would cross them:
+// The fix is two detents the ladder snaps to:
 //
 //   * 1.0 — Actual Size. Always meaningful; without it you can leave 100%
 //     and never tap your way back to it exactly.
@@ -30,10 +30,11 @@ namespace trailer {
 //     it is the only crisp stop for an image whose dpr differs from its
 //     screen's.
 //
-// Snapping happens only when a step CROSSES a detent, so the ladder is
-// otherwise untouched: on the common case where the image and the screen
-// share a dpr, pixelExact == 1.0 and the behaviour is bit-identical to the
-// pure geometric ladder.
+// A detent captures a step only when it is the nearest rung to where that
+// step would land (see steppedZoomFactor below for the exact rule), so the
+// ladder is otherwise untouched: in the common case where the image and the
+// screen share a dpr, pixelExact == 1.0 and the behaviour is bit-identical
+// to the pure geometric ladder.
 
 // The logical zoom factor at which one image device pixel == one screen
 // device pixel.
@@ -100,8 +101,11 @@ inline double steppedZoomFactor(double current, bool zoomIn, double step, double
     bool haveOvershot = false;
     double overshot = plain;
     // Pass 2 — detents the plain step lands close to. Best (smallest) ratio
-    // wins, and only if it beats the half-step threshold.
-    double near = plain;
+    // wins, and only if it beats the half-step threshold. (Named
+    // `nearDetent`, not `near`: <windows.h> has historically #define'd bare
+    // `near` / `far` as empty macros, and this header is compiled in the
+    // Windows lanes.)
+    double nearDetent = plain;
     double bestRatio = halfStep;
 
     for (const double detent : detents) {
@@ -124,10 +128,10 @@ inline double steppedZoomFactor(double current, bool zoomIn, double step, double
         const double ratio = plain > detent ? plain / detent : detent / plain;
         if (ratio < bestRatio) {
             bestRatio = ratio;
-            near = detent;
+            nearDetent = detent;
         }
     }
-    return haveOvershot ? overshot : near;
+    return haveOvershot ? overshot : nearDetent;
 }
 
 } // namespace trailer

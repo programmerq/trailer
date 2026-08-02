@@ -61,12 +61,26 @@ double recoverCaptureDpr(const QImage &image, double declaredScale,
     // resolution. Kept from the original heuristic; it is exact, not a
     // guess, but it only ever matched full-screen captures, which is the
     // gap rule 2 exists to close.
+    //
+    // Ties resolve DOWNWARD, to the lowest dpr among matching screens. Two
+    // attached screens can share a device resolution at different scales (a
+    // 1920x1080 1x monitor next to a 960x540-point 2x panel), and then a
+    // 1920x1080 paste is genuinely ambiguous. Picking the lower dpr means an
+    // ambiguous match never shrinks the image — the same "when in doubt,
+    // don't scale" stance as rule 4. (The pre-2026-08-02 code took whichever
+    // screen QGuiApplication happened to list first, which made the answer
+    // depend on monitor enumeration order.)
     const QSize raw = image.size();
     if (!raw.isEmpty()) {
+        double best = 0.0;
         for (const ScreenScale &s : screens) {
-            if (raw == s.deviceResolution && s.dpr > 1.0)
-                return s.dpr;
+            if (raw != s.deviceResolution || !(s.dpr > 0.0))
+                continue;
+            if (best == 0.0 || s.dpr < best)
+                best = s.dpr;
         }
+        if (best > 1.0)
+            return best;
     }
 
     // Rule 4 — nothing declared a scale. Say so, rather than inventing one:
