@@ -225,6 +225,7 @@ set(TRAILER_SOURCES
     src/document/PdfCommands.h
     src/document/RecoveryStore.cpp
     src/document/RecoveryStore.h
+    src/document/ZoomStops.h
     src/document/OcrDiskCache.cpp
     src/document/OcrDiskCache.h
     src/document/PdfEditor.cpp
@@ -342,6 +343,8 @@ set(TRAILER_SOURCES
     src/update/UpdatePublicKey.h
     src/update/UpdateTypes.cpp
     src/update/UpdateTypes.h
+    src/util/CaptureScale.cpp
+    src/util/CaptureScale.h
     src/util/TempPath.h
     src/platform/Share.h
     src/platform/QuitMenu.h
@@ -444,6 +447,19 @@ else()
     list(APPEND TRAILER_SOURCES src/platform/ReducedMotion_stub.cpp)
 endif()
 list(APPEND TRAILER_SOURCES src/platform/ReducedMotion.cpp src/platform/ReducedMotion.h)
+
+# Per-platform "what scale does the clipboard declare for its image?" query,
+# used to open a pasted HiDPI screen capture at its true size (see
+# src/util/CaptureScale.h). macOS reads NSPasteboard's bitmap representation;
+# everything else links the stub that honestly reports "nothing declared".
+if(APPLE)
+    list(APPEND TRAILER_SOURCES src/platform/ClipboardScale.mm)
+    set_source_files_properties(src/platform/ClipboardScale.mm PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc")
+else()
+    list(APPEND TRAILER_SOURCES src/platform/ClipboardScale_stub.cpp)
+endif()
+list(APPEND TRAILER_SOURCES src/platform/ClipboardScale.h)
 
 # Per-platform Dock-icon "recents while not running" shim. macOS uses
 # Objective-C++ to register opened documents with NSDocumentController so

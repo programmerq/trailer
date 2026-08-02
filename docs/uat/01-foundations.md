@@ -523,6 +523,50 @@ with one window and one open document.
 - The action is disabled for documents that can't render a page raster
   (e.g. the stub adapter).
 
+### UAT-FND-071 — A pasted HiDPI screen capture opens at its true size
+
+**Context.** Owner dogfooding, 2026-08-02 (nightly
+`0.3.1-dev+768.gce56b4b8`, macOS Retina): a macOS **window** screenshot
+pasted with `File > New from Clipboard` opened at a reported **100%** zoom
+but drew **2x too large**. The dpr recovery only matched a **whole-screen**
+grab (raw pixels == a screen's full device resolution), so a window- or
+region-sized capture fell through to dpr 1 and "Actual Size" mapped one
+image pixel to one logical point.
+
+Rationale and limits:
+`docs/decision-records/2026-08-02-pasted-capture-scale-and-pixel-exact-zoom-stop.md`;
+policy: `src/util/CaptureScale.h`.
+
+**Preconditions:** A HiDPI (2x) screen.
+**Steps:**
+1. Capture a *window* to the clipboard with the OS screenshot tool.
+2. `File > New from Clipboard`.
+3. Separately: copy an ordinary non-capture image (a logo, a diagram) and
+   repeat step 2.
+**Expected:**
+- The capture opens at Actual Size occupying `W/2 x H/2` **logical
+  points** for a `W x H` device-pixel capture — i.e. the same on-screen
+  size as the window it captured — and renders crisp (1 image pixel per
+  screen device pixel).
+- The ordinary pasted image is **not** shrunk: with nothing declaring a
+  scale it opens at its natural logical size, unchanged. (A blanket
+  "stamp the screen's dpr on every paste" was tried and reverted for
+  exactly this reason.)
+- A whole-screen grab keeps working as before.
+
+Driven at policy level by the `recoverCaptureDpr` cases in
+`tests/test_image_scale.cpp`.
+
+**Known coverage limit (stated, not papered over).** The scale a capture
+declares is read from the OS pasteboard
+(`src/platform/ClipboardScale.h`), which only macOS answers today —
+Windows and Linux expose nothing trustworthy through Qt, so a HiDPI
+**window** screenshot pasted there still opens at dpr 1. The remedy on
+those platforms is UAT-VWR-110's pixel-exact zoom stop, one keystroke
+away and rendered unresampled. Neither the macOS pasteboard read nor the
+Retina render is exercisable from the offscreen Linux/Windows harness;
+both need a real-Mac check.
+
 ---
 
 ## macOS Finder integration (Platform: macOS)

@@ -14,14 +14,17 @@
 
 #include "app/Application.h"
 #include "document/IDocument.h"
+#include "document/ImageAdapter.h"
 #include "platform/ReducedMotion.h"
 #include "ui/DocumentView.h"
 #include "ui/MainWindow.h"
 
 #include <QAction>
+#include <QDir>
 #include <QElapsedTimer>
 #include <QImage>
 #include <QLabel>
+#include <QPixmap>
 #include <QPointer>
 #include <QScopeGuard>
 #include <QSettings>
@@ -95,8 +98,13 @@ class TestUatZoomIndicator : public QObject {
     void uat_zoom_ind_050_docOpenAndSwitchStaySilent();            // UAT-VWR-104
     void uat_zoom_ind_060_reduceMotionSkipsFade();                 // UAT-VWR-105
     void uat_zoom_ind_070_togglingReadoutDoesNotShiftSiblingWidgets(); // UAT-VWR-106 (G10)
+    void uat_zoom_ind_080_ladderStopsAtThePixelExactFactor();          // UAT-VWR-110
+    void uat_zoom_ind_090_pixelExactEvidenceShots();                   // G2 evidence
 
   private:
+    // Open `path`, then swap the document's pixels for a synthetic capture
+    // stamped `dpr`, and settle at Actual Size. Returns the document.
+    ImageDocument *openAsCapture(MainWindow *mw, const QString &path, qreal dpr);
     QTemporaryDir m_scratch;
 };
 
@@ -428,6 +436,124 @@ void TestUatZoomIndicator::uat_zoom_ind_070_togglingReadoutDoesNotShiftSiblingWi
     QVERIFY2(pumpUntil([&] { return !indicator->isVisible(); }, 2000),
              "sanity: the readout actually faded back out");
     QCOMPARE(sibling->pos(), posBeforeReveal);
+}
+
+ImageDocument *TestUatZoomIndicator::openAsCapture(MainWindow *mw, const QString &path,
+                                                  qreal dpr) {
+    auto *app = qobject_cast<Application *>(qApp);
+    if (!app)
+        return nullptr;
+    app->openFiles({path}, /*markUntitled=*/true);
+    QApplication::processEvents();
+    auto *dv = mw ? mw->findChild<DocumentView *>() : nullptr;
+    if (!dv)
+        return nullptr;
+    auto *doc = dynamic_cast<ImageDocument *>(dv->currentDocument());
+    if (!doc)
+        return nullptr;
+    // A synthetic screen capture: raw device pixels carrying the capture's
+    // dpr. Injected rather than round-tripped through a file because PNG
+    // does not carry Qt's devicePixelRatio (see tests/test_image_scale.cpp
+    // ::pngRoundTripStripsDprThenRecovers) — this harness is about the zoom
+    // ladder, not about the recovery.
+    QImage capture(1200, 800, QImage::Format_ARGB32);
+    capture.fill(qRgb(214, 222, 232));
+    capture.setDevicePixelRatio(dpr);
+    doc->setImageForTest(capture, /*captureOrigin=*/true);
+    doc->zoomActual();
+    QApplication::processEvents();
+    return doc;
+}
+
+// UAT-VWR-110 (docs/uat/02-viewer.md) — the zoom ladder carries a stop at
+// the pixel-exact factor for the image on the screen showing it.
+//
+// Owner dogfooding, 2026-08-02: a pasted 2x capture that opened too large
+// could not be corrected crisply, because tapping zoom-out from 100% walks
+// 80% -> 64% -> 51% and never passes through the exact 1:2 mapping.
+//
+// The offscreen harness runs at dpr 1, so this drives the mirror case that
+// IS reachable here: a dpr-2 capture on a dpr-1 screen is pixel-exact at
+// 200%, and the third zoom-in tap must land there exactly (the pure
+// geometric ladder would report 195%).
+void TestUatZoomIndicator::uat_zoom_ind_080_ladderStopsAtThePixelExactFactor() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureFreshWindow();
+    QVERIFY(mw);
+    mw->resize(900, 640);
+    mw->show();
+    QApplication::processEvents();
+
+    ImageDocument *doc =
+        openAsCapture(mw, writeStaticImage(m_scratch.filePath(QStringLiteral("pxexact.png"))),
+                      /*dpr=*/2.0);
+    QVERIFY(doc);
+    QCOMPARE(qreal(mw->devicePixelRatioF()), qreal(1.0)); // harness precondition
+
+    QLabel *indicator = zoomIndicator(mw);
+    QVERIFY(indicator);
+    QAction *zoomIn = actionByText(mw, QStringLiteral("Zoom &In"));
+    QVERIFY(zoomIn);
+
+    zoomIn->trigger();
+    QApplication::processEvents();
+    QCOMPARE(indicator->text(), QStringLiteral("125%"));
+    zoomIn->trigger();
+    QApplication::processEvents();
+    QCOMPARE(indicator->text(), QStringLiteral("156%"));
+    zoomIn->trigger();
+    QApplication::processEvents();
+    // The defect: pre-fix this read "195%" and the image was resampled.
+    QCOMPARE(indicator->text(), QStringLiteral("200%"));
+    QVERIFY(std::abs(doc->zoomFactor() - 2.0) < 1e-9);
+
+    // ...and at that stop the source pixels are handed through with no
+    // resample, which is what "crisp" means here.
+    const QPixmap pm = doc->labelPixmapForTest();
+    QVERIFY(!pm.isNull());
+    QCOMPARE(pm.size(), QSize(1200, 800));
+    QCOMPARE(pm.devicePixelRatio(), qreal(1.0));
+
+    mw->close();
+    QApplication::processEvents();
+}
+
+// Curated G2 evidence (only when TRAILER_ZOOM_EVIDENCE_DIR is set): the
+// same window, same document, same three zoom-in taps. Run against pre-fix
+// and post-fix builds to produce the before/after pair.
+void TestUatZoomIndicator::uat_zoom_ind_090_pixelExactEvidenceShots() {
+    const QByteArray dirEnv = qgetenv("TRAILER_ZOOM_EVIDENCE_DIR");
+    if (dirEnv.isEmpty())
+        QSKIP("TRAILER_ZOOM_EVIDENCE_DIR not set; skipping evidence capture");
+    const QString dir = QString::fromLocal8Bit(dirEnv);
+    QDir().mkpath(dir);
+
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    MainWindow *mw = app->ensureFreshWindow();
+    QVERIFY(mw);
+    mw->resize(900, 640);
+    mw->show();
+    QApplication::processEvents();
+
+    ImageDocument *doc =
+        openAsCapture(mw, writeStaticImage(m_scratch.filePath(QStringLiteral("evidence.png"))),
+                      /*dpr=*/2.0);
+    QVERIFY(doc);
+
+    QAction *zoomIn = actionByText(mw, QStringLiteral("Zoom &In"));
+    QVERIFY(zoomIn);
+    for (int i = 0; i < 3; ++i) {
+        zoomIn->trigger();
+        QApplication::processEvents();
+    }
+    // The readout is transient; the third trigger just revealed it, so grab
+    // before the fade timer runs.
+    QVERIFY(mw->grab().save(dir + "/zoom-ladder-third-zoom-in-tap.png"));
+
+    mw->close();
+    QApplication::processEvents();
 }
 
 // Custom main: sandbox HOME before Application is constructed so

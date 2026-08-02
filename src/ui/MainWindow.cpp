@@ -1210,8 +1210,33 @@ void MainWindow::buildMenus() {
     // to header + platform info rather than needing anything to be
     // "ready" first (G3 — no lying controls; there's nothing here that
     // can be unavailable).
+    //
+    // Placement: the Help menu on all three platforms, exactly like the
+    // "Check for Updates…" item above it — see docs/platform-conventions.md
+    // §2 (Help row) and its "Check for Updates… placement" note.
+    //
+    // Do NOT give this (or any other per-window action) a
+    // QAction::ApplicationSpecificRole. On macOS that role relocates the
+    // item out of this window's Help menu and into the single, shared
+    // application menu, and Qt's Cocoa bridge dedupes the *merged* roles
+    // (About / Preferences / Quit) into fixed slots but appends every
+    // ApplicationSpecificRole item separately — QCocoaMenuLoader keys them
+    // on the per-QAction QCocoaMenuItem pointer, so each MainWindow
+    // contributes its own copy and closing the window does not reliably
+    // remove it. The owner's 2026-08-02 dogfooding report showed FOUR
+    // "Feedback Report…" items stacked in the application menu after four
+    // windows had been constructed in one session. Pinned by
+    // tests/test_menu_placement.cpp.
     auto *feedbackAction = helpMenu->addAction(tr("&Feedback Report…"));
-    feedbackAction->setMenuRole(QAction::ApplicationSpecificRole);
+    feedbackAction->setObjectName(QStringLiteral("action.help.feedbackReport"));
+    // NoRole, not merely "leave the default". Qt's default is
+    // TextHeuristicRole, which asks the Cocoa bridge to guess from the
+    // item's TRANSLATED text whether it is really About / Preferences /
+    // Quit and relocate it if so. Today's English title matches none of
+    // those keywords, but a future localisation could, and the failure
+    // would be a silently relocated menu item on one language only. NoRole
+    // states the intent: this belongs to the Help menu on every platform.
+    feedbackAction->setMenuRole(QAction::NoRole);
     connect(feedbackAction, &QAction::triggered, this,
             [this]() { showFeedbackReportDialog(this, m_app); });
 

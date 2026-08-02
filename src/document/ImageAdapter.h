@@ -304,6 +304,25 @@ class ImageDocument : public IDocument {
         const qreal d = m_image.devicePixelRatio();
         return d > 0.0 ? d : 1.0;
     }
+    // The devicePixelRatio of the screen this document's view is on, read
+    // live from the widget so it follows the window across a mixed-DPI
+    // multi-monitor setup rather than freezing whatever the primary screen
+    // was at open time. Needed wherever "one image pixel per screen device
+    // pixel" is the question: the pixel-exact zoom stop (ZoomStops.h) and
+    // the unresampled pass-through in buildDisplayPixmap. Falls back to 1.0
+    // before a view exists.
+    //
+    // Known gap: the built pixmap is NOT rebuilt when the window is dragged
+    // to a screen with a different dpr, so the pixel-exact stop is recomputed
+    // on the next zoom action rather than immediately. Fixing that needs a
+    // QEvent::DevicePixelRatioChange handler on the label; out of scope here
+    // and noted rather than silently skipped.
+    qreal viewDevicePixelRatio() const;
+    // One tap of zoom in / zoom out: the geometric step, snapped to the
+    // zoom-ladder detents in ZoomStops.h (Actual Size, and the pixel-exact
+    // factor for this image on this screen). Const — it computes the next
+    // factor; applyScale() is what commits it.
+    double steppedZoom(bool zoomIn) const;
     // True once the file is known to be a decodable still image — from the
     // header read at open, before the async full decode lands, and after a
     // SUCCESSFUL decode. Keyed to available-OR-in-flight so a still image's
