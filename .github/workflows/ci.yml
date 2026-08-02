@@ -75,6 +75,15 @@ jobs:
       - uses: actions/checkout@v7
       - name: Run version-gating regression tests
         run: bash scripts/test-version-gating.sh
+      - name: Run UAT-ratchet regression tests
+        # scripts/compare-uat-baseline.sh decides whether a nightly's UAT
+        # result reds the run. It originally shipped with its fixture
+        # matrix recorded only in a PR body, and the rule then drifted
+        # into calling an added-but-failing test a REGRESSION (see that
+        # script's header). The matrix is committed now and runs here,
+        # for the same reason version gating does: bash + coreutils only,
+        # so it can gate every PR without touching the build path.
+        run: bash scripts/test-compare-uat-baseline.sh
 
   build-and-test:
     name: Linux build + unit tests

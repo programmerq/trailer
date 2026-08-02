@@ -103,15 +103,25 @@
 #     what actually shipped that night). A release asset is atomic with the
 #     artifacts it describes and trivially fetched by tag.
 #   - "Worse" axis (scripts/compare-uat-baseline.sh — a standalone,
-#     directly-executable script, unit-tested against a fixture matrix; see
-#     its header comment and the implementing PR for the full rationale and
-#     verification output): crash state is checked first and dominates —
-#     a newly-crashing lane is always worse regardless of counts, a newly-
-#     clean lane always better. When crash state is unchanged, pass counts
-#     are compared as a RATIO (integer cross-multiplication, no float
-#     epsilon), not a raw passed-count delta — a raw-count comparison
-#     misbehaves once the suite grows (21/40 → 22/45 is more passing tests
-#     but a lower ratio, and is correctly not read as an improvement).
+#     directly-executable script whose fixture matrix is committed as
+#     scripts/test-compare-uat-baseline.sh and runs in ci.yml; see its
+#     header comment for the full rationale): crash state is checked first
+#     and dominates — a newly-crashing lane is always worse regardless of
+#     counts, a newly-clean lane always better. When crash state is
+#     unchanged, the ABSOLUTE PASSED COUNT is compared: fewer tests
+#     passing than last night is worse, more is better, equal is
+#     unchanged. The suite TOTAL is reported beside the verdict as a note
+#     ("+1 test added") but never affects it.
+#     This replaced a pass-RATIO comparison on 2026-08-02. The ratio axis
+#     reds a run as REGRESSED when a FAILING TEST IS ADDED and nothing
+#     actually regressed — which is precisely this repo's documented
+#     workflow (AGENTS.md "CI cadence": every confirmed defect lands as a
+#     regression guard, written red, before the fix). It produced a false
+#     REGRESSED on nightly-20260801's macOS lane (40/41 → 40/42, pass
+#     count flat). Absolute-count comparison has a narrower residual
+#     blind spot — a regression masked by a new passing test the same
+#     night — tracked in
+#     docs/backlog/2026-08-02-uat-ratchet-per-test-identity.md.
 #   - Degrade gracefully, always: no previous release, no asset on it, an
 #     asset that fails to parse, or a previous night where the lane itself
 #     wasn't green — all collapse to `no_baseline`, which is never `worse`.
@@ -906,7 +916,8 @@ jobs:
           echo "wine-reason=$REASON_CODE"        >> "$GITHUB_OUTPUT"
           echo "wine-prev-passed=$PREV_PASSED"   >> "$GITHUB_OUTPUT"
           echo "wine-prev-total=$PREV_TOTAL"     >> "$GITHUB_OUTPUT"
-          echo "Wine UAT verdict vs previous nightly: $VERDICT ($REASON_CODE)"
+          echo "wine-suite-delta=$SUITE_DELTA"   >> "$GITHUB_OUTPUT"
+          echo "Wine UAT verdict vs previous nightly: $VERDICT ($REASON_CODE), suite delta ${SUITE_DELTA:-n/a}"
 
           eval "$(bash scripts/compare-uat-baseline.sh macos_uat "$PREV_FILE" \
             "${{ needs.nightly-macos.result }}" \
@@ -917,7 +928,8 @@ jobs:
           echo "macos-reason=$REASON_CODE"       >> "$GITHUB_OUTPUT"
           echo "macos-prev-passed=$PREV_PASSED"  >> "$GITHUB_OUTPUT"
           echo "macos-prev-total=$PREV_TOTAL"    >> "$GITHUB_OUTPUT"
-          echo "macOS UAT verdict vs previous nightly: $VERDICT ($REASON_CODE)"
+          echo "macos-suite-delta=$SUITE_DELTA"  >> "$GITHUB_OUTPUT"
+          echo "macOS UAT verdict vs previous nightly: $VERDICT ($REASON_CODE), suite delta ${SUITE_DELTA:-n/a}"
 
       - name: Build since-last-nightly summary
         id: changelog
@@ -1019,23 +1031,47 @@ jobs:
           # below — e.g. "unchanged vs nightly-20260728" / "REGRESSED from
           # 40/40 (nightly-20260728)". Keeps the release body the readable
           # record of what the ratchet decided, not just the raw counts.
+          #
+          # A changed suite SIZE is appended as its own parenthetical note
+          # rather than folded into the verdict. The verdict compares
+          # absolute passed counts only, so "unchanged" on a night that
+          # added three failing regression guards is correct but reads as
+          # surprising without the "+3 tests added" note beside it — the
+          # note is what makes a flat pass count self-explaining, and it
+          # never gates.
+          render_suite_delta() {
+            local delta="$1" n word
+            case "$delta" in
+              ""|0) echo ""; return ;;
+              -*)   n="${delta#-}" ;;
+              *)    n="$delta" ;;
+            esac
+            if [ "$n" = "1" ]; then word="test"; else word="tests"; fi
+            case "$delta" in
+              -*) echo " ($n $word removed from the suite)" ;;
+              *)  echo " (+$n $word added to the suite)" ;;
+            esac
+          }
+
           render_compare() {
-            local verdict="$1" prev_passed="$2" prev_total="$3"
+            local verdict="$1" prev_passed="$2" prev_total="$3" suite_delta="${4:-}"
+            local note
+            note="$(render_suite_delta "$suite_delta")"
             case "$verdict" in
               worse)
                 if [ -n "$prev_total" ]; then
-                  echo "REGRESSED from $prev_passed/$prev_total ($PREV_TAG)"
+                  echo "REGRESSED from $prev_passed/$prev_total ($PREV_TAG)$note"
                 else
-                  echo "REGRESSED vs $PREV_TAG"
+                  echo "REGRESSED vs $PREV_TAG$note"
                 fi ;;
               better)
                 if [ -n "$prev_total" ]; then
-                  echo "IMPROVED from $prev_passed/$prev_total ($PREV_TAG)"
+                  echo "IMPROVED from $prev_passed/$prev_total ($PREV_TAG)$note"
                 else
-                  echo "IMPROVED vs $PREV_TAG"
+                  echo "IMPROVED vs $PREV_TAG$note"
                 fi ;;
               same)
-                echo "unchanged vs $PREV_TAG" ;;
+                echo "unchanged vs $PREV_TAG$note" ;;
               no_baseline)
                 if [ -n "$PREV_TAG" ]; then
                   echo "no baseline to compare (first ratcheted run, or $PREV_TAG has none)"
@@ -1062,7 +1098,8 @@ jobs:
             WIN_PASSED="${{ needs.nightly-windows.outputs.wine-uat-passed }}"
             WIN_TOTAL="${{ needs.nightly-windows.outputs.wine-uat-total }}"
             WIN_COMPARE="$(render_compare "${{ steps.uat_compare.outputs.wine-verdict }}" \
-              "${{ steps.uat_compare.outputs.wine-prev-passed }}" "${{ steps.uat_compare.outputs.wine-prev-total }}")"
+              "${{ steps.uat_compare.outputs.wine-prev-passed }}" "${{ steps.uat_compare.outputs.wine-prev-total }}" \
+              "${{ steps.uat_compare.outputs.wine-suite-delta }}")"
             if [ -n "$WIN_TOTAL" ] && [ "$WIN_PASSED" = "$WIN_TOTAL" ]; then
               WIN_ROW="✅ build+unit+UAT (Wine UAT $WIN_PASSED/$WIN_TOTAL) — $WIN_COMPARE"
             elif [ -n "$WIN_TOTAL" ]; then
@@ -1088,7 +1125,8 @@ jobs:
             MAC_TOTAL="${{ needs.nightly-macos.outputs.macos-uat-total }}"
             MAC_CRASHED="${{ needs.nightly-macos.outputs.macos-uat-crashed }}"
             MAC_COMPARE="$(render_compare "${{ steps.uat_compare.outputs.macos-verdict }}" \
-              "${{ steps.uat_compare.outputs.macos-prev-passed }}" "${{ steps.uat_compare.outputs.macos-prev-total }}")"
+              "${{ steps.uat_compare.outputs.macos-prev-passed }}" "${{ steps.uat_compare.outputs.macos-prev-total }}" \
+              "${{ steps.uat_compare.outputs.macos-suite-delta }}")"
             if [ "$MAC_CRASHED" = "true" ]; then
               if [ -n "$MAC_TOTAL" ]; then
                 MAC_ROW="✅ build+unit, 🔥 macOS UAT CRASHED ($MAC_PASSED/$MAC_TOTAL) — $MAC_COMPARE — informational, non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"

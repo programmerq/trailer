@@ -28,14 +28,41 @@
 #      regardless of pass counts (a crash is categorically more serious
 #      than an ordinary assertion failure -- see nightly-macos's "UAT
 #      suite" step). Symmetrically, a crash clearing is always better.
-#   2. When crash state is UNCHANGED (both crashed or both clean), pass
-#      counts are compared as a RATIO, not a raw passed-count delta, via
-#      integer cross-multiplication (no float epsilon): curr.passed *
-#      prev.total  vs  prev.passed * curr.total. Raw-count comparison
-#      misbehaves when the suite grows -- 21/40 -> 22/45 is MORE tests
-#      passing but a LOWER ratio (0.525 -> 0.489) -- so ratio is the
-#      axis, and that specific case is correctly NOT treated as an
-#      improvement (see the scenario matrix in the PR body).
+#   2. When crash state is UNCHANGED (both crashed or both clean), the
+#      ABSOLUTE PASSED COUNT is compared: curr.passed vs prev.passed.
+#      Fewer tests passing than last night is `worse`; more is `better`;
+#      equal is `same`. The suite's TOTAL is reported separately (see
+#      SUITE_DELTA below) and never affects the verdict.
+#
+#      This replaced a pass-RATIO comparison (integer cross-
+#      multiplication of curr.passed*prev.total vs prev.passed*
+#      curr.total) on 2026-08-02. The ratio axis was chosen to stop a
+#      grown suite from reading as an improvement, but it has the
+#      opposite and much more damaging failure mode: ADDING a test that
+#      fails, while every existing test still passes, LOWERS the ratio
+#      and reds the run as REGRESSED even though nothing regressed.
+#      Observed twice on real nightlies:
+#
+#        nightly-20260801  macOS  40/41 -> 40/42  ratio says REGRESSED,
+#                          passed count FLAT -- a pure false positive.
+#        nightly-20260802  macOS  40/42 -> 41/43  ratio says IMPROVED,
+#                          but only because passed happened to rise too;
+#                          the cross-products differ by 2 (1722 vs 1720).
+#
+#      That false positive is not an edge case here -- it is this
+#      repo's normal growth pattern. AGENTS.md ("CI cadence") requires
+#      every confirmed defect to land as a regression guard in the `uat`
+#      suite, and such a guard is written RED, before the fix. Under the
+#      ratio rule, following the documented process reds the nightly.
+#
+#      Known residual blind spot, accepted for now: because only counts
+#      (not per-test identity) are carried in the baseline, a test that
+#      regressed can be masked by a different, newly-added test that
+#      passes on the same night (40/41 -> 41/43 could be +2 new passes
+#      and 1 regression). Closing that needs the summary to carry the
+#      per-test name->status map and a set comparison; it is a schema
+#      change, not a tweak to this rule. Tracked in
+#      docs/backlog/2026-08-02-uat-ratchet-per-test-identity.md.
 #
 # DEGRADE GRACEFULLY (never a false regression): no previous summary file,
 # a file that fails to parse, a file missing this lane's key, or a
@@ -76,6 +103,12 @@
 #   PREV_PASSED=<n-or-empty>
 #   PREV_TOTAL=<n-or-empty>
 #   PREV_CRASHED=true|false|<empty>
+#   SUITE_DELTA=<signed-int-or-empty>   curr.total - prev.total. Purely
+#                             informational -- the caller renders it as a
+#                             note next to the verdict ("+1 test added")
+#                             so a changed suite size is visible rather
+#                             than silently folded into the counts. It is
+#                             NOT part of the verdict and never gates.
 set -uo pipefail
 
 LANE="${1:-}"
@@ -103,12 +136,18 @@ json_field() {
     | tr -d '"'
 }
 
+# Set by the count-comparison branch below when both totals are known;
+# stays empty for every early-exit path (not applicable / no baseline /
+# counts unavailable), where "how much did the suite grow" has no answer.
+SUITE_DELTA=""
+
 emit() {
   echo "VERDICT=$1"
   echo "REASON_CODE=$2"
   echo "PREV_PASSED=$3"
   echo "PREV_TOTAL=$4"
   echo "PREV_CRASHED=$5"
+  echo "SUITE_DELTA=$SUITE_DELTA"
 }
 
 if [ "$CURR_RESULT" != "success" ]; then
@@ -155,20 +194,23 @@ if [ "$PREV_CRASHED" = "true" ] && [ "$CURR_CRASHED" != "true" ]; then
   exit 0
 fi
 
-# Crash state unchanged (both crashed, or both clean) -- compare pass
-# RATIO via integer cross-multiplication.
+# Crash state unchanged (both crashed, or both clean) -- compare the
+# ABSOLUTE passed count. See the "WHAT COUNTS AS WORSE" header above for
+# why this is not a ratio.
 if [ -z "$CURR_PASSED" ] || [ -z "$CURR_TOTAL" ] || [ -z "$PREV_PASSED" ] || [ -z "$PREV_TOTAL" ]; then
   emit "unknown" "count-unavailable" "$PREV_PASSED" "$PREV_TOTAL" "$PREV_CRASHED"
   exit 0
 fi
 
-CURR_SIDE=$((CURR_PASSED * PREV_TOTAL))
-PREV_SIDE=$((PREV_PASSED * CURR_TOTAL))
+# Informational only -- deliberately computed BEFORE the verdict so it is
+# reported on every comparable run, including the ones where the suite
+# size is exactly what explains a flat pass count.
+SUITE_DELTA=$((CURR_TOTAL - PREV_TOTAL))
 
-if [ "$CURR_SIDE" -lt "$PREV_SIDE" ]; then
-  emit "worse" "ratio-worse" "$PREV_PASSED" "$PREV_TOTAL" "$PREV_CRASHED"
-elif [ "$CURR_SIDE" -gt "$PREV_SIDE" ]; then
-  emit "better" "ratio-better" "$PREV_PASSED" "$PREV_TOTAL" "$PREV_CRASHED"
+if [ "$CURR_PASSED" -lt "$PREV_PASSED" ]; then
+  emit "worse" "passed-fewer" "$PREV_PASSED" "$PREV_TOTAL" "$PREV_CRASHED"
+elif [ "$CURR_PASSED" -gt "$PREV_PASSED" ]; then
+  emit "better" "passed-more" "$PREV_PASSED" "$PREV_TOTAL" "$PREV_CRASHED"
 else
-  emit "same" "ratio-same" "$PREV_PASSED" "$PREV_TOTAL" "$PREV_CRASHED"
+  emit "same" "passed-same" "$PREV_PASSED" "$PREV_TOTAL" "$PREV_CRASHED"
 fi
