@@ -1327,6 +1327,11 @@ void PdfDocument::applyInitialFitZoom(QPdfView *view) {
     view->setZoomMode(QPdfView::ZoomMode::FitInView);
 }
 
+void PdfDocument::triggerInitialZoomForTest() {
+    if (m_view)
+        applyInitialFitZoom(m_view);
+}
+
 ZoomMode PdfDocument::zoomMode() const {
     if (!m_view)
         return ZoomMode::Custom;
@@ -1362,6 +1367,24 @@ double PdfDocument::zoomFactor() const {
 void PdfDocument::applyZoomState(ZoomMode mode, double factor) {
     if (!m_view)
         return;
+    // A (Custom, <=0.0) pair is the RecentEntry / DocumentTypeDefault "not
+    // captured" sentinel (RecentEntry.h: "-1 / 0.0 sentinel values mean 'not
+    // yet captured' -- the open path leaves the document at its natural
+    // defaults in that case"), so it must apply nothing AND leave the
+    // initial fit undecided. Bail before touching m_initialZoomApplied.
+    // This mirrors ImageDocument::applyZoomState's identical guard and the
+    // 2026-07-26 bug behind it — claiming the one-shot for a sentinel
+    // strands the document at its raw constructor zoom forever. `!(factor >
+    // 0.0)` rather than `factor <= 0.0` so a NaN factor also bails.
+    if (mode == ZoomMode::Custom && !(factor > 0.0))
+        return;
+    // A restored (or user-chosen) zoom supersedes the first-open automatic
+    // fit. buildRealView() schedules applyInitialFitZoom() on the event
+    // loop, so without claiming the one-shot here that deferred fit fires
+    // AFTER a restore and silently replaces the zoom the user actually left
+    // the document at — and, because a fit-mode change re-lays-out the
+    // document, it also throws away the restored scroll position.
+    m_initialZoomApplied = true;
     switch (mode) {
     case ZoomMode::FitInView:
         m_view->setZoomMode(QPdfView::ZoomMode::FitInView);

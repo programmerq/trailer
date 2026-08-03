@@ -124,6 +124,8 @@ class TestAdapters : public QObject {
     void pdfDocumentAdvertisesCapabilities();
     void pdfDocumentRendersThumbnailsForValidFile();
     void pdfDocumentAcceptsSearchQueryWithoutView();
+    void pdfApplyZoomStateSentinelLeavesInitialFitUndecided();
+    void pdfApplyZoomStateRealZoomSupersedesInitialFit();
     void pdfDocumentPageHasTextDistinguishesTextFromBlankPage();
     void pdfDocumentNativeTextLayerFeedsSelectableStore();
     void pdfDocumentNativeTextDragSelectsRealString();
@@ -486,6 +488,81 @@ void TestAdapters::pdfDocumentRendersThumbnailsForValidFile() {
 
     const QImage oob = doc.renderThumbnail(5, QSize(128, 160));
     QVERIFY(oob.isNull());
+}
+
+// A (Custom, 0.0) pair is RecentEntry / DocumentTypeDefault's documented
+// "not captured" sentinel, so PdfDocument::applyZoomState() must apply
+// nothing AND leave applyInitialFitZoom()'s natural fit-to-content decision
+// still reachable. Sibling of test_image_scale's
+// applyZoomStateSentinelLeavesInitialFitUndecided — the same trap exists on
+// both adapters, and the PDF side acquired it when applyZoomState started
+// claiming the initial-fit one-shot (2026-08-03 quit-restore work). Without
+// the sentinel bail, an entry that captured a page but never a zoom
+// (hasViewState() true, zoomMode Custom, zoomFactor 0.0 — reachable from any
+// pre-existing recent.json) would strand the PDF at its raw constructor zoom
+// instead of Fit Page.
+void TestAdapters::pdfApplyZoomStateSentinelLeavesInitialFitUndecided() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("sentinel.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 800, 200), Qt::AlignCenter, "trailer");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    QWidget *view = doc.createView(nullptr);
+    QVERIFY(view != nullptr);
+    // A viewport smaller than an A4 page, so the natural fit decision is
+    // unambiguously FitInView rather than the "already fits at 100%" no-op.
+    view->resize(200, 200);
+
+    doc.applyZoomState(ZoomMode::Custom, 0.0);
+
+    // The sentinel must be a true no-op: the natural fit must still be
+    // reachable, not permanently pre-empted.
+    doc.triggerInitialZoomForTest();
+    QCOMPARE(doc.zoomMode(), ZoomMode::FitInView);
+
+    delete view;
+}
+
+// The converse: a REAL restored zoom must claim the one-shot, so the deferred
+// initial auto-fit cannot fire afterwards and silently replace it (and,
+// because a fit-mode change re-lays-out the document, discard the restored
+// scroll position with it). This is the guard the quit-restore fix depends on.
+void TestAdapters::pdfApplyZoomStateRealZoomSupersedesInitialFit() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QString path = dir.filePath("realzoom.pdf");
+    {
+        QPdfWriter writer(path);
+        writer.setPageSize(QPageSize(QPageSize::A4));
+        QPainter painter(&writer);
+        painter.drawText(QRect(100, 100, 800, 200), Qt::AlignCenter, "trailer");
+        painter.end();
+    }
+
+    PdfDocument doc(path);
+    QVERIFY(doc.isValid());
+    QWidget *view = doc.createView(nullptr);
+    QVERIFY(view != nullptr);
+    // Small viewport: applyInitialFitZoom() would pick FitInView here, so if
+    // it were still allowed to run it would visibly clobber the Custom zoom.
+    view->resize(200, 200);
+
+    doc.applyZoomState(ZoomMode::Custom, 1.75);
+    QCOMPARE(doc.zoomMode(), ZoomMode::Custom);
+
+    doc.triggerInitialZoomForTest();
+    QCOMPARE(doc.zoomMode(), ZoomMode::Custom);
+    QVERIFY(qFuzzyCompare(doc.zoomFactor(), 1.75));
+
+    delete view;
 }
 
 void TestAdapters::pdfDocumentAcceptsSearchQueryWithoutView() {

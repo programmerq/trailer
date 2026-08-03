@@ -201,6 +201,26 @@ constexpr int kSlotSafetyMargin = 20;
 int slotWidthFor(QWidget *content) {
     return content->sizeHint().width() + kSlotSafetyMargin;
 }
+
+// How many extra event-loop turns MainWindow re-asserts a restored scroll
+// position for (see scheduleScrollPositionRestore). Each layout pass that
+// resizes the document viewport makes a fit-mode PDF re-lay-out and drop
+// its scroll offset, so a position applied before the last pass is lost.
+//
+// Range tried: 0 (apply synchronously) never survives even our OWN
+// restoreGeometry(), which queues the resize rather than performing it
+// inline — that is the shape of the reported bug. 1 is sufficient
+// offscreen, but leaves a real window manager's own later geometry pass
+// unguarded, and that is precisely the platform (macOS) the bug was
+// reported from and the one we cannot test here. 3 converges immediately
+// in the common case (the re-assert is a no-op once the position holds)
+// and costs two idle turns at document-open time.
+//
+// Symptom to change it: a reopened document visibly flashes its saved page
+// and then snaps back to page 1 — raise it. A document that yanks itself
+// back to the saved page after the user has already started scrolling —
+// lower it.
+constexpr int kScrollRestoreSettleTurns = 3;
 }
 
 MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent), m_app(app) {
@@ -3896,6 +3916,47 @@ void MainWindow::finishBackgroundRemoval(bool cancelled, bool succeeded) {
     updateRemoveBackgroundBadge(m_documentView->currentDocument());
 }
 
+void MainWindow::scheduleScrollPositionRestore(IDocument *doc, int page, int scrollY,
+                                               int turnsLeft) {
+    if (!doc || (page < 0 && scrollY == 0))
+        return;
+    // `doc` is a raw pointer we hand to a queued lambda, so re-validate on
+    // arrival that this window still holds it (a tab closed in the meantime
+    // frees it). `this` as the connection context additionally cancels the
+    // whole chain if the window itself goes away.
+    QTimer::singleShot(0, this, [this, doc, page, scrollY, turnsLeft]() {
+        bool stillOpen = false;
+        const int total = m_documentView->documentCount();
+        for (int i = 0; i < total && !stillOpen; ++i) {
+            IDocument *candidate = nullptr;
+            if (m_documentView->documentAt(i, &candidate) && candidate == doc)
+                stillOpen = true;
+        }
+        if (!stillOpen)
+            return;
+
+        if (page >= 0 && doc->pageCount() > page)
+            doc->goToPage(page);
+        if (scrollY != 0) {
+            // goToPage() lands on the page's top; the saved scrollY refines
+            // that to the exact offset the user was reading at. It is an
+            // ABSOLUTE pixel value though, so it only means what it meant if
+            // the layout is unchanged — a different window size or zoom makes
+            // the same number land somewhere else entirely (in the reported
+            // case, 4514px pointed at page 12 of 12). If applying it would
+            // move us off the restored page, DROP it and keep the page top.
+            // A dropped stale refinement is a drop, not a substitution (G3):
+            // the user still gets the page they asked for.
+            const int pageTop = doc->scrollY();
+            doc->applyScrollY(scrollY);
+            if (page >= 0 && doc->currentPage() != page)
+                doc->applyScrollY(pageTop);
+        }
+        if (turnsLeft > 0)
+            scheduleScrollPositionRestore(doc, page, scrollY, turnsLeft - 1);
+    });
+}
+
 void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // One-shot fit-to-content window resize. Drives the first frame
     // when the user opens a single file from cold start; later doc
@@ -4289,19 +4350,22 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
         bool restoredPerFileState = false;
         if (!entry.path.isEmpty() && entry.hasViewState()) {
             restoredPerFileState = true;
-            if (entry.currentPage >= 0 && doc->pageCount() > entry.currentPage) {
-                doc->goToPage(entry.currentPage);
-            }
-            if (!isCaptureOriginImage)
-                doc->applyZoomState(entry.zoomMode, entry.zoomFactor);
-            if (entry.scrollY != 0) {
-                doc->applyScrollY(entry.scrollY);
-            }
+            // ORDER IS LOAD-BEARING. Everything below the chrome block
+            // changes the document view's VIEWPORT size, and a viewport
+            // resize makes a fit-mode PDF re-lay-out and drop whatever
+            // scroll offset was set before it. So: window geometry, dock
+            // layout, sidebar and markup toolbar FIRST (they decide how
+            // much room the document gets), then zoom (which decides how
+            // tall the document is), and only then the page + scroll
+            // position (which are expressed in that final layout).
+            // Restoring page-then-zoom, as this block used to, landed a
+            // 12-page PDF on page 12: goToPage() set a pixel offset that
+            // the following fit-zoom re-interpreted against a much shorter
+            // document. (2026-08-03 dogfooding report.)
             m_sidebar->setMode(static_cast<Sidebar::Mode>(static_cast<int>(entry.sidebarMode)));
-            // Apply window-level layout first — restoreState() walks
-            // every dock/toolbar this MainWindow owns and sets its
-            // visibility from the blob, so the explicit show()/hide()
-            // calls below need to land *after* it to win.
+            // restoreState() walks every dock/toolbar this MainWindow owns
+            // and sets its visibility from the blob, so the explicit
+            // show()/hide() calls below need to land *after* it to win.
             if (!entry.windowGeometry.isEmpty()) {
                 restoreGeometry(entry.windowGeometry);
             }
@@ -4317,6 +4381,12 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             } else {
                 m_markupToolbar->hide();
             }
+            if (!isCaptureOriginImage)
+                doc->applyZoomState(entry.zoomMode, entry.zoomFactor);
+            // Page + scroll last, and on a later event-loop turn — see
+            // scheduleScrollPositionRestore().
+            scheduleScrollPositionRestore(doc, entry.currentPage, entry.scrollY,
+                                          kScrollRestoreSettleTurns);
         } else if (doc->documentType() != DocumentType::Unknown) {
             // Per-type fallback: apply the last-closed defaults for
             // this document's type, if any.
@@ -5397,14 +5467,24 @@ QMenu *MainWindow::createPopupMenu() {
     return nullptr;
 }
 
-void MainWindow::closeEvent(QCloseEvent *event) {
-    // Capture view-state for every document this window holds so the
-    // user picks up where they left off on next reopen. We do this
-    // before the save-prompt below — even if the user discards
-    // unsaved annotations, the page they were looking at is worth
-    // remembering. Sidebar / markup-toolbar visibility, window
-    // geometry, and dock layout are per-window, so they get the same
-    // value for every doc in this frame.
+// Capture view-state for every document this window holds so the user
+// picks up where they left off on next reopen. Sidebar / markup-toolbar
+// visibility, window geometry, and dock layout are per-window, so they get
+// the same value for every doc in this frame.
+//
+// Two callers, covering two disjoint routes out of a session:
+//   * closeEvent — the user closed this window.
+//   * the quit path (Application::requestQuit / onAboutToQuit) — the user
+//     quit with windows still open, which never delivers closeEvent here.
+// See the header comment for the bug that produced the second caller.
+//
+// Multi-window quit note: each window overwrites the per-TYPE default
+// (last-of-type wins), so with several windows open the last one in
+// Application's window list seeds it. That slot is only a convenience
+// fallback for files Trailer has never seen, and any open document of that
+// type is a reasonable seed; the per-FILE state below — the part the user
+// actually notices — is exact for every document regardless of order.
+void MainWindow::captureViewStateForRestore() {
     const SidebarMode currentSidebar =
         m_sidebar && m_sidebar->isVisible()
             ? static_cast<SidebarMode>(static_cast<int>(m_sidebar->mode()))
@@ -5422,14 +5502,6 @@ void MainWindow::closeEvent(QCloseEvent *event) {
             continue;
         if (doc->filePath().isEmpty())
             continue;
-        // Clean docs need no recovery snapshot: drop any sidecar left over
-        // from an earlier dirty moment (e.g. edits auto-snapshotted, then
-        // undone back to clean, or already saved). Otherwise a stale sidecar
-        // newer than the source would falsely "recover" on next open. Dirty
-        // docs keep their sidecar until confirmCloseDirtyDoc resolves the
-        // close (Save or Discard both clear it there).
-        if (!doc->isDirty())
-            m_app->recoveryStore().clear(doc->filePath());
         RecentEntry state;
         state.currentPage = doc->currentPage();
         state.zoomFactor = doc->zoomFactor();
@@ -5484,6 +5556,35 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     if (lastCapturedType != DocumentType::Unknown) {
         m_app->documentTypeDefaults().setForType(lastCapturedType, typeSnapshot);
         m_app->documentTypeDefaults().save();
+    }
+}
+
+void MainWindow::closeEvent(QCloseEvent *event) {
+    // Remember where the user was in each document. Done before the
+    // save-prompt below — even if the user discards unsaved annotations,
+    // the page they were looking at is worth remembering.
+    captureViewStateForRestore();
+
+    // Clean docs need no recovery snapshot: drop any sidecar left over
+    // from an earlier dirty moment (e.g. edits auto-snapshotted, then
+    // undone back to clean, or already saved). Otherwise a stale sidecar
+    // newer than the source would falsely "recover" on next open. Dirty
+    // docs keep their sidecar until confirmCloseDirtyDoc resolves the
+    // close (Save or Discard both clear it there).
+    //
+    // Deliberately CLOSE-only, and not part of captureViewStateForRestore:
+    // the quit path owns its own sidecar policy (⌥⌘Q's kept blob
+    // supersedes the sidecar — see Application::clearRecoverySidecarsFor),
+    // and a quit-time clear here would cut across it.
+    const int total = m_documentView->documentCount();
+    for (int i = 0; i < total; ++i) {
+        IDocument *doc = nullptr;
+        if (!m_documentView->documentAt(i, &doc) || !doc)
+            continue;
+        if (doc->filePath().isEmpty())
+            continue;
+        if (!doc->isDirty())
+            m_app->recoveryStore().clear(doc->filePath());
     }
 
     // Headless / test environments (QT_QPA_PLATFORM=offscreen) skip

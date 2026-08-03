@@ -463,6 +463,17 @@ class PdfDocument : public IDocument {
     // being upscaled. One-shot: subsequent currentDocumentChanged
     // events leave the user's zoom alone.
     void applyInitialFitZoom(QPdfView *view);
+
+  public:
+    // Test seam, mirroring ImageDocument::triggerInitialZoomForTest(): fire
+    // the one-shot initial fit the way buildRealView()'s deferred QTimer
+    // does, so a headless test can prove that a (Custom, 0.0) "not captured"
+    // sentinel left that decision still REACHABLE rather than silently
+    // consuming it. No-op without a view. Defined out-of-line because
+    // QPdfView is only forward-declared here.
+    void triggerInitialZoomForTest();
+
+  private:
     bool reloadViewerFromEditor();
     // Make `index` the highlighted search result AND bring it on screen.
     // setCurrentSearchResultIndex alone only changes which rectangle the

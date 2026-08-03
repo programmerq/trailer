@@ -307,6 +307,15 @@ class TestUatFoundations : public QObject {
     void uat_fnd_093_pageModeMenuItemsKeepFixedOrder();
     void uat_fnd_050_fileOpenEventOpensWindow();
     void uat_fnd_070_copyPageAsImageToClipboard();
+    // UAT-FND-094 — quitting the application captures per-document view
+    // state (the page you were on), so relaunch picks up where you left
+    // off. Regression guard for the 2026-08-03 dogfooding report: ⌘Q on
+    // macOS never delivers closeEvent to the open windows, and closeEvent
+    // was the ONLY site that captured RecentEntry::currentPage — so every
+    // document came back on page 1. One slot per quit command.
+    void uat_fnd_094_normalQuitCapturesPageSoReopenLandsThere();
+    void uat_fnd_094_keepWindowsQuitRestoresPage();
+    void uat_fnd_094_quitPageRestoreEvidence();
 
   private:
     QTemporaryDir m_scratch;
@@ -1893,6 +1902,212 @@ void TestUatFoundations::uat_fnd_070_copyPageAsImageToClipboard() {
     QVERIFY2(hostMenu->toolTipsVisible(),
              "The Edit menu must call setToolTipsVisible(true) so the disabled "
              "Copy Page as Image tooltip is actually rendered on hover");
+}
+
+namespace {
+
+// The one document held by `win`, or nullptr. Slots below open exactly one
+// file per window, so index 0 is unambiguous.
+IDocument *soleDocument(MainWindow *win) {
+    if (!win || win->documentCount() < 1)
+        return nullptr;
+    IDocument *doc = nullptr;
+    win->documentAt(0, &doc);
+    return doc;
+}
+
+// Pump the event loop enough times for MainWindow's deferred
+// scroll-position restore chain (kScrollRestoreSettleTurns re-asserts, each
+// on its own turn) to run to completion, so a slot asserts the position that
+// SETTLED rather than the first one applied.
+void pumpScrollRestoreSettle() {
+    for (int i = 0; i < 8; ++i)
+        QApplication::processEvents();
+}
+
+// The window in `after` that is not in `before` — i.e. the one a just-run
+// open/restore call created. Returns nullptr if there isn't exactly one.
+MainWindow *newlyAddedWindow(const QList<MainWindow *> &before, const QList<MainWindow *> &after) {
+    MainWindow *found = nullptr;
+    for (MainWindow *w : after) {
+        if (!w || before.contains(w))
+            continue;
+        if (found)
+            return nullptr; // ambiguous
+        found = w;
+    }
+    return found;
+}
+
+} // namespace
+
+// UAT-FND-094 — ⌘Q (QuitMode::Normal) captures per-document view state, so
+// reopening the same file lands on the page the user was reading.
+//
+// The 2026-08-03 dogfooding report: three large PDFs open, ⌘Q, relaunch —
+// every document came back on page 1. Root cause: RecentEntry::currentPage
+// was written ONLY by MainWindow::closeEvent, and an application quit never
+// delivers closeEvent to the still-open windows (Application::onAboutToQuit
+// documents exactly that for macOS ⌘Q). The page WAS restorable — the
+// restore side already reads RecentEntry — but nothing ever wrote it.
+//
+// Drives the real quit command through Application::requestQuit with the
+// performQuit seam stubbed, so the process survives to assert what the quit
+// persisted. The pre-quit window is deliberately left open: closing it would
+// run closeEvent, which captures view state on its own and would mask the
+// very gap this guards.
+void TestUatFoundations::uat_fnd_094_normalQuitCapturesPageSoReopenLandsThere() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    const QString pdfPath =
+        writeMultiPagePdf(m_scratch.filePath(QStringLiteral("uat_fnd_094_normal.pdf")), 12);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    IDocument *doc = soleDocument(mw);
+    QVERIFY(doc);
+    QCOMPARE(doc->pageCount(), 12);
+
+    doc->goToPage(7);
+    QApplication::processEvents();
+    QCOMPARE(doc->currentPage(), 7);
+
+    // ⌘Q. performQuit is stubbed so the harness process is not terminated.
+    app->setPerformQuitForTesting([] {});
+    QVERIFY2(app->requestQuit(QuitMode::Normal),
+             "A clean document must not block a Normal quit");
+
+    // The quit must have persisted where the user was.
+    const RecentEntry captured = app->recentFiles().findByPath(pdfPath);
+    QVERIFY2(!captured.path.isEmpty(), "The quit-time snapshot must find the recent entry");
+    QCOMPARE(captured.currentPage, 7);
+
+    // Relaunch, end to end: reopening the file must land on page 8 (index 7),
+    // not page 1. A fresh window so the pre-quit one is untouched.
+    const QList<MainWindow *> before = app->windows();
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+    MainWindow *reopened = newlyAddedWindow(before, app->windows());
+    QVERIFY2(reopened, "Reopening the file must spawn exactly one new window");
+    IDocument *restored = soleDocument(reopened);
+    QVERIFY(restored);
+    pumpScrollRestoreSettle();
+    QCOMPARE(restored->currentPage(), 7);
+}
+
+// UAT-FND-094 — ⌥⌘Q ("Quit and Keep Windows") does the same, and the
+// kept-windows restore path must not throw the captured page away.
+//
+// Second half of the same defect: RecentFiles::add() replaces an entry with
+// a freshly default-constructed one (currentPage = -1), and
+// Application::restoreKeptWindows() called add() BEFORE handing the document
+// to the window — so the restore path wiped the saved page a fraction of a
+// second before MainWindow read it.
+void TestUatFoundations::uat_fnd_094_keepWindowsQuitRestoresPage() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    // Never touch the user's real AppData session-drafts directory.
+    app->setSessionDraftStoreDirForTesting(
+        m_scratch.filePath(QStringLiteral("uat_fnd_094_drafts")));
+    app->sessionDraftStore().clear();
+
+    const QString pdfPath =
+        writeMultiPagePdf(m_scratch.filePath(QStringLiteral("uat_fnd_094_keep.pdf")), 12);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    IDocument *doc = soleDocument(mw);
+    QVERIFY(doc);
+
+    doc->goToPage(9);
+    QApplication::processEvents();
+    QCOMPARE(doc->currentPage(), 9);
+
+    app->setPerformQuitForTesting([] {});
+    QVERIFY(app->requestQuit(QuitMode::KeepWindows));
+    QVERIFY(app->sessionDraftStore().hasSession());
+    QCOMPARE(app->recentFiles().findByPath(pdfPath).currentPage, 9);
+
+    const QList<MainWindow *> before = app->windows();
+    QVERIFY(app->restoreKeptWindows());
+    QApplication::processEvents();
+    MainWindow *restoredWin = newlyAddedWindow(before, app->windows());
+    QVERIFY2(restoredWin, "Kept-windows restore must spawn exactly one new window");
+    IDocument *restored = soleDocument(restoredWin);
+    QVERIFY(restored);
+    pumpScrollRestoreSettle();
+    QCOMPARE(restored->currentPage(), 9);
+
+    app->sessionDraftStore().clear();
+}
+
+// UAT-FND-094 — curated G2 before/after evidence for the reopen-after-quit
+// page position. Uses ONLY pre-existing public API so the identical file
+// builds and runs against the tree before and after the fix.
+//
+// Both shots are the SAME document in the SAME window state (a 12-page PDF
+// reopened after a quit at page 8):
+//   * BEFORE — the pre-fix shape: the quit captured no view state for this
+//     file, so the reopen falls through to the natural default and shows
+//     page 1.
+//   * AFTER  — the quit captured page 8, so the reopen shows page 8.
+// No-op unless $TRAILER_SESSION_RESTORE_EVIDENCE_DIR is set (mirrors
+// test_uat_offthread_open / test_uat_deference_evidence).
+void TestUatFoundations::uat_fnd_094_quitPageRestoreEvidence() {
+    const QString dir = QString::fromLocal8Bit(qgetenv("TRAILER_SESSION_RESTORE_EVIDENCE_DIR"));
+    if (dir.isEmpty())
+        QSKIP("Set TRAILER_SESSION_RESTORE_EVIDENCE_DIR to emit the G2 evidence pair");
+    QVERIFY(m_scratch.isValid());
+    QDir().mkpath(dir);
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    auto shoot = [&](MainWindow *w, const QString &name) {
+        w->resize(760, 620);
+        QApplication::processEvents();
+        const QPixmap pm = w->grab();
+        QVERIFY2(!pm.isNull(), qPrintable(name));
+        QVERIFY2(pm.save(QDir(dir).filePath(name), "PNG"), qPrintable(name));
+    };
+
+    // BEFORE — a file with no captured view state (exactly what a pre-fix
+    // quit left behind): reopen lands on page 1.
+    const QString beforePdf =
+        writeMultiPagePdf(m_scratch.filePath(QStringLiteral("uat_fnd_094_evidence.pdf")), 12);
+    app->openFiles({beforePdf});
+    QApplication::processEvents();
+    MainWindow *beforeWin = currentMainWindow();
+    QVERIFY(beforeWin);
+    IDocument *beforeDoc = soleDocument(beforeWin);
+    QVERIFY(beforeDoc);
+    QCOMPARE(beforeDoc->currentPage(), 0);
+    shoot(beforeWin, QStringLiteral("2026-08-03-quit-page-restore-before.png"));
+
+    // AFTER — same file, same window size: read to page 8, quit, reopen.
+    beforeDoc->goToPage(7);
+    QApplication::processEvents();
+    app->setPerformQuitForTesting([] {});
+    QVERIFY(app->requestQuit(QuitMode::Normal));
+
+    const QList<MainWindow *> before = app->windows();
+    app->openFiles({beforePdf});
+    QApplication::processEvents();
+    MainWindow *afterWin = newlyAddedWindow(before, app->windows());
+    QVERIFY(afterWin);
+    IDocument *afterDoc = soleDocument(afterWin);
+    QVERIFY(afterDoc);
+    pumpScrollRestoreSettle();
+    shoot(afterWin, QStringLiteral("2026-08-03-quit-page-restore-after.png"));
+    qInfo().noquote() << "G2-SCREENSHOT pair written to" << dir
+                      << "after-page:" << afterDoc->currentPage();
 }
 
 // Custom main: we need to set HOME (and XDG vars) before constructing
