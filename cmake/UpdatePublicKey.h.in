@@ -1,0 +1,45 @@
+#pragma once
+
+#include <array>
+
+// GENERATED FILE — do not edit. CMake renders this from
+// cmake/UpdatePublicKey.h.in on every configure; your build tree's
+// copy lives at ${CMAKE_BINARY_DIR}/generated/UpdatePublicKey.h.
+
+namespace trailer::Update {
+
+// The ed25519 PUBLIC key Trailer trusts to verify the nightly update
+// feed (and, later, the stable feed). Embedding the public key in the
+// binary — rather than fetching it from anywhere — is the whole point:
+// a compromised release pipeline or feed host cannot swap in its own
+// key, because the verifier never trusts anything it downloads to tell
+// it which key to check against. See
+// docs/decision-records/2026-07-30-nightly-auto-update-channel.md.
+//
+// WHERE THE VALUE COMES FROM (changed 2026-08-02). The key is no longer
+// a literal committed to the repository. It is supplied at configure
+// time as 64 hex characters:
+//
+//   cmake -S . -B build -DTRAILER_UPDATE_PUBKEY=<64-hex-chars>
+//
+// and CI derives it from the TRAILER_UPDATE_SIGNING_KEY secret via
+// scripts/derive-update-pubkey.sh, so the key a build TRUSTS and the key
+// the feed is SIGNED with are the same key by construction — they cannot
+// drift, because there is only one input. See
+// docs/decision-records/2026-08-02-update-pubkey-from-signing-secret.md.
+//
+// WHEN NO KEY IS SUPPLIED (ordinary local builds, PRs, forks — anything
+// without access to the signing secret) the update channel is compiled
+// out rather than falling back to some other key: kUpdateChannelProvisioned
+// is false and the key below is all zeros. A build that cannot verify
+// must not pretend it can, and must not trust a placeholder — the two
+// failure modes that a committed default invites. The UI disables its
+// update affordances with an explanatory tooltip in that state (G3), and
+// UpdateManager::checkNow() never issues a network request.
+constexpr bool kUpdateChannelProvisioned = @TRAILER_UPDATE_PUBKEY_PROVISIONED@;
+
+constexpr std::array<unsigned char, 32> kNightlyPublicKey{
+@TRAILER_UPDATE_PUBKEY_BYTES@
+};
+
+} // namespace trailer::Update

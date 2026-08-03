@@ -84,6 +84,14 @@ jobs:
         # for the same reason version gating does: bash + coreutils only,
         # so it can gate every PR without touching the build path.
         run: bash scripts/test-compare-uat-baseline.sh
+      - name: Run update-pubkey-derivation regression tests
+        # scripts/derive-update-pubkey.sh turns the signing secret into
+        # the key every shipped binary embeds (nightly.yml's "Derive the
+        # update-channel public key"). A wrong answer here does not fail
+        # anything visibly — it produces a build that ships and then
+        # rejects every signature — so the rejection paths in particular
+        # are worth gating on every PR. bash + openssl only.
+        run: bash scripts/test-derive-update-pubkey.sh
 
   build-and-test:
     name: Linux build + unit tests

@@ -271,6 +271,13 @@ jobs:
       current-commit: ${{ steps.skip.outputs.current-commit }}
       prev-nightly-tag: ${{ steps.skip.outputs.prev-nightly-tag }}
       matched-commit: ${{ steps.skip.outputs.matched-commit }}
+      # The 32-byte ed25519 PUBLIC key, hex, derived from the signing
+      # secret by the step below. PUBLIC data — safe as a job output and
+      # safe in a log; the whole point of the scheme is that it is
+      # embedded in every shipped binary. Empty when the secret is not
+      # available (forks, or before provisioning), which the build lanes
+      # treat as "no update channel in this build", not as an error.
+      update-pubkey: ${{ steps.pubkey.outputs.hex }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -279,6 +286,47 @@ jobs:
           # (and every tag) present locally.
           fetch-depth: 0
           ref: ${{ inputs.ref }}
+
+      - name: Derive the update-channel public key
+        # Turn the PRIVATE signing secret into the PUBLIC key the built
+        # binaries embed, ONCE, here — so the key a nightly TRUSTS and
+        # the key its feed is SIGNED with (nightly-publish's "Build +
+        # sign nightly update feed" step, same secret) are derived from
+        # one input and cannot drift apart. That drift is not
+        # hypothetical: before this, the public key was a literal
+        # committed in src/update/UpdatePublicKey.h, and it was a
+        # throwaway dev key that no feed was ever signed with — every
+        # binary shipped would have rejected every real signature.
+        # See docs/decision-records/2026-08-02-update-pubkey-from-
+        # signing-secret.md.
+        #
+        # WHY THIS JOB: the three build lanes need the key at CONFIGURE
+        # time, and they all `needs:` this job, which is the earliest
+        # point where it can be computed once and fanned out. The
+        # alternative — giving the private secret to all three lanes —
+        # would put it on three more runners for no benefit, since what
+        # they actually need is the public half. Only the derived PUBLIC
+        # key crosses the job boundary.
+        #
+        # Absent secret (forks, pre-provisioning) is NOT an error: the
+        # output stays empty and every lane builds with the update
+        # channel compiled out, exactly like an ordinary local build.
+        id: pubkey
+        env:
+          TRAILER_UPDATE_SIGNING_KEY_B64: ${{ secrets.TRAILER_UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TRAILER_UPDATE_SIGNING_KEY_B64:-}" ]; then
+            echo "::warning::TRAILER_UPDATE_SIGNING_KEY secret is not set — tonight's binaries build WITHOUT an update channel (Help ▸ Check for Updates… will be disabled in them). The feed-signing step will skip for the same reason."
+            echo "hex=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The private key is piped straight into the derivation and is
+          # never written to disk here; only the public half is printed.
+          HEX="$(printf '%s' "$TRAILER_UPDATE_SIGNING_KEY_B64" \
+            | scripts/derive-update-pubkey.sh --base64 -)"
+          echo "hex=$HEX" >> "$GITHUB_OUTPUT"
+          echo "Update-channel public key: $HEX"
 
       - id: resolve
         # Captured ONCE, here, before any lane starts or waits on the mac
@@ -437,10 +485,16 @@ jobs:
         # nightly represents "what would ship", like release, not the dev
         # opt-in toggles). TRAILER_WERROR stays OFF (Qt/libstdc++/qpdf
         # system-header noise; see release.yml's header).
+        # TRAILER_UPDATE_PUBKEY: the update-channel key, derived once in
+        # nightly-date from the signing secret (see that job's "Derive
+        # the update-channel public key" step). Empty on a fork or before
+        # the secret is provisioned, which CMake treats as "no update
+        # channel in this build" rather than an error.
         run: >-
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DTRAILER_UPDATE_PUBKEY="${{ needs.nightly-date.outputs.update-pubkey }}"
 
       - name: Build
         run: cmake --build build --config Release --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
@@ -544,6 +598,7 @@ jobs:
           -DQT_HOST_PATH="$QT_HOST_DIR"
           -Dqpdf_DIR="$QPDF_DIR/lib/cmake/qpdf"
           -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_PREBUILT="$ORT_WIN_DIR"
+          -DTRAILER_UPDATE_PUBKEY="${{ needs.nightly-date.outputs.update-pubkey }}"
         env:
           PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
 
@@ -710,6 +765,16 @@ jobs:
         # add_subdirectory(tests) in CMakeLists.txt is unconditional), so
         # the unit + UAT binaries below need no separate configure/build —
         # this step already produced them alongside Trailer.app.
+        #
+        # TRAILER_UPDATE_PUBKEY reaches CMake via the environment here
+        # rather than a flag, because the configure line lives inside the
+        # script; the script forwards it (see its "update channel" block).
+        # macOS is the lane that matters most for this: it is the only
+        # platform with a working in-place install path today, so a macOS
+        # nightly built without the key is the one a user would actually
+        # notice failing to update.
+        env:
+          TRAILER_UPDATE_PUBKEY: ${{ needs.nightly-date.outputs.update-pubkey }}
         run: scripts/build-macos.sh
 
       - name: Unit tests
@@ -1272,10 +1337,15 @@ jobs:
         if: needs.nightly-date.outputs.skip != 'true' && needs.nightly-date.outputs.dry-run != 'true' && steps.assets.outputs.count != '0'
         env:
           GH_TOKEN: ${{ github.token }}
-          # Base64-encoded ed25519 PRIVATE key PEM (see
-          # src/update/UpdatePublicKey.h for the matching public key and the
-          # exact `openssl genpkey` / `base64` commands to generate and
-          # store this secret). Absent on a fork or before the owner
+          # Base64-encoded ed25519 PRIVATE key PEM. The matching PUBLIC
+          # key is not stored anywhere — it is derived from this secret by
+          # nightly-date's "Derive the update-channel public key" step and
+          # compiled into that night's binaries, so the two cannot drift
+          # (docs/decision-records/2026-08-02-update-pubkey-from-signing-
+          # secret.md). Generate/store with:
+          #   openssl genpkey -algorithm ed25519 -out key.pem
+          #   base64 -w0 key.pem   # -> the secret's value
+          # Absent on a fork or before the owner
           # provisions it — the soft-skip below handles that, not a hard
           # failure, so PRs from forks (which never see repo secrets) don't
           # break on this step.
@@ -1304,6 +1374,25 @@ jobs:
 
           KEY_FILE="$RUNNER_TEMP/update-signing-key.pem"
           printf '%s' "$TRAILER_UPDATE_SIGNING_KEY_B64" | base64 -d > "$KEY_FILE"
+
+          # Belt-and-braces: confirm the key we are about to sign with is
+          # the same one tonight's BINARIES embed. Both come from this
+          # secret in this run, so they agree by construction and this can
+          # only fire if the wiring is broken (a lane configured without
+          # the key, an output renamed, the secret rotated mid-run). It is
+          # worth the three lines because the failure it catches is
+          # otherwise invisible until a user's update silently stops
+          # verifying — the exact class of bug this whole arrangement was
+          # introduced to end.
+          EXPECTED_PUBKEY="${{ needs.nightly-date.outputs.update-pubkey }}"
+          ACTUAL_PUBKEY="$(scripts/derive-update-pubkey.sh "$KEY_FILE")"
+          if [ -n "$EXPECTED_PUBKEY" ] && [ "$EXPECTED_PUBKEY" != "$ACTUAL_PUBKEY" ]; then
+            echo "::error::Update key mismatch — tonight's binaries embed $EXPECTED_PUBKEY but the feed would be signed by $ACTUAL_PUBKEY. Refusing to publish a feed no shipped build can verify."
+            exit 1
+          fi
+          if [ -z "$EXPECTED_PUBKEY" ]; then
+            echo "::warning::Binaries were built WITHOUT an update-channel key (nightly-date could not derive one), so tonight's signed feed is unverifiable by them. Publishing it anyway for the benefit of previously-shipped builds signed by the same key."
+          fi
           trap 'rm -f "$KEY_FILE"' EXIT
 
           PAYLOAD_FILE="$RUNNER_TEMP/appcast-payload.json"

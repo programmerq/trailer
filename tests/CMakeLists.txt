@@ -98,6 +98,12 @@ trailer_add_test(test_screen_capture_flow test_screen_capture_flow.cpp)
 trailer_add_test(test_capture_backend test_capture_backend.cpp)
 trailer_add_test(test_ed25519 test_ed25519.cpp)
 trailer_add_test(test_update_feed_parser test_update_feed_parser.cpp)
+trailer_add_test(test_update_pubkey test_update_pubkey.cpp)
+# Needs the repo root to invoke the real scripts/derive-update-pubkey.sh
+# and scripts/sign-update-feed.sh — the point of that test is to exercise
+# the SHIPPED signing path, not a reimplementation of it.
+target_compile_definitions(test_update_pubkey PRIVATE
+    "TRAILER_REPO_ROOT=\"${CMAKE_CURRENT_SOURCE_DIR}/..\"")
 
 # Structural, CI-safe performance tests. These assert ordering / counts /
 # thread facts (never wall-clock time) and read the checked-in reference

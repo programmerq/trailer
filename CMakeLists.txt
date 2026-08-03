@@ -128,6 +128,76 @@ configure_file(
     @ONLY
 )
 
+# ---------------------------------------------------------------------
+# Update-channel public key (see cmake/UpdatePublicKey.h.in for the full
+# rationale, and docs/decision-records/2026-08-02-update-pubkey-from-
+# signing-secret.md for the decision).
+#
+# Supplied as 64 hex characters, NOT committed. CI derives it from the
+# TRAILER_UPDATE_SIGNING_KEY secret with scripts/derive-update-pubkey.sh
+# so the key a binary trusts and the key its feed is signed with come
+# from one input and cannot drift apart.
+#
+# Empty (the default, i.e. every ordinary local build, PR, and fork) is a
+# FIRST-CLASS state, not an error: the update channel is compiled out.
+# The key becomes all-zero and kUpdateChannelProvisioned is false, which
+# the UI surfaces as disabled affordances with an explanatory tooltip
+# (G3) and which stops UpdateManager from making any network request. A
+# non-empty but MALFORMED value is a hard error — that is a
+# misconfiguration, and silently shipping a build that rejects every
+# signature is exactly the outcome this whole arrangement exists to
+# prevent.
+# ---------------------------------------------------------------------
+set(TRAILER_UPDATE_PUBKEY "" CACHE STRING
+    "Hex-encoded 32-byte ed25519 PUBLIC key for the update feed (64 hex chars). Empty disables the update channel in this build.")
+
+if(TRAILER_UPDATE_PUBKEY STREQUAL "")
+    set(TRAILER_UPDATE_PUBKEY_PROVISIONED "false")
+    set(_trailer_pubkey_hex "0000000000000000000000000000000000000000000000000000000000000000")
+    message(STATUS "TRAILER_UPDATE_PUBKEY not set — update channel disabled in this build")
+else()
+    string(TOLOWER "${TRAILER_UPDATE_PUBKEY}" _trailer_pubkey_hex)
+    # NB: CMake's regex flavour has NO brace quantifiers — "[0-9a-f]{64}"
+    # is matched literally and rejects every input, including valid keys.
+    # Length is therefore checked separately from the character class.
+    string(LENGTH "${_trailer_pubkey_hex}" _trailer_pubkey_len)
+    if(NOT _trailer_pubkey_len EQUAL 64 OR NOT _trailer_pubkey_hex MATCHES "^[0-9a-f]+$")
+        message(FATAL_ERROR
+            "TRAILER_UPDATE_PUBKEY must be exactly 64 hex characters (a raw 32-byte "
+            "ed25519 public key), got '${TRAILER_UPDATE_PUBKEY}'. "
+            "Derive it with: scripts/derive-update-pubkey.sh <private-key.pem>. "
+            "Note an Ed25519 SubjectPublicKeyInfo in DER is 44 bytes — only the LAST 32 "
+            "are the raw key.")
+    endif()
+    set(TRAILER_UPDATE_PUBKEY_PROVISIONED "true")
+    message(STATUS "TRAILER_UPDATE_PUBKEY set — update channel enabled (key ${_trailer_pubkey_hex})")
+endif()
+
+# Render the hex into a C++ array initializer, 12 bytes per line.
+set(TRAILER_UPDATE_PUBKEY_BYTES "")
+foreach(_i RANGE 0 31)
+    math(EXPR _off "${_i} * 2")
+    string(SUBSTRING "${_trailer_pubkey_hex}" ${_off} 2 _byte)
+    math(EXPR _col "${_i} % 12")
+    if(_col EQUAL 0)
+        string(APPEND TRAILER_UPDATE_PUBKEY_BYTES "    ")
+    endif()
+    string(APPEND TRAILER_UPDATE_PUBKEY_BYTES "0x${_byte},")
+    if(_col EQUAL 11 OR _i EQUAL 31)
+        string(APPEND TRAILER_UPDATE_PUBKEY_BYTES "\n")
+    else()
+        string(APPEND TRAILER_UPDATE_PUBKEY_BYTES " ")
+    endif()
+endforeach()
+string(STRIP "${TRAILER_UPDATE_PUBKEY_BYTES}" TRAILER_UPDATE_PUBKEY_BYTES)
+set(TRAILER_UPDATE_PUBKEY_BYTES "    ${TRAILER_UPDATE_PUBKEY_BYTES}")
+
+configure_file(
+    "${CMAKE_SOURCE_DIR}/cmake/UpdatePublicKey.h.in"
+    "${CMAKE_BINARY_DIR}/generated/UpdatePublicKey.h"
+    @ONLY
+)
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 option(TRAILER_WERROR "Treat compiler warnings as errors (enabled in CI)" OFF)
@@ -340,7 +410,8 @@ set(TRAILER_SOURCES
     src/update/UpdateFeedParser.h
     src/update/UpdateManager.cpp
     src/update/UpdateManager.h
-    src/update/UpdatePublicKey.h
+    # UpdatePublicKey.h is GENERATED into ${CMAKE_BINARY_DIR}/generated —
+    # see the TRAILER_UPDATE_PUBKEY block below.
     src/update/UpdateTypes.cpp
     src/update/UpdateTypes.h
     src/util/CaptureScale.cpp

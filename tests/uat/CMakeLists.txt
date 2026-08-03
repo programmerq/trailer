@@ -294,3 +294,10 @@ target_link_libraries(test_uat_deference_evidence PRIVATE Qt6::Pdf Qt6::PdfWidge
 # evidence (with-document + empty-state dialog) to
 # $TRAILER_FEEDBACK_EVIDENCE_DIR when set.
 trailer_add_uat_test(test_uat_feedback test_uat_feedback.cpp)
+
+# UAT-UPD-001..003 (docs/uat/06-cross-cutting.md): the update affordances'
+# enabled state tracks whether this build carries an update-signing key,
+# and the Updates pane's button never moves as its status text changes.
+# Also emits the G2 evidence pair to $TRAILER_UPDATE_KEY_EVIDENCE_DIR when
+# set — run the same binary from a keyed and an unkeyed build tree.
+trailer_add_uat_test(test_uat_update_key_evidence test_uat_update_key_evidence.cpp)

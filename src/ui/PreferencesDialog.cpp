@@ -383,6 +383,20 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
         m_updatesStatusLabel = new QLabel(page);
         m_updatesStatusLabel->setObjectName(QStringLiteral("updatesStatusLabel"));
         m_updatesStatusLabel->setWordWrap(true);
+        // Reserve the label's tallest state so the Check Now button below
+        // it never moves as the status text changes (G10, spatial
+        // constancy). Without this the button sits one line higher while
+        // the status reads "Never checked." and drops as soon as a check
+        // starts ("Checking for updates…\nFetching: <url>"), i.e. it
+        // slides out from under the pointer at the exact moment the user
+        // has just clicked it. Three lines is the tallest any branch of
+        // refreshUpdatesStatus() produces (the no-signing-key message
+        // wraps to three at this dialog's minimum width); derived from
+        // the live font rather than a pixel literal so it holds at any
+        // text scale.
+        m_updatesStatusLabel->setMinimumHeight(
+            m_updatesStatusLabel->fontMetrics().lineSpacing() * 3);
+        m_updatesStatusLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
         form->addRow(m_updatesStatusLabel);
 
         m_updatesActionButton = new QPushButton(tr("Check Now"), page);
@@ -492,6 +506,30 @@ void PreferencesDialog::refreshUpdatesStatus() {
         return;
     if (!m_updateManager) {
         m_updatesStatusLabel->setText(tr("Updates are unavailable in this context."));
+        return;
+    }
+    // No signing key compiled in (every ordinary local build, PR, and
+    // fork — see cmake/UpdatePublicKey.h.in): this build can never
+    // verify a feed. Say so and disable the button, rather than offering
+    // a "Check Now" that can only fail (G3). The button keeps its label
+    // and — thanks to the status label's reserved height above — its
+    // exact position, so this branch is a text-and-enabled-state change
+    // only (G10).
+    if (!Update::UpdateManager::isChannelProvisioned()) {
+        // Kept to two lines at this dialog's MINIMUM width on purpose:
+        // the label reserves three lines (see its construction above) and
+        // the "Checking…" branch already needs all three once a long
+        // appcast URL wraps. A longer message here re-wraps to four at
+        // narrow widths and pushes the button down again — which
+        // uat_updatesButtonDoesNotMoveAsStatusTextChanges checks at the
+        // minimum width precisely so this stays true.
+        m_updatesStatusLabel->setText(
+            tr("This build has no update-signing key, so it can't verify an update.\n"
+               "Official builds update automatically — see the Releases page."));
+        m_updatesActionButton->setText(tr("Check Now"));
+        m_updatesActionButton->setEnabled(false);
+        m_updatesActionButton->setToolTip(
+            tr("Unavailable: this build has no update-signing key."));
         return;
     }
     using State = Update::UpdateManager::State;

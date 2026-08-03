@@ -1,6 +1,7 @@
 #include "UpdateManager.h"
 
 #include "TrailerVersion.h"
+#include "UpdatePublicKey.h"
 #include "settings/Settings.h"
 
 #include <QCoreApplication>
@@ -78,11 +79,40 @@ UpdateManager::UpdateManager(Settings &settings, QObject *parent)
     connect(&m_checker, &UpdateChecker::downloadFailed, this, &UpdateManager::onDownloadFailed);
 }
 
+bool UpdateManager::isChannelProvisioned() {
+    return kUpdateChannelProvisioned;
+}
+
 void UpdateManager::checkNow() {
+    // A build configured without TRAILER_UPDATE_PUBKEY has no key to
+    // verify a feed against, so there is nothing useful to fetch — and
+    // fetching anyway would mean an outbound request whose response can
+    // only ever be rejected (AGENTS.md "Networking": no outbound call
+    // without a reason the user consented to). Refuse here, before the
+    // network, rather than downloading and failing verification.
+    //
+    // The UI disables its update affordances in this state (G3), so
+    // reaching this branch means something called checkNow() directly;
+    // set an explanatory error rather than silently doing nothing, so
+    // the state is legible if it ever is reached.
+    if (!kUpdateChannelProvisioned) {
+        m_lastError = tr("This build has no update-signing key, so it cannot verify an "
+                         "update feed. Official builds from the nightly channel can — "
+                         "see the project README for where to get one.");
+        setState(State::Error);
+        return;
+    }
     m_checker.checkNow();
 }
 
 void UpdateManager::maybeAutoCheck() {
+    // Return SILENTLY (not via checkNow()'s error state) when this build
+    // has no key: this is the background startup/24h path, triggered by
+    // no user action, so surfacing an error banner for a build that was
+    // never going to update would be chrome the user didn't ask for and
+    // can't act on. The manual path still explains itself.
+    if (!kUpdateChannelProvisioned)
+        return;
     if (!m_settings.updatesAutoCheckEnabled())
         return;
     const QString lastIso = m_settings.updatesLastCheckedUtc();

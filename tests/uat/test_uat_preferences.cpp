@@ -33,6 +33,7 @@
 #include "ui/MainWindow.h"
 #include "ui/PreferencesDialog.h"
 #include "ui/TwoPageView.h"
+#include "UpdatePublicKey.h"
 #include "update/UpdateManager.h"
 #include "util/DocumentSurroundColor.h"
 
@@ -232,9 +233,24 @@ void TestUatPreferences::uat_pref_030_updatesTabReflectsManagerState() {
     QVERIFY2(status, "Preferences must host an updatesStatusLabel");
     QVERIFY2(action, "Preferences must host an updatesActionButton");
 
-    // Idle (never checked): action button enabled, reads "Check Now".
-    QVERIFY(action->isEnabled());
+    // Idle (never checked): action button reads "Check Now", and is
+    // enabled iff this build actually carries an update-signing key.
+    // A build configured without -DTRAILER_UPDATE_PUBKEY (every ordinary
+    // local build, PR, and fork — see cmake/UpdatePublicKey.h.in) can
+    // never verify a feed, so the button is disabled with a tooltip
+    // rather than offering a check that can only fail (G3). The label and
+    // position are identical either way, which is what the rest of this
+    // slot and UAT-UPD-003 pin.
+    QCOMPARE(action->isEnabled(), Update::kUpdateChannelProvisioned);
     QCOMPARE(action->text(), QStringLiteral("Check Now"));
+    if (!Update::kUpdateChannelProvisioned) {
+        QVERIFY2(!action->toolTip().isEmpty(),
+                 "A disabled Check Now must say why (G3)");
+        // The remaining state transitions below all route through
+        // refreshUpdatesStatus()'s no-key early return in this
+        // configuration, so they cannot be exercised here.
+        return;
+    }
 
     Update::FeedEntry entry;
     entry.tag = QStringLiteral("nightly-20260730");

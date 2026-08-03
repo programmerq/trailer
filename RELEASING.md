@@ -361,9 +361,13 @@ build is failing and you keep pushing fixes:
   that lands: the same `scripts/sign-update-feed.sh` /
   `scripts/build-nightly-appcast-payload.py` pattern applies (rename
   or generalize the payload builder), and the private key secret
-  (`TRAILER_UPDATE_SIGNING_KEY`, see `src/update/UpdatePublicKey.h`
-  for provisioning commands) needs to be available to
-  `release-publish.yml` as well as `nightly.yml`.
+  (`TRAILER_UPDATE_SIGNING_KEY`) needs to be available to
+  `release-publish.yml` as well as `nightly.yml`. Note the stable
+  lane will also need the public key threaded into its build the way
+  `nightly.yml` does it (derive once with
+  `scripts/derive-update-pubkey.sh`, pass `-DTRAILER_UPDATE_PUBKEY`
+  to every lane) — a release binary built without it ships with the
+  update channel compiled out.
 - **Notarized macOS builds.** Off the table indefinitely — Trailer
   is not in the Apple Developer Program. If that ever changes, a
   signing + notarization step plugs in between `make release` and
