@@ -124,6 +124,7 @@ trailer_add_perf_test(test_perf_gui_thread_io   test_perf_gui_thread_io.cpp)
 trailer_add_perf_test(test_perf_paint_budget    test_perf_paint_budget.cpp)
 trailer_add_perf_test(test_perf_lazy_open       test_perf_lazy_open.cpp)
 trailer_add_perf_test(test_perf_freehand_repaint test_perf_freehand_repaint.cpp)
+trailer_add_perf_test(test_perf_page_geometry   test_perf_page_geometry.cpp)
 
 # The facade test runs in EVERY configuration — it is the guard that
 # the uxrecord:: no-ops stay safe when the recorder is compiled out
