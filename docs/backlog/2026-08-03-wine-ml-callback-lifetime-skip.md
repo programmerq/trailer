@@ -48,6 +48,35 @@ conclusion is *"the first action is not to fix 21 tests; it is to make them
 legible."* That item is therefore the blocker for this one — this test cannot
 be diagnosed before Wine failures stop swallowing their output.
 
+### What the skip itself ruled out — start here
+
+The skip run is evidence, not just a mute button. With `QSKIP` as the first
+statement of `init()`, run
+[30830363282](https://github.com/programmerq/trailer/actions/runs/30830363282)
+(job `91742504120`, commit `3b1270f`) reports:
+
+```
+46/65 Test #47: test_ml_callback_lifetime ............   Passed    0.65 sec
+100% tests passed, 0 tests failed out of 65
+```
+
+That **refutes the "dies before `qExec`" hypothesis.** For the skip to fire at
+all, the binary must load under Wine, construct `trailer::Application`, reach
+`QTest::qExec`, enter `init()`, evaluate `runningUnderWine()`, and exit 0. All
+of that demonstrably works. So the fault lies in what `init()` and the slot
+bodies do *after* the skip point — not in static init, DLL loading, the
+sandbox `main()`, or `QApplication` construction.
+
+The duration corroborates it: ~1.4 s when the body ran and died, 0.65 s when it
+is skipped. The missing ~0.75 s is the work under suspicion.
+
+Whoever picks this up therefore does **not** need to re-open the loader
+question. The remaining candidates are all inside the body, and the most
+distinctive thing this test does that no other passing Wine unit test does is
+**park the MlScheduler's single worker on a blocking task while the GUI thread
+creates and destroys a window** — try bisecting there first, by moving the
+`QSKIP` progressively later through `init()` and then through the first slot.
+
 Reproduction is not available locally: it needs a Windows cross-build
 environment (mingw toolchain, Qt-for-Windows, qpdf, ONNX Runtime, a Wine
 prefix) that the dev boxes do not carry, so every attempt costs a self-hosted
