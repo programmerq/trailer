@@ -23,6 +23,59 @@ Three recurring sources feed this file:
   [`docs/audit-2026-05-19.md`](docs/audit-2026-05-19.md) for the
   current snapshot.
 
+## 2026-08-03 nightly macOS SIGSEGV — ML worker result posted to a freed window
+
+`nightly-20260803` (run 30815465012) went red on the **macOS gating unit-test
+step** — `test_ocr_window` `SIGSEGV`, `SEGV_ACCERR` at `0x50`, every test
+function already `PASS`. No DMG was produced, so the release carries three
+assets and no signed appcast. Linux and Windows were green.
+
+Root cause (confirmed, not inferred): an `MlScheduler` worker handed its
+result back with `QMetaObject::invokeMethod(rawMainWindow, …,
+Qt::QueuedConnection)`. A queued invoke **posts an event to its context
+object**, and posting dereferences that object — so a window closed between
+`submit()` and the worker's post is touched twice after it is gone (inside
+`postEvent()` on the worker thread, then again when the main loop delivers
+the `QMetaCallEvent` into freed memory and runs the lambda's `self->m_member`
+accesses).
+
+Evidence trail, for the next person who has to re-open this:
+
+- The sibling crash reproduces on **Linux** under CPU saturation —
+  `test_quit_and_keep_windows`, **10 failures in 60 runs** (0 in 60 idle).
+  Four of those ten `gdb` dumps put the faulting frame in
+  `MainWindow::scheduleBackgroundCandidateScore`'s apply lambda, on a
+  `QHash` whose internal `Data*` read out as `0x30` / `0x1e0` — a freed
+  window. The other six land in unrelated Qt internals (event-filter walk,
+  posted-event dispatch, the raster paint engine): downstream damage from the
+  same lambda *writing* into freed memory a moment earlier.
+- **AddressSanitizer**, driven by the new deterministic guard against the
+  unfixed tree, reports `SEGV` in
+  `QApplicationPrivate::notify_helper` ← `notifyInternal2` ←
+  `sendPostedEvents` — the same frames the crash reports show.
+- The earlier `MlScheduler`-condvar diagnosis (backlog
+  `2026-08-03-quit-teardown-segfault-mlscheduler`, now closed) was **wrong**.
+  The parked `workerLoop()` / power-watcher frames appear in every dump only
+  because Qt's crash handler prints *all* threads; they are idle waiters, and
+  their mutex living at a stack address is expected because `Application` is
+  a stack object in `main()`.
+- The macOS `test_ocr_window` failure itself was **not** captured under a
+  debugger. It never builds a `MainWindow`, so the fixed `MainWindow` sites
+  cannot be its cause. Its only worker→GUI hop is `OcrController`'s result
+  post, which an instrumented build shows **racing document teardown on more
+  than half of all runs** (171 posts reached with an already-destroyed store
+  across 300 loaded runs; the common outcome is the safe one — the `QPointer`
+  is already null and Qt drops the call — the crash needs the destruction to
+  land inside the post itself). That path is fixed the same way, but the
+  attribution is inference from the mechanism, not a captured macOS stack.
+  **A macOS nightly is still the confirming run.**
+
+Fix: `MlScheduler::postResultToGuiThread()` — post to the scheduler (which
+joins the worker in its own destructor, so it is always a live context) and
+re-check the weak guard *inside* the GUI-thread lambda. Cancelling the task
+is not a substitute: a worker already past its cancellation checkpoint still
+posts. Written up as a rule in `docs/CONVENTIONS.md` §5.
+
 ## 2026-08-03 slow-open investigation (nightly `0.3.1-dev+768.gce56b4b8`, macOS Tahoe arm64)
 
 Owner report: *"noticeably slower than I'd like … it shouldn't take multiple

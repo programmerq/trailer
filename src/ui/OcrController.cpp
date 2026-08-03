@@ -473,8 +473,16 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
     // superseded batch can't advance the current batch's counter.
     const int epoch = batchTracked ? m_batchEpoch : -1;
 
-    auto handle = m_app->mlScheduler().submit(priority, label,
-        [engine, recognizer, source, page, storePtr, self, cancelGuard, epoch, ocrScale, contentHash, diskCache](CancellationToken &token) {
+    // The result hop goes through the scheduler, never through storePtr /
+    // self directly: a queued invoke dereferences its context object when it
+    // POSTS, so a document (and its store) closed between submit() and the
+    // worker's post would be touched after it was freed. The scheduler joins
+    // this worker in its own destructor, so it is always a live context; the
+    // weak guards below are re-checked on the GUI thread instead. See
+    // MlScheduler::postResultToGuiThread().
+    MlScheduler *scheduler = &m_app->mlScheduler();
+    auto handle = scheduler->submit(priority, label,
+        [scheduler, engine, recognizer, source, page, storePtr, self, cancelGuard, epoch, ocrScale, contentHash, diskCache](CancellationToken &token) {
             if (token.isCancelled())
                 return;
             // OcrEngine::recognize cooperates with the same token
@@ -485,15 +493,15 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
             // bypasses this defensive gate.
             if (!recognizer && !engine->isModelReady()) {
                 // Still resolve the batch page so the count can complete.
-                // Use `self` (the GUI-thread controller) as the invoke
-                // context, not storePtr — storePtr may be null here, which
-                // would silently drop the queued call and stall the batch
-                // count (ADR 0002 review item 8).
-                if (self) {
-                    QMetaObject::invokeMethod(
-                        self, [self, epoch]() { if (self) self->onBatchPageResolved(epoch); },
-                        Qt::QueuedConnection);
-                }
+                // The hop is unconditional (the scheduler is always a live
+                // context) and `self` is re-checked on the GUI thread; the
+                // pre-2026-08-03 shape posted to `self` itself, which is the
+                // use-after-free MlScheduler::postResultToGuiThread()
+                // documents. Note this must NOT be keyed off storePtr, which
+                // may be null here — that would silently drop the queued call
+                // and stall the batch count (ADR 0002 review item 8).
+                scheduler->postResultToGuiThread(
+                    [self, epoch]() { if (self) self->onBatchPageResolved(epoch); });
                 return;
             }
             QVector<OcrEngine::TextBlock> blocks =
@@ -514,11 +522,11 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
                     b.polygon = std::move(scaled);
                 }
             }
-            // Hand the result back to the UI thread. The store is a
-            // QObject parented to the document on the UI thread, so
-            // queue the write through its thread context.
-            QMetaObject::invokeMethod(
-                storePtr,
+            // Hand the result back to the UI thread. storePtr / self are
+            // weak guards re-checked INSIDE the lambda below, on the GUI
+            // thread — the only thread that can destroy them, so the check
+            // and the use cannot interleave.
+            scheduler->postResultToGuiThread(
                 [storePtr, self, cancelGuard, page, contentHash, cancelled, epoch, diskCache,
                  out = std::move(out)]() mutable {
                     // No-partial-write guard (ADR 0002 §2): if the batch
@@ -568,8 +576,7 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
                     // no-op in the cancelled case.)
                     if (self)
                         self->onBatchPageResolved(epoch);
-                },
-                Qt::QueuedConnection);
+                });
         });
 
     m_pending[key] = PendingEntry{handle.id, batchTracked};

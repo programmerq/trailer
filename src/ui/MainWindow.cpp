@@ -86,6 +86,7 @@
 #include <QClipboard>
 #include <QMimeData>
 #include <QPixmap>
+#include <QPointer>
 #include <QProcess>
 #include <QProgressDialog>
 #include <QPropertyAnimation>
@@ -2581,10 +2582,15 @@ void MainWindow::onRemoveBackground() {
     // what the disabled-entry tooltip points at when the
     // "Never download" policy is the cause).
     const QImage source = imgDoc->image();
-    auto *self = this;
-    auto handle = m_app->mlScheduler().submit(
+    // Weak reference, not a raw `this`: the user can close this window while
+    // the remover is still running. MlScheduler::postResultToGuiThread()
+    // documents why the guard is re-checked on the GUI thread rather than on
+    // the worker.
+    QPointer<MainWindow> guard(this);
+    MlScheduler *scheduler = &m_app->mlScheduler();
+    auto handle = scheduler->submit(
         MlPriority::UserAction, tr("Removing background…"),
-        [self, source, doc, imgDoc, removeFn](CancellationToken &token) {
+        [guard, scheduler, source, doc, imgDoc, removeFn](CancellationToken &token) {
             const QImage result = removeFn(source, &token);
             const bool cancelled = token.isCancelled();
             const bool succeeded = !cancelled && !result.isNull();
@@ -2596,21 +2602,24 @@ void MainWindow::onRemoveBackground() {
             // cancel/failure we simply do not apply: the pre-op image is left
             // byte-for-byte intact (formerly ADR 0002 §2). A transient failure
             // surfaces the "Failed" glyph so the user knows a retry is worth it.
-            QMetaObject::invokeMethod(
-                self,
-                [self, doc, imgDoc, result, cancelled, succeeded]() {
-                    self->finishBackgroundRemoval(cancelled, succeeded);
+            scheduler->postResultToGuiThread(
+                [guard, doc, imgDoc, result, cancelled, succeeded]() {
+                    // Window closed mid-flight: nothing left to update, and the
+                    // document went with it. Dropping the result here is the
+                    // same "do not apply" outcome as a cancel.
+                    if (!guard)
+                        return;
+                    guard->finishBackgroundRemoval(cancelled, succeeded);
                     if (!succeeded)
                         return;
-                    auto *current = self->m_documentView->currentDocument();
+                    auto *current = guard->m_documentView->currentDocument();
                     if (current != doc)
                         return;
                     if (!imgDoc->replaceImage(result))
                         return;
-                    self->m_sidebar->refreshThumbnails();
-                    self->updateTitleForDocument(doc);
-                },
-                Qt::QueuedConnection);
+                    guard->m_sidebar->refreshThumbnails();
+                    guard->updateTitleForDocument(doc);
+                });
         });
     // Store the running op's token so re-invoking the entry can cancel it, and
     // flip the menu entry to its "calculating" glyph. The token must be live
@@ -3805,9 +3814,15 @@ void MainWindow::scheduleBackgroundCandidateScore(IDocument *doc) {
         return;
     }
 
-    auto *self = this;
-    auto handle = m_app->mlScheduler().submit(
-        MlPriority::Prefetch, tr("Scoring image…"), [self, doc, thumb](CancellationToken &token) {
+    // Weak reference, not a raw `this`: a window can close (or the whole app
+    // quit) while this speculative score is still queued or running, and the
+    // apply step below touches four MainWindow members. See
+    // MlScheduler::postResultToGuiThread().
+    QPointer<MainWindow> guard(this);
+    MlScheduler *scheduler = &m_app->mlScheduler();
+    auto handle = scheduler->submit(
+        MlPriority::Prefetch, tr("Scoring image…"),
+        [guard, scheduler, doc, thumb](CancellationToken &token) {
             const bool recommend = BackgroundCandidateScorer::isRecommended(thumb, &token);
             if (token.isCancelled())
                 return;
@@ -3818,25 +3833,27 @@ void MainWindow::scheduleBackgroundCandidateScore(IDocument *doc) {
             // any member state. Closing tabs cancels the pending
             // jobs map up-front so this lambda body should not fire
             // for a stale doc.
-            QMetaObject::invokeMethod(
-                self,
-                [self, doc, recommend]() {
-                    // Drop the in-flight entry first — even if the
-                    // doc was swapped out, the slot is no longer
-                    // pending.
-                    self->m_pendingCandidateJobs.remove(doc);
-                    if (recommend) {
-                        self->m_backgroundCandidateDocs.insert(doc);
-                    } else {
-                        self->m_backgroundCandidateDocs.remove(doc);
-                    }
-                    // Refresh the badge only when the verdict applies
-                    // to the document the user is currently looking at.
-                    if (self->m_documentView->currentDocument() == doc) {
-                        self->updateRemoveBackgroundBadge(doc);
-                    }
-                },
-                Qt::QueuedConnection);
+            scheduler->postResultToGuiThread([guard, doc, recommend]() {
+                // Window gone: every member this would touch went with
+                // it. This is the guard that was missing when the macOS
+                // nightly's unit-test step SIGSEGV'd on 2026-08-03.
+                if (!guard)
+                    return;
+                // Drop the in-flight entry first — even if the
+                // doc was swapped out, the slot is no longer
+                // pending.
+                guard->m_pendingCandidateJobs.remove(doc);
+                if (recommend) {
+                    guard->m_backgroundCandidateDocs.insert(doc);
+                } else {
+                    guard->m_backgroundCandidateDocs.remove(doc);
+                }
+                // Refresh the badge only when the verdict applies
+                // to the document the user is currently looking at.
+                if (guard->m_documentView->currentDocument() == doc) {
+                    guard->updateRemoveBackgroundBadge(doc);
+                }
+            });
         });
     m_pendingCandidateJobs.insert(doc, handle.id);
 }

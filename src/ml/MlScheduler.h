@@ -2,6 +2,7 @@
 
 #include "ml/CancellationToken.h"
 
+#include <QMetaObject>
 #include <QObject>
 #include <QString>
 
@@ -12,6 +13,7 @@
 #include <memory>
 #include <mutex>
 #include <thread>
+#include <utility>
 #include <vector>
 
 namespace trailer {
@@ -146,6 +148,49 @@ class MlScheduler : public QObject {
     // if needed. Normally called by the internal poll timer; tests
     // call it directly after flipping the test-seam power state.
     void reevaluatePowerPolicy();
+
+    // THE way a worker hands a result back to the GUI thread.
+    //
+    // Do NOT write QMetaObject::invokeMethod(myWidget, …,
+    // Qt::QueuedConnection) from inside a submit()ed lambda. A queued invoke
+    // POSTS AN EVENT TO ITS CONTEXT OBJECT, and posting dereferences that
+    // object (QObject::thread(), then its QThreadData). A window/controller
+    // closed between submit() and the worker's post is therefore touched
+    // twice after it is gone: once inside postEvent() on the worker thread,
+    // and again when the main loop delivers the QMetaCallEvent into freed
+    // memory and runs the lambda's `target->m_member` accesses. That bug took
+    // the macOS nightly's gating unit-test step down on 2026-08-03
+    // (nightly-20260803, SIGSEGV) and is reproduced deterministically by
+    // tests/test_ml_callback_lifetime.cpp.
+    //
+    // Reading a QPointer on the WORKER thread narrows the window but does not
+    // close it: ~QObject nulls QPointers near its start and only removes the
+    // object's posted events later, so a post can still land after the guard
+    // last read non-null.
+    //
+    // So: post to the scheduler instead. The scheduler is a QObject living on
+    // the GUI thread that PROVABLY outlives every worker — ~MlScheduler calls
+    // stop(), which joins the worker thread before the object is destroyed
+    // (which is also why workerLoop()'s `emit statsChanged()` is safe). The
+    // caller's own weak guard is then re-checked INSIDE `fn`, on the GUI
+    // thread, where the check cannot interleave with the destruction that
+    // invalidates it.
+    //
+    //     QPointer<MyWidget> guard(this);
+    //     MlScheduler *sched = &app->mlScheduler();
+    //     sched->submit(prio, label, [guard, sched](CancellationToken &tok) {
+    //         auto result = compute(tok);
+    //         sched->postResultToGuiThread([guard, result] {
+    //             if (!guard) return;      // window closed mid-flight
+    //             guard->apply(result);
+    //         });
+    //     });
+    //
+    // See docs/CONVENTIONS.md §5 ("Weak references are QPointer<T>, never raw
+    // pointers"), whose "Broken if" clause names this exact symptom.
+    template <typename Fn> void postResultToGuiThread(Fn &&fn) {
+        QMetaObject::invokeMethod(this, std::forward<Fn>(fn), Qt::QueuedConnection);
+    }
 
   signals:
     // Emitted whenever queue depth or running-task identity

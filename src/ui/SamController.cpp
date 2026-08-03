@@ -2,6 +2,7 @@
 
 #include "app/Application.h"
 #include "ml/CancellationToken.h"
+#include "ml/MlScheduler.h"
 #include "ml/ModelRegistry.h"
 #include "ml/SamSession.h"
 
@@ -208,23 +209,25 @@ void SamController::prepareForActive(const QImage &image, PreparedCallback onPre
         m_prepareTask = 0;
     }
 
-    // The worker captures a QPointer + the raw `this` it derefs after
-    // the QueuedConnection has verified the target is alive.
-    // QMetaObject::invokeMethod(target, ...) with a QPointer-tracked
-    // target drops the call if the controller has been destroyed
-    // before the GUI thread picks it up; the inner lambda can then
-    // dereference `controller` unconditionally.
+    // The worker carries a weak QPointer and hands the result back
+    // THROUGH THE SCHEDULER, never through the controller itself: a
+    // queued invoke dereferences its context object when it posts, so
+    // posting to a controller the user destroyed mid-encode (window
+    // closed during Instant Alpha / Smart Lasso) touches freed memory.
+    // The scheduler joins this worker in its destructor, so it is
+    // always a live context; the guard is re-checked on the GUI thread
+    // inside the lambda. See MlScheduler::postResultToGuiThread().
     QPointer<SamController> selfGuard(this);
-    SamController *controller = this;
+    MlScheduler *scheduler = &m_app->mlScheduler();
     // Capture the session by shared_ptr — the encoder lambda may
     // outlive the controller; the shared_ptr keeps SamSession alive
     // until the lambda exits (cancellation flips the token, the
     // encoder bails at its next checkpoint, and the shared_ptr
     // drops on lambda return).
     std::shared_ptr<SamSession> sess = m_session;
-    auto handle = m_app->mlScheduler().submit(
+    auto handle = scheduler->submit(
         MlPriority::UserAction, tr("Preparing Instant Alpha / Smart Lasso…"),
-        [selfGuard, controller, sess, image, key,
+        [selfGuard, scheduler, sess, image, key,
          onPrepared](CancellationToken &token) {
             if (token.isCancelled())
                 return;
@@ -240,27 +243,26 @@ void SamController::prepareForActive(const QImage &image, PreparedCallback onPre
             if (ok && sess) {
                 sess->cachedState(embedding, origSize, scale);
             }
-            // QueuedConnection: if `selfGuard` is null by the time the
-            // GUI thread dispatches, Qt drops the call silently.
-            if (!selfGuard)
-                return;
-            QMetaObject::invokeMethod(
-                selfGuard.data(),
-                [controller, ok, key, embedding = std::move(embedding), origSize, scale,
+            // The guard is checked on the GUI thread, inside the lambda:
+            // that is the only thread that can destroy the controller, so
+            // the check and the use below cannot interleave with it.
+            scheduler->postResultToGuiThread(
+                [selfGuard, ok, key, embedding = std::move(embedding), origSize, scale,
                  onPrepared]() {
-                    controller->m_prepareTask = 0;
+                    if (!selfGuard)
+                        return;
+                    selfGuard->m_prepareTask = 0;
                     if (ok && !embedding.empty()) {
                         CacheEntry e;
                         e.key = key;
                         e.embedding = std::move(embedding);
                         e.origSize = origSize;
                         e.scale = scale;
-                        controller->putCache(std::move(e));
+                        selfGuard->putCache(std::move(e));
                     }
                     if (onPrepared)
                         onPrepared(ok);
-                },
-                Qt::QueuedConnection);
+                });
         });
     m_prepareTask = handle.id;
 }
@@ -329,43 +331,41 @@ void SamController::dispatchDecoder(QVector<QPoint> positives, QVector<QPoint> n
     m_decoderInFlight = true;
     m_lastDispatch = std::chrono::steady_clock::now();
 
+    // Same weak-guard + scheduler-context hop as prepareForImage() above.
     QPointer<SamController> selfGuard(this);
-    SamController *controller = this;
+    MlScheduler *scheduler = &m_app->mlScheduler();
     // Capture the session by shared_ptr so the decoder lambda owns
     // a strong reference for the duration of the inference, even if
     // the controller is destroyed mid-flight.
     std::shared_ptr<SamSession> sess = m_session;
-    auto handle = m_app->mlScheduler().submit(
+    auto handle = scheduler->submit(
         MlPriority::UserAction, tr("Segmenting…"),
-        [selfGuard, controller, sess, positives = std::move(positives),
+        [selfGuard, scheduler, sess, positives = std::move(positives),
          negatives = std::move(negatives), onResult](CancellationToken &token) {
             QImage mask;
             if (sess && !token.isCancelled()) {
                 mask = sess->segment(positives, negatives, &token);
             }
-            if (!selfGuard)
-                return;
-            QMetaObject::invokeMethod(
-                selfGuard.data(),
-                [controller, mask, onResult]() {
-                    controller->m_decoderTask = 0;
-                    controller->m_decoderInFlight = false;
-                    if (onResult)
-                        onResult(mask);
-                    // If a fresher set of prompts queued up while the
-                    // decoder was running, dispatch them now.
-                    if (controller->m_havePending) {
-                        QVector<QPoint> p = std::move(controller->m_pendingPositives);
-                        QVector<QPoint> n = std::move(controller->m_pendingNegatives);
-                        SegmentCallback cb = std::move(controller->m_pendingCallback);
-                        controller->m_pendingPositives.clear();
-                        controller->m_pendingNegatives.clear();
-                        controller->m_pendingCallback = nullptr;
-                        controller->m_havePending = false;
-                        controller->dispatchDecoder(std::move(p), std::move(n), std::move(cb));
-                    }
-                },
-                Qt::QueuedConnection);
+            scheduler->postResultToGuiThread([selfGuard, mask, onResult]() {
+                if (!selfGuard)
+                    return;
+                selfGuard->m_decoderTask = 0;
+                selfGuard->m_decoderInFlight = false;
+                if (onResult)
+                    onResult(mask);
+                // If a fresher set of prompts queued up while the
+                // decoder was running, dispatch them now.
+                if (selfGuard->m_havePending) {
+                    QVector<QPoint> p = std::move(selfGuard->m_pendingPositives);
+                    QVector<QPoint> n = std::move(selfGuard->m_pendingNegatives);
+                    SegmentCallback cb = std::move(selfGuard->m_pendingCallback);
+                    selfGuard->m_pendingPositives.clear();
+                    selfGuard->m_pendingNegatives.clear();
+                    selfGuard->m_pendingCallback = nullptr;
+                    selfGuard->m_havePending = false;
+                    selfGuard->dispatchDecoder(std::move(p), std::move(n), std::move(cb));
+                }
+            });
         });
     m_decoderTask = handle.id;
 }

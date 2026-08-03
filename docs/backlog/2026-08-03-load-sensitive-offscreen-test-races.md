@@ -70,8 +70,33 @@ Fails cleanly (assertion, not crash) under the same conditions. Per
 assertion in this file still has a timing dependency. Identify it and
 re-express it structurally.
 
+**First sighting on real CI (2026-08-03).** Until now this was only ever
+observed on a contended dev box, which made it easy to dismiss as local noise.
+It has now fired on a self-hosted runner: run
+[30829364568](https://github.com/programmerq/trailer/actions/runs/30829364568),
+Linux lane job `91739129513` (on PR #146's branch, whose diff does not touch
+this path):
+
+```
+FAIL!  : TestPerfLazyOpen::formCapabilityProbeDoesNotParseSynchronously() Compared values are not the same
+   Actual   (PdfEditor::parseCount()): 1
+   Expected (0)                      : 0
+   Loc: tests/test_perf_lazy_open.cpp(205)
+```
+
+That names the specific assertion to re-express: the probe is expected to do
+zero synchronous parses, and under contention one lands before the check —
+i.e. the assertion depends on the background parse *not having been scheduled
+yet*, which is a timing dependency wearing a count's clothing. Threshold and
+status unchanged; this is evidence for prioritising it, not a re-scoping.
+
 ## Related
 
 - `2026-08-03-quit-teardown-segfault-mlscheduler` — the third flake found in
-  the same hunt. Distinct: that one is a `SIGSEGV` in teardown, a
-  memory-safety bug rather than a test-timing bug.
+  the same hunt. Distinct: that one was a `SIGSEGV` in teardown, a
+  memory-safety bug rather than a test-timing bug. **Closed**: the diagnosis
+  in that item (MlScheduler threads parked on a destroyed condvar) was wrong
+  — the parked-worker frames are idle bystanders the crash handler prints for
+  every thread. The real cause was an ML worker posting its result to a raw
+  `MainWindow *`; fixed via `MlScheduler::postResultToGuiThread()`, guarded by
+  `tests/test_ml_callback_lifetime.cpp`.
