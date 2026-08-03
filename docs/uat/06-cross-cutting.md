@@ -802,3 +802,78 @@ itself. What is asserted is the structural precondition the Cocoa bridge
 reacts to: with zero `ApplicationSpecificRole` actions in the tree, the
 bridge has nothing to append, so the duplication cannot occur. Confirming
 the rendered macOS menu remains an owner/real-Mac check.
+
+---
+
+## UAT-UPD-001 — Help ▸ Check for Updates… is honest about whether this build can update
+
+The update channel verifies a signed feed against a public key **embedded
+in the binary**, supplied at configure time (`-DTRAILER_UPDATE_PUBKEY`)
+and derived in CI from the signing secret — see
+`docs/decision-records/2026-08-02-update-pubkey-from-signing-secret.md`.
+A build configured without it (every ordinary local build, PR, and fork)
+carries no key and can never verify an update.
+
+**Preconditions:** None.
+**Steps:**
+1. Launch Trailer and open any document.
+2. Open the **Help** menu.
+**Expected:**
+- `Check for Updates…` is **present in both cases** — never removed, so
+  neighbouring items never shift (G10).
+- It is **enabled** iff the build carries a key
+  (`Update::kUpdateChannelProvisioned`).
+- When disabled it carries a tooltip naming the reason ("no
+  update-signing key") and where to go (the Releases page), and the
+  hosting menu calls `setToolTipsVisible(true)` so that tooltip actually
+  renders (G3 — a tooltip nobody can see is not an explanation).
+
+Driven by `uat_helpMenuCheckForUpdatesMatchesProvisioning`; the
+tooltips-visible half is swept for every menu by
+`uat_fnd_043_everyMenuWithDisabledTooltipActionRendersTooltips`.
+
+G2 evidence (same menu, same window, both states):
+`docs/uat/images/2026-08-02-update-help-menu-with-key.png` and
+`docs/uat/images/2026-08-02-update-help-menu-no-key.png`.
+
+## UAT-UPD-002 — Preferences ▸ Updates explains a keyless build
+
+**Preconditions:** None.
+**Steps:**
+1. Open **Preferences ▸ Updates**.
+**Expected:**
+- The action button reads `Check Now` and occupies the same position in
+  both cases; only its enabled state and the status text differ.
+- With a key: the ordinary status ladder (`Never checked.` → `Checking…`
+  → …) and an enabled button.
+- Without a key: the status states the build has no update-signing key
+  and points at the Releases page; the button is disabled and carries a
+  tooltip (G3).
+
+Driven by `uat_preferencesUpdatesPaneMatchesProvisioning` and
+`uat_pref_030_updatesTabReflectsManagerState`.
+
+G2 evidence: `docs/uat/images/2026-08-02-update-prefs-with-key.png` and
+`docs/uat/images/2026-08-02-update-prefs-no-key.png`.
+
+## UAT-UPD-003 — the Updates button does not move as the status text changes
+
+The Updates status line legitimately varies in height — one line for
+`Never checked.`, two while a check runs (`Checking for updates…` plus the
+disclosed URL), three for the no-signing-key message. Before the status
+label reserved its tallest height, `Check Now` rode up and down with it,
+sliding out from under the pointer at the moment the user clicked it.
+
+**Preconditions:** None.
+**Steps:**
+1. Open **Preferences ▸ Updates**.
+2. Observe the action button's position across each status message the
+   pane can display.
+**Expected:**
+- `Check Now`'s position within the dialog is **identical** for every
+  status text (G10, spatial constancy).
+
+Driven by `uat_updatesButtonDoesNotMoveAsStatusTextChanges`, which
+compares `mapTo(&dlg, {0,0})` across all four status strings — a geometry
+assertion rather than a screenshot, per G10's evidence rule. Verified to
+fail against the pre-fix layout.

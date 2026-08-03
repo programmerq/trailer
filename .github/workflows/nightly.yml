@@ -103,15 +103,25 @@
 #     what actually shipped that night). A release asset is atomic with the
 #     artifacts it describes and trivially fetched by tag.
 #   - "Worse" axis (scripts/compare-uat-baseline.sh — a standalone,
-#     directly-executable script, unit-tested against a fixture matrix; see
-#     its header comment and the implementing PR for the full rationale and
-#     verification output): crash state is checked first and dominates —
-#     a newly-crashing lane is always worse regardless of counts, a newly-
-#     clean lane always better. When crash state is unchanged, pass counts
-#     are compared as a RATIO (integer cross-multiplication, no float
-#     epsilon), not a raw passed-count delta — a raw-count comparison
-#     misbehaves once the suite grows (21/40 → 22/45 is more passing tests
-#     but a lower ratio, and is correctly not read as an improvement).
+#     directly-executable script whose fixture matrix is committed as
+#     scripts/test-compare-uat-baseline.sh and runs in ci.yml; see its
+#     header comment for the full rationale): crash state is checked first
+#     and dominates — a newly-crashing lane is always worse regardless of
+#     counts, a newly-clean lane always better. When crash state is
+#     unchanged, the ABSOLUTE PASSED COUNT is compared: fewer tests
+#     passing than last night is worse, more is better, equal is
+#     unchanged. The suite TOTAL is reported beside the verdict as a note
+#     ("+1 test added") but never affects it.
+#     This replaced a pass-RATIO comparison on 2026-08-02. The ratio axis
+#     reds a run as REGRESSED when a FAILING TEST IS ADDED and nothing
+#     actually regressed — which is precisely this repo's documented
+#     workflow (AGENTS.md "CI cadence": every confirmed defect lands as a
+#     regression guard, written red, before the fix). It produced a false
+#     REGRESSED on nightly-20260801's macOS lane (40/41 → 40/42, pass
+#     count flat). Absolute-count comparison has a narrower residual
+#     blind spot — a regression masked by a new passing test the same
+#     night — tracked in
+#     docs/backlog/2026-08-02-uat-ratchet-per-test-identity.md.
 #   - Degrade gracefully, always: no previous release, no asset on it, an
 #     asset that fails to parse, or a previous night where the lane itself
 #     wasn't green — all collapse to `no_baseline`, which is never `worse`.
@@ -261,6 +271,13 @@ jobs:
       current-commit: ${{ steps.skip.outputs.current-commit }}
       prev-nightly-tag: ${{ steps.skip.outputs.prev-nightly-tag }}
       matched-commit: ${{ steps.skip.outputs.matched-commit }}
+      # The 32-byte ed25519 PUBLIC key, hex, derived from the signing
+      # secret by the step below. PUBLIC data — safe as a job output and
+      # safe in a log; the whole point of the scheme is that it is
+      # embedded in every shipped binary. Empty when the secret is not
+      # available (forks, or before provisioning), which the build lanes
+      # treat as "no update channel in this build", not as an error.
+      update-pubkey: ${{ steps.pubkey.outputs.hex }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -269,6 +286,47 @@ jobs:
           # (and every tag) present locally.
           fetch-depth: 0
           ref: ${{ inputs.ref }}
+
+      - name: Derive the update-channel public key
+        # Turn the PRIVATE signing secret into the PUBLIC key the built
+        # binaries embed, ONCE, here — so the key a nightly TRUSTS and
+        # the key its feed is SIGNED with (nightly-publish's "Build +
+        # sign nightly update feed" step, same secret) are derived from
+        # one input and cannot drift apart. That drift is not
+        # hypothetical: before this, the public key was a literal
+        # committed in src/update/UpdatePublicKey.h, and it was a
+        # throwaway dev key that no feed was ever signed with — every
+        # binary shipped would have rejected every real signature.
+        # See docs/decision-records/2026-08-02-update-pubkey-from-
+        # signing-secret.md.
+        #
+        # WHY THIS JOB: the three build lanes need the key at CONFIGURE
+        # time, and they all `needs:` this job, which is the earliest
+        # point where it can be computed once and fanned out. The
+        # alternative — giving the private secret to all three lanes —
+        # would put it on three more runners for no benefit, since what
+        # they actually need is the public half. Only the derived PUBLIC
+        # key crosses the job boundary.
+        #
+        # Absent secret (forks, pre-provisioning) is NOT an error: the
+        # output stays empty and every lane builds with the update
+        # channel compiled out, exactly like an ordinary local build.
+        id: pubkey
+        env:
+          TRAILER_UPDATE_SIGNING_KEY_B64: ${{ secrets.TRAILER_UPDATE_SIGNING_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TRAILER_UPDATE_SIGNING_KEY_B64:-}" ]; then
+            echo "::warning::TRAILER_UPDATE_SIGNING_KEY secret is not set — tonight's binaries build WITHOUT an update channel (Help ▸ Check for Updates… will be disabled in them). The feed-signing step will skip for the same reason."
+            echo "hex=" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The private key is piped straight into the derivation and is
+          # never written to disk here; only the public half is printed.
+          HEX="$(printf '%s' "$TRAILER_UPDATE_SIGNING_KEY_B64" \
+            | scripts/derive-update-pubkey.sh --base64 -)"
+          echo "hex=$HEX" >> "$GITHUB_OUTPUT"
+          echo "Update-channel public key: $HEX"
 
       - id: resolve
         # Captured ONCE, here, before any lane starts or waits on the mac
@@ -427,10 +485,16 @@ jobs:
         # nightly represents "what would ship", like release, not the dev
         # opt-in toggles). TRAILER_WERROR stays OFF (Qt/libstdc++/qpdf
         # system-header noise; see release.yml's header).
+        # TRAILER_UPDATE_PUBKEY: the update-channel key, derived once in
+        # nightly-date from the signing secret (see that job's "Derive
+        # the update-channel public key" step). Empty on a fork or before
+        # the secret is provisioned, which CMake treats as "no update
+        # channel in this build" rather than an error.
         run: >-
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Release
           -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
+          -DTRAILER_UPDATE_PUBKEY="${{ needs.nightly-date.outputs.update-pubkey }}"
 
       - name: Build
         run: cmake --build build --config Release --parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
@@ -534,6 +598,7 @@ jobs:
           -DQT_HOST_PATH="$QT_HOST_DIR"
           -Dqpdf_DIR="$QPDF_DIR/lib/cmake/qpdf"
           -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_PREBUILT="$ORT_WIN_DIR"
+          -DTRAILER_UPDATE_PUBKEY="${{ needs.nightly-date.outputs.update-pubkey }}"
         env:
           PKG_CONFIG_LIBDIR: /usr/x86_64-w64-mingw32/lib/pkgconfig:${{ env.MINGW_PREFIX }}/lib/pkgconfig
 
@@ -700,6 +765,16 @@ jobs:
         # add_subdirectory(tests) in CMakeLists.txt is unconditional), so
         # the unit + UAT binaries below need no separate configure/build —
         # this step already produced them alongside Trailer.app.
+        #
+        # TRAILER_UPDATE_PUBKEY reaches CMake via the environment here
+        # rather than a flag, because the configure line lives inside the
+        # script; the script forwards it (see its "update channel" block).
+        # macOS is the lane that matters most for this: it is the only
+        # platform with a working in-place install path today, so a macOS
+        # nightly built without the key is the one a user would actually
+        # notice failing to update.
+        env:
+          TRAILER_UPDATE_PUBKEY: ${{ needs.nightly-date.outputs.update-pubkey }}
         run: scripts/build-macos.sh
 
       - name: Unit tests
@@ -906,7 +981,8 @@ jobs:
           echo "wine-reason=$REASON_CODE"        >> "$GITHUB_OUTPUT"
           echo "wine-prev-passed=$PREV_PASSED"   >> "$GITHUB_OUTPUT"
           echo "wine-prev-total=$PREV_TOTAL"     >> "$GITHUB_OUTPUT"
-          echo "Wine UAT verdict vs previous nightly: $VERDICT ($REASON_CODE)"
+          echo "wine-suite-delta=$SUITE_DELTA"   >> "$GITHUB_OUTPUT"
+          echo "Wine UAT verdict vs previous nightly: $VERDICT ($REASON_CODE), suite delta ${SUITE_DELTA:-n/a}"
 
           eval "$(bash scripts/compare-uat-baseline.sh macos_uat "$PREV_FILE" \
             "${{ needs.nightly-macos.result }}" \
@@ -917,7 +993,8 @@ jobs:
           echo "macos-reason=$REASON_CODE"       >> "$GITHUB_OUTPUT"
           echo "macos-prev-passed=$PREV_PASSED"  >> "$GITHUB_OUTPUT"
           echo "macos-prev-total=$PREV_TOTAL"    >> "$GITHUB_OUTPUT"
-          echo "macOS UAT verdict vs previous nightly: $VERDICT ($REASON_CODE)"
+          echo "macos-suite-delta=$SUITE_DELTA"  >> "$GITHUB_OUTPUT"
+          echo "macOS UAT verdict vs previous nightly: $VERDICT ($REASON_CODE), suite delta ${SUITE_DELTA:-n/a}"
 
       - name: Build since-last-nightly summary
         id: changelog
@@ -1019,23 +1096,47 @@ jobs:
           # below — e.g. "unchanged vs nightly-20260728" / "REGRESSED from
           # 40/40 (nightly-20260728)". Keeps the release body the readable
           # record of what the ratchet decided, not just the raw counts.
+          #
+          # A changed suite SIZE is appended as its own parenthetical note
+          # rather than folded into the verdict. The verdict compares
+          # absolute passed counts only, so "unchanged" on a night that
+          # added three failing regression guards is correct but reads as
+          # surprising without the "+3 tests added" note beside it — the
+          # note is what makes a flat pass count self-explaining, and it
+          # never gates.
+          render_suite_delta() {
+            local delta="$1" n word
+            case "$delta" in
+              ""|0) echo ""; return ;;
+              -*)   n="${delta#-}" ;;
+              *)    n="$delta" ;;
+            esac
+            if [ "$n" = "1" ]; then word="test"; else word="tests"; fi
+            case "$delta" in
+              -*) echo " ($n $word removed from the suite)" ;;
+              *)  echo " (+$n $word added to the suite)" ;;
+            esac
+          }
+
           render_compare() {
-            local verdict="$1" prev_passed="$2" prev_total="$3"
+            local verdict="$1" prev_passed="$2" prev_total="$3" suite_delta="${4:-}"
+            local note
+            note="$(render_suite_delta "$suite_delta")"
             case "$verdict" in
               worse)
                 if [ -n "$prev_total" ]; then
-                  echo "REGRESSED from $prev_passed/$prev_total ($PREV_TAG)"
+                  echo "REGRESSED from $prev_passed/$prev_total ($PREV_TAG)$note"
                 else
-                  echo "REGRESSED vs $PREV_TAG"
+                  echo "REGRESSED vs $PREV_TAG$note"
                 fi ;;
               better)
                 if [ -n "$prev_total" ]; then
-                  echo "IMPROVED from $prev_passed/$prev_total ($PREV_TAG)"
+                  echo "IMPROVED from $prev_passed/$prev_total ($PREV_TAG)$note"
                 else
-                  echo "IMPROVED vs $PREV_TAG"
+                  echo "IMPROVED vs $PREV_TAG$note"
                 fi ;;
               same)
-                echo "unchanged vs $PREV_TAG" ;;
+                echo "unchanged vs $PREV_TAG$note" ;;
               no_baseline)
                 if [ -n "$PREV_TAG" ]; then
                   echo "no baseline to compare (first ratcheted run, or $PREV_TAG has none)"
@@ -1062,7 +1163,8 @@ jobs:
             WIN_PASSED="${{ needs.nightly-windows.outputs.wine-uat-passed }}"
             WIN_TOTAL="${{ needs.nightly-windows.outputs.wine-uat-total }}"
             WIN_COMPARE="$(render_compare "${{ steps.uat_compare.outputs.wine-verdict }}" \
-              "${{ steps.uat_compare.outputs.wine-prev-passed }}" "${{ steps.uat_compare.outputs.wine-prev-total }}")"
+              "${{ steps.uat_compare.outputs.wine-prev-passed }}" "${{ steps.uat_compare.outputs.wine-prev-total }}" \
+              "${{ steps.uat_compare.outputs.wine-suite-delta }}")"
             if [ -n "$WIN_TOTAL" ] && [ "$WIN_PASSED" = "$WIN_TOTAL" ]; then
               WIN_ROW="✅ build+unit+UAT (Wine UAT $WIN_PASSED/$WIN_TOTAL) — $WIN_COMPARE"
             elif [ -n "$WIN_TOTAL" ]; then
@@ -1088,7 +1190,8 @@ jobs:
             MAC_TOTAL="${{ needs.nightly-macos.outputs.macos-uat-total }}"
             MAC_CRASHED="${{ needs.nightly-macos.outputs.macos-uat-crashed }}"
             MAC_COMPARE="$(render_compare "${{ steps.uat_compare.outputs.macos-verdict }}" \
-              "${{ steps.uat_compare.outputs.macos-prev-passed }}" "${{ steps.uat_compare.outputs.macos-prev-total }}")"
+              "${{ steps.uat_compare.outputs.macos-prev-passed }}" "${{ steps.uat_compare.outputs.macos-prev-total }}" \
+              "${{ steps.uat_compare.outputs.macos-suite-delta }}")"
             if [ "$MAC_CRASHED" = "true" ]; then
               if [ -n "$MAC_TOTAL" ]; then
                 MAC_ROW="✅ build+unit, 🔥 macOS UAT CRASHED ($MAC_PASSED/$MAC_TOTAL) — $MAC_COMPARE — informational, non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
@@ -1234,10 +1337,15 @@ jobs:
         if: needs.nightly-date.outputs.skip != 'true' && needs.nightly-date.outputs.dry-run != 'true' && steps.assets.outputs.count != '0'
         env:
           GH_TOKEN: ${{ github.token }}
-          # Base64-encoded ed25519 PRIVATE key PEM (see
-          # src/update/UpdatePublicKey.h for the matching public key and the
-          # exact `openssl genpkey` / `base64` commands to generate and
-          # store this secret). Absent on a fork or before the owner
+          # Base64-encoded ed25519 PRIVATE key PEM. The matching PUBLIC
+          # key is not stored anywhere — it is derived from this secret by
+          # nightly-date's "Derive the update-channel public key" step and
+          # compiled into that night's binaries, so the two cannot drift
+          # (docs/decision-records/2026-08-02-update-pubkey-from-signing-
+          # secret.md). Generate/store with:
+          #   openssl genpkey -algorithm ed25519 -out key.pem
+          #   base64 -w0 key.pem   # -> the secret's value
+          # Absent on a fork or before the owner
           # provisions it — the soft-skip below handles that, not a hard
           # failure, so PRs from forks (which never see repo secrets) don't
           # break on this step.
@@ -1266,6 +1374,25 @@ jobs:
 
           KEY_FILE="$RUNNER_TEMP/update-signing-key.pem"
           printf '%s' "$TRAILER_UPDATE_SIGNING_KEY_B64" | base64 -d > "$KEY_FILE"
+
+          # Belt-and-braces: confirm the key we are about to sign with is
+          # the same one tonight's BINARIES embed. Both come from this
+          # secret in this run, so they agree by construction and this can
+          # only fire if the wiring is broken (a lane configured without
+          # the key, an output renamed, the secret rotated mid-run). It is
+          # worth the three lines because the failure it catches is
+          # otherwise invisible until a user's update silently stops
+          # verifying — the exact class of bug this whole arrangement was
+          # introduced to end.
+          EXPECTED_PUBKEY="${{ needs.nightly-date.outputs.update-pubkey }}"
+          ACTUAL_PUBKEY="$(scripts/derive-update-pubkey.sh "$KEY_FILE")"
+          if [ -n "$EXPECTED_PUBKEY" ] && [ "$EXPECTED_PUBKEY" != "$ACTUAL_PUBKEY" ]; then
+            echo "::error::Update key mismatch — tonight's binaries embed $EXPECTED_PUBKEY but the feed would be signed by $ACTUAL_PUBKEY. Refusing to publish a feed no shipped build can verify."
+            exit 1
+          fi
+          if [ -z "$EXPECTED_PUBKEY" ]; then
+            echo "::warning::Binaries were built WITHOUT an update-channel key (nightly-date could not derive one), so tonight's signed feed is unverifiable by them. Publishing it anyway for the benefit of previously-shipped builds signed by the same key."
+          fi
           trap 'rm -f "$KEY_FILE"' EXIT
 
           PAYLOAD_FILE="$RUNNER_TEMP/appcast-payload.json"

@@ -154,3 +154,86 @@ Icon-Composer authoring effort:**
 
 Priority and status unchanged (P3, open) — this remains a real-Mac-tier
 item; nothing above is a substitute for the Threshold's live observation.
+
+## Investigation update (2026-08-02, "is it a manifest one-liner?")
+
+Asked before committing to Icon-Composer authoring effort: **actool is
+dropping the dark bitmaps — is that a flag or a manifest key we're
+missing, or is it the mechanism ceiling?** Answer: **the mechanism
+ceiling. There is no one-liner.**
+
+**The drop is now confirmed from CI, not inferred.** The 2026-07-31
+informational `assetutil` grep added by the previous investigation has
+been running on every nightly macOS lane since. `nightly-20260802`
+(run 30745321546, job 91489836596) logs:
+
+```
+==> Verifying adaptive app icon (Assets.car + CFBundleIconName)
+    Assets.car present; CFBundleIconName=AppIcon; assetutil confirms AppIcon
+    (info) compiled catalog does NOT visibly mention dark/luminosity —
+           see docs/backlog/2026-07-17-adaptive-dock-icon-option-b.md
+```
+
+So: catalog compiles, `AppIcon` set lands, **zero dark/luminosity
+entries survive**. Option A has never worked, on any build — consistent
+with finding 1 above (there is no prior working build to regress from).
+
+**actool emits no warning.** The same log shows actool's full result
+plist, and it contains only `com.apple.actool.compilation-results` with
+three `output-files` — no `com.apple.actool.notices`, no warnings. The
+`appearances` key in
+`resources/macos/Assets.xcassets/AppIcon.appiconset/Contents.json` is
+parsed without complaint and then has no effect on the `--app-icon`
+compile. A silent, successful-looking no-op is exactly why this shipped
+looking correct.
+
+**Why: `luminosity` appearance variants are not an input to the macOS
+app-icon compile path.** `appearances` is the documented dark-mode
+mechanism for `.imageset`s; the macOS **`.appiconset`** has no supported
+light/dark variant axis. Per-appearance *app* icons arrived on macOS with
+Tahoe's Icon Composer `.icon` format — i.e. ADR 0009 **Option B** — not
+by adding keys to a bitmap appiconset. Corroborating (all secondary, none
+Apple-official, none testing Trailer's exact shape):
+
+- Keith Harrison, [Adding Icon Composer Icons to Xcode](https://useyourloaf.com/blog/adding-icon-composer-icons-to-xcode/):
+  "You no longer need to add default, dark, and tinted variants of the
+  app icon to the asset catalog… drag the Icon Composer `.icon` file into
+  the project navigator" — the catalog route is superseded, not
+  configured differently.
+- Frank A. Krueger, [App Icons](https://praeclarum.org/2025/09/12/app-icons.html):
+  `actool` takes a **`.icon`** file and produces "(1) a compiled
+  `Assets.car` that contains the layered icon for macOS 26 and iOS 26,
+  and (2) a backwards-compatible `.icns`". Trailer's build emits exactly
+  that pair (`AppIcon.icns` + `Assets.car`) — but from bitmaps, so the
+  layered/appearance half has nothing to carry, and `.icns` has no
+  appearance axis at all.
+- Howard Oakley, [Appearance matters](https://eclecticlight.co/2025/09/15/appearance-matters-get-tahoe-looking-in-better-shape/):
+  "Using the new Icon Composer, each mode is designed separately… a
+  developer can (and often should) use a different icon for default and
+  dark modes."
+
+This also **retires the `--enable-icon-stack-fallback-generation` lead**
+from the 2026-07-31 update. That flag governs whether actool *generates*
+a fallback icon stack; it does not make an `.appiconset`'s `luminosity`
+variants compile. Flipping it would not have helped, which is the outcome
+the previous session's decision not to land it unverified was protecting
+against.
+
+**One alternative hypothesis is not yet falsified**, and it is the only
+thing that could still change the recommendation: that the dark bitmaps
+*are* in `Assets.car` and `assetutil --info` simply does not report an
+appearance axis for app-icon entries — making the grep a false negative
+and the root cause something else entirely. `scripts/diagnose-appicon-dark-variants.sh`
+(added with this update) settles it in one run on any Mac with Xcode, by
+compiling the catalog twice — once as-is, once with every `_dark` entry
+stripped — and comparing the two `Assets.car` outputs byte-for-byte.
+Identical output proves the dark bitmaps are absent from the archive
+regardless of what `assetutil` chooses to print.
+
+**Recommendation:** run that script once; if it confirms (expected),
+proceed to Option B — author an Icon Composer `.icon`, keep the existing
+`actool` wiring, and record the outcome as an accepted update to ADR
+0009. Do not spend further effort on the Option-A catalog. The two cheap
+real-Mac checks from the previous update (icon-cache staleness;
+`xcodebuild -version` ≥ 26) still apply before judging an Option-B build,
+and the runner's Xcode 26.3 satisfies the second.

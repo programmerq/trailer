@@ -39,8 +39,20 @@ class UpdateManager : public QObject {
 
     explicit UpdateManager(Settings &settings, QObject *parent = nullptr);
 
+    // False when this build was configured without TRAILER_UPDATE_PUBKEY
+    // (every ordinary local build, PR, and fork — see
+    // cmake/UpdatePublicKey.h.in). Such a build embeds no key, so it can
+    // neither verify a feed nor honestly offer to update; callers that
+    // surface an update affordance MUST disable it with a tooltip rather
+    // than let the user click into a guaranteed failure (G3). Static
+    // because it is a compile-time property of the binary, not of any
+    // particular manager instance.
+    static bool isChannelProvisioned();
+
     // Always available regardless of the auto-check setting — the menu
-    // action's one-shot manual check (G3: never a dead control).
+    // action's one-shot manual check (G3: never a dead control). Sets
+    // State::Error immediately, without any network request, when
+    // isChannelProvisioned() is false.
     void checkNow();
 
     // Called once at startup (and safe to call any time, e.g. from a

@@ -374,6 +374,15 @@ fi
 # CONFIG)) and jpeg-prefix (so the linker can resolve libjpeg, which
 # qpdf's patched INTERFACE_LINK_LIBRARIES points at as an absolute
 # path).
+# Update-channel public key. Forwarded from the environment so CI can
+# supply it (nightly.yml derives it once from the signing secret) without
+# this script needing its own flag plumbing. Unset — the normal case for
+# a local build — means CMake compiles the update channel out; see
+# cmake/UpdatePublicKey.h.in. Passed as an explicit empty string rather
+# than omitted so the cache value is refreshed on a reconfigure that
+# drops the variable, instead of silently retaining a stale key.
+UPDATE_PUBKEY_FLAG="-DTRAILER_UPDATE_PUBKEY=${TRAILER_UPDATE_PUBKEY:-}"
+
 cmake -S . -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_OSX_ARCHITECTURES="arm64" \
@@ -381,6 +390,7 @@ cmake -S . -B "$BUILD_DIR" -G Ninja \
     -DCMAKE_PREFIX_PATH="$QT_ROOT_DIR;$DEPS_DIR/qpdf-prefix;$DEPS_DIR/jpeg-prefix" \
     -DTRAILER_WERROR="$WERROR" \
     "$ADAPTIVE_ICON_FLAG" \
+    "$UPDATE_PUBKEY_FLAG" \
     $UX_RECORDER_CMAKE_ARG
 
 echo "==> Building Trailer.app ($BUILD_JOBS jobs)"

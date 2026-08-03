@@ -112,9 +112,12 @@ Pickable in this order.
    checker against GitHub's Releases API with our own ed25519
    verification, `src/update/`) and a GitHub-Release-asset feed over
    GitHub Pages hosting. Needs an ed25519 keypair the owner
-   generates and stores (see `src/update/UpdatePublicKey.h` for the
-   exact commands — the shipped public key is a throwaway dev
-   placeholder until then); "Check for Updates…" lives in the Help
+   generates and stores (see
+   [`docs/decision-records/2026-08-02-update-pubkey-from-signing-secret.md`](docs/decision-records/2026-08-02-update-pubkey-from-signing-secret.md)
+   — the public key is no longer committed; CI derives it from the
+   signing secret via `scripts/derive-update-pubkey.sh`, and a build
+   without that secret ships with the update channel compiled out);
+   "Check for Updates…" lives in the Help
    menu on all three platforms. **Stable-channel signing is NOT
    done** — `release.yml` has no feed-signing step yet, tracked as a
    Next item below.
@@ -315,11 +318,12 @@ Explicitly off the table so they stop eating planning oxygen.
 - **Update-signing key management.** The custom checker's ed25519
   private key needs to be (a) safely stored — losing it strands
   every existing user on whatever version they have, and (b)
-  reachable from CI to sign each nightly. **Still open:** the
-  shipped public key (`src/update/UpdatePublicKey.h`) is a
-  throwaway dev placeholder — the owner has NOT yet generated and
-  stored the real keypair. **Mitigation (commands in
-  `UpdatePublicKey.h`):** `openssl genpkey -algorithm ed25519`,
+  reachable from CI to sign each nightly. **Storage is done** —
+  the owner has generated the real keypair and set the
+  `TRAILER_UPDATE_SIGNING_KEY` secret; the public key is no longer
+  committed at all, being derived from that secret at build time
+  (`scripts/derive-update-pubkey.sh`), so there is no longer a
+  placeholder to replace. **Mitigation:** `openssl genpkey -algorithm ed25519`,
   store the PEM in a password manager *and* as the
   `TRAILER_UPDATE_SIGNING_KEY` GitHub Actions secret
   (base64-encoded) that `nightly.yml`'s signing step reads;

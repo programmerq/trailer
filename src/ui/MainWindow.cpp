@@ -1199,11 +1199,34 @@ void MainWindow::buildMenus() {
 
     // Help menu on every platform (macOS/Windows/Linux) — see
     // docs/platform-conventions.md's per-OS shape note for this action.
-    // Always enabled: this is the manual one-shot check path, independent
-    // of the Preferences → Updates auto-check toggle (G3).
+    // Enabled whenever this build HAS an update-signing key: the manual
+    // one-shot check is independent of the Preferences → Updates
+    // auto-check toggle (G3), so the toggle never disables it.
+    //
+    // A build configured without TRAILER_UPDATE_PUBKEY (every ordinary
+    // local build, PR, and fork — see cmake/UpdatePublicKey.h.in) embeds
+    // no key and can never verify a feed, so the item is disabled with a
+    // tooltip saying why and where to go, rather than left clickable to
+    // produce a guaranteed error (G3: no lying controls). The item stays
+    // PRESENT and in the same position in both states — only its enabled
+    // state changes — so nothing around it reflows (G10).
     auto *checkForUpdatesAction = helpMenu->addAction(tr("Check for &Updates…"));
     checkForUpdatesAction->setObjectName(QStringLiteral("action.help.checkForUpdates"));
-    connect(checkForUpdatesAction, &QAction::triggered, this, &MainWindow::onCheckForUpdates);
+    if (Update::UpdateManager::isChannelProvisioned()) {
+        connect(checkForUpdatesAction, &QAction::triggered, this, &MainWindow::onCheckForUpdates);
+    } else {
+        checkForUpdatesAction->setEnabled(false);
+        checkForUpdatesAction->setToolTip(
+            tr("This build has no update-signing key, so it cannot verify an update. "
+               "Download an official build from the project's Releases page to get "
+               "automatic updates."));
+        // Without this the tooltip above never renders: QMenu suppresses
+        // action tooltips by default, so a disabled item would explain
+        // itself to nobody — which is the G3 violation, not the fix for
+        // it. Guarded by uat_fnd_043, which sweeps every menu for exactly
+        // this mistake.
+        helpMenu->setToolTipsVisible(true);
+    }
 
     // Local-only diagnostic report (no network call, ever — see
     // src/diagnostics/FeedbackReport.h). Always enabled: it degrades
