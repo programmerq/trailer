@@ -167,6 +167,55 @@ class NavigablePdfView : public QPdfView {
 // lambda, so the worker never touches this static concurrently with a setter.
 PdfDocument::LoadDeviceFactory PdfDocument::s_loadDeviceFactory;
 
+// Test instrumentation (see PdfAdapter.h). Bumped only where a call actually
+// reaches pdfium — i.e. on a page-metrics cache MISS, once per page per load.
+std::atomic<qint64> PdfDocument::s_pagePointSizeEngineCalls{0};
+
+const PdfDocument::PageMetrics *PdfDocument::pageMetrics() const {
+    if (!m_valid || !m_doc)
+        return nullptr;
+    if (m_pageMetrics)
+        return &*m_pageMetrics;
+    const int total = m_doc->pageCount();
+    PageMetrics pm;
+    pm.sizes.reserve(static_cast<size_t>(std::max(0, total)));
+    pm.yOffsets.reserve(static_cast<size_t>(std::max(0, total) + 1));
+    double running = 0.0;
+    pm.yOffsets.push_back(0.0);
+    for (int i = 0; i < total; ++i) {
+        // The one and only place pdfium is asked for a page size: once per
+        // page per loaded page graph.
+        s_pagePointSizeEngineCalls.fetch_add(1, std::memory_order_relaxed);
+        const QSizeF sz = m_doc->pagePointSize(i);
+        pm.sizes.push_back(sz);
+        pm.maxWidth = std::max(pm.maxWidth, sz.width());
+        running += sz.height();
+        pm.yOffsets.push_back(running);
+    }
+    m_pageMetrics = std::move(pm);
+    return &*m_pageMetrics;
+}
+
+QSizeF PdfDocument::pagePoints(int page) const {
+    const PageMetrics *pm = pageMetrics();
+    if (!pm || page < 0 || static_cast<size_t>(page) >= pm->sizes.size())
+        return {};
+    return pm->sizes[static_cast<size_t>(page)];
+}
+
+void PdfDocument::attachDocSignals() {
+    if (!m_doc)
+        return;
+    // Central invalidation: every QPdfDocument::load()/close() transitions
+    // status (Ready -> Loading -> Ready, or -> Null), so hooking statusChanged
+    // covers the deferred open, unlock(), recoverFrom(), and every
+    // reloadViewerFromEditor() after a page-graph mutation — including any
+    // future load site — without each of them having to remember. Connected
+    // once, when m_doc is first adopted.
+    QObject::connect(m_doc.get(), &QPdfDocument::statusChanged, m_doc.get(),
+                     [this](QPdfDocument::Status) { invalidatePageMetrics(); });
+}
+
 void PdfDocument::setLoadDeviceFactoryForTesting(LoadDeviceFactory factory) {
     s_loadDeviceFactory = std::move(factory);
 }
@@ -265,6 +314,11 @@ void PdfDocument::adoptDocOpenResult() {
     m_valid = r.ok;
     m_needsPassword = r.needsPassword;
     m_docLoaded = true;
+    // The worker's load already happened, so no statusChanged will fire for it
+    // on this thread: drop any stale metrics explicitly, then hook the signal
+    // so every SUBSEQUENT load/close invalidates centrally.
+    invalidatePageMetrics();
+    attachDocSignals();
 
     // If createView already returned a "Loading…" placeholder container, swap in
     // the real view now that m_doc exists. In the common interactive path
@@ -717,27 +771,45 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
     auto *overlay = new AnnotationOverlay(view->viewport());
     overlay->setStore(&m_annotations);
     overlay->setPage(view->pageNavigator()->currentPage());
+    // Origin of `page` in viewport coordinates. This runs on EVERY
+    // document->view coordinate conversion: per polygon point of every
+    // selectable-text block, per annotation handle, per mouse move. It used to
+    // re-derive the whole-document aggregates (widest page, running Y offset,
+    // total content height) by walking every page and calling
+    // QPdfDocument::pagePointSize() on each — a mutex-guarded pdfium lookup —
+    // which made each conversion O(pageCount) and the first paint of a large
+    // document O(points x pages). The aggregates now come from the
+    // PageMetrics cache (points, zoom-independent, one pdfium pass per loaded
+    // page graph), so this is O(1) arithmetic. Keep it that way: any new
+    // whole-document term belongs in PageMetrics, not in a loop here.
     auto pageOriginInView = [this](int page) -> QPointF {
         if (!m_view || !m_doc || page < 0)
+            return {};
+        const PageMetrics *pm = pageMetrics();
+        // Past-the-end page index (a stale annotation whose page the document
+        // no longer has). Answered with the same default-QPointF this lambda
+        // already returns for the other invalid input, page < 0, above —
+        // rather than replicating what the removed loops happened to produce
+        // for a nonexistent page, which was QPdfDocument::pagePointSize()'s
+        // out-of-range (-1, -1) fed through the sums.
+        if (!pm || static_cast<size_t>(page) >= pm->sizes.size())
             return {};
         const double z = m_view->zoomFactor();
         const QMargins m = m_view->documentMargins();
         const int spacing = m_view->pageSpacing();
         const QSize vp = m_view->viewport()->size();
 
-        double maxW = 0.0;
-        const int total = m_doc->pageCount();
-        for (int i = 0; i < total; ++i) {
-            maxW = std::max(maxW, m_doc->pagePointSize(i).width() * z);
-        }
-        const double pw = m_doc->pagePointSize(page).width() * z;
+        const int total = static_cast<int>(pm->sizes.size());
+        const double maxW = pm->maxWidth * z;
+        const QSizeF pageSz = pm->sizes[static_cast<size_t>(page)];
+        const double pw = pageSz.width() * z;
 
         if (m_view->pageMode() == QPdfView::PageMode::SinglePage) {
             const int cur = m_view->pageNavigator()->currentPage();
             if (page != cur)
                 return QPointF(-1e9, -1e9);
             const double contentW = maxW + m.left() + m.right();
-            const double contentH = m_doc->pagePointSize(page).height() * z + m.top() + m.bottom();
+            const double contentH = pageSz.height() * z + m.top() + m.bottom();
             const double extraX = std::max(0.0, (vp.width() - contentW) / 2.0);
             const double extraY = std::max(0.0, (vp.height() - contentH) / 2.0);
             return QPointF(extraX + m.left() + (maxW - pw) / 2.0 -
@@ -745,16 +817,15 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
                            extraY + m.top() - m_view->verticalScrollBar()->value());
         }
 
-        double y = m.top();
-        for (int i = 0; i < page; ++i) {
-            y += m_doc->pagePointSize(i).height() * z + spacing;
-        }
-        double contentH = m.top() + m.bottom();
-        for (int i = 0; i < total; ++i) {
-            contentH += m_doc->pagePointSize(i).height() * z;
-            if (i > 0)
-                contentH += spacing;
-        }
+        // Continuous: y is the stacked height of the pages above `page` plus
+        // one inter-page gap for each of them; contentH is the whole stack
+        // plus (total - 1) gaps. Both are the closed forms of the loops this
+        // replaced, so the geometry is bit-for-bit the same modulo
+        // floating-point summation order.
+        const double y = m.top() + pm->yOffsets[static_cast<size_t>(page)] * z +
+                         static_cast<double>(spacing) * page;
+        const double contentH = m.top() + m.bottom() + pm->yOffsets.back() * z +
+                                (total > 0 ? static_cast<double>(spacing) * (total - 1) : 0.0);
         const double contentW = maxW + m.left() + m.right();
         const double extraX = std::max(0.0, (vp.width() - contentW) / 2.0);
         const double extraY = std::max(0.0, (vp.height() - contentH) / 2.0);
@@ -785,7 +856,7 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
         const int total = m_doc->pageCount();
         for (int i = 0; i < total; ++i) {
             const QPointF origin = pageOriginInView(i);
-            const QSizeF pt = m_doc->pagePointSize(i);
+            const QSizeF pt = pagePoints(i);
             const QRectF rect(origin.x(), origin.y(), pt.width() * z, pt.height() * z);
             if (rect.contains(viewPt))
                 return i;
@@ -795,7 +866,7 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
     overlay->setSourceSampler([this](QRectF docRect, QSize outPx, int page) -> QImage {
         if (!m_doc || page < 0 || docRect.isEmpty())
             return {};
-        const QSizeF pagePts = m_doc->pagePointSize(page);
+        const QSizeF pagePts = pagePoints(page);
         if (pagePts.isEmpty())
             return {};
         const double sx = outPx.width() / docRect.width();
@@ -927,7 +998,7 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
         const int total = m_doc->pageCount();
         for (int i = 0; i < total; ++i) {
             const QPointF origin = pageOriginInView(i);
-            const QSizeF pt = m_doc->pagePointSize(i);
+            const QSizeF pt = pagePoints(i);
             const QRectF rect(origin.x(), origin.y(), pt.width() * z, pt.height() * z);
             if (rect.contains(viewPt))
                 return i;
@@ -973,7 +1044,7 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
     formOverlay->setPageSize([this](int page) -> QSizeF {
         if (!m_doc || page < 0)
             return {};
-        return m_doc->pagePointSize(page);
+        return pagePoints(page);
     });
     // The form overlay is populated lazily: at createView time the qpdf
     // editor is usually not yet loaded (deferred), so this seeds fields only
@@ -1285,7 +1356,7 @@ QSize PdfDocument::contentSizeHint() const {
     const_cast<PdfDocument *>(this)->ensureDocLoaded();
     if (!m_valid || !m_doc || m_doc->pageCount() <= 0)
         return {};
-    const QSizeF pts = m_doc->pagePointSize(0);
+    const QSizeF pts = pagePoints(0);
     if (pts.isEmpty())
         return {};
     // QPdfView maps 1 PDF point to 1 logical pixel at zoom 1.0, so
@@ -1299,7 +1370,7 @@ void PdfDocument::applyInitialFitZoom(QPdfView *view) {
         return;
     if (m_initialZoomApplied)
         return;
-    const QSizeF pagePts = m_doc->pagePointSize(0);
+    const QSizeF pagePts = pagePoints(0);
     if (pagePts.isEmpty())
         return;
     const QSize vp = view->viewport()->size();
@@ -1406,7 +1477,7 @@ QImage PdfDocument::renderPageForOcr(int pageIndex) const {
     // PP-OCRv3 caps the long side at 960 px internally, but we want a
     // little extra so smaller scans render legible glyphs. See
     // kOcrRenderDpi for the DPI rationale.
-    const QSizeF pagePts = m_doc->pagePointSize(pageIndex);
+    const QSizeF pagePts = pagePoints(pageIndex);
     if (pagePts.isEmpty())
         return {};
     const int w = std::max(1, static_cast<int>(pagePts.width() / 72.0 * kOcrRenderDpi));
@@ -1433,13 +1504,13 @@ QSizeF PdfDocument::pageSizeHint(int pageIndex) const {
     if (!m_valid || !m_doc || pageIndex < 0 || pageIndex >= m_doc->pageCount()) {
         return {};
     }
-    return m_doc->pagePointSize(pageIndex);
+    return pagePoints(pageIndex);
 }
 
 double PdfDocument::ocrSourceToDocScale(int pageIndex) const {
     if (!m_valid || !m_doc || pageIndex < 0 || pageIndex >= m_doc->pageCount())
         return 1.0;
-    const QSizeF pagePts = m_doc->pagePointSize(pageIndex);
+    const QSizeF pagePts = pagePoints(pageIndex);
     if (pagePts.isEmpty())
         return 1.0;
     // renderPageForOcr rasterises at kOcrRenderDpi; recognized block
@@ -1536,7 +1607,7 @@ QImage PdfDocument::renderThumbnail(int pageIndex, QSize targetSize) {
     if (!m_valid || pageIndex < 0 || pageIndex >= m_doc->pageCount()) {
         return {};
     }
-    const QSizeF pageSize = m_doc->pagePointSize(pageIndex);
+    const QSizeF pageSize = pagePoints(pageIndex);
     if (pageSize.isEmpty() || !targetSize.isValid() || targetSize.isEmpty()) {
         return {};
     }
@@ -1908,7 +1979,7 @@ void PdfDocument::print(QWidget *dialogParent) {
 
     const QRect target = printer.pageLayout().paintRectPixels(printer.resolution());
     for (int page = first; page <= last; ++page) {
-        const QSizeF pagePts = m_doc->pagePointSize(page);
+        const QSizeF pagePts = pagePoints(page);
         if (pagePts.isEmpty())
             continue;
 

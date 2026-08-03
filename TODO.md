@@ -23,6 +23,59 @@ Three recurring sources feed this file:
   [`docs/audit-2026-05-19.md`](docs/audit-2026-05-19.md) for the
   current snapshot.
 
+## 2026-08-03 slow-open investigation (nightly `0.3.1-dev+768.gce56b4b8`, macOS Tahoe arm64)
+
+Owner report: *"noticeably slower than I'd like … it shouldn't take multiple
+seconds to load the app and/or the file when opening a large PDF."* Three
+windows, one PDF each — **365 / 407 / 2603 pages**, all Continuous + Fit Page,
+all with a text layer; background OCR ON; all five ML models downloaded.
+
+Profiled on a Linux dev box (4-core Xeon @2.8 GHz, Qt 6.11, Release) against
+synthetic born-digital PDFs of matching page counts. **Numbers below are from
+that box, not the owner's M-series Mac** — the shape of the cost is what
+transfers, not the absolute milliseconds.
+
+**Where the time actually went.** Not OCR, not thumbnails. Every
+document→view coordinate conversion re-derived three whole-document
+aggregates by calling `QPdfDocument::pagePointSize()` on *every page*, twice.
+Those conversions run per polygon point of every selectable-text block, so the
+real cost was **O(points × pages)**. Opening one 2603-page PDF issued
+**739,417** `pagePointSize` calls; callgrind put `pagePointSize` at **64.7%**
+of all GUI-thread instructions during open. Fixed by a per-page-graph geometry
+cache (`PdfDocument::PageMetrics`) — 739,417 → 2,603 calls, first paint
+766 ms → 23 ms. Guard: `tests/test_perf_page_geometry.cpp`.
+
+**Hypotheses tested and killed:**
+
+- **Background OCR on documents that already have a text layer** — killed.
+  `PdfDocument::hasTextLayer()` returns true for every valid PDF and
+  `OcrController::onVisiblePageChanged()` returns on it *before* any enqueue,
+  so a PDF never queues an ambient OCR page. Pinned by
+  `uat_ocr_win_070_textLayerDocEnqueuesNothingEvenOnAHugeDoc`.
+- **Eager per-page work at open (thumbnails / outline)** — killed as a
+  *dominant* cost. Only 6 thumbnails render during open (correctly lazy); the
+  sidebar's per-row aspect probe cost 17 ms of 1,000 ms even at 2603 rows;
+  `QPdfBookmarkModel` construction was ~0 ms.
+
+**Measured but deliberately left (secondary, each bounded):**
+
+- `PdfDocument::ingestNativeTextLayer()` runs the native text extraction for
+  the visible page on the **GUI thread** at open — 27.5% of GUI-thread
+  instructions on the 365-page run, and it scales with glyphs on that page
+  (~120 ms extra on a page with twice the text). Bounded per *page*, not per
+  document, and it is what makes text selection live immediately. Moving it
+  off-thread is an architectural change, not a drive-by.
+- Two full qpdf `processFile` parses of the file per open. Both run on worker
+  threads (already fixed by #63), so they do not block the GUI thread, but on
+  a 4-core box they contend with it.
+- **App launch is not a separate problem.** `Application::restorePreviousSession()`
+  opens every previously-open file serially inside one `openFiles()` call, so
+  launch cost ≈ Σ(file-open cost). Three large PDFs is three sequential opens
+  on the GUI thread; the per-file fix above is what moves it.
+- `TwoPageView` has the same defect class at O(pages) per paint — promoted to
+  [`docs/backlog/2026-08-03-twopageview-recomputes-canvas-per-paint.md`](docs/backlog/2026-08-03-twopageview-recomputes-canvas-per-paint.md).
+  Only reachable in Two Pages view, so not implicated in this report.
+
 ## 2026-08-02 owner dogfooding report (nightly `0.3.1-dev+768.gce56b4b8`, macOS Retina)
 
 Two findings from live use on macOS, both fixed in one PR
