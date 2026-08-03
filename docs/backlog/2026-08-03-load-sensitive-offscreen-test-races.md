@@ -73,5 +73,10 @@ re-express it structurally.
 ## Related
 
 - `2026-08-03-quit-teardown-segfault-mlscheduler` — the third flake found in
-  the same hunt. Distinct: that one is a `SIGSEGV` in teardown, a
-  memory-safety bug rather than a test-timing bug.
+  the same hunt. Distinct: that one was a `SIGSEGV` in teardown, a
+  memory-safety bug rather than a test-timing bug. **Closed**: the diagnosis
+  in that item (MlScheduler threads parked on a destroyed condvar) was wrong
+  — the parked-worker frames are idle bystanders the crash handler prints for
+  every thread. The real cause was an ML worker posting its result to a raw
+  `MainWindow *`; fixed via `MlScheduler::postResultToGuiThread()`, guarded by
+  `tests/test_ml_callback_lifetime.cpp`.

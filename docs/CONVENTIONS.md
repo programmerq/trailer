@@ -195,6 +195,40 @@ background operation is in flight. Almost always: a raw pointer
 captured into a lambda / queued connection / worker that outlived
 its target.
 
+**ML worker → GUI hop: a `QPointer` alone is NOT enough.** Never write
+`QMetaObject::invokeMethod(target, …, Qt::QueuedConnection)` from inside
+an `MlScheduler::submit()` lambda, with a raw pointer *or* a `QPointer`.
+A queued invoke posts an event to its **context object**, and posting
+dereferences that object — so the target is touched twice after it dies:
+once inside `postEvent()` on the worker thread, and again when the main
+loop delivers the `QMetaCallEvent` into freed memory. Reading a
+`QPointer` on the worker only narrows the window (`~QObject` nulls
+`QPointer`s near its start and removes posted events *later*).
+
+Use `MlScheduler::postResultToGuiThread()` and re-check the guard
+**inside** the lambda, where the check runs on the same thread that
+performs the destruction and therefore cannot interleave with it:
+
+```cpp
+QPointer<MyWidget> guard(this);
+MlScheduler *sched = &app->mlScheduler();
+sched->submit(prio, label, [guard, sched](CancellationToken &tok) {
+    auto result = compute(tok);
+    sched->postResultToGuiThread([guard, result] {
+        if (!guard) return;          // window closed mid-flight
+        guard->apply(result);
+    });
+});
+```
+
+**Anchor files:** `src/ml/MlScheduler.h` (the helper + the full
+rationale), `src/ui/MainWindow.cpp` (`onRemoveBackground`,
+`scheduleBackgroundCandidateScore`), `src/ui/OcrController.cpp`,
+`src/ui/SamController.cpp`. **Guard:**
+`tests/test_ml_callback_lifetime.cpp`. This is the 2026-08-03 macOS
+nightly SIGSEGV; cancelling the task is not a substitute, because a
+worker already past its cancellation checkpoint still posts.
+
 ---
 
 ## 6. Event filters are how widgets observe their children
