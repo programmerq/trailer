@@ -327,6 +327,43 @@ path above.
   should pick one — until we do, either outcome is acceptable, but the
   app must not crash).
 
+### UAT-FND-094 — Quitting remembers the page you were on in each document
+
+Implements DESIGN §6.13's PDF pane promise — *"reopen at last viewed
+page"* — across an application **quit**, not just a window close.
+
+**Preconditions:** Two multi-page PDFs of at least 12 pages each.
+`session.restore_previous_windows` at its default (`true`).
+**Steps:**
+1. Open both PDFs (one window each).
+2. In the first, navigate to page 8. In the second, navigate to page 3.
+3. Quit with `File > Quit` (`Cmd+Q` / `Ctrl+Q`) — do **not** close the
+   windows first.
+4. Relaunch the app.
+**Expected:**
+- The first document reopens showing **page 8**; the second shows
+  **page 3**. Neither returns to page 1.
+- The saved page is per file: each document restores its own page, not
+  the last-quit document's page.
+- Repeating steps 1-4 with `Quit and Keep Windows`
+  (`Opt+Cmd+Q`; **Platform: macOS** accelerator, the menu item exists on
+  every platform per G4) restores the same pages.
+- Reopening one of the files on its own via `File > Open Recent` — no
+  session restore involved — also lands on its saved page.
+
+**Regression note (2026-08-03 dogfooding report):** every document came
+back on page 1 after `Cmd+Q`. Per-document view state was captured **only**
+in `MainWindow::closeEvent`, and an application quit never delivers
+`closeEvent` to its still-open windows (`Application::onAboutToQuit`
+documents exactly that for macOS `Cmd+Q`), so nothing was ever written.
+Additionally `Application::restoreKeptWindows()` called
+`RecentFiles::add()` — which replaces an entry with a default-constructed
+one — *before* handing the document to its window, wiping any saved page
+on the `Opt+Cmd+Q` path. Harness slots:
+`uat_fnd_094_normalQuitCapturesPageSoReopenLandsThere`,
+`uat_fnd_094_keepWindowsQuitRestoresPage` in
+[`tests/uat/test_uat_foundations.cpp`](../../tests/uat/test_uat_foundations.cpp).
+
 ---
 
 ## Recent files

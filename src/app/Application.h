@@ -253,6 +253,21 @@ class Application : public QApplication {
     void onAboutToQuit();
 
   private:
+    // Ask every live window to persist its per-document view state (the page
+    // the user is on, scroll, zoom, chrome, geometry) so the next launch
+    // reopens each document where it was left. See
+    // MainWindow::captureViewStateForRestore.
+    //
+    // Called from BOTH quit sites on purpose — they cover disjoint routes:
+    //   * requestQuit()   — the explicit ⌘Q / ⌥⌘Q commands. Headlessly
+    //     testable, because performQuit is a seam and aboutToQuit therefore
+    //     never fires in tests.
+    //   * onAboutToQuit() — every OTHER way the process quits (an OS logout
+    //     or restart, QCoreApplication::quit() from anywhere), which
+    //     bypasses requestQuit entirely.
+    // The capture is a read-then-write of live state, so the overlap on a
+    // real quit stores identical values twice rather than compounding.
+    void captureViewStateAllWindows();
     void notifyWindowsRecentChanged();
     // Re-tint the themed icons of every live window. Called after a colour
     // scheme change (explicit via applyTheme, or an OS flip while in System

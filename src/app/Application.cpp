@@ -522,6 +522,13 @@ void Application::refreshThemedIconsAllWindows() {
     }
 }
 
+void Application::captureViewStateAllWindows() {
+    for (auto &ptr : m_windows) {
+        if (ptr)
+            ptr->captureViewStateForRestore();
+    }
+}
+
 void Application::notifyWindowsRecentChanged() {
     for (auto &ptr : m_windows) {
         if (ptr) {
@@ -668,6 +675,9 @@ bool Application::requestQuit(QuitMode mode) {
             clearRecoverySidecarsFor(session);
         }
         m_keepStructuralSnapshotCache.clear();
+        // Remember where the user was in every still-open document. ⌥⌘Q
+        // never closes the windows, so nothing else writes this.
+        captureViewStateAllWindows();
         if (m_performQuit)
             m_performQuit();
         return true;
@@ -681,6 +691,10 @@ bool Application::requestQuit(QuitMode mode) {
     // Every document resolved (saved or discarded). Drop any stale kept-
     // windows draft so a later launch doesn't resurrect a quit we cleaned.
     m_draftStore.clear();
+    // Remember where the user was in every still-open document. ⌘Q leaves
+    // the windows standing (Qt sends no closeEvent on quit), so this is the
+    // only chance to record the page/scroll/zoom they were reading at.
+    captureViewStateAllWindows();
     if (m_performQuit)
         m_performQuit();
     return true;
@@ -922,6 +936,15 @@ bool Application::restoreKeptWindows() {
         MainWindow *win = nullptr;
         for (const SessionDocDescriptor &dd : wd.docs) {
             std::unique_ptr<IDocument> doc;
+            // Deferred until AFTER addDocument below. RecentFiles::add()
+            // REPLACES an existing entry with a freshly default-constructed
+            // one (currentPage = -1, no zoom, no geometry), and MainWindow
+            // reads that entry inside addDocument to restore the document's
+            // view state — so adding first threw away the very page the
+            // ⌥⌘Q quit had just recorded, and the restored window landed on
+            // page 1. Application::openFiles has always ordered it this way
+            // (addDocument, then m_recent.add); this path had it backwards.
+            QString recentPath;
             if (dd.kind == SessionDocDescriptor::Kind::Draft) {
                 QImage img;
                 if (!img.loadFromData(dd.bytes, dd.format.toLatin1().constData()))
@@ -963,7 +986,7 @@ bool Application::restoreKeptWindows() {
                     if (!pdf || !pdf->recoverFrom(blobFile.path()))
                         continue; // could not rebuild the edited graph → drop
                     doc = std::move(opened);
-                    m_recent.add(dd.originalPath);
+                    recentPath = dd.originalPath;
                 } else {
                     // The original was MOVED or DELETED since ⌥⌘Q. The blob is
                     // the COMPLETE edited PDF and does not need the original to
@@ -988,18 +1011,22 @@ bool Application::restoreKeptWindows() {
                 doc = m_registry.open(dd.path);
                 if (auto *pdf = dynamic_cast<PdfDocument *>(doc.get()))
                     pdf->restoreAnnotationsFromDraft(dd.annotations, /*dirty=*/true);
-                m_recent.add(dd.path);
+                recentPath = dd.path;
             } else {
                 if (dd.path.isEmpty() || !QFileInfo::exists(dd.path))
                     continue;
                 doc = m_registry.open(dd.path);
-                m_recent.add(dd.path);
+                recentPath = dd.path;
             }
             if (!doc)
                 continue;
             if (!win)
                 win = ensureFreshWindow();
             win->addDocument(std::move(doc));
+            // Now that the window has read (and applied) the saved view
+            // state, refresh the recent entry — see `recentPath` above.
+            if (!recentPath.isEmpty())
+                m_recent.add(recentPath);
             anyOpened = true;
         }
     }
@@ -1051,6 +1078,15 @@ void Application::onAboutToQuit() {
     //     list is empty too — which is correct, since the user
     //     manually closed every window before the implicit quit.
     //   - Explicit menu Quit on Linux/Win: same as macOS Cmd+Q.
+    //
+    // Same reasoning applies to the per-DOCUMENT view state (which page the
+    // user was on, scroll, zoom, chrome): the windows are still alive here,
+    // and no closeEvent will ever run for them, so capture it now. Belt and
+    // braces with requestQuit's own call — this one also covers the quits
+    // that never route through requestQuit (OS logout/restart, a bare
+    // QCoreApplication::quit()). See captureViewStateAllWindows.
+    captureViewStateAllWindows();
+
     QStringList paths;
     for (const auto &ptr : m_windows) {
         if (!ptr)
