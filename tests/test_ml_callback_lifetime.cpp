@@ -69,15 +69,51 @@
 #include <QThread>
 #include <QtTest/QtTest>
 
+#ifdef Q_OS_WIN
+#define WIN32_LEAN_AND_MEAN
+#define NOMINMAX
+#include <windows.h>
+#endif
+
 #include <atomic>
+#include <cstdio>
 #include <memory>
 
 using namespace trailer;
 
 namespace {
 
+// True only under the Wine emulator (Wine exports ntdll!wine_get_version).
+// Same detector as tests/test_discard_file_integrity.cpp — see that file for
+// the canonical write-up.
+bool runningUnderWine() {
+#ifdef Q_OS_WIN
+    HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
+    return ntdll != nullptr && GetProcAddress(ntdll, "wine_get_version") != nullptr;
+#else
+    return false;
+#endif
+}
+
+// Wine leaves a crashing Qt test completely silent: stdout is block-buffered
+// into ctest's pipe so nothing is flushed on an abnormal exit, and the lane
+// sets WINEDEBUG=-all so Wine's own crash text is suppressed too. CI then
+// reports an opaque "***Failed" with ZERO captured output — exactly the
+// diagnose-by-guessing trap docs/backlog/2026-07-24-wine-uat-failures-triage.md
+// warns about, and exactly what this file hit on its first CI run. The
+// mitigations are unbuffered stdio (see main()) plus these phase markers, which
+// only print under Wine so the Linux/macOS lanes stay quiet.
+void trace(const char *phase) {
+    if (runningUnderWine()) {
+        qWarning("[wine-trace] %s", phase);
+        std::fflush(stdout);
+        std::fflush(stderr);
+    }
+}
+
 MainWindow *currentMainWindow() {
-    for (auto *w : QApplication::topLevelWidgets()) {
+    const QWidgetList tops = QApplication::topLevelWidgets();
+    for (auto *w : tops) {
         if (auto *mw = qobject_cast<MainWindow *>(w))
             return mw;
     }
@@ -145,9 +181,21 @@ using GatePtr = std::shared_ptr<Gate>;
 // window is genuinely FREED (not merely hidden) before we return. This is the
 // same shape as test_quit_and_keep_windows' closeAllWindows() — the helper the
 // reproduced crash ran under.
+//
+// The snapshot is QPointer-tracked, not a bare QWidgetList: topLevelWidgets()
+// includes every QMenu and popup, and closing one window can destroy others in
+// the same snapshot, leaving the loop to qobject_cast a freed QObject. Windows
+// has more of those helper top-levels than the Linux offscreen platform, so
+// this is the kind of latent hazard that only shows up on that lane
+// (docs/CONVENTIONS.md §5 — weak references are QPointer, never raw).
 void closeAndDeleteAllWindows() {
-    for (auto *w : QApplication::topLevelWidgets()) {
-        if (qobject_cast<MainWindow *>(w))
+    QList<QPointer<QWidget>> tops;
+    const QWidgetList snapshot = QApplication::topLevelWidgets();
+    tops.reserve(snapshot.size());
+    for (auto *w : snapshot)
+        tops.append(QPointer<QWidget>(w));
+    for (const auto &w : tops) {
+        if (w && qobject_cast<MainWindow *>(w.data()))
             w->close();
     }
     QCoreApplication::sendPostedEvents(nullptr, QEvent::DeferredDelete);
@@ -172,6 +220,7 @@ class TestMlCallbackLifetime : public QObject {
 };
 
 void TestMlCallbackLifetime::init() {
+    trace("init: enter");
     QVERIFY(m_scratch.isValid());
     // Speculative (Prefetch) work is pre-cancelled on battery when
     // run_on_battery is off, which would make the candidate-score slot pass
@@ -182,13 +231,16 @@ void TestMlCallbackLifetime::init() {
     app->mlScheduler().cancelAll();
     app->mlScheduler().waitForIdle(4000);
     pumpEvents();
+    trace("init: done");
 }
 
 void TestMlCallbackLifetime::cleanup() {
+    trace("cleanup: enter");
     closeAndDeleteAllWindows();
     app->mlScheduler().cancelAll();
     app->mlScheduler().waitForIdle(4000);
     pumpEvents();
+    trace("cleanup: done");
 }
 
 // The speculative background-candidate score (MainWindow::
@@ -205,6 +257,7 @@ void TestMlCallbackLifetime::candidateScoreDroppedWhenWindowClosesMidFlight() {
     // we have destroyed the window. UserAction priority so that neither the
     // barrier nor the score task pre-cancels the other (submit() only cancels
     // QUEUED tasks of strictly LOWER priority).
+    trace("score: submitting barrier");
     auto barrier = std::make_shared<Gate>();
     app->mlScheduler().submit(MlPriority::UserAction, QStringLiteral("barrier"),
                               [barrier](CancellationToken &) { barrier->waitOnWorker(); });
@@ -213,8 +266,10 @@ void TestMlCallbackLifetime::candidateScoreDroppedWhenWindowClosesMidFlight() {
     // the barrier is released before this function returns.
     const auto releaseBarrier = qScopeGuard([barrier] { barrier->open.store(true); });
 
+    trace("score: barrier running, opening file");
     app->openFiles({imgPath});
     pumpEvents();
+    trace("score: file opened");
 
     QPointer<MainWindow> win(currentMainWindow());
     QVERIFY2(win, "openFiles must produce a MainWindow");
@@ -228,7 +283,9 @@ void TestMlCallbackLifetime::candidateScoreDroppedWhenWindowClosesMidFlight() {
              "scheduleBackgroundCandidateScore must have queued a task behind the barrier");
 
     // Destroy the window while that task is still queued.
+    trace("score: closing window");
     closeAndDeleteAllWindows();
+    trace("score: window closed");
     QVERIFY2(win.isNull(), "the MainWindow must be FREED, not merely hidden, before the "
                            "worker posts its result — otherwise this test proves nothing");
 
@@ -238,6 +295,7 @@ void TestMlCallbackLifetime::candidateScoreDroppedWhenWindowClosesMidFlight() {
     barrier->open.store(true);
     QVERIFY2(app->mlScheduler().waitForIdle(8000), "scheduler must drain the score task");
     pumpEvents();
+    trace("score: drained");
 
     // Reaching here at all is the assertion (see the oracle note at the top).
     QVERIFY(app->mlScheduler().stats().queued == 0);
@@ -249,10 +307,12 @@ void TestMlCallbackLifetime::candidateScoreDroppedWhenWindowClosesMidFlight() {
 // updateTitleForDocument(). The injected inference is the sanctioned test seam
 // (setBackgroundRemoveFnForTesting), so no ONNX model or network is involved.
 void TestMlCallbackLifetime::backgroundRemovalDroppedWhenWindowClosesMidFlight() {
+    trace("bgr: writing fixture");
     const QString imgPath = writeSampleImage(m_scratch.filePath(QStringLiteral("bgr.png")));
 
     app->openFiles({imgPath});
     pumpEvents();
+    trace("bgr: file opened");
     // Let the candidate score settle so it can't be the job still in flight
     // when we close — this slot must isolate the Remove Background path.
     app->mlScheduler().waitForIdle(4000);
@@ -274,10 +334,13 @@ void TestMlCallbackLifetime::backgroundRemovalDroppedWhenWindowClosesMidFlight()
     QAction *action = findActionByText(win->menuBar(), QStringLiteral("Remove &Background"));
     QVERIFY2(action, "Tools → Remove Background must exist");
     QVERIFY2(action->isEnabled(), "the entry must be enabled for an image document");
+    trace("bgr: triggering Remove Background");
     action->trigger();
     QTRY_VERIFY_WITH_TIMEOUT(gate->entered.load(), 4000);
 
+    trace("bgr: closing window");
     closeAndDeleteAllWindows();
+    trace("bgr: window closed");
     QVERIFY2(win.isNull(), "the MainWindow must be FREED before the remover posts its result");
 
     gate->open.store(true);
@@ -302,6 +365,14 @@ int main(int argc, char *argv[]) {
     // macOS: QSettings(org, app) defaults to NativeFormat there, which
     // ignores the HOME sandboxing above.
     QSettings::setDefaultFormat(QSettings::IniFormat);
+
+    // Unbuffered stdio so a crash cannot swallow the output that says where it
+    // crashed. ctest pipes stdout, which makes it block-buffered on Windows;
+    // this file's first CI run failed under Wine with ZERO captured bytes for
+    // exactly that reason. Cheap everywhere, and the only thing that makes an
+    // opaque cross-emulator failure diagnosable at all.
+    std::setvbuf(stdout, nullptr, _IONBF, 0);
+    std::setvbuf(stderr, nullptr, _IONBF, 0);
 
     trailer::Application app(argc, argv);
     TestMlCallbackLifetime tests;
