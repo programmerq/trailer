@@ -758,7 +758,17 @@ jobs:
           cache: true
 
       - name: Install build deps
-        run: brew install ninja
+        # openssl@3 is NOT optional here despite nothing in the build
+        # linking it: macOS ships LibreSSL as /usr/bin/openssl (LibreSSL
+        # 3.3.6 on macOS 26.5), whose `genpkey` has no ed25519 algorithm,
+        # so tests/test_update_pubkey.cpp's production-signer interop
+        # check cannot run against the system binary. Homebrew puts a real
+        # OpenSSL 3.x at /opt/homebrew/bin/openssl, which the "Add
+        # Homebrew to PATH" step above places AHEAD of /usr/bin — so the
+        # interop check runs for real on this lane instead of skipping.
+        # Without this line the test still passes, but silently skips,
+        # and macOS stops covering the signer/verifier agreement.
+        run: brew install ninja openssl@3
 
       - name: Build, bundle, and package
         # scripts/build-macos.sh builds the WHOLE tree (enable_testing() +
