@@ -167,7 +167,13 @@ void TestUatDockRecents::uat_fnd_063_chosenEntryOpensTheFile() {
     QCOMPARE(menu->actions().size(), 2);
     QAction *secondEntry = menu->actions().at(1);
     QCOMPARE(secondEntry->text(), QStringLiteral("a.pdf"));
-    QCOMPARE(secondEntry->toolTip(), a); // tooltip carries the full path
+    // Tooltip carries the full path — as RecentFiles stored it, i.e.
+    // canonicalised. Compare against the canonical form, the same way the
+    // recentFiles() assertion below already does: on macOS the scratch dir
+    // lives under /var, which is a symlink to /private/var, so the raw
+    // QTemporaryDir path and the stored path differ by that prefix alone.
+    // (Identical strings on Linux/Windows, where /var is not a symlink.)
+    QCOMPARE(secondEntry->toolTip(), QFileInfo(a).canonicalFilePath());
 
     // Triggering the SECOND Dock-menu entry (a.pdf, not the current front)
     // must route through Application::openFiles just like File > Open
