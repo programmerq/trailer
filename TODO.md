@@ -23,6 +23,49 @@ Three recurring sources feed this file:
   [`docs/audit-2026-05-19.md`](docs/audit-2026-05-19.md) for the
   current snapshot.
 
+## 2026-08-04 nightly macOS — LibreSSL red-gated `test_update_pubkey`
+
+`nightly-20260804` (run 30907188776, macOS job 91985006187) went red on the
+**macOS gating unit-test step** again, but for an unrelated reason: no DMG and
+no signed appcast, Linux and Windows green.
+
+```
+FAIL!  : TestUpdatePubkey::opensslSignedFeedVerifiesAgainstDerivedKey()
+         (openssl exited 1: Algorithm ed25519 not found
+          usage: genpkey [-algorithm alg] [cipher] [-genparam] [-out file] …)
+```
+
+macOS ships **LibreSSL** as `/usr/bin/openssl`, and LibreSSL's `genpkey` has
+no ed25519. The slot's guard was `haveTool("openssl", {"version"})` — which
+LibreSSL answers perfectly happily — so it proved *existence* and the very
+next line needed *capability*. The test had never run on a Mac before (PR #143
+merged after the 08-03 nightly), so 08-04 was its first execution there and
+the first time the two diverged.
+
+The shape of the fix is the lesson worth keeping: **probe the operation, not
+the tool's name — and not its version string either.** A version table needs
+maintaining and is wrong the moment a fork words its banner differently or
+backports a feature; running the command and looking at whether it worked
+cannot be wrong about the host it just ran on.
+`scripts/find-openssl-ed25519.sh` runs all three operations the shipped
+scripts use (`genpkey -algorithm ed25519`, `pkey -pubout -outform DER`,
+`pkeyutl -sign -rawin`), so a fork that gains keygen but still lacks raw
+signing is rejected at the gate instead of inside a test.
+
+It also *prefers* a real OpenSSL when one exists, rather than settling for the
+skip: Homebrew's `openssl@3` is keg-only, so it never shadows LibreSSL on
+PATH and has to be asked for by name — via `brew --prefix openssl@3`, a query,
+not a hardcoded `/opt/homebrew/...` path that would be wrong on Intel Macs and
+would go stale silently.
+
+The good news from the same run: **`test_ocr_window` passed on macOS
+(1.02 s)** for the first time since the crash — night 1 of the 3 that
+`docs/backlog/2026-08-03-macos-nightly-ocr-window-segv-confirm.md` requires.
+With `test_update_pubkey` fixed, that lane's gating step should be green, and
+the next macOS nightly should produce a four-asset release with the first
+signed appcast. Tracked as
+`docs/backlog/2026-08-04-macos-nightly-openssl-skip-confirm.md`.
+
 ## 2026-08-03 nightly macOS SIGSEGV — ML worker result posted to a freed window
 
 `nightly-20260803` (run 30815465012) went red on the **macOS gating unit-test

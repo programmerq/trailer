@@ -16,6 +16,32 @@ SCRIPT="$REPO_ROOT/scripts/derive-update-pubkey.sh"
 TMPDIR_="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR_"' EXIT
 
+# Both this script's own reference computations and the script under test
+# call a bare `openssl`, and both need ed25519 — which macOS's LibreSSL
+# does not have, however happily it answers `openssl version`. Resolve a
+# capable one first and put it at the front of PATH, so a developer on a
+# Mac with `brew install openssl@3` gets the same run CI gets, with no
+# flags to remember. See scripts/find-openssl-ed25519.sh.
+#
+# This FAILS rather than skips when no capable openssl exists anywhere.
+# The reason is asymmetric risk: this script gates every PR from ci.yml's
+# Linux-only version-gating job, where OpenSSL 3.x is always present, so
+# a skip could only ever hide a real regression (openssl dropped from the
+# runner image) behind a green check — the exact silent pass the suite
+# exists to prevent. On a Mac without a real openssl the message below
+# says what is missing and how to get it, which is the honest outcome for
+# a developer; it is not a CI-visible state.
+#
+# Invoked through `bash` rather than executed directly, so a checkout that
+# lost the executable bit (a Windows clone, an unzipped source tarball)
+# still runs it.
+if ! OPENSSL_BIN="$(bash "$REPO_ROOT/scripts/find-openssl-ed25519.sh")"; then
+    echo "derive-update-pubkey tests: cannot run without an ed25519-capable openssl (see above)." >&2
+    exit 1
+fi
+PATH="$(dirname "$OPENSSL_BIN"):$PATH"
+export PATH
+
 PASSES=0
 FAILURES=0
 
