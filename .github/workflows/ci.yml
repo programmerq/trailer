@@ -92,6 +92,17 @@ jobs:
         # rejects every signature — so the rejection paths in particular
         # are worth gating on every PR. bash + openssl only.
         run: bash scripts/test-derive-update-pubkey.sh
+      - name: Run openssl-capability-probe regression tests
+        # scripts/find-openssl-ed25519.sh decides whether the production-
+        # signer interop check (tests/test_update_pubkey.cpp) RUNS or
+        # honestly skips. Both directions are worth gating: letting a
+        # LibreSSL-shaped openssl through reds the macOS nightly the way
+        # run 30907188776 did, and rejecting a good one would silently
+        # drop the interop coverage on Linux — the only lane that checks
+        # the shipped signer and the shipped verifier still agree. The
+        # macOS failure is reproduced here on Linux with a stub, so this
+        # needs no Mac. bash + openssl only.
+        run: bash scripts/test-find-openssl-ed25519.sh
 
   build-and-test:
     name: Linux build + unit tests

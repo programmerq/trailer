@@ -15,8 +15,11 @@
 #include "update/UpdateFeedParser.h"
 #include "update/UpdateManager.h"
 
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QProcess>
+#include <QProcessEnvironment>
 #include <QSignalSpy>
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
@@ -28,12 +31,15 @@ using namespace trailer;
 namespace {
 
 // Run a program, return true on a clean exit(0). stdout is captured for
-// the caller; stderr is folded into the failure message.
+// the caller; stderr is folded into the failure message. `env`, when
+// given, replaces the child's environment wholesale.
 bool run(const QString &program, const QStringList &args, QByteArray *stdOut = nullptr,
-         QString *errorOut = nullptr) {
+         QString *errorOut = nullptr, const QProcessEnvironment *env = nullptr) {
     QProcess p;
     p.setProgram(program);
     p.setArguments(args);
+    if (env)
+        p.setProcessEnvironment(*env);
     p.start();
     if (!p.waitForStarted(10000) || !p.waitForFinished(30000)) {
         if (errorOut)
@@ -55,6 +61,37 @@ bool run(const QString &program, const QStringList &args, QByteArray *stdOut = n
 
 bool haveTool(const QString &program, const QStringList &probeArgs) {
     return run(program, probeArgs);
+}
+
+// Resolve an openssl that can actually do ed25519, via the shared probe
+// in scripts/find-openssl-ed25519.sh. Returns an empty string and fills
+// `whyNot` when this host has none.
+//
+// The guard this replaces asked `openssl version` — "does *an* openssl
+// exist", not "can it do the thing". macOS answers that question with
+// LibreSSL, whose genpkey has no ed25519, so the guard passed and the
+// test then failed on its first real invocation: nightly-20260804 (run
+// 30907188776, macOS job 91985006187) got `Algorithm ed25519 not found`
+// plus a usage dump, and the DMG was never built. Capability, not
+// existence — and probed rather than version-sniffed, so it stays
+// correct whatever a given fork calls itself.
+//
+// The resolution is delegated to the script rather than reimplemented
+// here because scripts/test-derive-update-pubkey.sh needs the identical
+// answer; two copies of "which openssl" would drift.
+QString resolveOpenssl(const QString &repoRoot, QString *whyNot) {
+    const QString finder = repoRoot + QStringLiteral("/scripts/find-openssl-ed25519.sh");
+    if (!QFile::exists(finder)) {
+        *whyNot = QStringLiteral("%1 not found next to this build").arg(finder);
+        return {};
+    }
+    QByteArray out;
+    if (!run(QStringLiteral("bash"), {finder}, &out, whyNot))
+        return {};
+    const QString path = QString::fromLocal8Bit(out).trimmed();
+    if (path.isEmpty())
+        *whyNot = QStringLiteral("%1 exited 0 but printed no path").arg(finder);
+    return path;
 }
 
 } // namespace
@@ -118,20 +155,48 @@ void TestUpdatePubkey::unprovisionedCheckNowFailsWithoutNetwork() {
 //
 // This test drives the REAL scripts against a keypair it generates
 // itself, so it needs no secret and is meaningful on any lane that has
-// openssl and python3. It deliberately goes through
-// scripts/derive-update-pubkey.sh for the public key too, which makes it
-// a guard on that script's 44-vs-32-byte trimming as well.
+// python3 and an openssl that can actually do ed25519 — which is not the
+// same as "has openssl": see resolveOpenssl(). It deliberately goes
+// through scripts/derive-update-pubkey.sh for the public key too, which
+// makes it a guard on that script's 44-vs-32-byte trimming as well.
 void TestUpdatePubkey::opensslSignedFeedVerifiesAgainstDerivedKey() {
     const QString repoRoot = QStringLiteral(TRAILER_REPO_ROOT);
     const QString derive = repoRoot + QStringLiteral("/scripts/derive-update-pubkey.sh");
     const QString sign = repoRoot + QStringLiteral("/scripts/sign-update-feed.sh");
 
-    if (!haveTool(QStringLiteral("openssl"), {QStringLiteral("version")}))
-        QSKIP("openssl not runnable here (expected under Wine); production-signer interop unchecked on this lane.");
-    if (!haveTool(QStringLiteral("python3"), {QStringLiteral("--version")}))
-        QSKIP("python3 not runnable here; sign-update-feed.sh cannot run.");
     if (!QFile::exists(derive) || !QFile::exists(sign))
         QSKIP("Signing scripts not found next to this build; skipping interop check.");
+
+    // Capability, not existence — see resolveOpenssl(). A lane without a
+    // usable openssl (macOS's LibreSSL, or Wine, where nothing spawns)
+    // SKIPS and says why; it does not fail, and it does not pass quietly
+    // either. The interop property this test guards is a property of the
+    // Linux publish runner, which is where nightly.yml actually signs the
+    // feed, and it stays gated there on every PR.
+    QString whyNot;
+    const QString openssl = resolveOpenssl(repoRoot, &whyNot);
+    if (openssl.isEmpty()) {
+        const QByteArray msg =
+            QStringLiteral("No ed25519-capable openssl here, so the production-signer interop "
+                           "check is UNCHECKED on this lane (it still gates every PR on Linux "
+                           "CI, which is where the feed is really signed). Reason: %1")
+                .arg(whyNot)
+                .toLocal8Bit();
+        QSKIP(msg.constData());
+    }
+    if (!haveTool(QStringLiteral("python3"), {QStringLiteral("--version")}))
+        QSKIP("python3 not runnable here; sign-update-feed.sh cannot run.");
+
+    // Both scripts invoke a bare `openssl`, so put the binary this test
+    // just probed first on their PATH. Without this, a Mac would probe
+    // Homebrew's openssl@3 (keg-only, deliberately not symlinked into
+    // /opt/homebrew/bin) and then hand the scripts LibreSSL anyway.
+    QProcessEnvironment scriptEnv = QProcessEnvironment::systemEnvironment();
+    const QString opensslDir = QFileInfo(openssl).absolutePath();
+    if (!opensslDir.isEmpty()) {
+        const QString key = QStringLiteral("PATH");
+        scriptEnv.insert(key, opensslDir + QDir::listSeparator() + scriptEnv.value(key));
+    }
 
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -140,7 +205,7 @@ void TestUpdatePubkey::opensslSignedFeedVerifiesAgainstDerivedKey() {
     const QString feedPath = dir.filePath(QStringLiteral("feed.json"));
     QString err;
 
-    QVERIFY2(run(QStringLiteral("openssl"),
+    QVERIFY2(run(openssl,
                  {QStringLiteral("genpkey"), QStringLiteral("-algorithm"),
                   QStringLiteral("ed25519"), QStringLiteral("-out"), keyPath},
                  nullptr, &err),
@@ -148,7 +213,8 @@ void TestUpdatePubkey::opensslSignedFeedVerifiesAgainstDerivedKey() {
 
     // Public key, via the same script CI uses to configure the build.
     QByteArray hexOut;
-    QVERIFY2(run(QStringLiteral("bash"), {derive, keyPath}, &hexOut, &err), qPrintable(err));
+    QVERIFY2(run(QStringLiteral("bash"), {derive, keyPath}, &hexOut, &err, &scriptEnv),
+             qPrintable(err));
     const QByteArray hex = hexOut.trimmed();
     QCOMPARE(hex.size(), 64);
 
@@ -172,7 +238,8 @@ void TestUpdatePubkey::opensslSignedFeedVerifiesAgainstDerivedKey() {
         QCOMPARE(f.write(payload), static_cast<qint64>(payload.size()));
     }
 
-    QVERIFY2(run(QStringLiteral("bash"), {sign, payloadPath, keyPath, feedPath}, nullptr, &err),
+    QVERIFY2(run(QStringLiteral("bash"), {sign, payloadPath, keyPath, feedPath}, nullptr, &err,
+                 &scriptEnv),
              qPrintable(err));
 
     QFile feed(feedPath);
