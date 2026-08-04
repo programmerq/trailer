@@ -347,6 +347,8 @@ class TestUatFoundations : public QObject {
     void uat_fnd_094_normalQuitCapturesPageSoReopenLandsThere();
     void uat_fnd_094_keepWindowsQuitRestoresPage();
     void uat_fnd_094_quitPageRestoreEvidence();
+    void uat_fnd_095_restoredPageStaysPutAfterLaterLayout();
+    void uat_fnd_095_restoredPageStaysPutAcrossQuitModesAndWindows();
 
   private:
     QTemporaryDir m_scratch;
@@ -2216,6 +2218,150 @@ void TestUatFoundations::uat_fnd_094_quitPageRestoreEvidence() {
     shoot(afterWin, QStringLiteral("2026-08-03-quit-page-restore-after.png"));
     qInfo().noquote() << "G2-SCREENSHOT pair written to" << dir
                       << "after-page:" << afterDoc->currentPage();
+}
+
+namespace {
+
+// Sample a restored document's page across many event-loop turns AND a
+// real elapsed-time window, and report the first page it ever reports
+// that isn't `expected`.
+//
+// Why time and not just processEvents(): the reported symptom is a
+// visible flash of the saved page followed by a snap back to page 1 —
+// i.e. a LATER pass overwriting what the restore set. A check that
+// samples once, immediately, cannot see that at all. 750ms is ~250x the
+// restore settle actually measured here (3 idle turns) and keeps the
+// four sampling windows in this file to ~3s of suite time. Raise it
+// only if a real regression is found to land later than that.
+//
+// SCOPE, measured not assumed: this samples IDocument::currentPage(),
+// which the per-file view-state restore sets directly. It is NOT
+// sensitive to kScrollRestoreSettleTurns (src/ui/MainWindow.cpp) — that
+// constant budgets idle turns for re-asserting the scroll OFFSET, a
+// different observable. Verified by negative control: setting that
+// constant to 0 and rebuilding leaves both of these slots passing,
+// under offscreen and under a real cocoa window manager alike. So these
+// guard "the saved page comes back and holds"; they do not guard the
+// scroll-offset re-assert, which still has no automated guard.
+int firstPageDeviation(IDocument *doc, int expected, int settleMs = 750) {
+    QElapsedTimer clock;
+    clock.start();
+    while (clock.elapsed() < settleMs) {
+        QApplication::processEvents(QEventLoop::AllEvents, 10);
+        if (doc->currentPage() != expected)
+            return doc->currentPage();
+    }
+    return expected;
+}
+
+} // namespace
+
+// UAT-FND-095 — PR #145's quit/page-restore fix, verified the way the
+// bug was actually reported: the restored page must not merely be
+// correct on the first turn, it must STAY correct once the window
+// manager's own later layout pass has run. Uses a large document (the
+// report was against a multi-hundred-page PDF, where a stale scroll
+// restore is unmistakable) and samples over time rather than once.
+//
+// Meaningful under QT_QPA_PLATFORM=cocoa, where a real window manager
+// lays the window out; offscreen exercises the same code path with a
+// trivial layout, so the slot is a cheap guard there and a real one on a
+// Mac.
+void TestUatFoundations::uat_fnd_095_restoredPageStaysPutAfterLaterLayout() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    QVERIFY(m_scratch.isValid());
+
+    constexpr int kPages = 300;
+    constexpr int kTargetPage = 211; // deep enough that page 1 is unmistakable
+    const QString pdf =
+        writeMultiPagePdf(m_scratch.filePath(QStringLiteral("uat_fnd_095_big.pdf")), kPages);
+
+    app->openFiles({pdf});
+    QApplication::processEvents();
+    MainWindow *win = currentMainWindow();
+    QVERIFY(win);
+    IDocument *doc = soleDocument(win);
+    QVERIFY(doc);
+    doc->goToPage(kTargetPage);
+    QApplication::processEvents();
+    QCOMPARE(doc->currentPage(), kTargetPage);
+
+    app->setPerformQuitForTesting([] {});
+    QVERIFY(app->requestQuit(QuitMode::Normal));
+
+    const QList<MainWindow *> before = app->windows();
+    app->openFiles({pdf});
+    QApplication::processEvents();
+    MainWindow *reopened = newlyAddedWindow(before, app->windows());
+    QVERIFY(reopened);
+    IDocument *reopenedDoc = soleDocument(reopened);
+    QVERIFY(reopenedDoc);
+
+    pumpScrollRestoreSettle();
+    QCOMPARE(reopenedDoc->currentPage(), kTargetPage);
+
+    // Force a relayout after the restore, so a page that only "held"
+    // because nothing re-laid the view out afterwards would be caught.
+    reopened->resize(reopened->width() - 40, reopened->height() - 30);
+    QApplication::processEvents();
+
+    // The actual regression guard: it must still be there after the
+    // window manager has had time to run its own later layout pass.
+    QCOMPARE(firstPageDeviation(reopenedDoc, kTargetPage), kTargetPage);
+}
+
+// UAT-FND-095 — the same guarantee for "Quit and Keep Windows"
+// (⌥⌘Q, QuitMode::KeepWindows) and with THREE windows open at once,
+// which is the shape the original bug was reported in. A per-window
+// restore that races its siblings would show up here and nowhere else.
+void TestUatFoundations::uat_fnd_095_restoredPageStaysPutAcrossQuitModesAndWindows() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    QVERIFY(m_scratch.isValid());
+
+    constexpr int kPages = 300;
+    const int targets[3] = {97, 158, 264};
+    QStringList pdfs;
+    for (int i = 0; i < 3; ++i) {
+        pdfs << writeMultiPagePdf(
+            m_scratch.filePath(QStringLiteral("uat_fnd_095_multi_%1.pdf").arg(i)), kPages);
+    }
+
+    // Three separate windows, each parked on a different deep page.
+    QList<MainWindow *> opened;
+    for (int i = 0; i < 3; ++i) {
+        const QList<MainWindow *> before = app->windows();
+        app->openFiles({pdfs.at(i)});
+        QApplication::processEvents();
+        MainWindow *w = newlyAddedWindow(before, app->windows());
+        QVERIFY2(w, qPrintable(QStringLiteral("window %1 did not open").arg(i)));
+        IDocument *d = soleDocument(w);
+        QVERIFY(d);
+        d->goToPage(targets[i]);
+        QApplication::processEvents();
+        QCOMPARE(d->currentPage(), targets[i]);
+        opened << w;
+    }
+    QCOMPARE(opened.size(), 3);
+
+    app->setPerformQuitForTesting([] {});
+    QVERIFY(app->requestQuit(QuitMode::KeepWindows));
+
+    // Reopen each file and confirm its own saved page comes back and
+    // holds — no window inheriting a sibling's page, none snapping to 1.
+    for (int i = 0; i < 3; ++i) {
+        const QList<MainWindow *> before = app->windows();
+        app->openFiles({pdfs.at(i)});
+        QApplication::processEvents();
+        MainWindow *w = newlyAddedWindow(before, app->windows());
+        QVERIFY2(w, qPrintable(QStringLiteral("window %1 did not reopen").arg(i)));
+        IDocument *d = soleDocument(w);
+        QVERIFY(d);
+        pumpScrollRestoreSettle();
+        QCOMPARE(d->currentPage(), targets[i]);
+        QCOMPARE(firstPageDeviation(d, targets[i]), targets[i]);
+    }
 }
 
 // Custom main: we need to set HOME (and XDG vars) before constructing
