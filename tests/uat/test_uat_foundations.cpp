@@ -27,6 +27,8 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPdfWriter>
+#include <QElapsedTimer>
+#include <QPointer>
 #include <QPageSize>
 #include <QImage>
 #include <QPainter>
@@ -178,6 +180,35 @@ void requestCloseTab(DocumentView *dv, int index) {
     QMetaObject::invokeMethod(dv, "onTabCloseRequested", Qt::DirectConnection,
                               Q_ARG(int, index));
     QApplication::processEvents();
+}
+
+// What survived a tab close. On macOS, closing the LAST tab also closes
+// the WINDOW — MainWindow::onAllTabsClosed()'s Q_OS_MACOS branch calls
+// close() unconditionally, because macOS has no persistent empty window
+// (DESIGN §2.4.2). MainWindow is WA_DeleteOnClose, so the resulting
+// deleteLater() is flushed by the very QApplication::processEvents()
+// inside requestCloseTab: on return, every raw pointer into that window
+// is dangling. Linux/Windows keep the window and take the
+// updateEmptyState() branch instead.
+//
+// Reading those pointers anyway was a real, deterministic macOS SIGSEGV
+// (SEGV_ACCERR at 0x28 — a member read through the freed-and-zeroed
+// window), and it is invisible under the default allocator for the
+// sibling cases, which is why several of them survived undetected until
+// a Guard Malloc run (DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib)
+// faulted on the freed page itself.
+//
+// So: close through this helper and consult the returned guards, never
+// the pointers you passed in.
+struct ClosedTab {
+    QPointer<MainWindow> window; // null ⇒ the window was torn down (macOS)
+    QPointer<DocumentView> view; // null ⇒ ditto; it is a child of the window
+};
+
+[[nodiscard]] ClosedTab closeTabAndTrack(MainWindow *mw, DocumentView *dv, int index) {
+    ClosedTab result{mw, dv};
+    requestCloseTab(dv, index);
+    return result;
 }
 
 // Directory that persists past the test run (unlike QTemporaryDir) so
@@ -538,24 +569,36 @@ void TestUatFoundations::uat_fnd_011_macosNoWindowMenuProvidesFileActions() {
     QMenuBar* bar = app->noWindowMenuBar();
     QVERIFY2(bar, "Application-level macOS menu bar should exist");
 
+    // The acquire group is a "Screenshot" submenu plus Scanner / Camera
+    // items (Application::addAcquireItems) — there has never been a single
+    // "&Acquire…" entry. This slot asserted one because it was written
+    // before macOS CI existed to run it; assert the items the menu really
+    // carries, so the slot fails when the IA changes rather than because
+    // it never matched.
     for (const QString& item : {
-             QStringLiteral("&New"),
              QStringLiteral("&Open…"),
              QStringLiteral("New from &Clipboard"),
-             QStringLiteral("&Acquire…"),
+             QStringLiteral("Screenshot"),
+             QStringLiteral("Scanner"),
+             QStringLiteral("Camera"),
          }) {
         QAction* a = findMenuAction(bar, QStringLiteral("&File"), item);
         QVERIFY2(a, qPrintable(QStringLiteral("Missing File menu item: ") + item));
     }
 
-    QAction* newAction =
-        findMenuAction(bar, QStringLiteral("&File"), QStringLiteral("&New"));
-    QVERIFY(newAction);
-    const int before = static_cast<int>(app->windows().size());
-    newAction->trigger();
-    QApplication::processEvents();
-    QVERIFY2(app->windows().size() >= before + 1,
-             "File > New should create a window in no-window mode");
+    // There is deliberately NO standalone "New" (blank-window) item: the
+    // 2026-07-18 File-menu IA change removed it everywhere and rebound ⌘N
+    // to "New from Clipboard". This slot predates that change by two
+    // months and asserted the old IA until macOS CI first ran it
+    // (2026-07-26); assert the CURRENT contract instead, mirroring
+    // test_uat_file_menu_ia.cpp's uat_fmia_003 for the per-window menu.
+    QVERIFY2(!findMenuAction(bar, QStringLiteral("&File"), QStringLiteral("&New")),
+             "the no-window File menu must not carry a standalone New item");
+
+    QAction *clipboardAction =
+        findMenuAction(bar, QStringLiteral("&File"), QStringLiteral("New from &Clipboard"));
+    QVERIFY(clipboardAction);
+    QCOMPARE(clipboardAction->shortcut(), QKeySequence(QKeySequence::New));
 #endif
 }
 
@@ -954,15 +997,29 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabDiscardDropsDoc() {
     // sink that outlives it rather than reading the freed pointer.
     auto saveSink = std::make_shared<int>(0);
     doc->observeSavesInto(saveSink);
-    requestCloseTab(dv, 0);
 
-    // Discard: the doc is gone.
-    QCOMPARE(dv->documentCount(), 0);
-    QCOMPARE(mw->documentCount(), 0);
+    // See closeTabAndTrack(): closing the last tab tears the window down on
+    // macOS, so `mw`/`dv` are dangling from here on. Use the guards.
+    const ClosedTab after = closeTabAndTrack(mw, dv, 0);
+
+    // Sink outlives the FakeDoc, so this is safe on every platform.
     QCOMPARE(*saveSink, 0); // Discard never saves.
 
-    // Evidence: empty-state after Discard.
-    grabTo(mw, QStringLiteral("fnd014_empty_state_after_discard.png"));
+    if (after.window) {
+        // Linux / Windows: the window persists and shows its empty state.
+        QVERIFY(after.view);
+        QCOMPARE(after.view->documentCount(), 0);
+        QCOMPARE(after.window->documentCount(), 0);
+
+        // Evidence: empty-state after Discard.
+        grabTo(after.window, QStringLiteral("fnd014_empty_state_after_discard.png"));
+    } else {
+        // macOS: the absence of a window IS the empty state (G5 — dock icon
+        // + menu bar only), so there is no widget left to grab. The window
+        // being gone is itself the assertion: it cannot have gone while
+        // still holding the discarded document.
+        QVERIFY2(!after.view, "the DocumentView must not outlive its MainWindow");
+    }
 
     // Original file must NOT have been rewritten by a discard.
     QFile check(file);
@@ -970,7 +1027,10 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabDiscardDropsDoc() {
     QCOMPARE(check.readAll(), QByteArray("ORIGINAL"));
 
     // Reset the forced-response seam so it can't leak into later slots.
-    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    // On macOS the window is already destroyed (above) and the seam is
+    // per-window, so there is nothing left to leak — and nothing to reset.
+    if (after.window)
+        after.window->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
 }
 
 // UAT-FND-014 — Save on a titled dirty doc writes the file and closes.
@@ -999,10 +1059,17 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabSaveTitledWritesFile() {
     // a sink that outlives it rather than reading the freed pointer.
     auto saveSink = std::make_shared<int>(0);
     doc->observeSavesInto(saveSink);
-    requestCloseTab(dv, 0);
+    const ClosedTab after = closeTabAndTrack(mw, dv, 0);
 
-    // Save succeeded → the tab closed.
-    QCOMPARE(dv->documentCount(), 0);
+    // Save succeeded → the tab closed. On macOS the whole window went with
+    // it (see closeTabAndTrack), which is the same observation.
+    if (after.view)
+        QCOMPARE(after.view->documentCount(), 0);
+    else
+        // macOS: the window went with the last tab. Assert the invariant
+        // that makes that equivalent, so this branch is never silently
+        // assertion-free.
+        QVERIFY2(!after.window, "the DocumentView must not outlive its MainWindow");
     QCOMPARE(*saveSink, 1);
 
     // File on disk carries the new payload.
@@ -1011,7 +1078,8 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabSaveTitledWritesFile() {
     QCOMPARE(check.readAll(), QByteArray("REWRITTEN"));
 
     // Reset the forced-response seam so it can't leak into later slots.
-    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    if (after.window)
+        after.window->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
 }
 
 // UAT-FND-014 — Save on an UNTITLED dirty doc routes through the Save-As
@@ -1040,10 +1108,16 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabSaveUntitledRoutesThroughSaveA
     // be a use-after-free).
     auto saveSink = std::make_shared<int>(0);
     doc->observeSavesInto(saveSink);
-    requestCloseTab(dv, 0);
+    const ClosedTab after = closeTabAndTrack(mw, dv, 0);
 
-    // Save-As routed and wrote → the tab closed.
-    QCOMPARE(dv->documentCount(), 0);
+    // Save-As routed and wrote → the tab closed (on macOS, with the window).
+    if (after.view)
+        QCOMPARE(after.view->documentCount(), 0);
+    else
+        // macOS: the window went with the last tab. Assert the invariant
+        // that makes that equivalent, so this branch is never silently
+        // assertion-free.
+        QVERIFY2(!after.window, "the DocumentView must not outlive its MainWindow");
     QCOMPARE(*saveSink, 1);
     QVERIFY2(QFileInfo::exists(target),
              "Untitled Save must route through Save-As and write the chosen path");
@@ -1051,9 +1125,11 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabSaveUntitledRoutesThroughSaveA
     QVERIFY(check.open(QIODevice::ReadOnly));
     QCOMPARE(check.readAll(), QByteArray("UNTITLED-PAYLOAD"));
 
-    mw->setSaveAsPathForTesting(QString());
-    // Reset the forced-response seam so it can't leak into later slots.
-    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    // Reset the forced-response seams so they can't leak into later slots.
+    if (after.window) {
+        after.window->setSaveAsPathForTesting(QString());
+        after.window->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    }
 }
 
 // UAT-FND-014 (path c) — closing a NON-last (middle) tab respects the
@@ -1117,13 +1193,20 @@ void TestUatFoundations::uat_fnd_014_closeCleanTabNeverPrompts() {
     // sink that outlives it rather than reading the freed pointer.
     auto saveSink = std::make_shared<int>(0);
     doc->observeSavesInto(saveSink);
-    requestCloseTab(dv, 0);
+    const ClosedTab after = closeTabAndTrack(mw, dv, 0);
 
-    QCOMPARE(dv->documentCount(), 0);
+    if (after.view)
+        QCOMPARE(after.view->documentCount(), 0);
+    else
+        // macOS: the window went with the last tab. Assert the invariant
+        // that makes that equivalent, so this branch is never silently
+        // assertion-free.
+        QVERIFY2(!after.window, "the DocumentView must not outlive its MainWindow");
     QCOMPARE(*saveSink, 0); // A clean close never saves.
 
     // Reset the forced-response seam so it can't leak into later slots.
-    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    if (after.window)
+        after.window->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
 }
 
 // UAT-FND-014 — an UNTITLED document (isDirty()==false but isUntitled()
@@ -1180,15 +1263,23 @@ void TestUatFoundations::uat_fnd_014_closeUntitledTabDiscardDropsDoc() {
     QVERIFY(doc->isUntitled());
 
     mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
-    requestCloseTab(dv, 0);
+    const ClosedTab after = closeTabAndTrack(mw, dv, 0);
     // `doc` is destroyed by the close — do not touch it past this point.
+    // Nor `mw`/`dv`: on macOS the window went too (see closeTabAndTrack).
 
-    QCOMPARE(dv->documentCount(), 0);
+    if (after.view)
+        QCOMPARE(after.view->documentCount(), 0);
+    else
+        // macOS: the window went with the last tab. Assert the invariant
+        // that makes that equivalent, so this branch is never silently
+        // assertion-free.
+        QVERIFY2(!after.window, "the DocumentView must not outlive its MainWindow");
     // Discard must not have written anything to the temp path.
     QVERIFY2(!QFileInfo::exists(tempPath),
              "Discard must not write the untitled doc's temp file");
 
-    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    if (after.window)
+        after.window->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
 }
 
 // UAT-FND-014 — Save on an untitled doc routes through Save-As even
@@ -1216,7 +1307,7 @@ void TestUatFoundations::uat_fnd_014_closeUntitledTabSaveRoutesThroughSaveAs() {
 
     mw->setSaveAsPathForTesting(chosen);
     mw->setCloseResponseForTesting(MainWindow::CloseResponse::Save);
-    requestCloseTab(dv, 0);
+    const ClosedTab after = closeTabAndTrack(mw, dv, 0);
     // NOTE: on a successful close the DocumentView erases (destroys) the
     // document synchronously, so `doc` is dangling here — assert on the
     // file system and the tab count only, never on `doc`. That the save
@@ -1225,7 +1316,13 @@ void TestUatFoundations::uat_fnd_014_closeUntitledTabSaveRoutesThroughSaveAs() {
     // saves without closing, so the doc survives to be inspected).
 
     // Save-As routed to the chosen path and the tab closed.
-    QCOMPARE(dv->documentCount(), 0);
+    if (after.view)
+        QCOMPARE(after.view->documentCount(), 0);
+    else
+        // macOS: the window went with the last tab. Assert the invariant
+        // that makes that equivalent, so this branch is never silently
+        // assertion-free.
+        QVERIFY2(!after.window, "the DocumentView must not outlive its MainWindow");
     QVERIFY2(QFileInfo::exists(chosen),
              "Untitled Save must route through Save-As and write the CHOSEN path");
     QVERIFY2(!QFileInfo::exists(tempPath),
@@ -1234,8 +1331,10 @@ void TestUatFoundations::uat_fnd_014_closeUntitledTabSaveRoutesThroughSaveAs() {
     QVERIFY(check.open(QIODevice::ReadOnly));
     QCOMPARE(check.readAll(), QByteArray("PASTED-PAYLOAD"));
 
-    mw->setSaveAsPathForTesting(QString());
-    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    if (after.window) {
+        after.window->setSaveAsPathForTesting(QString());
+        after.window->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    }
 }
 
 // UAT-FND-014 — regression closer to the REAL bug: drive the actual
@@ -1429,13 +1528,22 @@ void TestUatFoundations::uat_fnd_014_multipleUntitledDocsEachPromptOnClose() {
     requestCloseTab(dv, 0);
     QCOMPARE(dv->documentCount(), 1);
 
-    // Finally Discard the second untitled doc.
+    // Finally Discard the second untitled doc. This empties the window, so
+    // on macOS the window itself goes with it (see closeTabAndTrack) —
+    // every close above left a document behind and was therefore safe.
     mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
-    requestCloseTab(dv, 0);
-    QCOMPARE(dv->documentCount(), 0);
+    const ClosedTab after = closeTabAndTrack(mw, dv, 0);
+    if (after.view)
+        QCOMPARE(after.view->documentCount(), 0);
+    else
+        // macOS: the window went with the last tab. Assert the invariant
+        // that makes that equivalent, so this branch is never silently
+        // assertion-free.
+        QVERIFY2(!after.window, "the DocumentView must not outlive its MainWindow");
     QVERIFY2(!QFileInfo::exists(tempB), "Discard must not write the second temp file");
 
-    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    if (after.window)
+        after.window->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
 }
 
 // UAT-FND-014 — the persistent EMPTY-STATE window (zero documents; the
