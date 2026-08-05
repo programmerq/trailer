@@ -1,6 +1,6 @@
 ---
 name: surface-the-ask
-description: When reporting work (PR body, session summary), state the one thing that blocks ready-to-merge up front — or say nothing blocks — so the owner never has to dig for it; triage first, and escalate genuine forks as socratic, one-word-answerable questions with a stated default.
+description: When reporting work (PR body, session summary), state the one thing that blocks ready-to-merge up front — or say nothing blocks — so the owner never has to dig for it; triage first, and escalate genuine forks as socratic, one-word-answerable questions with a stated default. Also governs PR granularity — whether a change is one PR or two, and why a blocking decision is never a reason to split.
 ---
 
 # Surface the ask
@@ -51,6 +51,18 @@ The owner later drew the line on *what deserves a PR at all* (#74, verbatim):
 
 Encoded as **Step 4 — the reviewable-deliverable gate** below: it runs *before*
 the ready-to-merge convention, because it decides whether a PR should exist.
+
+The owner then drew the line on *how many PRs one change gets* (#152 / #153,
+verbatim):
+
+> "why did you split this into two PRs? I'd prefer this sort of change be on one
+> PR. Since you intentionally stacked them, that means the agents knew they were
+> related, right? Is there some guidance or claude.md entry that we could
+> revise?"
+
+Encoded as **Step 5 — the PR-granularity gate** below. Step 4 decides whether a
+PR exists; Step 5 decides how many. Worked as a BAD example at the end of this
+file — the split there manufactured its own blocker.
 
 ## Step 1 — TRIAGE FIRST (is there actually an ask?)
 
@@ -140,10 +152,75 @@ no accompanying implementation), not every text diff.
 
 **Decision path (the whole skill in one line):** triage the ask (Step 1) →
 *is there implementation?* **no** → ask inline / draft-until-impl, don't open a
-docs-only PR → **yes** → *is there a blocking ask?* **yes** → Case A → **no** →
-Case B, open ready-for-review.
+docs-only PR → **yes** → *is this one change or two?* (Step 5 — a stacked base
+means one) → *is there a blocking ask?* **yes** → Case A → **no** → Case B, open
+ready-for-review.
 
-## Step 5 — The "ready-to-merge ask" PR convention
+## Step 5 — The PR-granularity gate (one PR, or two?)
+
+Step 4 decided that a PR belongs here. This step decides **how many**. Run it on
+the same diff, at the same moment — before you push either branch, because after
+you push, undoing a split costs the owner a re-read.
+
+> **Split only if each piece would still be worth opening if the other never
+> existed.**
+
+- **A blocking owner decision is not a reason to split.** That is what Case A
+  (Step 6) plus a stated default is for — one PR, one ask, default `hold`.
+- **If you are setting one PR's base to another agent branch, you are splitting
+  one change.** Stop and make it one PR.
+- **Legitimate splits** — and you **state the justification in the PR body**,
+  naming the specific fact that makes it true:
+  - *genuinely independent work* that merely happened to be in flight together —
+    say what each half's title would be if the other had never been written, and
+    that neither title mentions the other;
+  - *a diff too large to review in one sitting* — **say how large** (files and
+    lines, per piece);
+  - *a piece you would want to revert on its own* — **say why** you expect to
+    revert it, and what would trigger that.
+
+  An exception you don't write down is not an exception, it is the same
+  unexamined split with a label. If you can't write the sentence, you don't have
+  the split — open one PR.
+
+### The stacked base is the tell
+
+Make this the check you run on yourself, because it is mechanical and it fires
+before the mistake ships. **At PR-open time you type a `base:`. If that base is
+anything but `main`, stop.** You have just recorded, in a machine-readable
+field, that this PR only makes sense after another PR of yours — which is the
+relatedness test answering itself out loud: piece two would not be worth opening
+if piece one never existed, because without it the diff doesn't even apply.
+
+The same tell fires earlier, at `git checkout -b second-branch` while you are
+standing on the first one. Both are moments where you already *know* the halves
+belong together — stacking is the **proof** of relatedness, not a way to work
+around it. Collapse the branches into one and open one PR.
+
+**Don't over-correct.** This gate bars *fragmenting one change*; it does not
+mandate *bundling unrelated ones*. Two independent backlog items each clear the
+test on their own merits, so they stay two PRs — the per-item practice
+[`review-before-push`](../review-before-push/SKILL.md) expects. The question is
+never "could these ship together?", it is "does either piece stand without the
+other?"
+
+### The tension with Step 3's hold-default, resolved
+
+Step 3 already sanctions a default of *"holds — don't merge unverified"*: a
+default that holds the **merge** without stranding the **agent**. So a single PR
+carrying one blocked decision was always fully legitimate. What was missing was
+the *preference* — nothing said to choose it over splitting the clean half off,
+so "let half merge now" read as helpfulness.
+
+Stated here, so nobody rediscovers the fork: **when one part of a change is
+clean and another part carries an owner decision, the clean part does not get
+its own PR.** One PR, the ask stated per Step 6 Case A, default `hold`. The
+owner's attention is the scarce resource, not your merge throughput; two bodies,
+two review contexts, and a merge-ordering constraint cost more of it than one
+held PR does. Maximizing what can merge without the owner is not the goal —
+minimizing what the owner has to reconstruct is.
+
+## Step 6 — The "ready-to-merge ask" PR convention
 
 Every PR body carries, **as its first section**, exactly one of these two.
 
@@ -234,6 +311,27 @@ one line at the top: *"No ask — mergeable as-is: 2-line verbatim mirror of #61
 merged license-copy steps, reviewed locally, CI green. Merge is your call."*
 The failure was not a wrong decision — it was **leaving the ask unstated**.
 
+### BAD — the split that manufactured its own blocker (PRs #152 / #153)
+
+One change — *move CI off the self-hosted runners* — arrived as two PRs: **#152**
+(every PR-reachable lane → `ubuntu-latest`; clean, *"No ask — mergeable as-is"*)
+and **#153** (the nightly macOS lane → `macos-14`, carrying a real owner
+decision: the move surfaces a reproducible `test_uat_recognize_text` SEGFAULT).
+#153's base was **#152's branch**, not `main`.
+
+The stated reason for splitting was that #152 was *"independently mergeable, so
+nothing urgent rides on this"* — the split existed so the clean half could merge
+without waiting on the owner. What it produced instead: #153's Ready-to-merge
+ask leads with **"1. Merge #152 first."** The split **invented a blocker that a
+single PR would not have had**, and asked the owner to hold two review contexts
+to read a change that was one change all along.
+
+Both halves were good work; two personas ran on each; both bodies led with a
+correct ask. **The defect was the count.** Under Step 5: neither half is worth
+opening if the other never existed (#153's diff doesn't even apply without
+#152), the stacked base said so outright, and the blocking macOS decision was
+never a reason to split — it was a Case A ask with default `hold`, on one PR.
+
 ## Checklist (copyable)
 
 - [ ] Triaged the candidate: is the answer already derived by an objective / ADR
@@ -242,6 +340,13 @@ The failure was not a wrong decision — it was **leaving the ask unstated**.
       code / tests / a behavior change (a skill or runbook counts)? If it's a
       proposal / DR / plan **only** → ask inline or keep it draft; don't open a
       docs-only PR. A DR merges with its implementing PR, not alone.
+- [ ] PR-granularity gate (Step 5): one change → one PR. Each PR I'm opening
+      would still be worth opening if the other never existed, and **no PR's
+      `base` is another agent branch** (a stacked base means it's one change). A
+      blocking owner decision is **not** a reason to split off the clean half —
+      that's one PR, Case A, default `hold`. Any split I do make **states its
+      justification in the PR body** (independent — both titles; too large — how
+      large; revertible alone — why).
 - [ ] PR body's **first section** is `## Ready-to-merge ask` — Case A (blocks) or
       Case B (no ask).
 - [ ] If blocking: states the WHAT/CONTEXT/IMPACT from Step 2.

@@ -510,7 +510,13 @@ obvious.
 passes against the live app — see the `HITL round N` commits and the
 `2026-04-30 HITL pass` section in `TODO.md`. Agents should:
 
-1. Batch related work into a single PR rather than micro-PRs.
+1. **One change, one PR.** Batch related work into a single PR rather than
+   micro-PRs; never split one change into a clean half and a blocked
+   half, because a blocking owner decision is an ask with a stated
+   default, not a second PR. Basing one PR on another agent branch is
+   the tell that you have one change. Rule and test:
+   [`surface-the-ask`](.claude/skills/surface-the-ask/SKILL.md) → Step 5,
+   the PR-granularity gate.
 2. Mark the PR ready for HITL review when build + unit tests pass.
 3. Wait for the maintainer's review pass; don't auto-merge.
 4. Add UAT cases for any user-visible change (see `docs/uat/README.md`).
