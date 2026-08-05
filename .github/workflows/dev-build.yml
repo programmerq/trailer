@@ -17,7 +17,11 @@
 #
 # Triggered by:
 #   - workflow_dispatch: pick any ref/branch/SHA to build, and opt into
-#     the (10x-cost, GitHub-hosted) macOS build per-run.
+#     the macOS build per-run. That one runs on the owner's own
+#     self-hosted Mac (see the dev-macos job) rather than a hosted
+#     runner, so "opt in" is about not tying up a single-instance machine,
+#     not about cost — standard hosted runners are free and unlimited on a
+#     public repo, and this one isn't hosted at all.
 #   - pull_request `labeled`: adding the `dev-build` label to a PR
 #     builds its HEAD. Any other label is ignored by the `if:` filter.
 #
@@ -47,7 +51,10 @@ on:
         type: boolean
         default: true
       build_macos:
-        description: also build the macOS .dmg (10x runner cost)
+        description: >-
+          also build the macOS .dmg (runs on the owner's self-hosted Mac —
+          opt in when you need it, so a single-instance machine isn't tied
+          up by every dispatch)
         required: false
         type: boolean
         default: false
@@ -293,18 +300,36 @@ jobs:
           retention-days: 14
 
   dev-macos:
-    # Opt-in per DISPATCH only. macOS runners cost ~10x, so this never
-    # runs on the label path and requires the build_macos checkbox on a
-    # manual dispatch. (The `&& inputs.build_macos` short-circuits after
+    # Opt-in per DISPATCH only: it requires the build_macos checkbox on a
+    # manual dispatch and never runs on the label path. The reason is no
+    # longer cost (that was the "macOS bills at ~10x" era; standard hosted
+    # runners are free and unlimited on a public repo, and this job isn't
+    # hosted at all) — it is that this lane is a SINGLE-INSTANCE machine,
+    # so every PR label must not queue on it.
+    #
+    # That opt-in is also load-bearing for SECURITY — see the runs-on
+    # comment below: `github.event_name == 'workflow_dispatch'` is the
+    # first term, so a `pull_request` can never schedule this job.
+    # (The `&& inputs.build_macos` short-circuits after
     # the event check, so the label path — where inputs is absent —
     # never evaluates it.)
     if: github.event_name == 'workflow_dispatch' && inputs.build_macos == true
     name: macOS dev .dmg build (Apple Silicon, unsigned)
-    # TRIAL (2026-07-24): temporarily targeting the owner's self-hosted
-    # M4 MacBook Pro runner instead of the GitHub-hosted macos-14 fleet,
-    # to measure pickup latency and build time on real hardware. Revert
-    # to macos-14 (or make this configurable) once the trial's findings
-    # are reviewed — see the accompanying PR for the runs this produced.
+    # SETTLED (2026-08-05): this job stays on the owner's self-hosted M4
+    # MacBook Pro runner, permanently — it is no longer the 2026-07-24
+    # "trial" it started as. It is the ONE lane that carries the checks a
+    # fresh, ephemeral, headless hosted VM structurally cannot answer: the
+    # GUI/WindowServer session capability probe, the Dock-recents
+    # system-store integration test (it writes to and restores THIS
+    # machine's real NSDocumentController Recents list), and the
+    # adaptive-icon Assets.car `assetutil` assertion — plus the owner's own
+    # current Xcode. See the `run_macos_verification` steps below.
+    #
+    # nightly.yml's macOS lane moved the OTHER way on the same date (to
+    # GitHub-hosted macos-14): an unattended, timer-fired nightly must not
+    # depend on when a laptop lid opens. The split is the point — the
+    # laptop keeps doing what only it can do, and nightlies stop waiting
+    # on it.
     #
     # Lesson learned mid-trial: `runners-Virtual-Machine` is this
     # runner's registered NAME, not a label — `runs-on: runners-Virtual-Machine`

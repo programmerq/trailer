@@ -92,6 +92,16 @@ status unchanged; this is evidence for prioritising it, not a re-scoping.
 
 ## Related
 
+- `2026-08-05-macos-hosted-uat-recognize-text-segv` and
+  `2026-08-05-wine-uat-count-lower-on-hosted-runners` — both filed from the
+  2026-08-05 hosted-runner migration, and both fit this item's shape: a
+  weaker/shared-tenancy CI box surfaces failures a fast dedicated machine
+  hides. `ocr_ev_20_noTextFoundAfter` (this item) also fired on a hosted
+  `ubuntu-latest` UAT run during that migration — run
+  [31018085945](https://github.com/programmerq/trailer/actions/runs/31018085945),
+  the same `test_uat_ocr_evidence.cpp:244` assertion recorded above — and
+  passed on an immediate re-run, which is the first sighting of it on a
+  GitHub-hosted runner.
 - `2026-08-03-quit-teardown-segfault-mlscheduler` — the third flake found in
   the same hunt. Distinct: that one was a `SIGSEGV` in teardown, a
   memory-safety bug rather than a test-timing bug. **Closed**: the diagnosis
