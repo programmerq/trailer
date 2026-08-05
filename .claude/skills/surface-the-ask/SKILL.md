@@ -159,7 +159,8 @@ diff, same moment.
   (Step 3).
 - **A stacked base is the tell.** At PR-open time you type a `base:`; if it
   isn't `main`, stop — you are splitting one change. The same tell fires
-  earlier, at `git checkout -b` while standing on the first branch.
+  earlier, at `git checkout -b` while standing on the first branch; the real
+  fix is upstream, at dispatch (AGENTS.md → *Slash commands & subagents*).
 - **Legitimate splits — and you state the justification in the PR body**,
   naming the fact that makes it true: *genuinely independent work* (give both
   halves' titles, neither mentioning the other); *too large to review in one

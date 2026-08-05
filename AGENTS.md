@@ -601,6 +601,27 @@ Subagents live in [`.claude/agents/`](.claude/agents/). Currently defined:
   hit-testing, focus-loss handling, and the `/AP` appearance stream
   pipeline.
 
+**Dispatching follow-on work.** Where the next piece of work goes decides
+how many PRs it becomes: one change spread across two agents becomes two
+branches and two PRs.
+
+- **The agent that stalled, errored, or finished with part of the job
+  left over is the agent you send the rest to.** Message it; don't spawn
+  a fresh one. It holds the branch, the file context, and the decisions
+  already made. Within a session a completed agent is still resumable —
+  a send resumes it from its transcript, which persists on disk — so
+  "it already finished" is not a reason to start a new one.
+- **If it is genuinely unreachable — the rare case — the successor
+  inherits the whole job, branch and PR included, not just the leftover
+  piece.** A successor scoped to the remainder is exactly what produces
+  the second branch and the second PR. Hand over the work item, not the
+  remainder.
+- **The stacked-base tell at PR-open time is the backstop, not the
+  primary catch**
+  ([`surface-the-ask`](.claude/skills/surface-the-ask/SKILL.md) → Step 5).
+  By then the second branch exists and unwinding it costs the owner a
+  re-read; caught here, at dispatch, it costs nothing.
+
 Other agent products (Copilot SWE Agent, Cursor) should rely on this file
 plus the slash commands' descriptions; the workflows they encode are
 tool-agnostic.
