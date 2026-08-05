@@ -52,4 +52,11 @@ Hence: plausible, mechanically sound, unproven. Only a macOS run closes it.
 
 - `2026-08-03-load-sensitive-offscreen-test-races` — the other load-sensitive
   offscreen flakes from the same hunt (timing assertions, not memory safety).
+- `2026-08-05-macos-hosted-uat-recognize-text-segv` — **a second SIGSEGV in
+  the same OCR neighbourhood, in the UAT tier rather than the unit tier**
+  (`test_uat_recognize_text`), reproducible 2/2 on GitHub-hosted `macos-14`
+  while the unit tier stayed green on that same run. If a captured stack
+  explains both, close them together — and note that a *reproducible* hosted
+  crash is a far cheaper confirmation vehicle than waiting three nights on the
+  laptop, which is what this item's threshold currently requires.
 - `2026-07-26-macos-uat-triage` — the standing macOS-specific triage item.
