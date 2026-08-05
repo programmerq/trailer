@@ -1,6 +1,6 @@
 ---
 name: surface-the-ask
-description: When reporting work (PR body, session summary), state the one thing that blocks ready-to-merge up front — or say nothing blocks — so the owner never has to dig for it; triage first, and escalate genuine forks as socratic, one-word-answerable questions with a stated default.
+description: When reporting work (PR body, session summary), state the one thing that blocks ready-to-merge up front — or say nothing blocks — so the owner never has to dig for it; triage first, and escalate genuine forks as socratic, one-word-answerable questions with a stated default. Also rules PR granularity: one change, one PR.
 ---
 
 # Surface the ask
@@ -140,10 +140,36 @@ no accompanying implementation), not every text diff.
 
 **Decision path (the whole skill in one line):** triage the ask (Step 1) →
 *is there implementation?* **no** → ask inline / draft-until-impl, don't open a
-docs-only PR → **yes** → *is there a blocking ask?* **yes** → Case A → **no** →
-Case B, open ready-for-review.
+docs-only PR → **yes** → *is this one change or two?* (Step 5 — a stacked base
+means one) → *is there a blocking ask?* **yes** → Case A → **no** → Case B, open
+ready-for-review.
 
-## Step 5 — The "ready-to-merge ask" PR convention
+## Step 5 — The PR-granularity gate (one PR, or two?)
+
+Step 4 decided that a PR belongs here. This step decides **how many** — same
+diff, same moment.
+
+> **Split only if each piece would still be worth opening if the other never
+> existed.**
+
+- **A blocking owner decision is not a reason to split.** When one part of a
+  change is clean and another carries an owner decision, **the clean part does
+  not get its own PR**: one PR, the ask stated per Step 6 Case A, default
+  `hold` — a default that holds the *merge* without stranding the *agent*
+  (Step 3).
+- **A stacked base is the tell.** At PR-open time you type a `base:`; if it
+  isn't `main`, stop — you are splitting one change. The same tell fires
+  earlier, at `git checkout -b` while standing on the first branch; the real
+  fix is upstream, at dispatch (AGENTS.md → *Slash commands & subagents*).
+- **Legitimate splits — and you state the justification in the PR body**,
+  naming the fact that makes it true: *genuinely independent work* (give both
+  halves' titles, neither mentioning the other); *too large to review in one
+  sitting* (say how large); *a piece you would revert alone* (say what would
+  trigger that). An exception you don't write down is not an exception.
+- **Don't over-correct.** This gate bars *fragmenting one change*; it does not
+  mandate *bundling unrelated ones* — independent items stay separate PRs.
+
+## Step 6 — The "ready-to-merge ask" PR convention
 
 Every PR body carries, **as its first section**, exactly one of these two.
 
@@ -242,6 +268,11 @@ The failure was not a wrong decision — it was **leaving the ask unstated**.
       code / tests / a behavior change (a skill or runbook counts)? If it's a
       proposal / DR / plan **only** → ask inline or keep it draft; don't open a
       docs-only PR. A DR merges with its implementing PR, not alone.
+- [ ] PR-granularity gate (Step 5): each PR I'm opening would still be worth
+      opening if the other never existed, and **no PR's `base` is another agent
+      branch**. A blocking owner decision is not a reason to split off the clean
+      half — one PR, Case A, default `hold`. Any split **states its
+      justification in the PR body**.
 - [ ] PR body's **first section** is `## Ready-to-merge ask` — Case A (blocks) or
       Case B (no ask).
 - [ ] If blocking: states the WHAT/CONTEXT/IMPACT from Step 2.
