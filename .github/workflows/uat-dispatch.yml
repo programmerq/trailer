@@ -9,7 +9,10 @@ on:
 jobs:
   uat:
     name: UAT (manual)
-    runs-on: trailer-k8s
+    # ubuntu-latest: this job `docker build`s and `docker run`s the UAT
+    # image, so it needs a working Docker daemon on the runner. The hosted
+    # ubuntu image ships Docker + Buildx preinstalled.
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7

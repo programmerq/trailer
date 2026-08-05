@@ -64,19 +64,20 @@
 # same-day-same-mode grouping (see the "Create tag" step's comment on the
 # residual TOCTOU there).
 #
-# k8s pool sharing: nightly-linux and nightly-windows both run on the
-# shared trailer-k8s pool (also used by ci.yml/release.yml). They are
-# SERIALIZED, not parallel — nightly-windows `needs: [nightly-date,
-# nightly-linux]` + `if: always() && needs.nightly-date.result ==
-# 'success'`, so it starts only once Linux's job has finished (success or
-# failure never gates it, only completion-timing does). This was added
-# after bootstrap run 30099999309 (2026-07-24) fired nightly.yml
-# simultaneously with a routine ci.yml PR-validate run, putting FOUR heavy
-# compile jobs on the pool at once; pods were evicted mid-Build on both
-# lanes and the pool stalled for ~90 minutes. Nightly carries no latency
-# requirement, so trading parallelism for peak-footprint safety here is
-# free. The self-hosted macOS lane is unaffected — different runner
-# entirely — and stays fully parallel.
+# Runner isolation (2026-08-05): all three lanes now run in parallel,
+# each on its own runner. HISTORY, because the shape of this file still
+# carries its fingerprints: nightly-linux and nightly-windows used to
+# share one self-hosted trailer-k8s pool with ci.yml/release.yml, and
+# were deliberately SERIALIZED (`nightly-windows needs: nightly-linux`)
+# after bootstrap run 30099999309 (2026-07-24) put four heavy compile
+# jobs on that pool at once — pods were evicted mid-Build on both lanes
+# and the pool stalled ~90 minutes. That serialization was a workaround
+# for a shared, finite pool. Both lanes are now GitHub-hosted, where each
+# job gets its own fresh VM and standard runners are free and unlimited
+# on a public repo, so there is no pool to protect and no peak footprint
+# to smooth: the `needs: nightly-linux` edge was removed and Windows runs
+# alongside Linux again, halving nightly wall-clock. The macOS lane was
+# always parallel (separate runner) and is unchanged by this.
 #
 # Failure surfacing: nightly-publish's LAST-but-one step fails the job (and
 # so the whole workflow run) whenever any lane's result isn't `success` —
@@ -255,11 +256,11 @@ permissions:
 jobs:
   nightly-date:
     name: Resolve nightly date + run mode
-    runs-on: trailer-small
+    runs-on: ubuntu-latest
     # Was 2 when this job was pure shell (no checkout). Now does a
     # fetch-depth:0 checkout (needed for the skip-when-unchanged diff below)
     # — mirroring nightly-publish's identical checkout, which budgets 15 on
-    # the same trailer-small runner. 5 gives headroom without hiding a
+    # the same runner shape. 5 gives headroom without hiding a
     # genuinely stuck checkout for minutes on end.
     timeout-minutes: 5
     outputs:
@@ -435,7 +436,7 @@ jobs:
     # nightly (see the workflow header's "Skip-when-unchanged" section) —
     # this is the runner-time win the skip check exists for.
     if: needs.nightly-date.outputs.skip != 'true'
-    runs-on: trailer-k8s
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     concurrency:
       # Same-UTC-day REAL runs (scheduled + any manual dry_run:false
@@ -444,22 +445,25 @@ jobs:
       group: nightly-lane-linux-${{ needs.nightly-date.outputs.concurrency-key }}
       cancel-in-progress: false
     env:
-      # k8s-OOM guard (see ci.yml's env comment for the underlying
-      # CMAKE_BUILD_PARALLEL_LEVEL bug). REASSESSED (2026-07-26):
-      # CMAKE_BUILD_PARALLEL_LEVEL raised from 1 back to 2 — the -j1 was
-      # chased against the 2026-07-24 mid-Build kills, but this job's
-      # `cmake --build … --parallel` (below) was bare, so that env var
-      # was never actually enforced (bare `--parallel` ignores it
-      # entirely); the kills happened under fully unbounded parallelism
-      # regardless of the value set here. Now that the step passes the
-      # job count explicitly, 2 matches every other lane in the repo
-      # (ci.yml, release.yml, nightly-windows) and is the reasonable
-      # starting point — see the fix PR for the full history. This does
-      # NOT extend to CTEST_PARALLEL_LEVEL below: ctest has no such bug
-      # (it reads its env var normally regardless of command-line flags),
-      # so the existing 1 there was a real, working cap and is left
-      # unchanged by this fix.
-      CMAKE_BUILD_PARALLEL_LEVEL: 2
+      # See ci.yml's env comment for the underlying
+      # CMAKE_BUILD_PARALLEL_LEVEL bug (bare `--parallel` ignores the env
+      # var, which is why the step below passes the count explicitly).
+      # HISTORY: this was 1 for a while, chased against the 2026-07-24
+      # mid-Build pod kills — but that job's `cmake --build … --parallel`
+      # was bare at the time, so the value here was never enforced at all;
+      # the kills happened under fully unbounded parallelism regardless.
+      # It went back to 2 on 2026-07-26 and is now 4 (2026-08-05), matching
+      # every other Linux lane in the repo: a standard hosted runner on a
+      # public repo is 4 vCPU / 16 GB, so one build job per vCPU.
+      #
+      # CTEST_PARALLEL_LEVEL stays 1 here, deliberately and unchanged.
+      # This is the ONE lane that runs the full `ctest -L uat` tier, and
+      # two offscreen tests are known to fail only under CPU contention
+      # (docs/backlog/2026-08-03-load-sensitive-offscreen-test-races.md).
+      # A serial test tier is the whole reason the nightly Linux UAT
+      # result is trustworthy enough to gate on; widening it to chase a
+      # few minutes would trade a hard oracle for a flaky one.
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
       CTEST_PARALLEL_LEVEL: 1
     steps:
       - uses: actions/checkout@v7
@@ -540,21 +544,23 @@ jobs:
 
   nightly-windows:
     name: Windows full lane (Wine cross-build + unit + UAT)
-    # Serialized AFTER nightly-linux (see `needs`/`if` below), not parallel
-    # to it. Both share the same trailer-k8s pool; bootstrap run 30099999309
-    # (2026-07-24) fired nightly.yml and ci.yml simultaneously, putting two
-    # full heavy-compile lanes on the pool at once — pods got evicted mid-
-    # Build and the pool stalled ~90 min. `needs: [nightly-date,
-    # nightly-linux]` orders Windows to start only once Linux's job has
-    # finished (success OR failure — `if: always()` below), halving nightly's
-    # peak k8s footprint without making a Linux failure skip Windows. The
-    # mac lane stays fully parallel (different runner entirely). Nightly has
-    # no latency requirement, so the added wall-clock is a non-issue.
-    needs: [nightly-date, nightly-linux]
-    # `always()` so a red Linux lane still lets Windows run (unchanged);
-    # `skip != 'true'` is the new guard — see nightly-linux's comment above.
-    if: always() && needs.nightly-date.result == 'success' && needs.nightly-date.outputs.skip != 'true'
-    runs-on: trailer-k8s
+    # Runs in PARALLEL with nightly-linux, on its own hosted runner. It was
+    # serialized behind nightly-linux (`needs: [nightly-date,
+    # nightly-linux]` + `if: always() && …`) from 2026-07-24 until
+    # 2026-08-05 solely to keep two heavy compile lanes off the single
+    # shared self-hosted k8s pool at the same time — see the workflow
+    # header's "Runner isolation" section for that incident. With both
+    # lanes on GitHub-hosted runners each job gets its own VM, so that
+    # constraint no longer describes anything real and the edge was
+    # dropped: `needs: [nightly-date]` only, matching nightly-linux and
+    # nightly-macos exactly. A red Linux lane still does not affect this
+    # lane (they are siblings now, not ordered), which is the same
+    # partial-success property the `always()` form was preserving.
+    needs: [nightly-date]
+    # Skipped whenever nightly-date found no code change since the previous
+    # nightly — see nightly-linux's comment above.
+    if: needs.nightly-date.outputs.skip != 'true'
+    runs-on: ubuntu-latest
     # release.yml's windows-cross (build + bundle + unit tests only) budgets
     # 60. UAT adds a second full pass of Wine-emulated test binaries
     # (~2.5-3s startup each under Wine per ci.yml's own note) on top, so
@@ -564,7 +570,10 @@ jobs:
       group: nightly-lane-windows-${{ needs.nightly-date.outputs.concurrency-key }}
       cancel-in-progress: false
     env:
-      CMAKE_BUILD_PARALLEL_LEVEL: 2
+      # Build level 4 (one job per vCPU on a hosted runner); ctest level
+      # held at 2 rather than raised in lockstep — see ci.yml's env comment
+      # and docs/backlog/2026-08-03-load-sensitive-offscreen-test-races.md.
+      CMAKE_BUILD_PARALLEL_LEVEL: 4
       CTEST_PARALLEL_LEVEL: 2
     outputs:
       # Wine UAT is non-gating (see the step below) so its outcome doesn't
@@ -884,7 +893,7 @@ jobs:
     # red macOS lane (or an offline-VM timeout) NOT block the Linux/
     # Windows artifacts from shipping.
     if: always()
-    runs-on: trailer-small
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     concurrency:
       group: nightly-publish-${{ needs.nightly-date.outputs.concurrency-key }}

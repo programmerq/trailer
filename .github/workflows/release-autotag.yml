@@ -39,7 +39,11 @@ jobs:
     if: |
       github.event.pull_request.merged == true &&
       contains(github.event.pull_request.labels.*.name, 'release-candidate')
-    runs-on: trailer-small
+    # ubuntu-latest, NOT a self-hosted label: this workflow is triggered by
+    # `pull_request: types: [closed]` and checks out the PR HEAD sha, so it
+    # is a `pull_request`-reachable job running PR-authored code. On a
+    # public repo that must not touch the owner's own infrastructure.
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v7

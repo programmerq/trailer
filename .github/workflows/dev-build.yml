@@ -97,9 +97,11 @@ concurrency:
 # every `cmake --build` step below passes the job count explicitly
 # (`--parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"`) instead of a bare
 # `--parallel` — the short version: bare `--parallel` does NOT honor
-# this env var, and was the real cause of past OOMKilled pods.
+# this env var, and was the real cause of past OOMKilled pods — and for
+# why the build level is 4 (one job per vCPU on a hosted runner) while
+# the ctest level deliberately stays at 2.
 env:
-  CMAKE_BUILD_PARALLEL_LEVEL: 2
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
   CTEST_PARALLEL_LEVEL: 2
 
 jobs:
@@ -111,7 +113,13 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.build_linux) ||
       (github.event_name == 'pull_request' && github.event.label.name == 'dev-build')
     name: Linux dev build
-    runs-on: trailer-k8s
+    # ubuntu-latest, NOT a self-hosted label. This job is reachable from a
+    # `pull_request` (the `dev-build` label path above) and checks out
+    # `github.event.pull_request.head.sha` — i.e. it executes PR-authored
+    # code. On a public repo that must never land on the owner's own
+    # infrastructure. See PR "CI: move every PR-reachable job to
+    # GitHub-hosted runners" (2026-08-05).
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -197,9 +205,12 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.build_windows) ||
       (github.event_name == 'pull_request' && github.event.label.name == 'dev-build')
     name: Windows dev cross-build (mingw-w64)
-    runs-on: trailer-k8s
-    # Cold Wine/Qt/qpdf provisioning can be slow on the trailer-k8s
-    # Xeons before the caches warm — keep the release job's headroom.
+    # ubuntu-latest, NOT a self-hosted label — same reason as dev-linux
+    # above: this job is `pull_request`-reachable and builds PR-authored
+    # code.
+    runs-on: ubuntu-latest
+    # Cold Wine/Qt/qpdf provisioning is slow before the caches warm —
+    # keep the release job's headroom.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -301,6 +312,15 @@ jobs:
     # picked up). Self-hosted runners are targeted by their `labels:`
     # array; this runner's actual labels are self-hosted, macOS, ARM64
     # (no custom label such as `utm`).
+    #
+    # SECURITY (2026-08-05, public repo): this is the ONLY job left in the
+    # repo on a self-hosted runner, and it is safe to leave here because
+    # the `if:` above makes it `workflow_dispatch`-ONLY. The `pull_request`
+    # (labeled) path can never reach it — `github.event_name ==
+    # 'workflow_dispatch'` is the first term and short-circuits — so no
+    # PR-authored code can execute on the owner's hardware. If that `if:`
+    # is ever widened to include a `pull_request` branch, this job MUST
+    # move to `macos-14` first.
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 60
     outputs:
