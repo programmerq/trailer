@@ -7,7 +7,7 @@
 #   - fires on a timer, unattended;
 #   - runs the FULL test suite (unit + UAT, `ctest -L uat`) PER OS, not once
 #     centrally — Linux native, Windows via the existing Wine cross-build
-#     workers, macOS on the owner's self-hosted Apple Silicon runner;
+#     workers, macOS on a GitHub-hosted Apple Silicon runner (macos-14);
 #   - ships PARTIAL-SUCCESS releases: any OS lane that builds and passes its
 #     GATING checks gets its artifact published, even if the other two
 #     lanes are red. A lane's "Stage + upload" step is always its LAST step,
@@ -36,27 +36,44 @@
 #     VERSION, never tags/publishes a v* release, and release.yml /
 #     release-publish.yml / release-autotag.yml are untouched by this file.
 #
-# macOS availability: the self-hosted runner (runs-on: [self-hosted, macOS,
-# ARM64], same labels dev-build.yml's dev-macos job proved out in #120) is a
-# single-instance VM on the owner's laptop and may be offline for hours (see
-# the schedule comment below — a stuck mac lane is exactly why "results
-# ready by morning" is an expectation, not a guarantee). That's fine —
-# nightly-publish `needs` all three lanes with `if: always()`, so it simply
-# waits for macOS to reach a terminal state (success, or GitHub's own ~24h
-# "no runner available" auto-fail of a queued job) before assembling the
-# release from whichever lanes are green.
+# macOS availability (CHANGED 2026-08-05): this lane runs on GitHub-hosted
+# `macos-14` (Apple Silicon), matching release.yml's macos-build. It used to
+# run on `[self-hosted, macOS, ARM64]` — a single-instance VM on the owner's
+# LAPTOP — which meant an unattended, timer-fired pipeline's macOS result
+# depended on when a human happened to open a laptop lid. It could be
+# offline for hours, and "results ready by morning" was explicitly an
+# expectation rather than a guarantee. A hosted runner has no such
+# dependency, so the whole point of a nightly (unattended, ready in the
+# morning) now actually holds for all three lanes.
+#
+# WHAT IS NOT MOVING, and why: dev-build.yml's dev-macos job stays on the
+# self-hosted label permanently. That job hosts the checks that need REAL
+# hardware and the owner's Xcode — the GUI/WindowServer session capability
+# probe, the Dock-recents system-store integration test (it writes to and
+# restores the machine's real NSDocumentController Recents list), and the
+# adaptive-icon `assetutil` assertion. None of those are things a fresh
+# ephemeral hosted VM can answer. Splitting the two means the laptop keeps
+# doing what only it can do, and the nightly stops waiting on it.
+#
+# nightly-publish still `needs` all three lanes with `if: always()`, so a red
+# or slow macOS lane still cannot block the Linux/Windows artifacts from
+# shipping. That property is unchanged by this move; it is simply exercised
+# far less often now.
 #
 # Concurrency: the nightly-date job (below) resolves today's UTC date and a
 # concurrency key ONCE, before any lane starts or waits on anything — so a
-# slow mac-VM wait that straddles midnight can't smear the tag, or the
-# concurrency scope, into the wrong day. Every lane job and nightly-publish
+# lane that straddles midnight can't smear the tag, or the concurrency
+# scope, into the wrong day. Every lane job and nightly-publish
 # carries a job-level `concurrency:` keyed off that value: dry runs each get
 # a unique key (never contend with anything), while REAL runs (the
 # schedule, or an explicit dry_run:false dispatch) on the SAME UTC day
-# share one key per lane — so a stray manual real dispatch can't double-
-# book the single-instance mac runner or double-publish alongside that
-# day's scheduled run. A DIFFERENT day always gets a different key, so one
-# stuck night's mac wait can NEVER block the next (independent) night's
+# share one key per lane — so a stray manual real dispatch can't
+# double-publish alongside that day's scheduled run. (Until 2026-08-05 this
+# also served to stop a stray dispatch double-booking the single-instance
+# self-hosted mac VM; that runner is gone from this workflow, but the
+# no-double-publish reason stands on its own and is the load-bearing one.)
+# A DIFFERENT day always gets a different key, so one
+# slow night can NEVER block the next (independent) night's
 # Linux/Windows results — a workflow- or day-spanning lock would defeat the
 # whole point of the partial-success design. Idempotent tag/release
 # creation (skip if today's tag already exists — mirroring
@@ -138,8 +155,8 @@
 #     night instead of alarming forever for a known, already-backlogged
 #     issue — the same reasoning that made these two lanes non-gating in
 #     the first place.
-#   - A lane going from present to ABSENT (job cancelled, mac VM offline,
-#     etc.) is UNCHANGED behaviour: the pre-existing "any lane result !=
+#   - A lane going from present to ABSENT (job cancelled, runner
+#     unavailable, etc.) is UNCHANGED behaviour: the pre-existing "any lane result !=
 #     success" check below already reds the run for that (see e.g. the
 #     2026-07-28 mac-lane cancellation) — the ratchet's own comparison
 #     short-circuits to `not_applicable` in that case and adds nothing
@@ -158,7 +175,10 @@
 # Skip-when-unchanged (scripts/resolve-nightly-skip.sh): nightly-date
 # resolves a SKIP decision immediately after computing the date/tag/
 # concurrency-key above — before any lane starts, so a no-op night never
-# spends runner time (especially the single-instance mac VM). The
+# spends runner time (this mattered most when the mac lane was a
+# single-instance laptop VM; it is still worth having on hosted runners,
+# where three idle lanes are ~an hour of pointless wall-clock and, for
+# macOS, the slowest of the three). The
 # comparison is CODE, not commit count: `git diff --quiet` between the
 # resolved build commit and the commit the PREVIOUS nightly-* tag points
 # at, not a commit-count heuristic (see nightly-20260729, which "rebuilt"
@@ -204,8 +224,8 @@
 # runs every build/test lane exactly as normal but skips the tag, the
 # GitHub Release, and the retention cleanup in nightly-publish — it prints
 # what WOULD have been published to the step summary instead. This lets a
-# manual proof run validate the full pipeline (including a real,
-# hours-long wait for the mac VM) without creating a real nightly-YYYYMMDD
+# manual proof run validate the full pipeline — all three lanes, end to
+# end — without creating a real nightly-YYYYMMDD
 # tag. Pass dry_run=false on a manual dispatch to cut a real nightly on
 # demand instead of waiting for the 10:00 UTC schedule.
 
@@ -214,10 +234,10 @@ name: Nightly
 on:
   schedule:
     # 10:00 UTC daily (~03:00 America/Los_Angeles / ~06:00 America/New_York)
-    # — lands after a typical US workday, results USUALLY ready the next
-    # morning. "Usually": an offline mac VM can delay the macOS artifact/
-    # status by hours (see the header) — Linux/Windows still land close to
-    # the schedule time regardless, since a stuck mac lane never blocks them.
+    # — lands after a typical US workday, results ready the next morning.
+    # All three lanes are on GitHub-hosted runners since 2026-08-05, so
+    # "ready by morning" no longer depends on the owner's laptop being
+    # awake; a queued hosted runner is minutes, not hours (see the header).
     - cron: '0 10 * * *'
   workflow_dispatch:
     inputs:
@@ -330,9 +350,9 @@ jobs:
           echo "Update-channel public key: $HEX"
 
       - id: resolve
-        # Captured ONCE, here, before any lane starts or waits on the mac
-        # VM. Previously nightly-publish computed TAG itself after
-        # `needs:`-waiting on all three lanes — a mac-VM wait that
+        # Captured ONCE, here, before any lane starts. Previously
+        # nightly-publish computed TAG itself after
+        # `needs:`-waiting on all three lanes — a lane wait that
         # straddled the UTC day boundary would tag with the COMPLETION
         # date, not the trigger date, and could silently collide with the
         # next scheduled run's tag-exists check. Every downstream job
@@ -370,10 +390,9 @@ jobs:
           else
             # All REAL runs (the schedule, or an explicit dry_run:false
             # dispatch) on the SAME UTC calendar day share one key, so a
-            # stray manual dispatch can't double-book the single-instance
-            # mac runner (or double-publish) alongside that day's
-            # scheduled run. A DIFFERENT day gets a DIFFERENT key, so a
-            # long mac-VM wait never blocks the next day's run — see the
+            # stray manual dispatch can't double-publish alongside that
+            # day's scheduled run. A DIFFERENT day gets a DIFFERENT key, so
+            # a slow night never blocks the next day's run — see the
             # workflow header.
             KEY="real-$DATE"
           fi
@@ -724,18 +743,30 @@ jobs:
           retention-days: 7
 
   nightly-macos:
-    name: macOS full lane (build + unit + UAT, self-hosted)
+    name: macOS full lane (build + unit + UAT)
     needs: [nightly-date]
-    # Single-instance VM on the owner's laptop; may be offline for hours —
-    # see the workflow header. nightly-publish waits for this job via
-    # `needs:` + `if: always()` rather than racing it.
+    # GitHub-hosted Apple Silicon, same label release.yml's macos-build uses.
+    # Was `[self-hosted, macOS, ARM64]` (the owner's laptop VM) from
+    # 2026-07-24 until 2026-08-05 — see the workflow header's "macOS
+    # availability" section for why an unattended nightly must not depend on
+    # a laptop being awake, and for what stays on that VM (dev-build.yml's
+    # dev-macos, which needs real hardware and the owner's Xcode).
+    # nightly-publish still waits for this job via `needs:` + `if: always()`
+    # rather than racing it, so a red or slow mac lane still cannot withhold
+    # the Linux/Windows artifacts.
     # Skipped whenever nightly-date found no code change — see nightly-
-    # linux's comment above. This is the runner-time win that matters most:
-    # the mac lane is a single-instance self-hosted VM that would otherwise
-    # burn hours rebuilding a tree it already built last night.
+    # linux's comment above.
     if: needs.nightly-date.outputs.skip != 'true'
-    runs-on: [self-hosted, macOS, ARM64]
-    timeout-minutes: 90
+    runs-on: macos-14
+    # macos-14 is 3-core M1 / 7 GB, meaningfully slower than the M4 laptop
+    # VM this lane used to run on, and this job does more than
+    # release.yml's macos-build (which budgets 60 for build+bundle+package
+    # alone): it adds a full unit pass AND a full `ctest -L uat` pass on top.
+    # 120 rather than the previous 90 buys headroom for that gap. A timeout
+    # here means NO macOS artifact for the night, which is exactly the
+    # failure this PR exists to stop, so err long — the job still exits as
+    # soon as it is done, so unused headroom costs nothing.
+    timeout-minutes: 120
     concurrency:
       group: nightly-lane-macos-${{ needs.nightly-date.outputs.concurrency-key }}
       cancel-in-progress: false
@@ -753,9 +784,14 @@ jobs:
           ref: ${{ inputs.ref }}
 
       - name: Add Homebrew to PATH
-        # Same fix PR #120 landed for dev-build.yml's dev-macos job: the
-        # actions-runner service process doesn't inherit the interactive
-        # shell's PATH, so brew/cmake/ninja are invisible without this.
+        # KEPT after the move to macos-14, where it is a cheap no-op rather
+        # than a fix. It landed (PR #120) for the self-hosted VM, whose
+        # actions-runner service process didn't inherit the interactive
+        # shell's PATH, leaving brew/cmake/ninja invisible. A hosted
+        # macos-14 image already has /opt/homebrew/bin on PATH — this just
+        # guarantees the prefix is present and first, which keeps the `brew`
+        # the next step shells out to unambiguous. One `echo`; not worth the
+        # risk of removing.
         run: echo "/opt/homebrew/bin" >> "$GITHUB_PATH"
 
       - name: Install Qt
@@ -771,12 +807,20 @@ jobs:
         # linking it: macOS ships LibreSSL as /usr/bin/openssl (LibreSSL
         # 3.3.6 on macOS 26.5), whose `genpkey` has no ed25519 algorithm,
         # so tests/test_update_pubkey.cpp's production-signer interop
-        # check cannot run against the system binary. Homebrew puts a real
-        # OpenSSL 3.x at /opt/homebrew/bin/openssl, which the "Add
-        # Homebrew to PATH" step above places AHEAD of /usr/bin — so the
-        # interop check runs for real on this lane instead of skipping.
-        # Without this line the test still passes, but silently skips,
-        # and macOS stops covering the signer/verifier agreement.
+        # check cannot run against the system binary. Homebrew's openssl@3
+        # is a real OpenSSL 3.x — and note it is KEG-ONLY, so it is
+        # deliberately NOT symlinked into /opt/homebrew/bin and never
+        # shadows LibreSSL on PATH; scripts/find-openssl-ed25519.sh locates
+        # it by asking `brew --prefix openssl@3` and then probing the three
+        # ed25519 operations for real. Without this line the test still
+        # passes, but silently SKIPS, and macOS stops covering the
+        # signer/verifier agreement.
+        #
+        # Still required on macos-14: the hosted image may or may not carry
+        # openssl@3 on any given refresh, and `brew install` is a fast no-op
+        # when it is already there — so installing unconditionally is both
+        # correct and cheap. (This is the check that reds the macOS nightly
+        # when it is wrong — see run 30907188776.)
         run: brew install ninja openssl@3
 
       - name: Build, bundle, and package
