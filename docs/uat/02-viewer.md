@@ -454,6 +454,62 @@ on a dpr-1 screen, pixel-exact at 200%). The owner's own orientation
 arithmetic level in `tests/test_image_scale.cpp`
 (`zoomOutLadderStopsExactlyAtHalfOnA2xScreen`), not end-to-end.
 
+### UAT-VWR-111 — Resizing the window keeps you on the page you were reading
+
+**Context.** Resizing a window is not a navigation command. In continuous
+layout at a fit zoom, `QPdfView` re-lays-out on every viewport resize and
+rescales every page, but the vertical scrollbar keeps its **absolute pixel**
+value across that rescale — so the same offset lands somewhere else in the
+document and the reader is carried off. Measured on Linux/offscreen at
+`origin/main` 6606081: nudging a 300-page A4 document's window from 720x720
+to 680x690 moved the view from **page 212 to page 223**, an 11-page jump,
+with the scroll value unchanged at 127872 px.
+
+**Preconditions:** A long PDF (≥ 100 pages) open in `View > Continuous` at a
+fit zoom (`View > Fit Page` / `View > Fit Width`).
+**Steps:**
+1. Navigate deep into the document — say page 141 of 200.
+2. Resize the window (drag a corner, toggle the sidebar, or maximise).
+**Expected:**
+- The page you were reading is still the page you are reading. The page
+  indicator and the visible page are unchanged.
+- The zoom mode is still the fit mode you were in, so the **next** resize
+  re-fits too.
+- A resize that rescales **nothing** — a height-only drag under Fit Width,
+  or any resize under Custom / Actual zoom — does not move the document a
+  pixel.
+
+**Two stated limits, so this does not read as more than it is.**
+1. Recovering lands on the **top of the page** you were on, not the exact
+   line you were reading. Recovering the intra-page offset exactly would
+   mean reimplementing `QPdfView`'s per-page rounding; this is a drop of a
+   refinement *inside* a page you are still on (G3-permissible), and only
+   on a resize that had already carried you off that page entirely.
+2. A resize that rescales nothing can still change the **page readout** by
+   one, because the readout names whatever sits under a viewport-relative
+   line. That is truthful — the document did not move — and correcting it
+   would scroll a document the reader can see is still.
+
+Driven by `uat_vwr_111_resizingTheWindowKeepsTheCurrentPage` and
+`uat_vwr_111_nonRescalingResizeLeavesTheViewAlone`
+(`tests/uat/test_uat_viewer.cpp`). Implemented in
+`NavigablePdfView::resizeEvent` (`src/document/PdfAdapter.cpp`).
+Surfaced by UAT-FND-095 failing on the gating Linux nightly lane
+(`nightly-20260805`); that case reaches the same defect through
+quit/reopen, this one isolates the resize.
+
+G2 evidence: `docs/uat/images/2026-08-05-resize-keeps-page-before.png` /
+`docs/uat/images/2026-08-05-resize-keeps-page-after.png` — the same
+200-page document in the same window after the same resize, asked for
+page 141: `Page 148` before, `Page 141` after. Emitted by
+`uat_vwr_111_resizeKeepsPageEvidence` (set
+`TRAILER_RESIZE_ANCHOR_EVIDENCE_DIR`; the slot names the file from the page
+it actually observed, so a shot cannot be mislabelled).
+
+**Sibling defect, not covered here:** changing zoom *mode* carries the
+reader off in the same way and additionally leaves the page readout stale —
+`docs/backlog/2026-08-05-zoom-mode-change-drops-the-current-page.md`.
+
 ---
 
 ## Sidebar — Pages tab
