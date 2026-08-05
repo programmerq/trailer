@@ -41,7 +41,7 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Cap build/test parallelism on the self-hosted trailer-k8s pods.
+# Bounded build/test parallelism.
 #
 # CORRECTED (2026-07-26): a bare `cmake --build … --parallel` (no
 # following number) does NOT honor this env var — CMake only consults
@@ -49,15 +49,34 @@ concurrency:
 # command line entirely. Once `--parallel` appears, with or without a
 # value, CMake tells the native build tool to use ITS OWN default —
 # for GNU Make that means a bare `-j`, i.e. UNLIMITED concurrent jobs,
-# which is what was actually OOMKilling pods here even with this env
-# var set. Every `cmake --build` step below now passes the job count
-# explicitly (`--parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"`) so the
-# cap is real regardless of whether the env var is read. See the fix
-# PR (claude/fix-unbounded-build-parallelism) for the `ps --forest`
-# evidence. CTEST_PARALLEL_LEVEL is unaffected — ctest honors its env
-# var normally with or without an explicit `-j` on its command line.
+# which is what was actually OOMKilling the old self-hosted pods even
+# with this env var set. Every `cmake --build` step below passes the
+# job count explicitly (`--parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"`)
+# so the cap is real regardless of whether the env var is read. See the
+# fix PR (claude/fix-unbounded-build-parallelism) for the `ps --forest`
+# evidence. That rule is PERMANENT — it is a CMake behaviour, not a
+# runner property, so any new `cmake --build` added here must keep
+# passing an explicit count (AGENTS.md → Build). CTEST_PARALLEL_LEVEL is
+# unaffected — ctest honors its env var normally with or without an
+# explicit `-j` on its command line.
+#
+# VALUES (2026-08-05, hosted-runner migration): the two knobs are set
+# independently because they bound different things.
+#   * CMAKE_BUILD_PARALLEL_LEVEL: 4 — was 2, sized for the memory
+#     envelope of the self-hosted trailer-k8s pods. A standard
+#     GitHub-hosted runner on a PUBLIC repo is 4 vCPU / 16 GB, so 2 was
+#     leaving half the machine idle on every compile. 4 = one job per
+#     vCPU; peak RSS for four concurrent Qt/C++20 translation units sits
+#     far inside 16 GB. Symptom to lower it: an OOM-killed compiler
+#     (`c++: fatal error: Killed signal terminated program cc1plus`).
+#   * CTEST_PARALLEL_LEVEL: 2 — deliberately NOT raised in lockstep.
+#     Two offscreen tests are known to fail only under CPU contention
+#     (docs/backlog/2026-08-03-load-sensitive-offscreen-test-races.md:
+#     test_perf_lazy_open and uat ocr_ev_20), so widening the test tier
+#     to 4 would buy a few seconds and pay for it in flakes. Raise this
+#     only once that backlog item closes.
 env:
-  CMAKE_BUILD_PARALLEL_LEVEL: 2
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
   CTEST_PARALLEL_LEVEL: 2
 
 jobs:
@@ -69,7 +88,7 @@ jobs:
     # Needs nothing but bash + coreutils, so it stays off the heavy
     # build path and fails the workflow the moment the regex drifts.
     name: Version gating
-    runs-on: trailer-small
+    runs-on: ubuntu-latest
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v7
@@ -106,14 +125,16 @@ jobs:
 
   build-and-test:
     name: Linux build + unit tests
-    runs-on: trailer-k8s
-    # Prefer fast fail over patient hang, but the first cold-cache build
-    # on the self-hosted trailer-k8s runners overran 18 min and got
-    # cancelled before ccache was populated. The setup-linux-build action
-    # installs mold + ninja so the build uses them by default (~3× faster
-    # linking, better parallel job scheduling than make). ccache hits
-    # bring warm runs well under 5 min; the first cold run needs headroom
-    # to finish and seed the cache.
+    runs-on: ubuntu-latest
+    # Prefer fast fail over patient hang, but a cold-cache build overran
+    # 18 min on the old self-hosted runners and got cancelled before
+    # ccache was populated. The setup-linux-build action installs mold +
+    # ninja so the build uses them by default (~3× faster linking, better
+    # parallel job scheduling than make). ccache hits bring warm runs well
+    # under 5 min; the first cold run needs headroom to finish and seed
+    # the cache. Kept at 40 through the hosted-runner migration: a hosted
+    # runner has more cores but starts every run with an empty apt/Qt
+    # state, so the cold path is not obviously shorter.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
@@ -128,8 +149,14 @@ jobs:
           # falls back to the closest ancestor, so warm runs skip
           # recompiling unchanged files.
           max-size: 500M
-          # Custom trailer-runner image ships an empty apt index, so the
-          # action must run `apt-get update` before `apt-get install ccache`.
+          # STILL REQUIRED after the move to GitHub-hosted runners, for a
+          # different reason than before. It was here because the custom
+          # trailer-runner image shipped an EMPTY apt index. A hosted
+          # ubuntu-latest image instead ships an index snapshotted when the
+          # image was built; between weekly image refreshes that snapshot
+          # goes stale and `apt-get install` 404s on a package whose
+          # version has moved on the mirrors. Either way the action must
+          # `apt-get update` before `apt-get install ccache`.
           update-package-index: true
 
       - name: Configure
@@ -172,7 +199,7 @@ jobs:
 
   wayland-smoke:
     name: Wayland launch + screenshot smoke
-    runs-on: trailer-k8s
+    runs-on: ubuntu-latest
     # Least privilege: this job checks out, builds, and uploads one PNG
     # artifact — no extra token scope beyond the workflow-level read.
     permissions:
@@ -229,24 +256,30 @@ jobs:
           # cross-branch fallback the action already does within a key.
           key: ci-${{ runner.os }}-gcc-wayland
           max-size: 500M
-          # Custom trailer-runner image ships an empty apt index, so the
-          # action must run `apt-get update` before `apt-get install ccache`.
+          # STILL REQUIRED after the move to GitHub-hosted runners, for a
+          # different reason than before. It was here because the custom
+          # trailer-runner image shipped an EMPTY apt index. A hosted
+          # ubuntu-latest image instead ships an index snapshotted when the
+          # image was built; between weekly image refreshes that snapshot
+          # goes stale and `apt-get install` 404s on a package whose
+          # version has moved on the mirrors. Either way the action must
+          # `apt-get update` before `apt-get install ccache`.
           update-package-index: true
 
       - name: Install sway + grim
         # Per-run apt install, mirroring the Wine tier's per-run toolchain
-        # install: docker/runner/Dockerfile BAKES these for later, but until
-        # that image is rebuilt + the ARC runner-set repointed, install them
-        # here so the job is green WITHOUT waiting for an image rebuild. Skips
-        # the apt work when the packages are already present (custom image).
+        # install. On a GitHub-hosted runner neither package is preinstalled,
+        # so this always installs; the `dpkg -s` probe is kept because the
+        # same step has to stay correct on any image that does bake them in
+        # (docker/runner/Dockerfile does — see docs/ci/custom-runner-image.md).
         #
-        # sway drags a real dependency tree through the egress proxy on every
-        # run until it is baked into the runner image, so a single proxy hiccup
-        # could red-gate unrelated PRs. Wrap update+install in a bounded retry
-        # with backoff (same resilience the toolchain installs use) to ride out
-        # a transient failure. Until sway+grim are baked in, this job SHOULD be
-        # kept a NON-REQUIRED (advisory) status check in branch protection —
-        # see docs/ci/wayland-tier.md.
+        # sway drags a real dependency tree over the network on every run, so
+        # a single mirror hiccup could red-gate unrelated PRs. Wrap
+        # update+install in a bounded retry with backoff (same resilience the
+        # toolchain installs use) to ride out a transient failure. Because
+        # this job depends on a per-run apt fetch it SHOULD be kept a
+        # NON-REQUIRED (advisory) status check in branch protection — see
+        # docs/ci/wayland-tier.md.
         shell: bash
         run: |
           set -euo pipefail
@@ -269,7 +302,7 @@ jobs:
               fi
               n=$((n+1))
               if [ "$n" -ge 3 ]; then
-                echo "::error::apt-get failed to install ${missing[*]} after 3 attempts (egress-proxy hiccup?)"
+                echo "::error::apt-get failed to install ${missing[*]} after 3 attempts (transient apt-mirror failure?)"
                 exit 1
               fi
               echo "apt-get attempt $n failed — retrying in $((n*5))s..."
@@ -322,16 +355,17 @@ jobs:
 
   windows-cross-build:
     name: Windows cross-build + Wine unit tests
-    # Runs directly on the self-hosted trailer-k8s pods — NO Docker
-    # (the pods have no Docker daemon, so release.yml's Docker-based
-    # windows-cross job can't run here). The setup-windows-cross
-    # composite installs the mingw-w64 + Wine + Qt(win64_mingw) + qpdf
-    # toolchain on the runner instead. Proven end-to-end locally:
-    # trailer.exe cross-links and 26/26 unit tests pass under Wine.
-    runs-on: trailer-k8s
-    # Wine is slow on the low-power trailer-k8s Xeons (~2.5-3 s startup
-    # per test binary; the unit suite runs ~80 s vs ~38 s native). The
-    # first cold run also cross-builds qpdf/libjpeg and downloads Qt
+    # DOCKERLESS: the setup-windows-cross composite installs the
+    # mingw-w64 + Wine + Qt(win64_mingw) + qpdf toolchain directly on the
+    # runner. This shape was originally forced (the self-hosted k8s pods
+    # had no Docker daemon) and is KEPT deliberately now that the runner
+    # is GitHub-hosted and does have one: the composite's Qt / ONNX /
+    # qpdf prefixes are all `actions/cache`-keyed, so a warm run skips
+    # them entirely, whereas re-introducing `docker build` would rebuild
+    # a multi-GB image layer set on every run for no gain.
+    runs-on: ubuntu-latest
+    # Wine is slow regardless of host (~2.5-3 s startup per test binary).
+    # The first cold run also cross-builds qpdf/libjpeg and downloads Qt
     # (~2.6 GB) before the cache warms, so give it release-job headroom.
     timeout-minutes: 60
     steps:
@@ -347,17 +381,28 @@ jobs:
           # object cache must not collide with the native gcc one.
           key: ci-windows-cross-mingw
           max-size: 500M
-          # Custom trailer-runner image ships an empty apt index, so the
-          # action must run `apt-get update` before `apt-get install ccache`.
+          # STILL REQUIRED after the move to GitHub-hosted runners, for a
+          # different reason than before. It was here because the custom
+          # trailer-runner image shipped an EMPTY apt index. A hosted
+          # ubuntu-latest image instead ships an index snapshotted when the
+          # image was built; between weekly image refreshes that snapshot
+          # goes stale and `apt-get install` 404s on a package whose
+          # version has moved on the mirrors. Either way the action must
+          # `apt-get update` before `apt-get install ccache`.
           update-package-index: true
 
       - name: Configure
         # Same invocation as scripts/build-windows.sh (reusing the
-        # repo's cmake/toolchain-mingw-w64.cmake) plus two additions the
-        # k8s egress policy forces:
+        # repo's cmake/toolchain-mingw-w64.cmake) plus two additions:
         #   * -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_PREBUILT overrides
-        #     the ONNX release-asset download (403s through the proxy)
-        #     with the NuGet binaries the composite assembled.
+        #     the ONNX release-asset download with the NuGet binaries the
+        #     composite assembled. This was originally forced (the k8s
+        #     egress proxy 403'd objects.githubusercontent.com) and is
+        #     KEPT on hosted runners deliberately: the assembled dir is
+        #     ~15 MB and `actions/cache`-restored, versus re-downloading
+        #     a ~130 MB release zip every run. The composite pins that
+        #     DLL's own SHA256, so dropping CMake's hash check costs
+        #     nothing.
         #   * ccache launcher, matching the Linux job.
         # TRAILER_WERROR stays OFF (see workflow header).
         run: >-
@@ -458,7 +503,14 @@ jobs:
           cd build-win
           ctest -C Release --label-exclude 'uat|perf' --output-on-failure
 
-  # disabled 2026-07-09 to conserve Actions usage (2x multiplier); re-enable when needed
+  # Disabled 2026-07-09 to conserve Actions usage (Windows runners bill at
+  # a 2x minute multiplier). NOTE (2026-08-05): that cost reason no longer
+  # applies — the repo is public, and standard GitHub-hosted runners
+  # (including Windows) are free and unlimited on public repos, so
+  # re-enabling this job would cost nothing and would restore real MSVC
+  # coverage that the mingw cross-build can't give. Left `if: false` here
+  # because turning it back on is a CI-policy call for the owner, not part
+  # of the runner migration; flip `if: false` to re-enable.
   build-and-test-windows:
     name: Windows build + unit tests (MSVC)
     runs-on: windows-2022
@@ -545,7 +597,7 @@ jobs:
 
   clang-format:
     name: clang-format (advisory)
-    runs-on: trailer-small
+    runs-on: ubuntu-latest
     timeout-minutes: 5
     # Advisory only — output goes to the job summary so the diff is
     # visible without bouncing merges. Flip to required once the tree

@@ -48,14 +48,19 @@ on:
 permissions:
   contents: read
 
-# Cap build/test parallelism on the self-hosted trailer-k8s pods. See
-# ci.yml's matching env comment for why every `cmake --build` step
-# below passes the job count explicitly
+# Bounded build/test parallelism. See ci.yml's matching env comment for
+# the full rationale, including why every `cmake --build` step below
+# passes the job count explicitly
 # (`--parallel "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"`) instead of a bare
 # `--parallel` — the short version: bare `--parallel` does NOT honor
 # this env var, and was the real cause of past OOMKilled pods.
+#
+# Build level raised 2 -> 4 with the 2026-08-05 hosted-runner migration
+# (a standard hosted runner on a public repo is 4 vCPU / 16 GB). The
+# ctest level is deliberately left at 2 — see ci.yml's env comment and
+# docs/backlog/2026-08-03-load-sensitive-offscreen-test-races.md.
 env:
-  CMAKE_BUILD_PARALLEL_LEVEL: 2
+  CMAKE_BUILD_PARALLEL_LEVEL: 4
   CTEST_PARALLEL_LEVEL: 2
 
 jobs:
@@ -67,7 +72,7 @@ jobs:
     # already-released check still fails red because that's a real
     # duplicate-release bug.
     name: Pre-flight checks
-    runs-on: trailer-small
+    runs-on: ubuntu-latest
     # Run when: (a) manual dispatch, (b) any push to an RC-labeled PR
     # (opened/synchronize/reopened), or (c) the `release-candidate`
     # label specifically being added. Adding any *other* label to an
@@ -124,8 +129,8 @@ jobs:
           fi
           echo "is-release-ready=$IS_RELEASE_READY" >> "$GITHUB_OUTPUT"
 
-          # Once VERSION is release-ready, refuse to spend macOS/Windows
-          # minutes rebuilding a version that has already shipped — this
+          # Once VERSION is release-ready, refuse to spend runner time
+          # rebuilding a version that has already shipped — this
           # is a real bug (duplicate release attempt), worth surfacing
           # red. Skipped when IS_RELEASE_READY=false because dev-version
           # tags wouldn't follow the v$VERSION pattern anyway.
@@ -151,7 +156,7 @@ jobs:
     needs: [precheck, uat]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: Linux build
-    runs-on: trailer-k8s
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -163,8 +168,10 @@ jobs:
         with:
           key: release-${{ runner.os }}-gcc-linux
           max-size: 500M
-          # Custom trailer-runner image ships an empty apt index, so the
-          # action must run `apt-get update` before `apt-get install ccache`.
+          # Still required on hosted runners — see ci.yml's matching
+          # comment: the hosted image's apt index is a build-time snapshot
+          # that goes stale between refreshes, so `apt-get install ccache`
+          # must be preceded by `apt-get update`.
           update-package-index: true
 
       - name: Configure
@@ -213,8 +220,9 @@ jobs:
       - name: Install .deb / .rpm build deps
         # dpkg-deb ships in the base image; rpmbuild (rpm), patchelf,
         # dpkg-dev, and file are the extras the --no-docker deb/rpm
-        # packagers need. The trailer-runner image ships an empty apt
-        # index so `apt-get update` must run first. This step lives
+        # packagers need. `apt-get update` must run first — the hosted
+        # image's apt index is a build-time snapshot that goes stale
+        # between refreshes. This step lives
         # inside the already release-gated linux-build job (the job's
         # `if: needs.precheck.outputs.is-release-ready == 'true'`), so it
         # never runs on a non-release PR.
@@ -273,20 +281,22 @@ jobs:
     needs: [precheck, uat]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: Windows cross-build (mingw-w64)
-    # Runs directly on the self-hosted trailer-k8s pods — NO Docker.
-    # The pods have no Docker daemon, so the previous `docker build …
-    # docker/windows/Dockerfile` approach can't run here; it's folded
-    # onto the same dockerless path CI's `windows-cross-build` job
-    # proved green (setup-windows-cross composite installs the mingw-w64
-    # + Wine + Qt(win64_mingw) + qpdf toolchain on the runner). The only
-    # release-specific difference from CI is the artifact shape: this job
-    # zips the bundled directory into trailer-windows-x86_64.zip because
-    # release-publish.yml's rename step looks for dist/trailer-windows-
-    # x86_64.zip when promoting a build to a GitHub Release.
-    runs-on: trailer-k8s
-    # Wine is slow on the low-power trailer-k8s Xeons and the first cold
-    # run cross-builds qpdf/libjpeg and downloads Qt (~2.6 GB) before the
-    # cache warms — keep the release-job headroom.
+    # DOCKERLESS, matching CI's `windows-cross-build` job: the
+    # setup-windows-cross composite installs the mingw-w64 + Wine +
+    # Qt(win64_mingw) + qpdf toolchain directly on the runner, and every
+    # heavy prefix it produces is `actions/cache`-keyed. Originally forced
+    # (the self-hosted pods had no Docker daemon for the old `docker build
+    # … docker/windows/Dockerfile` path); kept deliberately on hosted
+    # runners because the cached dockerless path is faster than rebuilding
+    # a multi-GB image every run. The only release-specific difference
+    # from CI is the artifact shape: this job zips the bundled directory
+    # into trailer-windows-x86_64.zip because release-publish.yml's rename
+    # step looks for dist/trailer-windows-x86_64.zip when promoting a
+    # build to a GitHub Release.
+    runs-on: ubuntu-latest
+    # Wine is slow regardless of host, and the first cold run cross-builds
+    # qpdf/libjpeg and downloads Qt (~2.6 GB) before the cache warms —
+    # keep the release-job headroom.
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
@@ -300,16 +310,19 @@ jobs:
           # different compiler (mingw-w64 g++) targeting Windows.
           key: release-windows-cross-mingw
           max-size: 500M
-          # Custom trailer-runner image ships an empty apt index, so the
-          # action must run `apt-get update` before `apt-get install ccache`.
+          # Still required on hosted runners — see ci.yml's matching
+          # comment: the hosted image's apt index is a build-time snapshot
+          # that goes stale between refreshes, so `apt-get install ccache`
+          # must be preceded by `apt-get update`.
           update-package-index: true
 
       - name: Configure
         # Same invocation as scripts/build-windows.sh (reusing the
-        # repo's cmake/toolchain-mingw-w64.cmake) plus the two additions
-        # the k8s egress policy forces — the ONNX FetchContent-source
-        # override (the release-asset download 403s through the proxy)
-        # and the ccache launcher. Mirrors CI's windows-cross-build.
+        # repo's cmake/toolchain-mingw-w64.cmake) plus two additions — the
+        # ONNX FetchContent-source override and the ccache launcher.
+        # Mirrors CI's windows-cross-build; see that job's Configure step
+        # for why the ONNX override is kept on hosted runners even though
+        # the k8s egress proxy that first forced it is gone.
         # TRAILER_WERROR stays OFF (see workflow header).
         run: >-
           cmake -S . -B build-win -G Ninja
@@ -411,8 +424,8 @@ jobs:
 
       - name: Install .msi build deps (wixl / msitools)
         # wixl and msitools are separate apt packages on Ubuntu noble.
-        # The trailer-runner image ships an empty apt index so
-        # `apt-get update` must run first. This step lives inside the
+        # `apt-get update` must run first — the hosted image's apt index
+        # is a build-time snapshot that goes stale. This step lives inside the
         # already release-gated windows-cross job, so it never runs on a
         # non-release PR.
         run: |
@@ -453,10 +466,12 @@ jobs:
           retention-days: 30
 
   macos-build:
-    # Gate the expensive GitHub-hosted macOS build behind UAT and the two
-    # self-hosted targets (linux-build + windows-cross) so a flaky-runner
-    # rerun doesn't burn macOS action minutes until UAT passes and the
-    # cheap self-hosted platforms pass. UAT is the primary fail-fast gate
+    # Gate the slow macOS build behind UAT and the two Linux-hosted
+    # targets (linux-build + windows-cross) so a flaky-runner rerun
+    # doesn't spend ~an hour of macOS wall-time until UAT and the faster
+    # platforms pass. (Cost is no longer the reason — standard hosted
+    # runners, macOS included, are free and unlimited on a public repo;
+    # fail-fast ordering is, and remains.) UAT is the primary fail-fast gate
     # (see the release-uat-before-build backlog item); linux-build and
     # windows-cross already gate on `uat` too, so listing them here also
     # transitively orders macos-build after UAT. precheck stays in
@@ -513,7 +528,9 @@ jobs:
     needs: [precheck]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: UAT
-    runs-on: trailer-k8s
+    # ubuntu-latest: this job builds and runs a Docker image, so it needs
+    # a Docker daemon on the runner. The hosted image ships Docker+Buildx.
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -522,9 +539,13 @@ jobs:
       - name: Run UAT suite
         # scripts/run-uat.sh --in-container does the cmake configure
         # + build + ctest -L uat dance with the right Qt platform
-        # plugin available.
+        # plugin available. The two levels are passed into the container
+        # explicitly (workflow `env:` doesn't cross the `docker run`
+        # boundary) and match the workflow-level values: build 4 (one job
+        # per vCPU on a hosted runner), ctest 2 (held down on purpose —
+        # docs/backlog/2026-08-03-load-sensitive-offscreen-test-races.md).
         run: |
           docker run --rm -v "$PWD":/work -w /work \
-            -e CMAKE_BUILD_PARALLEL_LEVEL=2 -e CTEST_PARALLEL_LEVEL=2 \
+            -e CMAKE_BUILD_PARALLEL_LEVEL=4 -e CTEST_PARALLEL_LEVEL=2 \
             trailer-uat \
             bash scripts/run-uat.sh --in-container

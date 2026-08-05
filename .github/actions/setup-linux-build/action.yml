@@ -1,10 +1,23 @@
 name: Linux build environment
 description: >-
   Install Qt (install-qt-action) and the apt packages Trailer needs on
-  ubuntu-24.04 (noble). qpdf 11.x ships in noble main, which is the
-  minimum version Trailer's PDF forms code needs — earlier Ubuntu
+  ubuntu-24.04 (noble) — which is what `ubuntu-latest` currently resolves
+  to, and what every caller of this action runs on since the 2026-08-05
+  move to GitHub-hosted runners. qpdf 11.x ships in noble main, which is
+  the minimum version Trailer's PDF forms code needs — earlier Ubuntu
   releases (22.04/jammy) shipped qpdf 10.x and broke the link with an
-  `undefined reference to QPDFFormFieldObjectHelper::isChecked()`.
+  `undefined reference to QPDFFormFieldObjectHelper::isChecked()`. The
+  version-aware libqpdf-dev block below is what makes that safe when
+  `ubuntu-latest` eventually moves on.
+
+  Every dependency is probed before installing (see the "Install Linux
+  build deps" step), so this action is correct on BOTH a stock hosted
+  image, where it apt-installs the handful of packages the image lacks,
+  and on an image that bakes the toolchain in (docker/runner/Dockerfile),
+  where it skips apt entirely. That probe is not dead weight on hosted
+  runners: several deps (cmake, pkg-config, g++) genuinely ARE
+  preinstalled there, so it still skips real work.
+
   clang-format is installed by the dedicated `clang-format` job, not
   here, because most consumers of this action don't need it.
 
