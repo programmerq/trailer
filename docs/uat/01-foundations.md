@@ -364,6 +364,39 @@ on the `Opt+Cmd+Q` path. Harness slots:
 `uat_fnd_094_keepWindowsQuitRestoresPage` in
 [`tests/uat/test_uat_foundations.cpp`](../../tests/uat/test_uat_foundations.cpp).
 
+### UAT-FND-095 — The restored page STAYS put once later layout runs
+
+The other half of UAT-FND-094. Landing on the saved page is not enough if a
+**later** layout pass then moves it: the reported symptom was the document
+flashing its saved page and snapping away, which a check that samples the
+page once, immediately, cannot see at all.
+
+**Preconditions:** A long PDF (the report was against a multi-hundred-page
+document, where a stale position is unmistakable).
+**Steps:**
+1. Read to a deep page — say page 212 of 300.
+2. Quit (`Cmd+Q`), then reopen the file.
+3. Once it has come back on page 212, resize the window.
+**Expected:**
+- The document is on page 212 after the reopen, and **stays** there — over
+  time, and across the later relayout in step 3, not merely on the first
+  frame.
+- The same holds for `Quit and Keep Windows` (`Opt+Cmd+Q`) and with several
+  windows open at once: each window gets its own saved page back, none
+  inherits a sibling's, none snaps to page 1.
+
+Harness slots: `uat_fnd_095_restoredPageStaysPutAfterLaterLayout`,
+`uat_fnd_095_restoredPageStaysPutAcrossQuitModesAndWindows` in
+[`tests/uat/test_uat_foundations.cpp`](../../tests/uat/test_uat_foundations.cpp).
+
+**Regression note (2026-08-05, gating Linux nightly lane).** The first slot
+failed on Linux — restored to page 212, then the step-3 resize carried it to
+page 223. The restore itself was correct; step 3 was reaching a separate,
+pre-existing defect in the viewer (a fit-mode re-layout keeps the scrollbar's
+absolute pixel value while rescaling every page). Written up and fixed under
+**UAT-VWR-111** in [`02-viewer.md`](02-viewer.md); this case now passes
+because a resize no longer moves the page for anyone, restored or not.
+
 ---
 
 ## Recent files

@@ -86,6 +86,79 @@ class NavigablePdfView : public QPdfView {
     explicit NavigablePdfView(QWidget *parent) : QPdfView(parent) {}
 
   protected:
+    // Resizing a window is not a navigation command — the page you are
+    // reading must survive it.
+    //
+    // QPdfView re-lays-out on every viewport resize, and in a FIT mode
+    // that re-layout RESCALES every page; but the vertical scrollbar
+    // keeps its ABSOLUTE pixel value across it (updateScrollBars() only
+    // re-ranges the bar, it never re-anchors the value). The same offset
+    // therefore points somewhere else in the document afterwards, and the
+    // reader is silently carried off. Measured on the 300-page A4 fixture
+    // in tests/uat: shrinking the window 720x720 -> 680x690 moved the view
+    // from page 212 to page 223 — an 11-page jump — with the scroll value
+    // unchanged at 127872 px. This is the same mechanism the deferred
+    // scroll restore in MainWindow::scheduleScrollPositionRestore() was
+    // written to survive at document-open time; it is fixed at the source
+    // here, so it also holds for every LATER re-layout (window resize,
+    // sidebar toggle, window-manager geometry pass).
+    //
+    // So: capture the page before the base class re-lays-out, and put it
+    // back after if the re-layout moved it.
+    //
+    // Known limit, stated rather than hidden: re-anchoring lands on the
+    // TOP of the page you were on, not the exact line you were reading —
+    // recovering the intra-page offset exactly would mean reimplementing
+    // QPdfView's per-page rounding. That is a drop of a refinement inside
+    // a page the user is still on, not a substitution (G3), and it only
+    // ever happens on a resize that had already carried them off the page
+    // entirely.
+    //
+    // Deliberately narrow, because each condition rules out a way this
+    // could scroll the document when nothing was actually wrong:
+    //  - MultiPage only. In SinglePage the navigator does not track the
+    //    scroll offset at all, and Two-Pages renders through TwoPageView,
+    //    not this widget.
+    //  - Fit modes only. Under Custom/Actual the layout does NOT rescale
+    //    on resize, so the document has not moved under the reader.
+    //  - Only when the document was actually rescaled. Its laid-out height
+    //    (scroll maximum + page step) is invariant to a pure viewport
+    //    change: shrink the viewport by 30px and the maximum grows by the
+    //    same 30. So a height-only resize under Fit-Width, which changes
+    //    no page's size, leaves this alone — without that check we would
+    //    scroll the document just because the viewport-relative line
+    //    QPdfView derives "current page" from had crossed a boundary,
+    //    which is the very unrequested movement this exists to prevent.
+    //  - Only when the page actually changed. A resize that leaves you on
+    //    the same page is left completely alone, so this never disturbs
+    //    an intra-page offset it did not need to touch.
+    void resizeEvent(QResizeEvent *e) override {
+        auto *nav = pageNavigator();
+        auto *vbar = verticalScrollBar();
+        const bool inFitMode = zoomMode() == QPdfView::ZoomMode::FitInView ||
+                               zoomMode() == QPdfView::ZoomMode::FitToWidth;
+        const bool anchors = nav && vbar && document() && inFitMode &&
+                             pageMode() == QPdfView::PageMode::MultiPage;
+        // Read before the base class re-lays-out: the viewport is still
+        // its old size here, so these two are a consistent snapshot.
+        const int anchorPage = anchors ? nav->currentPage() : -1;
+        const int laidOutHeightBefore = anchors ? vbar->maximum() + vbar->pageStep() : 0;
+
+        QPdfView::resizeEvent(e);
+
+        if (anchorPage < 0)
+            return;
+        const int laidOutHeightAfter = vbar->maximum() + vbar->pageStep();
+        if (laidOutHeightAfter != laidOutHeightBefore && nav->currentPage() != anchorPage) {
+            // Zoom argument 0 means "leave the zoom alone" (see
+            // QPdfPageNavigator::jump's default), so re-anchoring cannot
+            // knock the view out of the fit mode that caused the rescale
+            // — unlike goToPage(), which passes a literal factor and has
+            // to re-assert the mode afterwards.
+            nav->jump(anchorPage, QPointF{}, 0);
+        }
+    }
+
     void keyPressEvent(QKeyEvent *e) override {
         if (pageMode() == QPdfView::PageMode::SinglePage) {
             const int key = e->key();
