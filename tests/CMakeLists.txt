@@ -43,6 +43,53 @@ trailer_add_test(test_recent     test_recent.cpp)
 # rule, Application::windowForOpenPath, and the openFiles surface-don't-
 # reopen behaviour across all three open_files_in modes.
 trailer_add_test(test_open_dedup test_open_dedup.cpp)
+
+# --- TEMPORARY DIAGNOSTIC: per-slot ctest entries for test_open_dedup ---
+#
+# Why this exists. On the Windows cross-build + Wine lane this binary fails
+# while its --output-on-failure block comes back COMPLETELY EMPTY — no QTest
+# banner, no assertion, nothing — so the one thing we need (which check
+# failed) is unavailable. Unbuffering stdout in its main() did not change
+# that, and it is verifiably compiled in, so stdout is simply not a channel
+# that carries on this lane. Note we would never have noticed: ctest only
+# prints output for FAILING tests, and until this one nothing here failed.
+#
+# ctest's own pass/fail reporting, by contrast, demonstrably works — it
+# named the failing binary correctly every time. So use THAT as the oracle:
+# register every test function as its own ctest entry, which QTest supports
+# natively (the slot name is just argv[1]). The next CI run then prints the
+# exact failing slot name in its "The following tests FAILED:" summary,
+# through a channel we know functions, with no product change and no
+# reliance on captured output.
+#
+# The aggregate test_open_dedup entry above is deliberately KEPT. If every
+# per-slot entry passes while the aggregate still fails, that is itself the
+# answer: the failure is an interaction between slots or at process
+# teardown, not any single check.
+#
+# The slot list is parsed from the source rather than hand-maintained, so it
+# cannot drift as slots are added or renamed. Remove this whole block once
+# the Wine failure is identified and fixed.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/test_open_dedup.cpp" _tod_lines
+     REGEX "^[ \t]+void [a-z][A-Za-z0-9_]*\\(\\);[ \t]*$")
+set(_tod_slots "")
+foreach(_line IN LISTS _tod_lines)
+    string(REGEX REPLACE "^[ \t]+void ([A-Za-z0-9_]+)\\(\\);[ \t]*$" "\\1" _slot "${_line}")
+    # init/cleanup are QTest fixture hooks, not selectable test functions.
+    if(NOT _slot STREQUAL "init" AND NOT _slot STREQUAL "cleanup")
+        list(APPEND _tod_slots "${_slot}")
+    endif()
+endforeach()
+list(LENGTH _tod_slots _tod_count)
+message(STATUS "test_open_dedup: registering ${_tod_count} per-slot diagnostic ctest entries")
+foreach(_slot IN LISTS _tod_slots)
+    add_test(NAME test_open_dedup_${_slot} COMMAND test_open_dedup ${_slot})
+    if(_trailer_unit_env)
+        set_tests_properties(test_open_dedup_${_slot}
+                             PROPERTIES ENVIRONMENT "${_trailer_unit_env}")
+    endif()
+endforeach()
+# --- end temporary diagnostic ---
 trailer_add_test(test_dock_recents test_dock_recents.cpp)
 trailer_add_test(test_document_type_defaults test_document_type_defaults.cpp)
 trailer_add_test(test_content_aware_defaults test_content_aware_defaults.cpp)
