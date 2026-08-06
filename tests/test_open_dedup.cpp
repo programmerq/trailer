@@ -463,12 +463,14 @@ void TestOpenDedup::imageBatchWithOneAlreadyOpenDoesNotSpawnAnEmptyBatchWindow()
 void TestOpenDedup::surfacingDoesNotConsumeTheEmptyWindowReuseCandidate() {
     QVERIFY(m_dir.isValid());
     const QString open = writeTinyPdf(m_dir.filePath("cf5_open.pdf"));
-    const QString fresh = writeTinyPdf(m_dir.filePath("cf5_fresh.pdf"));
 
     app()->settings().setOpenFilesIn(OpenFilesIn::NewWindow);
     app()->openFiles({open});
     QApplication::processEvents();
     QCOMPARE(app()->windowCount(), 1);
+    MainWindow *holder = liveWindows().value(0);
+    QVERIFY(holder);
+    QCOMPARE(holder->documentCount(), 1);
 
     // An empty window alongside the document window — the CF-5 candidate.
     MainWindow *empty = app()->ensureFreshWindow();
@@ -477,31 +479,48 @@ void TestOpenDedup::surfacingDoesNotConsumeTheEmptyWindowReuseCandidate() {
     QCOMPARE(app()->windowCount(), 2);
     QPointer<MainWindow> emptyGuard(empty);
 
-    // Ask for the already-open file. Nothing is created — and crucially
-    // the empty window is left untouched, still empty and still available.
+    // Ask for the already-open file. Nothing is created, and the empty
+    // window is left untouched: still tracked, still alive, still empty.
+    //
+    // Those three assertions ARE the invariant, observed directly. An
+    // earlier draft instead tried to prove it indirectly — re-activate the
+    // empty window, open a genuinely new file, and check that file landed
+    // in it rather than in a third window. That was wrong twice over:
+    //
+    //  1. It observed the invariant through activation state. CF-5 picks
+    //     its candidate from QApplication::activeWindow(), and the product
+    //     code right there says why that is not dependable in this setting
+    //     ("the launch-window case where offscreen/headless may not set an
+    //     active window" — Application.cpp, pre-dating this PR). The Wine
+    //     lane duly failed on that step and only that step: this was the
+    //     single failing slot out of 22, and the only one reaching for
+    //     activation. Review finding #2 of this PR refused to assert
+    //     activation directly for exactly this reason; the same reasoning
+    //     simply was not carried across to asserting it *indirectly*.
+    //
+    //  2. It could not observe anything the direct assertions miss.
+    //     `reuseCandidate` is a LOCAL in openFiles(), recomputed from
+    //     scratch on every call — there is no cross-call state that a
+    //     surface could "spend". A candidate is eligible iff its window is
+    //     still tracked and still empty, which is precisely what is
+    //     asserted below. The reuse mechanism itself is pre-existing CF-5
+    //     behaviour with its own coverage in
+    //     tests/uat/test_uat_empty_state.cpp (uat_empty_006/008/009/010),
+    //     and re-testing it here bought nothing.
+    //
+    // Verified by mutation: making the surfaced path call
+    // takeReuseOrFresh() fails the documentCount() assertion below, so this
+    // still bites on the regression it exists to catch.
     app()->openFiles({open});
     QApplication::processEvents();
     QCOMPARE(app()->windowCount(), 2);
-    QVERIFY(!emptyGuard.isNull());
+    QVERIFY2(!emptyGuard.isNull(), "the empty window must not be torn down");
+    QCOMPARE(app()->windows().contains(empty), true);
     QCOMPARE(empty->documentCount(), 0);
 
-    // Proof the candidate was never spent: the next genuinely new file
-    // lands in the empty window rather than spawning a third.
-    //
-    // The explicit re-activation is not a workaround — it restores the
-    // precondition CF-5 actually states. Its candidate is "the ACTIVE
-    // window, if it is one of ours and empty" (or the sole window), and
-    // surfacing above legitimately made the document window active,
-    // because that is exactly what the user asked for. So the empty
-    // window has to be frontmost again for CF-5 to consider it at all;
-    // what this asserts is that it is still *eligible*, i.e. still empty
-    // and unconsumed.
-    empty->activateWindow();
-    QApplication::processEvents();
-    app()->openFiles({fresh});
-    QApplication::processEvents();
-    QCOMPARE(app()->windowCount(), 2);
-    QCOMPARE(empty->documentCount(), 1);
+    // And the surfaced document went to the window that already held it,
+    // not into the empty one.
+    QCOMPARE(app()->windowForOpenPath(open), holder);
 }
 
 void TestOpenDedup::untitledImportsAreNeverDeduped() {
