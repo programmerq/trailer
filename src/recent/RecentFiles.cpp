@@ -1,6 +1,7 @@
 #include "RecentFiles.h"
 
 #include "settings/AppPaths.h"
+#include "util/PathKey.h"
 
 #include <QFile>
 #include <QFileInfo>
@@ -12,10 +13,12 @@ namespace trailer {
 
 namespace {
 
-QString canonicalize(const QString &path) {
-    const QString canonical = QFileInfo(path).canonicalFilePath();
-    return canonical.isEmpty() ? QFileInfo(path).absoluteFilePath() : canonical;
-}
+// "Same file?" is one rule, shared with the already-open dedup in
+// Application::openFiles — see util/PathKey.h. This wrapper keeps the
+// local call sites reading as before; the rule itself lives in one place
+// so the Recent list and the open path can never drift apart on what
+// counts as the same document.
+QString canonicalize(const QString &path) { return canonicalPathKey(path); }
 
 const char *zoomModeKey(ZoomMode m) {
     switch (m) {

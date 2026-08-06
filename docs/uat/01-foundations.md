@@ -580,6 +580,107 @@ with one window and one open document.
 
 ---
 
+## Opening a file that is already open
+
+**Context.** Owner HITL report, 2026-08-06 (macOS): typing a PDF's name
+into Spotlight while Trailer already had that exact file open, and picking
+the file, produced a **second window showing the same file** — "this feels
+like I'm looking at two open files … opening it twice feels like *copying*
+the document." Beyond the confusion it is a correctness hazard: two
+`IDocument` instances over one path means two undo logs and two save paths
+onto the same bytes, so whichever window saves last silently wins.
+
+The rule these cases pin: **a file that is already open is surfaced, never
+opened again.** Identity is the canonical on-disk path
+([`src/util/PathKey.h`](../../src/util/PathKey.h)), so a symlink and its
+target are one document. The rule is applied *before* `open_files_in`
+routing — that preference decides where a **new** document lands, not
+whether one document may exist twice — so it holds in all three modes.
+
+### UAT-FND-053 — Re-opening an open file surfaces its window
+
+**Preconditions:** `general.open_files_in = "new_window"`. One window
+open showing `report.pdf`.
+**Steps:**
+1. Open `report.pdf` again — from Spotlight, Finder, `File > Open…`,
+   `File > Open Recent`, or the command line.
+**Expected:**
+- **No** new window and **no** new tab appear; the window count is
+  unchanged.
+- The window already showing `report.pdf` comes to the front and becomes
+  the active window (un-minimizing first if it was minimized).
+- `report.pdf` is that window's current tab.
+- `report.pdf` moves to the top of `File > Open Recent`, exactly as an
+  ordinary open would.
+
+G2 evidence: `docs/uat/images/2026-08-06-open-already-open-before.png` /
+`docs/uat/images/2026-08-06-open-already-open-after.png` — the same file
+opened, then asked for a second time, captured by the same harness slot
+(`uat_fnd_053_090_openAlreadyOpenEvidence`) built against the tree before
+and after the fix. Before: two windows, both titled
+`Electrical service manual.pdf`. After: one.
+
+### UAT-FND-054 — Same rule in `new_tab` mode
+
+**Preconditions:** `general.open_files_in = "new_tab"`. One window open
+showing `report.pdf`.
+**Steps:**
+1. Open `report.pdf` again.
+**Expected:**
+- No second tab for `report.pdf` is created; the tab count is unchanged.
+- The existing `report.pdf` tab becomes current.
+
+### UAT-FND-055 — Same rule in `same_window` mode
+
+**Preconditions:** `general.open_files_in = "same_window"`. One window
+open showing `report.pdf`.
+**Steps:**
+1. Open `report.pdf` again.
+**Expected:**
+- No new document is created; the window and tab counts are unchanged.
+- The existing `report.pdf` is current.
+
+### UAT-FND-056 — A symlink and its target are one document
+
+**Preconditions:** `report.pdf` is open. `link.pdf` is a symlink pointing
+at `report.pdf`. (Platform: macOS / Linux — creating symlinks on Windows
+needs developer mode.)
+**Steps:**
+1. Open `link.pdf`.
+**Expected:**
+- No second document opens. The window already showing `report.pdf` is
+  surfaced.
+
+### UAT-FND-057 — Mixed batch: new files open, the open one is surfaced
+
+**Preconditions:** `general.open_files_in = "new_window"`. `a.pdf` is
+open. `b.pdf` and `c.pdf` are not.
+**Steps:**
+1. Open `b.pdf`, `c.pdf`, and `a.pdf` together (multi-select in the Open
+   panel, one drag-and-drop, or one command line).
+**Expected:**
+- Two new windows appear (for `b.pdf` and `c.pdf`), not three.
+- `a.pdf` is surfaced in the window that already held it; it is not
+  opened a second time.
+- Exactly one window/tab exists per distinct file.
+- **Focus:** the batch is processed in order and the **last** entry
+  decides what ends up in front — here `a.pdf`, so its existing window is
+  frontmost. (Same rule as an all-new batch, where the last window shown
+  is the frontmost one.)
+
+### UAT-FND-058 — Transient imports are never merged
+
+**Preconditions:** An image is on the clipboard.
+**Steps:**
+1. `File > New from Clipboard`.
+2. `File > New from Clipboard` again, with the same image still on the
+   clipboard.
+**Expected:**
+- Two separate untitled documents open. Nothing merges them, even though
+  neither has a location the user chose and their pixels are identical.
+
+---
+
 ## Clipboard
 
 ### UAT-FND-070 — Copy Page as Image

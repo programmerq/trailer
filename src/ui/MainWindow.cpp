@@ -5327,6 +5327,13 @@ int MainWindow::currentDocumentIndex() const {
     return m_documentView->currentIndex();
 }
 
+bool MainWindow::showDocumentAt(int index) {
+    if (!m_documentView || index < 0 || index >= m_documentView->documentCount())
+        return false;
+    m_documentView->setCurrentIndex(index);
+    return true;
+}
+
 bool MainWindow::isSidebarVisible() const {
     return m_sidebar && m_sidebar->isVisible();
 }

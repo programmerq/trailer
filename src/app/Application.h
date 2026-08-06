@@ -63,6 +63,20 @@ class Application : public QApplication {
     // clipboard / screenshot import paths, whose backing file is a
     // transient temp file the user never chose. Untitled docs prompt
     // Save-As on close instead of closing silently (ADR-0004).
+    //
+    // A path that is ALREADY OPEN is surfaced, not opened again: its
+    // window is raised and activated with that document made the current
+    // tab, and no window, tab, or IDocument is created. This holds in all
+    // three open-files-in modes — the preference decides where a new
+    // document lands, not whether one document may exist twice. Transient
+    // imports (markUntitled) are exempt; see the implementation.
+    //
+    // Batch focus rule: `paths` is processed in order and the LAST entry
+    // decides what the user ends up looking at — the same rule that
+    // already governed an all-new batch (the last window shown is
+    // frontmost). So a batch ending in an already-open file leaves that
+    // file's existing window in front; a batch ending in a new file
+    // leaves the new one in front.
     void openFiles(const QStringList &paths, bool markUntitled = false);
     void clearRecent();
 
@@ -232,6 +246,30 @@ class Application : public QApplication {
     // close the window (other windows exist) or persist it as an
     // empty-state window (this is the last window).
     int windowCount() const;
+
+    // The window already showing the document at `path`, or nullptr when
+    // that file is not open. When a window is returned and `tabIndex` is
+    // non-null, `*tabIndex` receives the document's tab index within it;
+    // otherwise `*tabIndex` is set to -1.
+    //
+    // Identity is trailer::canonicalPathKey (util/PathKey.h), so a symlink
+    // and its target resolve to one document. Two documents are NEVER
+    // matched on an empty key: an untitled / capture-origin document has no
+    // location the user chose (its backing file is a throwaway temp), so it
+    // is skipped outright — otherwise two unrelated pastes could collapse
+    // into one. Search order is window creation order, so when the same
+    // file somehow sits in two windows (a session predating this rule) the
+    // OLDEST window wins, deterministically.
+    //
+    // Cost: a linear scan of open documents, each costing one
+    // canonicalPathKey (a realpath stat). Deliberately not cached — the
+    // realistic worst case is a large drag-and-drop batch against a
+    // handful of open documents, which is microseconds against an open
+    // that already costs milliseconds per file, and a cache here would
+    // need invalidating on every open, close, and Save As.
+    //
+    // Public so the open path, and its tests, share one lookup.
+    MainWindow *windowForOpenPath(const QString &path, int *tabIndex = nullptr) const;
 #ifdef Q_OS_MACOS
     QMenuBar *noWindowMenuBar() const { return m_noWindowMenuBar.data(); }
 #endif
@@ -268,6 +306,23 @@ class Application : public QApplication {
     // The capture is a read-then-write of live state, so the overlap on a
     // real quit stores identical values twice rather than compounding.
     void captureViewStateAllWindows();
+    // Bring `window` to the front with the document at `tabIndex` current
+    // — what "open a file that is already open" resolves to. Un-minimizes
+    // first (a minimized window cannot be raised into view), then uses the
+    // same raise() + activateWindow() pair the screenshot path restores
+    // its context window with. Adds no chrome and moves no control: the
+    // only visible change is which window is frontmost and which tab is
+    // selected, both of which the user just asked for.
+    //
+    // Knock-on worth knowing: activating a document window makes it
+    // QApplication::activeWindow(), which is what the CF-5 empty-window
+    // reuse block reads. So a surface legitimately changes which window a
+    // LATER open would consider for reuse — an empty window that was
+    // frontmost no longer is. That is correct (the user did bring the
+    // document forward), and it never consumes the candidate, which is
+    // pinned by TestOpenDedup::surfacingDoesNotConsumeTheEmptyWindow-
+    // ReuseCandidate.
+    void surfaceDocument(MainWindow *window, int tabIndex);
     void notifyWindowsRecentChanged();
     // Re-tint the themed icons of every live window. Called after a colour
     // scheme change (explicit via applyTheme, or an OS flip while in System

@@ -295,6 +295,17 @@ target_link_libraries(test_uat_deference_evidence PRIVATE Qt6::Pdf Qt6::PdfWidge
 # $TRAILER_FEEDBACK_EVIDENCE_DIR when set.
 trailer_add_uat_test(test_uat_feedback test_uat_feedback.cpp)
 
+# Already-open dedup (UAT-FND-053..058): asking to open a file that is
+# already open surfaces the window that holds it instead of opening a
+# second copy over the same bytes. Drives Application + MainWindow; PDF
+# fixtures use QPdfWriter (QtGui), so no Qt6::Pdf link is needed.
+#
+# Deliberately calls only pre-existing public API so the SAME file builds
+# against the tree before and after the fix — that is what makes its G2
+# evidence slot a true before/after pair. Writes the composite PNG to
+# $TRAILER_OPENDEDUP_EVIDENCE_DIR when set.
+trailer_add_uat_test(test_uat_open_already_open test_uat_open_already_open.cpp)
+
 # UAT-UPD-001..003 (docs/uat/06-cross-cutting.md): the update affordances'
 # enabled state tracks whether this build carries an update-signing key,
 # and the Updates pane's button never moves as its status text changes.

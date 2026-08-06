@@ -23,6 +23,38 @@ Three recurring sources feed this file:
   [`docs/audit-2026-05-19.md`](docs/audit-2026-05-19.md) for the
   current snapshot.
 
+## 2026-08-06 HITL pass — Spotlight opened the same file twice
+
+Owner, macOS: typed a PDF's name into Spotlight while Trailer already had
+that exact file open. Two defects came out of one report.
+
+**Opening an already-open file opened it again** (fixed). Picking the
+*file* result spawned a second window over the same document — "this feels
+like I'm looking at two open files … opening it twice feels like *copying*
+the document." Beyond the confusion, two `IDocument`s over one path means
+two undo logs and two save paths onto the same bytes, so whichever window
+saved last silently won. `Application::openFiles` now resolves each path to
+a canonical on-disk key (`src/util/PathKey.h`, the rule `RecentFiles`
+already used) and, when that file is open, raises its window and selects
+its tab instead of creating anything. Dedup runs *before* `open_files_in`
+routing: the preference says where a **new** document lands, not whether
+one document may exist twice. Untitled / capture-origin documents are
+exempt — their backing file is a temp the user never chose. Spec:
+UAT-FND-053..058; guards: `tests/test_open_dedup.cpp`,
+`tests/uat/test_uat_open_already_open.cpp`.
+
+**Spotlight's *window* result fails with "Activate Tab"** (filed, not
+fixed). The same search also offers `<file> — Trailer / Window`; choosing
+it produces *The action "Activate Tab" could not run because an internal
+error occurred. (Shortcuts)*. Trailer's tabs are a `QTabWidget` central
+widget, not native `NSWindow` tabs, so macOS is offering an action against
+tabs it cannot address — and Qt has no cross-platform handle on `NSWindow`
+tabbing (it opts apps *out* of it by default). Fixing it properly means one
+`NSWindow` per document plus native tab-group wiring: architecture, not a
+patch. Filed as `docs/backlog/2026-08-06-macos-spotlight-activate-tab.md`.
+The first fix takes most of the sting out of it — the *file* result, the
+obvious one to pick, now surfaces the existing window correctly.
+
 ## 2026-08-04 nightly macOS — LibreSSL red-gated `test_update_pubkey`
 
 `nightly-20260804` (run 30907188776, macOS job 91985006187) went red on the

@@ -2035,6 +2035,25 @@ void pumpScrollRestoreSettle() {
         QApplication::processEvents();
 }
 
+// Close every open window, the way quitting the process does, so a slot
+// that simulates a RELAUNCH starts from the state a relaunch actually has:
+// no window holding the file it is about to reopen.
+//
+// Needed since UAT-FND-053: a file that is already open is surfaced in its
+// existing window rather than opened again, so re-calling openFiles() on a
+// still-open file no longer spawns a window — correctly. A slot that leaves
+// its pre-quit window standing and then "relaunches" into it was never
+// simulating a relaunch; it was exercising the duplicate-open defect.
+void closeAllWindowsLikeARelaunch() {
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (auto *mw = qobject_cast<MainWindow *>(w)) {
+            mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
+            mw->close();
+        }
+    }
+    QApplication::processEvents();
+}
+
 // The window in `after` that is not in `before` — i.e. the one a just-run
 // open/restore call created. Returns nullptr if there isn't exactly one.
 MainWindow *newlyAddedWindow(const QList<MainWindow *> &before, const QList<MainWindow *> &after) {
@@ -2097,7 +2116,16 @@ void TestUatFoundations::uat_fnd_094_normalQuitCapturesPageSoReopenLandsThere() 
     QCOMPARE(captured.currentPage, 7);
 
     // Relaunch, end to end: reopening the file must land on page 8 (index 7),
-    // not page 1. A fresh window so the pre-quit one is untouched.
+    // not page 1.
+    //
+    // The pre-quit window is torn down FIRST, because that is what a
+    // relaunch does — and since UAT-FND-053 an already-open file is
+    // surfaced in its existing window instead of opened again, so leaving
+    // it standing would be simulating a duplicate open, not a relaunch.
+    // Closing here cannot mask the gap this slot guards: the quit-time
+    // capture was already asserted above, on the RecentEntry read BEFORE
+    // any window closed. What follows only checks the RESTORE side.
+    closeAllWindowsLikeARelaunch();
     const QList<MainWindow *> before = app->windows();
     app->openFiles({pdfPath});
     QApplication::processEvents();
@@ -2290,6 +2318,10 @@ void TestUatFoundations::uat_fnd_095_restoredPageStaysPutAfterLaterLayout() {
     app->setPerformQuitForTesting([] {});
     QVERIFY(app->requestQuit(QuitMode::Normal));
 
+    // Tear the pre-quit window down before reopening — a relaunch has no
+    // window holding the file, and since UAT-FND-053 an already-open file
+    // is surfaced rather than opened again. See closeAllWindowsLikeARelaunch.
+    closeAllWindowsLikeARelaunch();
     const QList<MainWindow *> before = app->windows();
     app->openFiles({pdf});
     QApplication::processEvents();
@@ -2350,6 +2382,10 @@ void TestUatFoundations::uat_fnd_095_restoredPageStaysPutAcrossQuitModesAndWindo
 
     // Reopen each file and confirm its own saved page comes back and
     // holds — no window inheriting a sibling's page, none snapping to 1.
+    // The three pre-quit windows go first: a relaunch has none, and since
+    // UAT-FND-053 an already-open file is surfaced in the window that holds
+    // it rather than opened again. See closeAllWindowsLikeARelaunch.
+    closeAllWindowsLikeARelaunch();
     for (int i = 0; i < 3; ++i) {
         const QList<MainWindow *> before = app->windows();
         app->openFiles({pdfs.at(i)});
