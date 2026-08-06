@@ -21,9 +21,11 @@
 // set and QSKIPs when unset, matching the evidence-dir convention used
 // across this suite. The behavioural slots always assert.
 //
-// Mirrors the custom-main + HOME-sandbox + init() scaffolding of
+// Mirrors the custom-main + HOME-sandbox scaffolding of
 // test_uat_empty_state.cpp so Settings/RecentFiles write into a throwaway
-// sandbox and every case starts from a no-window baseline.
+// sandbox. The no-window baseline comes from cleanup() (after every slot,
+// including the last), not init() — see cleanup() for why that distinction
+// is load-bearing.
 
 #include "app/Application.h"
 #include "document/IDocument.h"
@@ -33,6 +35,7 @@
 #include <QClipboard>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QGuiApplication>
 #include <QImage>
 #include <QPageSize>
@@ -93,6 +96,23 @@ QString currentDocPath(MainWindow *mw) {
     if (!mw)
         return QString();
     return docPathAt(mw, mw->currentDocumentIndex());
+}
+
+// "Do these two paths name the same file on disk?" — used instead of
+// comparing path STRINGS, which is a platform-fragile assumption: a path a
+// test constructed and a path the document reports back can differ in
+// separator (`/` vs `\`), in drive-letter case (`Z:` vs `z:`), or in how a
+// prefix resolved, and still be the same file. That bites hardest on the
+// Wine cross-build lane.
+//
+// QFileInfo's own equality is documented as "refers to a file in the same
+// location", i.e. exactly this question, and it is pre-existing Qt API —
+// deliberately NOT trailer::canonicalPathKey, which this PR introduces and
+// which would break this file's before/after buildability (see the header).
+bool sameFile(const QString &a, const QString &b) {
+    if (a.isEmpty() || b.isEmpty())
+        return false;
+    return QFileInfo(a) == QFileInfo(b);
 }
 
 // Every live MainWindow, in creation order. Deliberately walks
@@ -188,6 +208,7 @@ class TestUatOpenAlreadyOpen : public QObject {
 
   private slots:
     void init();
+    void cleanup();
 
     void uat_fnd_053_reopenSameFileSurfacesExistingWindow();
     void uat_fnd_054_reopenSameFileInNewTabMode();
@@ -199,17 +220,34 @@ class TestUatOpenAlreadyOpen : public QObject {
 };
 
 void TestUatOpenAlreadyOpen::init() {
-    for (auto *w : QApplication::topLevelWidgets()) {
-        if (auto *mw = qobject_cast<MainWindow *>(w)) {
-            mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
-            mw->close();
-        }
-    }
-    QApplication::processEvents();
     // Every slot below states its own mode; reset to the shipped default
     // (NewWindow) so a slot that changes it cannot leak into the next.
     if (auto *app = qobject_cast<Application *>(qApp))
         app->settings().setOpenFilesIn(OpenFilesIn::NewWindow);
+}
+
+// Destroy every window a slot left behind, after EVERY slot — the same
+// per-slot teardown TestImageScale::cleanup() documents, and the same one
+// tests/test_open_dedup.cpp needs for the same reason. init() alone is not
+// enough: it runs before each slot and so never after the last, leaving
+// that slot's windows alive through main()'s return and into QApplication
+// destruction. That is what broke the sibling unit test on the Wine lane.
+//
+// `delete` rather than `close()`: close() runs MainWindow::closeEvent(),
+// which persists RecentFiles / DocumentTypeDefaults state and would leak
+// one slot's view state into the next — and it can raise a dirty-document
+// prompt that a headless run cannot answer.
+void TestUatOpenAlreadyOpen::cleanup() {
+    auto *app = qobject_cast<Application *>(qApp);
+    if (!app)
+        return;
+    const QList<MainWindow *> windows = app->windows();
+    for (MainWindow *w : windows)
+        delete w;
+    QApplication::processEvents();
+    // Assert the teardown emptied the set rather than assuming it — see the
+    // sibling assertion in tests/test_open_dedup.cpp.
+    QCOMPARE(app->windowCount(), 0);
 }
 
 // UAT-FND-053 — NewWindow mode. Asking to open a file that is already
@@ -242,7 +280,8 @@ void TestUatOpenAlreadyOpen::uat_fnd_053_reopenSameFileSurfacesExistingWindow() 
     QVERIFY2(first->documentCount() == 1,
              "A second IDocument over the same path is the defect — two undo "
              "logs and two save paths onto one file");
-    QCOMPARE(currentDocPath(first), pdf);
+    QVERIFY2(sameFile(currentDocPath(first), pdf),
+             "the surfaced document must be the current tab");
 }
 
 // UAT-FND-054 — NewTab mode. Dedup precedes mode routing: the setting
@@ -268,7 +307,8 @@ void TestUatOpenAlreadyOpen::uat_fnd_054_reopenSameFileInNewTabMode() {
 
     QCOMPARE(app->windowCount(), 1);
     QCOMPARE(mw->documentCount(), 1);
-    QCOMPARE(currentDocPath(mw), pdf);
+    QVERIFY2(sameFile(currentDocPath(mw), pdf),
+             "the surfaced document must be the current tab");
 }
 
 // UAT-FND-055 — SameWindow mode. Same rule, third routing mode.
@@ -292,7 +332,8 @@ void TestUatOpenAlreadyOpen::uat_fnd_055_reopenSameFileInSameWindowMode() {
 
     QCOMPARE(app->windowCount(), 1);
     QCOMPARE(mw->documentCount(), 1);
-    QCOMPARE(currentDocPath(mw), pdf);
+    QVERIFY2(sameFile(currentDocPath(mw), pdf),
+             "the surfaced document must be the current tab");
 }
 
 // UAT-FND-056 — A symlink and its target are ONE document. Opening the
@@ -357,18 +398,26 @@ void TestUatOpenAlreadyOpen::uat_fnd_057_mixedBatchOpensNewAndSurfacesExisting()
 
     QCOMPARE(app->windowCount(), 3);
     QCOMPARE(host->documentCount(), 1);
-    QCOMPARE(currentDocPath(host), openAlready);
+    QVERIFY2(sameFile(currentDocPath(host), openAlready),
+             "the last path in the batch decides what is current");
 
     // Exactly one window per distinct file — no path opened twice.
+    // Compared as canonical paths, not as the strings the test built: see
+    // sameFile() on why raw path strings are a platform-fragile oracle.
+    auto canonical = [](QStringList paths) {
+        for (QString &p : paths) {
+            const QString c = QFileInfo(p).canonicalFilePath();
+            p = c.isEmpty() ? QFileInfo(p).absoluteFilePath() : c;
+        }
+        paths.sort();
+        return paths;
+    };
     QStringList seen;
     for (MainWindow *mw : liveWindows()) {
         for (int i = 0; i < mw->documentCount(); ++i)
             seen.append(docPathAt(mw, i));
     }
-    seen.sort();
-    QStringList expected{openAlready, newB, newC};
-    expected.sort();
-    QCOMPARE(seen, expected);
+    QCOMPARE(canonical(seen), canonical({openAlready, newB, newC}));
 }
 
 // UAT-FND-058 — Transient imports never dedup. A clipboard/screenshot

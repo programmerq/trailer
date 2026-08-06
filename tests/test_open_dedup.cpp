@@ -28,6 +28,8 @@
 #include <QTemporaryDir>
 #include <QtTest/QtTest>
 
+#include <cstdio>
+
 using namespace trailer;
 
 namespace {
@@ -76,6 +78,7 @@ class TestOpenDedup : public QObject {
 
   private slots:
     void init();
+    void cleanup();
 
     // --- canonicalPathKey (util/PathKey.h) ---
     void keyResolvesSymlinkToItsTarget();
@@ -107,15 +110,48 @@ class TestOpenDedup : public QObject {
 };
 
 void TestOpenDedup::init() {
-    for (auto *w : QApplication::topLevelWidgets()) {
-        if (auto *mw = qobject_cast<MainWindow *>(w)) {
-            mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
-            mw->close();
-        }
-    }
-    QApplication::processEvents();
     QVERIFY(app());
     app()->settings().setOpenFilesIn(OpenFilesIn::NewWindow);
+}
+
+// Destroy every window a slot left behind, after EVERY slot.
+//
+// The teardown has to be here, in cleanup(), and not only in init(). init()
+// runs BEFORE each slot, so it never runs after the LAST one: whatever
+// windows the final slot opened — real MainWindows, each holding an open
+// PdfDocument and its view — stayed alive through main()'s return and into
+// Application / QApplication destruction. Tearing widgets down at that
+// point is its own hazard, and it is the one concrete way this file
+// differed from every other Application-driving unit test here:
+// TestImageScale and TestQuitAndKeepWindows both tear down in cleanup()
+// and so reach process exit with zero windows.
+//
+// That is what broke this file on the Wine cross-build lane. The slots ran
+// (~2 s, a full run's worth) and the process then died having printed
+// nothing at all — no QTest banner, no PASS lines, no assertion — which is
+// a late crash with the results still sitting in an unflushed stdout
+// buffer, not a failed comparison. Linux never showed it: the same "could
+// not be reproduced locally on Linux" shape TestImageScale::cleanup()'s own
+// comment warns about.
+//
+// `delete`, not `close()`, for the reason spelled out there: close() runs
+// MainWindow::closeEvent(), which PERSISTS RecentFiles /
+// DocumentTypeDefaults state — exactly the contamination a per-slot
+// teardown exists to prevent. It also means no dirty-document prompt can
+// block a headless run.
+void TestOpenDedup::cleanup() {
+    auto *a = app();
+    if (!a)
+        return;
+    const QList<MainWindow *> windows = a->windows();
+    for (MainWindow *w : windows)
+        delete w;
+    QApplication::processEvents();
+    // Assert the teardown actually emptied the set rather than assuming it.
+    // This is the invariant whose absence broke the Wine lane, so it is
+    // worth failing loudly and precisely on the slot that reintroduces it,
+    // on every platform, instead of surfacing as a silent late crash.
+    QCOMPARE(a->windowCount(), 0);
 }
 
 // ---------------------------------------------------------------- keys
@@ -505,6 +541,16 @@ void TestOpenDedup::distinctFilesStillOpenSeparately() {
 // tests/test_image_scale.cpp's main() (NativeFormat on macOS bypasses the
 // HOME sandbox entirely).
 int main(int argc, char **argv) {
+    // Unbuffered stdout/stderr, same as tests/test_image_scale.cpp's main().
+    // Under Wine these streams are fully buffered, so a process that dies
+    // before exiting normally loses every line it ever printed — ctest then
+    // reports the failure with a completely EMPTY --output-on-failure block
+    // and there is nothing to debug from. That is exactly how this file's
+    // first Wine failure presented. Flushing per line means the next one
+    // shows its assertion.
+    setvbuf(stdout, nullptr, _IONBF, 0);
+    setvbuf(stderr, nullptr, _IONBF, 0);
+
     QTemporaryDir fakeHome;
     if (!fakeHome.isValid())
         return 1;
