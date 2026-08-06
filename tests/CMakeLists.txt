@@ -39,6 +39,10 @@ endfunction()
 trailer_add_test(test_settings   test_settings.cpp)
 trailer_add_test(test_settings_volatility test_settings_volatility.cpp)
 trailer_add_test(test_recent     test_recent.cpp)
+# Already-open dedup (owner HITL 2026-08-06): canonicalPathKey's identity
+# rule, Application::windowForOpenPath, and the openFiles surface-don't-
+# reopen behaviour across all three open_files_in modes.
+trailer_add_test(test_open_dedup test_open_dedup.cpp)
 trailer_add_test(test_dock_recents test_dock_recents.cpp)
 trailer_add_test(test_document_type_defaults test_document_type_defaults.cpp)
 trailer_add_test(test_content_aware_defaults test_content_aware_defaults.cpp)

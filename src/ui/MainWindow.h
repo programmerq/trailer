@@ -72,6 +72,13 @@ class MainWindow : public QMainWindow {
     // no tabs are open. Used by the diagnostics/feedback report to
     // record which open document the user was looking at.
     int currentDocumentIndex() const;
+    // Make the document at `index` this window's current tab. Returns
+    // false (and changes nothing) for an out-of-range index. Used by the
+    // already-open path in Application::openFiles to surface the document
+    // the user asked for when it is open behind another tab; addDocument
+    // already selects the tab it creates, so this is the only other place
+    // the current tab moves without the user clicking it.
+    bool showDocumentAt(int index);
 
     // Persist this window's per-document view state — the page the user is
     // on, scroll offset, zoom mode/factor, sidebar mode, markup-toolbar
