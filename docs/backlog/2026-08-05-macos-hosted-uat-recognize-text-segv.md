@@ -130,3 +130,62 @@ trade. Filed so it cannot silently become "how the macOS lane always looks."
   lane non-gating in the first place. Its file is no longer in
   `docs/backlog/` (closed), but `nightly.yml`'s "UAT suite" step and two
   sibling items still cite it by id; named here for the same reason.
+
+## Stack captured, root cause found (2026-08-06, self-hosted Mac session)
+
+The Threshold's "**Before fixing, capture the stack**" clause is now
+satisfied, and it points somewhere the item did not expect.
+
+**It is not an ML/OCR bug.** The `Related` section pairs this with
+`2026-08-03-macos-nightly-ocr-window-segv-confirm` and asks whether it is the
+same `MlScheduler::postResultToGuiThread()` window. It is not: no worker
+thread, no ML code, and no OCR code appears anywhere on the faulting stack.
+
+**Faulting thread** (`~/Library/Logs/DiagnosticReports/`, reproduced locally):
+
+```
+ 0  TestUatRecognizeText::uat_ocr_067_noticeAndProbeCachesPurgedOnClose()
+ 1  QMetaMethodInvoker::invokeImpl(...)            [QtCore]
+ ...
+ 6  QTest::qRun()                                  [QtTest]
+ 8  main
+```
+
+Frame 0 is the test slot itself, with no production frame beneath it —
+`test_uat_recognize_text.cpp:643`, `QCOMPARE(dv->documentCount(), 0)`, the
+first dereference after the close.
+
+**(c) — the classification the Threshold asks for: recycled garbage
+pointer, NOT a null dereference.** The hosted run's own log (run
+[31020325093](https://github.com/programmerq/trailer/actions/runs/31020325093))
+records `accessing address 0x0e1dfcf0da7d1784` — non-canonical, freed memory
+that has been reused. So this is *not* the `0x28`/`0x50` null-page shape of
+the two related items; "small fault address" is not a reliable signature for
+this family.
+
+**Why hosted reproduces and the laptop does not.** The use-after-free happens
+on every run, everywhere. Whether it *faults* depends only on what the
+allocator did with the freed page: the M4 leaves it mapped and silently reads
+garbage (**0 failures / 60 runs at load average 21** — contention alone does
+not force it), while the 3-core hosted box recycles it. Guard Malloc
+(`DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib`) unmaps freed pages and
+reproduces it **10/10, idle, on any Mac** — the tool this family should be
+hunted with, since `-fsanitize=address` hangs at startup on macOS 26.
+
+This confirms the item's own reading that **the hosted lane is better signal,
+not worse.**
+
+**Two distinct bugs, both fixed together** (see the implementing PR):
+
+1. The test dereferenced `dv`/`mw` after the close, which on macOS destroys
+   the window (`onAllTabsClosed()`'s `Q_OS_MACOS` branch + `WA_DeleteOnClose`).
+2. Fixing (1) exposed a **production** bug, reproducible on pristine `main`
+   with a minimal case and **not macOS-specific**:
+   `DocumentView::onTabCloseRequested()` emitted `currentDocumentChanged`
+   from `removeTab()` *before* `m_documents.erase()`, so listeners resynced
+   against a stale vector and nothing corrected them afterwards. The sidebar
+   kept a raw `IDocument *` to the closed document — a dangling-pointer
+   SIGSEGV reachable by **closing one tab of two**.
+
+**Status stays `open`:** this Threshold requires three consecutive green
+`macos-14` nightlies, which no code change can satisfy on its own.
