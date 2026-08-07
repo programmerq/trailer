@@ -374,6 +374,16 @@ Sidebar::Sidebar(QWidget *parent) : QDockWidget(tr("Sidebar"), parent) {
     setWidget(m_stack);
 }
 
+void Sidebar::forgetDocument(IDocument *doc) {
+    if (!doc || m_doc != doc)
+        return;
+    // setDocument(nullptr) clears m_doc AND m_model's own raw pointer,
+    // and drops the view to the placeholder page. The next
+    // onCurrentDocumentChanged re-populates it with the surviving
+    // document in the same event-loop turn.
+    setDocument(nullptr);
+}
+
 void Sidebar::setDocument(IDocument *doc) {
     m_doc = doc;
     if (doc && doc->supportsThumbnails() && doc->pageCount() > 0) {

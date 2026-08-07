@@ -49,6 +49,17 @@ class Sidebar : public QDockWidget {
     explicit Sidebar(QWidget *parent = nullptr);
 
     void setDocument(IDocument *doc);
+
+    // Drop `doc` if it is the one currently shown, leaving the sidebar
+    // empty until the next setDocument().
+    //
+    // Sidebar holds a RAW IDocument* (IDocument is not a QObject, so
+    // QPointer is unavailable — docs/CONVENTIONS.md §13), which means it
+    // MUST be flushed from DocumentView::documentAboutToBeRemoved or it
+    // is left dangling the moment a tab closes. Mirrors
+    // SamController::purgeDocument(), the sibling raw-pointer cache
+    // flushed from that same handler.
+    void forgetDocument(IDocument *doc);
     void refreshThumbnails();
     void refreshAnnotations();
 

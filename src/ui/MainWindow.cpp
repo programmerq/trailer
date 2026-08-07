@@ -366,6 +366,14 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         if (m_samController) {
             m_samController->purgeDocument(doc);
         }
+        // The sidebar (and, through it, ThumbnailModel) also keys off the
+        // raw IDocument*. Without this flush both are left dangling the
+        // instant a tab closes, and the next posted refresh/paint
+        // dereferences freed memory — a hard SIGSEGV reachable by closing
+        // one tab of two. See docs/CONVENTIONS.md §13.
+        if (m_sidebar) {
+            m_sidebar->forgetDocument(doc);
+        }
     });
 
     m_animationBar = new AnimationBar(center);
