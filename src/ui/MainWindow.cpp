@@ -46,6 +46,7 @@
 #include "uxrecord/UxRecord.h"
 #include "ml/SamSession.h"
 #include "recent/RecentFiles.h"
+#include "recent/RecentGrouping.h"
 #include "MlProgressWidget.h"
 #include "ModelManagerDialog.h"
 #include "OcrController.h"
@@ -66,6 +67,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDateTime>
+#include <algorithm>
 #include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
@@ -115,6 +117,21 @@ namespace trailer {
 // shared one-time-consent download flow (ADR 0002 §3).
 namespace {
 bool ensureOcrModelsReady(MainWindow *parent, OcrEngine &engine);
+
+// How many Open Recent entries the menu shows before the rest move into
+// the "More" submenu. This is a DISPLAY cap only -- Settings::recentMax()
+// still governs how deep the history itself is kept, so nothing is
+// forgotten at 20 (2026-08-19 owner feedback: "I am not against tracking
+// history further back", but a 50-item flat menu is unusable).
+//
+// Range tried: 50 (the history depth) is what prompted the report; 10 cut
+// off a normal working set of manuals mid-session. 20 fills roughly half a
+// 1080p-tall menu with the dated section headers included, and keeps the
+// commonly-wanted files above the fold. Symptom to change: if the menu
+// still runs past the bottom of the screen on the shortest supported
+// display, or if the "More" submenu is being opened routinely rather than
+// occasionally, move this number.
+constexpr int kRecentMenuVisibleEntries = 20;
 
 // Class-targeted stylesheet that pins the built-in QToolBar overflow
 // chevron (objectName qt_toolbar_ext_button) to a fixed width so
@@ -4918,6 +4935,19 @@ void MainWindow::rebuildRecentMenu() {
     if (!m_recentMenu) {
         return;
     }
+    // QMenu::clear() deletes the QActions it owns but NOT the QMenu
+    // widgets addMenu() created — those stay children of m_recentMenu.
+    // This runs on every recents change, so without an explicit delete
+    // the "More" submenu would accumulate one orphan per rebuild.
+    // deleteLater (not delete): a rebuild can be triggered from inside a
+    // recent entry's own triggered() handler (openFiles ->
+    // notifyWindowsRecentChanged -> here), i.e. while that very menu is
+    // still unwinding.
+    const auto previousActions = m_recentMenu->actions();
+    for (QAction *action : previousActions) {
+        if (QMenu *submenu = action->menu())
+            submenu->deleteLater();
+    }
     m_recentMenu->clear();
 
     const auto entries = m_app->recentFiles().entries();
@@ -4925,7 +4955,10 @@ void MainWindow::rebuildRecentMenu() {
     // menu: this runs both at window construction and on every recents
     // change (Application::notifyWindowsRecentChanged), so refreshing here
     // covers a list that is already on screen. The widget caps and hides
-    // itself when the list is empty.
+    // itself when the list is empty. It is deliberately fed the UNFILTERED
+    // list: the empty state only shows in a window with no document, where
+    // "already open" means "open in some other window" — a weaker reason to
+    // hide a name than in the File menu of the window you are looking at.
     if (m_emptyState)
         m_emptyState->setRecentEntries(entries);
 
@@ -4935,11 +4968,59 @@ void MainWindow::rebuildRecentMenu() {
         return;
     }
 
+    // Leave out what is already open anywhere in the app: picking one of
+    // those from Open Recent does nothing the user can see, and on a
+    // working set of a dozen manuals they were most of the menu
+    // (2026-08-19 owner feedback).
+    const QSet<QString> openPaths = m_app->openDocumentPaths();
+    QList<RecentEntry> selectable;
+    selectable.reserve(entries.size());
     for (const RecentEntry &entry : entries) {
-        auto *action = m_recentMenu->addAction(entry.displayName);
-        action->setToolTip(entry.path);
-        const QString path = entry.path;
-        connect(action, &QAction::triggered, this, [this, path]() { m_app->openFiles({path}); });
+        if (!openPaths.contains(entry.path))
+            selectable.append(entry);
+    }
+
+    // Adds `group`-sectioned entries to `menu`. Section headers come from
+    // groupRecentByAge; a group is only emitted when it has entries, so
+    // there is never a header with nothing under it.
+    auto addGroupedEntries = [this](QMenu *menu, const QList<RecentEntry> &list) {
+        const QList<RecentGroup> groups = groupRecentByAge(list, QDateTime::currentDateTimeUtc());
+        for (const RecentGroup &group : groups) {
+            menu->addSection(group.label);
+            for (const RecentEntry &entry : group.entries) {
+                auto *action = menu->addAction(entry.displayName);
+                action->setToolTip(entry.path);
+                const QString path = entry.path;
+                connect(action, &QAction::triggered, this,
+                        [this, path]() { m_app->openFiles({path}); });
+            }
+        }
+    };
+
+    if (selectable.isEmpty()) {
+        // History is non-empty but every file in it is open. "(Empty)"
+        // would be a lie, and an enabled item that reopens an open file
+        // would be a lying control (G3) — so say which it is, and where
+        // to go instead.
+        auto *allOpen = m_recentMenu->addAction(tr("(All recent files are open)"));
+        allOpen->setEnabled(false);
+        allOpen->setToolTip(
+            tr("Every file in the recent list is already open. Use the Window menu to "
+               "switch to one."));
+    } else {
+        const int visible =
+            static_cast<int>(std::min<qsizetype>(selectable.size(), kRecentMenuVisibleEntries));
+        addGroupedEntries(m_recentMenu, selectable.mid(0, visible));
+        if (selectable.size() > visible) {
+            m_recentMenu->addSeparator();
+            // The overflow is a submenu rather than an in-place "expand"
+            // so the items above it never move when it opens (G10 spatial
+            // constancy), and so the deeper history stays reachable — the
+            // cap hides names, it does not forget them.
+            QMenu *more = m_recentMenu->addMenu(
+                tr("More (%n file(s))", nullptr, selectable.size() - visible));
+            addGroupedEntries(more, selectable.mid(visible));
+        }
     }
 
     m_recentMenu->addSeparator();

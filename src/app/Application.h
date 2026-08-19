@@ -16,6 +16,7 @@
 #include <QList>
 #include <QMenuBar>
 #include <QPointer>
+#include <QSet>
 #include <QStringList>
 
 #include <functional>
@@ -232,6 +233,15 @@ class Application : public QApplication {
     // close the window (other windows exist) or persist it as an
     // empty-state window (this is the last window).
     int windowCount() const;
+    // Canonical paths of every document currently open in any window.
+    // Canonicalised the same way RecentFiles::add does, so the returned
+    // strings compare equal to RecentEntry::path for the same file
+    // (symlink / "./" spellings included). Used by the File > Open
+    // Recent builder to leave out files the user already has open —
+    // re-picking one of those is a no-op the menu should not offer.
+    // An unsaved (never-written) document contributes nothing: its
+    // filePath() is empty and is skipped.
+    QSet<QString> openDocumentPaths() const;
 #ifdef Q_OS_MACOS
     QMenuBar *noWindowMenuBar() const { return m_noWindowMenuBar.data(); }
 #endif

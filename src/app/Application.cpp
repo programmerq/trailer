@@ -294,6 +294,29 @@ QList<MainWindow *> Application::windows() const {
     return out;
 }
 
+QSet<QString> Application::openDocumentPaths() const {
+    QSet<QString> paths;
+    for (const auto &ptr : m_windows) {
+        if (!ptr)
+            continue;
+        const int count = ptr->documentCount();
+        for (int i = 0; i < count; ++i) {
+            IDocument *doc = nullptr;
+            if (ptr->documentAt(i, &doc) != 1 || !doc)
+                continue;
+            const QString path = doc->filePath();
+            if (path.isEmpty())
+                continue; // never-saved document: nothing to match a recent entry against
+            // Mirror RecentFiles' canonicalisation exactly (canonical path,
+            // falling back to the absolute path when the file no longer
+            // resolves) so the two sides compare equal for the same file.
+            const QString canonical = QFileInfo(path).canonicalFilePath();
+            paths.insert(canonical.isEmpty() ? QFileInfo(path).absoluteFilePath() : canonical);
+        }
+    }
+    return paths;
+}
+
 int Application::windowCount() const {
     int n = 0;
     for (const auto &ptr : m_windows) {

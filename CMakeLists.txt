@@ -331,6 +331,8 @@ set(TRAILER_SOURCES
     src/platform/ScreenCapturePermission.h
     src/recent/RecentFiles.cpp
     src/recent/RecentFiles.h
+    src/recent/RecentGrouping.cpp
+    src/recent/RecentGrouping.h
     src/settings/AppPaths.cpp
     src/settings/AppPaths.h
     src/settings/DocumentTypeDefaults.cpp
