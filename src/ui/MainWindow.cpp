@@ -5106,10 +5106,28 @@ void MainWindow::rebuildRecentMenu() {
     // Adds `group`-sectioned entries to `menu`. Section headers come from
     // groupRecentByAge; a group is only emitted when it has entries, so
     // there is never a header with nothing under it.
+    // Group headers are separator + DISABLED ACTION, deliberately not
+    // QMenu::addSection(): addSection is a styling hint that native menu
+    // styles ignore — the Cocoa bridge and the Windows-native style both
+    // render it as a bare separator (QPlatformMenuItem has no section
+    // API), which would silently drop the whole recency ladder on two of
+    // the three platforms (HIG review, 2026-08-28). A greyed label row
+    // renders identically everywhere, native macOS menus included.
     auto addGroupedEntries = [this](QMenu *menu, const QList<RecentEntry> &list) {
+        // Tooltips carry each entry's full path; QMenu::toolTipsVisible
+        // is per-menu, defaults false, and is NOT inherited from the
+        // parent menu, so every menu this lambda fills opts in itself.
+        // (macOS native menus drop action tooltips entirely — there the
+        // path stays undisclosed, an accepted platform shape.)
+        menu->setToolTipsVisible(true);
         const QList<RecentGroup> groups = groupRecentByAge(list, QDateTime::currentDateTimeUtc());
+        bool first = true;
         for (const RecentGroup &group : groups) {
-            menu->addSection(group.label);
+            if (!first)
+                menu->addSeparator();
+            first = false;
+            auto *header = menu->addAction(group.label);
+            header->setEnabled(false);
             for (const RecentEntry &entry : group.entries) {
                 auto *action = menu->addAction(entry.displayName);
                 action->setToolTip(entry.path);
@@ -5125,11 +5143,12 @@ void MainWindow::rebuildRecentMenu() {
         // would be a lie, and an enabled item that reopens an open file
         // would be a lying control (G3) — so say which it is, and where
         // to go instead.
-        auto *allOpen = m_recentMenu->addAction(tr("(All recent files are open)"));
+        // The where-to-go rides in the label, not a tooltip: macOS
+        // native menus cannot show action tooltips at all, and submenu
+        // tooltip visibility is opt-in per menu elsewhere (HIG review).
+        auto *allOpen =
+            m_recentMenu->addAction(tr("All recent files are open — see the Window menu"));
         allOpen->setEnabled(false);
-        allOpen->setToolTip(
-            tr("Every file in the recent list is already open. Use the Window menu to "
-               "switch to one."));
     } else {
         const int visible =
             static_cast<int>(std::min<qsizetype>(selectable.size(), kRecentMenuVisibleEntries));
@@ -5140,8 +5159,12 @@ void MainWindow::rebuildRecentMenu() {
             // so the items above it never move when it opens (G10 spatial
             // constancy), and so the deeper history stays reachable — the
             // cap hides names, it does not forget them.
+            // "More (%1)" with a bare count: %n plural forms only render
+            // through an installed translator, so the untranslated build
+            // would show a literal "file(s)" — developer register no
+            // native File menu uses (HIG review).
             QMenu *more = m_recentMenu->addMenu(
-                tr("More (%n file(s))", nullptr, selectable.size() - visible));
+                tr("More (%1)").arg(selectable.size() - visible));
             addGroupedEntries(more, selectable.mid(visible));
         }
     }

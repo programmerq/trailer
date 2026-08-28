@@ -7,8 +7,10 @@ namespace trailer {
 
 namespace {
 
-// Bucket keys in display order. The ladder is the platform-conventional
-// coarse one (Finder, Explorer, Chrome history):
+// Bucket keys in display order. The ladder is Apple's (Finder / Photos):
+// other platforms group differently (Explorer: "Last week / Earlier this
+// month"; Chrome: per-date), so this is one convention followed, not a
+// cross-platform unanimity:
 //
 //   0  Today
 //   1  Yesterday
@@ -19,7 +21,8 @@ namespace {
 // Range tried: per-day "N days ago" sections for days 2-6 (first draft,
 // owner's literal wording) produced up to five single-item sections on a
 // normal working week — noise, and no platform precedent. The owner
-// delegated the call to established convention (2026-08-28); this is it.
+// delegated the call to established convention (2026-08-28); Apple's
+// ladder is the one Trailer follows.
 // Symptom to change: if "Previous 7 Days" routinely holds so many entries
 // that locating a file means reading the whole section, split it.
 constexpr int kKeyToday = 0;

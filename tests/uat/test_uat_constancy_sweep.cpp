@@ -91,6 +91,8 @@
 #include <QScopeGuard>
 #include <QSettings>
 #include <QStatusBar>
+
+#include <cstdlib>
 #include <QTemporaryDir>
 #include <QToolBar>
 #include <QtTest/QtTest>
@@ -167,6 +169,15 @@ struct KnownDefect {
     QString prefix;
     bool allowDx;
     QString backlogRef;
+    // Magnitude cap (px, per axis) on the tolerated movement. The frozen
+    // defects measure 1-4 px; 8 gives headroom for font/DPI variance
+    // while keeping the freeze a FREEZE — a future regression moving the
+    // same prefix 40 px must still ring the gate, not hide behind the
+    // backlog item (HIG review, 2026-08-28). Range tried: unbounded
+    // (original) tolerated arbitrarily large drift silently; 4 flaked on
+    // a 1px font-metric wobble atop the measured 3px. Symptom to change:
+    // a legitimate re-measure of the frozen defect exceeding the cap.
+    int maxAbsDelta = 8;
 };
 
 // Position deltas for every element visible in both snapshots, minus the
@@ -198,7 +209,9 @@ QStringList compareSnapshots(const QHash<QString, QPoint> &before,
         for (const KnownDefect &d : knownDefects) { // first match wins
             if (!idMatchesPrefix(it.key(), d.prefix))
                 continue;
-            if (d.allowDx || a.x() == b.x()) {
+            const bool withinCap = std::abs(a.x() - b.x()) <= d.maxAbsDelta &&
+                                   std::abs(a.y() - b.y()) <= d.maxAbsDelta;
+            if (withinCap && (d.allowDx || a.x() == b.x())) {
                 if (tolerated)
                     *tolerated << desc + QStringLiteral("  [known defect: %1]").arg(d.backlogRef);
                 isTolerated = true;
@@ -442,12 +455,17 @@ void TestUatConstancySweep::uat_xct_093_togglesDoNotMoveFurniture() {
         auto *input = searchBar->findChild<QLineEdit *>();
         QVERIFY(input);
         apply = [find] { find->trigger(); };
-        revert = [input, searchButton] {
+        revert = [input, searchBar] {
             // Esc on the search input collapses the bar back to the
             // icon button (SearchBar::dismissed -> hideSearchBar).
+            // Settle on the BAR disappearing, not the button appearing:
+            // the frozen defect this row tolerates re-shows the button
+            // while the bar is still open, so button visibility is
+            // already true mid-collapse and would settle vacuously
+            // (HIG review, 2026-08-28).
             QTest::keyClick(input, Qt::Key_Escape);
-            QVERIFY2(pumpUntil([searchButton] { return searchButton->isVisible(); }, 2000),
-                     "sanity: dismissing search restores the collapsed button");
+            QVERIFY2(pumpUntil([searchBar] { return !searchBar->isVisible(); }, 2000),
+                     "sanity: dismissing search collapses the bar");
         };
         // Both frozen against the same backlog item; entries are checked
         // first-match, so the button's dx allowance precedes the
@@ -456,8 +474,14 @@ void TestUatConstancySweep::uat_xct_093_togglesDoNotMoveFurniture() {
             "docs/backlog/2026-08-28-search-open-reflows-toolbar-and-reshows-button.md");
         // The "hidden" icon is re-shown by QToolBarLayout (wrapper
         // QWidgetAction never hidden) and pushed left by the bar's width.
+        // The re-shown button lands beside the open field — displaced by
+        // the search bar's full width (~360 px measured offscreen), not
+        // a few pixels, so it carries its own cap: bar width + headroom.
+        // The cap still rings if the button ever lands somewhere new
+        // (e.g. a second row), and dies with the entry when the backlog
+        // item closes.
         knownDefects << KnownDefect{QStringLiteral("MainToolbar/searchButton"),
-                                    /*allowDx=*/true, searchBacklog};
+                                    /*allowDx=*/true, searchBacklog, /*maxAbsDelta=*/420};
         // The taller SearchBar grows the row; every row-1 control
         // re-centres +3px down (dy only — dx stays hard-asserted).
         knownDefects << KnownDefect{QStringLiteral("MainToolbar"), /*allowDx=*/false,
