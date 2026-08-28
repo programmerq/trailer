@@ -5089,11 +5089,17 @@ void MainWindow::rebuildRecentMenu() {
     QList<RecentEntry> selectable;
     selectable.reserve(entries.size());
     for (const RecentEntry &entry : entries) {
-        // add() stores canonical keys, but a recent.json written before
-        // PathKey unified identity can hold a symlink/relative spelling —
-        // key the comparison, don't trust the stored string. One realpath
-        // stat per entry per rebuild; ~50 entries, microseconds.
-        if (!openPaths.contains(canonicalPathKey(entry.path)))
+        // Plain string comparison, deliberately NOT canonicalPathKey():
+        // add() already stores canonical keys, so both sides agree for
+        // every entry written since PathKey unified identity. A realpath
+        // per entry here would run on the GUI thread on EVERY rebuild —
+        // and an entry homed on a dead network mount would block for the
+        // mount timeout, per entry, per window (frugality review,
+        // 2026-08-28). The residue is benign and self-healing: a
+        // pre-PathKey recent.json entry spelled via a symlink may show
+        // in the menu while its target is open; re-opening it re-adds
+        // the canonical spelling.
+        if (!openPaths.contains(entry.path))
             selectable.append(entry);
     }
 
