@@ -137,14 +137,25 @@ template <typename Pred> bool pumpUntil(Pred pred, int budgetMs = 2000) {
 
 // Chrome positions OUTSIDE the central-widget subtree (the standing
 // exclusion — see file header).
-QHash<QString, QPoint> furniturePositions(MainWindow *mw) {
-    QHash<QString, QPoint> out;
+// Keyed by the WIDGET POINTER, not the walk id: the walk's "#<n>"
+// ordinals count only visible same-base siblings, so a toggle that
+// shows/hides an unnamed sibling renames every later same-base id —
+// and an id-keyed comparison would silently drop a genuinely displaced,
+// still-visible control as "appeared/disappeared" (correctness review,
+// 2026-08-28). The pointer is stable across a toggle; the id rides
+// along for messages and prefix matching. Pointers are never
+// dereferenced during comparison, so a widget destroyed between
+// snapshots is harmless (it is simply absent from `after`).
+using FurnitureSnapshot = QHash<QWidget *, QPair<QString, QPoint>>;
+
+FurnitureSnapshot furniturePositions(MainWindow *mw) {
+    FurnitureSnapshot out;
     QWidget *central = mw->centralWidget();
     const auto elements = trailer_uat::walkChrome(mw);
     for (const auto &e : elements) {
         if (central && (e.widget == central || central->isAncestorOf(e.widget)))
             continue;
-        out.insert(e.id, e.widget->mapTo(mw, QPoint(0, 0)));
+        out.insert(e.widget, qMakePair(e.id, e.widget->mapTo(mw, QPoint(0, 0))));
     }
     return out;
 }
@@ -184,8 +195,8 @@ struct KnownDefect {
 // whitelist. Movement matching a KnownDefect entry is appended to
 // `tolerated` instead of the returned violations. Empty return ==
 // constancy holds (modulo the frozen, backlog-tracked defects).
-QStringList compareSnapshots(const QHash<QString, QPoint> &before,
-                             const QHash<QString, QPoint> &after,
+QStringList compareSnapshots(const FurnitureSnapshot &before,
+                             const FurnitureSnapshot &after,
                              const QStringList &whitelist,
                              const QList<KnownDefect> &knownDefects = {},
                              QStringList *tolerated = nullptr) {
@@ -193,21 +204,22 @@ QStringList compareSnapshots(const QHash<QString, QPoint> &before,
     for (auto it = before.constBegin(); it != before.constEnd(); ++it) {
         if (!after.contains(it.key()))
             continue; // appeared/disappeared: census scope, not sweep scope
-        if (idWhitelisted(it.key(), whitelist))
+        const QString id = it.value().first; // before-snapshot id, for messages
+        if (idWhitelisted(id, whitelist))
             continue;
-        const QPoint a = it.value();
-        const QPoint b = after.value(it.key());
+        const QPoint a = it.value().second;
+        const QPoint b = after.value(it.key()).second;
         if (a == b)
             continue;
         const QString desc = QStringLiteral("%1 moved (%2,%3) -> (%4,%5)")
-                                 .arg(it.key())
+                                 .arg(id)
                                  .arg(a.x())
                                  .arg(a.y())
                                  .arg(b.x())
                                  .arg(b.y());
         bool isTolerated = false;
         for (const KnownDefect &d : knownDefects) { // first match wins
-            if (!idMatchesPrefix(it.key(), d.prefix))
+            if (!idMatchesPrefix(id, d.prefix))
                 continue;
             const bool withinCap = std::abs(a.x() - b.x()) <= d.maxAbsDelta &&
                                    std::abs(a.y() - b.y()) <= d.maxAbsDelta;
@@ -278,7 +290,7 @@ MainWindow *TestUatConstancySweep::openPdfWindow(const QString &tag) {
     // docs/backlog/2026-08-03-load-sensitive-offscreen-test-races.md).
     QElapsedTimer settle;
     settle.start();
-    QHash<QString, QPoint> prev = furniturePositions(mw);
+    FurnitureSnapshot prev = furniturePositions(mw);
     while (settle.elapsed() < 5000) {
         QTest::qWait(50);
         const auto now = furniturePositions(mw);

@@ -193,7 +193,7 @@ if (-not $env:QT_PLUGIN_PATH) {
 Push-Location $BuildDir
 try {
     Write-Host "==> Unit tests (ctest -LE uat)" -ForegroundColor Green
-    & ctest -C $Config --output-on-failure --label-exclude uat
+    & ctest -C $Config --output-on-failure --label-exclude 'uat|advisory'
     $unitExit = $LASTEXITCODE
 
     $uatExit = 0

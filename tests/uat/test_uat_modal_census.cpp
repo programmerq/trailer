@@ -389,6 +389,11 @@ void TestUatModalCensus::uat_xct_091_staticModalSitesMatchGolden() {
     const auto golden =
         jsonToCensus(doc.object().value(QStringLiteral("sites")).toObject());
 
+    // Matcher scope (correctness review, 2026-08-28): the static census
+    // catches exec()/static-helper modals. QDialog::open() and
+    // setModal(true)+show() create real modals with neither and are NOT
+    // counted — the dynamic read-path sentinel (UAT-XCT-092) is the only
+    // guard for those. Extend the matcher before src/ grows such a site.
     QStringList diffs;
     for (const auto &[file, kinds] : census) {
         const auto git = golden.find(file);
@@ -413,14 +418,22 @@ void TestUatModalCensus::uat_xct_091_staticModalSitesMatchGolden() {
         }
     }
     for (const auto &[file, kinds] : golden) {
-        if (census.count(file))
-            continue;
-        for (const auto &[kind, count] : kinds)
-            diffs << QStringLiteral("%1: golden expects %2 site(s) of %3, build has none — "
-                                    "removed or renamed file; ratchet the golden down")
-                         .arg(file)
-                         .arg(count)
-                         .arg(kind);
+        const auto cit = census.find(file);
+        for (const auto &[kind, count] : kinds) {
+            // Covers BOTH the whole-file-gone case and the kind-gone case
+            // (a kind whose live count dropped to zero in a file that
+            // still has other kinds — countModalSites omits zero counts,
+            // so the forward loop never visits it and the ratchet would
+            // silently go stale; correctness review, 2026-08-28).
+            const bool kindGone =
+                cit == census.end() || cit->second.count(kind) == 0;
+            if (kindGone)
+                diffs << QStringLiteral("%1: golden expects %2 site(s) of %3, build has none — "
+                                        "removed site or renamed file; ratchet the golden down")
+                             .arg(file)
+                             .arg(count)
+                             .arg(kind);
+        }
     }
 
     QVERIFY2(diffs.isEmpty(),

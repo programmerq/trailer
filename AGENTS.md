@@ -417,7 +417,7 @@ and locally.
 
 ```sh
 # Unit tests only (what CI runs on PRs)
-ctest --test-dir build -LE uat --output-on-failure
+ctest --test-dir build -LE 'uat|advisory' --output-on-failure
 
 # UAT suite (offscreen Qt, no display server needed)
 QT_QPA_PLATFORM=offscreen ctest --test-dir build -L uat --output-on-failure

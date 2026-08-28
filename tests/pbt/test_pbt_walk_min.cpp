@@ -409,6 +409,16 @@ void TestPbtWalkMin::walk_min() {
     const QByteArray seedEnv = qgetenv("TRAILER_PBT_SEED");
     bool seedOk = false;
     m_seed = seedEnv.toUInt(&seedOk);
+    if (!seedOk && !seedEnv.isEmpty()) {
+        // A set-but-unparsable seed (hex spelling, stray space, > 2^32-1)
+        // must NOT silently fall back to a random walk: a triager
+        // replaying a failure would get a passing random walk and wrongly
+        // close the finding as non-reproducing (correctness review,
+        // 2026-08-28). Decimal unsigned only, by contract.
+        QFAIL(qPrintable(QStringLiteral("TRAILER_PBT_SEED is set but not a decimal uint32: "
+                                        "'%1' — refusing to substitute a random seed")
+                             .arg(QString::fromLatin1(seedEnv))));
+    }
     if (!seedOk)
         m_seed = QRandomGenerator::global()->generate();
     qInfo().noquote()
@@ -473,7 +483,13 @@ void TestPbtWalkMin::walk_min() {
     // Settle the open, then wait out the staged-open grace window: content
     // (not the surround canvas) must eventually appear on page 1.
     FrameOracle oracle{documentSurroundColor(QApplication::palette())};
-    pbt::waitForPaintQuiescence(m_view->viewport(), kEventuallyMs);
+    // A view that never quiesces would silently turn every later oracle
+    // timing-dependent — the exact flake class PbtSettle.h exists to
+    // prevent — so non-quiescence is a loud failure, not a shrug
+    // (correctness review, 2026-08-28). Advisory tier: a loaded machine
+    // failing here is a true report of an unusable measurement.
+    QVERIFY2(pbt::waitForPaintQuiescence(m_view->viewport(), kEventuallyMs),
+             "open never reached paint quiescence — walk oracles would be timing-dependent");
     {
         QElapsedTimer t;
         t.start();
@@ -510,8 +526,10 @@ void TestPbtWalkMin::walk_min() {
         const QImage page1 = grabViewport();
         if (oracle.isBlank(page1)) {
             saveEvidence(page1, m_seed, -1, QStringLiteral("calibration"));
-            QFAIL("BROKEN HARNESS: settled page-1 frame reads as blank — surround colour, "
-                  "sampling rect, or settle is wrong; walk results would be vacuous");
+            QFAIL("calibration: settled page-1 frame reads as blank. EITHER the app "
+                  "genuinely failed to render page 1 (a real regression — check the evidence "
+                  "PNG) OR the oracle's surround colour / sampling rect / settle is wrong. "
+                  "Do not assume broken harness; triage the PNG first");
         }
     }
 
@@ -668,8 +686,13 @@ void TestPbtWalkMin::walk_min() {
         }
 
         // Settle before reading geometry or acting again — the ONE audited
-        // settling primitive; no ad-hoc waits (PbtSettle.h).
-        pbt::waitForPaintQuiescence(m_view->viewport(), kEventuallyMs);
+        // settling primitive; no ad-hoc waits (PbtSettle.h). Failing loud
+        // on non-quiescence also converts a livelock-shaped hang into a
+        // diagnosable step failure instead of an opaque ctest TIMEOUT.
+        QVERIFY2(pbt::waitForPaintQuiescence(m_view->viewport(), kEventuallyMs),
+                 qPrintable(QStringLiteral("step %1 never reached paint quiescence — "
+                                           "livelock-shaped; see the PBT-STEP trace above")
+                                .arg(i)));
 
         // Oracle 2 — spatial constancy (G10): no control outside the
         // viewport moved. A resize legitimately reshapes chrome, so it

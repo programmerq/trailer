@@ -49,6 +49,7 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSet>
 #include <QLabel>
 #include <QPageSize>
 #include <QPainter>
@@ -364,6 +365,24 @@ void TestUatChromeCensus::censusState(const QString &stateName, MainWindow *mw) 
     }
 
     const QJsonObject states = m_golden.value(QStringLiteral("states")).toObject();
+    // Reverse containment: every state in the golden must be one this
+    // suite still censuses, or a renamed canonical state would leave a
+    // stale, never-compared section in the golden forever (correctness
+    // review, 2026-08-28). Checked against the static canonical set, not
+    // m_observed, so a macOS run (which QSKIPs empty-window per DESIGN
+    // §2.4.2) doesn't false-alarm. NOTE regen footgun: regenerating on
+    // macOS writes a golden MISSING empty-window that then fails on every
+    // Linux run — regenerate goldens on Linux only.
+    static const QSet<QString> kCanonicalStates = {
+        QStringLiteral("empty-window"), QStringLiteral("pdf-open"),
+        QStringLiteral("image-open"), QStringLiteral("form-pdf-open")};
+    for (auto it = states.constBegin(); it != states.constEnd(); ++it) {
+        QVERIFY2(kCanonicalStates.contains(it.key()),
+                 qPrintable(QStringLiteral("golden holds unknown state '%1' — stale section "
+                                           "from a renamed canonical state; regenerate on Linux "
+                                           "(TRAILER_CENSUS_WRITE=1, owner-acknowledged PR)")
+                                .arg(it.key())));
+    }
     QVERIFY2(states.contains(stateName),
              qPrintable(QStringLiteral("golden has no state '%1' — regenerate the golden "
                                        "(TRAILER_CENSUS_WRITE=1) in an owner-acknowledged PR")
