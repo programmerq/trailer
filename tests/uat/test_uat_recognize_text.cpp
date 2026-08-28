@@ -66,6 +66,7 @@
 #include <atomic>
 #include <QSettings>
 #include <QTemporaryDir>
+#include <QPointer>
 #include <QToolButton>
 #include <QWidget>
 #include <QtTest/QtTest>
@@ -621,6 +622,42 @@ void TestUatRecognizeText::uat_ocr_067_noticeAndProbeCachesPurgedOnClose() {
     IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
 
+    // A SECOND tab, so closing the first does not empty the window.
+    //
+    // This is load-bearing, not scene-setting. On macOS,
+    // MainWindow::onAllTabsClosed() closes the WINDOW when the last tab
+    // goes (there is no persistent empty window — DESIGN §2.4.2), and
+    // MainWindow is WA_DeleteOnClose, so the deleteLater() is flushed by
+    // the very QApplication::processEvents() that follows the close
+    // below. With only one document open, `dv` and `mw` are freed at that
+    // point and every assertion after the close reads freed memory.
+    //
+    // That was a real, reproducible SIGSEGV, not a theoretical one: the
+    // hosted macos-14 nightly lane crashed here deterministically
+    // (`accessing address 0x0e1dfcf0da7d1784` — recycled garbage, runs
+    // 31018708642 and 31020325093), while the faster self-hosted Mac
+    // silently read the same freed memory and passed. Guard Malloc
+    // (DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib) reproduces it
+    // 10/10 on any Mac.
+    //
+    // Keeping a second document open is what makes the purge assertions
+    // BELOW mean anything on macOS. Guarding the pointers instead would
+    // stop the crash but leave the window destroyed, so the cache checks
+    // could not run on the one platform that was crashing.
+    const QString keepOpen =
+        writeMultiPagePdf(m_scratch.filePath(QStringLiteral("purge_on_close_keep.pdf")), 2,
+                          /*withText=*/true);
+    app->openFiles({keepOpen});
+    QApplication::processEvents();
+    QCOMPARE(dv->documentCount(), 2);
+    QVERIFY2(currentMainWindow() == mw, "the second file must open as a tab in the same window");
+
+    // Make the doc under test current again, so the notice/probe flow
+    // below observes it rather than the keep-open tab.
+    dv->setCurrentIndex(0);
+    QApplication::processEvents();
+    QCOMPARE(dv->currentDocument(), doc);
+
     // Textless large doc → notice shows; dismiss it so the doc is recorded
     // in m_largeDocOcrHintDismissed. Let the ~7Hz poll run so the
     // pageHasText probe caches an entry for this doc as well.
@@ -637,13 +674,26 @@ void TestUatRecognizeText::uat_ocr_067_noticeAndProbeCachesPurgedOnClose() {
     QVERIFY2(mw->pageHasTextCacheHasDocForTesting(doc),
              "pageHasText probe must have cached this doc before close");
 
-    // Close the document the way the tab close button does.
+    // Close the document the way the tab close button does. Tab 1 stays
+    // open, so the window survives on every platform (see above) and the
+    // pointers below remain valid.
+    QPointer<MainWindow> windowGuard(mw);
     QVERIFY(QMetaObject::invokeMethod(dv, "onTabCloseRequested", Q_ARG(int, 0)));
     QApplication::processEvents();
-    QCOMPARE(dv->documentCount(), 0);
+
+    // If this ever fails, the window was torn down by the close and every
+    // assertion below would be reading freed memory. Assert it explicitly
+    // rather than crashing three lines later: this is the precondition
+    // the second tab exists to guarantee, and a future edit that drops
+    // back to a single document should fail here, loudly, not SIGSEGV on
+    // a slower machine only.
+    QVERIFY2(windowGuard, "closing one of two tabs must not destroy the window");
+    QCOMPARE(dv->documentCount(), 1);
 
     // Both pointer-keyed caches must have dropped the now-dangling pointer,
     // so a new document reusing the address can't inherit stale state.
+    // `doc` is used only as a map KEY here — never dereferenced — which is
+    // exactly the stale-key reuse this test exists to rule out.
     QVERIFY2(!mw->isLargeDocOcrHintDismissedForTesting(doc),
              "dismissal set must not retain the closed doc pointer");
     QVERIFY2(!mw->pageHasTextCacheHasDocForTesting(doc),

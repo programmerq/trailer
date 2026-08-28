@@ -99,9 +99,12 @@ depend on the corpus.
 
 The latency budgets (B1-B6) are verified by **agent-run local measurement on the
 reference corpus plus a reviewer check** — **never** a CI wall-clock assertion.
-CI on the self-hosted runners is deliberately *not* a timing gate: runner
-wall-time is too variable to yield a stable pass/fail oracle, and runner minutes
-are limited. So:
+CI is deliberately *not* a timing gate: runner wall-time is too variable to
+yield a stable pass/fail oracle. (This held on the old self-hosted runners and
+holds just as much on the GitHub-hosted ones they moved to on 2026-08-05 — a
+shared-tenancy hosted VM is if anything *more* variable, and two offscreen
+tests already fail only under CPU contention; see
+`docs/backlog/2026-08-03-load-sensitive-offscreen-test-races.md`.) So:
 
 - **Agent-measured locally.** When a PR plausibly moves a latency budget, the
   agent measures the affected row on the reference corpus (once a rig + corpus

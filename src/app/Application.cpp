@@ -11,6 +11,7 @@
 #include "platform/ScreenCapturePermission.h"
 #include "ui/MainWindow.h"
 #include "util/CaptureScale.h"
+#include "util/PathKey.h"
 #include "util/TempPath.h"
 #ifdef TRAILER_UX_RECORDER
 #include "uxrecord/UxPlatformCapture.h"
@@ -304,14 +305,14 @@ QSet<QString> Application::openDocumentPaths() const {
             IDocument *doc = nullptr;
             if (ptr->documentAt(i, &doc) != 1 || !doc)
                 continue;
-            const QString path = doc->filePath();
-            if (path.isEmpty())
-                continue; // never-saved document: nothing to match a recent entry against
-            // Mirror RecentFiles' canonicalisation exactly (canonical path,
-            // falling back to the absolute path when the file no longer
-            // resolves) so the two sides compare equal for the same file.
-            const QString canonical = QFileInfo(path).canonicalFilePath();
-            paths.insert(canonical.isEmpty() ? QFileInfo(path).absoluteFilePath() : canonical);
+            // canonicalPathKey is the app's single file-identity rule
+            // (util/PathKey.h); RecentFiles keys entries the same way, so
+            // the two sides compare equal for the same file. An empty key
+            // (never-saved document) has no identity and matches nothing.
+            const QString key = canonicalPathKey(doc->filePath());
+            if (key.isEmpty())
+                continue;
+            paths.insert(key);
         }
     }
     return paths;
@@ -324,6 +325,39 @@ int Application::windowCount() const {
             ++n;
     }
     return n;
+}
+
+MainWindow *Application::windowForOpenPath(const QString &path, int *tabIndex) const {
+    if (tabIndex)
+        *tabIndex = -1;
+    const QString key = canonicalPathKey(path);
+    if (key.isEmpty())
+        return nullptr; // no identity — never matches, not even another empty.
+
+    for (const auto &ptr : m_windows) {
+        if (!ptr)
+            continue;
+        const int total = ptr->documentCount();
+        for (int i = 0; i < total; ++i) {
+            IDocument *doc = nullptr;
+            if (!ptr->documentAt(i, &doc) || !doc)
+                continue;
+            // An untitled document lives at a temp path the user never
+            // chose and which changes the moment they Save As, so it is
+            // not a stable identity and must never be a dedup target.
+            if (doc->isUntitled())
+                continue;
+            const QString openKey = canonicalPathKey(doc->filePath());
+            if (openKey.isEmpty())
+                continue; // pathless document — same rule as above.
+            if (openKey == key) {
+                if (tabIndex)
+                    *tabIndex = i;
+                return ptr.data();
+            }
+        }
+    }
+    return nullptr;
 }
 
 MainWindow *Application::ensureFreshWindow() {
@@ -352,6 +386,48 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
 
     const OpenFilesIn mode = m_settings.openFilesIn();
 
+    // --- Already-open documents are surfaced, never opened twice. ---
+    //
+    // Owner HITL report 2026-08-06 (macOS): picking a file from Spotlight
+    // while Trailer already had that exact file open produced a SECOND
+    // window over the same file — "this feels like I'm looking at two open
+    // files". It is worse than a cosmetic duplicate: two IDocument
+    // instances over one path means two undo logs and two save paths onto
+    // the same bytes, so whichever window saves last silently wins.
+    //
+    // This runs BEFORE any mode routing on purpose. `open_files_in`
+    // (SameWindow / NewTab / NewWindow) answers "where does a NEW document
+    // land", not "may one document exist twice" — so all three modes
+    // surface an already-open file rather than each re-deciding it.
+    //
+    // Transient imports (markUntitled: clipboard paste, screenshot) opt
+    // out entirely. Their backing file is a throwaway temp the user never
+    // chose, so "already open" is meaningless for them and pooling by path
+    // could only ever merge two distinct captures.
+    const bool dedupOpenDocuments = !markUntitled;
+
+    // Which of `paths` will actually produce a NEW document. Computed up
+    // front because the image-batch and empty-window-reuse decisions below
+    // must be made against the real work: without this, asking to open two
+    // already-open images would spawn (or consume) a batch window that
+    // then gets nothing put in it. In-batch repeats collapse here too, so
+    // `trailer a.pdf a.pdf` counts a.pdf once.
+    QStringList freshPaths;
+    if (dedupOpenDocuments) {
+        QSet<QString> planned;
+        for (const QString &path : paths) {
+            const QString key = canonicalPathKey(path);
+            if (!key.isEmpty()) {
+                if (planned.contains(key) || windowForOpenPath(path))
+                    continue;
+                planned.insert(key);
+            }
+            freshPaths.append(path);
+        }
+    } else {
+        freshPaths = paths;
+    }
+
     // Resolve the first-existing window once — used by SameWindow and
     // NewTab modes. For NewWindow we don't reuse anything; every file
     // gets a fresh window so closing it is "close this file" without
@@ -373,8 +449,14 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
     // user opens a batch of images, route them all into one fresh
     // window so they share a tab strip rather than spawning N
     // separate frames.
-    auto isImageBatch = [&paths]() -> bool {
-        if (paths.size() < 2)
+    //
+    // Reads `freshPaths`, not `paths`: an already-open image is surfaced
+    // in its existing window and contributes nothing to a batch, so
+    // "opened together" must be counted over what is genuinely being
+    // opened. Opening one new image alongside one already-open image is a
+    // single-file open, not a two-image batch.
+    auto isImageBatch = [&freshPaths]() -> bool {
+        if (freshPaths.size() < 2)
             return false;
         static const QSet<QString> imageExts = {
             QStringLiteral("png"),  QStringLiteral("jpg"), QStringLiteral("jpeg"),
@@ -382,7 +464,7 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
             QStringLiteral("webp"), QStringLiteral("gif"), QStringLiteral("heic"),
             QStringLiteral("heif"),
         };
-        for (const QString &p : paths) {
+        for (const QString &p : freshPaths) {
             const QString ext = QFileInfo(p).suffix().toLower();
             if (!imageExts.contains(ext))
                 return false;
@@ -439,6 +521,31 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
     MainWindow *batchTarget = batchedImages ? takeReuseOrFresh() : nullptr;
 
     for (const QString &path : paths) {
+        // Already open? Surface it and create nothing. This is checked
+        // per path (not only in the up-front pass) so a path repeated
+        // within one batch resolves against the document the earlier
+        // iteration just opened, keeping the focus rule below true for
+        // every entry.
+        //
+        // Note where this sits: BEFORE m_registry.open() — no second
+        // IDocument is ever constructed — and before any target is
+        // chosen, so a surfaced file cannot consume the CF-5 empty-window
+        // reuse candidate. That candidate is reserved for a document that
+        // is genuinely being opened; spending it here would orphan the
+        // empty launch window the CF-5 block exists to save.
+        if (dedupOpenDocuments) {
+            int tabIndex = -1;
+            if (MainWindow *existing = windowForOpenPath(path, &tabIndex)) {
+                surfaceDocument(existing, tabIndex);
+                // Recorded in Recent exactly as an ordinary open would:
+                // the user did ask for this file, so it belongs at the top
+                // of the list. (Behaviour here is unchanged from before
+                // this fix, which also re-added the path.)
+                m_recent.add(path);
+                continue;
+            }
+        }
+
         auto doc = m_registry.open(path);
 
         // Defensive: a failed open (null document) must not consume the
@@ -542,6 +649,27 @@ void Application::refreshThemedIconsAllWindows() {
     for (auto &ptr : m_windows) {
         if (ptr)
             ptr->refreshThemedIcons();
+    }
+}
+
+void Application::surfaceDocument(MainWindow *window, int tabIndex) {
+    if (!window)
+        return;
+    window->showDocumentAt(tabIndex);
+    if (window->isMinimized()) {
+        // raise() on a minimized window does nothing visible, so restore
+        // it first. showNormal() is correct rather than show(): the window
+        // is already shown, just iconified.
+        window->showNormal();
+    }
+    window->raise();
+    window->activateWindow();
+}
+
+void Application::captureViewStateAllWindows() {
+    for (auto &ptr : m_windows) {
+        if (ptr)
+            ptr->captureViewStateForRestore();
     }
 }
 
@@ -691,6 +819,9 @@ bool Application::requestQuit(QuitMode mode) {
             clearRecoverySidecarsFor(session);
         }
         m_keepStructuralSnapshotCache.clear();
+        // Remember where the user was in every still-open document. ⌥⌘Q
+        // never closes the windows, so nothing else writes this.
+        captureViewStateAllWindows();
         if (m_performQuit)
             m_performQuit();
         return true;
@@ -704,6 +835,10 @@ bool Application::requestQuit(QuitMode mode) {
     // Every document resolved (saved or discarded). Drop any stale kept-
     // windows draft so a later launch doesn't resurrect a quit we cleaned.
     m_draftStore.clear();
+    // Remember where the user was in every still-open document. ⌘Q leaves
+    // the windows standing (Qt sends no closeEvent on quit), so this is the
+    // only chance to record the page/scroll/zoom they were reading at.
+    captureViewStateAllWindows();
     if (m_performQuit)
         m_performQuit();
     return true;
@@ -945,6 +1080,15 @@ bool Application::restoreKeptWindows() {
         MainWindow *win = nullptr;
         for (const SessionDocDescriptor &dd : wd.docs) {
             std::unique_ptr<IDocument> doc;
+            // Deferred until AFTER addDocument below. RecentFiles::add()
+            // REPLACES an existing entry with a freshly default-constructed
+            // one (currentPage = -1, no zoom, no geometry), and MainWindow
+            // reads that entry inside addDocument to restore the document's
+            // view state — so adding first threw away the very page the
+            // ⌥⌘Q quit had just recorded, and the restored window landed on
+            // page 1. Application::openFiles has always ordered it this way
+            // (addDocument, then m_recent.add); this path had it backwards.
+            QString recentPath;
             if (dd.kind == SessionDocDescriptor::Kind::Draft) {
                 QImage img;
                 if (!img.loadFromData(dd.bytes, dd.format.toLatin1().constData()))
@@ -986,7 +1130,7 @@ bool Application::restoreKeptWindows() {
                     if (!pdf || !pdf->recoverFrom(blobFile.path()))
                         continue; // could not rebuild the edited graph → drop
                     doc = std::move(opened);
-                    m_recent.add(dd.originalPath);
+                    recentPath = dd.originalPath;
                 } else {
                     // The original was MOVED or DELETED since ⌥⌘Q. The blob is
                     // the COMPLETE edited PDF and does not need the original to
@@ -1011,18 +1155,22 @@ bool Application::restoreKeptWindows() {
                 doc = m_registry.open(dd.path);
                 if (auto *pdf = dynamic_cast<PdfDocument *>(doc.get()))
                     pdf->restoreAnnotationsFromDraft(dd.annotations, /*dirty=*/true);
-                m_recent.add(dd.path);
+                recentPath = dd.path;
             } else {
                 if (dd.path.isEmpty() || !QFileInfo::exists(dd.path))
                     continue;
                 doc = m_registry.open(dd.path);
-                m_recent.add(dd.path);
+                recentPath = dd.path;
             }
             if (!doc)
                 continue;
             if (!win)
                 win = ensureFreshWindow();
             win->addDocument(std::move(doc));
+            // Now that the window has read (and applied) the saved view
+            // state, refresh the recent entry — see `recentPath` above.
+            if (!recentPath.isEmpty())
+                m_recent.add(recentPath);
             anyOpened = true;
         }
     }
@@ -1074,6 +1222,15 @@ void Application::onAboutToQuit() {
     //     list is empty too — which is correct, since the user
     //     manually closed every window before the implicit quit.
     //   - Explicit menu Quit on Linux/Win: same as macOS Cmd+Q.
+    //
+    // Same reasoning applies to the per-DOCUMENT view state (which page the
+    // user was on, scroll, zoom, chrome): the windows are still alive here,
+    // and no closeEvent will ever run for them, so capture it now. Belt and
+    // braces with requestQuit's own call — this one also covers the quits
+    // that never route through requestQuit (OS logout/restart, a bare
+    // QCoreApplication::quit()). See captureViewStateAllWindows.
+    captureViewStateAllWindows();
+
     QStringList paths;
     for (const auto &ptr : m_windows) {
         if (!ptr)

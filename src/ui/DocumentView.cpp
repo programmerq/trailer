@@ -17,6 +17,10 @@ DocumentView::DocumentView(QWidget *parent) : QTabWidget(parent) {
         if (QWidget *w = currentWidget()) {
             w->setFocus();
         }
+        // Focus still follows the tab during a close; only the
+        // announcement is deferred (see m_suppressCurrentDocumentChanged).
+        if (m_suppressCurrentDocumentChanged)
+            return;
         emit currentDocumentChanged(currentDocument());
     });
 }
@@ -76,7 +80,11 @@ void DocumentView::onTabCloseRequested(int index) {
     // append to m_documents, so no re-entrant close can shift or
     // invalidate this index while the modal is up — index stays valid.
     QWidget *view = widget(index);
+    // Hold back the currentChanged-driven announcement until m_documents
+    // is consistent again — see the emit after the erase below.
+    m_suppressCurrentDocumentChanged = true;
     removeTab(index);
+    m_suppressCurrentDocumentChanged = false;
     // Emit the about-to-be-removed signal before erasing the
     // unique_ptr so listeners can flush state keyed by the doc
     // pointer (cancel any pending MlScheduler tasks, drop cache
@@ -86,6 +94,29 @@ void DocumentView::onTabCloseRequested(int index) {
         view->deleteLater();
     }
     m_documents.erase(m_documents.begin() + index);
+
+    // Announce the current document now that m_documents is consistent.
+    //
+    // removeTab() above fires QTabWidget::currentChanged, whose handler
+    // would emit currentDocumentChanged(currentDocument()) — but that runs
+    // BEFORE this erase, while m_documents still holds the closed document.
+    // currentDocument() maps currentIndex() into m_documents, so at that
+    // moment the mapping is off by one for every tab after `index`, and can
+    // hand listeners the very document being closed. Nothing re-announced
+    // afterwards, so listeners that follow the current document were left
+    // synced to a stale vector: the sidebar kept showing — and holding a
+    // raw pointer to — the closed document. That is how closing one tab of
+    // two produced a dangling-pointer SIGSEGV, and, once the pointer was
+    // guarded, a blank sidebar instead.
+    //
+    // So the emission is SUPPRESSED across removeTab() and issued exactly
+    // once here. Once, not twice, is load-bearing:
+    // MainWindow::onCurrentDocumentChanged retargets the external-change
+    // monitor and re-runs onExternalFileChanged(), which can reload the
+    // file or raise a conflict banner — firing it a second time, on a
+    // stale mapping, is not a harmless duplicate.
+    emit currentDocumentChanged(currentDocument());
+
     if (m_documents.empty()) {
         emit allTabsClosed();
     }

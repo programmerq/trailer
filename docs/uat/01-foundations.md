@@ -327,6 +327,76 @@ path above.
   should pick one — until we do, either outcome is acceptable, but the
   app must not crash).
 
+### UAT-FND-094 — Quitting remembers the page you were on in each document
+
+Implements DESIGN §6.13's PDF pane promise — *"reopen at last viewed
+page"* — across an application **quit**, not just a window close.
+
+**Preconditions:** Two multi-page PDFs of at least 12 pages each.
+`session.restore_previous_windows` at its default (`true`).
+**Steps:**
+1. Open both PDFs (one window each).
+2. In the first, navigate to page 8. In the second, navigate to page 3.
+3. Quit with `File > Quit` (`Cmd+Q` / `Ctrl+Q`) — do **not** close the
+   windows first.
+4. Relaunch the app.
+**Expected:**
+- The first document reopens showing **page 8**; the second shows
+  **page 3**. Neither returns to page 1.
+- The saved page is per file: each document restores its own page, not
+  the last-quit document's page.
+- Repeating steps 1-4 with `Quit and Keep Windows`
+  (`Opt+Cmd+Q`; **Platform: macOS** accelerator, the menu item exists on
+  every platform per G4) restores the same pages.
+- Reopening one of the files on its own via `File > Open Recent` — no
+  session restore involved — also lands on its saved page.
+
+**Regression note (2026-08-03 dogfooding report):** every document came
+back on page 1 after `Cmd+Q`. Per-document view state was captured **only**
+in `MainWindow::closeEvent`, and an application quit never delivers
+`closeEvent` to its still-open windows (`Application::onAboutToQuit`
+documents exactly that for macOS `Cmd+Q`), so nothing was ever written.
+Additionally `Application::restoreKeptWindows()` called
+`RecentFiles::add()` — which replaces an entry with a default-constructed
+one — *before* handing the document to its window, wiping any saved page
+on the `Opt+Cmd+Q` path. Harness slots:
+`uat_fnd_094_normalQuitCapturesPageSoReopenLandsThere`,
+`uat_fnd_094_keepWindowsQuitRestoresPage` in
+[`tests/uat/test_uat_foundations.cpp`](../../tests/uat/test_uat_foundations.cpp).
+
+### UAT-FND-095 — The restored page STAYS put once later layout runs
+
+The other half of UAT-FND-094. Landing on the saved page is not enough if a
+**later** layout pass then moves it: the reported symptom was the document
+flashing its saved page and snapping away, which a check that samples the
+page once, immediately, cannot see at all.
+
+**Preconditions:** A long PDF (the report was against a multi-hundred-page
+document, where a stale position is unmistakable).
+**Steps:**
+1. Read to a deep page — say page 212 of 300.
+2. Quit (`Cmd+Q`), then reopen the file.
+3. Once it has come back on page 212, resize the window.
+**Expected:**
+- The document is on page 212 after the reopen, and **stays** there — over
+  time, and across the later relayout in step 3, not merely on the first
+  frame.
+- The same holds for `Quit and Keep Windows` (`Opt+Cmd+Q`) and with several
+  windows open at once: each window gets its own saved page back, none
+  inherits a sibling's, none snaps to page 1.
+
+Harness slots: `uat_fnd_095_restoredPageStaysPutAfterLaterLayout`,
+`uat_fnd_095_restoredPageStaysPutAcrossQuitModesAndWindows` in
+[`tests/uat/test_uat_foundations.cpp`](../../tests/uat/test_uat_foundations.cpp).
+
+**Regression note (2026-08-05, gating Linux nightly lane).** The first slot
+failed on Linux — restored to page 212, then the step-3 resize carried it to
+page 223. The restore itself was correct; step 3 was reaching a separate,
+pre-existing defect in the viewer (a fit-mode re-layout keeps the scrollbar's
+absolute pixel value while rescaling every page). Written up and fixed under
+**UAT-VWR-111** in [`02-viewer.md`](02-viewer.md); this case now passes
+because a resize no longer moves the page for anyone, restored or not.
+
 ---
 
 ## Recent files
@@ -507,6 +577,107 @@ with one window and one open document.
   `"new_tab"` — [src/app/Application.cpp](../../src/app/Application.cpp)
   treats both the same). The case exists so we catch regressions once
   true replace-in-place lands. Cross-ref TODO.md.
+
+---
+
+## Opening a file that is already open
+
+**Context.** Owner HITL report, 2026-08-06 (macOS): typing a PDF's name
+into Spotlight while Trailer already had that exact file open, and picking
+the file, produced a **second window showing the same file** — "this feels
+like I'm looking at two open files … opening it twice feels like *copying*
+the document." Beyond the confusion it is a correctness hazard: two
+`IDocument` instances over one path means two undo logs and two save paths
+onto the same bytes, so whichever window saves last silently wins.
+
+The rule these cases pin: **a file that is already open is surfaced, never
+opened again.** Identity is the canonical on-disk path
+([`src/util/PathKey.h`](../../src/util/PathKey.h)), so a symlink and its
+target are one document. The rule is applied *before* `open_files_in`
+routing — that preference decides where a **new** document lands, not
+whether one document may exist twice — so it holds in all three modes.
+
+### UAT-FND-053 — Re-opening an open file surfaces its window
+
+**Preconditions:** `general.open_files_in = "new_window"`. One window
+open showing `report.pdf`.
+**Steps:**
+1. Open `report.pdf` again — from Spotlight, Finder, `File > Open…`,
+   `File > Open Recent`, or the command line.
+**Expected:**
+- **No** new window and **no** new tab appear; the window count is
+  unchanged.
+- The window already showing `report.pdf` comes to the front and becomes
+  the active window (un-minimizing first if it was minimized).
+- `report.pdf` is that window's current tab.
+- `report.pdf` moves to the top of `File > Open Recent`, exactly as an
+  ordinary open would.
+
+G2 evidence: `docs/uat/images/2026-08-06-open-already-open-before.png` /
+`docs/uat/images/2026-08-06-open-already-open-after.png` — the same file
+opened, then asked for a second time, captured by the same harness slot
+(`uat_fnd_053_090_openAlreadyOpenEvidence`) built against the tree before
+and after the fix. Before: two windows, both titled
+`Electrical service manual.pdf`. After: one.
+
+### UAT-FND-054 — Same rule in `new_tab` mode
+
+**Preconditions:** `general.open_files_in = "new_tab"`. One window open
+showing `report.pdf`.
+**Steps:**
+1. Open `report.pdf` again.
+**Expected:**
+- No second tab for `report.pdf` is created; the tab count is unchanged.
+- The existing `report.pdf` tab becomes current.
+
+### UAT-FND-055 — Same rule in `same_window` mode
+
+**Preconditions:** `general.open_files_in = "same_window"`. One window
+open showing `report.pdf`.
+**Steps:**
+1. Open `report.pdf` again.
+**Expected:**
+- No new document is created; the window and tab counts are unchanged.
+- The existing `report.pdf` is current.
+
+### UAT-FND-056 — A symlink and its target are one document
+
+**Preconditions:** `report.pdf` is open. `link.pdf` is a symlink pointing
+at `report.pdf`. (Platform: macOS / Linux — creating symlinks on Windows
+needs developer mode.)
+**Steps:**
+1. Open `link.pdf`.
+**Expected:**
+- No second document opens. The window already showing `report.pdf` is
+  surfaced.
+
+### UAT-FND-057 — Mixed batch: new files open, the open one is surfaced
+
+**Preconditions:** `general.open_files_in = "new_window"`. `a.pdf` is
+open. `b.pdf` and `c.pdf` are not.
+**Steps:**
+1. Open `b.pdf`, `c.pdf`, and `a.pdf` together (multi-select in the Open
+   panel, one drag-and-drop, or one command line).
+**Expected:**
+- Two new windows appear (for `b.pdf` and `c.pdf`), not three.
+- `a.pdf` is surfaced in the window that already held it; it is not
+  opened a second time.
+- Exactly one window/tab exists per distinct file.
+- **Focus:** the batch is processed in order and the **last** entry
+  decides what ends up in front — here `a.pdf`, so its existing window is
+  frontmost. (Same rule as an all-new batch, where the last window shown
+  is the frontmost one.)
+
+### UAT-FND-058 — Transient imports are never merged
+
+**Preconditions:** An image is on the clipboard.
+**Steps:**
+1. `File > New from Clipboard`.
+2. `File > New from Clipboard` again, with the same image still on the
+   clipboard.
+**Expected:**
+- Two separate untitled documents open. Nothing merges them, even though
+  neither has a location the user chose and their pixels are identical.
 
 ---
 

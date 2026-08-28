@@ -142,6 +142,7 @@ class TestUatThumbnailSidebar : public QObject {
     void init();
     void uat_thumb_010_scaleToWidthAndAspectRows();
     void uat_thumb_020_imageDocAspectRow();
+    void uat_thumb_030_closingOneOfTwoTabsDoesNotDangleTheSidebar();
 
   private:
     // Drive one sidebar width: resize the dock, settle the debounce, capture
@@ -454,6 +455,116 @@ void TestUatThumbnailSidebar::uat_thumb_010_scaleToWidthAndAspectRows() {
 // pixel aspect (a wide image → short row), mirroring the PDF assertions and
 // exercising the new ImageDocument::pageSizeHint. Kept lightweight: one wide
 // PNG, one width, the same round(availW/aspect)+padding height oracle.
+// UAT-THUMB-030 — closing ONE tab of two must not leave the sidebar (or
+// its ThumbnailModel) pointing at the destroyed document.
+//
+// Sidebar::m_doc and ThumbnailModel::m_doc are raw IDocument* — IDocument
+// is not a QObject, so QPointer is unavailable and docs/CONVENTIONS.md §13
+// requires the holder to flush on DocumentView::documentAboutToBeRemoved.
+// Neither was flushed, so closing a tab left both dangling and the next
+// posted refresh/paint dereferenced freed memory:
+//
+//   trailer::Sidebar::refreshAnnotations()      <- via a posted event
+//   trailer::ThumbnailModel::rowCount() const   <- via QListView::paintEvent
+//
+// Both null-check m_doc, which does not help: the pointer is non-null and
+// freed. This is NOT platform-gated (nothing in the path is #ifdef'd) —
+// whether it faults depends only on what the allocator does with the freed
+// page, which is why a fast machine can silently read garbage and pass.
+//
+// Pre-fix this slot SIGSEGVs; post-fix it passes, including under Guard
+// Malloc (DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib), which forces
+// the freed page to be unmapped and so turns the latent read into a
+// deterministic fault on any machine.
+void TestUatThumbnailSidebar::uat_thumb_030_closingOneOfTwoTabsDoesNotDangleTheSidebar() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    // Both documents must live in ONE window, so the close exercises the
+    // in-window tab teardown rather than closing the window itself.
+    const OpenFilesIn prior = app->settings().openFilesIn();
+    const auto restore = qScopeGuard([&] { app->settings().setOpenFilesIn(prior); });
+    app->settings().setOpenFilesIn(OpenFilesIn::NewTab);
+
+    const QString first =
+        writeMixedPdf(m_scratch.filePath(QStringLiteral("uat_thumb_030_first.pdf")), 6);
+    const QString second =
+        writeMixedPdf(m_scratch.filePath(QStringLiteral("uat_thumb_030_second.pdf")), 4);
+
+    app->openFiles({first});
+    QApplication::processEvents();
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    mw->resize(1100, 800);
+    mw->show();
+    (void)QTest::qWaitForWindowExposed(mw);
+    QApplication::processEvents();
+
+    auto *dv = mw->findChild<DocumentView *>();
+    QVERIFY(dv);
+    auto *sidebar = mw->findChild<Sidebar *>();
+    QVERIFY(sidebar);
+
+    app->openFiles({second});
+    QApplication::processEvents();
+    QCOMPARE(dv->documentCount(), 2);
+    QVERIFY2(currentMainWindow() == mw, "the second file must open as a tab in the same window");
+
+    // Show the first document's thumbnails, so the sidebar and its model
+    // are both actively pointing at the document we are about to close.
+    dv->setCurrentIndex(0);
+    QApplication::processEvents();
+    IDocument *closing = dv->currentDocument();
+    QVERIFY(closing);
+
+    // Close it the way the tab close button does. The window survives
+    // (one tab remains), so anything that still holds `closing` is a leak
+    // of a freed pointer, not an expected teardown.
+    QVERIFY(QMetaObject::invokeMethod(dv, "onTabCloseRequested", Q_ARG(int, 0)));
+    QApplication::processEvents();
+    QCOMPARE(dv->documentCount(), 1);
+
+    // Pump hard: the crash arrived via a POSTED event and a paint, neither
+    // of which necessarily runs on the first turn.
+    for (int i = 0; i < 8; ++i) {
+        sidebar->update();
+        QApplication::processEvents();
+    }
+    QTest::qWait(50);
+    QApplication::processEvents();
+
+    // Surviving the pump is the assertion (the bug was a hard SIGSEGV);
+    // this confirms the window is still usable afterwards rather than
+    // merely un-crashed.
+    QCOMPARE(dv->documentCount(), 1);
+    QVERIFY(dv->currentDocument());
+    QVERIFY2(dv->currentDocument() != closing,
+             "the surviving tab must not still be showing the closed document");
+
+    // The flush clears the sidebar to its placeholder, so this asserts the
+    // OTHER half: onCurrentDocumentChanged must repopulate it with the
+    // surviving document. Without this the fix would trade a crash for a
+    // permanently blank sidebar after every tab close — a worse bug,
+    // because it would look intentional.
+    QListView *view = nullptr;
+    for (auto *lv : sidebar->findChildren<QListView *>()) {
+        if (qobject_cast<ThumbnailModel *>(lv->model())) {
+            view = lv;
+            break;
+        }
+    }
+    QVERIFY2(view, "Sidebar should host a QListView backed by ThumbnailModel");
+    QCOMPARE(view->model()->rowCount(), 4); // the surviving 4-page document
+
+    // G2 evidence: the sidebar after closing one of two tabs. There is no
+    // meaningful "before" image to pair this with — on unfixed code this
+    // point is never reached, because the process has already SIGSEGV'd
+    // (see the negative control in the PR body). A crash is not a state
+    // that can be screenshotted, so the crash report stands in for it.
+    grabTo(sidebar, QStringLiteral("thumb030-sidebar-after-closing-one-of-two-tabs.png"));
+}
+
 void TestUatThumbnailSidebar::uat_thumb_020_imageDocAspectRow() {
     QVERIFY(m_scratch.isValid());
     // Wide 1600x400 image → aspect 4.0 (much wider than tall).

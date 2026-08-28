@@ -27,6 +27,8 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QPdfWriter>
+#include <QElapsedTimer>
+#include <QPointer>
 #include <QPageSize>
 #include <QImage>
 #include <QPainter>
@@ -180,6 +182,35 @@ void requestCloseTab(DocumentView *dv, int index) {
     QApplication::processEvents();
 }
 
+// What survived a tab close. On macOS, closing the LAST tab also closes
+// the WINDOW — MainWindow::onAllTabsClosed()'s Q_OS_MACOS branch calls
+// close() unconditionally, because macOS has no persistent empty window
+// (DESIGN §2.4.2). MainWindow is WA_DeleteOnClose, so the resulting
+// deleteLater() is flushed by the very QApplication::processEvents()
+// inside requestCloseTab: on return, every raw pointer into that window
+// is dangling. Linux/Windows keep the window and take the
+// updateEmptyState() branch instead.
+//
+// Reading those pointers anyway was a real, deterministic macOS SIGSEGV
+// (SEGV_ACCERR at 0x28 — a member read through the freed-and-zeroed
+// window), and it is invisible under the default allocator for the
+// sibling cases, which is why several of them survived undetected until
+// a Guard Malloc run (DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib)
+// faulted on the freed page itself.
+//
+// So: close through this helper and consult the returned guards, never
+// the pointers you passed in.
+struct ClosedTab {
+    QPointer<MainWindow> window; // null ⇒ the window was torn down (macOS)
+    QPointer<DocumentView> view; // null ⇒ ditto; it is a child of the window
+};
+
+[[nodiscard]] ClosedTab closeTabAndTrack(MainWindow *mw, DocumentView *dv, int index) {
+    ClosedTab result{mw, dv};
+    requestCloseTab(dv, index);
+    return result;
+}
+
 // Directory that persists past the test run (unlike QTemporaryDir) so
 // the G2 evidence PNGs can be collected. Lives under the CTest working
 // directory (the build tree).
@@ -307,6 +338,17 @@ class TestUatFoundations : public QObject {
     void uat_fnd_093_pageModeMenuItemsKeepFixedOrder();
     void uat_fnd_050_fileOpenEventOpensWindow();
     void uat_fnd_070_copyPageAsImageToClipboard();
+    // UAT-FND-094 — quitting the application captures per-document view
+    // state (the page you were on), so relaunch picks up where you left
+    // off. Regression guard for the 2026-08-03 dogfooding report: ⌘Q on
+    // macOS never delivers closeEvent to the open windows, and closeEvent
+    // was the ONLY site that captured RecentEntry::currentPage — so every
+    // document came back on page 1. One slot per quit command.
+    void uat_fnd_094_normalQuitCapturesPageSoReopenLandsThere();
+    void uat_fnd_094_keepWindowsQuitRestoresPage();
+    void uat_fnd_094_quitPageRestoreEvidence();
+    void uat_fnd_095_restoredPageStaysPutAfterLaterLayout();
+    void uat_fnd_095_restoredPageStaysPutAcrossQuitModesAndWindows();
 
   private:
     QTemporaryDir m_scratch;
@@ -529,24 +571,36 @@ void TestUatFoundations::uat_fnd_011_macosNoWindowMenuProvidesFileActions() {
     QMenuBar* bar = app->noWindowMenuBar();
     QVERIFY2(bar, "Application-level macOS menu bar should exist");
 
+    // The acquire group is a "Screenshot" submenu plus Scanner / Camera
+    // items (Application::addAcquireItems) — there has never been a single
+    // "&Acquire…" entry. This slot asserted one because it was written
+    // before macOS CI existed to run it; assert the items the menu really
+    // carries, so the slot fails when the IA changes rather than because
+    // it never matched.
     for (const QString& item : {
-             QStringLiteral("&New"),
              QStringLiteral("&Open…"),
              QStringLiteral("New from &Clipboard"),
-             QStringLiteral("&Acquire…"),
+             QStringLiteral("Screenshot"),
+             QStringLiteral("Scanner"),
+             QStringLiteral("Camera"),
          }) {
         QAction* a = findMenuAction(bar, QStringLiteral("&File"), item);
         QVERIFY2(a, qPrintable(QStringLiteral("Missing File menu item: ") + item));
     }
 
-    QAction* newAction =
-        findMenuAction(bar, QStringLiteral("&File"), QStringLiteral("&New"));
-    QVERIFY(newAction);
-    const int before = static_cast<int>(app->windows().size());
-    newAction->trigger();
-    QApplication::processEvents();
-    QVERIFY2(app->windows().size() >= before + 1,
-             "File > New should create a window in no-window mode");
+    // There is deliberately NO standalone "New" (blank-window) item: the
+    // 2026-07-18 File-menu IA change removed it everywhere and rebound ⌘N
+    // to "New from Clipboard". This slot predates that change by two
+    // months and asserted the old IA until macOS CI first ran it
+    // (2026-07-26); assert the CURRENT contract instead, mirroring
+    // test_uat_file_menu_ia.cpp's uat_fmia_003 for the per-window menu.
+    QVERIFY2(!findMenuAction(bar, QStringLiteral("&File"), QStringLiteral("&New")),
+             "the no-window File menu must not carry a standalone New item");
+
+    QAction *clipboardAction =
+        findMenuAction(bar, QStringLiteral("&File"), QStringLiteral("New from &Clipboard"));
+    QVERIFY(clipboardAction);
+    QCOMPARE(clipboardAction->shortcut(), QKeySequence(QKeySequence::New));
 #endif
 }
 
@@ -945,15 +999,29 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabDiscardDropsDoc() {
     // sink that outlives it rather than reading the freed pointer.
     auto saveSink = std::make_shared<int>(0);
     doc->observeSavesInto(saveSink);
-    requestCloseTab(dv, 0);
 
-    // Discard: the doc is gone.
-    QCOMPARE(dv->documentCount(), 0);
-    QCOMPARE(mw->documentCount(), 0);
+    // See closeTabAndTrack(): closing the last tab tears the window down on
+    // macOS, so `mw`/`dv` are dangling from here on. Use the guards.
+    const ClosedTab after = closeTabAndTrack(mw, dv, 0);
+
+    // Sink outlives the FakeDoc, so this is safe on every platform.
     QCOMPARE(*saveSink, 0); // Discard never saves.
 
-    // Evidence: empty-state after Discard.
-    grabTo(mw, QStringLiteral("fnd014_empty_state_after_discard.png"));
+    if (after.window) {
+        // Linux / Windows: the window persists and shows its empty state.
+        QVERIFY(after.view);
+        QCOMPARE(after.view->documentCount(), 0);
+        QCOMPARE(after.window->documentCount(), 0);
+
+        // Evidence: empty-state after Discard.
+        grabTo(after.window, QStringLiteral("fnd014_empty_state_after_discard.png"));
+    } else {
+        // macOS: the absence of a window IS the empty state (G5 — dock icon
+        // + menu bar only), so there is no widget left to grab. The window
+        // being gone is itself the assertion: it cannot have gone while
+        // still holding the discarded document.
+        QVERIFY2(!after.view, "the DocumentView must not outlive its MainWindow");
+    }
 
     // Original file must NOT have been rewritten by a discard.
     QFile check(file);
@@ -961,7 +1029,10 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabDiscardDropsDoc() {
     QCOMPARE(check.readAll(), QByteArray("ORIGINAL"));
 
     // Reset the forced-response seam so it can't leak into later slots.
-    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    // On macOS the window is already destroyed (above) and the seam is
+    // per-window, so there is nothing left to leak — and nothing to reset.
+    if (after.window)
+        after.window->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
 }
 
 // UAT-FND-014 — Save on a titled dirty doc writes the file and closes.
@@ -990,10 +1061,17 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabSaveTitledWritesFile() {
     // a sink that outlives it rather than reading the freed pointer.
     auto saveSink = std::make_shared<int>(0);
     doc->observeSavesInto(saveSink);
-    requestCloseTab(dv, 0);
+    const ClosedTab after = closeTabAndTrack(mw, dv, 0);
 
-    // Save succeeded → the tab closed.
-    QCOMPARE(dv->documentCount(), 0);
+    // Save succeeded → the tab closed. On macOS the whole window went with
+    // it (see closeTabAndTrack), which is the same observation.
+    if (after.view)
+        QCOMPARE(after.view->documentCount(), 0);
+    else
+        // macOS: the window went with the last tab. Assert the invariant
+        // that makes that equivalent, so this branch is never silently
+        // assertion-free.
+        QVERIFY2(!after.window, "the DocumentView must not outlive its MainWindow");
     QCOMPARE(*saveSink, 1);
 
     // File on disk carries the new payload.
@@ -1002,7 +1080,8 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabSaveTitledWritesFile() {
     QCOMPARE(check.readAll(), QByteArray("REWRITTEN"));
 
     // Reset the forced-response seam so it can't leak into later slots.
-    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    if (after.window)
+        after.window->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
 }
 
 // UAT-FND-014 — Save on an UNTITLED dirty doc routes through the Save-As
@@ -1031,10 +1110,16 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabSaveUntitledRoutesThroughSaveA
     // be a use-after-free).
     auto saveSink = std::make_shared<int>(0);
     doc->observeSavesInto(saveSink);
-    requestCloseTab(dv, 0);
+    const ClosedTab after = closeTabAndTrack(mw, dv, 0);
 
-    // Save-As routed and wrote → the tab closed.
-    QCOMPARE(dv->documentCount(), 0);
+    // Save-As routed and wrote → the tab closed (on macOS, with the window).
+    if (after.view)
+        QCOMPARE(after.view->documentCount(), 0);
+    else
+        // macOS: the window went with the last tab. Assert the invariant
+        // that makes that equivalent, so this branch is never silently
+        // assertion-free.
+        QVERIFY2(!after.window, "the DocumentView must not outlive its MainWindow");
     QCOMPARE(*saveSink, 1);
     QVERIFY2(QFileInfo::exists(target),
              "Untitled Save must route through Save-As and write the chosen path");
@@ -1042,9 +1127,11 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabSaveUntitledRoutesThroughSaveA
     QVERIFY(check.open(QIODevice::ReadOnly));
     QCOMPARE(check.readAll(), QByteArray("UNTITLED-PAYLOAD"));
 
-    mw->setSaveAsPathForTesting(QString());
-    // Reset the forced-response seam so it can't leak into later slots.
-    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    // Reset the forced-response seams so they can't leak into later slots.
+    if (after.window) {
+        after.window->setSaveAsPathForTesting(QString());
+        after.window->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    }
 }
 
 // UAT-FND-014 (path c) — closing a NON-last (middle) tab respects the
@@ -1108,13 +1195,20 @@ void TestUatFoundations::uat_fnd_014_closeCleanTabNeverPrompts() {
     // sink that outlives it rather than reading the freed pointer.
     auto saveSink = std::make_shared<int>(0);
     doc->observeSavesInto(saveSink);
-    requestCloseTab(dv, 0);
+    const ClosedTab after = closeTabAndTrack(mw, dv, 0);
 
-    QCOMPARE(dv->documentCount(), 0);
+    if (after.view)
+        QCOMPARE(after.view->documentCount(), 0);
+    else
+        // macOS: the window went with the last tab. Assert the invariant
+        // that makes that equivalent, so this branch is never silently
+        // assertion-free.
+        QVERIFY2(!after.window, "the DocumentView must not outlive its MainWindow");
     QCOMPARE(*saveSink, 0); // A clean close never saves.
 
     // Reset the forced-response seam so it can't leak into later slots.
-    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    if (after.window)
+        after.window->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
 }
 
 // UAT-FND-014 — an UNTITLED document (isDirty()==false but isUntitled()
@@ -1171,15 +1265,23 @@ void TestUatFoundations::uat_fnd_014_closeUntitledTabDiscardDropsDoc() {
     QVERIFY(doc->isUntitled());
 
     mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
-    requestCloseTab(dv, 0);
+    const ClosedTab after = closeTabAndTrack(mw, dv, 0);
     // `doc` is destroyed by the close — do not touch it past this point.
+    // Nor `mw`/`dv`: on macOS the window went too (see closeTabAndTrack).
 
-    QCOMPARE(dv->documentCount(), 0);
+    if (after.view)
+        QCOMPARE(after.view->documentCount(), 0);
+    else
+        // macOS: the window went with the last tab. Assert the invariant
+        // that makes that equivalent, so this branch is never silently
+        // assertion-free.
+        QVERIFY2(!after.window, "the DocumentView must not outlive its MainWindow");
     // Discard must not have written anything to the temp path.
     QVERIFY2(!QFileInfo::exists(tempPath),
              "Discard must not write the untitled doc's temp file");
 
-    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    if (after.window)
+        after.window->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
 }
 
 // UAT-FND-014 — Save on an untitled doc routes through Save-As even
@@ -1207,7 +1309,7 @@ void TestUatFoundations::uat_fnd_014_closeUntitledTabSaveRoutesThroughSaveAs() {
 
     mw->setSaveAsPathForTesting(chosen);
     mw->setCloseResponseForTesting(MainWindow::CloseResponse::Save);
-    requestCloseTab(dv, 0);
+    const ClosedTab after = closeTabAndTrack(mw, dv, 0);
     // NOTE: on a successful close the DocumentView erases (destroys) the
     // document synchronously, so `doc` is dangling here — assert on the
     // file system and the tab count only, never on `doc`. That the save
@@ -1216,7 +1318,13 @@ void TestUatFoundations::uat_fnd_014_closeUntitledTabSaveRoutesThroughSaveAs() {
     // saves without closing, so the doc survives to be inspected).
 
     // Save-As routed to the chosen path and the tab closed.
-    QCOMPARE(dv->documentCount(), 0);
+    if (after.view)
+        QCOMPARE(after.view->documentCount(), 0);
+    else
+        // macOS: the window went with the last tab. Assert the invariant
+        // that makes that equivalent, so this branch is never silently
+        // assertion-free.
+        QVERIFY2(!after.window, "the DocumentView must not outlive its MainWindow");
     QVERIFY2(QFileInfo::exists(chosen),
              "Untitled Save must route through Save-As and write the CHOSEN path");
     QVERIFY2(!QFileInfo::exists(tempPath),
@@ -1225,8 +1333,10 @@ void TestUatFoundations::uat_fnd_014_closeUntitledTabSaveRoutesThroughSaveAs() {
     QVERIFY(check.open(QIODevice::ReadOnly));
     QCOMPARE(check.readAll(), QByteArray("PASTED-PAYLOAD"));
 
-    mw->setSaveAsPathForTesting(QString());
-    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    if (after.window) {
+        after.window->setSaveAsPathForTesting(QString());
+        after.window->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    }
 }
 
 // UAT-FND-014 — regression closer to the REAL bug: drive the actual
@@ -1420,13 +1530,22 @@ void TestUatFoundations::uat_fnd_014_multipleUntitledDocsEachPromptOnClose() {
     requestCloseTab(dv, 0);
     QCOMPARE(dv->documentCount(), 1);
 
-    // Finally Discard the second untitled doc.
+    // Finally Discard the second untitled doc. This empties the window, so
+    // on macOS the window itself goes with it (see closeTabAndTrack) —
+    // every close above left a document behind and was therefore safe.
     mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
-    requestCloseTab(dv, 0);
-    QCOMPARE(dv->documentCount(), 0);
+    const ClosedTab after = closeTabAndTrack(mw, dv, 0);
+    if (after.view)
+        QCOMPARE(after.view->documentCount(), 0);
+    else
+        // macOS: the window went with the last tab. Assert the invariant
+        // that makes that equivalent, so this branch is never silently
+        // assertion-free.
+        QVERIFY2(!after.window, "the DocumentView must not outlive its MainWindow");
     QVERIFY2(!QFileInfo::exists(tempB), "Discard must not write the second temp file");
 
-    mw->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
+    if (after.window)
+        after.window->setCloseResponseForTesting(MainWindow::CloseResponse::Prompt);
 }
 
 // UAT-FND-014 — the persistent EMPTY-STATE window (zero documents; the
@@ -1893,6 +2012,392 @@ void TestUatFoundations::uat_fnd_070_copyPageAsImageToClipboard() {
     QVERIFY2(hostMenu->toolTipsVisible(),
              "The Edit menu must call setToolTipsVisible(true) so the disabled "
              "Copy Page as Image tooltip is actually rendered on hover");
+}
+
+namespace {
+
+// The one document held by `win`, or nullptr. Slots below open exactly one
+// file per window, so index 0 is unambiguous.
+IDocument *soleDocument(MainWindow *win) {
+    if (!win || win->documentCount() < 1)
+        return nullptr;
+    IDocument *doc = nullptr;
+    win->documentAt(0, &doc);
+    return doc;
+}
+
+// Pump the event loop enough times for MainWindow's deferred
+// scroll-position restore chain (kScrollRestoreSettleTurns re-asserts, each
+// on its own turn) to run to completion, so a slot asserts the position that
+// SETTLED rather than the first one applied.
+void pumpScrollRestoreSettle() {
+    for (int i = 0; i < 8; ++i)
+        QApplication::processEvents();
+}
+
+// Close every open window, the way quitting the process does, so a slot
+// that simulates a RELAUNCH starts from the state a relaunch actually has:
+// no window holding the file it is about to reopen.
+//
+// Needed since UAT-FND-053: a file that is already open is surfaced in its
+// existing window rather than opened again, so re-calling openFiles() on a
+// still-open file no longer spawns a window — correctly. A slot that leaves
+// its pre-quit window standing and then "relaunches" into it was never
+// simulating a relaunch; it was exercising the duplicate-open defect.
+void closeAllWindowsLikeARelaunch() {
+    for (auto *w : QApplication::topLevelWidgets()) {
+        if (auto *mw = qobject_cast<MainWindow *>(w)) {
+            mw->setCloseResponseForTesting(MainWindow::CloseResponse::Discard);
+            mw->close();
+        }
+    }
+    QApplication::processEvents();
+}
+
+// The window in `after` that is not in `before` — i.e. the one a just-run
+// open/restore call created. Returns nullptr if there isn't exactly one.
+MainWindow *newlyAddedWindow(const QList<MainWindow *> &before, const QList<MainWindow *> &after) {
+    MainWindow *found = nullptr;
+    for (MainWindow *w : after) {
+        if (!w || before.contains(w))
+            continue;
+        if (found)
+            return nullptr; // ambiguous
+        found = w;
+    }
+    return found;
+}
+
+} // namespace
+
+// UAT-FND-094 — ⌘Q (QuitMode::Normal) captures per-document view state, so
+// reopening the same file lands on the page the user was reading.
+//
+// The 2026-08-03 dogfooding report: three large PDFs open, ⌘Q, relaunch —
+// every document came back on page 1. Root cause: RecentEntry::currentPage
+// was written ONLY by MainWindow::closeEvent, and an application quit never
+// delivers closeEvent to the still-open windows (Application::onAboutToQuit
+// documents exactly that for macOS ⌘Q). The page WAS restorable — the
+// restore side already reads RecentEntry — but nothing ever wrote it.
+//
+// Drives the real quit command through Application::requestQuit with the
+// performQuit seam stubbed, so the process survives to assert what the quit
+// persisted. The pre-quit window is deliberately left open: closing it would
+// run closeEvent, which captures view state on its own and would mask the
+// very gap this guards.
+void TestUatFoundations::uat_fnd_094_normalQuitCapturesPageSoReopenLandsThere() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    const QString pdfPath =
+        writeMultiPagePdf(m_scratch.filePath(QStringLiteral("uat_fnd_094_normal.pdf")), 12);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    IDocument *doc = soleDocument(mw);
+    QVERIFY(doc);
+    QCOMPARE(doc->pageCount(), 12);
+
+    doc->goToPage(7);
+    QApplication::processEvents();
+    QCOMPARE(doc->currentPage(), 7);
+
+    // ⌘Q. performQuit is stubbed so the harness process is not terminated.
+    app->setPerformQuitForTesting([] {});
+    QVERIFY2(app->requestQuit(QuitMode::Normal),
+             "A clean document must not block a Normal quit");
+
+    // The quit must have persisted where the user was.
+    const RecentEntry captured = app->recentFiles().findByPath(pdfPath);
+    QVERIFY2(!captured.path.isEmpty(), "The quit-time snapshot must find the recent entry");
+    QCOMPARE(captured.currentPage, 7);
+
+    // Relaunch, end to end: reopening the file must land on page 8 (index 7),
+    // not page 1.
+    //
+    // The pre-quit window is torn down FIRST, because that is what a
+    // relaunch does — and since UAT-FND-053 an already-open file is
+    // surfaced in its existing window instead of opened again, so leaving
+    // it standing would be simulating a duplicate open, not a relaunch.
+    // Closing here cannot mask the gap this slot guards: the quit-time
+    // capture was already asserted above, on the RecentEntry read BEFORE
+    // any window closed. What follows only checks the RESTORE side.
+    closeAllWindowsLikeARelaunch();
+    const QList<MainWindow *> before = app->windows();
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+    MainWindow *reopened = newlyAddedWindow(before, app->windows());
+    QVERIFY2(reopened, "Reopening the file must spawn exactly one new window");
+    IDocument *restored = soleDocument(reopened);
+    QVERIFY(restored);
+    pumpScrollRestoreSettle();
+    QCOMPARE(restored->currentPage(), 7);
+}
+
+// UAT-FND-094 — ⌥⌘Q ("Quit and Keep Windows") does the same, and the
+// kept-windows restore path must not throw the captured page away.
+//
+// Second half of the same defect: RecentFiles::add() replaces an entry with
+// a freshly default-constructed one (currentPage = -1), and
+// Application::restoreKeptWindows() called add() BEFORE handing the document
+// to the window — so the restore path wiped the saved page a fraction of a
+// second before MainWindow read it.
+void TestUatFoundations::uat_fnd_094_keepWindowsQuitRestoresPage() {
+    QVERIFY(m_scratch.isValid());
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    // Never touch the user's real AppData session-drafts directory.
+    app->setSessionDraftStoreDirForTesting(
+        m_scratch.filePath(QStringLiteral("uat_fnd_094_drafts")));
+    app->sessionDraftStore().clear();
+
+    const QString pdfPath =
+        writeMultiPagePdf(m_scratch.filePath(QStringLiteral("uat_fnd_094_keep.pdf")), 12);
+    app->openFiles({pdfPath});
+    QApplication::processEvents();
+
+    MainWindow *mw = currentMainWindow();
+    QVERIFY(mw);
+    IDocument *doc = soleDocument(mw);
+    QVERIFY(doc);
+
+    doc->goToPage(9);
+    QApplication::processEvents();
+    QCOMPARE(doc->currentPage(), 9);
+
+    app->setPerformQuitForTesting([] {});
+    QVERIFY(app->requestQuit(QuitMode::KeepWindows));
+    QVERIFY(app->sessionDraftStore().hasSession());
+    QCOMPARE(app->recentFiles().findByPath(pdfPath).currentPage, 9);
+
+    const QList<MainWindow *> before = app->windows();
+    QVERIFY(app->restoreKeptWindows());
+    QApplication::processEvents();
+    MainWindow *restoredWin = newlyAddedWindow(before, app->windows());
+    QVERIFY2(restoredWin, "Kept-windows restore must spawn exactly one new window");
+    IDocument *restored = soleDocument(restoredWin);
+    QVERIFY(restored);
+    pumpScrollRestoreSettle();
+    QCOMPARE(restored->currentPage(), 9);
+
+    app->sessionDraftStore().clear();
+}
+
+// UAT-FND-094 — curated G2 before/after evidence for the reopen-after-quit
+// page position. Uses ONLY pre-existing public API so the identical file
+// builds and runs against the tree before and after the fix.
+//
+// Both shots are the SAME document in the SAME window state (a 12-page PDF
+// reopened after a quit at page 8):
+//   * BEFORE — the pre-fix shape: the quit captured no view state for this
+//     file, so the reopen falls through to the natural default and shows
+//     page 1.
+//   * AFTER  — the quit captured page 8, so the reopen shows page 8.
+// No-op unless $TRAILER_SESSION_RESTORE_EVIDENCE_DIR is set (mirrors
+// test_uat_offthread_open / test_uat_deference_evidence).
+void TestUatFoundations::uat_fnd_094_quitPageRestoreEvidence() {
+    const QString dir = QString::fromLocal8Bit(qgetenv("TRAILER_SESSION_RESTORE_EVIDENCE_DIR"));
+    if (dir.isEmpty())
+        QSKIP("Set TRAILER_SESSION_RESTORE_EVIDENCE_DIR to emit the G2 evidence pair");
+    QVERIFY(m_scratch.isValid());
+    QDir().mkpath(dir);
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+
+    auto shoot = [&](MainWindow *w, const QString &name) {
+        w->resize(760, 620);
+        QApplication::processEvents();
+        const QPixmap pm = w->grab();
+        QVERIFY2(!pm.isNull(), qPrintable(name));
+        QVERIFY2(pm.save(QDir(dir).filePath(name), "PNG"), qPrintable(name));
+    };
+
+    // BEFORE — a file with no captured view state (exactly what a pre-fix
+    // quit left behind): reopen lands on page 1.
+    const QString beforePdf =
+        writeMultiPagePdf(m_scratch.filePath(QStringLiteral("uat_fnd_094_evidence.pdf")), 12);
+    app->openFiles({beforePdf});
+    QApplication::processEvents();
+    MainWindow *beforeWin = currentMainWindow();
+    QVERIFY(beforeWin);
+    IDocument *beforeDoc = soleDocument(beforeWin);
+    QVERIFY(beforeDoc);
+    QCOMPARE(beforeDoc->currentPage(), 0);
+    shoot(beforeWin, QStringLiteral("2026-08-03-quit-page-restore-before.png"));
+
+    // AFTER — same file, same window size: read to page 8, quit, reopen.
+    beforeDoc->goToPage(7);
+    QApplication::processEvents();
+    app->setPerformQuitForTesting([] {});
+    QVERIFY(app->requestQuit(QuitMode::Normal));
+
+    const QList<MainWindow *> before = app->windows();
+    app->openFiles({beforePdf});
+    QApplication::processEvents();
+    MainWindow *afterWin = newlyAddedWindow(before, app->windows());
+    QVERIFY(afterWin);
+    IDocument *afterDoc = soleDocument(afterWin);
+    QVERIFY(afterDoc);
+    pumpScrollRestoreSettle();
+    shoot(afterWin, QStringLiteral("2026-08-03-quit-page-restore-after.png"));
+    qInfo().noquote() << "G2-SCREENSHOT pair written to" << dir
+                      << "after-page:" << afterDoc->currentPage();
+}
+
+namespace {
+
+// Sample a restored document's page across many event-loop turns AND a
+// real elapsed-time window, and report the first page it ever reports
+// that isn't `expected`.
+//
+// Why time and not just processEvents(): the reported symptom is a
+// visible flash of the saved page followed by a snap back to page 1 —
+// i.e. a LATER pass overwriting what the restore set. A check that
+// samples once, immediately, cannot see that at all. 750ms is ~250x the
+// restore settle actually measured here (3 idle turns) and keeps the
+// four sampling windows in this file to ~3s of suite time. Raise it
+// only if a real regression is found to land later than that.
+//
+// SCOPE, measured not assumed: this samples IDocument::currentPage(),
+// which the per-file view-state restore sets directly. It is NOT
+// sensitive to kScrollRestoreSettleTurns (src/ui/MainWindow.cpp) — that
+// constant budgets idle turns for re-asserting the scroll OFFSET, a
+// different observable. Verified by negative control: setting that
+// constant to 0 and rebuilding leaves both of these slots passing,
+// under offscreen and under a real cocoa window manager alike. So these
+// guard "the saved page comes back and holds"; they do not guard the
+// scroll-offset re-assert, which still has no automated guard.
+int firstPageDeviation(IDocument *doc, int expected, int settleMs = 750) {
+    QElapsedTimer clock;
+    clock.start();
+    while (clock.elapsed() < settleMs) {
+        QApplication::processEvents(QEventLoop::AllEvents, 10);
+        if (doc->currentPage() != expected)
+            return doc->currentPage();
+    }
+    return expected;
+}
+
+} // namespace
+
+// UAT-FND-095 — PR #145's quit/page-restore fix, verified the way the
+// bug was actually reported: the restored page must not merely be
+// correct on the first turn, it must STAY correct once the window
+// manager's own later layout pass has run. Uses a large document (the
+// report was against a multi-hundred-page PDF, where a stale scroll
+// restore is unmistakable) and samples over time rather than once.
+//
+// Meaningful under QT_QPA_PLATFORM=cocoa, where a real window manager
+// lays the window out; offscreen exercises the same code path with a
+// trivial layout, so the slot is a cheap guard there and a real one on a
+// Mac.
+void TestUatFoundations::uat_fnd_095_restoredPageStaysPutAfterLaterLayout() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    QVERIFY(m_scratch.isValid());
+
+    constexpr int kPages = 300;
+    constexpr int kTargetPage = 211; // deep enough that page 1 is unmistakable
+    const QString pdf =
+        writeMultiPagePdf(m_scratch.filePath(QStringLiteral("uat_fnd_095_big.pdf")), kPages);
+
+    app->openFiles({pdf});
+    QApplication::processEvents();
+    MainWindow *win = currentMainWindow();
+    QVERIFY(win);
+    IDocument *doc = soleDocument(win);
+    QVERIFY(doc);
+    doc->goToPage(kTargetPage);
+    QApplication::processEvents();
+    QCOMPARE(doc->currentPage(), kTargetPage);
+
+    app->setPerformQuitForTesting([] {});
+    QVERIFY(app->requestQuit(QuitMode::Normal));
+
+    // Tear the pre-quit window down before reopening — a relaunch has no
+    // window holding the file, and since UAT-FND-053 an already-open file
+    // is surfaced rather than opened again. See closeAllWindowsLikeARelaunch.
+    closeAllWindowsLikeARelaunch();
+    const QList<MainWindow *> before = app->windows();
+    app->openFiles({pdf});
+    QApplication::processEvents();
+    MainWindow *reopened = newlyAddedWindow(before, app->windows());
+    QVERIFY(reopened);
+    IDocument *reopenedDoc = soleDocument(reopened);
+    QVERIFY(reopenedDoc);
+
+    pumpScrollRestoreSettle();
+    QCOMPARE(reopenedDoc->currentPage(), kTargetPage);
+
+    // Force a relayout after the restore, so a page that only "held"
+    // because nothing re-laid the view out afterwards would be caught.
+    reopened->resize(reopened->width() - 40, reopened->height() - 30);
+    QApplication::processEvents();
+
+    // The actual regression guard: it must still be there after the
+    // window manager has had time to run its own later layout pass.
+    QCOMPARE(firstPageDeviation(reopenedDoc, kTargetPage), kTargetPage);
+}
+
+// UAT-FND-095 — the same guarantee for "Quit and Keep Windows"
+// (⌥⌘Q, QuitMode::KeepWindows) and with THREE windows open at once,
+// which is the shape the original bug was reported in. A per-window
+// restore that races its siblings would show up here and nowhere else.
+void TestUatFoundations::uat_fnd_095_restoredPageStaysPutAcrossQuitModesAndWindows() {
+    auto *app = qobject_cast<Application *>(qApp);
+    QVERIFY(app);
+    QVERIFY(m_scratch.isValid());
+
+    constexpr int kPages = 300;
+    const int targets[3] = {97, 158, 264};
+    QStringList pdfs;
+    for (int i = 0; i < 3; ++i) {
+        pdfs << writeMultiPagePdf(
+            m_scratch.filePath(QStringLiteral("uat_fnd_095_multi_%1.pdf").arg(i)), kPages);
+    }
+
+    // Three separate windows, each parked on a different deep page.
+    QList<MainWindow *> opened;
+    for (int i = 0; i < 3; ++i) {
+        const QList<MainWindow *> before = app->windows();
+        app->openFiles({pdfs.at(i)});
+        QApplication::processEvents();
+        MainWindow *w = newlyAddedWindow(before, app->windows());
+        QVERIFY2(w, qPrintable(QStringLiteral("window %1 did not open").arg(i)));
+        IDocument *d = soleDocument(w);
+        QVERIFY(d);
+        d->goToPage(targets[i]);
+        QApplication::processEvents();
+        QCOMPARE(d->currentPage(), targets[i]);
+        opened << w;
+    }
+    QCOMPARE(opened.size(), 3);
+
+    app->setPerformQuitForTesting([] {});
+    QVERIFY(app->requestQuit(QuitMode::KeepWindows));
+
+    // Reopen each file and confirm its own saved page comes back and
+    // holds — no window inheriting a sibling's page, none snapping to 1.
+    // The three pre-quit windows go first: a relaunch has none, and since
+    // UAT-FND-053 an already-open file is surfaced in the window that holds
+    // it rather than opened again. See closeAllWindowsLikeARelaunch.
+    closeAllWindowsLikeARelaunch();
+    for (int i = 0; i < 3; ++i) {
+        const QList<MainWindow *> before = app->windows();
+        app->openFiles({pdfs.at(i)});
+        QApplication::processEvents();
+        MainWindow *w = newlyAddedWindow(before, app->windows());
+        QVERIFY2(w, qPrintable(QStringLiteral("window %1 did not reopen").arg(i)));
+        IDocument *d = soleDocument(w);
+        QVERIFY(d);
+        pumpScrollRestoreSettle();
+        QCOMPARE(d->currentPage(), targets[i]);
+        QCOMPARE(firstPageDeviation(d, targets[i]), targets[i]);
+    }
 }
 
 // Custom main: we need to set HOME (and XDG vars) before constructing

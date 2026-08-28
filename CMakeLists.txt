@@ -418,6 +418,7 @@ set(TRAILER_SOURCES
     src/update/UpdateTypes.h
     src/util/CaptureScale.cpp
     src/util/CaptureScale.h
+    src/util/PathKey.h
     src/util/TempPath.h
     src/platform/Share.h
     src/platform/QuitMenu.h

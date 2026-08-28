@@ -22,6 +22,7 @@
 //   uat_ocr_win_040_largeDocGetsAmbientWindowNotCancelToNothing
 //   uat_ocr_win_050_backgroundOffSubmitsNothingExplicitStillRuns
 //   uat_ocr_win_060_onBatteryOnlyVisiblePageRunsNeighboursSuppressed
+//   uat_ocr_win_070_textLayerDocEnqueuesNothingEvenOnAHugeDoc
 
 #include "app/Application.h"
 #include "document/IDocument.h"
@@ -57,7 +58,11 @@ PowerState forceBattery() { return PowerState::OnBattery; }
 // method keeps its default. createView is never called by these tests.
 class FakeOcrDoc : public IDocument {
   public:
-    explicit FakeOcrDoc(int pages) : m_pages(pages) {}
+    // `hasText` mirrors IDocument::hasTextLayer(). It defaults to false so the
+    // window slots exercise the ambient path; the text-layer guard slot passes
+    // true to stand in for a born-digital PDF (PdfDocument::hasTextLayer()
+    // returns true for every valid PDF — see PdfAdapter.h).
+    explicit FakeOcrDoc(int pages, bool hasText = false) : m_pages(pages), m_hasText(hasText) {}
 
     QString displayName() const override { return QStringLiteral("fake-ocr-doc"); }
     QString filePath() const override { return {}; }
@@ -68,7 +73,7 @@ class FakeOcrDoc : public IDocument {
     void goToPage(int p) override { m_current = p; }
 
     bool supportsSelectableText() const override { return true; }
-    bool hasTextLayer() const override { return false; }
+    bool hasTextLayer() const override { return m_hasText; }
     SelectableTextStore *selectableText() override { return &m_store; }
 
     QImage renderPageForOcr(int page) const override {
@@ -81,6 +86,7 @@ class FakeOcrDoc : public IDocument {
 
   private:
     int m_pages;
+    bool m_hasText = false;
     int m_current = 0;
     SelectableTextStore m_store;
 };
@@ -128,6 +134,7 @@ class TestOcrWindow : public QObject {
     void uat_ocr_win_040_largeDocGetsAmbientWindowNotCancelToNothing();
     void uat_ocr_win_050_backgroundOffSubmitsNothingExplicitStillRuns();
     void uat_ocr_win_060_onBatteryOnlyVisiblePageRunsNeighboursSuppressed();
+    void uat_ocr_win_070_textLayerDocEnqueuesNothingEvenOnAHugeDoc();
 
   private:
     void resetSettings() {
@@ -328,6 +335,52 @@ void TestOcrWindow::uat_ocr_win_060_onBatteryOnlyVisiblePageRunsNeighboursSuppre
                                 .arg(p)));
 
     PowerSource::setProbeForTesting(&forceAc);
+}
+
+// Text-layer skip (ADR 0013 §G13.3 / OcrController::onVisiblePageChanged).
+// A document that already exposes a text layer needs no auto-OCR, and the
+// skip must happen BEFORE anything is enqueued — not after, and not "the
+// worker notices and bails". This is the guard for a leading hypothesis in
+// the 2026-08-03 slow-open investigation: with "Recognize text in background"
+// ON and three born-digital PDFs open (365 / 407 / 2603 pages), was Trailer
+// queuing OCR for pages that already carry extractable text and starving the
+// GUI thread? Measurement said no; this pins it so the answer stays no.
+//
+// The page count is deliberately far above kLargeDocPageThreshold so the
+// assertion also covers the case that actually motivated it — the huge
+// document — and would catch a future reordering that let the enqueue run
+// before the text-layer check.
+void TestOcrWindow::uat_ocr_win_070_textLayerDocEnqueuesNothingEvenOnAHugeDoc() {
+    OcrController ctl(app);
+    // hasTextLayer() == true, standing in for a born-digital PDF.
+    FakeOcrDoc doc(2603, /*hasText=*/true);
+    ctl.setDocument(&doc);
+    ctl.setModelReadyForTesting(true);
+    ctl.setDiskCacheForTesting(nullptr);
+    auto calls = std::make_shared<std::atomic<int>>(0);
+    ctl.setRecognizerForTesting(oneBlockRecognizer(calls));
+
+    // Background recognition is ON — the setting the report ran with.
+    QVERIFY(app->settings().mlRecognizeTextInBackground());
+
+    ctl.onVisiblePageChanged(1200);
+    QVERIFY2(ctl.pendingPagesForTesting().empty(),
+             "a document that already has a text layer must enqueue ZERO ambient "
+             "OCR pages, however large it is");
+
+    // Nothing runs later either: no worker was ever scheduled.
+    pumpUntil(400, []() { return false; });
+    QCOMPARE(calls->load(), 0);
+    QVERIFY2(ctl.pendingPagesForTesting().empty(), "still nothing pending after the pump");
+
+    // The explicit Recognize Text… path is deliberately unaffected — the
+    // user can still force a re-run on a text-layer document (the
+    // watermark-only edge case OcrController.h documents).
+    auto *store = doc.selectableText();
+    ctl.submitUserPages(&doc, {1200}, /*forceRerun=*/true);
+    pumpUntil(4000, [store]() { return store->hasResults(1200); });
+    QVERIFY2(store->hasResults(1200),
+             "explicit Recognize Text must still run on a text-layer document");
 }
 
 // Hand-rolled main: exactly one trailer::Application (a QApplication

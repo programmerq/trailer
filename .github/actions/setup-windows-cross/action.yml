@@ -1,20 +1,28 @@
 name: Windows cross-build environment (mingw-w64 + Wine)
 description: >-
   Install the toolchain that cross-compiles trailer.exe from Linux and
-  runs its unit tests under Wine, WITHOUT Docker (the trailer-k8s pods
-  have no Docker daemon). Mirrors the Dockerfile
+  runs its unit tests under Wine, WITHOUT Docker. Mirrors the Dockerfile
   (docker/windows/Dockerfile) recipe but installs directly on the
   runner: Ubuntu's mingw-w64 13 (-posix), Wine, Qt's win64_mingw
   prebuilt + a Linux host Qt (for moc/rcc/uic) via aqtinstall, ONNX
   Runtime's Windows binaries from NuGet, and qpdf + libjpeg-turbo
   cross-built from git-cloned tags.
 
-  Two egress facts from the local de-risking drive the choices here:
-  GitHub *release-asset* downloads (objects.githubusercontent.com) 403
-  through the org proxy, so ONNX comes from NuGet and qpdf/libjpeg from
-  `git clone` of the tag instead of the Dockerfile's `wget` of the
-  release tarballs; and the heavy bits (Qt ~2.6 GB, the qpdf/libjpeg
-  cross-build) are cache-keyed so warm runs skip them.
+  Two source choices below (ONNX from NuGet rather than the GitHub
+  release asset; qpdf/libjpeg from `git clone` of the tag rather than
+  the Dockerfile's `wget` of the release tarball) were originally forced
+  by the old self-hosted k8s egress policy, which 403'd
+  objects.githubusercontent.com. Since 2026-08-05 every caller runs on a
+  GitHub-hosted runner with no such proxy, so those downloads WOULD now
+  work — the NuGet/git-clone paths are kept anyway because they are
+  strictly cheaper: the assembled ONNX dir is ~15 MB versus a ~130 MB
+  release zip, its DLL carries its own pinned SHA256 here, and both it
+  and the heavy bits (Qt ~2.6 GB, the qpdf/libjpeg cross-build) are
+  `actions/cache`-keyed so warm runs skip them entirely.
+
+  Every dependency is probed before install, so this action also works
+  unchanged on an image that bakes the toolchain in — see
+  docs/ci/custom-runner-image.md.
 
   Exports QT_WIN_DIR, QT_HOST_DIR, QPDF_DIR, ORT_WIN_DIR and
   MINGW_PREFIX to $GITHUB_ENV for the calling job's configure + wine
@@ -55,7 +63,8 @@ inputs:
       ONNX Runtime version. Must match cmake/OnnxRuntime.cmake's
       TRAILER_ORT_VERSION; the assembled dir is fed to CMake via
       -DFETCHCONTENT_SOURCE_DIR_ONNXRUNTIME_PREBUILT so the SHA256'd
-      release-asset download (which 403s through the proxy) is skipped.
+      release-asset download is skipped (see the description above for
+      why this is kept now that the proxy that forced it is gone).
     required: false
     default: '1.25.0'
   install-wine:
@@ -243,8 +252,9 @@ runs:
 
     - name: Assemble ONNX Runtime from NuGet
       if: steps.ort-cache.outputs.cache-hit != 'true'
-      # Microsoft's GitHub release-asset zip 403s through the org proxy;
-      # the NuGet package carries the same win-x64 native binaries. The
+      # The NuGet package carries the same win-x64 native binaries as
+      # Microsoft's GitHub release-asset zip, at ~15 MB assembled instead
+      # of ~130 MB (and it is what worked through the old egress proxy). The
       # MSVC-generated onnxruntime.lib links cleanly with mingw ld. The
       # resulting lib/onnxruntime.{lib,dll} + include/ layout is what
       # cmake/OnnxRuntime.cmake's Windows branch expects.
@@ -341,7 +351,9 @@ runs:
         # explicitly rather than relying on CMAKE_BUILD_PARALLEL_LEVEL,
         # which cmake ignores once `-j`/`--parallel` is on the command
         # line at all. Every caller of this composite action sets
-        # CMAKE_BUILD_PARALLEL_LEVEL=2 at the workflow or job level.
+        # CMAKE_BUILD_PARALLEL_LEVEL explicitly at the workflow or job
+        # level (4 since the 2026-08-05 hosted-runner migration); the
+        # `:-2` here is only the no-caller fallback.
         cmake --build "$work/jpeg-build" -j "${CMAKE_BUILD_PARALLEL_LEVEL:-2}"
         cmake --install "$work/jpeg-build"
 

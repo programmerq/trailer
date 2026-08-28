@@ -72,6 +72,31 @@ class MainWindow : public QMainWindow {
     // no tabs are open. Used by the diagnostics/feedback report to
     // record which open document the user was looking at.
     int currentDocumentIndex() const;
+    // Make the document at `index` this window's current tab. Returns
+    // false (and changes nothing) for an out-of-range index. Used by the
+    // already-open path in Application::openFiles to surface the document
+    // the user asked for when it is open behind another tab; addDocument
+    // already selects the tab it creates, so this is the only other place
+    // the current tab moves without the user clicking it.
+    bool showDocumentAt(int index);
+
+    // Persist this window's per-document view state — the page the user is
+    // on, scroll offset, zoom mode/factor, sidebar mode, markup-toolbar
+    // visibility, window geometry and dock layout — into RecentFiles (per
+    // file) and DocumentTypeDefaults (last-of-type), then save both.
+    //
+    // Called from closeEvent AND from the application-quit path
+    // (Application::requestQuit / Application::onAboutToQuit). A quit does
+    // NOT deliver closeEvent to its still-open windows — macOS ⌘Q is the
+    // canonical case, documented in Application::onAboutToQuit — so while
+    // this capture lived only in closeEvent, every quit silently dropped
+    // the user's place in every open document and each one reopened on
+    // page 1 (2026-08-03 dogfooding report; DESIGN §6.13 promises "reopen
+    // at last viewed page"). Idempotent: it reads the live view state and
+    // writes it, so running it twice within one quit stores the same
+    // values. Documents with no on-disk path are skipped (there is no key
+    // to file their state under).
+    void captureViewStateForRestore();
 
     // Read-only chrome-visibility accessors for the diagnostics/feedback
     // report (src/diagnostics/FeedbackReport.cpp). Each mirrors the
@@ -302,6 +327,23 @@ class MainWindow : public QMainWindow {
     // don't have an anchor) falls back to the cursor position.
     void onSignHere(const QPoint &anchorGlobalPos = QPoint());
     void onCurrentDocumentChanged(IDocument *doc);
+    // Re-apply a restored page + scroll offset to `doc` on the next
+    // event-loop turn, then again for `turnsLeft` further turns.
+    //
+    // The position CANNOT be applied inline with the rest of the per-file
+    // restore: the window geometry / dock layout applied just before it
+    // queue a viewport resize rather than performing it inline, and a
+    // fit-mode PDF re-lays-out on that resize and drops whatever scroll
+    // offset was already set — which is how a document restored to page 8
+    // still painted page 1 (2026-08-03 dogfooding report). Re-asserting for
+    // a few turns also absorbs a window manager's own later geometry pass;
+    // see kScrollRestoreSettleTurns in MainWindow.cpp for the count and its
+    // rationale. Each re-assert is a no-op once the position holds.
+    //
+    // `page < 0` means "no saved page" and `scrollY == 0` means "no saved
+    // offset" (RecentEntry's documented sentinels); with both absent this
+    // schedules nothing.
+    void scheduleScrollPositionRestore(IDocument *doc, int page, int scrollY, int turnsLeft);
     // Forms-toolbar enable/populate for `doc`. Extracted from
     // onCurrentDocumentChanged so it can run both at open and when the
     // document's async form detection completes (PR #63: the qpdf parse that

@@ -1,5 +1,21 @@
 # Custom runner image for the `trailer-k8s` self-hosted runners
 
+> **Status (2026-08-05): currently unconsumed.** The repo went public, and
+> every workflow job that used the `trailer-k8s` / `trailer-small` labels
+> moved to GitHub-hosted `ubuntu-latest` — standard hosted runners are free
+> and unlimited on public repos, and GitHub's own hardening guidance is that
+> self-hosted runners "should almost never be used for public repositories".
+> As a result **no workflow currently requests a `trailer-k8s` runner**, so
+> nothing schedules onto a pod booted from this image.
+>
+> Nothing here has been deleted or decommissioned: `docker/runner/Dockerfile`
+> still builds, `.github/workflows/build-runner-image.yml` still publishes it
+> weekly to `ghcr.io/programmerq/trailer-runner` (from a hosted runner), and
+> both setup actions still probe for baked-in tooling, so pointing a
+> runner-set back at this image would work unchanged. Whether to keep
+> maintaining the image or retire the ARC runner-set is the owner's call —
+> see the migration PR for the trade-off.
+
 The `trailer-k8s` runners are ephemeral pods managed by
 [Actions Runner Controller (ARC)][arc]. By default they boot the stock
 `ghcr.io/actions/actions-runner` image, which ships no build toolchain,

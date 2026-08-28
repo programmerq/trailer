@@ -199,8 +199,13 @@ Heavy artifact builds (Linux native, Windows cross-build via
 mingw-w64 in `docker/windows/Dockerfile`, and a macOS Apple Silicon
 `.app` packaged as a DMG) plus the full UAT suite live in
 `.github/workflows/release.yml`. They are intentionally **not**
-triggered on every PR — macOS runner minutes bill at 10× Linux, and
-UAT is slow. Instead they are gated on a `release-candidate` label:
+triggered on every PR — a full artifact matrix plus UAT is slow, and
+the macOS lane alone is roughly an hour of wall-clock. (Cost is no
+longer part of that reasoning: since the repo went public, standard
+GitHub-hosted runners are free and unlimited on every OS, so the old
+"macOS bills at 10× Linux" concern no longer applies. Wall-clock and
+fail-fast ordering still do.) Instead they are gated on a
+`release-candidate` label:
 
 1. Open a release PR that bumps `VERSION` off its `-dev` suffix
    (e.g. `0.2.0-dev` → `0.2.0`). The CMake configure regenerates

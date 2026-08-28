@@ -54,6 +54,14 @@ class DocumentView : public QTabWidget {
 
   private:
     std::vector<std::unique_ptr<IDocument>> m_documents;
+
+    // Set while onTabCloseRequested() is mid-removal. removeTab() fires
+    // QTabWidget::currentChanged before m_documents has been erased, so
+    // currentDocument() would map currentIndex() into a vector that still
+    // holds the closed document — an emission listeners must not see.
+    // onTabCloseRequested emits currentDocumentChanged exactly once,
+    // itself, after the erase. See its comment for why this matters.
+    bool m_suppressCurrentDocumentChanged = false;
 };
 
 } // namespace trailer

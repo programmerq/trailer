@@ -877,3 +877,105 @@ Driven by `uat_updatesButtonDoesNotMoveAsStatusTextChanges`, which
 compares `mapTo(&dlg, {0,0})` across all four status strings — a geometry
 assertion rather than a screenshot, per G10's evidence rule. Verified to
 fail against the pre-fix layout.
+
+## Structural UX censuses (G10 made machine-checkable)
+
+The three cases below convert the accretion-prone halves of G10 (and the
+modal half of the no-popup philosophy) from per-PR prose into
+deterministic release-gating oracles. Two of them diff the build against
+committed golden files; **a golden diff merges only with the owner's
+explicit acknowledgment in the PR plus a cited accepted decision record**
+— agents never self-approve a golden change. The first goldens
+(2026-08-28) are faithful freezes of the app as built: nothing was
+pruned, and each row doubles as the owner's pruning worksheet.
+
+### UAT-XCT-090 — Chrome census: the at-rest permanent surface matches the committed golden
+
+**Preconditions:** Sandboxed settings (no persisted per-type defaults or
+recents).
+**Steps:**
+1. Realize each canonical state offscreen: empty window (Win/Linux; macOS
+   shows no window per DESIGN §2.4.2 and is skipped), a plain PDF open,
+   a static image open, an AcroForm PDF open.
+2. Walk the ENTIRE realized widget tree (not any registry — floating
+   `move()`-positioned overlays must be caught), recording every
+   visible-at-rest chrome element by stable identity (objectName where
+   present; class + parent chain + action identity otherwise), plus the
+   top-level menu titles. DocumentView's interior is the document, not
+   chrome, and is not descended into.
+3. Diff each state's element list against
+   [`chrome-census.json`](chrome-census.json).
+**Expected:**
+- Zero additions and zero removals against the golden, per state.
+- A probe QLabel injected into the status bar IS detected (the harness
+  runs this negative control every time — a blind census must fail).
+
+Driven by `tests/uat/test_uat_chrome_census.cpp` (slots
+`uat_xct_090_*`). Regenerate after an owner-acked change with
+`TRAILER_CENSUS_WRITE=1`.
+
+### UAT-XCT-091 — Modal census: modal call sites under src/ match the committed golden
+
+**Preconditions:** None (static analysis of the source tree).
+**Steps:**
+1. Scan every `.cpp/.h/.hpp/.mm` under `src/` with comments stripped
+   (string literals respected) for modal call sites: argumentless
+   `.exec()` / `->exec()`, `QMessageBox` statics, `QInputDialog::get*`,
+   `QFileDialog::get*`, `QColorDialog::getColor`,
+   `QFontDialog::getFont`.
+2. Diff per-file, per-kind counts against
+   [`modal-census.json`](modal-census.json). (Counts, not line numbers,
+   so refactors and wording tweaks stay silent and only a genuinely
+   added or removed modal rings the gate.)
+**Expected:**
+- Counts match the golden exactly, both directions.
+- The matcher negative control passes: commented-out calls are not
+  counted; calls split across lines are.
+
+Driven by `tests/uat/test_uat_modal_census.cpp` (slots `uat_xct_091_*`).
+
+### UAT-XCT-092 — The read path never surfaces a modal
+
+**Preconditions:** A multi-page PDF with real text.
+**Steps:**
+1. With a sentinel watching `QApplication::activeModalWidget()` from the
+   event loop (it also ticks inside any nested modal loop, closing and
+   recording what it finds instead of letting the harness hang), drive:
+   open → page through → zoom → search (type a matching query) →
+   dismiss search → close.
+**Expected:**
+- `activeModalWidget()` is null after every step, and the sentinel saw
+  nothing at any point in between.
+
+Driven by `tests/uat/test_uat_modal_census.cpp` (slot `uat_xct_092_*`).
+
+### UAT-XCT-093 — Generalized constancy sweep: no unrelated toggle moves the furniture
+
+**Preconditions:** A document open (plain PDF; the lifecycle case also
+opens an image).
+**Steps:**
+1. Snapshot the position (`mapTo(window)`) of every chrome element
+   outside the central widget — the document area is elastic by design;
+   the furniture around it is not.
+2. For each unrelated-state toggle — markup toolbar, form toolbar,
+   sidebar mode, inspector, live theme flip, transient zoom readout,
+   each status-bar content widget forced visible in its reserved slot,
+   search expand, and document open/switch/close — apply, re-snapshot,
+   revert, re-snapshot.
+**Expected:**
+- Every element visible both before and during a toggle holds its exact
+  position (bit-identical), and every element returns to its baseline
+  after the revert (no hysteresis).
+- Movement is excused only by (a) a whitelist entry declaring the
+  control legitimately affected, with a why-comment (none exist today),
+  or (b) a `KnownDefect` tolerance freezing a pre-existing violation
+  against the backlog item whose closing threshold deletes the entry.
+  Current frozen defects (both vertical-axis; all horizontal SC-CRIT
+  protections hold strict):
+  `docs/backlog/2026-08-28-status-bar-slot-height-not-reserved.md` and
+  `docs/backlog/2026-08-28-search-open-reflows-toolbar-and-reshows-button.md`.
+- The comparator negative control passes: inserting a permanent widget
+  at the front of the status bar IS reported as sibling displacement.
+
+Driven by `tests/uat/test_uat_constancy_sweep.cpp` (slots
+`uat_xct_093_*`).

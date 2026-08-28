@@ -11,11 +11,14 @@
 #include "util/TempPath.h"
 
 #include <QPointer>
+#include <QSizeF>
 #include <QString>
 #include <QStringList>
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <optional>
+#include <vector>
 
 class QIODevice;
 class QPdfDocument;
@@ -328,7 +331,72 @@ class PdfDocument : public IDocument {
     using LoadDeviceFactory = std::function<QIODevice *(const QString &path)>;
     static void setLoadDeviceFactoryForTesting(LoadDeviceFactory factory);
 
+    // --- Test instrumentation (always compiled, negligible cost) ---
+    // Mirrors the PdfEditor::resetInstrumentation() pattern (see PdfEditor.h).
+    // s_pagePointSizeEngineCalls counts every call that actually reaches
+    // QPdfDocument::pagePointSize() — i.e. every pdfium page-dictionary
+    // lookup, cache misses only. The structural perf guard
+    // (tests/test_perf_page_geometry.cpp) asserts a COUNT bound on it, so the
+    // O(pages)-per-coordinate-conversion regression this counter was added for
+    // cannot silently return. Never wall-clock time.
+    static qint64 pagePointSizeEngineCalls() {
+        return s_pagePointSizeEngineCalls.load(std::memory_order_relaxed);
+    }
+    static void resetInstrumentation() {
+        s_pagePointSizeEngineCalls.store(0, std::memory_order_relaxed);
+    }
+
   private:
+    // --- Page-geometry metrics cache (perf) ---------------------------------
+    //
+    // QPdfDocument::pagePointSize() is NOT a cheap field read: each call takes
+    // the document mutex and asks pdfium to resolve the page dictionary and
+    // its inherited /CropBox — order microseconds. The continuous-mode page
+    // origin needs three whole-document aggregates (widest page, the running
+    // Y offset of a page, total content height), so computing them inline made
+    // every single document->view coordinate conversion O(pageCount). Those
+    // conversions run per polygon point, per annotation, per mouse move, so
+    // the real cost was O(points x pages) — 739,417 pagePointSize calls to
+    // open one 2603-page PDF (measured; see the PR that added this).
+    //
+    // The fix is to resolve every page size exactly ONCE per loaded page graph
+    // and keep the aggregates alongside, so a coordinate conversion is O(1)
+    // arithmetic. All values are in PDF points (zoom-independent) so a zoom
+    // change does not invalidate anything.
+    struct PageMetrics {
+        // Per-page /CropBox size in points. Index == page index.
+        std::vector<QSizeF> sizes;
+        // Prefix sums of page heights in points: yOffsets[i] is the summed
+        // height of pages [0, i). Size is sizes.size() + 1, so yOffsets.back()
+        // is the total stacked height.
+        std::vector<double> yOffsets;
+        // Widest page, points.
+        double maxWidth = 0.0;
+    };
+    // Built lazily on first use, dropped by invalidatePageMetrics(). mutable
+    // because the const coordinate/geometry probes populate it.
+    mutable std::optional<PageMetrics> m_pageMetrics;
+    // Returns the metrics for the currently loaded page graph, building them
+    // on first call. Null when there is no valid document.
+    const PageMetrics *pageMetrics() const;
+    // Drop the cache. Wired to QPdfDocument::statusChanged in
+    // attachDocSignals() so EVERY load()/close() — the deferred open, unlock,
+    // recoverFrom, and the reloadViewerFromEditor after any page-graph
+    // mutation (rotate/delete/move/insert/crop, all of which can change page
+    // sizes) — invalidates centrally, rather than relying on each call site
+    // remembering to.
+    void invalidatePageMetrics() const { m_pageMetrics.reset(); }
+    // Connect the per-document signals PdfDocument needs (currently just the
+    // metrics invalidation). Called once, when m_doc is first adopted.
+    void attachDocSignals();
+    // Cached page size in points. The ONLY route to QPdfDocument::pagePointSize
+    // inside this class — going direct re-introduces the per-call pdfium hit
+    // this cache exists to remove.
+    QSizeF pagePoints(int page) const;
+
+    // Test instrumentation counter (see the accessor above).
+    static std::atomic<qint64> s_pagePointSizeEngineCalls;
+
     // Test seam only, private + friend-fenced so no production caller
     // can reach it: drop the qpdf command stacks while leaving the
     // chronological log untouched, simulating the log/stack desync the
@@ -463,6 +531,17 @@ class PdfDocument : public IDocument {
     // being upscaled. One-shot: subsequent currentDocumentChanged
     // events leave the user's zoom alone.
     void applyInitialFitZoom(QPdfView *view);
+
+  public:
+    // Test seam, mirroring ImageDocument::triggerInitialZoomForTest(): fire
+    // the one-shot initial fit the way buildRealView()'s deferred QTimer
+    // does, so a headless test can prove that a (Custom, 0.0) "not captured"
+    // sentinel left that decision still REACHABLE rather than silently
+    // consuming it. No-op without a view. Defined out-of-line because
+    // QPdfView is only forward-declared here.
+    void triggerInitialZoomForTest();
+
+  private:
     bool reloadViewerFromEditor();
     // Make `index` the highlighted search result AND bring it on screen.
     // setCurrentSearchResultIndex alone only changes which rectangle the

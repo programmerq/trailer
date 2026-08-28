@@ -39,6 +39,65 @@ endfunction()
 trailer_add_test(test_settings   test_settings.cpp)
 trailer_add_test(test_settings_volatility test_settings_volatility.cpp)
 trailer_add_test(test_recent     test_recent.cpp)
+# Already-open dedup (owner HITL 2026-08-06): canonicalPathKey's identity
+# rule, Application::windowForOpenPath, and the openFiles surface-don't-
+# reopen behaviour across all three open_files_in modes.
+trailer_add_test(test_open_dedup test_open_dedup.cpp)
+
+# --- Per-slot ctest entries for test_open_dedup (KEEP — not scaffolding) ---
+#
+# Why this exists, and why it stays. The Windows cross-build + Wine lane
+# cannot carry test output: when this binary failed there, its
+# --output-on-failure block came back COMPLETELY EMPTY — no QTest banner, no
+# assertion, nothing. Unbuffering stdout in its main() did not change that,
+# and that unbuffering is verifiably compiled in (objdump shows the
+# setvbuf@plt calls at the top of main; there is no QTEST_MAIN). Nobody knew,
+# because ctest only prints output for FAILING tests and nothing on that lane
+# had failed before — every passing test's output is equally invisible.
+# Tracked as docs/backlog/2026-08-06-wine-lane-emits-no-test-output.md.
+#
+# ctest's own pass/fail reporting DOES work there. So it is the only usable
+# oracle on that lane, and this block turns it into a per-check one:
+# registering each test function as its own entry (QTest takes the slot name
+# as argv[1]) means the "The following tests FAILED:" summary names the
+# failing CHECK, not merely the failing binary. That is exactly how the
+# activation-dependent assertion in
+# surfacingDoesNotConsumeTheEmptyWindowReuseCandidate was found, after two
+# blind rounds had failed to.
+#
+# Keeping it is therefore a durable improvement to a lane that is otherwise
+# opaque by construction: without it, the next Wine failure in this file is
+# as undebuggable as that one was. The cost is ~22 extra short process
+# launches; the alternative is a lane that can only ever say "something in
+# here broke".
+#
+# The aggregate test_open_dedup entry above is deliberately KEPT alongside:
+# if every per-slot entry passes while the aggregate fails, that is itself
+# the answer — the failure is an interaction between slots or at process
+# teardown rather than any single check.
+#
+# The slot list is parsed from the source rather than hand-maintained, so it
+# cannot drift as slots are added or renamed.
+file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/test_open_dedup.cpp" _tod_lines
+     REGEX "^[ \t]+void [a-z][A-Za-z0-9_]*\\(\\);[ \t]*$")
+set(_tod_slots "")
+foreach(_line IN LISTS _tod_lines)
+    string(REGEX REPLACE "^[ \t]+void ([A-Za-z0-9_]+)\\(\\);[ \t]*$" "\\1" _slot "${_line}")
+    # init/cleanup are QTest fixture hooks, not selectable test functions.
+    if(NOT _slot STREQUAL "init" AND NOT _slot STREQUAL "cleanup")
+        list(APPEND _tod_slots "${_slot}")
+    endif()
+endforeach()
+list(LENGTH _tod_slots _tod_count)
+message(STATUS "test_open_dedup: registering ${_tod_count} per-slot ctest entries")
+foreach(_slot IN LISTS _tod_slots)
+    add_test(NAME test_open_dedup_${_slot} COMMAND test_open_dedup ${_slot})
+    if(_trailer_unit_env)
+        set_tests_properties(test_open_dedup_${_slot}
+                             PROPERTIES ENVIRONMENT "${_trailer_unit_env}")
+    endif()
+endforeach()
+# --- end per-slot registration ---
 trailer_add_test(test_dock_recents test_dock_recents.cpp)
 trailer_add_test(test_document_type_defaults test_document_type_defaults.cpp)
 trailer_add_test(test_content_aware_defaults test_content_aware_defaults.cpp)
@@ -82,6 +141,7 @@ trailer_add_test(test_selectable_text_layer test_selectable_text_layer.cpp)
 trailer_add_test(test_cancellation_token test_cancellation_token.cpp)
 trailer_add_test(test_power_source test_power_source.cpp)
 trailer_add_test(test_ml_scheduler test_ml_scheduler.cpp)
+trailer_add_test(test_ml_callback_lifetime test_ml_callback_lifetime.cpp)
 trailer_add_test(test_ml_progress_widget test_ml_progress_widget.cpp)
 trailer_add_test(test_empty_state_widget test_empty_state_widget.cpp)
 trailer_add_test(test_external_change_state test_external_change_state.cpp)
@@ -124,6 +184,7 @@ trailer_add_perf_test(test_perf_gui_thread_io   test_perf_gui_thread_io.cpp)
 trailer_add_perf_test(test_perf_paint_budget    test_perf_paint_budget.cpp)
 trailer_add_perf_test(test_perf_lazy_open       test_perf_lazy_open.cpp)
 trailer_add_perf_test(test_perf_freehand_repaint test_perf_freehand_repaint.cpp)
+trailer_add_perf_test(test_perf_page_geometry   test_perf_page_geometry.cpp)
 
 # The facade test runs in EVERY configuration — it is the guard that
 # the uxrecord:: no-ops stay safe when the recorder is compiled out

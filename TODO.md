@@ -23,6 +23,187 @@ Three recurring sources feed this file:
   [`docs/audit-2026-05-19.md`](docs/audit-2026-05-19.md) for the
   current snapshot.
 
+## 2026-08-06 HITL pass — Spotlight opened the same file twice
+
+Owner, macOS: typed a PDF's name into Spotlight while Trailer already had
+that exact file open. Two defects came out of one report.
+
+**Opening an already-open file opened it again** (fixed). Picking the
+*file* result spawned a second window over the same document — "this feels
+like I'm looking at two open files … opening it twice feels like *copying*
+the document." Beyond the confusion, two `IDocument`s over one path means
+two undo logs and two save paths onto the same bytes, so whichever window
+saved last silently won. `Application::openFiles` now resolves each path to
+a canonical on-disk key (`src/util/PathKey.h`, the rule `RecentFiles`
+already used) and, when that file is open, raises its window and selects
+its tab instead of creating anything. Dedup runs *before* `open_files_in`
+routing: the preference says where a **new** document lands, not whether
+one document may exist twice. Untitled / capture-origin documents are
+exempt — their backing file is a temp the user never chose. Spec:
+UAT-FND-053..058; guards: `tests/test_open_dedup.cpp`,
+`tests/uat/test_uat_open_already_open.cpp`.
+
+**Spotlight's *window* result fails with "Activate Tab"** (filed, not
+fixed). The same search also offers `<file> — Trailer / Window`; choosing
+it produces *The action "Activate Tab" could not run because an internal
+error occurred. (Shortcuts)*. Trailer's tabs are a `QTabWidget` central
+widget, not native `NSWindow` tabs, so macOS is offering an action against
+tabs it cannot address — and Qt has no cross-platform handle on `NSWindow`
+tabbing (it opts apps *out* of it by default). Fixing it properly means one
+`NSWindow` per document plus native tab-group wiring: architecture, not a
+patch. Filed as `docs/backlog/2026-08-06-macos-spotlight-activate-tab.md`.
+The first fix takes most of the sting out of it — the *file* result, the
+obvious one to pick, now surfaces the existing window correctly.
+
+## 2026-08-04 nightly macOS — LibreSSL red-gated `test_update_pubkey`
+
+`nightly-20260804` (run 30907188776, macOS job 91985006187) went red on the
+**macOS gating unit-test step** again, but for an unrelated reason: no DMG and
+no signed appcast, Linux and Windows green.
+
+```
+FAIL!  : TestUpdatePubkey::opensslSignedFeedVerifiesAgainstDerivedKey()
+         (openssl exited 1: Algorithm ed25519 not found
+          usage: genpkey [-algorithm alg] [cipher] [-genparam] [-out file] …)
+```
+
+macOS ships **LibreSSL** as `/usr/bin/openssl`, and LibreSSL's `genpkey` has
+no ed25519. The slot's guard was `haveTool("openssl", {"version"})` — which
+LibreSSL answers perfectly happily — so it proved *existence* and the very
+next line needed *capability*. The test had never run on a Mac before (PR #143
+merged after the 08-03 nightly), so 08-04 was its first execution there and
+the first time the two diverged.
+
+The shape of the fix is the lesson worth keeping: **probe the operation, not
+the tool's name — and not its version string either.** A version table needs
+maintaining and is wrong the moment a fork words its banner differently or
+backports a feature; running the command and looking at whether it worked
+cannot be wrong about the host it just ran on.
+`scripts/find-openssl-ed25519.sh` runs all three operations the shipped
+scripts use (`genpkey -algorithm ed25519`, `pkey -pubout -outform DER`,
+`pkeyutl -sign -rawin`), so a fork that gains keygen but still lacks raw
+signing is rejected at the gate instead of inside a test.
+
+It also *prefers* a real OpenSSL when one exists, rather than settling for the
+skip: Homebrew's `openssl@3` is keg-only, so it never shadows LibreSSL on
+PATH and has to be asked for by name — via `brew --prefix openssl@3`, a query,
+not a hardcoded `/opt/homebrew/...` path that would be wrong on Intel Macs and
+would go stale silently.
+
+The good news from the same run: **`test_ocr_window` passed on macOS
+(1.02 s)** for the first time since the crash — night 1 of the 3 that
+`docs/backlog/2026-08-03-macos-nightly-ocr-window-segv-confirm.md` requires.
+With `test_update_pubkey` fixed, that lane's gating step should be green, and
+the next macOS nightly should produce a four-asset release with the first
+signed appcast. Tracked as
+`docs/backlog/2026-08-04-macos-nightly-openssl-skip-confirm.md`.
+
+## 2026-08-03 nightly macOS SIGSEGV — ML worker result posted to a freed window
+
+`nightly-20260803` (run 30815465012) went red on the **macOS gating unit-test
+step** — `test_ocr_window` `SIGSEGV`, `SEGV_ACCERR` at `0x50`, every test
+function already `PASS`. No DMG was produced, so the release carries three
+assets and no signed appcast. Linux and Windows were green.
+
+Root cause (confirmed, not inferred): an `MlScheduler` worker handed its
+result back with `QMetaObject::invokeMethod(rawMainWindow, …,
+Qt::QueuedConnection)`. A queued invoke **posts an event to its context
+object**, and posting dereferences that object — so a window closed between
+`submit()` and the worker's post is touched twice after it is gone (inside
+`postEvent()` on the worker thread, then again when the main loop delivers
+the `QMetaCallEvent` into freed memory and runs the lambda's `self->m_member`
+accesses).
+
+Evidence trail, for the next person who has to re-open this:
+
+- The sibling crash reproduces on **Linux** under CPU saturation —
+  `test_quit_and_keep_windows`, **10 failures in 60 runs** (0 in 60 idle).
+  Four of those ten `gdb` dumps put the faulting frame in
+  `MainWindow::scheduleBackgroundCandidateScore`'s apply lambda, on a
+  `QHash` whose internal `Data*` read out as `0x30` / `0x1e0` — a freed
+  window. The other six land in unrelated Qt internals (event-filter walk,
+  posted-event dispatch, the raster paint engine): downstream damage from the
+  same lambda *writing* into freed memory a moment earlier.
+- **AddressSanitizer**, driven by the new deterministic guard against the
+  unfixed tree, reports `SEGV` in
+  `QApplicationPrivate::notify_helper` ← `notifyInternal2` ←
+  `sendPostedEvents` — the same frames the crash reports show.
+- The earlier `MlScheduler`-condvar diagnosis (backlog
+  `2026-08-03-quit-teardown-segfault-mlscheduler`, now closed) was **wrong**.
+  The parked `workerLoop()` / power-watcher frames appear in every dump only
+  because Qt's crash handler prints *all* threads; they are idle waiters, and
+  their mutex living at a stack address is expected because `Application` is
+  a stack object in `main()`.
+- The macOS `test_ocr_window` failure itself was **not** captured under a
+  debugger. It never builds a `MainWindow`, so the fixed `MainWindow` sites
+  cannot be its cause. Its only worker→GUI hop is `OcrController`'s result
+  post, which an instrumented build shows **racing document teardown on more
+  than half of all runs** (171 posts reached with an already-destroyed store
+  across 300 loaded runs; the common outcome is the safe one — the `QPointer`
+  is already null and Qt drops the call — the crash needs the destruction to
+  land inside the post itself). That path is fixed the same way, but the
+  attribution is inference from the mechanism, not a captured macOS stack.
+  **A macOS nightly is still the confirming run.**
+
+Fix: `MlScheduler::postResultToGuiThread()` — post to the scheduler (which
+joins the worker in its own destructor, so it is always a live context) and
+re-check the weak guard *inside* the GUI-thread lambda. Cancelling the task
+is not a substitute: a worker already past its cancellation checkpoint still
+posts. Written up as a rule in `docs/CONVENTIONS.md` §5.
+
+## 2026-08-03 slow-open investigation (nightly `0.3.1-dev+768.gce56b4b8`, macOS Tahoe arm64)
+
+Owner report: *"noticeably slower than I'd like … it shouldn't take multiple
+seconds to load the app and/or the file when opening a large PDF."* Three
+windows, one PDF each — **365 / 407 / 2603 pages**, all Continuous + Fit Page,
+all with a text layer; background OCR ON; all five ML models downloaded.
+
+Profiled on a Linux dev box (4-core Xeon @2.8 GHz, Qt 6.11, Release) against
+synthetic born-digital PDFs of matching page counts. **Numbers below are from
+that box, not the owner's M-series Mac** — the shape of the cost is what
+transfers, not the absolute milliseconds.
+
+**Where the time actually went.** Not OCR, not thumbnails. Every
+document→view coordinate conversion re-derived three whole-document
+aggregates by calling `QPdfDocument::pagePointSize()` on *every page*, twice.
+Those conversions run per polygon point of every selectable-text block, so the
+real cost was **O(points × pages)**. Opening one 2603-page PDF issued
+**739,417** `pagePointSize` calls; callgrind put `pagePointSize` at **64.7%**
+of all GUI-thread instructions during open. Fixed by a per-page-graph geometry
+cache (`PdfDocument::PageMetrics`) — 739,417 → 2,603 calls, first paint
+766 ms → 23 ms. Guard: `tests/test_perf_page_geometry.cpp`.
+
+**Hypotheses tested and killed:**
+
+- **Background OCR on documents that already have a text layer** — killed.
+  `PdfDocument::hasTextLayer()` returns true for every valid PDF and
+  `OcrController::onVisiblePageChanged()` returns on it *before* any enqueue,
+  so a PDF never queues an ambient OCR page. Pinned by
+  `uat_ocr_win_070_textLayerDocEnqueuesNothingEvenOnAHugeDoc`.
+- **Eager per-page work at open (thumbnails / outline)** — killed as a
+  *dominant* cost. Only 6 thumbnails render during open (correctly lazy); the
+  sidebar's per-row aspect probe cost 17 ms of 1,000 ms even at 2603 rows;
+  `QPdfBookmarkModel` construction was ~0 ms.
+
+**Measured but deliberately left (secondary, each bounded):**
+
+- `PdfDocument::ingestNativeTextLayer()` runs the native text extraction for
+  the visible page on the **GUI thread** at open — 27.5% of GUI-thread
+  instructions on the 365-page run, and it scales with glyphs on that page
+  (~120 ms extra on a page with twice the text). Bounded per *page*, not per
+  document, and it is what makes text selection live immediately. Moving it
+  off-thread is an architectural change, not a drive-by.
+- Two full qpdf `processFile` parses of the file per open. Both run on worker
+  threads (already fixed by #63), so they do not block the GUI thread, but on
+  a 4-core box they contend with it.
+- **App launch is not a separate problem.** `Application::restorePreviousSession()`
+  opens every previously-open file serially inside one `openFiles()` call, so
+  launch cost ≈ Σ(file-open cost). Three large PDFs is three sequential opens
+  on the GUI thread; the per-file fix above is what moves it.
+- `TwoPageView` has the same defect class at O(pages) per paint — promoted to
+  [`docs/backlog/2026-08-03-twopageview-recomputes-canvas-per-paint.md`](docs/backlog/2026-08-03-twopageview-recomputes-canvas-per-paint.md).
+  Only reachable in Two Pages view, so not implicated in this report.
+
 ## 2026-08-02 owner dogfooding report (nightly `0.3.1-dev+768.gce56b4b8`, macOS Retina)
 
 Two findings from live use on macOS, both fixed in one PR

@@ -295,9 +295,56 @@ target_link_libraries(test_uat_deference_evidence PRIVATE Qt6::Pdf Qt6::PdfWidge
 # $TRAILER_FEEDBACK_EVIDENCE_DIR when set.
 trailer_add_uat_test(test_uat_feedback test_uat_feedback.cpp)
 
+# Already-open dedup (UAT-FND-053..058): asking to open a file that is
+# already open surfaces the window that holds it instead of opening a
+# second copy over the same bytes. Drives Application + MainWindow; PDF
+# fixtures use QPdfWriter (QtGui), so no Qt6::Pdf link is needed.
+#
+# Deliberately calls only pre-existing public API so the SAME file builds
+# against the tree before and after the fix — that is what makes its G2
+# evidence slot a true before/after pair. Writes the composite PNG to
+# $TRAILER_OPENDEDUP_EVIDENCE_DIR when set.
+trailer_add_uat_test(test_uat_open_already_open test_uat_open_already_open.cpp)
+
 # UAT-UPD-001..003 (docs/uat/06-cross-cutting.md): the update affordances'
 # enabled state tracks whether this build carries an update-signing key,
 # and the Updates pane's button never moves as its status text changes.
 # Also emits the G2 evidence pair to $TRAILER_UPDATE_KEY_EVIDENCE_DIR when
 # set — run the same binary from a keyed and an unkeyed build tree.
 trailer_add_uat_test(test_uat_update_key_evidence test_uat_update_key_evidence.cpp)
+
+# Chrome census (UAT-XCT-090): walks the realized widget tree of each
+# canonical at-rest state and diffs the permanent chrome surface against
+# the committed golden docs/uat/chrome-census.json (owner-ack-gated —
+# see the golden's _readme). Links qpdf for the AcroForm fixture (the
+# form-PDF state) and Qt PDF for the document view it drives. The golden
+# path is baked from the source tree at configure time, same pattern as
+# TRAILER_UX_EVIDENCE_DIR above.
+trailer_add_uat_test(test_uat_chrome_census test_uat_chrome_census.cpp)
+target_link_libraries(test_uat_chrome_census PRIVATE Qt6::Pdf Qt6::PdfWidgets)
+if(TARGET qpdf::libqpdf)
+    target_link_libraries(test_uat_chrome_census PRIVATE qpdf::libqpdf)
+elseif(TARGET PkgConfig::QPDF)
+    target_link_libraries(test_uat_chrome_census PRIVATE PkgConfig::QPDF)
+endif()
+target_compile_definitions(test_uat_chrome_census PRIVATE
+    "TRAILER_CENSUS_GOLDEN_DIR=\"${CMAKE_SOURCE_DIR}/docs/uat\"")
+
+# Modal census (UAT-XCT-091 static + UAT-XCT-092 dynamic): (a) scans
+# src/ for modal call sites (exec()/QMessageBox-static/QInputDialog/
+# QFileDialog/QColorDialog/QFontDialog) and diffs per-file counts
+# against the owner-ack-gated golden docs/uat/modal-census.json;
+# (b) drives the read path (open/page/zoom/search/close) with a modal
+# sentinel and asserts QApplication::activeModalWidget() stays null.
+trailer_add_uat_test(test_uat_modal_census test_uat_modal_census.cpp)
+target_compile_definitions(test_uat_modal_census PRIVATE
+    "TRAILER_CENSUS_GOLDEN_DIR=\"${CMAKE_SOURCE_DIR}/docs/uat\""
+    "TRAILER_SOURCE_SRC_DIR=\"${CMAKE_SOURCE_DIR}/src\"")
+
+# Generalized spatial-constancy sweep (UAT-XCT-093): the G10-question-2
+# matrix — every unrelated-state toggle MainWindow offers x the full
+# chrome inventory, asserting mapTo(window) positions hold, plus a
+# return-to-baseline check per toggle. uat_zoom_ind_070's geometry
+# oracle generalized; shares the census's tree walk (uat_chrome_walk.h).
+trailer_add_uat_test(test_uat_constancy_sweep test_uat_constancy_sweep.cpp)
+target_link_libraries(test_uat_constancy_sweep PRIVATE Qt6::Pdf Qt6::PdfWidgets)
