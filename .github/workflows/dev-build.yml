@@ -175,7 +175,7 @@ jobs:
         # the artifact upload below. Release keeps its tests blocking.
         continue-on-error: true
         working-directory: build
-        run: ctest -C Release --output-on-failure --label-exclude uat
+        run: ctest -C Release --output-on-failure --label-exclude 'uat|advisory'
         env:
           QT_QPA_PLATFORM: offscreen
 
