@@ -20,10 +20,11 @@ struct RecentGroup {
 // so File > Open Recent can render dated sections instead of one long
 // undifferentiated list (2026-08-19 owner feedback).
 //
-// The ladder, in emitted order, is:
+// The ladder, in emitted order, is the platform-conventional coarse one
+// (Finder / Explorer / Chrome history):
 //
-//     Today · Yesterday · "N days ago" (2-6) · Last week (7-13)
-//         · Last month (14-30) · Older (31+)
+//     Today · Yesterday · Previous 7 Days (2-7) · Previous 30 Days (8-30)
+//         · Older (31+)
 //
 // Age is measured in whole LOCAL calendar days, not elapsed hours:
 // openedAt is stored UTC (RecentFiles::add), and a file opened at 23:00

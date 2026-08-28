@@ -7,33 +7,30 @@ namespace trailer {
 
 namespace {
 
-// Bucket keys, chosen so that the "N days ago" band's key IS N. That
-// keeps the map's natural ascending order the same as the display order
-// (Today -> Older) without a separate ordering table to keep in sync.
+// Bucket keys in display order. The ladder is the platform-conventional
+// coarse one (Finder, Explorer, Chrome history):
 //
-//   0     Today
-//   1     Yesterday
-//   2..6  "N days ago"
-//   7     Last week   (7-13 days)
-//   8     Last month  (14-30 days)
-//   9     Older       (31+ days, or no usable timestamp)
+//   0  Today
+//   1  Yesterday
+//   2  Previous 7 Days   (2-7 whole local days ago)
+//   3  Previous 30 Days  (8-30)
+//   4  Older             (31+, or no usable timestamp)
 //
-// Range tried: a flat "This week" instead of per-day 2..6 keys read as
-// less useful for the reported case (dozens of manuals opened across a
-// working week, where "3 days ago" locates a file and "this week" does
-// not). Symptom to change: if per-day sections make the menu feel
-// choppy, collapse 2..6 to a single key here — the label switch and the
-// menu builder both follow.
+// Range tried: per-day "N days ago" sections for days 2-6 (first draft,
+// owner's literal wording) produced up to five single-item sections on a
+// normal working week — noise, and no platform precedent. The owner
+// delegated the call to established convention (2026-08-28); this is it.
+// Symptom to change: if "Previous 7 Days" routinely holds so many entries
+// that locating a file means reading the whole section, split it.
 constexpr int kKeyToday = 0;
 constexpr int kKeyYesterday = 1;
-constexpr int kKeyLastWeek = 7;
-constexpr int kKeyLastMonth = 8;
-constexpr int kKeyOlder = 9;
+constexpr int kKeyPrev7 = 2;
+constexpr int kKeyPrev30 = 3;
+constexpr int kKeyOlder = 4;
 
 // Upper bounds (inclusive) of the coarse bands, in whole local days.
-constexpr qint64 kDaysAgoMax = 6;   // last day that gets its own "N days ago"
-constexpr qint64 kLastWeekMax = 13; // last day that reads as "Last week"
-constexpr qint64 kLastMonthMax = 30;
+constexpr qint64 kPrev7Max = 7;
+constexpr qint64 kPrev30Max = 30;
 
 int bucketKey(const QDateTime &openedAt, const QDateTime &now) {
     if (!openedAt.isValid() || !now.isValid())
@@ -46,12 +43,10 @@ int bucketKey(const QDateTime &openedAt, const QDateTime &now) {
         return kKeyToday; // clamp: a clock skew into the future still reads Today
     if (days == 1)
         return kKeyYesterday;
-    if (days <= kDaysAgoMax)
-        return static_cast<int>(days);
-    if (days <= kLastWeekMax)
-        return kKeyLastWeek;
-    if (days <= kLastMonthMax)
-        return kKeyLastMonth;
+    if (days <= kPrev7Max)
+        return kKeyPrev7;
+    if (days <= kPrev30Max)
+        return kKeyPrev30;
     return kKeyOlder;
 }
 
@@ -61,19 +56,14 @@ QString labelForKey(int key) {
         return QCoreApplication::translate("RecentGrouping", "Today");
     case kKeyYesterday:
         return QCoreApplication::translate("RecentGrouping", "Yesterday");
-    case kKeyLastWeek:
-        return QCoreApplication::translate("RecentGrouping", "Last week");
-    case kKeyLastMonth:
-        return QCoreApplication::translate("RecentGrouping", "Last month");
+    case kKeyPrev7:
+        return QCoreApplication::translate("RecentGrouping", "Previous 7 Days");
+    case kKeyPrev30:
+        return QCoreApplication::translate("RecentGrouping", "Previous 30 Days");
     case kKeyOlder:
-        return QCoreApplication::translate("RecentGrouping", "Older");
     default:
-        break;
+        return QCoreApplication::translate("RecentGrouping", "Older");
     }
-    // 2..6 — the key is the day count. %n drives the plural form, so
-    // translations that inflect on it (and any future "1 day ago" use)
-    // stay correct without a second string.
-    return QCoreApplication::translate("RecentGrouping", "%n day(s) ago", nullptr, key);
 }
 
 } // namespace
