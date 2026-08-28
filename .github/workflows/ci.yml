@@ -191,9 +191,11 @@ jobs:
         # UAT tests (label `uat`) drive the full Application +
         # MainWindow stack and need a windowed Qt platform plugin. The
         # fast PR loop excludes them; they run on tag via release.yml's
-        # UAT step or manually via uat-dispatch.yml.
+        # UAT step or manually via uat-dispatch.yml. `advisory` (the
+        # tests/pbt/ explorer tier) is excluded EXPLICITLY per the
+        # AGENTS.md tier table — advisory checks never gate a merge.
         working-directory: build
-        run: ctest -C Release --output-on-failure --label-exclude uat
+        run: ctest -C Release --output-on-failure --label-exclude 'uat|advisory'
         env:
           QT_QPA_PLATFORM: offscreen
 
@@ -455,7 +457,7 @@ jobs:
 
       - name: Wine unit tests
         # Mirrors the Linux job's selector but also drops the `perf` tier
-        # (`--label-exclude 'uat|perf'`) so this stays a real Windows-
+        # (`--label-exclude 'uat|perf|advisory'`) so this stays a real Windows-
         # behaviour gate, not a toy: the UAT tier needs a windowed platform
         # plugin Wine's offscreen doesn't provide, and wall-time perf
         # budgets are noise under the Wine emulator — they run natively on
@@ -501,7 +503,7 @@ jobs:
              "$QT_WIN_DIR"/plugins/platforms/qwindows.dll build-win/platforms/
           cp "$QT_WIN_DIR"/plugins/imageformats/*.dll build-win/imageformats/
           cd build-win
-          ctest -C Release --label-exclude 'uat|perf' --output-on-failure
+          ctest -C Release --label-exclude 'uat|perf|advisory' --output-on-failure
 
   # Disabled 2026-07-09 to conserve Actions usage (Windows runners bill at
   # a 2x minute multiplier). NOTE (2026-08-05): that cost reason no longer
@@ -590,7 +592,7 @@ jobs:
         # comment in tests/uat/CMakeLists.txt.
         working-directory: build
         shell: pwsh
-        run: ctest -C Release --output-on-failure --label-exclude uat
+        run: ctest -C Release --output-on-failure --label-exclude 'uat|advisory'
         env:
           QT_QPA_PLATFORM: offscreen
           QT_QPA_FONTDIR: C:\Windows\Fonts

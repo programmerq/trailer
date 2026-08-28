@@ -189,7 +189,7 @@ jobs:
 
       - name: Unit tests
         working-directory: build
-        run: ctest -C Release --output-on-failure --label-exclude uat
+        run: ctest -C Release --output-on-failure --label-exclude 'uat|advisory'
         env:
           QT_QPA_PLATFORM: offscreen
 
@@ -370,7 +370,7 @@ jobs:
 
       - name: Wine unit tests
         # Cheap Windows-behaviour insurance before shipping a release:
-        # same `--label-exclude 'uat|perf'` selector CI's windows-cross-
+        # same `--label-exclude 'uat|perf|advisory'` selector CI's windows-cross-
         # build job runs (26/26 green locally). The UAT tier needs a
         # windowed platform plugin Wine's offscreen doesn't provide, and
         # wall-time perf budgets are noise under the Wine emulator — they
@@ -400,7 +400,7 @@ jobs:
              "$QT_WIN_DIR"/plugins/platforms/qwindows.dll build-win/platforms/
           cp "$QT_WIN_DIR"/plugins/imageformats/*.dll build-win/imageformats/
           cd build-win
-          ctest -C Release --label-exclude 'uat|perf' --output-on-failure
+          ctest -C Release --label-exclude 'uat|perf|advisory' --output-on-failure
 
       - name: Stage Windows artifact
         # Zip the bundled directory into the exact filename

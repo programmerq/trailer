@@ -199,3 +199,4 @@ if(TRAILER_ENABLE_UX_RECORDER)
 endif()
 
 add_subdirectory(uat)
+add_subdirectory(pbt)

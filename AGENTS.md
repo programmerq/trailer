@@ -443,7 +443,7 @@ a merge or a release; speculative / advisory checks never gate.**
 
 | Tier | Trigger | Runs | Selector | May block? |
 |---|---|---|---|---|
-| **PR / push** | every PR (`ci.yml`, Linux + Windows) | unit tests (+ any non-`uat` deterministic checks) | `ctest --label-exclude uat` | **blocks merge** |
+| **PR / push** | every PR (`ci.yml`, Linux + Windows) | unit tests (+ any non-`uat` deterministic checks) | `ctest --label-exclude 'uat\|advisory'` | **blocks merge** |
 | **Release-candidate** | `release-candidate` label (`release.yml`) | full UAT — regression guards **and** the Layer-1 layout sweep | `ctest -L uat` | **blocks the release** |
 | **Nightly / advisory** *(planned, not yet wired)* | scheduled workflow | persona Monte-Carlo + vision (Set-of-Mark) judge + HITL-recall backtest | a label with **no** `uat` in it | **never blocks** — emits a digest artifact |
 
@@ -454,7 +454,10 @@ a merge or a release; speculative / advisory checks never gate.**
 - **Label gotcha:** `ctest -L` / `-LE` match labels by regex, so a label
   like `uat-sweep` is still matched by `-L uat` and would silently join
   the release gate. Give advisory tests a label with no `uat` substring
-  (e.g. `advisory`) and exclude it from PR CI explicitly.
+  (e.g. `advisory`) and exclude it from PR CI explicitly. The `advisory`
+  label exists now — the `tests/pbt/` explorer carries it, and every
+  gating selector excludes it (`--label-exclude 'uat|advisory'`, or
+  `'uat|perf|advisory'` on the Wine lanes).
 - Every confirmed defect (HITL finding, bug report, or sweep result)
   becomes a regression guard in the `uat` suite so it can't silently
   return — the ratchet only tightens.

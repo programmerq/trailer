@@ -524,7 +524,7 @@ jobs:
 
       - name: Unit tests
         working-directory: build
-        run: ctest -C Release --output-on-failure --label-exclude uat
+        run: ctest -C Release --output-on-failure --label-exclude 'uat|advisory'
         env:
           QT_QPA_PLATFORM: offscreen
 
@@ -677,7 +677,7 @@ jobs:
         # does NOT — this is the one addition nightly makes over CI/release.
         working-directory: build-win
         timeout-minutes: 30
-        run: ctest -C Release --label-exclude 'uat|perf' --output-on-failure
+        run: ctest -C Release --label-exclude 'uat|perf|advisory' --output-on-failure
         env:
           WINEPREFIX: ${{ runner.temp }}/wineprefix
           WINEDEBUG: -all
@@ -845,7 +845,7 @@ jobs:
         # macos.sh only builds/bundles/packages; `make test` on macOS is
         # an alias for the same script). This is net-new coverage.
         working-directory: build-macos
-        run: ctest -C Release --output-on-failure --label-exclude uat
+        run: ctest -C Release --output-on-failure --label-exclude 'uat|advisory'
         env:
           QT_QPA_PLATFORM: offscreen
 
