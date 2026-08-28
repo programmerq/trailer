@@ -175,6 +175,10 @@ QString kToolbarExtensionPinStyle() {
 // permanent-widget region exactly as it did before this change.
 QWidget *reserveStatusBarSlot(QWidget *content, int width) {
     auto *slot = new QWidget(content->parentWidget());
+    // Stable identity for the chrome census (UAT-XCT-090): the slot is the
+    // always-visible element, so it carries "<contentName>.slot".
+    if (!content->objectName().isEmpty())
+        slot->setObjectName(content->objectName() + QStringLiteral(".slot"));
     slot->setFixedWidth(width);
     auto *layout = new QHBoxLayout(slot);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -768,6 +772,8 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         qMax(hint->sizeHint().width(), m_ocrModelMissingHint->sizeHint().width()) +
         kSlotSafetyMargin;
     auto *ocrHintSlot = new QWidget(this);
+    // Stable identity for the chrome census (UAT-XCT-090).
+    ocrHintSlot->setObjectName(QStringLiteral("ocrHintSlot"));
     ocrHintSlot->setFixedWidth(kOcrHintSlotWidth);
     auto *ocrHintSlotLayout = new QHBoxLayout(ocrHintSlot);
     ocrHintSlotLayout->setContentsMargins(0, 0, 0, 0);
@@ -889,6 +895,9 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // OcrController's batch signals drive it; the reveal is delayed so
     // sub-threshold batches never flicker it. See wiring below.
     m_mlProgress = new MlProgressWidget(this);
+    // Stable identity for the chrome census (UAT-XCT-090); its reserved
+    // slot below derives "mlProgress.slot" from it.
+    m_mlProgress->setObjectName(QStringLiteral("mlProgress"));
     // G10/SC-CRIT-1: this is the widget the audit's concrete repro names —
     // its Cancel button is a control the user may be mid-click on, so its
     // reserved slot (m_mlProgress->maxWidth(), computed from THIS
@@ -1334,6 +1343,8 @@ void MainWindow::buildMainToolbar() {
     // Sidebar mode picker. Each entry calls Sidebar::setMode; the
     // checked state mirrors back via Sidebar::modeChanged.
     auto *sidebarBtn = new QToolButton(m_mainToolbar);
+    // Stable identity for the chrome census (UAT-XCT-090).
+    sidebarBtn->setObjectName(QStringLiteral("sidebarModePicker"));
     sidebarBtn->setText(tr("Sidebar"));
     m_themedIcons.apply(sidebarBtn, QStringLiteral(":/icons/actions/panel-sidebar.svg"),
                         m_mainToolbar);
@@ -1414,6 +1425,8 @@ void MainWindow::buildMainToolbar() {
     // the toolbar (rather than swapping widgets) preserves the
     // signals and counter state wired up in the constructor.
     m_searchButton = new QToolButton(m_mainToolbar);
+    // Stable identity for the chrome census (UAT-XCT-090).
+    m_searchButton->setObjectName(QStringLiteral("searchButton"));
     m_themedIcons.apply(m_searchButton, QStringLiteral(":/icons/actions/view-search.svg"),
                         m_mainToolbar);
     m_searchButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
@@ -2039,6 +2052,10 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     // explicit call is needed.
 
     m_rotateLeftAction = toolsMenu->addAction(tr("Rotate &Left"));
+    // Stable identity for the chrome census (UAT-XCT-090) — its twin
+    // below already carries one (added for the ux-walkthrough harness);
+    // without it the census would key off the translatable label text.
+    m_rotateLeftAction->setObjectName(QStringLiteral("action.tools.rotateLeft"));
     m_themedIcons.apply(m_rotateLeftAction, QStringLiteral(":/icons/actions/page-rotate-left.svg"),
                         this);
     m_rotateLeftAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_L));

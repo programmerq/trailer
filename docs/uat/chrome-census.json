@@ -1,0 +1,160 @@
+{
+    "_readme": [
+        "Chrome census golden — the at-rest permanent chrome surface of each canonical state, frozen.",
+        "Compared verbatim by tests/uat/test_uat_chrome_census.cpp (UAT-XCT-090, docs/uat/06-cross-cutting.md). A build whose at-rest surface shows chrome not listed here fails the release gate.",
+        "OWNER-ACK RULE: a change to this file merges ONLY with the owner's explicit acknowledgment in the PR and a cited accepted decision record in docs/decision-records/. Agents do not self-approve golden diffs (AGENTS.md, G6/G10).",
+        "The 2026-08-28 baseline is a faithful FREEZE of the surface as built — nothing was pruned. Each row doubles as the owner's pruning worksheet; deleting a row is an owner decision.",
+        "Regenerate after an approved change: TRAILER_CENSUS_WRITE=1 QT_QPA_PLATFORM=offscreen ./test_uat_chrome_census"
+    ],
+    "schema": 1,
+    "states": {
+        "empty-window": {
+            "chrome": [
+                "MainToolbar",
+                "MainToolbar/QToolBarSeparator",
+                "MainToolbar/QToolBarSeparator#1",
+                "MainToolbar/QToolBarSeparator#2",
+                "MainToolbar/QToolButton:action.tools.rotateLeft",
+                "MainToolbar/QToolButton:action.tools.rotateRight",
+                "MainToolbar/QToolButton:action.view.actualSize",
+                "MainToolbar/QToolButton:action.view.formToolbar",
+                "MainToolbar/QToolButton:action.view.markupToolbar",
+                "MainToolbar/QToolButton:action.view.zoomIn",
+                "MainToolbar/QToolButton:action.view.zoomOut",
+                "MainToolbar/QWidget",
+                "MainToolbar/searchButton",
+                "MainToolbar/sidebarModePicker",
+                "QStatusBar",
+                "QStatusBar/mlIndicator.slot",
+                "QStatusBar/mlProgress.slot",
+                "QStatusBar/ocrHintSlot",
+                "QStatusBar/twoPageReadOnlyBadge.slot",
+                "QWidget",
+                "QWidget/QStackedWidget",
+                "QWidget/QStackedWidget/EmptyStateWidget",
+                "QWidget/QStackedWidget/EmptyStateWidget/QLabel",
+                "QWidget/QStackedWidget/EmptyStateWidget/QLabel#1",
+                "QWidget/QStackedWidget/EmptyStateWidget/QLabel#2",
+                "QWidget/QStackedWidget/EmptyStateWidget/QPushButton:Open File…"
+            ],
+            "menus": [
+                "File",
+                "Edit",
+                "View",
+                "Go",
+                "Tools",
+                "Window",
+                "Help"
+            ]
+        },
+        "form-pdf-open": {
+            "chrome": [
+                "MainToolbar",
+                "MainToolbar/QToolBarSeparator",
+                "MainToolbar/QToolBarSeparator#1",
+                "MainToolbar/QToolBarSeparator#2",
+                "MainToolbar/QToolButton:action.tools.rotateLeft",
+                "MainToolbar/QToolButton:action.tools.rotateRight",
+                "MainToolbar/QToolButton:action.view.actualSize",
+                "MainToolbar/QToolButton:action.view.formToolbar",
+                "MainToolbar/QToolButton:action.view.markupToolbar",
+                "MainToolbar/QToolButton:action.view.zoomIn",
+                "MainToolbar/QToolButton:action.view.zoomOut",
+                "MainToolbar/QWidget",
+                "MainToolbar/searchButton",
+                "MainToolbar/sidebarModePicker",
+                "QStatusBar",
+                "QStatusBar/mlIndicator.slot",
+                "QStatusBar/mlProgress.slot",
+                "QStatusBar/ocrHintSlot",
+                "QStatusBar/twoPageReadOnlyBadge.slot",
+                "QWidget",
+                "QWidget/QStackedWidget",
+                "QWidget/QStackedWidget/QWidget",
+                "QWidget/QStackedWidget/QWidget/DocumentView"
+            ],
+            "menus": [
+                "File",
+                "Edit",
+                "View",
+                "Go",
+                "Tools",
+                "Window",
+                "Help"
+            ]
+        },
+        "image-open": {
+            "chrome": [
+                "MainToolbar",
+                "MainToolbar/QToolBarSeparator",
+                "MainToolbar/QToolBarSeparator#1",
+                "MainToolbar/QToolBarSeparator#2",
+                "MainToolbar/QToolButton:action.tools.rotateLeft",
+                "MainToolbar/QToolButton:action.tools.rotateRight",
+                "MainToolbar/QToolButton:action.view.actualSize",
+                "MainToolbar/QToolButton:action.view.formToolbar",
+                "MainToolbar/QToolButton:action.view.markupToolbar",
+                "MainToolbar/QToolButton:action.view.zoomIn",
+                "MainToolbar/QToolButton:action.view.zoomOut",
+                "MainToolbar/QWidget",
+                "MainToolbar/searchButton",
+                "MainToolbar/sidebarModePicker",
+                "QStatusBar",
+                "QStatusBar/mlIndicator.slot",
+                "QStatusBar/mlProgress.slot",
+                "QStatusBar/ocrHintSlot",
+                "QStatusBar/ocrHintSlot/ocrModelMissingHint",
+                "QStatusBar/twoPageReadOnlyBadge.slot",
+                "QWidget",
+                "QWidget/QStackedWidget",
+                "QWidget/QStackedWidget/QWidget",
+                "QWidget/QStackedWidget/QWidget/DocumentView"
+            ],
+            "menus": [
+                "File",
+                "Edit",
+                "View",
+                "Go",
+                "Tools",
+                "Window",
+                "Help"
+            ]
+        },
+        "pdf-open": {
+            "chrome": [
+                "MainToolbar",
+                "MainToolbar/QToolBarSeparator",
+                "MainToolbar/QToolBarSeparator#1",
+                "MainToolbar/QToolBarSeparator#2",
+                "MainToolbar/QToolButton:action.tools.rotateLeft",
+                "MainToolbar/QToolButton:action.tools.rotateRight",
+                "MainToolbar/QToolButton:action.view.actualSize",
+                "MainToolbar/QToolButton:action.view.formToolbar",
+                "MainToolbar/QToolButton:action.view.markupToolbar",
+                "MainToolbar/QToolButton:action.view.zoomIn",
+                "MainToolbar/QToolButton:action.view.zoomOut",
+                "MainToolbar/QWidget",
+                "MainToolbar/searchButton",
+                "MainToolbar/sidebarModePicker",
+                "QStatusBar",
+                "QStatusBar/mlIndicator.slot",
+                "QStatusBar/mlProgress.slot",
+                "QStatusBar/ocrHintSlot",
+                "QStatusBar/twoPageReadOnlyBadge.slot",
+                "QWidget",
+                "QWidget/QStackedWidget",
+                "QWidget/QStackedWidget/QWidget",
+                "QWidget/QStackedWidget/QWidget/DocumentView"
+            ],
+            "menus": [
+                "File",
+                "Edit",
+                "View",
+                "Go",
+                "Tools",
+                "Window",
+                "Help"
+            ]
+        }
+    }
+}

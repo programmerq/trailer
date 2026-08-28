@@ -1,0 +1,67 @@
+{
+    "_readme": [
+        "Modal census golden — every modal call site under src/, as per-file, per-kind counts, frozen.",
+        "Compared verbatim by tests/uat/test_uat_modal_census.cpp (UAT-XCT-091, docs/uat/06-cross-cutting.md). A new exec()/QMessageBox-static/QInputDialog/QFileDialog/QColorDialog/QFontDialog call site anywhere under src/ fails the release gate until this file changes.",
+        "OWNER-ACK RULE: a change to this file merges ONLY with the owner's explicit acknowledgment in the PR and a cited accepted decision record in docs/decision-records/. Agents do not self-approve golden diffs (AGENTS.md, G6/G10).",
+        "Scope: argumentless .exec()/->exec() (dialogs, boxes, progress dialogs — and, indistinguishably by grep, event loops and qApp->exec(), frozen alongside rather than risking a matcher hole). QMenu::exec(pos) is a transient popup and is out of scope. The 2026-08-28 baseline is a faithful FREEZE — nothing was pruned; each row is the owner's pruning worksheet.",
+        "Regenerate after an approved change: TRAILER_CENSUS_WRITE=1 QT_QPA_PLATFORM=offscreen ./test_uat_modal_census"
+    ],
+    "schema": 1,
+    "sites": {
+        "src/app/Application.cpp": {
+            "QFileDialog-static": 1,
+            "exec": 2
+        },
+        "src/document/ImageAdapter.cpp": {
+            "exec": 1
+        },
+        "src/document/PdfAdapter.cpp": {
+            "QInputDialog-static": 1,
+            "exec": 1
+        },
+        "src/main.cpp": {
+            "exec": 1
+        },
+        "src/ml/ModelRegistry.cpp": {
+            "exec": 1
+        },
+        "src/platform/PortalScreenshot.cpp": {
+            "exec": 1
+        },
+        "src/platform/ScreenCapturePermission.cpp": {
+            "exec": 1
+        },
+        "src/ui/FeedbackDialog.cpp": {
+            "exec": 1
+        },
+        "src/ui/Inspector.cpp": {
+            "QColorDialog-static": 2
+        },
+        "src/ui/MainWindow.cpp": {
+            "QFileDialog-static": 6,
+            "QInputDialog-static": 1,
+            "QMessageBox-static": 2,
+            "exec": 15
+        },
+        "src/ui/MarkupToolbar.cpp": {
+            "QColorDialog-static": 2
+        },
+        "src/ui/ModelManagerDialog.cpp": {
+            "QMessageBox-static": 3,
+            "exec": 4
+        },
+        "src/ui/SignatureCaptureDialog.cpp": {
+            "QFileDialog-static": 1
+        },
+        "src/ui/SignaturePicker.cpp": {
+            "exec": 2
+        },
+        "src/ui/SignaturesDialog.cpp": {
+            "QMessageBox-static": 2,
+            "exec": 1
+        },
+        "src/uxrecord/UxTrailerHooks.cpp": {
+            "QInputDialog-static": 1
+        }
+    }
+}
