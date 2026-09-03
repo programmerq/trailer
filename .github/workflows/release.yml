@@ -164,7 +164,7 @@ jobs:
       - uses: ./.github/actions/setup-linux-build
 
       - name: ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           key: release-${{ runner.os }}-gcc-linux
           max-size: 500M
@@ -304,7 +304,7 @@ jobs:
       - uses: ./.github/actions/setup-windows-cross
 
       - name: ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           # Separate key from the native-gcc linux-build job: this is a
           # different compiler (mingw-w64 g++) targeting Windows.

@@ -145,7 +145,7 @@ jobs:
       - uses: ./.github/actions/setup-linux-build
 
       - name: ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           # Share the release job's ccache prefix for warm hits (the
           # action restores by prefix and saves a fresh per-run entry,
@@ -230,7 +230,7 @@ jobs:
       - uses: ./.github/actions/setup-windows-cross
 
       - name: ccache
-        uses: hendrikmuhs/ccache-action@v1.2.23
+        uses: hendrikmuhs/ccache-action@v1.2.24
         with:
           # Share the release windows-cross ccache prefix for warm hits.
           key: release-windows-cross-mingw
