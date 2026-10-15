@@ -52,7 +52,7 @@ reportlab's `invariant=1` mode so the byte output is stable across runs.
 
 ```sh
 pip3 install reportlab pillow
-python3 docs/perf/corpus/generate_corpus.py
+python3 tests/perf/corpus/generate_corpus.py
 ```
 
 The script prints each file's byte size on completion. Re-run it after any

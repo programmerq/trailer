@@ -49,7 +49,7 @@ HEIGHT="${WAYLAND_SMOKE_HEIGHT:-800}"
 TRAILER_BIN="${TRAILER_BIN:-$REPO_ROOT/build/trailer}"
 # A sample document so Trailer opens a real, content-filled window (Phase 1
 # used an image doc — the money shot). Fall back gracefully if it's ever moved.
-SAMPLE_DOC="${WAYLAND_SMOKE_DOC:-$REPO_ROOT/docs/perf/corpus/photo.jpg}"
+SAMPLE_DOC="${WAYLAND_SMOKE_DOC:-$REPO_ROOT/tests/perf/corpus/photo.jpg}"
 OUT_PNG="${WAYLAND_SMOKE_OUT:-$REPO_ROOT/wayland-smoke.png}"
 
 # Timeouts (seconds) — polled, never a blind sleep.

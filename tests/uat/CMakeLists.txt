@@ -208,15 +208,11 @@ trailer_add_uat_test(test_uat_file_menu_ia test_uat_file_menu_ia.cpp)
 
 # UX recorder UI evidence (UXR-002). Recorder-only: the "● REC" chip and
 # "◉ Recording" menu exist solely in TRAILER_ENABLE_UX_RECORDER builds.
-# Writes curated offscreen grab() PNGs to the committed
-# docs/evidence/ux-recorder/ tree (overridable via
-# $TRAILER_UX_EVIDENCE_DIR) so they can be embedded in the PR — the
-# project's UX-Done gate. Drives Application + MainWindow; no Qt PDF.
+# Set $TRAILER_UX_EVIDENCE_DIR to also get offscreen grab() PNGs of them.
+# Drives Application + MainWindow; no Qt PDF.
 if(TRAILER_ENABLE_UX_RECORDER)
     trailer_add_uat_test(test_uat_ux_recorder_evidence
         test_uat_ux_recorder_evidence.cpp)
-    target_compile_definitions(test_uat_ux_recorder_evidence PRIVATE
-        "TRAILER_UX_EVIDENCE_DIR=\"${CMAKE_SOURCE_DIR}/docs/evidence/ux-recorder\"")
 endif()
 
 # Zoom-% status indicator UAT. Drives Application + MainWindow with an

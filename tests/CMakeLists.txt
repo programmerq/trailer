@@ -187,12 +187,12 @@ trailer_add_known_bug_variant(test_known_bugs_window_dpi72 test_known_bugs_windo
 
 # Structural, CI-safe performance tests. These assert ordering / counts /
 # thread facts (never wall-clock time) and read the checked-in reference
-# corpus at docs/perf/corpus/. TRAILER_PERF_CORPUS_DIR points each test
+# corpus at tests/perf/corpus/. TRAILER_PERF_CORPUS_DIR points each test
 # at that directory (CMAKE_CURRENT_SOURCE_DIR here is <repo>/tests).
 function(trailer_add_perf_test name source)
     trailer_add_test(${name} ${source})
     target_compile_definitions(${name} PRIVATE
-        "TRAILER_PERF_CORPUS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../docs/perf/corpus\"")
+        "TRAILER_PERF_CORPUS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/perf/corpus\"")
     # Tag the structural perf tier with a ctest label so CI can target it
     # (e.g. `ctest --label-exclude perf` on the Wine runner, which can't
     # meet the threading/paint assumptions these tests make).

@@ -1,5 +1,5 @@
 // UAT evidence harness — offscreen grab() PNGs for the UX recorder's
-// visible MainWindow controls (docs/ux-recorder.md, UXR-002).
+// visible MainWindow controls (src/uxrecord/README.md, UXR-002).
 //
 // Compiled only into recorder-enabled builds (TRAILER_UX_RECORDER); the
 // widgets it grabs — the "● REC" status-bar chip and the "◉ Recording"
@@ -8,10 +8,8 @@
 // itself is macOS-only.
 //
 // Runs under QT_QPA_PLATFORM=offscreen like every other uat slot. Each
-// slot both asserts the wired behaviour AND, when an evidence directory
-// is available, writes a curated grab() PNG there. The directory is the
-// committed docs/evidence/ux-recorder/ tree by default (compiled in via
-// TRAILER_UX_EVIDENCE_DIR), overridable with $TRAILER_UX_EVIDENCE_DIR.
+// slot asserts the wired behaviour and, when $TRAILER_UX_EVIDENCE_DIR is
+// set, also writes a grab() PNG there for a PR description:
 //
 //   ux_ev_10_recChipNormal    -> ux-recorder-rec-chip.png
 //   ux_ev_20_recordingMenu    -> ux-recorder-menu.png
@@ -56,14 +54,7 @@ QMenu *recordingMenu(MainWindow *mw) {
 }
 
 QString evidenceDir() {
-    const QString override = QString::fromLocal8Bit(qgetenv("TRAILER_UX_EVIDENCE_DIR"));
-    if (!override.isEmpty())
-        return override;
-#ifdef TRAILER_UX_EVIDENCE_DIR
-    return QStringLiteral(TRAILER_UX_EVIDENCE_DIR);
-#else
-    return QString();
-#endif
+    return QString::fromLocal8Bit(qgetenv("TRAILER_UX_EVIDENCE_DIR"));
 }
 
 // Grab `w` offscreen and write it under the evidence directory.

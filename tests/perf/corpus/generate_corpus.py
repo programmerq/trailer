@@ -3,9 +3,9 @@
 
 Run from the repository root:
 
-    python3 docs/perf/corpus/generate_corpus.py
+    python3 tests/perf/corpus/generate_corpus.py
 
-Produces three small, synthetic files under docs/perf/corpus/:
+Produces three small, synthetic files under tests/perf/corpus/:
 
   * form_1page.pdf   — a 1-page PDF carrying an interactive AcroForm
                        (one text field + one checkbox). Used by the
