@@ -132,7 +132,7 @@ int annotationCount(const QString &path, int page) {
     try {
         QPDF pdf;
         pdf.processFile(path.toLocal8Bit().constData());
-        const QPDFObjectHandle annots = pageAnnots(pdf, page);
+        QPDFObjectHandle annots = pageAnnots(pdf, page);
         return annots.isArray() ? annots.getArrayNItems() : 0;
     } catch (const std::exception &) {
         return -1;
