@@ -54,9 +54,10 @@ entries terse and user-visible; CI / infrastructure churn lives in the
   `PRODUCT.md` (what Trailer is and its rules), `AGENTS.md` (how to work
   on the code) and a single `TODO.md`. A CI check fails if another
   tracking file appears.
-- **Known-bug tests.** Each open data-loss bug in `TODO.md` has a test
-  that asserts the right behaviour and expects today's failure (ctest
-  label `known-bug`), so the fix turns it into a regression test.
+- **Known-bug tests.** Most open P0 bugs in `TODO.md`, and some others,
+  have a test that asserts the right behaviour and expects today's
+  failure (ctest label `known-bug`), so the fix turns it into a
+  regression test.
 - CI's hosted Linux runners are pinned to `ubuntu-24.04`.
 
 ## [0.3.0] - 2026-07-12

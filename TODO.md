@@ -10,10 +10,14 @@ Trailer won't do is in PRODUCT.md ("Not doing"), not here.
   lists view modes, every combination must pass.
 
 **Closing and adding**
-- To close an entry, the PR that meets its bar deletes it and names the id in the commit subject,
-  e.g. `fix(T-07): …`. There is no status field and no done list.
-- To add an entry, take the next unused id (ids are never reused; the highest so far is T-130)
-  and put it under its priority. Land a failing test in the same PR when you can.
+- To close an entry, the PR that meets its bar deletes it and names the id in its title and
+  commit subject, e.g. `fix(T-07): …`; one PR may close several (`fix(T-05, T-97): …`). There
+  is no status field and no done list.
+- A fix that meets only part of a bar deletes the `QEXPECT_FAIL` lines it fixed, keeps the
+  entry, and narrows its Done when to what's left.
+- To add an entry, take the next unused id and update this line: the highest so far is T-132.
+  Ids are never reused, and CI fails if an entry is above that number. Put the entry under its
+  priority, with a failing test in the same PR when the bug can be reproduced offscreen.
 - A code comment that points at open work says `// T-NN: …` and nothing more.
 
 **Known-bug tests**
@@ -23,7 +27,9 @@ Trailer won't do is in PRODUCT.md ("Not doing"), not here.
   `QEXPECT_FAIL` line and this entry together, so the test becomes the regression test.
 
 **Priorities**
-- **P0**: data loss, a wrong save or undo, or a file that leaks what the user removed.
+- **P0**: in ordinary use (no crash, no unusual setup), Trailer damages a file or writes one
+  that looks right in Trailer and wrong elsewhere, loses work, saves or undoes the wrong thing,
+  or leaves in a file what the user removed.
 - **P1**: the named friction: controls that move, popups that say no, status-bar clutter, broken
   select/undo/zoom basics, text you can't select, HiDPI blur, slow open.
 - **P2**: Preview parity and polish.
@@ -36,8 +42,10 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
 `data-loss` where work can be lost.
 
 **Sources (Src)**
-- `file:line` refers to `09bc1e3` (origin/main, 2026-08-07). Removed files (the old TODO.md,
-  ROADMAP.md, `docs/backlog/`, decision records) can still be read with `git show 09bc1e3:<path>`.
+- `file:line` refers to `09bc1e3` (main before the reboot, 2026-08-07) unless the entry names
+  another commit; a new entry cites lines at the commit it was written on, e.g.
+  `PdfAdapter.cpp:120 @1a2b3c4`. Removed files (the old TODO.md, ROADMAP.md, `docs/backlog/`,
+  decision records) can still be read with `git show 09bc1e3:<path>`.
 - Short ids such as MAP-1, SAV-3 or C7 name findings from the October 2026 audit, which lives
   outside the repo. Each entry repeats what you need from it.
 
@@ -84,7 +92,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     ignores /Rotate and the CropBox.
 - **T-04 Zoom Lens marks vanish when a PDF is saved.** `save` `data-loss`
   - Done when: a Zoom Lens drawn on a PDF is still present and editable after Save and reopen.
-    Until that works, the tool is disabled on PDFs with a tooltip saying it works on images.
+    A stopgap PR may instead disable the tool on PDFs, with a tooltip saying it works on images;
+    that stops the loss but closes nothing.
   - Test: `test_known_bugs_pdf_save` (T-04).
   - Src: the store goes 1 → 0 on Save. `PdfEditor.cpp:674-678`.
 - **T-05 ⌘Z of a page operation after Save does nothing, marks the document edited, and can
@@ -126,7 +135,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     file appears at a Save As target. The next good Save writes each mark once.
   - Src: `MainWindow.cpp:3247-3268` returns on `wasCanceled`, but the `QtConcurrent::run` worker
     keeps going. `PdfAdapter.cpp:2596-2604` mutates the live editor; `:2626-2630` writes the
-    Save As target directly. Inferred from the code, not reproduced.
+    Save As target directly. Inferred from the code, not reproduced, so no known-bug test yet:
+    it needs a fault-injection seam in the writer first.
 - **T-09 Fit Width plus navigation, view-mode toggle or resize can freeze the UI at 100% CPU.**
   `nav` `data-loss`
   - Done when: these seeds of the random UI walk pass its per-step quiescence check at dpr 1 and
@@ -137,7 +147,20 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     `TRAILER_PBT_SEED=<seed> QT_QPA_PLATFORM=offscreen ctest -R test_pbt_walk_min`, adding
     `QT_SCALE_FACTOR=2` for dpr 2; all eight seeds fail today. gdb shows the GUI thread looping in
     `QAbstractScrollAreaPrivate::layoutChildren_helper → postEvent`. Force-quitting loses
-    unsaved work.
+    unsaved work. No known-bug test yet: the seeds freeze with this repo's cloud toolchain and
+    fonts, but nobody has checked them on CI's, and a known-bug test must fail the same way
+    there.
+- **T-29 Saving a PDF wipes its markup undo history, so ⌘Z then undoes the wrong thing.** `undo`
+  `data-loss`
+  - Done when: add a mark, rotate a page, Save, then ⌘Z twice: the rotate is reverted, then the
+    mark, and the document is marked edited; ⌘⇧Z restores both. The same holds after Save As.
+  - Test: `test_known_bugs_pdf_save` (T-29).
+  - Src: UND-3. `PdfAdapter.cpp:2725` calls `clearHistory()` for annotations but keeps page-op
+    history, so ⌘Z after Save skips the newest mark and undoes an older rotate.
+- **T-41 Saved text boxes carry no appearance stream.** `annotations`
+  - Done when: a text box or speech bubble saved by Trailer has an /AP, so pdfium renders its
+    text with annotations on. Also check it by hand in Preview.
+  - Src: `PdfEditor.cpp:620-626` writes /DA but no /AP.
 - **T-90 Redaction leaves the text readable on rotated and cropped pages.** `security` `data-loss`
   - Done when: red text under a redaction box leaves 0 red pixels in the saved file at /Rotate
     0, 90, 180 and 270 and on a page with a CropBox; the page keeps its orientation; links, form
@@ -169,7 +192,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     - killing the process at every step of a save (fault injection at each file operation)
       always leaves either the complete old file or the complete new one at the path;
     - saving through a symlink updates the target and leaves the link a link;
-    - mode 0600 stays 0600; extended attributes and hard links are preserved;
+    - mode 0600 stays 0600, and extended attributes are preserved. (Other hard links to the
+      file keep the old content: that is the accepted cost of an atomic replace.)
     - image saves get the same treatment (write a temp file in the same directory, then rename).
   - Test: `test_known_bugs_pdf_files` (T-92; symlink and mode).
   - Src: C3, SAV-4. The order is `unlink(target)` → `link(temp, target)` → `unlink(temp)`, so the
@@ -186,6 +210,14 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Src: SAV-3, C7. `onSave` has no dirty gate (`MainWindow.cpp:3153-3171`). A JPEG is
     re-encoded at Qt's default quality on every save (55,412 → ~12,400 bytes; error grows with
     each save), and EXIF goes from 5 tags to 0 (`ImageAdapter.cpp:1385-1387`).
+- **T-98 Saving a signed PDF silently invalidates the signature.** `save` `data-loss`
+  - Done when: a clean ⌘S on a PDF with a /Sig field leaves its bytes unchanged (T-96); editing
+    one shows an inline, non-modal notice that the signature will break, and Save defaults to a
+    copy unless the user confirms.
+  - Src: C10. Nothing in `src` handles /Sig or /ByteRange, and every Save is a full rewrite.
+- **T-101 Filled form values rely on NeedAppearances.** `annotations`
+  - Done when: a filled text field renders in pdfium with NeedAppearances off, and prints.
+  - Src: C15. `PdfEditor.cpp:1402-1416` writes /V and sets NeedAppearances but builds no /AP.
 - **T-102 Marks and text selection land on different content than the user pointed at.**
   `text` `annotations` `data-loss`
   - Done when, through MainWindow with real mouse events at positions found from rendered pixels,
@@ -209,14 +241,16 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
 - **T-10 Every PDF Save opens a window-modal "Saving…" dialog.** `dialogs`
   - Done when: saving a PDF creates no dialog (test: no top-level QDialog appears between Save and
     completion). The document stays scrollable while it writes, and the edited indicator clears
-    when the write lands. A save that takes over a second shows progress without a modal.
+    when the write lands. A save still running after a fixed delay shows progress without a
+    modal (test it with an injected slow writer).
   - Src: NO-7. `MainWindow.cpp:3232-3236`: QProgressDialog, WindowModal, `setMinimumDuration(0)`.
 - **T-11 The status bar is always shown, with success toasts and reserved slots that jump.**
   `chrome`
   - Done when: `statusBar()` is not visible in the empty, PDF, image and markup states on any OS,
     and no text appears after a successful action ("✓ Saved.", "Page cropped.", "Page copied…",
     "Trailer reset complete."). Anything that must still be shown appears in context and only
-    while its state is true (errors: T-111).
+    while its state is true. The status bar also carries every error today, so T-111 lands first
+    or in the same PR.
   - Test: `test_known_bugs_window` (T-11). `test_uat_constancy_sweep` tolerates T-11 in its four
     status-bar rows and, on Linux, fails once one stops moving; the fix deletes those entries.
   - Src: SB-1, SB-2. Four fixed-width reserved slots take 1,045 px of a 1,280 px window, empty at
@@ -273,7 +307,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
       makes the visible page's text selectable with no user action;
     - a born-digital PDF triggers no OCR; a mixed PDF OCRs only its image-only pages;
     - the missing-model hint follows the same per-page rule;
-    - Recognize Text… no longer opens a page-range modal.
+    - Recognize Text… recognizes the whole document in the background, cancellable, instead of
+      asking for a page range first.
   - Src: OCR-3, NO-6. `hasTextLayer()` returns `m_valid` (`PdfAdapter.h:139`), so the gates at
     `OcrController.cpp:76` and `:280-284` stop every PDF. A per-page `pageHasText()` exists at
     `PdfAdapter.cpp:1621` but runs on the GUI thread. `MainWindow.cpp:2818-2841`.
@@ -308,12 +343,13 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Src: `MainWindow.cpp:5250-5253`; `PdfAdapter.cpp:781-786`; `src/uxrecord/UxRecord.h:53`.
 - **T-24 GUI-thread work grows with page count: layout, sidebar and thumbnails.** `open`
   - Done when these counting tests (no clocks) pass in Continuous, Single and Two Pages:
-    - the pages touched before the first frame are the same set for 1 and for 20,000 pages;
+    - before the first frame, the pages touched are the visible ones plus the same fixed
+      prefetch, for 1 and for 20,000 pages;
     - the GUI thread makes 0 engine calls across open, 3 scroll steps, 1 zoom, 1 resize and a
       mode switch;
     - page-record visits per scroll, zoom or resize event are at most visits(N=1) + 4·⌈log2 N⌉;
     - Two Pages relayout makes 0 `pagePointSize()` calls;
-    - the GUI thread's instruction count to the first frame grows by less than about 100
+    - the GUI thread's instruction count to the first frame grows by fewer than 100
       instructions per page between 20,000 and 40,000 pages (callgrind, `--separate-threads`).
   - Src: QPdfView's Continuous layout walks every page on open, zoom and resize; Trailer adds
     eight `pagePointSize` walks per page. `PdfAdapter.cpp:815-1471`; `TwoPageView.cpp:134-162`;
@@ -343,17 +379,11 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     - the QSKIP at `test_perf_render_ordering.cpp:114` is gone;
     - `test_perf_lazy_open` passes 50 of 50 runs alongside a parallel build.
   - Src: `test_perf_lazy_open` failed 2 of 45 runs under load.
-- **T-29 Saving a PDF wipes its markup undo history.** `undo`
-  - Done when: add a mark, rotate a page, Save, then ⌘Z twice: the rotate is reverted, then the
-    mark, and the document is marked edited; ⌘⇧Z restores both. The same holds after Save As.
-  - Test: `test_known_bugs_pdf_save` (T-29).
-  - Src: UND-3. `PdfAdapter.cpp:2725` calls `clearHistory()` for annotations but keeps page-op
-    history, so ⌘Z after Save skips the newest mark and undoes an older rotate.
 - **T-30 No Trailer build runs on the reference Intel Mac.** `platform`
   - Done when: the owner's choice (PRODUCT.md, open decision 2) is in place. Either a release DMG
     launches and opens a PDF on the reference Intel Mac (x86_64, ML off, which needs T-49), or
     the counting tests (T-24) and the cold-launch measurement (T-124) run on that machine under
-    Linux or Windows with the results recorded.
+    Linux or Windows, with the results in the closing PR's description.
   - Src: Qt 6.10+ needs macOS 13 and ONNX Runtime 1.25 needs 14, while 2014 Macs stop at
     macOS 11 or 12. `cmake/OnnxRuntime.cmake:37-38` is FATAL on macOS x86_64.
     `scripts/build-macos.sh:2-17` is arm64 only, and `:68` sets the floor to macOS 14.0.
@@ -369,8 +399,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     - main stays green on 10 consecutive pushes, and a re-run never flips a result.
   - Src: about 4,400 lines of workflow YAML for about 2,300 lines of logic. The disabled MSVC job
     (`ci.yml:506-596`) passed 36 of 37 runs before it was turned off; the Wine lane fails about 1
-    run in 3 and Wine UAT passes about half its cases. Main's last CI run is red from a Wine
-    flake. `tests/test_ml_callback_lifetime.cpp:271`; `tests/CMakeLists.txt:25`;
+    run in 3 and Wine UAT passes about half its cases. As of 2026-10-15, main's last CI run is
+    red from a Wine flake. `tests/test_ml_callback_lifetime.cpp:271`; `tests/CMakeLists.txt:25`;
     `tests/uat/CMakeLists.txt:19`.
 - **T-94 Annotations made by other apps are invisible in Trailer.** `annotations`
   - Done when: a /Stamp and a /Polygon with appearance streams show in the view, thumbnails, Copy
@@ -381,7 +411,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
 - **T-95 Print leaves out annotations, signatures and unsaved marks, and rasterizes on the GUI
   thread.** `print`
   - Done when: printing to PDF a document with a saved mark and an unsaved mark contains both;
-    images print with their marks; the GUI thread stays responsive while printing (counted).
+    images print with their marks; no page is rasterized on the GUI thread while printing
+    (counted at the render call).
   - Test: `test_known_bugs_pdf_files` (T-95).
   - Src: C5. `PdfAdapter.cpp:2052-2099` renders `m_doc` with default flags; `ImageAdapter.cpp:
     1517-1538` prints `m_image` without the overlay.
@@ -393,11 +424,6 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     a lazy qpdf parse (776 ms / 3,249 ms). `PdfAdapter.cpp:2100-2147` serializes the whole
     document, closes, reloads and clears all OCR. A stable page model (source page, rotation,
     crop; written out only at Save) fixes this together with T-05, T-103 and T-116.
-- **T-98 Saving a signed PDF silently invalidates the signature.** `save`
-  - Done when: a clean ⌘S on a PDF with a /Sig field leaves its bytes unchanged (T-96); editing
-    one shows an inline, non-modal notice that the signature will break, and Save defaults to a
-    copy unless the user confirms.
-  - Src: C10. Nothing in `src` handles /Sig or /ByteRange, and every Save is a full rewrite.
 - **T-103 Save, page operations and Undo move the reading position.** `nav`
   - Done when: after Save, Save As, any page operation, Undo or Redo, the same document point
     stays under the same viewport pixel (±2 px).
@@ -431,10 +457,10 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Src: SB-3. `MainWindow.cpp:722-733`, `:979-980`.
 - **T-112 Disabled items explain nothing, or point at other items.** `dialogs`
   - Done when: a test walks every menu and toolbar action in the empty, PDF and image states, and
-    each disabled action is either self-evident (Undo, Redo, Cut, Copy, Paste) or has a tooltip
-    that differs from its label and says why (an image-only command on a PDF says it works on
-    images); switching between a PDF tab and an image tab moves no control; there is one OCR
-    command.
+    each disabled action is either a standard edit command (Undo, Redo, Cut, Copy, Paste) or has
+    a tooltip that differs from its label and says why, and where to go when there's somewhere
+    to go (an image-only command on a PDF says it works on images); switching between a PDF tab
+    and an image tab moves no control; there is one OCR command.
   - Src: NO-2, NO-8. Nine disabled items on a PDF window have a tooltip that only repeats the
     label (Adjust Size…, Adjust Colour…, Remove Background, Instant Alpha…, Smart Lasso…, Export
     As…, Crop Image…, Fill Forms, and one since removed); "Re-run Text Recognition" is disabled
@@ -497,8 +523,7 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
       stay green;
     - Reset Trailer's confirmation lists every store it deletes or keeps: the OCR cache is
       deleted, and unsaved work is kept and named as kept;
-    - a test checks that the disk matches that list;
-    - Reset ends without a success toast.
+    - a test checks that the disk matches that list.
   - Src: `RecoveryStore.cpp:13-19` uses `QStandardPaths::AppDataLocation/autosave`;
     `AppPaths.cpp:98-99`; `MainWindow.cpp:5456-5495`.
 - **T-36 Deleting or renaming a document's folder leaves the change monitor deaf.** `save`
@@ -525,10 +550,6 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Done when: a selected line or arrow shows a handle at each end. Dragging one moves only that
     end, as a single undo step.
   - Src: `AnnotationOverlay.cpp:1834-1845`.
-- **T-41 Saved text boxes carry no appearance stream.** `annotations`
-  - Done when: a text box or speech bubble saved by Trailer has an /AP, so pdfium renders its
-    text with annotations on. Also check it by hand in Preview.
-  - Src: `PdfEditor.cpp:620-626` writes /DA but no /AP.
 - **T-42 OCR text isn't embedded on PDF export.** `ocr`
   - Done when: exporting an OCR'd scan writes an invisible text layer. Reopened with OCR off, in
     Trailer and in pdfium, the recognised words can be found and selected.
@@ -557,9 +578,10 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     replaced, not as a separate big bang.
   - Src: `onCurrentDocumentChanged` alone is 714 lines.
 - **T-48 51 modal call sites remain.** `dialogs`
-  - Done when: each site in `tests/uat/census/modal-census.json` is either a decision PRODUCT.md
-    allows or gone. The allowed decisions are a file or page-range pick, confirming irreversible
-    loss, one-time consent, and an error the UI can't show.
+  - Done when: every site in `tests/uat/census/modal-census.json`, except `main.cpp`'s event
+    loop and the recorder's dev-only prompt, is gone or is a decision PRODUCT.md allows: a file
+    or page-range pick, confirming irreversible loss, one-time consent, or an error the UI can't
+    show.
   - Src: `test_uat_modal_census` (label `uat`) fails when a site is added; after removing one,
     regenerate the golden with `TRAILER_CENSUS_WRITE=1`. The 51 sites in 16 files include
     `main.cpp`'s `app.exec()` and the recorder's dev-only prompt. Known noise: the Export As
@@ -580,21 +602,22 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     runs the model was skipped there for lack of weights: capture the lldb stack on macOS, or run
     that slot under ASan on Linux with the weights present.
 - **T-52 Nothing is checked on a real Mac or a real Windows desktop.** `infra` `platform`
-  - Done when: each of these passes once on a real Mac (arm64, macOS 14+) and on real Windows 11,
-    and the result is recorded in RELEASING.md:
+  - Done when each of these passes once on a real Mac (arm64, macOS 14+), and the ones that
+    aren't macOS-only also on real Windows 11, with the results in the closing PR's description:
     - reopening the last document, including after Quit and Keep Windows;
-    - with no window open, launching or activating Trailer shows only the Dock icon and the menu
-      bar, with no panel or window;
-    - holding ⌥ swaps Quit for Quit and Keep Windows on the real Quit row;
-    - pasted-capture scale at 2x, and with two displays of different scale;
+    - (macOS) with no window open, launching or activating Trailer shows only the Dock icon and
+      the menu bar, with no panel or window;
+    - (macOS) holding ⌥ swaps Quit for Quit and Keep Windows on the real Quit row;
+    - a capture on a 2x display opens 1:1 at Actual Size, also on the second of two displays with
+      different scales;
     - trackpad pinch-zoom at 2x leaves marks where they were drawn;
-    - the macOS screen-capture picker flow, and the modal shown when capture starts with no
-      window open;
-    - the Dock's recent-documents menu, including when NSDocumentController isn't running;
-    - Help ▸ Feedback Report… appearing once in the macOS app menu with several windows open;
+    - (macOS) From Window… opens the picked window as an untitled image; with no window open and
+      Screen Recording denied, one modal appears whose Open System Settings button opens that
+      setting;
+    - (macOS) the Dock's recent-documents menu lists recent files, also when
+      NSDocumentController isn't running;
+    - (macOS) Help ▸ Feedback Report… appears once in the app menu with several windows open;
     - installing a nightly update.
-
-    A GUI smoke lane also runs in macOS and Windows CI.
   - Src: `UpdateManager.cpp:215-221`.
 - **T-53 Updates install only on macOS.** `packaging`
   - Done when: on Windows (MSI) and Linux (DEB, RPM, tarball), Check for Updates downloads the
@@ -635,9 +658,6 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     Linux PR job configures `-DTRAILER_ENABLE_UX_RECORDER=ON` (`ci.yml:185`, `:322`). 26 recorder
     references sit in 9 product files. In recorder builds, "Hand Off to Preview" saves to the
     user's file on macOS (`UxTrailerHooks.cpp:287-293`): a dev tool must not write documents.
-- **T-101 Filled form values rely on NeedAppearances.** `annotations`
-  - Done when: a filled text field renders in pdfium with NeedAppearances off, and prints.
-  - Src: C15. `PdfEditor.cpp:1402-1416` writes /V and sets NeedAppearances but builds no /AP.
 - **T-105 Undo and Redo don't name the operation.** `undo`
   - Done when: Edit ▸ Undo and Redo read "Undo Rotate", "Undo Delete Page", "Undo Add Rectangle"
     and so on for every operation type.
@@ -682,7 +702,7 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
 - **T-125 OCR on the reference machine is unmeasured.** `ocr`
   - Done when: with the weights present, OCR of one 300 dpi page uses at most one worker thread
     on battery, is cancellable within one page, makes no GUI-thread engine calls, and its time
-    on the reference machine is recorded.
+    on the reference machine is in the closing PR's description.
   - Src: no OCR run has been timed on old hardware.
 - **T-126 Releases are untested end to end.** `packaging`
   - Done when: the release workflow produces every artifact from one tag; `dpkg-deb -c` on the
@@ -712,6 +732,21 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     and nothing from the lines above or below, at dpr 1 and 2.
   - Src: the detector's quadrilaterals are reduced to axis-aligned rectangles
     (`OcrEngine.h:43-47`), so a tilted line's rectangle covers parts of its neighbours.
+- **T-131 Quit and Keep Windows answers to the wrong keys.** `platform`
+  - Done when: ⌥⌘Q quits and keeps windows on macOS, also when the native Option-swap menu item
+    isn't installed; on Windows and Linux the shortcut follows PRODUCT.md's Ctrl-for-⌘ rule, and
+    AltGr+Q on a German layout still types @ without quitting; a test checks the shortcut by its
+    portable text.
+  - Src: the shortcut is built from `Qt::MetaModifier`, which is ⌃ on macOS and the Windows or
+    Super key elsewhere, so today it is ⌃⌥Q and Win+Alt+Q (`Application.cpp:1699`,
+    `MainWindow.cpp:1201-1202`). The test asserts the same constant
+    (`test_quit_and_keep_windows.cpp:741-742`). Inferred from Qt's key mapping, not tried on a Mac.
+- **T-132 The ML scheduler wakes every 30 s for as long as Trailer runs.** `ocr`
+  - Done when: with no ML work queued, the scheduler's threads stay asleep through 60 s of idle,
+    and a switch to battery power still pauses speculative ML work (tested through a seam that
+    delivers a power-change event).
+  - Src: a thread polls the power source every 30 s (`MlScheduler.cpp:20`, `:41-58`), and the
+    scheduler lives as long as the app (`Application.h:406`).
 
 ## P3: later or stretch
 
@@ -787,7 +822,7 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     - every markup tool has a shortcut;
     - colour swatches show their state without relying on colour;
     - a signature can be typed;
-    - a keyboard-only run completes the PRODUCT.md "Done means" jobs at dpr 1 and 2;
+    - a keyboard-only run completes PRODUCT.md's seven jobs at dpr 1 and 2;
     - contrast meets WCAG AA, focus is always visible, Reduce Motion is honoured, and text scales
       to 200 %.
   - Src: `MarkupToolbar.cpp` has no `setShortcut`; `SignatureCaptureDialog.cpp:257`.
@@ -858,5 +893,6 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
 - **T-124 Cold launch to the first window has never been measured on the reference machine.**
   `open`
   - Done when: a developer-only flag (`--quit-after-first-frame`) reports launch-to-first-frame
-    time, and a run after a reboot on the reference machine is recorded. Never gated.
+    time, and a run after a reboot on the reference machine is in the closing PR's description.
+    Never gated.
   - Src: warm `trailer --version` takes 17–30 ms here; cold launch on old hardware is unknown.

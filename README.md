@@ -11,15 +11,19 @@ construction: no accounts, no telemetry, no cloud sync.
 
 [PRODUCT.md](PRODUCT.md) says what Trailer is and the rules it follows,
 [TODO.md](TODO.md) holds all open work, and [AGENTS.md](AGENTS.md) says
-how to work on the code. Releases are tagged `v0.x.0`; see
+how to work on the code. Releases are tagged `vX.Y.Z`; see
 [CHANGELOG.md](CHANGELOG.md) for what shipped when and
 [RELEASING.md](RELEASING.md) for the maintainer release runbook.
 
 ## Requirements
 
 - CMake 3.24+
-- Qt 6.6+ (Core, Gui, Widgets, Test, **Pdf**, **PdfWidgets**, **PrintSupport**)
+- Qt 6.6+ with Core, Concurrent, Gui, Widgets, Network, Svg, Test, **Pdf**, **PdfWidgets** and
+  **PrintSupport**, plus DBus on Linux
 - [qpdf](https://qpdf.sourceforge.io/) 11+ (lossless PDF page editing)
+- ONNX Runtime 1.25 for the on-device ML features. CMake uses an installed copy (or
+  `-DTRAILER_ORT_ROOT=<dir>`), and otherwise downloads Microsoft's checksum-pinned prebuilt.
+  Microsoft publishes none for Intel Macs (T-30).
 - A C++20 compiler (MSVC 2022, GCC 11+, or Clang 14+)
 
 Qt PDF is not bundled in all distribution packages. If `find_package(Qt6
@@ -34,22 +38,11 @@ cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --parallel "$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)"
 ```
 
-(`--parallel` with no number tells the build tool to use its own
-default rather than your core count — for GNU Make that default is
-unbounded; always pass an explicit job count.)
+(`--parallel` with no number lets the build tool pick, and GNU Make then runs unbounded; always
+pass a job count.)
 
-CI builds with warnings-as-errors **off** by default (both PR CI
-and the release pipeline). Too many warnings fire from inside
-Qt / libstdc++ / qpdf system headers — false-positive
-`-Wnull-dereference` template-instantiation noise, qpdf's
-`POINTERHOLDER_TRANSITION` `#warning`, etc. — to make strict
-`-Werror` workable. Warnings still print in the build log and
-trailer's own source is kept clean by review. Flip the strict bar
-on locally when you're chasing a specific regression:
-
-```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRAILER_WERROR=ON
-```
+Warnings-as-errors is off by default, in CI too, because Qt, libstdc++ and qpdf headers raise
+warnings Trailer can't fix. Turn it on with `-DTRAILER_WERROR=ON` when chasing a regression.
 
 ### Platform notes
 
@@ -149,32 +142,29 @@ fontconfig. `tests/CMakeLists.txt` and `tests/uat/CMakeLists.txt`
 set this for you on Windows; you only need to export it manually if
 you run the test binaries directly.
 
-**Linux.** Install Qt via your distribution (`qt6-base-dev` on
-Debian/Ubuntu) or the Qt online installer. Install qpdf and pkg-config via
-`sudo apt-get install pkg-config libqpdf-dev` (or the equivalent for your
-distribution).
+**Linux.** Ubuntu 24.04 packages Qt 6.4, older than the 6.6 floor. There, install Qt with the
+Qt online installer, with aqtinstall (what CI does) or from conda-forge (what
+[scripts/session-setup.sh](scripts/session-setup.sh) does for cloud agent sessions). A
+distribution's own Qt 6.6+ works if it includes Qt PDF. Install qpdf and pkg-config with
+`sudo apt-get install pkg-config libqpdf-dev` or your distribution's equivalent.
 
-**Cross-compile Windows from Linux.** A Docker-based mingw-w64 setup
-lives at [docker/windows/Dockerfile](docker/windows/Dockerfile)
-(Ubuntu 24.04 + aqtinstall Qt 6 MinGW + qpdf built from source
-against the same toolchain). Run `scripts/build-windows.sh` — the
-script builds the image on first use, cross-compiles `trailer.exe`,
-and drops it plus required Qt and runtime DLLs into `build-windows/`.
-This path is what the release pipeline uses; the native MSVC
-[scripts/build-windows-native.ps1](scripts/build-windows-native.ps1)
-above is the fast-feedback path for developers working on a Windows
-box. PR CI runs both Linux (native) and Windows (native MSVC); the
-release pipeline still cross-compiles Windows via Docker so it can
-run on the same Ubuntu runner as the Linux build.
+**Cross-compile Windows from Linux.** `scripts/build-windows.sh` builds a mingw-w64 toolchain
+image from [docker/windows/Dockerfile](docker/windows/Dockerfile) on first use, cross-compiles
+`trailer.exe`, and puts it with the Qt and runtime DLLs it needs in `build-windows/`. CI and the
+release pipeline run the same cross-build without Docker
+(`.github/actions/setup-windows-cross`, then `scripts/build-windows.sh --in-container`), and PR
+CI runs the Windows unit tests under Wine. The native MSVC job in `ci.yml` is switched off
+(T-58), so the PowerShell scripts above are only exercised by hand.
 
 ## Run
 
 ```sh
-./build/trailer                       # empty window
-./build/trailer path/to/file.pdf      # opens the file in a stub view
+./build/trailer                       # Windows, Linux: an empty window with Open and Recent
+./build/trailer path/to/file.pdf      # opens the file
+open build/Trailer.app                # macOS: no window, only the menu bar and the Dock icon
 ```
 
-Drag files onto the running window to open them.
+Drag files onto a window, or onto the Dock icon on macOS, to open them.
 
 To make double-clicking a PDF or image open Trailer instead of your OS's
 default viewer, see
@@ -183,137 +173,28 @@ default viewer, see
 ## Test
 
 ```sh
-ctest --test-dir build -LE 'uat|advisory' --output-on-failure                     # unit + known-bug tests
-QT_QPA_PLATFORM=offscreen ctest --test-dir build -L uat --output-on-failure       # UAT: the whole app, offscreen
-QT_QPA_PLATFORM=offscreen ctest --test-dir build -L advisory --output-on-failure  # chrome census, random UI walk
+QT_QPA_PLATFORM=offscreen ctest --test-dir build -LE 'uat|advisory' --output-on-failure  # unit + known-bug
+QT_QPA_PLATFORM=offscreen ctest --test-dir build -L uat --output-on-failure              # UAT: the whole app
+QT_QPA_PLATFORM=offscreen ctest --test-dir build -L advisory --output-on-failure         # never gates
 ```
 
 Known-bug tests (label `known-bug`) assert the correct behaviour for an
 open bug in TODO.md and expect today's failure; AGENTS.md explains how
 they flip when the bug is fixed.
 
-CI (`.github/workflows/ci.yml`) builds and runs the unit tests on
-**Linux** (Ubuntu 24.04, GCC) on every push and pull request, plus a
-MinGW cross-build of **Windows** whose unit tests run under Wine. There
-is no native Windows or macOS CI yet (T-58); the nightly workflow builds
-all three.
+On every pull request, CI (`.github/workflows/ci.yml`) builds on **Linux** (Ubuntu 24.04, GCC)
+and runs the unit and known-bug tests plus the two furniture tests (modal census, constancy
+sweep), and cross-builds **Windows** with MinGW to run its unit tests under Wine. Pull requests
+get no native Windows or macOS run yet (T-58); the nightly workflow builds and tests all three.
 
-## Release process
+## Releases
 
-Heavy artifact builds (Linux native, Windows cross-build via
-mingw-w64 in `docker/windows/Dockerfile`, and a macOS Apple Silicon
-`.app` packaged as a DMG) plus the full UAT suite live in
-`.github/workflows/release.yml`. They are intentionally **not**
-triggered on every PR — a full artifact matrix plus UAT is slow, and
-the macOS lane alone is roughly an hour of wall-clock. (Cost is no
-longer part of that reasoning: since the repo went public, standard
-GitHub-hosted runners are free and unlimited on every OS, so the old
-"macOS bills at 10× Linux" concern no longer applies. Wall-clock and
-fail-fast ordering still do.) Instead they are gated on a
-`release-candidate` label:
-
-1. Open a release PR that bumps `VERSION` off its `-dev` suffix
-   (e.g. `0.2.0-dev` → `0.2.0`). The CMake configure regenerates
-   `TrailerVersion.h` so `setApplicationVersion()` and the About
-   dialog pick up the new string.
-2. **Run a local sanity-check** of the release build before
-   labeling. The same scripts CI uses are runnable as `make` targets,
-   so a green local run is a strong signal CI will succeed:
-
-   ```sh
-   make release          # host platform: macOS host → arm64 DMG
-   make release-windows  # Windows cross-build via Docker (any host)
-   make release-uat      # UAT suite via Docker
-   ```
-
-   `make release` honours whatever the `VERSION` file says — a
-   `0.1.0-dev` value bakes that string into the About dialog and the
-   bundle's `CFBundleShortVersionString`, so the build is clearly
-   marked as a dev one when you smoke-test it. Bump `VERSION` once
-   the build is green if you didn't already.
-
-3. Add the `release-candidate` label. The label event re-triggers
-   the workflow; the precheck job:
-   - reads `VERSION` and emits `is-release-ready=false` if it still
-     carries `-dev` / `-rc` — this **skips** the heavy build jobs
-     (precheck ✅, Linux/Windows/macOS/UAT ⊘ skipped) with a yellow
-     `::warning::` + step-summary note. The PR page stays green so
-     you can label-then-bump without a noisy ❌.
-   - hard-fails (red ❌) if `v$VERSION` already has a corresponding
-     git tag or GitHub Release upstream — that's a real duplicate-
-     release bug worth surfacing immediately.
-
-4. When the workflow is green, merge the PR with a policy that
-   preserves the PR HEAD SHA (fast-forward or merge-commit — **not
-   squash**, which would discard the SHA the artifacts were built
-   against).
-
-5. `release-autotag.yml` fires on the merged-and-labeled PR: it
-   tags PR HEAD as `v$VERSION` and dispatches `release-publish.yml`.
-   The publish workflow looks up the prior successful Release run
-   for the tagged SHA, downloads its artifacts (Linux tarball,
-   Windows zip, macOS DMG), renames them to versioned filenames
-   (`trailer-$VERSION-<platform>.<ext>`), and creates the GitHub
-   Release. No rebuild — the bytes shipped to users are exactly the
-   bytes the release-candidate PR validated.
-
-The macOS DMG contains an Apple Silicon (arm64) self-contained
-`Trailer.app` (Qt frameworks bundled via `macdeployqt`; qpdf
-statically linked from a source build inside CI). An Intel-Mac
-binary is tracked as future work (T-30) — ONNX Runtime no longer
-publishes a macOS x86_64 / universal2 prebuilt upstream, so the
-choices are either an ML-disabled build that ships everywhere or a
-third-party ONNX x86_64 bundle; either is acceptable when someone
-picks it up. Intel-Mac users can build from source via
-`scripts/build-macos.sh` on their host until then.
-
-The bundled `.app` ships **unsigned and un-notarized** by project
-policy — Trailer is not enrolled in the Apple Developer Program.
-The release body documents the one-time Gatekeeper quarantine
-bypass users need to run on first launch (`xattr -dr
-com.apple.quarantine /Applications/Trailer.app`). An ed25519-signed
-auto-update channel — a custom checker, not Sparkle — is **shipped
-for the nightly channel** (Help → Check for Updates…, or Preferences
-→ Updates; key handling is in
-[RELEASING.md](RELEASING.md#update-signing-key)).
-Those signatures protect the update channel itself and don't require
-Apple enrollment — Gatekeeper's quarantine gate is a separate system
-and still applies on every install, updates included; the updater
-clears the quarantine bit on its own downloads, but this has not yet
-been verified against real Gatekeeper enforcement on-device (T-52). The
-stable (tagged-release) channel is not wired yet (T-69).
-
-**Dev builds.** For pre-merge dogfooding, the on-demand
-`.github/workflows/dev-build.yml` workflow (`workflow_dispatch`, or a
-`dev-build` PR label) produces the same unsigned per-OS portable
-artifacts uploaded to the run instead of a Release — the
-`build_linux` / `build_windows` / `build_macos` inputs select which
-OSes to build. These self-identify from git: `VERSION` holds the bare
-base `X.Y.Z-dev` and CMake derives the full string
-`X.Y.Z-dev+<count>.g<sha>[.dirty]` at configure time (no manual dev
-bump — every dev artifact is unique and commit-traceable). It is a
-SemVer prerelease that can never be tagged or published:
-`release-autotag.yml` **unconditionally** refuses to tag any `-dev`
-(bare or with `+build.metadata`) / `-rc` version, and `release.yml`
-never tags or publishes at all. On a `pull_request`, `release.yml`'s
-precheck additionally skips the heavy build jobs for such a version —
-but a manual `workflow_dispatch` of `release.yml` on a `-dev` VERSION
-still builds artifacts; it just never tags or publishes them. See
-[RELEASING.md](RELEASING.md#dev-builds).
-
-### Recovering from a missing prior build
-
-If a tag is pushed manually and no prior Release run exists for its
-SHA (e.g. a maintainer tagged a non-PR commit, or an unattended
-squash merge dropped the PR HEAD), `release-publish.yml` fails with
-a clear recovery message. Run
-
-```sh
-gh workflow run Release --ref=<SHA>
-```
-
-to seed artifacts for that commit, wait for it to finish, then
-re-run the failed Publish Release job from the Actions tab.
+A release is cut from a pull request labelled `release-candidate`; [RELEASING.md](RELEASING.md)
+is the runbook. Each release ships a Linux tarball, .deb and .rpm, a Windows zip and .msi, and
+an Apple Silicon macOS DMG. The macOS app is unsigned and not notarized, because Trailer isn't in
+the Apple Developer Program, so its first launch needs
+`xattr -dr com.apple.quarantine /Applications/Trailer.app`. Nightly builds also update themselves
+over an ed25519-signed feed (Help ▸ Check for Updates…); tagged releases don't yet (T-69).
 
 ## Principles
 

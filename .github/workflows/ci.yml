@@ -189,14 +189,20 @@ jobs:
 
       - name: Unit tests
         # UAT tests (label `uat`) drive the full Application +
-        # MainWindow stack and need a windowed Qt platform plugin. The
-        # fast PR loop excludes them; they run on tag via release.yml's
-        # UAT step or manually via uat-dispatch.yml. `advisory` tests
-        # (the random UI walk in tests/pbt/ and the chrome census) are
-        # excluded too: they never gate a merge; run them with
-        # `ctest -L advisory`.
+        # MainWindow stack offscreen. The fast PR loop leaves most of them
+        # to nightly.yml and release.yml (the next step runs two). `advisory`
+        # tests (the random UI walk in tests/pbt/ and the chrome census)
+        # never gate a merge; run them with `ctest -L advisory`.
         working-directory: build
         run: ctest -C Release --output-on-failure --label-exclude 'uat|advisory'
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Furniture tests (modal census, constancy sweep)
+        # Two `uat` tests that decide whether a PR adds a popup or moves a
+        # control, so they gate every PR rather than waiting for nightly.
+        working-directory: build
+        run: ctest -C Release --output-on-failure -R '^test_uat_(modal_census|constancy_sweep)$'
         env:
           QT_QPA_PLATFORM: offscreen
 
@@ -461,7 +467,7 @@ jobs:
         # behaviour gate, not a toy: the UAT tier needs a windowed platform
         # plugin Wine's offscreen doesn't provide, and wall-time perf
         # budgets are noise under the Wine emulator — they run natively on
-        # Linux (the project's no-CI-wall-time-gate perf ruling). Known-bug
+        # Linux (AGENTS.md: count work, never gate on wall time). Known-bug
         # tests expect today's failure on Linux and run only there.
         # CMAKE_CROSSCOMPILING_EMULATOR is applied via an incremental
         # reconfigure (it's baked into CTestTestfile.cmake at generate

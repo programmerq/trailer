@@ -28,14 +28,22 @@ ORT_VERSION=1.25.0
 ORT_DIR="${TRAILER_ORT_DIR:-/opt/onnxruntime-${ORT_VERSION}}"
 ORT_SHA256=c12a4e043c7ae1cee4ef99a347193eceabe2f6c828eb04f6d58ab21bcccddd8d
 MM_DIR="${PREFIX}-micromamba"
+CURL=(curl -fsSL --retry 3 --retry-delay 2 --connect-timeout 20 --max-time 900)
 
 start=$(date +%s)
+scratch="$(mktemp -d)"
+trap 'rm -rf "${scratch}"' EXIT
 
-# 1. micromamba (single static binary from conda-forge itself)
-if [ ! -x "${MM_DIR}/bin/micromamba" ]; then
-    mkdir -p "${MM_DIR}"
-    curl -fsSL https://conda.anaconda.org/conda-forge/linux-64/micromamba-2.9.0-0.tar.bz2 \
-        | tar -xj -C "${MM_DIR}" bin/micromamba
+# 1. micromamba (single static binary from conda-forge itself). Unpacked in
+#    scratch and moved into place only once it runs, so an interrupted
+#    download is retried next time instead of leaving a broken binary.
+if ! { "${MM_DIR}/bin/micromamba" --version; } >/dev/null 2>&1; then
+    "${CURL[@]}" -o "${scratch}/micromamba.tar.bz2" \
+        https://conda.anaconda.org/conda-forge/linux-64/micromamba-2.9.0-0.tar.bz2
+    tar -xjf "${scratch}/micromamba.tar.bz2" -C "${scratch}" bin/micromamba
+    "${scratch}/bin/micromamba" --version >/dev/null
+    mkdir -p "${MM_DIR}/bin"
+    mv -f "${scratch}/bin/micromamba" "${MM_DIR}/bin/micromamba"
 fi
 
 # 2. Qt 6.11 (+ QtPdf, which conda-forge ships in qt6-webengine), qpdf,
@@ -49,8 +57,8 @@ fi
 # 3. ONNX Runtime C++ SDK, assembled from Microsoft's nuget package
 #    (identical binary to the GitHub release tarball, SHA-256 pinned).
 if [ ! -e "${ORT_DIR}/lib/cmake/onnxruntime/onnxruntimeConfig.cmake" ]; then
-    tmp="$(mktemp)"
-    curl -fsSL -o "${tmp}" \
+    tmp="${scratch}/onnxruntime.nupkg"
+    "${CURL[@]}" -o "${tmp}" \
         "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/${ORT_VERSION}/microsoft.ml.onnxruntime.${ORT_VERSION}.nupkg"
     echo "${ORT_SHA256}  ${tmp}" | sha256sum -c - >/dev/null
     mkdir -p "${ORT_DIR}/include" "${ORT_DIR}/lib/cmake/onnxruntime"
@@ -68,7 +76,6 @@ with zipfile.ZipFile(nupkg) as z:
         with z.open(n) as s, open(dst, "wb") as d:
             shutil.copyfileobj(s, d)
 PY
-    rm -f "${tmp}"
     test -s "${ORT_DIR}/include/onnxruntime_cxx_api.h"
     ln -sf "libonnxruntime.so.${ORT_VERSION}" "${ORT_DIR}/lib/libonnxruntime.so.1"
     ln -sf libonnxruntime.so.1 "${ORT_DIR}/lib/libonnxruntime.so"
@@ -93,8 +100,12 @@ endif()
 VER
 fi
 
-# 4. Make a plain `cmake -S . -B build -G Ninja` pick all of this up.
-cat > /etc/profile.d/trailer-toolchain.sh <<ENV
+# 4. Make a plain `cmake -S . -B build -G Ninja` pick all of this up. Without
+#    root (a forced run on your own machine), the file goes next to the
+#    toolchain instead; source it yourself.
+env_file=/etc/profile.d/trailer-toolchain.sh
+[ -w "$(dirname "${env_file}")" ] || env_file="${PREFIX}/trailer-toolchain.sh"
+cat > "${env_file}" <<ENV
 export PATH="${PREFIX}/bin:\$PATH"
 export CC="${PREFIX}/bin/x86_64-conda-linux-gnu-gcc"
 export CXX="${PREFIX}/bin/x86_64-conda-linux-gnu-g++"
@@ -103,7 +114,7 @@ export CMAKE_GENERATOR=Ninja
 export QT_QPA_PLATFORM=offscreen
 ENV
 if [ -n "${CLAUDE_ENV_FILE:-}" ] && ! grep -qsF "${PREFIX}/bin" "${CLAUDE_ENV_FILE}"; then
-    cat /etc/profile.d/trailer-toolchain.sh >> "${CLAUDE_ENV_FILE}"
+    cat "${env_file}" >> "${CLAUDE_ENV_FILE}"
 fi
 
-echo "[trailer-setup] ready in $(( $(date +%s) - start ))s: ${PREFIX}, ${ORT_DIR}"
+echo "[trailer-setup] ready in $(( $(date +%s) - start ))s: ${PREFIX}, ${ORT_DIR} (env: ${env_file})"

@@ -168,8 +168,7 @@ void TestMarkupToolbar::toolPositionsNeverMoveAcrossEnableDisableToggles() {
     assertUnchanged("text-aware trio re-enabled");
 }
 
-// Correctness-skeptic finding (review-before-push self-review): two
-// different documents can both leave a tool disabled for DIFFERENT
+// Two different documents can both leave a tool disabled for DIFFERENT
 // reasons — e.g. Instant Alpha disabled on a PDF ("images only") vs.
 // disabled on an image with a blocked download policy ("Never
 // Download..."). setToolEnabled() must refresh the tooltip on every call,

@@ -31,9 +31,19 @@ while IFS= read -r path; do
     esac
 done < <(git ls-files)
 
-# 2. Entry ids are unique.
-dups=$(grep -oE '^- \*\*T-[0-9]+ ' TODO.md | grep -oE 'T-[0-9]+' | sort | uniq -d | tr '\n' ' ')
-[ -z "$dups" ] || fail "TODO.md: duplicate ids: $dups"
+# 2. Entry ids are unique, and the header's "highest so far" covers them,
+#    so the next id is never one that was used before. An empty TODO.md
+#    passes.
+ids=$(grep -oE '^- \*\*T-[0-9]+ ' TODO.md | grep -oE '[0-9]+' || true)
+dups=$(printf '%s\n' $ids | sort | uniq -d | sed 's/^/T-/' | tr '\n' ' ')
+[ -z "${dups// /}" ] || fail "TODO.md: duplicate ids: $dups"
+highest=$(grep -oE 'the highest so far is T-[0-9]+' TODO.md | grep -oE '[0-9]+$' || true)
+max=$(printf '%s\n' $ids | sort -n | tail -1)
+if [ -z "$highest" ]; then
+    fail "TODO.md: the header must say \"the highest so far is T-NN\" on one line"
+elif [ -n "$max" ] && [ "$max" -gt "$highest" ]; then
+    fail "TODO.md: T-$max is above \"the highest so far is T-$highest\"; update the header"
+fi
 
 # 3. Every id cited outside TODO.md is open: the "T-NN: <reason>" markers
 #    in known-bug QEXPECT_FAILs and the constancy sweep's KnownDefect

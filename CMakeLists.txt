@@ -198,7 +198,7 @@ configure_file(
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
-option(TRAILER_WERROR "Treat compiler warnings as errors (enabled in CI)" OFF)
+option(TRAILER_WERROR "Treat compiler warnings as errors (off in CI)" OFF)
 option(TRAILER_ADAPTIVE_ICON "Compile the adaptive light/dark macOS app icon via actool (requires full Xcode)" ON)
 
 # Developer-only UX session recorder (see src/uxrecord/README.md). OFF by
@@ -498,8 +498,8 @@ else()
     list(APPEND TRAILER_SOURCES src/platform/QuitMenu_stub.cpp)
 endif()
 
-# Per-platform "Reduce Motion" accessibility query (docs/accessibility-
-# checklist.md row A6). macOS reads the real NSWorkspace toggle;
+# Per-platform "Reduce Motion" accessibility query: animations honour the
+# OS setting. macOS reads the real NSWorkspace toggle;
 # everything else falls back to a documented best-effort Qt UI-effect
 # proxy (see ReducedMotion_stub.cpp). ReducedMotion.cpp is the
 # cross-platform override wrapper used by every caller and is always
@@ -598,7 +598,7 @@ if(APPLE)
     # CoreGraphics serves two macOS capture paths:
     #   * ScreenCapturePermission.cpp (PR #77) calls CGPreflightScreenCaptureAccess
     #     and CGRequestScreenCaptureAccess to preflight/request the Screen
-    #     Recording TCC state (the screen-capture preflight ADR).
+    #     Recording TCC state before a capture starts.
     #   * ScreenCaptureKit picker backend (MacScreenCapture.mm, PR #72): the
     #     picker + SCScreenshotManager live in ScreenCaptureKit; CoreMedia /
     #     CoreGraphics carry the sample/image types, and ImageIO +

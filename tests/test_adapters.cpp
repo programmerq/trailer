@@ -1864,8 +1864,8 @@ void TestAdapters::imageDocumentResizeEventTriggersRefit() {
                             .arg(scaleAfter)));
 }
 
-// Regression guard for the unified chronological undo log (roadmap
-// Now #4). Interleaving a qpdf page op, an annotation edit, then another
+// Regression guard for the unified chronological undo log.
+// Interleaving a qpdf page op, an annotation edit, then another
 // page op must undo in strict reverse-chronological order — the old
 // most-recently-touched-stack heuristic undid both page ops first and
 // the annotation last, so after two undos the document was in a state

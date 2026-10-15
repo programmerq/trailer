@@ -113,7 +113,7 @@ git). Each step emits:
 - `NN-<label>.txt` — the metadata bundle: step label, **expected effect**,
   notes, any documented **boundary**, and the window inventory at capture time
 
-That per-step bundle is the exact shape persona (A) consumes.
+A reviewer (a person or an agent) judges each screenshot against its bundle.
 
 ## Selector techniques added by paths 05–09
 
@@ -148,7 +148,7 @@ in its path header with the fragility it carries:
 ## The nine golden paths and what "pass" looks like
 
 A review agent runs the harness, then reads each path's `NN-*.png` +
-`NN-*.txt` and judges with persona (A). Per-step pass criteria:
+`NN-*.txt` and judges each step against its expected effect. Per-step pass criteria:
 
 ### 01 — new-from-clipboard
 | step | screenshot should show | pass |

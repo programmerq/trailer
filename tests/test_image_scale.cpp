@@ -703,7 +703,7 @@ void TestImageScale::applyInitialFitZoomForcesDecodeForCaptureOrigin() {
     // NOT itself a repro of this path: it calls capDoc->image() (which
     // internally calls ensureDecoded()) before triggerInitialZoomForTest(),
     // so m_image is already non-null by the time this method runs there
-    // (a review-before-push finding on the first version of this fix).
+    // (found in review of the first version of this fix).
     // This test constructs the race this fix actually protects against
     // directly: no decode-forcing accessor is called before
     // triggerInitialZoomForTest().

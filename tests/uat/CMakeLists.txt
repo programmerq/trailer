@@ -1,7 +1,8 @@
 # UAT harness — drives Application + MainWindow in-process under
-# QT_QPA_PLATFORM=offscreen. Tests here are labelled `uat` so a normal
-# `ctest` run (which is `ctest -LE uat` in CI) skips them. Invoke
-# explicitly with `ctest -L uat` locally or via scripts/run-uat.sh.
+# QT_QPA_PLATFORM=offscreen. Tests here are labelled `uat` (the chrome
+# census: `advisory`), so the unit run (`ctest -LE 'uat|advisory'`) skips
+# them; ci.yml runs the modal census and constancy sweep on every PR
+# anyway. Run them with `ctest -L uat` or scripts/run-uat.sh.
 
 # Per-test environment. On Windows the `offscreen` Qt platform plugin
 # does not enumerate fonts through GDI the way the `windows` plugin

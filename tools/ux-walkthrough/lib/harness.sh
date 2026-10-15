@@ -8,7 +8,7 @@
 #   launch [args...]        launch the real trailer binary under the current
 #                           X display, wait for its top-level window
 #   step "label" "expect"   begin a numbered step; records label + expected
-#                           effect for the judge persona
+#                           effect for the reviewer
 #   shot                    capture the whole X screen (root window, so modal
 #                           dialogs and menus are included) for the current step
 #   press <xdotool-keys>    send a real X key chord to the app window
@@ -45,7 +45,7 @@
 #   NN-<label>.png    the screenshot
 #   NN-<label>.txt    a metadata bundle: step label, expected effect, notes,
 #                     and window inventory at capture time
-# The per-step bundle is the shape the ux-walkthrough persona (A) consumes.
+# A reviewer judges each screenshot against its bundle.
 # ---------------------------------------------------------------------------
 
 set -uo pipefail
@@ -155,8 +155,8 @@ menupick() {
     _settle
 }
 
-# Begin a numbered step. Records the label + expected effect that the judge
-# persona measures the screenshot against.
+# Begin a numbered step. Records the label + expected effect that the
+# reviewer measures the screenshot against.
 step() {
     _STEP=$((_STEP + 1))
     _CUR_LABEL="$(printf '%02d-%s' "$_STEP" "$(echo "$1" | tr ' /' '--')")"

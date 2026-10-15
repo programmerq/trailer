@@ -368,11 +368,11 @@ jobs:
       - name: Wine unit tests
         # Cheap Windows-behaviour insurance before shipping a release:
         # same `--label-exclude 'uat|perf|known-bug|advisory'` selector CI's windows-cross-
-        # build job runs (26/26 green locally). The UAT tier needs a
+        # build job runs. The UAT tier needs a
         # windowed platform plugin Wine's offscreen doesn't provide, and
         # wall-time perf budgets are noise under the Wine emulator — they
-        # run natively on Linux (the project's no-CI-wall-time-gate
-        # ruling). Every test
+        # run natively on Linux (AGENTS.md: count work, never gate on wall
+        # time). Every test
         # .exe lands in build-win/ root, so the DLLs it loads must sit
         # beside it — copy the Bundle step's import-walked DLLs back next
         # to the exes, then add the two test-only extras the import walk

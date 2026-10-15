@@ -3319,7 +3319,7 @@ void TestUatSearchAndMarkup::uat_ann_134_boundedToolsAreStickyViaToolbar() {
 
 // UAT-ANN-140 — Interleaved page-op + annotation undo is chronological.
 //
-// Regression guard for the unified undo log (roadmap Now #4): a qpdf
+// Regression guard for the unified undo log: a qpdf
 // page delete, then an annotation, then another page delete must undo
 // in strict reverse order (delete, annotation, delete) — the old
 // most-recently-touched-stack heuristic undid both deletes first, so
