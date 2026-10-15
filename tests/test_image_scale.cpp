@@ -42,6 +42,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <memory>
 
 using namespace trailer;
 
@@ -391,8 +392,8 @@ void TestImageScale::ordinaryOpenKeepsFit() {
     // the existing fit-to-content-capped-at-100% default, NOT Actual.
     ImageDocument doc{QString()};
     doc.setImageForTest(makeDprImage(4000, 3000, 1.0), /*captureOrigin=*/false);
-    QWidget *view = doc.createView(nullptr);
-    auto *scroll = qobject_cast<QScrollArea *>(view);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(1200, 800);
     scroll->show();
@@ -400,7 +401,6 @@ void TestImageScale::ordinaryOpenKeepsFit() {
     // viewport. If it never settles under the offscreen platform the fit
     // is unobservable, so skip rather than crash/hang.
     if (!pumpUntil([&] { return scroll->viewport()->width() > 0; })) {
-        delete view;
         QSKIP("viewport does not settle under offscreen platform");
     }
     doc.triggerInitialZoomForTest();
@@ -410,8 +410,6 @@ void TestImageScale::ordinaryOpenKeepsFit() {
     QVERIFY2(doc.scaleFactor() < 1.0,
              qPrintable(QStringLiteral("ordinary large image should fit-shrink, scale=%1")
                             .arg(doc.scaleFactor())));
-
-    delete view;
 }
 
 void TestImageScale::smallImageResizeDoesNotUpscale() {
@@ -424,8 +422,8 @@ void TestImageScale::smallImageResizeDoesNotUpscale() {
     // viewport measured ~1360x815.
     ImageDocument doc{QString()};
     doc.setImageForTest(makeDprImage(600, 420, 1.0), /*captureOrigin=*/false);
-    QWidget *view = doc.createView(nullptr);
-    auto *scroll = qobject_cast<QScrollArea *>(view);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(1400, 900);
     scroll->show();
@@ -434,7 +432,6 @@ void TestImageScale::smallImageResizeDoesNotUpscale() {
     // fit can't measure it, so skip the unmeasurable path rather than
     // silently crash/hang under Wine.
     if (!pumpUntil([&] { return scroll->viewport()->width() > 0; })) {
-        delete view;
         QSKIP("viewport does not settle under offscreen platform");
     }
 
@@ -456,8 +453,6 @@ void TestImageScale::smallImageResizeDoesNotUpscale() {
                                        "resize, got %1")
                             .arg(doc.scaleFactor())));
     QCOMPARE(doc.zoomMode(), ZoomMode::Actual);
-
-    delete view;
 }
 
 void TestImageScale::readoutMatchesRenderAfterAsyncFit() {
@@ -601,13 +596,12 @@ void TestImageScale::reapplyFitModeNotifiesOnEveryRescale() {
     // independent of whatever the OS's real settle widths happen to be.
     ImageDocument doc{QString()};
     doc.setImageForTest(makeDprImage(4000, 3000, 1.0), /*captureOrigin=*/false);
-    QWidget *view = doc.createView(nullptr);
-    auto *scroll = qobject_cast<QScrollArea *>(view);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(1200, 800);
     scroll->show();
     if (!pumpUntil([&] { return scroll->viewport()->width() > 0; })) {
-        delete view;
         QSKIP("viewport does not settle under offscreen platform");
     }
 
@@ -643,8 +637,6 @@ void TestImageScale::reapplyFitModeNotifiesOnEveryRescale() {
                                        "render scale (%2) -- one source of truth")
                             .arg(scaleAtLastNotify)
                             .arg(doc.scaleFactor())));
-
-    delete view;
 }
 
 void TestImageScale::reapplyFitModeSkipsNotifyWhenScaleUnchanged() {
@@ -659,13 +651,12 @@ void TestImageScale::reapplyFitModeSkipsNotifyWhenScaleUnchanged() {
     // unconditionally regardless of whether the scale actually moved.
     ImageDocument doc{QString()};
     doc.setImageForTest(makeDprImage(4000, 3000, 1.0), /*captureOrigin=*/false);
-    QWidget *view = doc.createView(nullptr);
-    auto *scroll = qobject_cast<QScrollArea *>(view);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(1200, 800);
     scroll->show();
     if (!pumpUntil([&] { return scroll->viewport()->width() > 0; })) {
-        delete view;
         QSKIP("viewport does not settle under offscreen platform");
     }
 
@@ -684,8 +675,6 @@ void TestImageScale::reapplyFitModeSkipsNotifyWhenScaleUnchanged() {
     doc.reapplyFitMode();
 
     QCOMPARE(notifyCount, 0);
-
-    delete view;
 }
 
 void TestImageScale::applyInitialFitZoomForcesDecodeForCaptureOrigin() {
@@ -1176,13 +1165,12 @@ void TestImageScale::smallReportedImageNaturalFitIsActual() {
     // 504x375 DEVICE px at the given dpr -> logical size is 504/dpr x
     // 375/dpr, still comfortably smaller than any real viewport.
     doc.setImageForTest(makeDprImage(504, 375, dpr), /*captureOrigin=*/false);
-    QWidget *view = doc.createView(nullptr);
-    auto *scroll = qobject_cast<QScrollArea *>(view);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(1400, 900);
     scroll->show();
     if (!pumpUntil([&] { return scroll->viewport()->width() > 0; })) {
-        delete view;
         QSKIP("viewport does not settle under offscreen platform");
     }
 
@@ -1192,8 +1180,6 @@ void TestImageScale::smallReportedImageNaturalFitIsActual() {
              qPrintable(QStringLiteral("dpr=%1: expected natural Actual Size (100%%), got %2%%")
                             .arg(dpr)
                             .arg(doc.scaleFactor() * 100.0)));
-
-    delete view;
 }
 
 // ---------------------------------------------------------------------------
