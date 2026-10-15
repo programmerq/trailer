@@ -129,7 +129,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Done when: in a two-tab image window, after dragging the first tab to second place with the
     mouse, Save, Rotate, ⌘Z, Close and Export each act on the selected tab's document, and each
     tab keeps its name. (⌘A on a two-tab window is T-17.)
-  - Test: `test_known_bugs_window` (T-07).
+  - Test: `test_known_bugs_window` (T-07; which document is current after the drag). Not
+    checked: the five commands themselves; the tab names.
   - Src: UND-9. `DocumentView.cpp:7` calls `setMovable(true)` and nothing handles `tabMoved`.
     `DocumentView.cpp:27-33` looks documents up by index. Opening several images at once makes a
     tabbed window, so this is reachable by default. After the drag, clicking a tab also renames it
@@ -409,7 +410,11 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
       marked QEXPECT_FAIL until its fix lands;
     - the QSKIP at `test_perf_render_ordering.cpp:114` is gone;
     - `test_perf_lazy_open` passes 50 of 50 runs alongside a parallel build.
-  - Src: `test_perf_lazy_open` failed 2 of 45 runs under load.
+  - Src: `test_perf_lazy_open` failed 2 of 45 runs under load, and 3 of 7 runs on 2026-10-15,
+    once run alone. `formCapabilityProbeDoesNotParseSynchronously` expects no parse yet right
+    after `annotations()` starts the background load (`test_perf_lazy_open.cpp:205`), but that
+    worker's own parse bumps the same global counter (`PdfAdapter.cpp:507-522`). Recording the
+    thread of the first parse would make the check race-free.
 - **T-30 No Trailer build runs on the reference Intel Mac.** `platform`
   - Done when: the owner's choice (PRODUCT.md, open decision 2) is in place. Either a release DMG
     launches and opens a PDF on the reference Intel Mac (x86_64, ML off, which needs T-49), or
