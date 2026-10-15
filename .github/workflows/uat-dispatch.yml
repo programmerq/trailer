@@ -9,10 +9,10 @@ on:
 jobs:
   uat:
     name: UAT (manual)
-    # ubuntu-latest: this job `docker build`s and `docker run`s the UAT
+    # ubuntu-24.04: this job `docker build`s and `docker run`s the UAT
     # image, so it needs a working Docker daemon on the runner. The hosted
     # ubuntu image ships Docker + Buildx preinstalled.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7

@@ -276,7 +276,7 @@ permissions:
 jobs:
   nightly-date:
     name: Resolve nightly date + run mode
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Was 2 when this job was pure shell (no checkout). Now does a
     # fetch-depth:0 checkout (needed for the skip-when-unchanged diff below)
     # — mirroring nightly-publish's identical checkout, which budgets 15 on
@@ -455,7 +455,7 @@ jobs:
     # nightly (see the workflow header's "Skip-when-unchanged" section) —
     # this is the runner-time win the skip check exists for.
     if: needs.nightly-date.outputs.skip != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     concurrency:
       # Same-UTC-day REAL runs (scheduled + any manual dry_run:false
@@ -579,7 +579,7 @@ jobs:
     # Skipped whenever nightly-date found no code change since the previous
     # nightly — see nightly-linux's comment above.
     if: needs.nightly-date.outputs.skip != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # release.yml's windows-cross (build + bundle + unit tests only) budgets
     # 60. UAT adds a second full pass of Wine-emulated test binaries
     # (~2.5-3s startup each under Wine per ci.yml's own note) on top, so
@@ -937,7 +937,7 @@ jobs:
     # red macOS lane (or an offline-VM timeout) NOT block the Linux/
     # Windows artifacts from shipping.
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     concurrency:
       group: nightly-publish-${{ needs.nightly-date.outputs.concurrency-key }}

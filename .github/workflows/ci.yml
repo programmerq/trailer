@@ -88,7 +88,7 @@ jobs:
     # Needs nothing but bash + coreutils, so it stays off the heavy
     # build path and fails the workflow the moment the regex drifts.
     name: Version gating
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v7
@@ -125,7 +125,7 @@ jobs:
 
   build-and-test:
     name: Linux build + unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Prefer fast fail over patient hang, but a cold-cache build overran
     # 18 min on the old self-hosted runners and got cancelled before
     # ccache was populated. The setup-linux-build action installs mold +
@@ -152,7 +152,7 @@ jobs:
           # STILL REQUIRED after the move to GitHub-hosted runners, for a
           # different reason than before. It was here because the custom
           # trailer-runner image shipped an EMPTY apt index. A hosted
-          # ubuntu-latest image instead ships an index snapshotted when the
+          # ubuntu-24.04 image instead ships an index snapshotted when the
           # image was built; between weekly image refreshes that snapshot
           # goes stale and `apt-get install` 404s on a package whose
           # version has moved on the mirrors. Either way the action must
@@ -199,7 +199,7 @@ jobs:
 
   wayland-smoke:
     name: Wayland launch + screenshot smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Least privilege: this job checks out, builds, and uploads one PNG
     # artifact — no extra token scope beyond the workflow-level read.
     permissions:
@@ -259,7 +259,7 @@ jobs:
           # STILL REQUIRED after the move to GitHub-hosted runners, for a
           # different reason than before. It was here because the custom
           # trailer-runner image shipped an EMPTY apt index. A hosted
-          # ubuntu-latest image instead ships an index snapshotted when the
+          # ubuntu-24.04 image instead ships an index snapshotted when the
           # image was built; between weekly image refreshes that snapshot
           # goes stale and `apt-get install` 404s on a package whose
           # version has moved on the mirrors. Either way the action must
@@ -363,7 +363,7 @@ jobs:
     # qpdf prefixes are all `actions/cache`-keyed, so a warm run skips
     # them entirely, whereas re-introducing `docker build` would rebuild
     # a multi-GB image layer set on every run for no gain.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Wine is slow regardless of host (~2.5-3 s startup per test binary).
     # The first cold run also cross-builds qpdf/libjpeg and downloads Qt
     # (~2.6 GB) before the cache warms, so give it release-job headroom.
@@ -384,7 +384,7 @@ jobs:
           # STILL REQUIRED after the move to GitHub-hosted runners, for a
           # different reason than before. It was here because the custom
           # trailer-runner image shipped an EMPTY apt index. A hosted
-          # ubuntu-latest image instead ships an index snapshotted when the
+          # ubuntu-24.04 image instead ships an index snapshotted when the
           # image was built; between weekly image refreshes that snapshot
           # goes stale and `apt-get install` 404s on a package whose
           # version has moved on the mirrors. Either way the action must
@@ -597,7 +597,7 @@ jobs:
 
   clang-format:
     name: clang-format (advisory)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     # Advisory only — output goes to the job summary so the diff is
     # visible without bouncing merges. Flip to required once the tree

@@ -72,7 +72,7 @@ jobs:
     # already-released check still fails red because that's a real
     # duplicate-release bug.
     name: Pre-flight checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Run when: (a) manual dispatch, (b) any push to an RC-labeled PR
     # (opened/synchronize/reopened), or (c) the `release-candidate`
     # label specifically being added. Adding any *other* label to an
@@ -156,7 +156,7 @@ jobs:
     needs: [precheck, uat]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: Linux build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -293,7 +293,7 @@ jobs:
     # into trailer-windows-x86_64.zip because release-publish.yml's rename
     # step looks for dist/trailer-windows-x86_64.zip when promoting a
     # build to a GitHub Release.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Wine is slow regardless of host, and the first cold run cross-builds
     # qpdf/libjpeg and downloads Qt (~2.6 GB) before the cache warms —
     # keep the release-job headroom.
@@ -528,9 +528,9 @@ jobs:
     needs: [precheck]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: UAT
-    # ubuntu-latest: this job builds and runs a Docker image, so it needs
+    # ubuntu-24.04: this job builds and runs a Docker image, so it needs
     # a Docker daemon on the runner. The hosted image ships Docker+Buildx.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7

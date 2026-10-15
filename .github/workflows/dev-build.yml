@@ -120,13 +120,13 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.build_linux) ||
       (github.event_name == 'pull_request' && github.event.label.name == 'dev-build')
     name: Linux dev build
-    # ubuntu-latest, NOT a self-hosted label. This job is reachable from a
+    # ubuntu-24.04, NOT a self-hosted label. This job is reachable from a
     # `pull_request` (the `dev-build` label path above) and checks out
     # `github.event.pull_request.head.sha` — i.e. it executes PR-authored
     # code. On a public repo that must never land on the owner's own
     # infrastructure. See PR "CI: move every PR-reachable job to
     # GitHub-hosted runners" (2026-08-05).
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -212,10 +212,10 @@ jobs:
       (github.event_name == 'workflow_dispatch' && inputs.build_windows) ||
       (github.event_name == 'pull_request' && github.event.label.name == 'dev-build')
     name: Windows dev cross-build (mingw-w64)
-    # ubuntu-latest, NOT a self-hosted label — same reason as dev-linux
+    # ubuntu-24.04, NOT a self-hosted label — same reason as dev-linux
     # above: this job is `pull_request`-reachable and builds PR-authored
     # code.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Cold Wine/Qt/qpdf provisioning is slow before the caches warm —
     # keep the release job's headroom.
     timeout-minutes: 60
