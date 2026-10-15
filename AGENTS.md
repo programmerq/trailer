@@ -185,8 +185,9 @@ Saving: only an explicit Save or Save As writes the user's file. The 30 s auto-s
 - **QPDF is not thread-safe**, even for reads. Background work opens its own qpdf instance.
 - **Worker → GUI:** use `MlScheduler::postResultToGuiThread()` and re-check a `QPointer`. Never
   `QMetaObject::invokeMethod(…, Qt::QueuedConnection)` from a worker (macOS crash).
-- **`IDocument` is not a QObject:** drop held pointers on `documentAboutToBeRemoved`. Reach
-  objects via the current document, since `MainWindow::findChild<…>()` searches every tab.
+- **`IDocument` is not a QObject:** drop held pointers on `documentAboutToBeRemoved`. Reach a
+  tab's widgets from `DocumentView::currentWidget()`, never `MainWindow::findChild<…>()`: every tab
+  has its own, and in a two-tab window that finds the hidden tab's.
 - **Enum switches** have no `default:`, so `-Werror=switch` flags unhandled modes.
   `AnnotationType` and `ModelId` are persisted: append only. New setting keys go in
   `Settings::volatilityOf`.
@@ -201,6 +202,10 @@ Saving: only an explicit Save or Save As writes the user's file. The 30 s auto-s
 - **Unsaved-changes prompt:** never shown under the offscreen or minimal platforms. Tests force
   an answer with `CloseResponse`; under any other platform plugin a dirty-close test blocks on
   the modal.
+- **Other dialogs in tests** (a file dialog, Export As's options, a replace prompt) wait for an
+  answer, and the test hangs until QTest's watchdog kills it after 5 minutes. Answer them from
+  a timer that polls `QApplication::activeModalWidget()`, which keeps firing inside the dialog's
+  event loop, like `ModalSentinel` in `tests/uat/test_uat_modal_census.cpp`.
 - **Screen capture:** a macOS Screen Recording grant applies from the next launch. XWayland
   grabs come back black, so Linux capture uses the XDG portal.
 - **No macOS PR lane yet (T-58):** a change to `src/platform/*.mm` isn't compiled before merge,

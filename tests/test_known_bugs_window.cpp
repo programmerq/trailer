@@ -11,7 +11,9 @@
 #include "document/IDocument.h"
 #include "document/PdfEditor.h"
 #include "settings/DocumentTypeDefaults.h"
+#include "ui/AnnotationOverlay.h"
 #include "ui/DocumentView.h"
+#include "ui/Inspector.h"
 #include "ui/MainWindow.h"
 #include "ui/SearchBar.h"
 
@@ -23,6 +25,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
+#include <QLabel>
 #include <QPainter>
 #include <QPdfDocument>
 #include <QPdfSelection>
@@ -34,6 +37,7 @@
 #include <QSettings>
 #include <QStatusBar>
 #include <QTabBar>
+#include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTimeZone>
 #include <QToolBar>
@@ -464,6 +468,8 @@ class KnownBugsWindow : public QObject {
     void rectangleAroundWordIsSavedAroundIt_data();
     void rectangleAroundWordIsSavedAroundIt();
     void currentDocumentFollowsDraggedTab();
+    void inspectorShowsMarkSelectedOnEitherTab_data();
+    void inspectorShowsMarkSelectedOnEitherTab();
     void saveLeavesUneditedFileUntouched_data();
     void saveLeavesUneditedFileUntouched();
     void undoToSavedStateClearsDirtyMarker_data();
@@ -629,6 +635,79 @@ void KnownBugsWindow::currentDocumentFollowsDraggedTab() {
         QEXPECT_FAIL("", "T-07: the document list is not reordered with the tabs", Abort);
         QCOMPARE(QFileInfo(dv->currentDocument()->filePath()).fileName(), shown);
     }
+}
+
+void KnownBugsWindow::inspectorShowsMarkSelectedOnEitherTab_data() {
+    QTest::addColumn<int>("tab");
+    QTest::newRow("openedFirst") << 0;
+    QTest::newRow("openedSecond") << 1;
+}
+
+// T-133: In a two-tab window, the Inspector, crop, Instant Alpha and Smart Lasso can ignore the
+// shown tab
+void KnownBugsWindow::inspectorShowsMarkSelectedOnEitherTab() {
+    QFETCH(int, tab);
+    // Two images opened together share one tabbed window, showing the one
+    // opened second. The openedFirst row switches tabs once; neither row
+    // switches after that.
+    const QString alpha = m_dir.filePath(QStringLiteral("alpha.png"));
+    const QString bravo = m_dir.filePath(QStringLiteral("bravo.png"));
+    QVERIFY(writeImage(alpha, Qt::red));
+    QVERIFY(writeImage(bravo, Qt::blue));
+    MainWindow *mw = openWindow({alpha, bravo});
+    QVERIFY(mw);
+    QCOMPARE(mw->documentCount(), 2);
+    DocumentView *dv = documentView(mw);
+    QTabBar *bar = dv->tabBar();
+    QTRY_VERIFY(bar->isVisible());
+    QCOMPARE(dv->currentIndex(), 1);
+    if (tab != 1)
+        clickOn(bar, bar->tabRect(tab).center());
+    QCOMPARE(dv->currentIndex(), tab);
+
+    // Show the Inspector on its Properties tab, and the markup toolbar. A
+    // window restores the panes the last one closed with, so only turn on.
+    QAction *showInspector = actionTexted(mw, QStringLiteral("Inspector"));
+    QVERIFY(showInspector && showInspector->isCheckable());
+    if (!showInspector->isChecked())
+        showInspector->trigger();
+    auto *pane = mw->findChild<Inspector *>(QStringLiteral("trailer.inspector"));
+    QTRY_VERIFY(pane && pane->isVisible());
+    auto *paneTabs = pane->findChild<QTabWidget *>();
+    QVERIFY(paneTabs);
+    int properties = -1;
+    for (int i = 0; i < paneTabs->count(); ++i)
+        if (paneTabs->tabText(i).remove(QLatin1Char('&')) == QStringLiteral("Properties"))
+            properties = i;
+    QVERIFY(properties >= 0);
+    clickOn(paneTabs->tabBar(), paneTabs->tabBar()->tabRect(properties).center());
+    QCOMPARE(paneTabs->currentIndex(), properties);
+    QAction *showMarkup = actionNamed(mw, QStringLiteral("action.view.markupToolbar"));
+    QVERIFY(showMarkup && showMarkup->isCheckable());
+    if (!showMarkup->isChecked())
+        showMarkup->trigger();
+    settle();
+
+    // Draw a rectangle on the shown image, then select it with a click.
+    auto *layer = dv->currentWidget()->findChild<AnnotationOverlay *>();
+    QVERIFY(layer && layer->isVisible());
+    const QPoint centre = layer->rect().center();
+    QAction *rectangle = markupTool(mw, QStringLiteral("Rectangle"));
+    QAction *select = markupTool(mw, QStringLiteral("Select"));
+    QVERIFY(rectangle && select);
+    rectangle->trigger();
+    dragOn(layer, centre - QPoint(60, 40), centre + QPoint(60, 40));
+    QCOMPARE(currentDocument(mw)->annotations()->count(), 1);
+    select->trigger();
+    clickOn(layer, centre);
+    settle();
+
+    bool shown = false;
+    for (QLabel *label : pane->findChildren<QLabel *>())
+        shown = shown || (label->isVisible() && label->text() == QStringLiteral("Rectangle"));
+    QEXPECT_FAIL("openedSecond", "T-133: this tab's marks aren't connected to the Inspector",
+                 Abort);
+    QVERIFY2(shown, "the Inspector's Properties tab doesn't show the selected rectangle");
 }
 
 void KnownBugsWindow::saveLeavesUneditedFileUntouched_data() {

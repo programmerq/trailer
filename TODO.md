@@ -11,11 +11,11 @@ Trailer won't do is in PRODUCT.md ("Not doing"), not here.
 
 **Closing and adding**
 - To close an entry, the PR that meets its bar deletes it and names the id in its title and
-  commit subject, e.g. `fix(T-07): …`; one PR may close several (`fix(T-05, T-97): …`). There
+  commit subject, e.g. `fix(T-NN): …`; one PR may close several (`fix(T-NN, T-MM): …`). There
   is no status field and no done list.
 - A fix that meets only part of a bar deletes the `QEXPECT_FAIL` lines it fixed, keeps the
   entry, and narrows its Done when to what's left.
-- To add an entry, take the next unused id and update this line: the highest so far is T-132.
+- To add an entry, take the next unused id and update this line: the highest so far is T-133.
   Ids are never reused, and CI fails if an entry is above that number. Put the entry under its
   priority, with a failing test in the same PR when the bug can be reproduced offscreen.
 - A code comment that points at open work says `// T-NN: …` and nothing more.
@@ -120,9 +120,9 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     (`ImageAdapter.cpp:1383-1391`). ⌘Z re-adds the mark over the burned-in pixels; a second ⌘Z
     leaves the pixels red with nothing left to undo.
 - **T-07 After a tab is dragged, commands act on the other document.** `save` `data-loss`
-  - Done when: in a two-tab image window, after dragging the first tab to second place, Save,
-    Rotate, ⌘Z, Select All, Close and Export each act on the selected tab's document. Test: after
-    `tabBar()->moveTab()`, `currentDocument()` matches the selected tab at every index.
+  - Done when: in a two-tab image window, after dragging the first tab to second place with the
+    mouse, Save, Rotate, ⌘Z, Close and Export each act on the selected tab's document, and each
+    tab keeps its name. (⌘A on a two-tab window is T-17.)
   - Test: `test_known_bugs_window` (T-07).
   - Src: UND-9. `DocumentView.cpp:7` calls `setMovable(true)` and nothing handles `tabMoved`.
     `DocumentView.cpp:27-33` looks documents up by index. Opening several images at once makes a
@@ -297,6 +297,18 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     - With focus in the thumbnails, ⌘A selects all pages.
     - In a two-tab window, ⌘A acts only on the visible tab.
   - Src: `MainWindow.cpp:1570-1575` calls `findChild<AnnotationOverlay*>()->selectAll()`.
+- **T-133 In a two-tab window, the Inspector, crop, Instant Alpha and Smart Lasso can ignore the
+  shown tab.** `annotations` `ocr`
+  - Done when: in a window with two documents, on each tab, both right after opening and after a
+    tab switch, selecting a mark shows it in the Inspector, Enter over a crop rectangle crops the
+    page, and Instant Alpha and Smart Lasso change the shown image.
+  - Test: `test_known_bugs_window` (T-133) checks the Inspector on the tab opened second; crop
+    and the ML tools aren't tested.
+  - Src: `MainWindow.cpp:4095` connects these to `findChild<AnnotationOverlay *>()`, which in a
+    two-tab window returns the hidden tab's layer, so the tab opened last is never connected and
+    each tab switch connects the tab being left. The Instant Alpha and Smart Lasso handlers check
+    the current document and return, so those tools do nothing rather than edit the other image
+    (inferred from the code). Found while fixing T-07.
 - **T-18 Copy Page as Image leaves out the page's marks.** `text`
   - Done when: Edit ▸ Copy Page as Image on a page with a rectangle and a text box puts an image
     on the clipboard that shows both marks, at page size × screen dpr. Checked at dpr 1 and 2.
