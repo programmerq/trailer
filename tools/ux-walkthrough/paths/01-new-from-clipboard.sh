@@ -40,7 +40,7 @@ if [ "$CLIP_BYTES" -gt 0 ]; then
 else
     _fail "clipboard did not accept the image"
 fi
-boundary "Linux build has NO clipboard-consuming menu action (macOS-only, Application.cpp #ifdef Q_OS_MACOS). ⌘N/menu wiring -> owner real-Mac checklist."
+boundary "Linux build has NO clipboard-consuming menu action (macOS-only, Application.cpp #ifdef Q_OS_MACOS). ⌘N/menu wiring needs a real Mac (TODO.md T-52)."
 launch    # no file argument -> empty state
 shot
 

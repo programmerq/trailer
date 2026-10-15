@@ -1,4 +1,4 @@
-// UAT harness — Background removal (Phase 6 §6.3.8 / DESIGN §6.1.5).
+// UAT harness — Background removal.
 //
 // Drives the full integration path for the Tools → Remove Background
 // feature. The UI path uses a modal QProgressDialog we can't click
@@ -50,7 +50,7 @@
 //       "calculating" glyph (a static busy glyph, NOT a progress bar or
 //       spinner widget) while the op runs; re-invoking the entry cancels
 //       the op; the document is left byte-for-byte identical, not dirty,
-//       with no undo entry (DR 2026-07-21). Asserts the OCR MlProgressWidget
+//       with no undo entry. Asserts the OCR MlProgressWidget
 //       is never driven by background removal. A fake inference is injected
 //       so the flow runs without a network model.
 //   uat_bgr_080_transientFailureShowsFailedGlyph
@@ -284,9 +284,9 @@ MlProgressWidget *findProgressWidget(MainWindow *mw) {
     return mw->findChild<MlProgressWidget *>();
 }
 
-// G2 evidence capture. When TRAILER_UAT_IMAGE_DIR is set, pop up the real Tools
+// Optional screenshot. When TRAILER_UAT_IMAGE_DIR is set, pop up the real Tools
 // menu (so the Remove Background entry's live icon/enabled/tooltip render) and
-// grab it offscreen to <name>.png (the sanctioned QWidget::grab() method). A
+// grab it offscreen to <dir>/<name>.png, a local file that is not committed. A
 // no-op in normal CI runs so the test never depends on a writable path.
 void captureToolsMenu(MainWindow *mw, const QString &name) {
     const QString dir = QString::fromLocal8Bit(qgetenv("TRAILER_UAT_IMAGE_DIR"));
@@ -713,7 +713,7 @@ void TestUatBackgroundRemoval::uat_bgr_090_disabledDocShowsUnavailableGlyph() {
     QVERIFY2(
         iconIsResource(action->icon(), QStringLiteral(":/icons/actions/status-unavailable.svg"), mw),
         "A disabled/unavailable entry must carry the muted unavailable glyph");
-    // G3: the explain-why tooltip still stands alongside the glyph.
+    // The disabled entry still explains why in its tooltip, alongside the glyph.
     QVERIFY2(action->toolTip().contains(QStringLiteral("Manage ML Models")),
              qPrintable(QString("Unavailable entry keeps its explain-why tooltip: '%1'")
                             .arg(action->toolTip())));

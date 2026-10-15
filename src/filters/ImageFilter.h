@@ -4,7 +4,7 @@
 #include <QString>
 #include <QStringList>
 
-// Quartz-equivalent filters (DESIGN §6.3.7). A filter is a pure
+// Quartz-equivalent filters. A filter is a pure
 // function `QImage -> QImage` selected by a stable id. The UI shows
 // the display name; exporters save and load the id so a file's
 // filter choice round-trips without being pinned to a translation.
@@ -12,7 +12,7 @@
 // The built-ins are pure colour transforms with no external state —
 // no LUT files, no ICC conversions — so they run cheaply on top of
 // whatever the exporter already produced. Custom LUT-backed filters
-// are left for a follow-up (noted in DESIGN §6.3.7 "Custom…" entry).
+// aren't supported.
 
 namespace trailer {
 

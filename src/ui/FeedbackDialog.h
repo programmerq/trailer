@@ -16,11 +16,11 @@ class Application;
 // AppSnapshot (src/diagnostics/FeedbackReport.h) once at construction
 // and shows the rendered markdown in a read-only, fully-visible text
 // view — never clipboard-only, the user must be able to read
-// everything before they paste it anywhere (see PHILOSOPHY.md privacy-
-// by-construction). A "Copy to Clipboard" button and an "Include full
-// file paths" checkbox (default off — see FeedbackReport.h's privacy
-// note on formatMarkdown) re-render the same already-gathered snapshot;
-// neither ever re-queries live app state or touches the network.
+// everything before they paste it anywhere. A "Copy to Clipboard"
+// button and an "Include full file paths" checkbox (default off — see
+// FeedbackReport.h's privacy note on formatMarkdown) re-render the same
+// already-gathered snapshot; neither ever re-queries live app state or
+// touches the network.
 //
 // A QDialog subclass (rather than a bare free function) so a UAT slot
 // can construct one directly and inspect its widgets without running

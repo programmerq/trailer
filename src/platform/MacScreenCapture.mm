@@ -1,4 +1,5 @@
-// NOT COMPILED ON macOS in CI — ScreenCaptureKit is Apple-only; requires an on-device build + the GPSC.2 smoke test before the flag default flips.
+// NOT COMPILED ON macOS in CI — ScreenCaptureKit is Apple-only; requires an on-device
+// build + tools/macos-capture-smoketest before the flag default flips.
 //
 // Native (Apple-only) implementation of the ScreenCaptureKit picker
 // backend: screenCaptureKitAvailable() and captureViaPickerToPng(). Built
@@ -212,7 +213,7 @@ PickerCaptureResult captureViaPickerToPng(const QString &outPngPath, bool wholeD
             //
             // Qt-reentrancy caveat: a nested NSRunLoop in NSDefaultRunLoopMode
             // can fire Qt timers/events reentrantly on macOS — a known risk to
-            // validate under the on-device GPSC.2 smoke test.
+            // validate with tools/macos-capture-smoketest on a real Mac.
             //
             // Bounded by a wall-clock deadline so a wedged picker (no pick, no
             // cancel, no failure callback) can't spin the main run loop forever.

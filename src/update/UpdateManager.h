@@ -19,12 +19,12 @@ namespace trailer::Update {
 // / QNetworkReply here — see UpdateChecker.h for why that separation
 // matters.
 //
-// Auto-check policy (owner decision, 2026-07-30): OFF by default. When
-// the user turns "Automatically check for updates" on in Preferences,
-// Trailer checks once at startup and once per 24h while running — never
-// more often, never silently downloading. The "Check for Updates…" menu
-// action is independent of this setting and always available (G3): it
-// always performs one manual check, whether or not auto-check is on.
+// Auto-check policy: OFF by default. When the user turns "Automatically
+// check for updates" on in Preferences, Trailer checks once at startup
+// and once per 24h while running — never more often, never silently
+// downloading. The "Check for Updates…" menu action is independent of
+// this setting and always available: it always performs one manual
+// check, whether or not auto-check is on.
 //
 // Download/install policy: ALWAYS a user action. Finding an update never
 // downloads it — the caller (Preferences pane or the manual-check
@@ -44,13 +44,13 @@ class UpdateManager : public QObject {
     // cmake/UpdatePublicKey.h.in). Such a build embeds no key, so it can
     // neither verify a feed nor honestly offer to update; callers that
     // surface an update affordance MUST disable it with a tooltip rather
-    // than let the user click into a guaranteed failure (G3). Static
+    // than let the user click into a guaranteed failure. Static
     // because it is a compile-time property of the binary, not of any
     // particular manager instance.
     static bool isChannelProvisioned();
 
     // Always available regardless of the auto-check setting — the menu
-    // action's one-shot manual check (G3: never a dead control). Sets
+    // action's one-shot manual check (never a dead control). Sets
     // State::Error immediately, without any network request, when
     // isChannelProvisioned() is false.
     void checkNow();
@@ -66,15 +66,14 @@ class UpdateManager : public QObject {
 
     // Installs the downloaded artifact and relaunches. macOS: clears the
     // quarantine bit on the new bundle, swaps it into place, relaunches.
-    // Windows/Linux: no automatic in-place swap exists yet (tracked for
-    // the Windows/Linux follow-on — ROADMAP "Next" item 7), so this
+    // Windows/Linux: no automatic in-place swap exists yet, so this
     // reveals the downloaded file in the platform file manager instead
-    // of pretending to install it (G3: no lying controls). No-op if
+    // of pretending to install it (no lying controls). No-op if
     // state() is not ReadyToInstall.
     void installAndRelaunch();
 
     // Test-only seam: forces the manager into an arbitrary state without a
-    // real network round-trip, so UAT/G2 evidence harnesses (see
+    // real network round-trip, so UAT harnesses (see
     // tests/uat/test_uat_preferences.cpp) can render every Updates-pane
     // state deterministically (Checking / UpdateAvailable / UpToDate /
     // Error / ReadyToInstall). Never called from any production code
@@ -93,7 +92,7 @@ class UpdateManager : public QObject {
   signals:
     void stateChanged();
     // Disclosed BEFORE the request fires — mirrors ModelDownloader's
-    // show-the-URL consent framing (AGENTS.md "Networking").
+    // show-the-URL consent framing.
     void checkStarted(QString url);
     void downloadProgress(qint64 received, qint64 total);
 

@@ -98,9 +98,8 @@ class PdfDocument : public IDocument {
     bool supportsEditing() const override { return m_valid; }
     // Any valid PDF can be re-encrypted / re-linearized on export; the
     // qpdf editor is loaded lazily by the actual export action, so these
-    // capability probes must NOT force the parse (P0 startup-hang fix,
-    // closed by #63; residual in
-    // docs/backlog/2026-07-15-offthread-pdf-open-placeholder.md).
+    // capability probes must NOT force the parse (it would block the GUI
+    // thread at open).
     bool supportsPasswordExport() const override { return m_valid; }
     bool exportWithPassword(const QString &destPath, const QString &password) override;
 
@@ -109,14 +108,13 @@ class PdfDocument : public IDocument {
 
     // Form-field detection genuinely needs the qpdf editor (there is no
     // cheaper way to know a PDF carries an AcroForm). The ~0.55s qpdf
-    // processFile parse this used to force synchronously must NOT block the
-    // GUI thread at open (owner feedback on PR #63): so this probe no longer
-    // forces a synchronous ensureEditorLoaded(). It answers definitively
+    // processFile parse must NOT block the GUI thread at open, so this probe
+    // never forces a synchronous ensureEditorLoaded(). It answers definitively
     // from the editor once the background load has adopted it, and returns a
     // provisional "not ready yet" (false) meanwhile — kicking that
     // background load so the answer resolves. The forms toolbar is disabled
-    // during the window and enables when capabilitiesChanged() fires (G3
-    // disabled-not-lying). The result is cached so repeated toolbar
+    // during the window (never enabled while it can't act) and enables when
+    // capabilitiesChanged() fires. The result is cached so repeated toolbar
     // refreshes don't re-scan; an edit that rebuilds the page graph clears
     // the cache (reloadViewerFromEditor) and the definitive branch recomputes.
     bool supportsFormFilling() const override {
@@ -164,8 +162,8 @@ class PdfDocument : public IDocument {
     // annotation-only dirtiness by reopening the file and re-applying the
     // annotations editable (restoreAnnotationsFromDraft), but it CANNOT
     // reconstruct structural edits from the annotation JSON, so a
-    // structurally-dirty PDF falls back to the per-doc prompt (flagged
-    // residual — see the decision record + docs/backlog).
+    // structurally-dirty PDF is kept as a full edited-PDF blob instead
+    // (StructuralDraft; see Application::canDraftForKeep).
     bool hasStructuralEdits() const { return m_dirty; }
     // True iff this document carries a still-PENDING (un-applied) redaction or
     // signature annotation. These are the only annotation kinds
@@ -174,10 +172,10 @@ class PdfDocument : public IDocument {
     // such a doc would come back with them BURNED IN and no longer editable —
     // a silent irreversible commit. The kept-windows capture routes exactly
     // this combination to the per-doc prompt instead (Application::
-    // canDraftForKeep; docs/backlog/2026-07-20-nondestructive-structural-
-    // redaction-keep.md). Forces a synchronous annotation load first so the
+    // canDraftForKeep). Forces a synchronous annotation load first so the
     // check sees the COMPLETE set (never a racy, still-loading store) — hence
     // non-const (the sync load commits the deferred annotation result).
+    // T-61: ⌥⌘Q should keep such a PDF without prompting.
     bool hasPendingDestructiveAnnotation();
     // Rehydrate this document from a kept-windows draft on session restore:
     // re-apply `annotations` (the document's unsaved annotations, captured
@@ -312,7 +310,7 @@ class PdfDocument : public IDocument {
     // Forces the deferred off-thread open to settle so validity is definitive.
     bool isValid() const;
 
-    // Phase 5: password-protected open flow. If load() hits
+    // Password-protected open flow. If load() hits
     // IncorrectPassword, needsPassword() returns true and unlock() can
     // be retried with a password from the user. Stays false for plain
     // PDFs. Forces the deferred off-thread open to settle (ensureDocLoaded)
@@ -407,7 +405,7 @@ class PdfDocument : public IDocument {
         m_pdfRedoStack.clear();
     }
 
-    // --- Lazy open gates (P0 startup-hang fix + PR #63 off-thread parse) ---
+    // --- Lazy open gates ---
     // The heavy whole-document passes that used to run in the ctor are
     // deferred off the synchronous open path. A single background worker now
     // does BOTH the all-pages annotation sweep AND the qpdf processFile parse
@@ -416,11 +414,11 @@ class PdfDocument : public IDocument {
     //                               isolated qpdf instances (see the .cpp) it
     //                               (1) sweeps annotations on a throwaway
     //                               instance freed before it returns — keeping
-    //                               steady-state RSS low (Option B, DR 0006) —
-    //                               and (2) parses a separate, parse-only
-    //                               editor and reads AcroForm presence. The
-    //                               GUI-thread finished slot ADOPTS that editor
-    //                               as m_editor and commits the annotations.
+    //                               steady-state RSS low — and (2) parses a
+    //                               separate, parse-only editor and reads
+    //                               AcroForm presence. The GUI-thread finished
+    //                               slot ADOPTS that editor as m_editor and
+    //                               commits the annotations.
     //                               Wires the annotation history hooks
     //                               synchronously up front so user edits made
     //                               during the (possibly multi-second) load
@@ -449,8 +447,7 @@ class PdfDocument : public IDocument {
     void ensureEditorLoaded() const;
     void startBackgroundLoad();
 
-    // --- Off-GUI-thread initial document open (backlog
-    // 2026-07-15-offthread-pdf-open-placeholder; deferred (b) of DR 0006) ---
+    // --- Off-GUI-thread initial document open ---
     // The residual synchronous open cost is QPdfDocument::load. It now runs on
     // a worker thread kicked from the ctor: the worker constructs a
     // QPdfDocument (worker affinity), loads it (its file reads therefore run
@@ -559,7 +556,7 @@ class PdfDocument : public IDocument {
     // and scrolled into view — this is where the "Find found nothing"
     // bug on OCR'd PDFs used to live.
     void onSearchResultsPopulated();
-    // Position-aware seed (ADR 0006): the smallest populated result-row
+    // Position-aware seed: the smallest populated result-row
     // index whose page is >= `page`. Returns 0 (wrap to the first match)
     // when nothing sits at/after the page, or the model is empty. Results
     // arrive in page order, so the first such row is also the first
@@ -606,7 +603,7 @@ class PdfDocument : public IDocument {
     QPointer<AnnotationOverlay> m_overlay;
     QPointer<SelectableTextLayer> m_textLayer;
     QPointer<FormOverlay> m_formOverlay;
-    // AUGMENT wiring (decision record 2026-07-21-two-page-layout, D1-A):
+    // Two-Pages wiring:
     // createView returns a QStackedWidget holding the QPdfView surface
     // (Single/Continuous, unchanged) at index 0 and the custom TwoPageView
     // (Two-Pages mode) at index 1. applyViewMode swaps the visible page.
@@ -623,7 +620,7 @@ class PdfDocument : public IDocument {
     SelectableTextStore m_selectableText;
     ViewMode m_viewMode = ViewMode::Continuous;
     int m_currentResult = -1;
-    // Async-populate seed guard (ADR 0006 R1). The search model streams
+    // Async-populate seed guard. The search model streams
     // rowsInserted incrementally in page order, so each populate re-seeds
     // against the growing model until the current-page rows arrive.
     // m_seedPending is set true when a non-empty query is issued and is

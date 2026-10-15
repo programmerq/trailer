@@ -1,14 +1,13 @@
-// Regression guard for the dark-mode disabled icon-contrast fix
-// (audit 2026-07-15, Fix A). An icon-only toolbar button (magnifier,
-// zoom, etc.) has no greyed text label to carry the "disabled" signal,
-// so the glyph itself must dim when the action is disabled. Before the
-// fix, themedActionIcon registered only QIcon::Normal pixmaps; under a
-// dark palette Qt's style-generated disabled fade left the glyph almost
-// as bright as enabled (measured disabled peak-luminance ~203 vs enabled
-// ~220 — indistinguishable), so the control lied about being inert
-// (Gate G3 spirit).
+// Regression guard for the dark-mode disabled icon-contrast fix. An
+// icon-only toolbar button (magnifier, zoom, etc.) has no greyed text
+// label to carry the "disabled" signal, so the glyph itself must dim when
+// the action is disabled. Before the fix, themedActionIcon registered only
+// QIcon::Normal pixmaps; under a dark palette Qt's style-generated
+// disabled fade left the glyph almost as bright as enabled (measured
+// disabled peak-luminance ~203 vs enabled ~220 — indistinguishable), so
+// the control lied about being inert.
 //
-// Threshold (G1): under a dark palette, the QIcon::Disabled pixmap peaks
+// Threshold: under a dark palette, the QIcon::Disabled pixmap peaks
 // at luminance <= 150 while the QIcon::Normal pixmap peaks at >= 200, and
 // the disabled peak is strictly dimmer than normal.
 //

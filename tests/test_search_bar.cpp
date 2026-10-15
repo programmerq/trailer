@@ -1,16 +1,16 @@
 // Unit test for SearchBar — the counter/nav-button layout invariant this
 // file exists to protect.
 //
-// G10/SC-MOD-1 (spatial constancy, AGENTS.md;
-// docs/audit-2026-07-31-g10-deference.md): SearchBar::setMatchCounter()
-// used to hide()/show() the match-count label as the count crossed zero,
-// which collapsed/restored its slot in the shared QHBoxLayout and shifted
-// Prev/Next/Close sideways. This is a bare-widget test (no MainWindow
-// embedding, mirroring test_markup_toolbar.cpp's pattern) so the
-// invariant is pinned against the WIDGET's own layout behaviour, not
-// against an incidental width constraint MainWindow happens to apply
-// (setMaximumWidth(360) on the embedded instance) that could otherwise
-// mask a real defect in a narrower or differently-constrained embedding.
+// Spatial constancy (a control never moves because unrelated state
+// changed): SearchBar::setMatchCounter() used to hide()/show() the
+// match-count label as the count crossed zero, which collapsed/restored its
+// slot in the shared QHBoxLayout and shifted Prev/Next/Close sideways. This
+// is a bare-widget test (no MainWindow embedding, mirroring
+// test_markup_toolbar.cpp's pattern) so the invariant is pinned against the
+// WIDGET's own layout behaviour, not against an incidental width constraint
+// MainWindow happens to apply (setMaximumWidth(360) on the embedded
+// instance) that could otherwise mask a real defect in a narrower or
+// differently-constrained embedding.
 
 #include "ui/SearchBar.h"
 
@@ -38,7 +38,7 @@ QToolButton *findByTooltip(SearchBar *bar, const QString &tip) {
     return nullptr;
 }
 
-// G2 evidence, opt-in via TRAILER_UAT_EVIDENCE_DIR (mirrors
+// Screenshot evidence, opt-in via TRAILER_UAT_EVIDENCE_DIR (mirrors
 // test_uat_ml_affordances.cpp's saveEvidence helper) — off by default so a
 // normal ctest run never writes files outside the build tree.
 void saveEvidence(QWidget *w, const QString &fileName) {
@@ -60,7 +60,7 @@ void TestSearchBar::navButtonsStayPutAsMatchCountCrossesZero() {
     // window-exposed event within the default 5s timeout, even though the
     // bar's own layout is already computable by the time show() returns.
     // Hard-failing on the wait would fail a platform quirk unrelated to the
-    // invariant this test protects: SC-MOD-1 is a DIFFERENTIAL property (a
+    // invariant this test protects: that is a DIFFERENTIAL property (a
     // button's position is unchanged as the match count crosses zero),
     // which needs a settled layout, not a confirmed window-manager paint.
     // So: wait, but don't assert on the result -- settle() below (called

@@ -1,12 +1,13 @@
-// UAT harness — Zoom-% status indicator
+// UAT harness — transient zoom-% readout
 //
 // Drives Application + MainWindow in-process under
-// QT_QPA_PLATFORM=offscreen to exercise the status-bar zoom indicator
-// (the permanent QLabel objectName "zoomIndicator"):
-//   - Opening a zoomable image shows the label and reads the current
-//     zoom as an integer percent (== qRound(zoomFactor * 100)).
-//   - With no document open the label is hidden (nothing to read out).
-//   - Zooming in updates the readout to the new percent.
+// QT_QPA_PLATFORM=offscreen to exercise the floating zoom readout
+// (QLabel objectName "zoomIndicator"), which appears on an explicit zoom
+// action and fades back out:
+//   - Actual Size and Zoom In reveal it, reading the current zoom as an
+//     integer percent (== qRound(zoomFactor * 100)).
+//   - Opening or switching documents never reveals it on its own.
+//   - With no document open it stays hidden (nothing to read out).
 //
 // Mirrors the custom-main + HOME-sandbox + init() scaffolding of
 // test_uat_empty_state.cpp so Settings/RecentFiles write into a
@@ -97,9 +98,9 @@ class TestUatZoomIndicator : public QObject {
     void uat_zoom_ind_040_explicitZoomActionRevealsAndFades();    // UAT-VWR-103
     void uat_zoom_ind_050_docOpenAndSwitchStaySilent();            // UAT-VWR-104
     void uat_zoom_ind_060_reduceMotionSkipsFade();                 // UAT-VWR-105
-    void uat_zoom_ind_070_togglingReadoutDoesNotShiftSiblingWidgets(); // UAT-VWR-106 (G10)
+    void uat_zoom_ind_070_togglingReadoutDoesNotShiftSiblingWidgets(); // UAT-VWR-106
     void uat_zoom_ind_080_ladderStopsAtThePixelExactFactor();          // UAT-VWR-110
-    void uat_zoom_ind_090_pixelExactEvidenceShots();                   // G2 evidence
+    void uat_zoom_ind_090_pixelExactEvidenceShots();                   // evidence PNGs
 
   private:
     // Open `path`, then swap the document's pixels for a synthetic capture
@@ -116,9 +117,8 @@ void TestUatZoomIndicator::init() {
     QApplication::processEvents();
 }
 
-// UAT-VWR-104 (docs/uat/02-viewer.md) / DR 2026-07-31-transient-zoom-
-// readout: opening a zoomable image never itself reveals the transient
-// status-bar readout — the indicator stays hidden at rest through the
+// UAT-VWR-104: opening a zoomable image never itself reveals the transient
+// zoom readout — the indicator stays hidden at rest through the
 // open. Triggering an explicit zoom action (Actual Size, here) reveals
 // it with the correct percent. Actual Size is the canonical 100% path —
 // pin the zoom there so the readout is deterministic (a fit-mode default
@@ -149,8 +149,7 @@ void TestUatZoomIndicator::uat_zoom_ind_010_actualSizeRevealsCorrectPercent() {
     QLabel *indicator = zoomIndicator(mw);
     QVERIFY2(indicator, "MainWindow should host a zoomIndicator label");
     QVERIFY2(!indicator->isVisible(),
-             "Opening a document must never itself reveal the transient zoom readout "
-             "(DR 2026-07-31-transient-zoom-readout)");
+             "Opening a document must never itself reveal the transient zoom readout");
 
     // Pin to Actual Size (Ctrl+0) so the readout is 100% regardless of
     // the viewport-dependent open default. This is an explicit zoom
@@ -258,12 +257,11 @@ void TestUatZoomIndicator::uat_zoom_ind_030_zoomInUpdatesPercent() {
     QCOMPARE(indicator->text(), QStringLiteral("125%"));
 }
 
-// UAT-VWR-103 / DR 2026-07-31-transient-zoom-readout: an explicit zoom
-// action reveals the readout immediately, and it fades back out on its
-// own after the hold+fade window, with no further zoom action. Uses the
-// test-only setZoomIndicatorTimingForTesting() seam for fast,
-// deterministic timing instead of sleeping through the real (~1.5s)
-// production hold.
+// UAT-VWR-103: an explicit zoom action reveals the readout immediately, and
+// it fades back out on its own after the hold+fade window, with no further
+// zoom action. Uses the test-only setZoomIndicatorTimingForTesting() seam
+// for fast, deterministic timing instead of sleeping through the real
+// (~1.5s) production hold.
 void TestUatZoomIndicator::uat_zoom_ind_040_explicitZoomActionRevealsAndFades() {
     QVERIFY(m_scratch.isValid());
     const QString imgPath = writeStaticImage(m_scratch.filePath(QStringLiteral("zoom_ind_040.png")));
@@ -389,15 +387,14 @@ void TestUatZoomIndicator::uat_zoom_ind_060_reduceMotionSkipsFade() {
              "without an opacity fade");
 }
 
-// UAT-VWR-106 / G10 (spatial constancy, AGENTS.md): toggling the
-// transient readout's visibility must never move an EXISTING sibling
-// status-bar widget. m_zoomIndicator is deliberately the rightmost
-// permanent status-bar widget (see the addPermanentWidget() call site
-// comment in MainWindow's constructor) so nothing sits to its right to
-// be displaced when it reveals/hides; this pins that a widget POSITIONED
-// BEFORE it (here, the Two-Pages read-only badge, forced visible
-// directly since its normal trigger is Two-Pages mode) keeps an
-// unchanged pos() across a reveal-then-hide cycle.
+// UAT-VWR-106: toggling the transient readout's visibility must never move
+// an EXISTING sibling status-bar widget. m_zoomIndicator is a floating
+// overlay parented to MainWindow and placed by repositionZoomIndicator(),
+// outside QStatusBar's permanent-widget row (which shifts as one block when
+// any member resizes); this pins that a status-bar widget (here, the
+// Two-Pages read-only badge, forced visible directly since its normal
+// trigger is Two-Pages mode) keeps an unchanged pos() across a
+// reveal-then-hide cycle.
 void TestUatZoomIndicator::uat_zoom_ind_070_togglingReadoutDoesNotShiftSiblingWidgets() {
     QVERIFY(m_scratch.isValid());
     const QString imgPath = writeStaticImage(m_scratch.filePath(QStringLiteral("zoom_ind_070.png")));
@@ -465,8 +462,8 @@ ImageDocument *TestUatZoomIndicator::openAsCapture(MainWindow *mw, const QString
     return doc;
 }
 
-// UAT-VWR-110 (docs/uat/02-viewer.md) — the zoom ladder carries a stop at
-// the pixel-exact factor for the image on the screen showing it.
+// UAT-VWR-110 — the zoom ladder carries a stop at the pixel-exact factor for
+// the image on the screen showing it.
 //
 // Owner dogfooding, 2026-08-02: a pasted 2x capture that opened too large
 // could not be corrected crisply, because tapping zoom-out from 100% walks
@@ -519,9 +516,9 @@ void TestUatZoomIndicator::uat_zoom_ind_080_ladderStopsAtThePixelExactFactor() {
     QApplication::processEvents();
 }
 
-// Curated G2 evidence (only when TRAILER_ZOOM_EVIDENCE_DIR is set): the
-// same window, same document, same three zoom-in taps. Run against pre-fix
-// and post-fix builds to produce the before/after pair.
+// Uncommitted PNGs (only when TRAILER_ZOOM_EVIDENCE_DIR is set): the same
+// window, same document, same three zoom-in taps. Run against pre-fix and
+// post-fix builds to produce a before/after pair.
 void TestUatZoomIndicator::uat_zoom_ind_090_pixelExactEvidenceShots() {
     const QByteArray dirEnv = qgetenv("TRAILER_ZOOM_EVIDENCE_DIR");
     if (dirEnv.isEmpty())

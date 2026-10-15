@@ -29,8 +29,8 @@ class QuitMenu {
 
     // Read the macOS `NSQuitAlwaysKeepsWindows` user default (System
     // Settings ▸ Desktop & Dock ▸ "Close windows when quitting an app",
-    // inverted). When true, a plain Quit takes the keep path and the
-    // Option alternate offers the complement (decision record D3-A).
+    // inverted). It governs only macOS's own window auto-restoration, not
+    // what ⌘Q (always prompts) and ⌥⌘Q (always keeps) do.
     // Returns false off macOS and when the default is unset.
     static bool osQuitAlwaysKeepsWindows();
 };

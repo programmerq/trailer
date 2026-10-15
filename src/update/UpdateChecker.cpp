@@ -20,7 +20,7 @@ namespace trailer::Update {
 namespace {
 
 // Public, unauthenticated GitHub REST endpoint — no token, no account
-// (PHILOSOPHY "no accounts"). Rate-limited to 60 req/hr per source IP
+// (Trailer has no accounts). Rate-limited to 60 req/hr per source IP
 // for unauthenticated callers, which a user-initiated "Check for
 // Updates…" plus an opt-in once-daily auto-check stays comfortably
 // under.

@@ -1,4 +1,4 @@
-// UAT harness — AcroForm field filling (Phase 5)
+// UAT harness — AcroForm field filling
 //
 // Covers reading form fields from a PDF, toggling form-filling mode,
 // updating field values through the document interface, and persisting

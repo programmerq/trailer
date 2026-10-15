@@ -1,5 +1,4 @@
-// Unit tests for the lazy per-page OCR window in trailer::OcrController
-// (ADR 0013 §G13.3 / backlog 2026-07-15-lazy-per-page-ocr-window).
+// Unit tests for the lazy per-page OCR window in trailer::OcrController.
 //
 // The window logic lives in OcrController::onVisiblePageChanged: on every
 // settle it OCR-submits the visible page (±kLazyWindowRadius neighbours as
@@ -158,8 +157,8 @@ void TestOcrWindow::cleanup() {
     PowerSource::clearProbeForTesting();
 }
 
-// Backlog Threshold 1 (Window). ADR G13.3 states N = 2 and asserts the
-// window is exactly [k-2, k+2] with no page outside it.
+// Window: N = 2 (OcrController::kLazyWindowRadius), so the window is
+// exactly [k-2, k+2] with no page outside it.
 void TestOcrWindow::uat_ocr_win_010_windowIsVisiblePagePlusMinusTwo() {
     QCOMPARE(OcrController::kLazyWindowRadius, 2);
 
@@ -195,7 +194,7 @@ void TestOcrWindow::uat_ocr_win_010_windowIsVisiblePagePlusMinusTwo() {
     QVERIFY2(!store->hasResults(13), "page above window must not OCR");
 }
 
-// Backlog Threshold 1 edge behaviour: the window clamps to the document,
+// Window edge behaviour: the window clamps to the document,
 // it never submits negative or past-end pages.
 void TestOcrWindow::uat_ocr_win_020_windowClampsAtDocumentEdges() {
     OcrController ctl(app);
@@ -218,10 +217,9 @@ void TestOcrWindow::uat_ocr_win_020_windowClampsAtDocumentEdges() {
     QCOMPARE(ctl.pendingPagesForTesting(), (std::vector<int>{3, 4, 5}));
 }
 
-// Backlog Threshold 2 (Jump). Jumping to a far page recenters OCR on the
-// new window and cancels the prior speculative pages (on-demand, not
-// greedy). Asserted synchronously so no old-window page could have raced
-// to completion.
+// Jump: jumping to a far page recenters OCR on the new window and cancels
+// the prior speculative pages (on-demand, not greedy). Asserted
+// synchronously so no old-window page could have raced to completion.
 void TestOcrWindow::uat_ocr_win_030_jumpRecentersAndCancelsOldWindow() {
     OcrController ctl(app);
     FakeOcrDoc doc(30);
@@ -248,7 +246,7 @@ void TestOcrWindow::uat_ocr_win_030_jumpRecentersAndCancelsOldWindow() {
                  qPrintable(QStringLiteral("old page %1 must be cancelled").arg(oldPage)));
 }
 
-// Backlog context: the prior behaviour cancelled a large doc (>50 pages)
+// Large docs: the prior behaviour cancelled a large doc (>50 pages)
 // down to nothing on the ambient path. It must now get the same lazy
 // window. Proves the cancel-to-nothing early return is gone.
 void TestOcrWindow::uat_ocr_win_040_largeDocGetsAmbientWindowNotCancelToNothing() {
@@ -270,7 +268,7 @@ void TestOcrWindow::uat_ocr_win_040_largeDocGetsAmbientWindowNotCancelToNothing(
     QCOMPARE(ctl.pendingPagesForTesting(), (std::vector<int>{58, 59, 60, 61, 62}));
 }
 
-// Backlog Threshold 4a (CPU discipline). With recognize_text_in_background
+// CPU discipline (background off): with recognize_text_in_background
 // off there are zero ambient submissions; the explicit Recognize path is
 // unaffected.
 void TestOcrWindow::uat_ocr_win_050_backgroundOffSubmitsNothingExplicitStillRuns() {
@@ -300,7 +298,7 @@ void TestOcrWindow::uat_ocr_win_050_backgroundOffSubmitsNothingExplicitStillRuns
     QVERIFY(calls->load() >= 1);
 }
 
-// Backlog Threshold 4b (CPU discipline). On battery with run_on_battery
+// CPU discipline (battery): on battery with run_on_battery
 // off, the scheduler pre-cancels the speculative Prefetch neighbours; only
 // the VisiblePage submission (the visible page) recognises.
 void TestOcrWindow::uat_ocr_win_060_onBatteryOnlyVisiblePageRunsNeighboursSuppressed() {
@@ -337,7 +335,7 @@ void TestOcrWindow::uat_ocr_win_060_onBatteryOnlyVisiblePageRunsNeighboursSuppre
     PowerSource::setProbeForTesting(&forceAc);
 }
 
-// Text-layer skip (ADR 0013 §G13.3 / OcrController::onVisiblePageChanged).
+// Text-layer skip (OcrController::onVisiblePageChanged).
 // A document that already exposes a text layer needs no auto-OCR, and the
 // skip must happen BEFORE anything is enqueued — not after, and not "the
 // worker notices and bails". This is the guard for a leading hypothesis in

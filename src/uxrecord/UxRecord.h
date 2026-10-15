@@ -8,7 +8,7 @@ namespace trailer {
 class MainWindow;
 class UxRecorder;
 
-// Facade for the developer UX session recorder (docs/ux-recorder.md).
+// Facade for the developer UX session recorder (see README.md).
 //
 // This header is compiled into every build. When the project is
 // configured without TRAILER_ENABLE_UX_RECORDER, everything below
@@ -18,7 +18,7 @@ class UxRecorder;
 //
 // The recorder is strictly local: events, screen frames, camera
 // segments, and logs are written under AppPaths::uxSessionsDir() and
-// nothing is ever transmitted anywhere (PHILOSOPHY.md "No telemetry").
+// nothing is ever transmitted anywhere (PRODUCT.md: no telemetry).
 namespace uxrecord {
 
 #ifdef TRAILER_UX_RECORDER

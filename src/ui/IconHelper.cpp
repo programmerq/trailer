@@ -79,10 +79,10 @@ QIcon themedActionIcon(const QString& resource, const QColor& color,
     // the style to synthesise the disabled look from the Normal pixmap,
     // and for these solid-tinted alpha glyphs the synthesised fade is
     // imperceptible — under a dark palette a disabled icon-only button
-    // is pixel-identical to its enabled self, so the greyed state lies
-    // (Gate G3 spirit: a control's state must read honestly). Rendering
-    // the glyph in the palette's disabled foreground makes the dim
-    // explicit and matches the disabled-text convention everywhere else.
+    // is pixel-identical to its enabled self, so the greyed state lies.
+    // Rendering the glyph in the palette's disabled foreground makes the
+    // dim explicit and matches the disabled-text convention everywhere
+    // else.
     addRenderedSvg(icon, resource, color, QIcon::Normal, QIcon::Off, disabledColor);
     if (icon.isNull()) {
         // The base SVG didn't render — return early so we don't

@@ -34,7 +34,7 @@ coordinates and never menu *label text*. Most shortcuts are stable across **PR
 #86's File-menu information-architecture rename**, which moves/renames menu items
 but keeps their `QKeySequence` bindings. The one exception is **Tools → Take
 Screenshot**: #86 deliberately *removed* its OS-reserved `⌘⇧3` binding as a lying
-control (DR `2026-07-18-file-menu-acquire-ia`), so that action now has a stable
+control, so that action now has a stable
 `objectName` but no shortcut. Golden path 2 therefore reaches it with the
 `menupick` verb (open the menu by its Alt mnemonic, trigger the item by its own
 mnemonic — `Alt+T`, then `T`), which is likewise stable across the IA rename and
@@ -49,7 +49,7 @@ Tools one deliberately: **Tools → Take Screenshot** (objectName
 `objectName` this path asserts on — #86 did *not* move or rename it, it only
 stripped its dead `⌘⇧3` shortcut. Separately, **File → Screenshot** (the
 `Whole Screen / Window / Selected Area` submenu added by #86 via
-`Application::addAcquireItems`) is the DR's canonical *discoverable* acquire
+`Application::addAcquireItems`) is the canonical *discoverable* acquire
 surface, but its items carry **no** `objectName` and fire capture **directly
 with no dialog**. An audit note reading "canonical path is File → Screenshot"
 refers to that discoverable submenu; the dialog-bearing, `objectName`'d action
@@ -217,7 +217,7 @@ This path is the reason Tier-1 uses a real X server (see top).
 `Application::addNewFromClipboardAction` + `newFromClipboard` **cross-platform**
 (`MainWindow::buildMenus` calls them on every OS; the `#ifdef Q_OS_MACOS` is only
 the *no-window* menu bar), so the Linux `Ctrl+N` clipboard-open this path drives
-is real, not a reproduction. The macOS no-window menu bar stays owner real-Mac.
+is real, not a reproduction. The macOS no-window menu bar needs a real Mac (T-52).
 
 ### 06 — external file-change flows (PR #89)
 | step | screenshot should show | pass |
@@ -246,7 +246,7 @@ X-level asserts are the title dirty marker + fixture stem. Debounce ~250 ms
 **Selector (fragile, documented):** Freehand has no shortcut/menu, so it is
 clicked by a **client-relative pixel offset** (`TOOL_FREEHAND_DX/DY`); if the
 markup toolbar layout changes, re-tune those. dpr=1 under Xvfb; the residual #91
-Retina pinch-zoom drift is owner real-Mac.
+Retina pinch-zoom drift needs a real Mac (T-52).
 
 ### 08 — zoom indicator / steps / open-at-100% (#76/#80/#88)
 | step | screenshot should show | pass |

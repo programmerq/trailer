@@ -2,14 +2,14 @@
 #
 # wayland-smoke.sh — deterministic "does Trailer render on native Wayland?" smoke.
 #
-# This is the launch-and-screenshot Wayland smoke tier (Phase 2 of the Wayland
-# CI work). It proves the one thing offscreen unit tests and the Wine tier can
-# NEVER prove: that the shipped Qt binary loads the *wayland* platform plugin,
-# maps a real surface on a real compositor, and paints actual UI into it.
+# This is the launch-and-screenshot Wayland smoke tier. It proves the one thing
+# offscreen unit tests and the Wine tier can NEVER prove: that the shipped Qt
+# binary loads the *wayland* platform plugin, maps a real surface on a real
+# compositor, and paints actual UI into it.
 #
-# Recipe follows the Phase 1 investigation exactly (sway 1.9 headless + pixman +
-# grim). See docs/ci/wayland-tier.md for the rationale (why sway over weston,
-# why launch+screenshot-only, why the unit/UAT suites stay on offscreen).
+# sway 1.9, not weston: grim needs wlroots' wlr-screencopy. No input injection
+# worked in CI, hence launch+screenshot only. Unit/UAT stay offscreen because a
+# dirty close blocks on the real unsaved-changes modal under wayland.
 #
 # What it does, in order:
 #   1. Create a SHORT XDG_RUNTIME_DIR (sway's IPC socket path must fit
@@ -47,8 +47,8 @@ WIDTH="${WAYLAND_SMOKE_WIDTH:-1280}"
 HEIGHT="${WAYLAND_SMOKE_HEIGHT:-800}"
 
 TRAILER_BIN="${TRAILER_BIN:-$REPO_ROOT/build/trailer}"
-# A sample document so Trailer opens a real, content-filled window (Phase 1
-# used an image doc — the money shot). Fall back gracefully if it's ever moved.
+# A sample document so Trailer opens a real, content-filled window (an image
+# makes the clearest screenshot). Fall back gracefully if it's ever moved.
 SAMPLE_DOC="${WAYLAND_SMOKE_DOC:-$REPO_ROOT/tests/perf/corpus/photo.jpg}"
 OUT_PNG="${WAYLAND_SMOKE_OUT:-$REPO_ROOT/wayland-smoke.png}"
 

@@ -55,12 +55,10 @@ class ThumbnailModel : public QAbstractListModel {
 
   private:
     IDocument *m_doc = nullptr;
-    // Logical thumbnail size used by ThumbnailDelegate. Shrunk from
-    // 128x160 in the 2026-05 HITL pass to roughly double sidebar
-    // density. Preserves the original 0.8 aspect (matches Letter
-    // /A4 close enough that KeepAspectRatio leaves nothing pinned
-    // to one edge), and pairs with the page-number badge drawn
-    // inside the thumbnail (no separate text row below).
+    // Render size for page pixmaps. 80x100 (0.8 aspect, close to
+    // Letter/A4) only lasts until the sidebar's first setRenderWidth(),
+    // which sets {w, w*2} from the column width; the delegate sizes rows
+    // by each page's aspect.
     QSize m_size{80, 100};
     // Cost-bounded LRU of rendered page pixmaps (QCache owns the QPixmap*).
     // The cost unit is kilobytes (each entry's byte size / 1024) and the

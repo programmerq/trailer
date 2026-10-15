@@ -188,23 +188,23 @@ class TestPdfEditor : public QObject {
     void saveWithPasswordEmptyOwnerUsesUserPassword();
     void unlockRecoversLoadedButLockedEditor();
 
-    // Form field tests (Phase 5)
+    // Form field tests
     void formFieldsRoundTripsText();
     void formFieldsRoundTripsCheckbox();
     void formFieldsRoundTripsDropdown();
     void setFormFieldValuePersists();
 
-    // File-size reduction (Phase 5)
+    // File-size reduction
     void saveReducedProducesValidPdf();
     void saveReducedFailsOnInvalidEditor();
 
-    // Signature flattening (Phase 5)
+    // Signature flattening
     void flattenSignaturesEmbedsImageXObject();
     void flattenSignaturesWithMissingPngLeavesPageUntouched();
     void flattenSignaturesIsNoOpWithoutSignatureAnnotations();
     void saveSkipsSignatureAnnotationsInAnnots();
 
-    // Redaction (Phase 5)
+    // Redaction
     void applyRedactionsReplacesPageContentWithRaster();
     void applyRedactionsRemovesOriginalAnnotsOnRedactedPage();
     void applyRedactionsIsNoOpWithoutRedactionAnnotations();
@@ -1053,7 +1053,7 @@ void TestPdfEditor::cropPageCommandRestoresAbsentCropBox() {
     QVERIFY(!pages.front().getObjectHandle().hasKey("/CropBox"));
 }
 
-// ---------- Encryption (Phase 5) ------------------------------------------
+// ---------- Encryption ----------------------------------------------------
 
 // Saving with a user password must produce a PDF that:
 //   (a) refuses to load without a password (isEncrypted() flips to true);
@@ -1134,7 +1134,7 @@ void TestPdfEditor::unlockRecoversLoadedButLockedEditor() {
     QVERIFY(!empty.unlock(QStringLiteral("anything")));
 }
 
-// ---------- Form fields (Phase 5) -----------------------------------------
+// ---------- Form fields ---------------------------------------------------
 
 // readFormFields() must return the text field's name, label, type, and value.
 void TestPdfEditor::formFieldsRoundTripsText() {
@@ -1249,7 +1249,7 @@ void TestPdfEditor::setFormFieldValuePersists() {
     QCOMPARE(tf->value, QStringLiteral("Bob"));
 }
 
-// ---------- File-size reduction (Phase 5) ---------------------------------
+// ---------- File-size reduction -------------------------------------------
 
 // saveReduced must produce a valid PDF with the same page count. We don't
 // assert the output is smaller — already-optimised inputs can even grow

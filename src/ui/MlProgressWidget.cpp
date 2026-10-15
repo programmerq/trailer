@@ -71,17 +71,16 @@ MlProgressWidget::MlProgressWidget(QWidget *parent) : QWidget(parent) {
         fm.horizontalAdvance(QStringLiteral("Text recognition cancelled — no changes saved")) +
         kElisionRoundingPad;
 
-    // G10 (spatial constancy): pin the widget's own HEIGHT, not just its
-    // reserved status-bar WIDTH (MainWindow.cpp's reserveStatusBarSlot()).
-    // finishWithMessage() hides m_bar/m_cancel for the Terminal state,
-    // which — left alone — shrinks this widget's sizeHint().height() by a
-    // few px (the Cancel QToolButton is taller than the plain label),
-    // which shrinks the WHOLE status bar's height (it sizes to its
-    // tallest child) and shifts every OTHER permanent widget vertically.
-    // Measuring sizeHint() here, with every child still nominally visible
-    // (only `this` is hidden below, which does not affect a widget's own
-    // sizeHint), captures the tallest — Running — state once, so Terminal
-    // narrows in width only, never in height.
+    // Pin the widget's own HEIGHT, not just its reserved status-bar WIDTH
+    // (MainWindow.cpp's reserveStatusBarSlot()). finishWithMessage() hides
+    // m_bar/m_cancel for the Terminal state, which — left alone — shrinks
+    // this widget's sizeHint().height() by a few px (the Cancel QToolButton
+    // is taller than the plain label), which shrinks the WHOLE status bar's
+    // height (it sizes to its tallest child) and shifts every OTHER
+    // permanent widget vertically. Measuring sizeHint() here, with every
+    // child still nominally visible (only `this` is hidden below, which does
+    // not affect a widget's own sizeHint), captures the tallest — Running —
+    // state once, so Terminal narrows in width only, never in height.
     setFixedHeight(sizeHint().height());
 
     // maxWidth(): sized to max(Running total, Terminal total), not their

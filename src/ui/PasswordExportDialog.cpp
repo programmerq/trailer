@@ -25,7 +25,7 @@ PasswordExportDialog::PasswordExportDialog(QWidget *parent) : QDialog(parent) {
 
     // Inline validation hint. Lives below the fields and updates live; it is
     // the sole feedback surface (no warn-and-abort dialog) and doubles as the
-    // G3 "why" text mirrored into the disabled OK button's tooltip.
+    // "why" text mirrored into the disabled OK button's tooltip.
     m_hint = new QLabel(this);
     m_hint->setWordWrap(true);
     form->addRow(m_hint);
@@ -66,7 +66,7 @@ void PasswordExportDialog::revalidate() {
 
     m_hint->setText(hint);
     m_okButton->setEnabled(valid);
-    // G3: a disabled control states why. When valid there is nothing to
+    // A disabled control states why. When valid there is nothing to
     // explain, so the tooltip clears.
     m_okButton->setToolTip(valid ? QString() : hint);
 }

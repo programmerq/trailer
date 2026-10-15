@@ -5,8 +5,8 @@
 namespace trailer::platform {
 
 // Best-effort OS "Reduce Motion" accessibility query, used to gate
-// non-essential UI animations (DESIGN §6.12, docs/accessibility-
-// checklist.md row A6). Checked once at the moment an animation is
+// non-essential UI animations: when the user asked the OS to reduce
+// motion, they are skipped. Checked once at the moment an animation is
 // about to start -- there is no live-update signal, since none of the
 // current call sites need to react to the setting flipping mid-session.
 //

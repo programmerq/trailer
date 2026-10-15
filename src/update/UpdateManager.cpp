@@ -24,15 +24,11 @@ namespace trailer::Update {
 
 namespace {
 
-// Minimum gap between unattended auto-checks. Nightlies publish at most
-// once/day, so anything more frequent just burns the user's rate-limit
-// budget for no new information. Not a magic-number-needing-a-decision-
-// record per AGENTS.md G6: it's a pure internal tuning value (no
-// user-visible default changes if it moves — the user only ever
-// observes "auto-check is on" or "off"), documented here per
-// PHILOSOPHY's "hand-tuned values stay hand-tuned" rule. Range
-// considered: 1h (too chatty, no new nightlies that often) to 7d (stale
-// for a dogfooding user); 24h matches the nightly cadence exactly.
+// Hand-tuned minimum gap between unattended auto-checks. Nightlies publish
+// at most once/day, so anything more frequent just burns the user's
+// rate-limit budget for no new information. Range considered: 1h (too
+// chatty, no new nightlies that often) to 7d (stale for a dogfooding
+// user); 24h matches the nightly cadence exactly.
 constexpr qint64 kAutoCheckMinIntervalSecs = 24 * 60 * 60;
 
 QString downloadDir() {
@@ -87,11 +83,11 @@ void UpdateManager::checkNow() {
     // A build configured without TRAILER_UPDATE_PUBKEY has no key to
     // verify a feed against, so there is nothing useful to fetch — and
     // fetching anyway would mean an outbound request whose response can
-    // only ever be rejected (AGENTS.md "Networking": no outbound call
-    // without a reason the user consented to). Refuse here, before the
-    // network, rather than downloading and failing verification.
+    // only ever be rejected (no outbound call without a reason the user
+    // consented to). Refuse here, before the network, rather than
+    // downloading and failing verification.
     //
-    // The UI disables its update affordances in this state (G3), so
+    // The UI disables its update affordances in this state, so
     // reaching this branch means something called checkNow() directly;
     // set an explanatory error rather than silently doing nothing, so
     // the state is legible if it ever is reached.
@@ -147,7 +143,7 @@ void UpdateManager::onUpdateAvailable(const FeedEntry &entry) {
         // Honest, not silent: a partial-success nightly (see
         // nightly.yml) may ship Linux+Windows but not macOS on a given
         // night. Surface that plainly rather than reporting "up to
-        // date" (untrue) or silently doing nothing (G3).
+        // date" (untrue) or silently doing nothing.
         m_lastError = tr("A newer nightly build exists, but no build for this platform "
                          "was published in it yet.");
         setState(State::Error);
@@ -210,15 +206,14 @@ void UpdateManager::installAndRelaunch() {
 
 #ifdef Q_OS_MACOS
     // The downloaded artifact is a DMG containing Trailer.app (see
-    // RELEASING.md / docs/packaging-macos.md). Mount it read-only,
-    // clear quarantine on both the mounted copy and the artifact
-    // itself (belt-and-suspenders — see clearQuarantine's comment),
-    // copy the bundle over the running one with `ditto` (preserves
-    // resource forks/xattrs, the tool Apple's own installers use), and
-    // relaunch. This path is exercised structurally in code review but
-    // has NOT been run against a real signed nightly on real Gatekeeper
-    // hardware yet — flagged explicitly in the PR body as a dogfood-
-    // verification follow-up, not asserted as proven here.
+    // RELEASING.md). Mount it read-only, clear quarantine on both the
+    // mounted copy and the artifact itself (belt-and-suspenders — see
+    // clearQuarantine's comment), copy the bundle over the running one
+    // with `ditto` (preserves resource forks/xattrs, the tool Apple's own
+    // installers use), and relaunch. This path is exercised structurally in
+    // code review but has NOT been run against a real signed nightly on
+    // real Gatekeeper hardware yet, so it is not asserted as proven here.
+    // T-52: install a nightly update on a real Mac.
     clearQuarantine(m_downloadedPath);
 
     QProcess attach;
@@ -319,12 +314,12 @@ void UpdateManager::installAndRelaunch() {
     QProcess::startDetached(QStringLiteral("/usr/bin/open"), {installedAppPath});
     QCoreApplication::quit();
 #else
-    // Windows/Linux: no in-place installer exists yet (ROADMAP "Next"
-    // item 7 — the Windows/Linux follow-on). Rather than pretending to
-    // install (G3), reveal the verified download so the user can run it
-    // themselves; the file's SHA256 already matched what the signed
+    // Windows/Linux: no in-place installer exists yet. Rather than
+    // pretending to install, reveal the verified download so the user can
+    // run it themselves; the file's SHA256 already matched what the signed
     // feed committed to, so this is a safe manual handoff, not a
     // downgrade in trust.
+    // T-53: updates install only on macOS.
     const QString dir = QFileInfo(m_downloadedPath).absolutePath();
 #if defined(Q_OS_WIN)
     QProcess::startDetached(QStringLiteral("explorer.exe"),

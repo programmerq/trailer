@@ -1,4 +1,4 @@
-// UAT harness — Sign tool (Phase 5 §6.4.3).
+// UAT harness — Sign tool.
 //
 // Stamps a saved signature onto a freshly-loaded PDF, saves, and
 // re-reads the file to confirm the PNG was flattened into the page

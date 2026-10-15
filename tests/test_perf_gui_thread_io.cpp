@@ -1,11 +1,10 @@
 // Structural performance test (b): no file IO on the GUI thread during
 // document open.
 //
-// Target invariant (docs/performance-budgets.md → "The whole UI never
-// blocks during long work" / "First-page render must not block on a
-// full-file read"): reading a document off disk must not run on the
-// GUI/main thread, so a large or slow file never performs its open IO on
-// the window's thread.
+// Target invariant (the UI never blocks during long work, and first-page
+// render never blocks on a full-file read): reading a document off disk must
+// not run on the GUI/main thread, so a large or slow file never performs its
+// open IO on the window's thread.
 //
 // ARCHITECTURE: the residual QPdfDocument::load — the last whole-file read
 // that used to run on the GUI thread at open — now runs on a worker thread
@@ -13,8 +12,7 @@
 // QPdfDocument (worker affinity), loads it there (its reads therefore run off
 // the GUI thread), then moveToThread()s it back for GUI-thread adoption. The
 // earlier P0 startup-hang fix (#63) already moved the qpdf parse + all-pages
-// annotation sweep off-thread; this test guards the final piece and retires
-// the former QSKIP (docs/backlog/2026-07-15-offthread-pdf-open-placeholder.md).
+// annotation sweep off-thread; this test guards the final piece.
 //
 // The assertion is STRUCTURAL (thread identity / counts), never wall-clock:
 // an InstrumentedIODevice injected into the open records the QThread of every
@@ -53,10 +51,9 @@ class TestPerfGuiThreadIo : public QObject {
     void imageOpenDefersFullDecodeOffGuiThread();
 };
 
-// THE INVARIANT (backlog 2026-07-15-offthread-pdf-open-placeholder): no read
-// performed during a document open driven from the GUI thread lands on the
-// GUI/calling thread — InstrumentedIODevice::readThreads() contains no entry
-// equal to the GUI thread after the open.
+// THE INVARIANT: no read performed during a document open driven from the GUI
+// thread lands on the GUI/calling thread — InstrumentedIODevice::readThreads()
+// contains no entry equal to the GUI thread after the open.
 //
 // Fail-first: against the pre-change code the QPdfDocument load ran inline in
 // the PdfDocument ctor on the calling thread, so the injected device's reads
@@ -110,7 +107,7 @@ void TestPerfGuiThreadIo::openIoDoesNotRunOnGuiThread() {
     }
 }
 
-// --- Image path (ADR 0008, accepted for images = Option B). Like the PDF path
+// --- Image path (staged open). Like the PDF path
 // above (now a live off-thread assertion since the off-thread-PDF-open change
 // retired its QSKIP), an image open performs NO full-pixel decode on the GUI
 // thread: the ctor reads only the header for an immediate contentSizeHint, and

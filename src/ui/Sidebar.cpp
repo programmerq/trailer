@@ -54,11 +54,11 @@ static_assert(static_cast<int>(SidebarMode::HighlightsAndNotes) ==
 
 namespace {
 
-// Vertical padding around the thumbnail inside each list item. The
-// 2026-05 HITL pass shrank the logical thumbnail to ~80x100 and
-// moved the page number from a separate text row below the image
-// into a corner badge drawn on top of it, so the only padding the
-// item needs is breathing room above and below the thumbnail.
+// Vertical padding around the thumbnail inside each list item. The page
+// number is a corner badge drawn on top of the thumbnail, not a text row
+// below it, so the only padding the item needs is breathing room above
+// and below the thumbnail.
+// T-44: page number moves to a row below the thumbnail.
 constexpr int kThumbVerticalPadding = 4;
 
 // Horizontal gutter between the thumbnail and each edge of the sidebar
@@ -253,14 +253,12 @@ class ThumbnailListView : public QListView {
 
 } // namespace
 
-// G10 (deference): no visible "Sidebar" caption — a label that describes
-// the chrome instead of what it contains is the chrome announcing itself
-// (docs/ux-guidelines.md's motivating example for this gate; DR
-// 2026-07-31-dock-panel-labels-removed-accessible-names-kept). The panel's
-// own content (page thumbnails, search results, table of contents) already
+// No visible "Sidebar" caption — a label that describes the chrome instead
+// of what it contains is the chrome announcing itself. The panel's own
+// content (page thumbnails, search results, table of contents) already
 // makes its purpose obvious.
 //
-// IMPORTANT (verified empirically, not assumed — see the DR above): a
+// IMPORTANT (verified empirically, not assumed): a
 // QDockWidget's built-in accessibility interface reads windowTitle()
 // DIRECTLY for its screen-reader Name, NOT accessibleName() — unlike
 // almost every other widget (QPushButton, QGroupBox, ...), which check
@@ -278,7 +276,7 @@ class ThumbnailListView : public QListView {
 // defence-in-depth for any AT bridge that reads the property directly
 // rather than through Qt's interface, but it is not what makes this work.
 //
-// Spatial constancy (G10): the custom title bar keeps the same features
+// Spatial constancy: the custom title bar keeps the same features
 // (DockWidgetMovable | DockWidgetClosable — Sidebar does NOT carry
 // DockWidgetFloatable, so the shared helper omits the float button for it;
 // the close button still works, Qt forwards title-bar-area mouse handling
@@ -338,10 +336,9 @@ Sidebar::Sidebar(QWidget *parent) : QDockWidget(tr("Sidebar"), parent) {
     connect(m_annotations, &QListWidget::itemActivated, this, &Sidebar::onAnnotationActivated);
     connect(m_annotations, &QListWidget::itemClicked, this, &Sidebar::onAnnotationActivated);
 
-    // Pages-thumbnails tab. The 2026-04-30 HITL pass removed the
-    // legacy "Annotations" sibling tab from this strip; that view
-    // now lives on its own stack page so it can be reached via the
-    // sidebar mode picker's "Highlights & Notes" entry.
+    // Pages-thumbnails tab. The annotations view is not a sibling tab
+    // in this strip; it lives on its own stack page so it can be
+    // reached via the sidebar mode picker's "Highlights & Notes" entry.
     m_tabs = new QTabWidget(m_stack);
     m_tabs->addTab(m_thumbnails, tr("Pages"));
     m_tabs->setTabBarAutoHide(true); // single tab → no tab strip

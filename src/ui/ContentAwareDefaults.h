@@ -6,7 +6,7 @@
 
 namespace trailer {
 
-// Content-aware first-open sidebar default (roadmap Now #3).
+// Content-aware first-open sidebar default.
 //
 // On the *first* open of a document for which the user has no saved
 // per-file state, the document's own contents are a better signal than
@@ -28,9 +28,8 @@ namespace trailer {
 // so an explicit choice always wins and sticks.
 //
 // Both thresholds are conservative *initial* values pending real-document
-// validation (ADR 0003, accepted 2026-07-12); they are hand-picked guesses,
-// not the output of a recorded tuning pass. Per PHILOSOPHY "Hand-tuned values
-// stay hand-tuned", each carries a range and a symptom-to-change note:
+// validation; they are hand-picked guesses, not the output of a recorded
+// tuning pass. Each carries a range and a symptom-to-change note:
 //
 //   kLongDocumentPages = 20 — "long enough that page-hunting starts to hurt."
 //     Range: not empirically swept; 20 is a conservative first pick, set
@@ -45,8 +44,8 @@ namespace trailer {
 //     hides the sidebar; too high -> real multi-field forms miss the clean
 //     fill view.
 //
-// See ADR 0003 (docs/decision-records/0003-magic-number-thresholds.md); G6
-// cites these constants at their file:line below.
+// Both boundaries are inclusive (19 vs 20 pages, 2 vs 3 fields), pinned by
+// exactBoundaries in tests/test_content_aware_defaults.cpp.
 inline constexpr int kLongDocumentPages = 20;
 inline constexpr int kFormFieldThreshold = 3;
 

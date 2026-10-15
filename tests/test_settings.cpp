@@ -29,8 +29,7 @@ void TestSettings::defaults() {
     QVERIFY(dir.isValid());
     Settings s(dir.filePath("settings.toml"));
     QCOMPARE(s.theme(), Theme::System);
-    // Default flipped to NewWindow in the 2026-04-24 HITL pass —
-    // tabs are opt-in via settings.toml.
+    // The default is NewWindow; tabs are opt-in (Preferences or settings.toml).
     QCOMPARE(s.openFilesIn(), OpenFilesIn::NewWindow);
     QCOMPARE(s.autoSave(), true);
     QCOMPARE(s.recentMax(), 50);

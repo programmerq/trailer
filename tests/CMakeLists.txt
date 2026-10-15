@@ -39,9 +39,9 @@ endfunction()
 trailer_add_test(test_settings   test_settings.cpp)
 trailer_add_test(test_settings_volatility test_settings_volatility.cpp)
 trailer_add_test(test_recent     test_recent.cpp)
-# Already-open dedup (owner HITL 2026-08-06): canonicalPathKey's identity
-# rule, Application::windowForOpenPath, and the openFiles surface-don't-
-# reopen behaviour across all three open_files_in modes.
+# Already-open dedup: canonicalPathKey's identity rule,
+# Application::windowForOpenPath, and the openFiles surface-don't-reopen
+# behaviour across all three open_files_in modes.
 trailer_add_test(test_open_dedup test_open_dedup.cpp)
 
 # --- Per-slot ctest entries for test_open_dedup (KEEP — not scaffolding) ---
@@ -54,7 +54,7 @@ trailer_add_test(test_open_dedup test_open_dedup.cpp)
 # setvbuf@plt calls at the top of main; there is no QTEST_MAIN). Nobody knew,
 # because ctest only prints output for FAILING tests and nothing on that lane
 # had failed before — every passing test's output is equally invisible.
-# Tracked as docs/backlog/2026-08-06-wine-lane-emits-no-test-output.md.
+# T-58: replace the Wine lane with native Windows CI.
 #
 # ctest's own pass/fail reporting DOES work there. So it is the only usable
 # oracle on that lane, and this block turns it into a per-check one:

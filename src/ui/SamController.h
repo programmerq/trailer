@@ -26,7 +26,7 @@ class SamSession;
 // `(document-id, page-index, image-hash)` so flipping between recent
 // pages does not re-encode.
 //
-// Submission shape (Workstream G):
+// Submission shape:
 //   - On tool activation (Instant Alpha / Smart Lasso) the controller
 //     submits `SamSession::prepare(image)` to `Application::mlScheduler()`
 //     at `UserAction` priority. The result populates the LRU cache.
@@ -38,7 +38,7 @@ class SamSession;
 //     for Smart Lasso) the overlay reads the last cached mask /
 //     polygon directly off the session (no fresh decoder run needed).
 //
-// PHILOSOPHY:
+// Rules:
 //   - No popups for failure. A null mask / empty polygon = no commit.
 //   - No telemetry, no network outside the existing `ModelDownloader`.
 //   - LRU cache stays bounded (kLruCapacity entries) so a long

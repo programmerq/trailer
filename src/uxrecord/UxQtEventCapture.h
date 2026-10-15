@@ -44,7 +44,7 @@ class UxQtEventCapture : public QObject {
 
     // When false, key events omit the printable text() payload and
     // keep only key/modifier identity. Default true — this recorder
-    // is for the developer's own sessions (docs/ux-recorder.md).
+    // is for the developer's own sessions (see README.md).
     void setCaptureKeyText(bool capture) { m_captureKeyText = capture; }
     bool captureKeyText() const { return m_captureKeyText; }
 

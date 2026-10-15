@@ -6,13 +6,13 @@
 // isolation so a regression doesn't sneak through the bigger UAT's
 // many other moving parts.
 //
-// G10/SC-CRIT-2 (docs/decision-records/2026-08-01-markup-toolbar-disable-not-hide.md):
-// setToolEnabled disables a tool in place rather than hiding it, so every
-// action keeps its on-screen slot in the shared toolbar row regardless of
-// document capability — hiding used to collapse the action's slot,
-// shifting every action after it. These tests pin the disable-in-place
-// contract (isVisible() never changes) that replaced the old
-// hide/show + separator-visibility contract.
+// Spatial constancy (the furniture doesn't move): setToolEnabled disables
+// a tool in place rather than hiding it, so every action keeps its
+// on-screen slot in the shared toolbar row regardless of document
+// capability — hiding used to collapse the action's slot, shifting every
+// action after it. These tests pin the disable-in-place contract
+// (isVisible() never changes) that replaced the old hide/show +
+// separator-visibility contract.
 
 #include "ui/MarkupToolbar.h"
 
@@ -56,8 +56,7 @@ void TestMarkupToolbar::disablingATextAwareToolKeepsItVisibleButDisabled() {
     QVERIFY(underline->isEnabled());
 
     bar.setToolEnabled(AnnotationTool::Underline, false, QStringLiteral("why"));
-    QVERIFY2(underline->isVisible(),
-             "G10: a disabled tool stays in the toolbar's layout, not hidden");
+    QVERIFY2(underline->isVisible(), "a disabled tool stays in the toolbar's layout, not hidden");
     QVERIFY(!underline->isEnabled());
 
     bar.setToolEnabled(AnnotationTool::Underline, true);
@@ -89,7 +88,7 @@ void TestMarkupToolbar::disabledToolCarriesTheGivenTooltip() {
     QAction* strike = find(&bar, QStringLiteral("Strikeout"));
     QVERIFY(strike);
 
-    // G3: a disabled control states why it can't act right now.
+    // A disabled control states why it can't act right now.
     const QString why = QStringLiteral("Available once this page has recognisable text");
     bar.setToolEnabled(AnnotationTool::StrikeOut, false, why);
     QCOMPARE(strike->toolTip(), why);
@@ -109,11 +108,11 @@ void TestMarkupToolbar::reEnablingATextAwareToolRestoresItsPlainLabelTooltip() {
     QCOMPARE(underline->toolTip(), plainTooltip);
 }
 
-// The direct regression guard for SC-CRIT-2: every OTHER action's
+// The direct regression guard for disable-in-place: every OTHER action's
 // on-screen position is unaffected by disabling/re-enabling the
 // text-aware trio and the SAM pair, in any combination. Positions are
 // compared via QToolBar::widgetForAction()->pos(), the same style of
-// geometry assertion ADR 0007's toolbar-anchoring tests use.
+// geometry assertion the toolbar-anchoring tests use.
 void TestMarkupToolbar::toolPositionsNeverMoveAcrossEnableDisableToggles() {
     MarkupToolbar bar;
     bar.resize(900, 40);
@@ -124,7 +123,7 @@ void TestMarkupToolbar::toolPositionsNeverMoveAcrossEnableDisableToggles() {
     // window-exposed event within the default 5s timeout, even though the
     // toolbar's own layout is already fully computed by the time show()
     // returns. Hard-failing on the wait would fail a platform quirk
-    // unrelated to the invariant this test protects: SC-CRIT-2 is a
+    // unrelated to the invariant this test protects: that is a
     // DIFFERENTIAL property (a widget's position is unchanged across state
     // transitions), which needs a settled layout, not a confirmed
     // window-manager paint. So: wait, but don't assert on the result, and

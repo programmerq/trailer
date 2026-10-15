@@ -1,9 +1,7 @@
-// UAT harness — Password-protected PDF (Phase 5)
+// UAT harness — Password-protected PDF
 //
 // Covers the lock/unlock open flow and the export-with-password round
-// trip. Cases map to the manual checklist in docs/uat/07-security.md
-// (which we create in this same commit). Each slot is named after the
-// spec ID it exercises so a failing test points straight at the prose.
+// trip. Each slot is named after the UAT-SEC id it exercises.
 //
 //   uat_sec_010_openLockedPdfPrompts
 //       Opening a password-protected PDF triggers the installed

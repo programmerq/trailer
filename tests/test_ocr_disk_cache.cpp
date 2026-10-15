@@ -1,11 +1,10 @@
 // Unit tests for OcrDiskCache — the bounded, content-hash-keyed on-disk
-// LRU tier that persists OCR results under SelectableTextStore
-// (ADR 0013 §G13.4). These are pure-container tests over a temporary
-// cache directory; the read-through / write-through wiring into the OCR
-// pipeline is exercised end-to-end in
+// LRU tier that persists OCR results under SelectableTextStore. These are
+// pure-container tests over a temporary cache directory; the read-through /
+// write-through wiring into the OCR pipeline is exercised end-to-end in
 // tests/uat/test_uat_ocr_disk_cache.cpp.
 //
-// Mapping to ADR 0013 §G13.4 / backlog thresholds:
+// Mapping from the cache's requirements to tests:
 //   (i)  size-capped LRU eviction, total stays <= ceiling  -> lruEviction*
 //   (ii) changed pixels (new hash) miss; unchanged hit      -> contentHashKeyIsInvalidation
 //   (iii)reopen restores without re-OCR                     -> survivesReopen / roundTrip
@@ -117,7 +116,7 @@ void TestOcrDiskCache::emptyBlocksAreNotStored() {
 }
 
 void TestOcrDiskCache::contentHashKeyIsInvalidation() {
-    // Threshold 3 / ADR G13.4(ii): the content-hash key IS the
+    // The content-hash key IS the
     // invalidation. A page whose pixels change renders to a new hash and
     // MISSES; the unchanged page keeps hitting. We use the real
     // hashImageContent() to prove the keys the pipeline actually computes
@@ -180,7 +179,7 @@ void TestOcrDiskCache::removeDropsEntry() {
 }
 
 void TestOcrDiskCache::lruEvictionKeepsUnderCeiling() {
-    // Threshold 2 / ADR G13.4(i): inserting past the ceiling evicts LRU so
+    // Inserting past the ceiling evicts LRU so
     // total on-disk size stays <= ceiling — never unbounded. Drive it with
     // a small ceiling and ~1 KB entries.
     const std::int64_t entryPayload = 1000; // ~1 KB text per entry
@@ -240,7 +239,7 @@ void TestOcrDiskCache::lruEvictsLeastRecentlyUsed() {
 }
 
 void TestOcrDiskCache::survivesReopen() {
-    // Threshold / G13.4(iii): OCR survives a process restart. A second
+    // OCR survives a process restart. A second
     // cache object over the same directory re-indexes the persisted entry
     // and serves it without re-OCR.
     {

@@ -378,7 +378,7 @@ void TestUatEmptyState::uat_empty_005_markupToolbarHiddenOverEmptyState() {
 #endif
 }
 
-// CF-5 — Open reuses the empty launch window. On Win/Linux launch there
+// Open reuses the empty launch window. On Win/Linux launch there
 // is one empty untouched window (documentCount()==0). Opening a file in
 // NewWindow mode must load into THAT window rather than spawning a second
 // one and orphaning the empty launch frame (Preview.app behavior).
@@ -409,7 +409,7 @@ void TestUatEmptyState::uat_empty_006_openReusesEmptyLaunchWindow() {
     QCOMPARE(mw, launch);
 }
 
-// CF-5 — New-from-Clipboard reuses the empty launch window. ⌘N routes
+// New-from-Clipboard reuses the empty launch window. ⌘N routes
 // through the same openFiles() reuse path, so pasting an image into the
 // empty launch window must load it there rather than orphaning it.
 void TestUatEmptyState::uat_empty_007_newFromClipboardReusesEmptyLaunchWindow() {
@@ -435,7 +435,7 @@ void TestUatEmptyState::uat_empty_007_newFromClipboardReusesEmptyLaunchWindow() 
     QCOMPARE(mw->documentCount(), 1);
 }
 
-// CF-5 guard — Open must NOT clobber a window that already holds a
+// Guard — Open must NOT clobber a window that already holds a
 // document. With one real document window active, opening another file in
 // NewWindow mode spawns a SECOND window (only empty/untouched windows are
 // reuse candidates). This mirrors the uat_empty_004 setup semantics; kept
@@ -462,7 +462,7 @@ void TestUatEmptyState::uat_empty_008_openDoesNotClobberDocumentWindow() {
     QCOMPARE(app->windowCount(), 2);
 }
 
-// CF-5 consume-once — Opening a MULTI-FILE batch of non-image documents
+// Consume-once — Opening a MULTI-FILE batch of non-image documents
 // (PDFs still spawn one window each) from an empty launch window must
 // reuse that window for the FIRST file and spawn a fresh window for the
 // SECOND, ending at two windows. The launch frame must survive holding
@@ -492,7 +492,7 @@ void TestUatEmptyState::uat_empty_009_multiFileConsumesLaunchWindowOnce() {
     QCOMPARE(launch->documentCount(), 1);
 }
 
-// CF-5 image-batch reuse — An image batch (2+ images in one openFiles()
+// Image-batch reuse — An image batch (2+ images in one openFiles()
 // call) shares a single window via the tab strip. Opened from an empty
 // launch window it must REUSE that window as the batch window rather than
 // spawning a second and orphaning the launch frame: window count stays 1,
@@ -523,10 +523,6 @@ void TestUatEmptyState::uat_empty_010_imageBatchReusesEmptyLaunchWindow() {
     QCOMPARE(mw, launch);
     QCOMPARE(launch->documentCount(), 2);
 }
-
-// Note: CF-9 (screenshot-dialog copy: drop the "tracked in TODO.md"
-// reference) is a copy-only change with no assertable UI behavior; it is
-// verified by reading the reworded QLabel in MainWindow::onTakeScreenshot.
 
 // Custom main: sandbox HOME before Application is constructed so
 // Settings/RecentFiles never touch the real config dir.

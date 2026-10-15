@@ -111,7 +111,7 @@ class PdfEditor {
     // black over each redacted rectangle, and replace the page's
     // content stream with just that image. The underlying text /
     // glyph operators are discarded, so the redacted content is
-    // actually destroyed — not merely visually hidden. Per §6.11.6
+    // actually destroyed — not merely visually hidden.
     // Trailer is not a defence-grade tool; the caller should warn
     // users that non-page-content metadata (bookmarks, attached
     // files, encrypted layers) is not touched by this pass.
@@ -126,7 +126,7 @@ class PdfEditor {
     // writes are recognised; unknown subtypes are skipped silently.
     std::vector<Annotation> readAnnotations() const;
 
-    // AcroForm field access (Phase 5).
+    // AcroForm field access.
     // Returns true if the document has any AcroForm fields — cheap check
     // before calling the more expensive readFormFields().
     bool hasFormFields() const;
@@ -155,7 +155,7 @@ class PdfEditor {
     bool saveReduced(const QString &path);
 
     // After load(): true if the backing PDF required a password to
-    // open. Phase 5 callers prompt the user when this is the case.
+    // open. Callers prompt the user when this is the case.
     bool isEncrypted() const { return m_encrypted; }
 
     // Attempt to unlock an already-loaded (but password-gated) PDF.

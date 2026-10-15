@@ -1,9 +1,8 @@
 // UAT harness — Foundations
 //
 // Drives the Application + MainWindow in-process under
-// QT_QPA_PLATFORM=offscreen. Each slot implements one case from
-// docs/uat/01-foundations.md; slot names end with the UAT ID so
-// failures point directly at the spec case.
+// QT_QPA_PLATFORM=offscreen. Each slot checks one UAT-FND case, and its
+// name ends with that case's id.
 //
 // The test binary is labelled `uat` in CTest. Regular CI runs pass
 // `-LE uat` to skip it; UAT runs pass `-L uat`.
@@ -184,11 +183,11 @@ void requestCloseTab(DocumentView *dv, int index) {
 
 // What survived a tab close. On macOS, closing the LAST tab also closes
 // the WINDOW — MainWindow::onAllTabsClosed()'s Q_OS_MACOS branch calls
-// close() unconditionally, because macOS has no persistent empty window
-// (DESIGN §2.4.2). MainWindow is WA_DeleteOnClose, so the resulting
-// deleteLater() is flushed by the very QApplication::processEvents()
-// inside requestCloseTab: on return, every raw pointer into that window
-// is dangling. Linux/Windows keep the window and take the
+// close() unconditionally, because macOS has no persistent empty window.
+// MainWindow is WA_DeleteOnClose, so the resulting deleteLater() is
+// flushed by the very QApplication::processEvents() inside
+// requestCloseTab: on return, every raw pointer into that window is
+// dangling. Linux/Windows keep the window and take the
 // updateEmptyState() branch instead.
 //
 // Reading those pointers anyway was a real, deterministic macOS SIGSEGV
@@ -212,8 +211,8 @@ struct ClosedTab {
 }
 
 // Directory that persists past the test run (unlike QTemporaryDir) so
-// the G2 evidence PNGs can be collected. Lives under the CTest working
-// directory (the build tree).
+// the screenshot PNGs can be collected. Lives under the CTest working
+// directory (the build tree) and is never committed.
 QString screenshotDir() {
     QDir dir(QDir::current());
     dir.mkpath(QStringLiteral("uat-screenshots"));
@@ -223,7 +222,7 @@ QString screenshotDir() {
 void grabTo(QWidget *w, const QString &name) {
     const QString path = QDir(screenshotDir()).absoluteFilePath(name);
     w->grab().save(path, "PNG");
-    qInfo().noquote() << "G2-SCREENSHOT" << path;
+    qInfo().noquote() << "SCREENSHOT" << path;
 }
 
 QString writeTinyPdf(const QString &path) {
@@ -236,7 +235,7 @@ QString writeTinyPdf(const QString &path) {
 }
 
 // Multi-page variant so tests that need View > Two Pages ENABLED (it's
-// disabled-with-tooltip for single-page docs, G3) have a fixture that
+// disabled-with-tooltip for single-page docs) have a fixture that
 // qualifies.
 QString writeMultiPagePdf(const QString &path, int pages) {
     QPdfWriter writer(path);
@@ -286,7 +285,6 @@ class TestUatFoundations : public QObject {
   private slots:
     void init();
 
-    // Map to docs/uat/01-foundations.md
     void uat_fnd_001_launchWithNoArguments();
     void uat_fnd_002_launchOpensFileInWindow();
     void uat_fnd_003_singleDocumentHidesTabBar();
@@ -325,7 +323,7 @@ class TestUatFoundations : public QObject {
     void uat_fnd_014_autoSaveSkipsUntitledDirtyDoc();
     void uat_fnd_014_closeUntitledSaveFailureVetoesAndKeepsDoc();
     void uat_fnd_014_multipleUntitledDocsEachPromptOnClose();
-    // The persistent empty-state window (zero documents, ADR 0005) must
+    // The persistent empty-state window (zero documents) must
     // NEVER be treated as an untitled/unsaved doc: closing it must not
     // prompt and must not veto. Guards against a phantom "Untitled"
     // placeholder document ever being created for the empty state.
@@ -373,9 +371,9 @@ void TestUatFoundations::uat_fnd_001_launchWithNoArguments() {
     QCOMPARE(mw->windowTitle(), QStringLiteral("Trailer"));
     QCOMPARE(mw->documentCount(), 0);
 
-    // Sidebar dock is hidden at launch (2026-04-30 HITL: chrome
-    // off by default; the user opens it from the top-bar's
-    // sidebar-mode picker or View → Toggle Sidebar).
+    // Sidebar dock is hidden at launch (chrome is off by default; the
+    // user opens it from the top-bar's sidebar-mode picker or View →
+    // Toggle Sidebar).
     auto docks = mw->findChildren<QDockWidget *>();
     QDockWidget *sidebar = nullptr;
     for (auto *d : docks) {
@@ -429,10 +427,9 @@ void TestUatFoundations::uat_fnd_002_launchOpensFileInWindow() {
     QVERIFY2(!recent.isEmpty(), "Recent files should contain at least one entry after openFiles");
 }
 
-// Window-per-file is the default (see TODO.md UX polish pass). A
-// window holding exactly one document should show no tab strip — the
-// tab bar is a distraction on single-doc frames. Qt's built-in
-// tabBarAutoHide handles this when count() <= 1.
+// Window-per-file is the default. A window holding exactly one document
+// should show no tab strip — the tab bar is a distraction on single-doc
+// frames. Qt's built-in tabBarAutoHide handles this when count() <= 1.
 void TestUatFoundations::uat_fnd_003_singleDocumentHidesTabBar() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writeTinyPdf(m_scratch.filePath("uat_fnd_003.pdf"));
@@ -633,18 +630,17 @@ void TestUatFoundations::uat_fnd_016_toggleSidebar() {
     QVERIFY2(!sidebar->isVisible(), "Second trigger should hide the Sidebar");
 }
 
-// UAT-FND-019 — G10 (deference): the Sidebar and Inspector dock panels
-// carry no visible title-bar CAPTION text ("Sidebar" / "Inspector" would be
-// the chrome announcing itself — docs/ux-guidelines.md's motivating example
-// for this gate) but still expose the correct name to assistive
-// technology. This is the accessible-name-preserved invariant the PR
-// description calls out: a QDockWidget's built-in accessibility interface
-// reads windowTitle() directly and does NOT fall back to accessibleName()
-// the way most widgets do, so the regression this guards against is
-// specifically "blanked the visible caption by blanking windowTitle(),
-// which silently blanked the screen-reader name too" — the trap, not the
-// fix. Also confirms the close affordance the native title bar offered
-// still exists (a QToolButton in the custom title bar wired to close()).
+// UAT-FND-019 — the Sidebar and Inspector dock panels carry no visible
+// title-bar CAPTION text (a panel labelled "Sidebar" / "Inspector" is the
+// chrome announcing itself instead of showing the document) but still
+// expose the correct name to assistive technology. A QDockWidget's built-in
+// accessibility interface reads windowTitle() directly and does NOT fall
+// back to accessibleName() the way most widgets do, so the regression this
+// guards against is specifically "blanked the visible caption by blanking
+// windowTitle(), which silently blanked the screen-reader name too" — the
+// trap, not the fix. Also confirms the close affordance the native title
+// bar offered still exists (a QToolButton in the custom title bar wired to
+// close()).
 void TestUatFoundations::uat_fnd_019_dockPanelsHaveNoVisibleCaptionButKeepAccessibleName() {
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
@@ -760,9 +756,7 @@ void TestUatFoundations::uat_fnd_020_flashErrorRoutesToStatusBarNotModal() {
 }
 
 // UAT-FND-030 — Auto-save writes a RECOVERY SIDECAR, never the backing
-// file. Per the write-side never-worry-save invariant
-// (docs/decision-records/2026-07-19-autosave-recovery-sidecar.md, amending
-// ADR 0004): no path except an explicit Save/Save-As may write the user's
+// file. No path except an explicit Save/Save-As may write the user's
 // file, so an auto-save tick must leave the backing file byte-identical AND
 // leave the document dirty (its edits are still unsaved), while protecting
 // the work in a sidecar so a crash can't lose it. The 30 s timer's slot is
@@ -843,14 +837,12 @@ void TestUatFoundations::uat_fnd_031_autoSaveSkipsUntitledAndCleanDocs() {
              "When autoSave setting is off, no save should happen");
 }
 
-// UAT-FND-032 — G10 (deference) regression guard: a successful recovery
-// snapshot must NOT flash a "Recovery snapshot saved" (or any) status-bar
-// toast — this is the exact anti-pattern named in docs/ux-guidelines.md
-// (a permanent-surface announcement of routine background work the user
-// didn't ask about) and DR 2026-07-31-recovery-snapshot-toast-silent. The
-// user's actual unsaved-work signal — the title-bar dirty marker
-// (tests/test_dirty_marker_zoom.cpp) — must still be present and
-// unaffected, proving nothing the user needs was silently dropped along
+// UAT-FND-032 — regression guard: a successful recovery snapshot must NOT
+// flash a "Recovery snapshot saved" (or any) status-bar toast — announcing
+// routine background work the user didn't ask about is chrome competing
+// with the document. The user's actual unsaved-work signal — the title-bar
+// dirty marker (tests/test_dirty_marker_zoom.cpp) — must still be present
+// and unaffected, proving nothing the user needs was silently dropped along
 // with the toast.
 void TestUatFoundations::uat_fnd_032_recoverySnapshotNeverFlashesStatusBarMessage() {
     QVERIFY(m_scratch.isValid());
@@ -1016,8 +1008,8 @@ void TestUatFoundations::uat_fnd_014_closeDirtyTabDiscardDropsDoc() {
         // Evidence: empty-state after Discard.
         grabTo(after.window, QStringLiteral("fnd014_empty_state_after_discard.png"));
     } else {
-        // macOS: the absence of a window IS the empty state (G5 — dock icon
-        // + menu bar only), so there is no widget left to grab. The window
+        // macOS: the absence of a window IS the empty state (Dock icon +
+        // menu bar only), so there is no widget left to grab. The window
         // being gone is itself the assertion: it cannot have gone while
         // still holding the discarded document.
         QVERIFY2(!after.view, "the DocumentView must not outlive its MainWindow");
@@ -1549,7 +1541,7 @@ void TestUatFoundations::uat_fnd_014_multipleUntitledDocsEachPromptOnClose() {
 }
 
 // UAT-FND-014 — the persistent EMPTY-STATE window (zero documents; the
-// disabled-toolbar-over-welcome-surface window, ADR 0005) must NEVER be
+// disabled-toolbar-over-welcome-surface window) must NEVER be
 // treated as an unsaved / untitled document. The close gate now prompts
 // when isDirty() || isUntitled(), so if anything ever created a phantom
 // "Untitled" placeholder doc for the empty state, closing a brand-new
@@ -1589,7 +1581,7 @@ void TestUatFoundations::uat_fnd_014_emptyStateWindowNeverPromptsOnClose() {
     // do not touch them past this point.
 }
 
-// UAT-FND-014 — G2 / UX-Done evidence for the NEW reshaped untitled states.
+// UAT-FND-014 — uncommitted grabTo() screenshots of the reshaped untitled states.
 // (1) The close prompt for an UNTITLED doc: title "Unsaved changes", text
 //     "Save changes to Untitled?", a "Save…" (ellipsis) button, and the
 //     informative "If you don't save, this image will be lost." line.
@@ -1599,7 +1591,7 @@ void TestUatFoundations::uat_fnd_014_emptyStateWindowNeverPromptsOnClose() {
 // (2) The "Untitled" tab / window title with a single untitled doc open.
 // The native Save-As picker itself cannot be grabbed under offscreen; its
 // friendly default filename is verified by the chooseSaveAsPath unit
-// assertions and by owner manual check (manual-fallback allowance §2.5.3).
+// assertions and by owner manual check.
 void TestUatFoundations::uat_fnd_014_untitledCloseReshapeAndTabTitleEvidence() {
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
@@ -1667,8 +1659,8 @@ void TestUatFoundations::uat_fnd_014_untitledCloseReshapeAndTabTitleEvidence() {
 // UAT-FND-040 — File → Share is ALWAYS present in the File menu. On
 // platforms that have a native share-sheet (macOS via
 // NSSharingServicePicker) it is enabled and wired; elsewhere it is
-// present-but-disabled with an explanatory tooltip (owner policy:
-// unavailable capabilities are disabled + explained, never hidden).
+// present-but-disabled with an explanatory tooltip (T-14: it should be
+// absent there instead, which will change this test).
 // This test only checks presence; firing the picker is platform-
 // modal and not UAT-friendly.
 void TestUatFoundations::uat_fnd_040_shareMenuItemPresentOnSupportedPlatforms() {
@@ -1718,10 +1710,8 @@ void TestUatFoundations::uat_fnd_041_shareDisabledWithTooltipWhenUnavailable() {
              "Share tooltip is actually rendered on hover");
 }
 
-// UAT-FND-042 — View → Two Pages is an unbuilt capability: QPdfView
-// has no facing/two-up layout. Per owner policy the action must be
-// present but disabled with an explanatory tooltip, never silently
-// aliasing another layout.
+// UAT-FND-042 — with no document open, View → Two Pages stays in the
+// menu, disabled, with a tooltip saying why (it needs a multi-page PDF).
 void TestUatFoundations::uat_fnd_042_twoPagesActionDisabledWithTooltip() {
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
@@ -1732,7 +1722,7 @@ void TestUatFoundations::uat_fnd_042_twoPagesActionDisabledWithTooltip() {
         findMenuAction(mw->menuBar(), QStringLiteral("&View"), QStringLiteral("Two Pages"));
     QVERIFY2(twoPages, "View → Two Pages action must be present");
     QVERIFY2(!twoPages->isEnabled(),
-             "Two Pages must be disabled while a real facing layout is unbuilt");
+             "Two Pages must be disabled when no multi-page PDF is open");
     QVERIFY2(!twoPages->toolTip().isEmpty(),
              "Disabled Two Pages must carry an explanatory tooltip");
 
@@ -1745,7 +1735,7 @@ void TestUatFoundations::uat_fnd_042_twoPagesActionDisabledWithTooltip() {
              "Two Pages tooltip is actually rendered on hover");
 }
 
-// UAT-FND-043 — Generalized "no lying controls" guard (Gate G3).
+// UAT-FND-043 — Generalized "no lying controls" guard.
 //
 // uat_fnd_041 (Share) and uat_fnd_042 (Two Pages) each pin one specific
 // action: disabled + explanatory tooltip + host menu has toolTipsVisible.
@@ -1780,7 +1770,7 @@ void TestUatFoundations::
     // we ask Qt itself: a throwaway action with the same text and no explicit
     // tooltip yields precisely that fallback. An action carries a real
     // *explanation* only when its tooltip differs from that fallback — that is
-    // the G3-relevant set.
+    // the set this sweep checks.
     auto carriesExplanation = [](const QAction *action) {
         const QString tip = action->toolTip();
         if (tip.isEmpty())
@@ -1804,7 +1794,7 @@ void TestUatFoundations::
             ++disabledExplainedActions;
             const QString msg =
                 QStringLiteral(
-                    "G3 violation: menu \"%1\" hosts disabled action \"%2\" "
+                    "No-lying-controls violation: menu \"%1\" hosts disabled action \"%2\" "
                     "with explanatory tooltip \"%3\" but does NOT call "
                     "setToolTipsVisible(true) — the explanation is invisible "
                     "on hover.")
@@ -1822,9 +1812,8 @@ void TestUatFoundations::
 
 // UAT-FND-093 — the View menu's page-mode entries (Single Page / Two Pages
 // / Continuous) keep a FIXED top-to-bottom order regardless of which mode
-// is active — gate G10 (spatial constancy, AGENTS.md), which names "a menu
-// reordering its items by which mode is active" as its own motivating
-// example. Investigated: no code path in MainWindow rebuilds or reorders
+// is active, since menus must never reorder their items by the active
+// mode. Investigated: no code path in MainWindow rebuilds or reorders
 // the View menu at runtime — QActionGroup's exclusivity only toggles
 // isChecked(), it never moves an action's position, and syncViewModeActions
 // (called after every mode switch) only calls setChecked(). The concrete,
@@ -1843,7 +1832,7 @@ void TestUatFoundations::uat_fnd_093_pageModeMenuItemsKeepFixedOrder() {
     QVERIFY(m_scratch.isValid());
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
-    // Multi-page so Two Pages is enabled (G3) and can actually be triggered
+    // Multi-page so Two Pages is enabled and can actually be triggered
     // as one of the states cycled below.
     const QString pdfPath =
         writeMultiPagePdf(m_scratch.filePath(QStringLiteral("uat_fnd_093.pdf")), 4);
@@ -1862,9 +1851,8 @@ void TestUatFoundations::uat_fnd_093_pageModeMenuItemsKeepFixedOrder() {
     QVERIFY2(continuous && singlePage && twoPages,
              "Continuous / Single Page / Two Pages actions must all exist in the View menu");
 
-    // Cluster 1.3 — the shortcuts themselves: Cmd-1 Continuous, Cmd-2
-    // Single Page, Cmd-3 Two Pages (ROADMAP.md's "page-mode shortcuts
-    // Cmd-1/2/3, zoom moved to Cmd-0/9").
+    // The shortcuts themselves: Cmd-1 Continuous, Cmd-2 Single Page, Cmd-3
+    // Two Pages (zoom lives on Cmd-0/9).
     QCOMPARE(continuous->shortcut(), QKeySequence(QStringLiteral("Ctrl+1")));
     QCOMPARE(singlePage->shortcut(), QKeySequence(QStringLiteral("Ctrl+2")));
     QCOMPARE(twoPages->shortcut(), QKeySequence(QStringLiteral("Ctrl+3")));
@@ -1984,7 +1972,7 @@ void TestUatFoundations::uat_fnd_070_copyPageAsImageToClipboard() {
     QVERIFY2(!copied.isNull(), "Copy Page as Image must place an image on the clipboard");
     QVERIFY(copied.width() > 0 && copied.height() > 0);
 
-    // G3: when the action is unavailable it must be disabled and carry an
+    // When the action is unavailable it must be disabled and carry an
     // explanatory tooltip that is actually visible in the menu — the same
     // pattern uat_fnd_041 (Share) and uat_fnd_042 (Two Pages) enforce. An
     // empty-state window (no rasterisable document) is the disabled case.
@@ -2187,7 +2175,7 @@ void TestUatFoundations::uat_fnd_094_keepWindowsQuitRestoresPage() {
     app->sessionDraftStore().clear();
 }
 
-// UAT-FND-094 — curated G2 before/after evidence for the reopen-after-quit
+// UAT-FND-094 — uncommitted before/after screenshots of the reopen-after-quit
 // page position. Uses ONLY pre-existing public API so the identical file
 // builds and runs against the tree before and after the fix.
 //
@@ -2202,7 +2190,7 @@ void TestUatFoundations::uat_fnd_094_keepWindowsQuitRestoresPage() {
 void TestUatFoundations::uat_fnd_094_quitPageRestoreEvidence() {
     const QString dir = QString::fromLocal8Bit(qgetenv("TRAILER_SESSION_RESTORE_EVIDENCE_DIR"));
     if (dir.isEmpty())
-        QSKIP("Set TRAILER_SESSION_RESTORE_EVIDENCE_DIR to emit the G2 evidence pair");
+        QSKIP("Set TRAILER_SESSION_RESTORE_EVIDENCE_DIR to emit the before/after evidence pair");
     QVERIFY(m_scratch.isValid());
     QDir().mkpath(dir);
     auto *app = qobject_cast<Application *>(qApp);
@@ -2244,7 +2232,7 @@ void TestUatFoundations::uat_fnd_094_quitPageRestoreEvidence() {
     QVERIFY(afterDoc);
     pumpScrollRestoreSettle();
     shoot(afterWin, QStringLiteral("2026-08-03-quit-page-restore-after.png"));
-    qInfo().noquote() << "G2-SCREENSHOT pair written to" << dir
+    qInfo().noquote() << "Screenshot pair written to" << dir
                       << "after-page:" << afterDoc->currentPage();
 }
 

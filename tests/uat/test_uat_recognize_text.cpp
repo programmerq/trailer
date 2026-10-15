@@ -1,7 +1,7 @@
-// UAT harness — Recognize Text (Phase 6 §6.11 / Workstream F).
+// UAT harness — Recognize Text.
 //
-// After Workstream F, Recognize Text feeds the document's
-// SelectableTextStore instead of dumping into a QPlainTextEdit.
+// Recognize Text feeds the document's SelectableTextStore instead of
+// dumping into a QPlainTextEdit.
 // These tests exercise the new in-document selectability contract:
 //
 //   1. The Tools → Recognize Text… action is enabled for any doc that
@@ -109,8 +109,8 @@ QAction *findActionByText(QMenuBar *bar, const QString &text) {
 }
 
 // The QMenu owning the action with `text`, so a test can grab the open menu
-// and show a greyed-out entry (G3 evidence — a window grab has the menu
-// closed and cannot show it).
+// and show a greyed-out entry (a window grab has the menu closed and
+// cannot show it).
 QMenu *menuOwningAction(QMenuBar *bar, const QString &text) {
     for (QAction *top : bar->actions()) {
         QMenu *menu = top->menu();
@@ -196,7 +196,7 @@ QString writeMultiPagePdf(const QString &path, int pages, bool withText) {
     return path;
 }
 
-// G2 evidence: grab the running window to PNG when TRAILER_SHOT_DIR is
+// Grab the running window to an uncommitted PNG in TRAILER_SHOT_DIR when
 // set. Offscreen-safe (QWidget::grab renders without a display).
 void saveNoticeShot(MainWindow *mw, const QString &name) {
     const QByteArray shotDir = qgetenv("TRAILER_SHOT_DIR");
@@ -369,7 +369,7 @@ void TestUatRecognizeText::uat_ocr_040_recognizeTextDialogOffersForceRerunForPdf
     RecognizeTextDialog dialog(/*pageCount=*/10, /*currentPage=*/3,
                                /*hasTextLayer=*/true, /*languageOptions=*/{});
     // The force-rerun control should be reachable and not hidden
-    // for a doc that has a text layer (per Workstream F: PDFs whose
+    // for a doc that has a text layer (it is how to OCR PDFs whose
     // layer is a corner watermark only). isVisibleTo(&dialog) checks
     // the explicit-hide state without requiring the dialog be
     // shown — the offscreen plugin doesn't realize widgets that
@@ -420,8 +420,7 @@ void TestUatRecognizeText::uat_ocr_050_recognizeTextLayerIsOverlayChildOfView() 
 // (m_largeDocOcrHint) is (a) guarded by a real per-page text check so it
 // never fires on a born-digital doc, (b) visible only for a genuinely
 // text-less large-doc page, (c) routed through the consent/download gate
-// (no silent no-op), (d) dismissable and self-clearing. Backlog
-// 2026-07-13 / ADR 0006 (refines ADR-0002 §3 G5/G6).
+// (no silent no-op), (d) dismissable and self-clearing.
 void TestUatRecognizeText::uat_ocr_060_largeDocNoticeGuardedDismissableSelfClearing() {
     QVERIFY(m_scratch.isValid());
     auto *app = qobject_cast<Application *>(qApp);
@@ -626,11 +625,11 @@ void TestUatRecognizeText::uat_ocr_067_noticeAndProbeCachesPurgedOnClose() {
     //
     // This is load-bearing, not scene-setting. On macOS,
     // MainWindow::onAllTabsClosed() closes the WINDOW when the last tab
-    // goes (there is no persistent empty window — DESIGN §2.4.2), and
-    // MainWindow is WA_DeleteOnClose, so the deleteLater() is flushed by
-    // the very QApplication::processEvents() that follows the close
-    // below. With only one document open, `dv` and `mw` are freed at that
-    // point and every assertion after the close reads freed memory.
+    // goes (there is no persistent empty window), and MainWindow is
+    // WA_DeleteOnClose, so the deleteLater() is flushed by the very
+    // QApplication::processEvents() that follows the close below. With
+    // only one document open, `dv` and `mw` are freed at that point and
+    // every assertion after the close reads freed memory.
     //
     // That was a real, reproducible SIGSEGV, not a theoretical one: the
     // hosted macos-14 nightly lane crashed here deterministically
@@ -815,9 +814,9 @@ void TestUatRecognizeText::uat_ocr_080_ocrOnPdfBlocksLandInPointSpace() {
              "stored block must be scaled down from the 144-DPI pixel rect");
 }
 
-// uat_ocr_090 — ADR-0002 G5: clicking the notice link reveals the standard
-// MlProgressWidget with the model present (no ad-hoc modal), and routes to
-// the consent gate with the model absent (no QDialog spawned). Grabs both.
+// uat_ocr_090 — clicking the notice link reveals the standard MlProgressWidget
+// with the model present (no ad-hoc modal), and routes to the consent gate
+// with the model absent (no QDialog spawned). Grabs both.
 void TestUatRecognizeText::uat_ocr_090_noticeLinkRevealsProgressNoModal() {
     QVERIFY(m_scratch.isValid());
     auto *app = qobject_cast<Application *>(qApp);
@@ -976,7 +975,7 @@ void TestUatRecognizeText::uat_ocr_110_emptyResultDoesNotClaimTextLayer() {
     QVERIFY(store->blocks(0).empty());
 }
 
-// uat_ocr_120 — ADR G13.1 headline: opening a SMALL (≤4 MP) single image
+// uat_ocr_120 — headline case: opening a SMALL (≤4 MP) single image
 // auto-OCRs page 0 on the AMBIENT path (onVisiblePageChanged, the same
 // call MainWindow drives on open/settle) with NO user action — the store
 // gains results and no user-action batch is ever started.
@@ -1023,9 +1022,9 @@ void TestUatRecognizeText::uat_ocr_120_smallImageAutoOcrsOnOpen() {
     QCOMPARE(batchStarted.count(), 0);
 }
 
-// uat_ocr_130 — ADR G13.1: a single image whose pixel area exceeds the
-// 4 MP eager ceiling is NOT greedy — the ambient path submits no eager
-// OCR on open. Manual Recognize Text (UserAction) still runs for it.
+// uat_ocr_130 — a single image whose pixel area exceeds the 4 MP eager
+// ceiling is NOT greedy — the ambient path submits no eager OCR on open.
+// Manual Recognize Text (UserAction) still runs for it.
 void TestUatRecognizeText::uat_ocr_130_imageOverThresholdDoesNotEagerOcr() {
     QVERIFY(m_scratch.isValid());
     // 3000×2000 = 6,000,000 px > the 4 MP (2048×2048 = 4,194,304) ceiling.
@@ -1129,12 +1128,12 @@ void TestUatRecognizeText::uat_ocr_140_emptyPageNotReOcrdOnRevisit() {
     QVERIFY2(!store->hasResults(0), "hasResults stays false across the revisit");
 }
 
-// uat_ocr_150 — single-page force-rerun (backlog 2026-07-15-single-page-
-// force-rerun). A single-page image that OCR'd to non-empty-but-WRONG text
-// (watermark garbage) has hasResults(0)=true, so the ambient "already ran"
-// guard would skip a plain re-run. The new Tools → Re-run Text Recognition
-// entry must be enabled and reach submitUserPages(forceRerun=true), which
-// invalidates then re-recognises — replacing the wrong text.
+// uat_ocr_150 — single-page force-rerun. A single-page image that OCR'd to
+// non-empty-but-WRONG text (watermark garbage) has hasResults(0)=true, so
+// the ambient "already ran" guard would skip a plain re-run. The Tools →
+// Re-run Text Recognition entry must be enabled and reach
+// submitUserPages(forceRerun=true), which invalidates then re-recognises —
+// replacing the wrong text.
 void TestUatRecognizeText::uat_ocr_150_singlePageForceRerunReRunsThroughMenu() {
     QVERIFY(m_scratch.isValid());
     const QString imgPath = writeTextImage(m_scratch.filePath(QStringLiteral("ocr150.png")));
@@ -1184,10 +1183,9 @@ void TestUatRecognizeText::uat_ocr_150_singlePageForceRerunReRunsThroughMenu() {
     QVERIFY2(rerun, "Tools → Re-run Text Recognition action is missing");
     QVERIFY2(rerun->isEnabled(),
              "Re-run must be enabled for a single-page doc that already has OCR results");
-    // Status glyph (owner HITL on #114): the entry is checkable and its
-    // native menu checkmark is ON when the current page has recognised,
-    // selectable text — the in-context replacement for the removed status-bar
-    // cue.
+    // Status glyph: the entry is checkable and its native menu checkmark is
+    // ON when the current page has recognised, selectable text — the
+    // in-context replacement for the removed status-bar cue.
     QVERIFY2(rerun->isCheckable(), "Re-run must be checkable to carry the status glyph");
     QVERIFY2(rerun->isChecked(),
              "the status glyph must be ON when the page has recognised text");
@@ -1224,10 +1222,10 @@ void TestUatRecognizeText::uat_ocr_150_singlePageForceRerunReRunsThroughMenu() {
     QCOMPARE(calls.load(), callsBeforeDecline);
 }
 
-// uat_ocr_160 — G3 (no lying controls). The Re-run entry is disabled with a
-// why/where-to-go tooltip when it can't act: (a) a single-page image with no
-// results yet, and (b) a multi-page doc (force-rerun lives in the Recognize
-// Text… dialog there). Grabs the Tools menu for the disabled-state evidence.
+// uat_ocr_160 — the Re-run entry is disabled with a why/where-to-go tooltip
+// when it can't act: (a) a single-page image with no results yet, and (b) a
+// multi-page doc (force-rerun lives in the Recognize Text… dialog there).
+// Grabs the Tools menu for the disabled-state evidence.
 void TestUatRecognizeText::uat_ocr_160_rerunActionDisabledWithTooltip() {
     QVERIFY(m_scratch.isValid());
     auto *app = qobject_cast<Application *>(qApp);
@@ -1273,10 +1271,10 @@ void TestUatRecognizeText::uat_ocr_160_rerunActionDisabledWithTooltip() {
                  QStringLiteral("rerun-disabled-multipage.png"));
 }
 
-// uat_ocr_170 — recognised-text status GLYPH, not a status-bar cue (owner HITL
-// on #114: the former transient long-form status-bar line — "Text in this
-// image is now selectable…" — was distracting; it is replaced by the Re-run
-// Text Recognition entry's native menu checkmark). When an image page gains
+// uat_ocr_170 — recognised-text status GLYPH, not a status-bar cue (the
+// former transient long-form status-bar line — "Text in this image is now
+// selectable…" — was distracting; it is replaced by the Re-run Text
+// Recognition entry's native menu checkmark). When an image page gains
 // usable OCR blocks the checkmark turns ON; it turns OFF when the text is
 // invalidated. NO status-bar cue text ever appears, and NO modal is spawned —
 // the document stays the focus.
@@ -1304,7 +1302,7 @@ void TestUatRecognizeText::uat_ocr_170_recognizedGlyphReflectsOcrNoCueNoModal() 
     const QString kOldCue = QStringLiteral("now selectable");
 
     // BEFORE: no OCR results → glyph OFF, no cue in the status bar. Grab the
-    // Tools menu in this "not recognised" state for the G2 before/after pair.
+    // Tools menu in this "not recognised" state for the before/after pair.
     mw->statusBar()->clearMessage();
     QVERIFY2(!rerun->isChecked(), "glyph must be OFF before any text lands");
     QVERIFY2(!mw->statusBar()->currentMessage().contains(kOldCue),

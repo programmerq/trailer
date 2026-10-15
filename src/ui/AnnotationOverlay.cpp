@@ -301,7 +301,7 @@ void AnnotationOverlay::requestSamPreview() {
                                     [self](const QImage &mask) {
                                         if (!self)
                                             return;
-                                        // PHILOSOPHY: a null/empty mask
+                                        // A null/empty mask
                                         // is silent — no popup. The
                                         // user is mid-drag; their next
                                         // click might land somewhere
@@ -318,7 +318,7 @@ void AnnotationOverlay::commitInstantAlpha() {
     }
     const QImage source = m_samImageProvider();
     if (source.isNull() || m_samMask.isNull()) {
-        // PHILOSOPHY: no popup; the user can re-click and try again.
+        // No popup; the user can re-click and try again.
         m_samMask = QImage();
         update();
         return;
@@ -357,8 +357,8 @@ void AnnotationOverlay::commitSmartLasso() {
     }
     const QPolygon poly = m_samController->lastContour();
     if (poly.isEmpty()) {
-        // PHILOSOPHY: no popup. Smart Lasso needs at least one
-        // positive prompt to produce a polygon.
+        // No popup. Smart Lasso needs at least one positive prompt to
+        // produce a polygon.
         return;
     }
     m_smartLassoCommit(poly);
@@ -528,8 +528,8 @@ void AnnotationOverlay::paintEvent(QPaintEvent * /*event*/) {
         }
         case AnnotationType::Redaction: {
             // Provisional preview — rendered as a flat black block.
-            // On save the underlying page region is raster-flattened
-            // so the glyph content is actually destroyed (§6.11.6).
+            // On save the redacted page is raster-flattened so the
+            // glyph content is actually destroyed.
             p.fillRect(viewRect, Qt::black);
             break;
         }
@@ -1044,15 +1044,11 @@ void AnnotationOverlay::mousePressEvent(QMouseEvent *event) {
     // drawing tool active always starts a NEW mark, regardless of what
     // is underneath.
     //
-    // This is the "draw-first on press" half of DRAWING-TOOL PARITY
-    // (owner ruling "parity", 2026-07-20; ADR
-    // docs/decision-records/2026-07-20-drawing-tool-parity.md). The
-    // bounded shape tools (Rectangle / Ellipse / Line / Arrow) now match
-    // the free-form Ink tool, which already drew-first since Bug 3 (#91).
-    // Previously this guard was `m_tool != Ink`, so the bounded tools
-    // hijacked a press over an existing shape into select-and-move
-    // (the old UAT-ANN-128). Under parity, a user aiming a drawing tool
-    // at an existing shape draws a new overlapping one; to select the
+    // This is the "draw-first on press" half of drawing-tool parity (the
+    // other half, staying armed after a commit, is isStickyDrawTool() in
+    // MainWindow.cpp): the bounded shape tools (Rectangle / Ellipse / Line /
+    // Arrow) behave like the free-form Ink tool. A user aiming a drawing
+    // tool at an existing shape draws a new overlapping one; to select the
     // underlying shape they switch to the Select tool.
     //
     // Every non-Select tool therefore falls straight through to the
@@ -1227,7 +1223,7 @@ void AnnotationOverlay::mouseMoveEvent(QMouseEvent *event) {
         // the note above setActiveTool()). Only ever an HONEST signal:
         // m_pointOverText is unset for documents with no text-selection
         // wiring (raster images), so the cursor stays the plain arrow
-        // rather than promising an interaction that can't happen (G3).
+        // rather than promising an interaction that can't happen.
         if (m_tool == AnnotationTool::Select && m_pointOverText) {
             const int page = pageAt(event->position());
             setCursor(m_pointOverText(event->position(), page) ? Qt::IBeamCursor
@@ -1840,8 +1836,7 @@ QRectF AnnotationOverlay::handleRect(const QRectF &viewBounds, ResizeHandle whic
     // move drag) away from the move path. 6×6 is small enough that even
     // short shapes have a graspable body, and large enough for keyboard-
     // and-mouse desktop users to land on with a normal pointer.
-    // Shape-aware (endpoint-only) handles for Line/Arrow are a follow-up
-    // PR (see TODO.md ## 2026-05-19 HITL pass).
+    // T-40: endpoint-only handles for Line/Arrow.
     constexpr double kSize = 6.0; // view-space px per side
     constexpr double kHalf = kSize / 2.0;
     QPointF c;
@@ -1987,8 +1982,7 @@ void AnnotationOverlay::contextMenuEvent(QContextMenuEvent *event) {
     update();
 }
 
-// --- Direct-manipulation page crop (backlog
-// 2026-07-15-crop-pages-direct-manipulation) -----------------------------
+// --- Direct-manipulation page crop ------------------------------------------
 
 // Minimum crop side, in DOCUMENT units (PDF points / image pixels),
 // below which a gesture is treated as a stray click rather than a crop.

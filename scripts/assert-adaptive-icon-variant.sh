@@ -1,21 +1,19 @@
 #!/usr/bin/env bash
 # Assert that a COMPILED Assets.car (the actool output — see CMakeLists.txt's
-# TRAILER_ADAPTIVE_ICON block and ADR 0009) actually contains a dark /
-# luminosity appearance marker for the AppIcon set.
+# TRAILER_ADAPTIVE_ICON block) actually contains a dark / luminosity
+# appearance marker for the AppIcon set.
 #
 # IMPORTANT — what this proves and what it does NOT:
 #   - PROVES: the artifact actool produced from
 #     resources/macos/Assets.xcassets contains SOME machine-readable trace
-#     of a dark-appearance variant. This is the "built green" half of ADR
-#     0009's threshold.
+#     of a dark-appearance variant. This is the "built green" half.
 #   - Does NOT prove: that macOS actually RENDERS that variant in the Dock
 #     when the system is in dark mode. That is the "icon didn't change"
 #     half — native Dock/Finder chrome, unobservable from any script, real
-#     or CI — and is exactly the gap that let ADR 0009 Option A ship
-#     looking correct while failing on the owner's real Tahoe dogfood (see
-#     TODO.md T-63). A green
-#     result from this script is evidence toward, never a substitute for,
-#     the real-Mac visual check that backlog item's Threshold requires.
+#     or CI — and is exactly the gap that let the luminosity-variant asset
+#     catalog ship looking correct while failing on a real Tahoe Mac
+#     (T-63). A green result from this script is evidence toward, never a
+#     substitute for, the real-Mac visual check T-63 requires.
 #
 # scripts/build-macos.sh's own post-build verification keeps a SEPARATE,
 # non-fatal, informational version of this same grep (never fails a real
@@ -24,10 +22,9 @@
 # opt-in verification workflow — not from the release/nightly/dev-build
 # pipelines — precisely because the exact assetutil key/value shape was
 # never empirically confirmed against real Tahoe output before this
-# script was written (see the backlog item). Once a real run confirms (or
-# corrects) the pattern below, that confirmation belongs in a commit
-# message / PR comment, not silently baked in as if it had always been
-# verified.
+# script was written. Once a real run confirms (or corrects) the pattern
+# below, that confirmation belongs in a commit message / PR comment, not
+# silently baked in as if it had always been verified.
 #
 # Usage: scripts/assert-adaptive-icon-variant.sh /path/to/Assets.car
 # Exit 0 + prints the match; exit 1 + prints the FULL raw assetutil output

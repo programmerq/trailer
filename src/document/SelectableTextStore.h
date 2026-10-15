@@ -18,7 +18,7 @@ namespace trailer {
 //
 // This store is the per-document, in-memory tier. Persistence across
 // reopen is provided UNDER it by a bounded, content-hash-keyed on-disk
-// LRU cache (`OcrDiskCache`, ADR 0013 §G13.4) owned by the
+// LRU cache (`OcrDiskCache`) owned by the
 // `OcrController`: on a read miss the controller reads through the disk
 // tier before running OCR, and on a successful pass it writes through.
 // The store itself stays a pure in-memory container with no filesystem
@@ -80,7 +80,7 @@ class SelectableTextStore : public QObject {
     // store.
     std::uint64_t contentHashFor(int pageIndex) const;
 
-    // "Attempted-and-empty" memo (ADR G13.1/G13.2 honesty seam). A page
+    // "Attempted-and-empty" memo. A page
     // that OCR'd to zero usable blocks deliberately does NOT get a
     // put() — hasResults() must stay false so the completion status is an
     // honest "No text found". But without a separate memo the ambient

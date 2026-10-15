@@ -32,7 +32,7 @@ bool isWaylandSession();
 // True when org.freedesktop.portal.Screenshot is reachable on the session bus
 // (the portal frontend owns org.freedesktop.portal.Desktop and exports the
 // Screenshot interface). A cheap, side-effect-free probe used both to gate the
-// menu affordance (disabled + tooltip when false, per G3) and to select the
+// menu affordance (disabled + tooltip when false) and to select the
 // capture backend. Always false on the non-Linux stub.
 bool portalScreenshotAvailable();
 

@@ -30,8 +30,7 @@ set(TRAILER_VERSION_STRING "${TRAILER_VERSION_BASE}")
 # HEAD, independent of the VERSION suffix. Nightly builds (nightly.yml)
 # always build off main HEAD, and main's commit count only ever goes up,
 # so this is the update channel's version-compare key (see
-# src/update/UpdateManager.cpp and docs/decision-records/2026-07-30-
-# nightly-auto-update-channel.md) — a plain integer compare, no date
+# src/update/UpdateManager.cpp) — a plain integer compare, no date
 # parsing, no ambiguity about two builds on the same calendar day.
 # Defaults to 0 for a .git-less source tarball (never a valid "newer"
 # build, so the update checker can never mistake it for one).
@@ -130,8 +129,7 @@ configure_file(
 
 # ---------------------------------------------------------------------
 # Update-channel public key (see cmake/UpdatePublicKey.h.in for the full
-# rationale, and docs/decision-records/2026-08-02-update-pubkey-from-
-# signing-secret.md for the decision).
+# rationale).
 #
 # Supplied as 64 hex characters, NOT committed. CI derives it from the
 # TRAILER_UPDATE_SIGNING_KEY secret with scripts/derive-update-pubkey.sh
@@ -142,7 +140,7 @@ configure_file(
 # FIRST-CLASS state, not an error: the update channel is compiled out.
 # The key becomes all-zero and kUpdateChannelProvisioned is false, which
 # the UI surfaces as disabled affordances with an explanatory tooltip
-# (G3) and which stops UpdateManager from making any network request. A
+# and which stops UpdateManager from making any network request. A
 # non-empty but MALFORMED value is a hard error — that is a
 # misconfiguration, and silently shipping a build that rejects every
 # signature is exactly the outcome this whole arrangement exists to
@@ -203,12 +201,12 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 option(TRAILER_WERROR "Treat compiler warnings as errors (enabled in CI)" OFF)
 option(TRAILER_ADAPTIVE_ICON "Compile the adaptive light/dark macOS app icon via actool (requires full Xcode)" ON)
 
-# Developer-only UX session recorder (see docs/ux-recorder.md). OFF by
+# Developer-only UX session recorder (see src/uxrecord/README.md). OFF by
 # default: release artifacts must not link capture frameworks, request
 # recording permissions, or carry recorder UI. When ON, the recorder
 # still does nothing unless the app is launched with --ux-record.
 # Everything it records stays on the local disk — no network code is
-# permitted anywhere in src/uxrecord/ (PHILOSOPHY.md "No telemetry").
+# permitted anywhere in src/uxrecord/ (PRODUCT.md: no telemetry).
 option(TRAILER_ENABLE_UX_RECORDER
        "Build the local developer UX session recorder (--ux-record)" OFF)
 
@@ -476,7 +474,8 @@ if(APPLE)
         COMPILE_FLAGS "-fobjc-arc")
     # ScreenCaptureKit picker backend (Apple-only Objective-C++). NOT built
     # in CI — see the header comment in MacScreenCapture.mm; requires an
-    # on-device build + the GPSC.2 smoke test before its flag default flips.
+    # on-device build + tools/macos-capture-smoketest before its flag
+    # default flips.
     list(APPEND TRAILER_SOURCES src/platform/MacScreenCapture.mm)
     set_source_files_properties(src/platform/MacScreenCapture.mm PROPERTIES
         COMPILE_FLAGS "-fobjc-arc")
@@ -628,11 +627,11 @@ if(TRAILER_ENABLE_UX_RECORDER)
             "-framework ImageIO"
             "-framework CoreGraphics"
         )
-        # ScreenCaptureKit needs macOS 12.3+ but Trailer's deployment
-        # target is 11.0 (packaging-macos.md). Weak-link so the binary
-        # still loads on older systems; MacUxPlatformCapture.mm guards
-        # every use with @available and records "unsupported" events
-        # instead of capturing frames there.
+        # ScreenCaptureKit needs macOS 12.3+. The deployment target is 14.0
+        # today; the weak link keeps the binary loadable if that is ever
+        # lowered, and MacUxPlatformCapture.mm guards every use with
+        # @available and records "unsupported" events instead of capturing
+        # frames there.
         target_link_options(trailer_core PUBLIC
             "-Wl,-weak_framework,ScreenCaptureKit")
     endif()
@@ -683,12 +682,12 @@ if(APPLE AND EXISTS "${TRAILER_MACOS_ICON}")
     )
 endif()
 
-# Adaptive (light/dark) app icon — ADR 0009 Option A. Compile the luminosity
-# Asset Catalog (resources/macos/Assets.xcassets, AppIcon set with light +
-# `luminosity: dark` variants fed by the existing trailer_*/trailer-dark_*
-# PNGs) into Assets.car and drop it into the bundle's Resources/ via actool.
-# Info.plist.in declares CFBundleIconName=AppIcon alongside the legacy
-# CFBundleIconFile so the two coexist.
+# Adaptive (light/dark) app icon. T-63: the Dock never shows the dark one.
+# Compile the luminosity Asset Catalog (resources/macos/Assets.xcassets,
+# AppIcon set with light + `luminosity: dark` variants fed by the existing
+# trailer_*/trailer-dark_* PNGs) into Assets.car and drop it into the
+# bundle's Resources/ via actool. Info.plist.in declares
+# CFBundleIconName=AppIcon alongside the legacy CFBundleIconFile.
 #
 # EVERYTHING here is inside `if(APPLE)` and depends on `actool`, which ships
 # only with Xcode — so it is completely inert on Linux/Windows: the Linux

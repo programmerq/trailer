@@ -20,7 +20,7 @@
 #     07  draw-zoom             (freehand draw -> zoom -> draw-over, #91)
 #     08  zoom-indicator        (zoom readout / steps / open-at-100%, #76/#80/#88)
 #     09  file-screenshot-direct (File -> Screenshot -> Whole Screen, dialogless, #86)
-#     10  empty-window-reuse    (CF-5 empty-window reuse / no-clobber, WM-driven)
+#     10  empty-window-reuse    (empty-window reuse / no-clobber, WM-driven)
 #     11  tools-screenshot-capture (Tools -> Take Screenshot capture + cancel, #77)
 #     12  discard-file-integrity (Discard leaves the backing file byte-identical, #90)
 #     13  quit-and-keep-basics  (quit prompt + Cancel keeps app alive, #78 Linux)

@@ -1,10 +1,10 @@
-// UAT evidence + regression guard for staged (async) image open (ADR 0008).
+// UAT evidence + regression guard for staged (async) image open.
 //
-// Set TRAILER_STAGED_OPEN_EVIDENCE_DIR to capture the curated before/after
-// grab() pair: the honest "Loading image…" placeholder painted immediately at
-// open, and the decoded image after the off-GUI-thread decode swaps in — the
-// SAME view widget in both shots. Runs offscreen (no display server); the
-// asserts are the regression guard, the grabs are the G2 evidence.
+// Set TRAILER_STAGED_OPEN_EVIDENCE_DIR to capture the before/after grab()
+// pair (uncommitted PNGs): the honest "Loading image…" placeholder painted
+// immediately at open, and the decoded image after the off-GUI-thread decode
+// swaps in — the SAME view widget in both shots. Runs offscreen (no display
+// server); the asserts are the regression guard, the grabs are the evidence.
 //
 // Registered across the {1, 1.5, 2} devicePixelRatio matrix (#92) so the
 // staged-open view holds on HiDPI as well as dpr=1.
@@ -87,7 +87,7 @@ void TestUatStagedImageOpen::staged_open_10_placeholderThenDecodedSwap() {
     const QString path = writeScene(m_scratch.filePath(QStringLiteral("scene.png")));
 
     ImageDocument doc(path);
-    // Open defers the full-pixel decode off the GUI thread (ADR 0008).
+    // Open defers the full-pixel decode off the GUI thread.
     QVERIFY2(doc.isDecodePendingForTest(),
              "open must defer the full-pixel decode off the GUI thread");
     // The window can be sized immediately from the header-only size hint.
@@ -117,7 +117,7 @@ void TestUatStagedImageOpen::staged_open_10_placeholderThenDecodedSwap() {
 
     // STATE (b) — POST-GRACE (slow load): once the grace elapses (simulated)
     // while the decode is still in flight, the honest loading text appears — a
-    // visible loading state, not a blank/stub mistaken for an empty file (G3).
+    // visible loading state, not a blank/stub mistaken for an empty file.
     doc.triggerPlaceholderTextTimerForTest();
     QVERIFY2(label->text().contains(QStringLiteral("Loading")),
              qPrintable(QStringLiteral("expected a loading placeholder, got '%1'")

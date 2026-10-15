@@ -1,6 +1,6 @@
-// UAT harness — ML status-bar affordances (ADR 0002).
+// UAT harness — ML status-bar affordances.
 //
-// Covers the six declared gates for the progress / cancel / missing-model
+// Covers the six checks (G1–G6) for the progress / cancel / missing-model
 // work. Everything is deterministic and offscreen: OCR is driven through a
 // test recogniser seam (OcrController::setRecognizerForTesting) so the
 // batch machinery runs without real ONNX models, and page timing is
@@ -143,7 +143,7 @@ OcrController::RecognizeFn gatedRecognizer(std::shared_ptr<QSemaphore> gate) {
 }
 
 // Mirror of MainWindow's OcrController→MlProgressWidget wiring, used by the
-// controller-level gates (G1–G3) so the exact reveal / progress / terminal
+// controller-level checks (G1–G3) so the exact reveal / progress / terminal
 // mapping is exercised without standing up the whole window.
 struct ProgressBinder {
     MlProgressWidget *widget = nullptr;
@@ -295,7 +295,7 @@ void TestUatMlAffordances::uat_ml_g1_determinateBatchProgress() {
 // G1 (real wiring) — item 5: drive the REAL MainWindow m_mlProgress through
 // its own OcrController→widget lambdas (not the copied ProgressBinder) to a
 // determinate N/M completion AND through a cancel to the terminal message,
-// so the gate proves MainWindow.cpp's actual wiring, not a test replica.
+// so the slot proves MainWindow.cpp's actual wiring, not a test replica.
 void TestUatMlAffordances::uat_ml_g1real_realMainWindowWidgetProgressAndCancel() {
     QVERIFY(m_scratch.isValid());
     const QString pdf = writeSamplePdf(m_scratch.filePath(QStringLiteral("g1real.pdf")), 4);
@@ -724,19 +724,18 @@ void TestUatMlAffordances::uat_ml_batchIdentityStragglersDoNotInflateNextBatch()
     app->mlScheduler().waitForIdle(3000);
 }
 
-// UAT-XCT-078 / SC-CRIT-1 (docs/audit-2026-07-31-g10-deference.md; gate
-// G10, AGENTS.md): the status bar's permanent widgets — m_mlIndicator,
-// the large-doc/missing-model OCR hint pair, m_readOnlyBadge, and
-// m_mlProgress — each toggle visibility on independent triggers.
-// QStatusBar::addPermanentWidget() used to pack all of them into one
-// right-anchored box layout, so any one appearing/disappearing shifted
-// every sibling — concretely, switching to Two-Pages view while an OCR
-// batch ran slid the Cancel button (a control the user may be mid-click
-// on) sideways. This drives a REAL, gated OCR batch to reveal the real
-// m_mlProgress (mirroring uat_ml_g1real's technique), then toggles every
-// OTHER permanent widget in turn, asserting the Cancel button's absolute
-// position never moves — the audit's exact named repro, plus the general
-// sweep (any widget toggling must not move any other).
+// UAT-XCT-078: no control may move because unrelated state changed. The
+// status bar's permanent widgets — m_mlIndicator, the large-doc/missing-
+// model OCR hint pair, m_readOnlyBadge, and m_mlProgress — each toggle
+// visibility on independent triggers. QStatusBar::addPermanentWidget()
+// packs them into one right-anchored box layout, so unguarded, any one
+// appearing/disappearing shifts every sibling — concretely, switching to
+// Two-Pages view while an OCR batch ran slid the Cancel button (a control
+// the user may be mid-click on) sideways. This drives a REAL, gated OCR
+// batch to reveal the real m_mlProgress (mirroring uat_ml_g1real's
+// technique), then toggles every OTHER permanent widget in turn, asserting
+// the Cancel button's absolute position never moves — that repro, plus
+// the general sweep (any widget toggling must not move any other).
 void TestUatMlAffordances::uat_xct_078_statusBarPermanentWidgetsNeverReflowEachOther() {
     QVERIFY(m_scratch.isValid());
     const QString pdf = writeSamplePdf(m_scratch.filePath(QStringLiteral("xct078.pdf")), 4);
@@ -779,8 +778,8 @@ void TestUatMlAffordances::uat_xct_078_statusBarPermanentWidgetsNeverReflowEachO
         QVERIFY2(cancelBtn->mapTo(mw, QPoint(0, 0)) == cancelBaseline, step);
     };
 
-    // SC-CRIT-1's named concrete repro: the Two-Pages read-only badge
-    // appearing while the OCR batch's Cancel button is showing.
+    // The concrete repro: the Two-Pages read-only badge appearing while
+    // the OCR batch's Cancel button is showing.
     readOnlyBadge->setVisible(true);
     QApplication::processEvents();
     assertCancelUnchanged("read-only badge shown");
@@ -789,8 +788,8 @@ void TestUatMlAffordances::uat_xct_078_statusBarPermanentWidgetsNeverReflowEachO
     QApplication::processEvents();
     assertCancelUnchanged("read-only badge hidden again");
 
-    // The remaining three, each independently — the audit's second named
-    // repro (dismissing the large-doc hint shifted three siblings).
+    // The remaining three, each independently — dismissing the large-doc
+    // hint is the other known repro (it shifted three siblings).
     mlIndicator->setVisible(true);
     QApplication::processEvents();
     assertCancelUnchanged("ML indicator shown");

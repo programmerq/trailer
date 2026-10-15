@@ -24,8 +24,8 @@ namespace trailer {
 
 #ifdef TRAILER_UX_RECORDER
 namespace {
-// Recorder-only injected deference seam (ADR 0014). Holds the recorder's
-// live Screen-Recording-granted probe so this file can consult Mechanism B's
+// Recorder-only injected deference seam. Holds the recorder's live
+// Screen-Recording-granted probe so this file can consult the recorder's
 // authoritative TCC state WITHOUT src/platform/ linking against src/uxrecord/.
 // A function-pointer/std::function injection (over a direct call into
 // uxrecord) keeps the module boundary clean and lets tests drive the granted
@@ -44,12 +44,12 @@ void setScreenRecordingGrantedProbe(std::function<bool()> probe) {
 
 bool shouldShowScreenCaptureExplainer(Settings &settings) {
 #ifdef TRAILER_UX_RECORDER
-    // Recorder builds only (ADR 0014, G14.2): defer to the recorder's live
-    // macOS Screen Recording grant. If the OS already reports it granted, no
-    // system prompt will fire and this explainer is redundant, so suppress it
-    // even on a fresh profile with screen_capture_explainer unset — this closes
-    // the double-prompt / split-suppression defect. Compiled out of default
-    // builds entirely, so the non-recorder path below stays byte-for-byte (G14.4).
+    // Recorder builds only: defer to the recorder's live macOS Screen
+    // Recording grant. If the OS already reports it granted, no system prompt
+    // will fire and this explainer is redundant, so suppress it even on a
+    // fresh profile with screen_capture_explainer unset — so the two flows
+    // never double-prompt or keep split suppression state. Compiled out of
+    // default builds entirely, so the non-recorder path below is unchanged.
     if (const auto &probe = screenRecordingGrantedProbe(); probe && probe()) {
         return false;
     }
@@ -132,11 +132,10 @@ bool requestScreenCaptureAccess() {
 }
 
 #ifdef Q_OS_MACOS
-// NOTE: the stills capture flow (Take Screenshot / Acquire) no longer calls
-// this — the pre-permission explainer was retired for stills per the
-// capture-permission-preflight ADR / owner decision 2026-07-17; the flow now
-// leans on the OS Screen Recording prompt directly. Retained for the recorder
-// path (PR #69), which may still use the explainer helpers.
+// NOTE: the stills capture flow (Take Screenshot / Acquire) does not call
+// this: it leans on the OS Screen Recording prompt directly, since an
+// explainer in front of that prompt would be a popup before a popup.
+// Retained for the recorder path, which may still use the explainer helpers.
 bool maybeShowScreenCaptureExplainer(Settings &settings, QWidget *parent) {
     if (!shouldShowScreenCaptureExplainer(settings)) {
         // Already acknowledged on a previous use — proceed straight to capture.
@@ -152,10 +151,10 @@ bool maybeShowScreenCaptureExplainer(Settings &settings, QWidget *parent) {
     // Recorder builds align the Screen-Recording references across both flows
     // (this explainer and the recorder's launch gate) on the "→" separator the
     // recorder already uses in its Screen-Recording messaging
-    // (MacUxPlatformCapture.mm), so the two dialogs read as one voice (ADR 0014
-    // G14.3). Kept as a whole-string #ifdef/#else so the default build's #else
-    // branch stays byte-for-byte identical to #59 (G14.4) — only the separator
-    // glyph differs; terminology and capitalization are already identical.
+    // (MacUxPlatformCapture.mm), so the two dialogs read as one voice. Kept as
+    // a whole-string #ifdef/#else so the default build's #else branch stays
+    // byte-for-byte unchanged — only the separator glyph differs; terminology
+    // and capitalization are already identical.
     box.setInformativeText(
         QObject::tr("macOS calls this permission “Screen Recording” even for a "
                     "still screenshot, so it may now ask you to allow it. Trailer "

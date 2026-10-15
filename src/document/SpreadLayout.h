@@ -23,8 +23,7 @@ inline bool operator!=(const Spread &a, const Spread &b) { return !(a == b); }
 
 // Pure page-pairing rule for facing-page (two-up) layout. GUI-free and
 // side-effect-free so every pairing can be enumerated headlessly in unit tests;
-// the TwoPageView paint layer (a later increment) consumes this to decide which
-// pages share a row. See docs/decision-records/2026-07-21-two-page-layout.md.
+// the TwoPageView paint layer consumes this to decide which pages share a row.
 //
 // coverAlone == true  (book-like default): page 1 (the cover) renders alone,
 //   then facing pairs {2,3}, {4,5}, ….

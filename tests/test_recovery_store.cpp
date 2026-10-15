@@ -1,5 +1,5 @@
 // Unit tests for RecoveryStore — the app-data index of auto-save recovery
-// sidecars (docs/decision-records/2026-07-19-autosave-recovery-sidecar.md).
+// sidecars.
 //
 // The store never touches the user's backing file; these tests pin its
 // sidecar-path derivation, record/lookup/clear round-trip, index persistence,

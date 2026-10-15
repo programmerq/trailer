@@ -1,5 +1,5 @@
 // UAT evidence harness — offscreen grab() PNGs for the UX recorder's
-// visible MainWindow controls (src/uxrecord/README.md, UXR-002).
+// visible MainWindow controls (src/uxrecord/README.md).
 //
 // Compiled only into recorder-enabled builds (TRAILER_UX_RECORDER); the
 // widgets it grabs — the "● REC" status-bar chip and the "◉ Recording"
@@ -169,7 +169,7 @@ void TestUatUxRecorderEvidence::ux_ev_20_recordingMenu() {
 
 // #3 degraded REC chip: driving a stream degraded (here "screen", as if
 // Screen Recording were denied) must relabel the chip to the amber
-// "● REC · no screen" persistent state (UXR-002). Forced through the
+// "● REC · no screen" persistent state. Forced through the
 // public reportStreamDegraded() seam so the amber state is a real
 // offscreen capture, not a macOS-only one.
 void TestUatUxRecorderEvidence::ux_ev_30_recChipDegraded() {

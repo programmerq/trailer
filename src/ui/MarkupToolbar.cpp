@@ -220,7 +220,7 @@ void MarkupToolbar::setToolEnabled(AnnotationTool tool, bool enabled,
     // document. setEnabled()/setToolTip() are cheap no-ops when the value is
     // already correct, so calling them unconditionally costs nothing.
     action->setEnabled(enabled);
-    // G3: a disabled control carries a tooltip stating why. An enabled
+    // A disabled control carries a tooltip stating why. An enabled
     // action reverts to its plain label (set once in makeToolAction() and
     // never otherwise touched — action->text() is always that label).
     action->setToolTip(enabled ? action->text() : disabledTooltip);

@@ -2,10 +2,9 @@
 
 A tiny, checked-in set of synthetic input files used by the **structural**
 performance tests (`tests/test_perf_*.cpp`) and available for
-agent-measured latency runs. See
-[`../../performance-budgets.md`](../../performance-budgets.md) →
-*Reference rig + corpus* for why a fixed corpus is required before any
-latency budget can bind.
+agent-measured latency runs. A latency number is only comparable to
+another measured on the same fixed files (and the same machine), which is
+why the corpus is checked in.
 
 These files are **synthetic and reproducible** — regenerate them with the
 script below rather than editing bytes by hand. They are deliberately
@@ -15,7 +14,7 @@ small to keep the repository lean.
 
 | File | What it is | Size | Used by |
 |---|---|---|---|
-| `form_1page.pdf` | 1-page US-Letter PDF with an interactive **AcroForm** (one text field `full_name`, one checkbox `subscribe`). | ~7 KB | `test_perf_render_ordering` → `acroFormCorpusOpensWithInteractiveField` (opens via `PdfAdapter`, asserts ≥1 interactive form field). Also the named 1-page form PDF the budgets doc calls for. |
+| `form_1page.pdf` | 1-page US-Letter PDF with an interactive **AcroForm** (one text field `full_name`, one checkbox `subscribe`). | ~7 KB | `test_perf_render_ordering` → `acroFormCorpusOpensWithInteractiveField` (opens via `PdfAdapter`, asserts ≥1 interactive form field). |
 | `text_20page.pdf` | 20-page US-Letter text PDF (40 lines of body text per page). | ~18 KB | `test_perf_render_ordering` (render-before-full-read ordering probe on the 20-page doc) and `test_perf_gui_thread_io` (open-path thread instrumentation). |
 | `photo.jpg` | 640×480 synthetic "photo": a procedural gradient with a few shapes, JPEG q82. | ~19 KB | `test_perf_paint_budget` → `singleZoomStepStaysWithinPaintBudget` (opens via `ImageAdapter`, counts paints/relayouts for one zoom step). |
 
@@ -23,8 +22,8 @@ small to keep the repository lean.
 
 The perf tests are **deterministic and CI-safe**: they assert ordering,
 counts, and thread facts — **never** wall-clock time (there is no CI
-wall-time gate; latency is agent-measured + reviewer-checked, per the
-budgets doc). Current state:
+wall-time gate; latency is agent-measured + reviewer-checked). Current
+state:
 
 - **Render-before-full-read** (`test_perf_render_ordering`): asserts the
   invariant *when observable*. On this tiny corpus pdfium consumes the
@@ -34,12 +33,9 @@ budgets doc). Current state:
   red test. The page-0 render itself and the AcroForm open are live
   assertions.
 - **No GUI-thread IO on open** (`test_perf_gui_thread_io`): live
-  assertions confirm the open path is synchronous on the calling thread
-  and that the PDF IO layer serves every read on that thread. The *target*
-  invariant (open IO off the GUI thread) does **not** hold today —
-  `DocumentRegistry::open` → `PdfAdapter::open` → the `PdfDocument` ctor
-  read the file inline, on the GUI thread in `MainWindow` — so it is a
-  documented **QSKIP** naming the gap.
+  assertions that every read during a PDF open lands off the GUI thread
+  (the `QPdfDocument` load runs on a worker), and that an image open does
+  no full-pixel decode on the GUI thread.
 - **Paint/relayout budget** (`test_perf_paint_budget`): live assertion. A
   single zoom-in step on the open photo must stay within a fixed paint /
   layout-request budget (observed: ~1 paint; budget 8, with headroom).

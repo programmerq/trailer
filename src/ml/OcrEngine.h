@@ -17,8 +17,7 @@ class ModelRegistry;
 class OnnxSession;
 
 // PP-OCR powered text recognizer for Live Text on images and
-// extracting searchable text off scanned pages (DESIGN §6.11 / §10
-// Phase 6). Two models are loaded:
+// extracting searchable text off scanned pages. Two models are loaded:
 //
 //   - Detector  (en_PP-OCRv3_det, ~2.4 MB) — a DBNet that emits a
 //     per-pixel text probability map; we threshold + connected-
@@ -41,10 +40,9 @@ class OcrEngine : public QObject {
   public:
     struct TextBlock {
         // Quadrilateral outlining the detected text region in
-        // original-image pixel coordinates. Phase 6D only emits
-        // axis-aligned rects (4 corner points); a later phase can
-        // extend this with rotated boxes from minAreaRect without
-        // changing the struct.
+        // original-image pixel coordinates. Only axis-aligned rects
+        // (4 corner points) are emitted; rotated boxes from minAreaRect
+        // would fit without changing the struct.
         QPolygon polygon;
         QString text;
         // CTC posterior geometric mean across kept (non-blank)

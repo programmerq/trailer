@@ -1,21 +1,16 @@
 // UAT harness — PDF page operations (undo / redo)
 //
 // Drives the Application + MainWindow in-process under
-// QT_QPA_PLATFORM=offscreen. Each slot maps to a case in
-// docs/uat/03-pdf-pages.md. The cases here all exercise the
-// undo/redo loop for page-level qpdf mutations — the gap noted
-// at UAT-PDF-014 / UAT-PDF-090 in that document. Specifically:
+// QT_QPA_PLATFORM=offscreen. These slots exercise the undo/redo loop
+// for page-level qpdf mutations:
 //
-//   uat_pdf_014_deleteUndoRedo  → docs/uat/03-pdf-pages.md UAT-PDF-014
-//   uat_pdf_024_moveUndoRedo    → new case (claims UAT-PDF-024 slot)
-//   uat_pdf_035_insertUndoRedo  → new case (claims UAT-PDF-035 slot)
-//   uat_pdf_056_cropUndoRedo    → new case (claims UAT-PDF-056 slot)
+//   uat_pdf_014_deleteUndoRedo
+//   uat_pdf_024_moveUndoRedo
+//   uat_pdf_035_insertUndoRedo
+//   uat_pdf_056_cropUndoRedo
 //
-// The IDs were picked from gaps in the spec's numbering — Delete is
-// the 010 block, Move is 020, Insert is 030, Crop is 050. Each new
-// numeric slot ends in 4-6 to avoid colliding with anything the spec
-// already calls out. When this file lands the spec will be updated
-// in a follow-up pass to enumerate these cases explicitly.
+// Slot numbers follow the UAT-PDF blocks: Delete is 010, Move is 020,
+// Insert is 030, Crop is 050.
 
 #include "app/Application.h"
 #include "document/IDocument.h"
@@ -101,7 +96,7 @@ void TestUatPdfPages::init() {
 
 // UAT-PDF-014 — Delete is undoable.
 //
-// Spec text marks this as a Known gap. This test pins the fix:
+// Delete once had no undo. This test pins the fix:
 // open a 4-page PDF, delete pages 1 and 2 (indices), undo, verify
 // the document returns to 4 pages; redo, verify it's 2 again.
 void TestUatPdfPages::uat_pdf_014_deleteUndoRedo() {
@@ -295,11 +290,10 @@ void TestUatPdfPages::uat_pdf_056_cropUndoRedo() {
 
 // UAT-PDF-058 — Crop Pages by dragging applies end-to-end.
 //
-// Direct-manipulation crop (backlog 2026-07-15-crop-pages-direct-
-// manipulation): the "Crop Pages by Dragging" menu action activates the
-// on-page crop tool; drawing a rectangle and pressing Enter shrinks the
-// page /CropBox WITHOUT the numeric dialog. This drives the real menu
-// action → doc->setAnnotationTool(CropRect) → AnnotationOverlay crop
+// Direct-manipulation crop: the "Crop Pages by Dragging" menu action
+// activates the on-page crop tool; drawing a rectangle and pressing Enter
+// shrinks the page /CropBox WITHOUT the numeric dialog. This drives the
+// real menu action → doc->setAnnotationTool(CropRect) → AnnotationOverlay crop
 // gesture → cropCommitted → MainWindow::onCropRectCommitted → cropPage
 // chain. The geometry maths (page-anchoring / dpr-safety) is pinned
 // separately and hermetically by tests/test_crop_direct_manipulation.cpp
@@ -327,8 +321,8 @@ void TestUatPdfPages::uat_pdf_058_dragCropAppliesEndToEnd() {
     IDocument *doc = dv->currentDocument();
     QVERIFY(doc);
 
-    // The drag-crop action must exist, be reachable (G4), and be enabled
-    // on a PDF (G3: it would be disabled with a tooltip on a non-PDF).
+    // The drag-crop action must exist in the menus on every OS and be
+    // enabled on a PDF (on a non-PDF it is disabled, its tooltip says why).
     QAction *dragAction = nullptr;
     for (QAction *a : mw->findChildren<QAction *>()) {
         if (a->text().contains(QStringLiteral("Dragging"))) {

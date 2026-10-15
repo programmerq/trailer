@@ -3,7 +3,7 @@
 #
 # Persona-(A) goal: with unsaved edits, invoking Quit (Ctrl+Q) must raise the
 # Save/Discard/Cancel prompt, and choosing Cancel must ABORT the quit — the app
-# stays open and nothing is written. This is the ADR-0004 no-silent-loss floor
+# stays open and nothing is written. This is the no-silent-loss floor
 # on the quit path (Application::requestQuit(Normal) -> promptDirtyDocsForQuit;
 # Cancel returns false and never calls performQuit).
 #
@@ -21,8 +21,8 @@
 # requires quitting the process and RELAUNCHING to observe the session restore,
 # which cannot be honestly reproduced inside this single-process Xvfb harness
 # (each path runs one app instance under one ephemeral X server; there is no
-# second launch to restore into). That relaunch-restore assertion stays on the
-# owner checklist / the offscreen draft-store unit tests. This path proves the
+# second launch to restore into). The offscreen draft-store unit tests cover the
+# store; T-52: check the relaunch-restore on a real Mac. This path proves the
 # reachable Linux basics: the quit PROMPT and its Cancel-keeps-alive contract.
 set -uo pipefail
 export PATH_NAME="quit-and-keep-basics"
@@ -98,7 +98,7 @@ assert_bool "QUIT-CANCEL-DISMISSED" "quit_prompt_open" "$((1 - QUIT_MODAL_GONE))
 # --- documented boundary: relaunch-restore not driven here -----------------
 step "keep-windows-boundary" \
     "Documented limit: the Keep-Windows relaunch-restore flow is out of scope for this single-process harness."
-boundary "The ⌥⌘Q 'Quit and Keep Windows' relaunch-and-restore flow is NOT driven here: it requires quitting the process and RELAUNCHING to observe the session-draft restore, which a single-process Xvfb path (one app instance, one ephemeral X server, no second launch) cannot honestly reproduce. The draft-store save/restore is covered by offscreen unit tests; the real relaunch stays on the owner checklist. This path proves the reachable Linux basics: the quit prompt + Cancel-keeps-alive."
+boundary "The ⌥⌘Q 'Quit and Keep Windows' relaunch-and-restore flow is NOT driven here: it requires quitting the process and RELAUNCHING to observe the session-draft restore, which a single-process Xvfb path (one app instance, one ephemeral X server, no second launch) cannot honestly reproduce. The draft-store save/restore is covered by offscreen unit tests; the real relaunch needs a real Mac (TODO.md T-52). This path proves the reachable Linux basics: the quit prompt + Cancel-keeps-alive."
 note "not faked: no relaunch is attempted; only the reachable quit-prompt/cancel contract is asserted above"
 shot
 

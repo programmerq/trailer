@@ -1,6 +1,5 @@
-// Direct-manipulation page crop (backlog
-// 2026-07-15-crop-pages-direct-manipulation) — page-anchoring / dpr-safety
-// and tool-precedence guard.
+// Direct-manipulation page crop — page-anchoring / dpr-safety and
+// tool-precedence guard.
 //
 // This drives the REAL ImageDocument adapter end-to-end, exactly like
 // tests/test_freehand_zoom_glue.cpp: the overlay's doc<->view callbacks are
@@ -12,14 +11,14 @@
 // handleCropMove / handleCropRelease), so it is the honest surface to pin
 // the geometry on.
 //
-// Threshold (G1, from the backlog item): "Cropping is achievable by
-// dragging a crop rectangle directly on the page ... the crop rect must be
-// page-anchored and dpr-safe." Verified here by drawing the crop rect over
-// an independently-chosen page rectangle at capture zoom Z and injected dpr
-// D, then asserting the recovered DOCUMENT-space crop rectangle equals that
-// page rectangle for every Z in {1.0, 1.5, 2.0} and D in {1, 1.5, 2}, and
-// that it still renders over the same page region after a display-zoom
-// change (glue across zoom, the #91/#94 family).
+// Threshold: "Cropping is achievable by dragging a crop rectangle directly
+// on the page ... the crop rect must be page-anchored and dpr-safe."
+// Verified here by drawing the crop rect over an independently-chosen page
+// rectangle at capture zoom Z and injected dpr D, then asserting the
+// recovered DOCUMENT-space crop rectangle equals that page rectangle for
+// every Z in {1.0, 1.5, 2.0} and D in {1, 1.5, 2}, and that it still renders
+// over the same page region after a display-zoom change (glue across zoom,
+// the #91/#94 family).
 //
 // Owner ruling (2026-07-20): with the crop tool active a press starts the
 // crop rectangle and NEVER selects an annotation underneath — pinned by
@@ -93,7 +92,7 @@ class TestCropDirectManipulation : public QObject {
     void cropRectIsPageAnchoredAndDprSafe_data();
     void cropPressDoesNotSelectAnnotation();
     void enterCommitsCropRect();
-    // Emits G2 before/after + drag-sequence PNGs when TRAILER_GRAB_DIR
+    // Emits before/after + drag-sequence PNGs when TRAILER_GRAB_DIR
     // is set; a no-op otherwise (so CI stays clean and headless).
     void grabG2Evidence();
 };

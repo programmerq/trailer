@@ -1,14 +1,14 @@
-// Regression guard for the Crop Pages "Apply to all pages" checkbox
-// (audit 2026-07-15, Fix B). On a single-page document the checkbox
-// offers no meaningful choice — there is nothing else to apply the crop
-// to — so it must not be shown. On a multi-page document it is shown,
-// checked by default, and reflected by applyToAllPages().
+// Regression guard for the Crop Pages "Apply to all pages" checkbox.
+// On a single-page document the checkbox offers no meaningful choice —
+// there is nothing else to apply the crop to — so it must not be shown.
+// On a multi-page document it is shown, checked by default, and reflected
+// by applyToAllPages().
 //
-// Threshold (G1): CropPagesDialog(1) hides the "Apply to all pages"
+// Threshold: CropPagesDialog(1) hides the "Apply to all pages"
 // checkbox and reports applyToAllPages()==false; CropPagesDialog(>1)
 // shows it and reports applyToAllPages()==true by default.
 //
-// Setting TRAILER_GRAB_DIR makes the test also write offscreen G2
+// Setting TRAILER_GRAB_DIR makes the test also write offscreen
 // evidence grabs (crop-singlepage-after.png, crop-multipage-after.png).
 
 #include "ui/CropPagesDialog.h"

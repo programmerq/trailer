@@ -3,8 +3,7 @@
 # Builds docker/runner/Dockerfile (the trailer-k8s runner image with the
 # full Linux + Windows-cross toolchain baked in) and pushes it to
 # ghcr.io/programmerq/trailer-runner. Switching the ARC runner-set onto
-# this image is a one-line change documented in
-# docs/ci/custom-runner-image.md.
+# this image is a one-line change (see docker/runner/Dockerfile's header).
 #
 # IMPORTANT: these jobs run on ubuntu-24.04 (a GitHub-HOSTED runner),
 # NOT a self-hosted label. Building a Docker image needs a Docker daemon,

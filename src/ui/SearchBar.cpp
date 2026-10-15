@@ -43,22 +43,19 @@ SearchBar::SearchBar(QWidget *parent) : QWidget(parent) {
     // needs to be intercepted BEFORE it reaches the line edit's own Return
     // handling (which would fire returnPressed → findNextRequested regardless
     // of Shift). An event filter on the child is the standard pattern for a
-    // parent observing events a child widget would otherwise consume
-    // (docs/CONVENTIONS.md §6) — SearchBar::keyPressEvent alone can't see this
-    // key press because QLineEdit accepts Return itself.
+    // parent observing events a child widget would otherwise consume —
+    // SearchBar::keyPressEvent alone can't see this key press because
+    // QLineEdit accepts Return itself.
     m_input->installEventFilter(this);
 
     // "X of Y" counter that lives between the input and the arrows.
     //
-    // G10 (spatial constancy, AGENTS.md; SC-MOD-1,
-    // docs/audit-2026-07-31-g10-deference.md): this used to hide() with no
-    // query and show() once matches existed, which collapsed/restored its
-    // slot in this shared QHBoxLayout and shifted Prev/Next/Close sideways
-    // by its own width the moment the match count crossed zero — typing
-    // the first matching character, or clearing the query, moved the
-    // buttons the user's mouse was tracking. Fixed by never hiding it:
-    // it stays visible at a FIXED width (kCounterWidth) always, blank when
-    // there is nothing to report — see setMatchCounter().
+    // It never hides: hide()/show() would collapse/restore its slot in this
+    // shared QHBoxLayout and shift Prev/Next/Close sideways by its own width
+    // the moment the match count crossed zero — typing the first matching
+    // character, or clearing the query, would move the buttons the user's
+    // mouse is tracking. It stays visible at a FIXED width (m_counterWidth)
+    // always, blank when there is nothing to report — see setMatchCounter().
     m_counter = new QLabel(this);
     m_counter->setForegroundRole(QPalette::Mid);
     const QFontMetrics counterFm(m_counter->font());
@@ -93,9 +90,9 @@ SearchBar::SearchBar(QWidget *parent) : QWidget(parent) {
 }
 
 void SearchBar::setMatchCounter(int current, int total) {
-    // G10/SC-MOD-1: m_counter is always visible at a fixed width (see the
-    // constructor comment) — blank it rather than hide() it so Prev/Next/
-    // Close never move as the count crosses zero.
+    // m_counter is always visible at a fixed width (see the constructor
+    // comment) — blank it rather than hide() it so Prev/Next/Close never
+    // move as the count crosses zero.
     if (total <= 0) {
         m_counter->clear();
         return;

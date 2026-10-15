@@ -34,9 +34,8 @@ nothing to associate for those.
 
 ## macOS
 
-**Unverified by author** — worked out from `resources/macos/Info.plist.in`,
-`docs/packaging-macos.md`, and Apple's documented Launch Services / Gatekeeper
-behavior; not run on a Mac in this session.
+**Unverified by author** — worked out from `resources/macos/Info.plist.in` and
+Apple's documented Launch Services / Gatekeeper behavior; not run on a Mac in this session.
 
 Trailer's `.app` bundle already declares `CFBundleDocumentTypes` for
 `com.adobe.pdf` and `public.image` with `LSHandlerRank=Alternate` (see
@@ -58,8 +57,7 @@ DMG both bake the same `Info.plist.in`.
    on the next build.
 3. **First launch — clear the quarantine flag.** The app is unsigned and
    un-notarized (project policy: Trailer isn't enrolled in the Apple
-   Developer Program — see `docs/packaging-macos.md` "Signing and
-   notarization (deferred)"). Gatekeeper will refuse to open it with a
+   Developer Program; see `PRODUCT.md`, "Distribution"). Gatekeeper will refuse to open it with a
    "damaged" or "unidentified developer" dialog. Clear the quarantine
    attribute once:
    ```sh

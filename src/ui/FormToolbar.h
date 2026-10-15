@@ -10,9 +10,8 @@ class QActionGroup;
 
 namespace trailer {
 
-// Lightweight toolbar for filling PDFs that lack real AcroForm fields.
-// Per DESIGN.md §6.4: "a 'Text Box' tool that lets the user place a
-// text box for free-typing on PDFs that lack proper form fields."
+// Lightweight toolbar for filling PDFs that lack real AcroForm fields: its
+// Text Box tool places a text box the user free-types into.
 //
 // Separate from MarkupToolbar so "filling" and "marking up" stay
 // conceptually distinct in the UI — a user can show only this toolbar

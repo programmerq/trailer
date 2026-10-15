@@ -69,7 +69,7 @@ const QStringList kAllIcons = {
     QStringLiteral("panel-form"),
 };
 
-// Tools with an armed/active state per docs/icon-guidelines.md §3.6.
+// Tools with an armed/active state, drawn filled while armed.
 // Each entry must have a corresponding `<name>-filled.svg` registered.
 const QStringList kIconsWithFilledVariant = {
     QStringLiteral("tool-rectangle"),

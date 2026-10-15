@@ -43,12 +43,12 @@ endfunction()
 # by Qt before QGuiApplication starts, so each fresh ctest process gets the
 # requested screen dpr — the only in-process handle for a realized widget's
 # dpr is QGuiApplication::primaryScreen()->devicePixelRatio(), which the
-# offscreen plugin fixes at startup). This closes the HiDPI blind spot
-# tracked in docs/backlog/2026-07-16-hidpi-uat-harness.md: dpr=1-only runs
-# hid the #55 thumbnail and #76 capture-blur bugs that broke on Retina.
+# offscreen plugin fixes at startup). This closes the HiDPI blind spot:
+# dpr=1-only runs hid the #55 thumbnail and #76 capture-blur bugs that broke
+# on Retina. T-50: most UAT binaries don't register through it yet.
 #
 # All three entries carry the plain `uat` label so they gate at release
-# like the rest of the suite (AGENTS.md "CI cadence"); they carry NO label
+# like the rest of the suite (AGENTS.md "Test"); they carry NO label
 # containing a distinct substring that would exclude them. The dpr tag in
 # the test name uses '_' (1.5 -> 1_5) since ctest names avoid '.'.
 function(trailer_register_uat_dpr_matrix name)
@@ -105,9 +105,9 @@ trailer_add_uat_test(test_uat_instant_alpha_and_smart_lasso
 trailer_add_uat_test(test_uat_recognize_text test_uat_recognize_text.cpp)
 trailer_add_uat_test(test_uat_ocr_disk_cache test_uat_ocr_disk_cache.cpp)
 
-# External file-change handling (ADR 2026-07-19): silent clean-reload, dirty-
-# conflict banner, deleted banner, G3 Compare placeholder. Also emits the G2
-# before/after evidence pair when TRAILER_EXTCHANGE_EVIDENCE_DIR is set.
+# External file-change handling: silent clean-reload, dirty-conflict banner,
+# deleted banner, disabled Compare placeholder (T-14). Also writes a before/
+# after PNG pair (not committed) when TRAILER_EXTCHANGE_EVIDENCE_DIR is set.
 trailer_add_uat_test(test_uat_external_change test_uat_external_change.cpp)
 
 # Curated before/after grab() evidence for the image OCR pipeline
@@ -116,15 +116,15 @@ trailer_add_uat_test(test_uat_external_change test_uat_external_change.cpp)
 # asserts the wired behaviour like any other uat slot.
 trailer_add_uat_test(test_uat_ocr_evidence test_uat_ocr_evidence.cpp)
 
-# Representative offscreen evidence for the screen-capture permission preflight
-# (the screen-capture preflight ADR). The real explainer/degrade UI is mac-gated
-# and can't render on Linux, so these slots reconstruct widgets with the same
-# strings/buttons and grab them. Writes PNGs to $TRAILER_CAPTURE_EVIDENCE_DIR
-# when set; otherwise just asserts the strings like any other uat slot.
+# Representative offscreen evidence for the screen-capture permission preflight.
+# The real explainer/degrade UI is mac-gated and can't render on Linux, so these
+# slots reconstruct widgets with the same strings/buttons and grab them. Writes
+# PNGs to $TRAILER_CAPTURE_EVIDENCE_DIR when set; otherwise just asserts the
+# strings like any other uat slot.
 trailer_add_uat_test(test_uat_capture_permission_evidence
     test_uat_capture_permission_evidence.cpp)
 
-# ML status-bar affordances (ADR 0002): progress widget, scoped cancel,
+# ML status-bar affordances: progress widget, scoped cancel,
 # missing-model in-context hint. Builds a multi-page PDF via QPdfWriter
 # (QtGui) for the OCR batch gates; the OCR itself runs through a test
 # recogniser seam, so no Qt6::Pdf link nor real models are needed.
@@ -133,14 +133,13 @@ trailer_add_uat_test(test_uat_ml_affordances test_uat_ml_affordances.cpp)
 trailer_add_uat_test(test_uat_pdf_pages test_uat_pdf_pages.cpp)
 target_link_libraries(test_uat_pdf_pages PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 
-# Page-changed signal replaces the former 150 ms polls (backlog
-# 2026-07-12-page-changed-signal-no-poll). Drives the QPdfView navigator via
-# doc->goToPage() and reads back the Sidebar selection + large-doc OCR hint, so
-# it links Qt PDF.
+# Page-changed signal replaces the former sidebar and OCR-hint page polls.
+# Drives the QPdfView navigator via doc->goToPage() and reads back the Sidebar
+# selection + large-doc OCR hint, so it links Qt PDF.
 trailer_add_uat_test(test_uat_page_change_signal test_uat_page_change_signal.cpp)
 target_link_libraries(test_uat_page_change_signal PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 
-# Sidebar thumbnail sizing (scale-to-width + aspect-fit rows, ADR 0006).
+# Sidebar thumbnail sizing (scale-to-width + aspect-fit rows).
 # Builds a mixed portrait/landscape deck via QPdfWriter and reads back
 # per-page point sizes through QPdfDocument, so it links Qt PDF.
 #
@@ -163,12 +162,11 @@ target_link_libraries(test_uat_undo_interleaved_cap PRIVATE Qt6::Pdf Qt6::PdfWid
 trailer_add_uat_test(test_uat_viewer test_uat_viewer.cpp)
 target_link_libraries(test_uat_viewer PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 
-# Two-page (facing) continuous-spread view, PR1 (UAT-VWR-070..073). Drives the
+# Two-page (facing) continuous-spread view (UAT-VWR-070..073). Drives the
 # custom TwoPageView + View-menu toggle in MainWindow, so it links Qt PDF for
 # the QPdfDocument / QPdfView surfaces. Runs across the HiDPI dpr matrix
 # {1, 1.5, 2}: the per-page Actual-Size render path is pts x zoom x dpr device
-# pixels, so fractional and 2x scaling are exactly the geometry this guards
-# (decision record 2026-07-21-two-page-layout, clauses 3 and 4).
+# pixels, so fractional and 2x scaling are exactly the geometry this guards.
 trailer_build_uat_exe(test_uat_two_page test_uat_two_page.cpp)
 target_link_libraries(test_uat_two_page PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 trailer_register_uat_dpr_matrix(test_uat_two_page)
@@ -178,16 +176,14 @@ trailer_register_uat_dpr_matrix(test_uat_two_page)
 # Qt PDF for the document view. Hard oracle + fast, so it carries the plain
 # `uat` label like the rest.
 #
-# Also runs across the HiDPI dpr matrix {1, 1.5, 2}: this is the
-# toolbar/shell-geometry surface the backlog names, and fractional scaling
-# (1.5) is where a control's minimumSizeHint can outrun its allotted box.
-# The former in-file note that "per-monitor DPI needs a per-process
-# QT_SCALE_FACTOR matrix" is now satisfied here.
+# Also runs across the HiDPI dpr matrix {1, 1.5, 2}: toolbar/shell geometry
+# is where dpr bugs show up, and fractional scaling (1.5) is where a
+# control's minimumSizeHint can outrun its allotted box.
 trailer_build_uat_exe(test_uat_sweep test_uat_sweep.cpp)
 target_link_libraries(test_uat_sweep PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 trailer_register_uat_dpr_matrix(test_uat_sweep)
 
-# Staged (async) image open UAT + G2 evidence (ADR 0008): the honest
+# Staged (async) image open UAT + optional before/after PNGs: the honest
 # "Loading image…" placeholder painted immediately, then the off-thread
 # decode swap. Runs across the HiDPI dpr matrix {1, 1.5, 2} (#92) so the
 # staged-open view holds on Retina/fractional scaling, not just dpr=1.
@@ -198,15 +194,15 @@ trailer_register_uat_dpr_matrix(test_uat_staged_image_open)
 # fixtures use QPdfWriter (QtGui), so no Qt6::Pdf link is needed.
 trailer_add_uat_test(test_uat_empty_state test_uat_empty_state.cpp)
 
-# File-menu IA redesign UAT (DR 2026-07-18-file-menu-acquire-ia): ⌘N =
-# New from Clipboard, Screenshot submenu + Scanner/Camera placeholders,
-# acquire group stays present with a document window open, non-image
-# clipboard disables + no-ops New from Clipboard, dead ⌘⇧3 removed.
+# File-menu IA redesign UAT: ⌘N = New from Clipboard, Screenshot submenu +
+# Scanner/Camera placeholders (T-14), acquire group stays present with a
+# document window open, non-image clipboard disables + no-ops New from
+# Clipboard, dead ⌘⇧3 removed.
 # Drives Application + MainWindow; PDF fixture uses QPdfWriter (QtGui),
 # so no Qt6::Pdf link is needed.
 trailer_add_uat_test(test_uat_file_menu_ia test_uat_file_menu_ia.cpp)
 
-# UX recorder UI evidence (UXR-002). Recorder-only: the "● REC" chip and
+# UX recorder UI evidence. Recorder-only: the "● REC" chip and
 # "◉ Recording" menu exist solely in TRAILER_ENABLE_UX_RECORDER builds.
 # Set $TRAILER_UX_EVIDENCE_DIR to also get offscreen grab() PNGs of them.
 # Drives Application + MainWindow; no Qt PDF.
@@ -220,9 +216,8 @@ endif()
 # needed.
 trailer_add_uat_test(test_uat_zoom_indicator test_uat_zoom_indicator.cpp)
 
-# Off-GUI-thread document open (UAT-VWR-100, backlog
-# 2026-07-15-offthread-pdf-open-placeholder / DR 0006 (b)). Captures the
-# "Loading…" placeholder → real page before/after G2 evidence. Builds a PDF
+# Off-GUI-thread document open (UAT-VWR-100). Captures the "Loading…"
+# placeholder → real page as an uncommitted before/after PNG pair. Builds a PDF
 # via QPdfWriter and drives PdfDocument + QPdfView directly, so it links Qt PDF.
 #
 # Runs across the HiDPI dpr matrix {1, 1.5, 2}: open-at-logical-size is
@@ -231,17 +226,13 @@ trailer_build_uat_exe(test_uat_offthread_open test_uat_offthread_open.cpp)
 target_link_libraries(test_uat_offthread_open PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 trailer_register_uat_dpr_matrix(test_uat_offthread_open)
 
-# Inline Open Recent list in the empty state (backlog
-# 2026-07-12-empty-state-open-recent-list). Drives Application +
+# Inline Open Recent list in the empty state. Drives Application +
 # MainWindow; PDF fixtures use QPdfWriter (QtGui), so no Qt6::Pdf link is
-# needed. Writes curated before/after grab() PNGs to
-# $TRAILER_WELCOME_EVIDENCE_DIR when set (the G2 UX-Done artifact). A new
-# file rather than an edit to test_uat_empty_state.cpp, to avoid a
-# collision with the open PR #95.
+# needed. Writes uncommitted before/after grab() PNGs to
+# $TRAILER_WELCOME_EVIDENCE_DIR when set.
 trailer_add_uat_test(test_uat_empty_state_recent test_uat_empty_state_recent.cpp)
 
-# Window-menu Maximize/Restore dynamic label (backlog
-# 2026-07-12-maximize-restore-dynamic-label). Drives Application +
+# Window-menu Maximize/Restore dynamic label. Drives Application +
 # MainWindow; no document fixture, so no Qt6::Pdf link is needed. Writes a
 # grab() of the open Window menu to $TRAILER_WINDOWMENU_EVIDENCE_DIR when
 # set.
@@ -261,7 +252,7 @@ trailer_add_uat_test(test_uat_dock_recents test_uat_dock_recents.cpp)
 
 # Preferences pane UAT (theme live-wire + tabs-grow-with-settings). Guards
 # that the Theme control is enabled and every visible tab has >=1 enabled
-# operable control. Also emits the curated G2 before/after evidence (enabled
+# operable control. Also writes uncommitted before/after PNGs (enabled
 # Theme combo + app in light/dark) to $TRAILER_PREF_EVIDENCE_DIR when set.
 # Drives PreferencesDialog + Application + MainWindow with an image document
 # (PNG via QImage) AND, for UAT-XCT-005 (document-surround colour tracks a
@@ -270,23 +261,23 @@ trailer_add_uat_test(test_uat_dock_recents test_uat_dock_recents.cpp)
 trailer_add_uat_test(test_uat_preferences test_uat_preferences.cpp)
 target_link_libraries(test_uat_preferences PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 
-# G2 before/after evidence generator for the "deference" PR (G10): PDF
-# surround colour, the silenced recovery-snapshot toast, and the textless
+# Before/after screenshot generator for three chrome fixes: PDF surround
+# colour, the silenced recovery-snapshot toast, and the textless
 # Sidebar/Inspector title bars. Deliberately calls only stable pre-existing
-# API (no new symbol this PR introduces) so this same file produces a true
-# before/after pair when built against the tree before and after the fix —
-# see the file's header comment. No-op (QSKIP, no assertions) unless
-# $TRAILER_DEFERENCE_EVIDENCE_DIR is set.
+# API so this same file produces a true before/after pair when built against
+# the tree before and after a fix — see the file's header comment. No-op
+# (QSKIP, no assertions) unless $TRAILER_DEFERENCE_EVIDENCE_DIR is set; the
+# PNGs are not committed.
 trailer_add_uat_test(test_uat_deference_evidence test_uat_deference_evidence.cpp)
 target_link_libraries(test_uat_deference_evidence PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 
 # Feedback / Diagnostic Report (Help menu). Guards the menu item is always
-# enabled (G3 — there is no "unavailable" state, the report degrades
-# instead), the report text is fully visible (never clipboard-only), the
-# "Include full file paths" checkbox defaults off and toggles live, and
-# Copy to Clipboard matches the visible text exactly. Emits the curated G2
-# evidence (with-document + empty-state dialog) to
-# $TRAILER_FEEDBACK_EVIDENCE_DIR when set.
+# enabled (there is no "unavailable" state; the report degrades instead),
+# the report text is fully visible (never clipboard-only), the "Include full
+# file paths" checkbox defaults off and toggles live, and Copy to Clipboard
+# matches the visible text exactly. Writes uncommitted PNGs of the dialog
+# (with a document, and in the empty state) to $TRAILER_FEEDBACK_EVIDENCE_DIR
+# when set.
 trailer_add_uat_test(test_uat_feedback test_uat_feedback.cpp)
 
 # Already-open dedup (UAT-FND-053..058): asking to open a file that is
@@ -295,16 +286,16 @@ trailer_add_uat_test(test_uat_feedback test_uat_feedback.cpp)
 # fixtures use QPdfWriter (QtGui), so no Qt6::Pdf link is needed.
 #
 # Deliberately calls only pre-existing public API so the SAME file builds
-# against the tree before and after the fix — that is what makes its G2
-# evidence slot a true before/after pair. Writes the composite PNG to
-# $TRAILER_OPENDEDUP_EVIDENCE_DIR when set.
+# against the tree before and after the fix — that is what makes its
+# evidence slot a true before/after pair. Writes the composite PNG (not
+# committed) to $TRAILER_OPENDEDUP_EVIDENCE_DIR when set.
 trailer_add_uat_test(test_uat_open_already_open test_uat_open_already_open.cpp)
 
-# UAT-UPD-001..003 (docs/uat/06-cross-cutting.md): the update affordances'
-# enabled state tracks whether this build carries an update-signing key,
-# and the Updates pane's button never moves as its status text changes.
-# Also emits the G2 evidence pair to $TRAILER_UPDATE_KEY_EVIDENCE_DIR when
-# set — run the same binary from a keyed and an unkeyed build tree.
+# UAT-UPD-001..003: the update affordances' enabled state tracks whether this
+# build carries an update-signing key, and the Updates pane's button never
+# moves as its status text changes. Also writes an uncommitted PNG pair to
+# $TRAILER_UPDATE_KEY_EVIDENCE_DIR when set — run the same binary from a keyed
+# and an unkeyed build tree.
 trailer_add_uat_test(test_uat_update_key_evidence test_uat_update_key_evidence.cpp)
 
 # Chrome census (UAT-XCT-090): walks the realized widget tree of each

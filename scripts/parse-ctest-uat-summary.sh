@@ -16,13 +16,12 @@
 # failed out of 62" for the identical 0-failures case). Grepping for
 # "[0-9]+ tests failed" alone -- the pre-2026-07-26 approach both steps used
 # -- silently misreports a full pass as "count unavailable"; for Wine that
-# bug was latent (Wine UAT has never reached 100%, see docs/backlog/
-# 2026-07-24-wine-uat-failures-triage.md, whose whole point is to get there)
-# but would have started misreporting the exact day that item closes -- a
-# silent failure mode that only triggers on success, the worst kind. Only
-# default the failed-count to 0 when the leading percentage actually reads
-# 100 (not merely "clause absent") -- a garbled/truncated non-100% line
-# falls through to "unknown" rather than reporting a false full pass.
+# bug was latent (Wine UAT has never reached 100%) but would have started
+# misreporting the exact day it does -- a silent failure mode that only
+# triggers on success, the worst kind. Only default the failed-count to 0
+# when the leading percentage actually reads 100 (not merely "clause
+# absent") -- a garbled/truncated non-100% line falls through to "unknown"
+# rather than reporting a false full pass.
 #
 # Usage: parse-ctest-uat-summary.sh <ctest-log-file>
 # Prints two lines to stdout: PASSED=<n-or-empty> and TOTAL=<n-or-empty>.

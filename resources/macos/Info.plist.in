@@ -10,7 +10,7 @@
     <key>CFBundleIconFile</key>
     <string>${MACOSX_BUNDLE_ICON_FILE}</string>
     <!--
-        Adaptive (light/dark) app icon — ADR 0009 Option A. Names the
+        Adaptive (light/dark) app icon. Names the
         AppIcon set compiled from resources/macos/Assets.xcassets into
         Contents/Resources/Assets.car by actool (see CMakeLists.txt).
         Coexists with the legacy CFBundleIconFile above: macOS that reads
@@ -47,7 +47,7 @@
         (-DTRAILER_ENABLE_UX_RECORDER=ON) substitute the camera
         usage-description key here — macOS refuses (kills the
         process, in fact) any camera-permission request from a
-        bundle without it. See docs/ux-recorder.md.
+        bundle without it. See src/uxrecord/README.md.
     -->
     ${TRAILER_UX_PLIST_EXTRAS}
 

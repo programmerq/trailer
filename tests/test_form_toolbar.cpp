@@ -1,9 +1,8 @@
-// Unit tests for FormToolbar — the toolbar introduced in Phase 5 for
-// "fill in a form that doesn't have proper AcroForm fields" (design
-// doc §6.4). We don't test the rendering; we test that clicking each
-// tool action emits `toolChanged` with the right AnnotationTool and
-// the expected preset text (✓ / ✗ glyph or empty), and that the
-// Sign Here button emits its own signal.
+// Unit tests for FormToolbar — the toolbar for "fill in a form that
+// doesn't have proper AcroForm fields". We don't test the rendering;
+// we test that clicking each tool action emits `toolChanged` with the
+// right AnnotationTool and the expected preset text (✓ / ✗ glyph or
+// empty), and that the Sign Here button emits its own signal.
 
 #include "ui/FormToolbar.h"
 #include "ui/IconHelper.h"
@@ -132,7 +131,7 @@ void TestFormToolbar::toolsAreMutuallyExclusive() {
 // QIcon API does not throw — and we'd ship a blank-button toolbar.
 void TestFormToolbar::everyActionHasARenderedIcon() {
     FormToolbar bar;
-    // The leading expanding spacer (ADR 0007 R2b, right-aligns the tool
+    // The leading expanding spacer (it right-aligns the tool
     // group) is the ONE QWidgetAction that legitimately carries no icon.
     // Pin the count to exactly one so a future real widget-action (which
     // SHOULD carry an icon) can't be silently skipped by the blanket

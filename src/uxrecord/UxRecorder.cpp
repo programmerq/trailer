@@ -415,7 +415,7 @@ QString uxDegradedStreamForEventType(const QString &type) {
     // Only hard failures map to a degraded stream. Notably absent:
     // input_monitoring_permission (granted:false) — that preflight is
     // advisory and the tap often still delivers pointer events even
-    // when it reports not-granted (see UXR-003); only input_tap_unavailable
+    // when it reports not-granted (T-84); only input_tap_unavailable
     // means input capture truly didn't start.
     static const QHash<QString, QString> kMap = {
         {QStringLiteral("screen_capture_failed"), QStringLiteral("screen")},
@@ -489,7 +489,7 @@ void UxRecorder::writeManifest(const QString &status) {
         {QStringLiteral("dirs"), QJsonArray{QStringLiteral("screen"), QStringLiteral("camera"),
                                             QStringLiteral("screenshots")}},
     };
-    // Streams that failed this session (UXR-002). Present (and kept
+    // Streams that failed this session. Present (and kept
     // current) from the first failure on, so a consumer never mistakes
     // an empty screen/ for a healthy session.
     if (!m_degradedStreams.isEmpty()) {

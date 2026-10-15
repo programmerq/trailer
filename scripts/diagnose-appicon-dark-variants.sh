@@ -12,8 +12,8 @@
 # "the dark bitmaps were dropped" and with "the dark bitmaps are present
 # but assetutil does not print an appearance axis for app-icon entries."
 # Those two have completely different fixes, and the expensive decision
-# downstream (author an Icon Composer .icon for ADR 0009 Option B) is
-# only correct under the first.
+# downstream (replace this asset catalog, "Option A", with an Icon Composer
+# .icon, "Option B") is only correct under the first.
 #
 # THE TEST. Compile the catalog twice with the SAME actool invocation the
 # real build uses (CMakeLists.txt's TRAILER_ADAPTIVE_ICON block):
@@ -139,9 +139,9 @@ The nightly lane's assetutil check was reporting the truth, and no actool
 flag or Contents.json key recovers them: a macOS .appiconset has no
 supported light/dark axis.
 
-  -> ADR 0009 Option A is a dead end. Proceed to Option B (Icon Composer
-     .icon source, same build wiring) and record the outcome as an
-     accepted update to ADR 0009.
+  -> The asset-catalog route (Option A) is a dead end. Proceed to Option B
+     (Icon Composer .icon source, same build wiring) and record the outcome
+     in TODO.md T-63.
 MSG
     exit 0
 else

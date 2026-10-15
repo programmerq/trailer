@@ -5,11 +5,10 @@
 
 namespace trailer::Update {
 
-// Only "nightly" is wired end-to-end today (owner decision, 2026-07-30 —
-// see docs/decision-records/2026-07-30-nightly-auto-update-channel.md).
-// Stable exists as a UI-visible, deliberately-disabled option so the
-// Preferences control doesn't need reshaping when release.yml grows its
-// own signed feed later.
+// Only "nightly" is wired end-to-end today. Stable exists as a UI-visible,
+// deliberately-disabled option so the Preferences control doesn't need
+// reshaping when release.yml grows its own signed feed later.
+// T-69: the stable update channel isn't signed.
 enum class Channel { Nightly, Stable };
 
 QString channelToString(Channel value);

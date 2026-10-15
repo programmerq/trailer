@@ -155,7 +155,7 @@ void TestSelectableTextStore::hashContentSurvivesFormatConversion() {
 }
 
 void TestSelectableTextStore::attemptedMemoTracksHashAndClears() {
-    // The attempted-and-empty memo (ADR G13.1/G13.2) lets the ambient OCR
+    // The attempted-and-empty memo lets the ambient OCR
     // path skip re-OCRing a text-less page without ever making it report a
     // text layer. It is keyed by (page, contentHash) and is independent of
     // hasResults().

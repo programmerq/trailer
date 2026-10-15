@@ -9,8 +9,7 @@ namespace trailer {
 // "canvas" or "letterbox". ONE shared rule, so no two call sites can
 // independently drift apart per theme (the bug this fixes: PdfDocument's
 // QPdfView and TwoPageView each separately read QPalette::Dark for this,
-// while ImageDocument's QScrollArea reads QPalette::Base — DR
-// 2026-07-31-document-surround-colour-follows-base).
+// while ImageDocument's QScrollArea reads QPalette::Base).
 //
 // Prefers QPalette::Dark: a canvas that reads visibly RECESSED behind a
 // page is the convention every mainstream PDF viewer follows (Preview,

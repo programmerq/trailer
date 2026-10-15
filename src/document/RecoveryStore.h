@@ -9,14 +9,13 @@ namespace trailer {
 
 // App-managed store of auto-save RECOVERY SIDECARS.
 //
-// Per the never-worry-save write-side invariant
-// (docs/decision-records/2026-07-19-autosave-recovery-sidecar.md, amending
-// ADR 0004): auto-save must never write the user's backing file. Instead it
-// writes a recovery snapshot to a sidecar living under the app's data
-// directory (QStandardPaths::AppDataLocation `/autosave/`), keyed by a hash
-// of the backing file's absolute path. Sidecars live in app-data — NOT next
-// to the user's file — so an external-file watcher never sees them and the
-// user's directory is never touched.
+// Auto-save must never write the user's backing file; only an explicit Save
+// or Save As does. Instead auto-save writes a recovery snapshot to a sidecar
+// living under the app's data directory (QStandardPaths::AppDataLocation
+// `/autosave/`), keyed by a hash of the backing file's absolute path.
+// Sidecars live in app-data — NOT next to the user's file — so an
+// external-file watcher never sees them and the user's directory is never
+// touched.
 //
 // A small JSON index (`<baseDir>/index.json`) maps each backing path to its
 // sidecar and the source file's modification time captured when the snapshot

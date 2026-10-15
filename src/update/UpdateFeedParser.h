@@ -14,9 +14,7 @@ namespace trailer::Update {
 // networking here — UpdateChecker.cpp fetches the bytes; this file only
 // ever sees bytes it has already been handed.
 //
-// On-wire format (see docs/decision-records/2026-07-30-nightly-auto-
-// update-channel.md and scripts/sign-update-feed.py, the CI-side
-// generator):
+// On-wire format (see scripts/sign-update-feed.py, the CI-side generator):
 //
 //   {
 //     "payload": "<the exact UTF-8 text below, JSON-escaped as a string>",

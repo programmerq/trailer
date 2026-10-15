@@ -1,6 +1,6 @@
 // Unit test — macOS launch / activation shape.
 //
-// Guards the owner ruling (backlog 2026-07-12-macos-launch-no-open-panel):
+// Guards these launch rules:
 //   - The app must survive its last window closing so dismissing a dialog
 //     never quits it. This is platform-shaped: on macOS the app disables
 //     Qt's quit-on-last-window-closed (dock icon + global menu bar keep it
@@ -15,8 +15,8 @@
 //     (ApplicationStateChange -> Qt::ApplicationActive) that the offscreen
 //     plugin off-Mac never raises and can't be driven into a genuinely
 //     Active zero-window state non-flakily, so it is NOT unit-tested here
-//     (see the note on the removed test below); it is covered by the
-//     real-Mac checklist and tests/uat/test_uat_empty_state.cpp.
+//     (see the note on the removed test below); it is covered by
+//     tests/uat/test_uat_empty_state.cpp (T-52: check it on a real Mac).
 //
 // Mirrors the custom-main + HOME-sandbox scaffolding of
 // test_uat_empty_state.cpp so Settings/RecentFiles write into a throwaway
@@ -51,10 +51,8 @@ class TestMacosLaunch : public QObject {
     // never raises, and which cannot be driven into a genuinely-Active
     // zero-window state non-flakily under CI. A synthetic bare
     // QEvent(ApplicationStateChange) does NOT make applicationState()==Active,
-    // so it would assert nothing real. It is instead covered by the
-    // real-Mac verification checklist (backlog
-    // 2026-07-12-macos-reopen-realhw-verify) and by
-    // tests/uat/test_uat_empty_state.cpp.
+    // so it would assert nothing real. It is instead covered by
+    // tests/uat/test_uat_empty_state.cpp (T-52: check it on a real Mac).
 };
 
 void TestMacosLaunch::quitOnLastWindowClosedIsDisabled() {

@@ -1,9 +1,5 @@
 // UAT harness — sidebar thumbnail sizing (scale-to-width + aspect-fit rows).
 //
-// Pins the P1 fix tracked in
-// docs/backlog/2026-07-13-thumbnail-sidebar-sizing.md and decided in
-// docs/decision-records/0006-thumbnail-scale-to-width.md.
-//
 // The bug: sidebar PDF thumbnails rendered inside a fixed 80x100 logical
 // box, centred in the full-width column (~1/8 of the sidebar width) with a
 // fixed 108 px row height that left vertical slack under landscape pages.
@@ -14,9 +10,6 @@
 //   2. Each row's visualRect height tracks the page aspect
 //      (round(availW / aspect) + 2*kThumbVerticalPadding), so portrait rows
 //      are tall and landscape rows short — no fixed 108 px gap.
-//
-// This test is written test-FIRST: on the unmodified Sidebar it FAILS (every
-// row is 108 px regardless of width/aspect) and captures BEFORE screenshots.
 
 #include "app/Application.h"
 #include "document/IDocument.h"
@@ -71,8 +64,8 @@ MainWindow *currentMainWindow() {
 // QT_SCALE_FACTOR per process; Qt reads it before QGuiApplication and
 // stamps it on every QScreen. Defaults to 1.0 when unset (a plain `ctest`
 // run). The offscreen platform reports dpr = 1 by default, so a value > 1
-// here is the proof the injection actually took — per the backlog
-// threshold, "a passing run at the ambient dpr is not evidence."
+// here is the proof the injection actually took: a pass at the ambient
+// dpr proves nothing about HiDPI.
 double requestedDpr() {
     bool ok = false;
     const double v = qEnvironmentVariable("QT_SCALE_FACTOR").toDouble(&ok);
@@ -87,8 +80,8 @@ double screenDpr() {
 }
 
 // Directory that persists past the test run (mirrors the helper in
-// test_uat_foundations.cpp) so the G2 evidence PNGs can be collected from
-// the build tree after the run.
+// test_uat_foundations.cpp) so the screenshot PNGs can be collected from
+// the build tree after the run (gitignored; never committed).
 QString screenshotDir() {
     QDir dir(QDir::current());
     dir.mkpath(QStringLiteral("uat-screenshots"));
@@ -98,7 +91,7 @@ QString screenshotDir() {
 void grabTo(QWidget *w, const QString &name) {
     const QString path = QDir(screenshotDir()).absoluteFilePath(name);
     w->grab().save(path, "PNG");
-    qInfo().noquote() << "G2-SCREENSHOT" << path;
+    qInfo().noquote() << "SCREENSHOT" << path;
 }
 
 // Build a mixed-orientation PDF: alternating PORTRAIT and LANDSCAPE pages.
@@ -254,8 +247,8 @@ void TestUatThumbnailSidebar::checkAtWidth(MainWindow *mw, Sidebar *sidebar,
 
     // Crispness: the DecorationRole pixmap is re-rendered at the current
     // column width (debounced), so at a wider sidebar its device-pixel width
-    // must GROW versus the previous narrower call — pinning ADR 0006's "stays
-    // crisp" claim (not stuck at the old ~80 px box). DPR is constant across
+    // must GROW versus the previous narrower call — the thumbnail stays
+    // crisp (not stuck at the old ~80 px box). DPR is constant across
     // calls (same screen), so comparing raw device pixels is consistent.
     const QPixmap pPix = qvariant_cast<QPixmap>(pIdx.data(Qt::DecorationRole));
     QVERIFY2(!pPix.isNull(), "portrait DecorationRole pixmap must render");
@@ -418,8 +411,8 @@ void TestUatThumbnailSidebar::uat_thumb_010_scaleToWidthAndAspectRows() {
     const int portraitIndex = 2; // portrait
     const int landscapeIndex = 1; // landscape
 
-    // Selection/identity survives resize. ADR 0006 justifies setRenderWidth
-    // (cache-clear + dataChanged) over setThumbnailSize (a full
+    // Selection/identity survives resize. setRenderWidth (cache-clear +
+    // dataChanged) is used instead of setThumbnailSize (a full
     // beginResetModel) precisely so a resize does NOT reset the model and
     // drop row identity. Spy on the model-reset signal across both resizes
     // and assert it never fires — this is the faithful, robust pin of that
@@ -459,8 +452,8 @@ void TestUatThumbnailSidebar::uat_thumb_010_scaleToWidthAndAspectRows() {
 // its ThumbnailModel) pointing at the destroyed document.
 //
 // Sidebar::m_doc and ThumbnailModel::m_doc are raw IDocument* — IDocument
-// is not a QObject, so QPointer is unavailable and docs/CONVENTIONS.md §13
-// requires the holder to flush on DocumentView::documentAboutToBeRemoved.
+// is not a QObject, so QPointer is unavailable and the holder must flush
+// on DocumentView::documentAboutToBeRemoved.
 // Neither was flushed, so closing a tab left both dangling and the next
 // posted refresh/paint dereferenced freed memory:
 //
@@ -557,11 +550,9 @@ void TestUatThumbnailSidebar::uat_thumb_030_closingOneOfTwoTabsDoesNotDangleTheS
     QVERIFY2(view, "Sidebar should host a QListView backed by ThumbnailModel");
     QCOMPARE(view->model()->rowCount(), 4); // the surviving 4-page document
 
-    // G2 evidence: the sidebar after closing one of two tabs. There is no
+    // Screenshot of the sidebar after closing one of two tabs. There is no
     // meaningful "before" image to pair this with — on unfixed code this
-    // point is never reached, because the process has already SIGSEGV'd
-    // (see the negative control in the PR body). A crash is not a state
-    // that can be screenshotted, so the crash report stands in for it.
+    // point is never reached, because the process has already SIGSEGV'd.
     grabTo(sidebar, QStringLiteral("thumb030-sidebar-after-closing-one-of-two-tabs.png"));
 }
 

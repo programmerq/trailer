@@ -145,9 +145,8 @@ menu() {
 # the open popup keeps its keyboard grab). Used for actions that carry a stable
 # objectName but no keyboard shortcut — e.g. Tools -> Take Screenshot
 # (action.tools.takeScreenshot), whose OS-reserved ⌘⇧3 binding PR #86 removed as
-# a lying control (DR 2026-07-18-file-menu-acquire-ia). Reaching it by mnemonic
-# keeps the selector stable without pixel geometry. Requires the item's mnemonic
-# to be unique within the menu.
+# a lying control. Reaching it by mnemonic keeps the selector stable without
+# pixel geometry. Requires the item's mnemonic to be unique within the menu.
 menupick() {
     activate
     xdotool key --clearmodifiers "alt+$1"

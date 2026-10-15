@@ -23,9 +23,8 @@ class AppPaths {
 
     // Directory holding the macOS "Quit and Keep Windows" draft store —
     // the serialized open-window set plus the bytes of any unsaved/
-    // untitled documents kept across a relaunch (see SessionDraftStore and
-    // docs/decision-records/2026-07-16-quit-and-keep-windows.md). Sits
-    // beside settings.toml / recent.json under the app data dir.
+    // untitled documents kept across a relaunch (see SessionDraftStore).
+    // Sits beside settings.toml / recent.json under the app data dir.
     static QString sessionDraftsDir();
 
     // Cache directory for downloaded ONNX model weights
@@ -35,7 +34,7 @@ class AppPaths {
     static QString modelsDir();
 
     // Root for developer UX recording sessions (one timestamped
-    // subdirectory per --ux-record run; see docs/ux-recorder.md).
+    // subdirectory per --ux-record run; see src/uxrecord/README.md).
     // Always resolvable so the path stays testable, but nothing is
     // ever written here unless the build was configured with
     // TRAILER_ENABLE_UX_RECORDER and the recorder was started.

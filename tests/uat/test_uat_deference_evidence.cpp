@@ -1,6 +1,6 @@
-// UAT harness — G2 before/after evidence for the "deference" PR (G10):
-// PDF surround colour (item 1), the silenced "Recovery snapshot saved"
-// toast (item 2), and the textless Sidebar/Inspector title bars (item 3).
+// UAT harness — before/after screenshots for three chrome fixes: PDF
+// surround colour (item 1), the silenced "Recovery snapshot saved" toast
+// (item 2), and the textless Sidebar/Inspector title bars (item 3).
 //
 // This file deliberately calls ONLY stable, pre-existing public API
 // (Application::openFiles/applyTheme, MainWindow, QPdfView, QScrollArea,
@@ -8,7 +8,7 @@
 // IDocument::refreshViewPalette(), buildTextlessDockTitleBar()) — so this
 // SAME file can be built and run unmodified against the tree BEFORE and
 // AFTER the fix to produce a genuine before/after pair, not two unrelated
-// captures. Emits PNGs to $TRAILER_DEFERENCE_EVIDENCE_DIR when set;
+// captures. Emits uncommitted PNGs to $TRAILER_DEFERENCE_EVIDENCE_DIR when set;
 // QSKIPs (no assertions, no failure) when unset, matching the
 // TRAILER_PREF_EVIDENCE_DIR / TRAILER_STAGED_OPEN_EVIDENCE_DIR convention
 // used elsewhere in this suite.
@@ -58,9 +58,8 @@ QString evidenceDir() {
 // A representative dark palette — same rationale as
 // test_uat_preferences.cpp's darkPalette(): the offscreen QPA plugin has no
 // platform theme, so QStyleHints::setColorScheme cannot derive a genuinely
-// dark palette on its own; this is the sanctioned offscreen substitute so
-// the "dark" evidence shot is actually dark, per AGENTS.md's G2 capture-
-// method note.
+// dark palette on its own; this offscreen substitute makes the "dark"
+// evidence shot actually dark.
 QPalette darkPalette() {
     QPalette p;
     const QColor window(0x2b, 0x2b, 0x2e);
@@ -85,7 +84,7 @@ QString writeEvidencePdf(const QString &path) {
     writer.setPageSize(QPageSize(QPageSize::A4));
     QPainter p(&writer);
     p.setPen(QPen(Qt::black, 2));
-    p.drawText(200, 200, QStringLiteral("Deference PR — G2 evidence fixture"));
+    p.drawText(200, 200, QStringLiteral("Deference evidence fixture"));
     p.drawRect(100, 100, 1200, 1600);
     return path;
 }
@@ -112,10 +111,10 @@ void TestUatDeferenceEvidence::init() {
     QApplication::processEvents();
 }
 
-// Item 1 — G2 evidence: a PDF zoomed out enough to show visible surround
-// margin, captured in light then dark, with the SAME document and window
-// in both. Run this same file against the tree before and after the fix
-// (see the file header) to get the before/after pair G2 requires.
+// Item 1 — a PDF zoomed out enough to show visible surround margin,
+// captured in light then dark, with the SAME document and window in both.
+// Run this same file against the tree before and after the fix (see the
+// file header) to get a before/after pair.
 void TestUatDeferenceEvidence::uat_evidence_pdfSurroundLightAndDark() {
     const QString dir = evidenceDir();
     if (dir.isEmpty())
@@ -159,7 +158,7 @@ void TestUatDeferenceEvidence::uat_evidence_pdfSurroundLightAndDark() {
     QApplication::processEvents();
 }
 
-// Item 3 — G2 evidence: MainWindow with both Sidebar and Inspector open,
+// Item 3 — MainWindow with both Sidebar and Inspector open,
 // same document/window in both captures.
 void TestUatDeferenceEvidence::uat_evidence_dockPanelCaptions() {
     const QString dir = evidenceDir();
@@ -189,7 +188,7 @@ void TestUatDeferenceEvidence::uat_evidence_dockPanelCaptions() {
     QVERIFY(mw->grab().save(dir + "/dock-panels.png"));
 }
 
-// Item 2 — G2 evidence: the status bar immediately after an auto-save tick.
+// Item 2 — the status bar immediately after an auto-save tick.
 // Same window/document in both captures; the only thing that should ever
 // differ is whether the toast text appears.
 void TestUatDeferenceEvidence::uat_evidence_recoverySnapshotStatusBar() {

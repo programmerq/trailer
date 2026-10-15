@@ -19,8 +19,7 @@
 # versioned with what actually shipped). A release asset is atomic with
 # the artifacts it describes, trivially fetched by tag (`gh release
 # download <tag> -p uat-summary.json`), and keeps the release itself the
-# human-readable record (AGENTS.md G2 spirit: what shipped is what's
-# visible).
+# human-readable record (what shipped is what's visible).
 #
 # WHAT COUNTS AS "WORSE" (the axis this script implements):
 #   1. Crash state is checked FIRST and dominates: a lane that crashes
@@ -50,10 +49,9 @@
 #                          the cross-products differ by 2 (1722 vs 1720).
 #
 #      That false positive is not an edge case here -- it is this
-#      repo's normal growth pattern. AGENTS.md ("CI cadence") requires
-#      every confirmed defect to land as a regression guard in the `uat`
-#      suite, and such a guard is written RED, before the fix. Under the
-#      ratio rule, following the documented process reds the nightly.
+#      repo's normal growth pattern: a test for a confirmed defect is
+#      often added before its fix, failing. Under the ratio rule, adding
+#      such a test reds the nightly.
 #
 #      Known residual blind spot, accepted for now: because only counts
 #      (not per-test identity) are carried in the baseline, a test that
@@ -61,8 +59,8 @@
 #      passes on the same night (40/41 -> 41/43 could be +2 new passes
 #      and 1 regression). Closing that needs the summary to carry the
 #      per-test name->status map and a set comparison; it is a schema
-#      change, not a tweak to this rule. Tracked in
-#      docs/backlog/2026-08-02-uat-ratchet-per-test-identity.md.
+#      change, not a tweak to this rule. T-68: carry per-test identity
+#      in the baseline.
 #
 # DEGRADE GRACEFULLY (never a false regression): no previous summary file,
 # a file that fails to parse, a file missing this lane's key, or a

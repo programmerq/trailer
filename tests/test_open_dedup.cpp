@@ -1,5 +1,5 @@
 // Unit tests for the "already-open documents are surfaced, never opened
-// twice" rule (owner HITL report 2026-08-06).
+// twice" rule.
 //
 // Two levels:
 //   * trailer::canonicalPathKey  — the one identity rule (util/PathKey.h):
@@ -455,11 +455,11 @@ void TestOpenDedup::imageBatchWithOneAlreadyOpenDoesNotSpawnAnEmptyBatchWindow()
     QCOMPARE(totalOpenDocuments(), 2);
 }
 
-// CF-5 interaction. The empty-launch-window reuse candidate is a
-// consume-once resource reserved for a document that is genuinely being
-// opened. A file that turns out to be already open must NOT spend it —
-// otherwise the empty window is claimed, filled with nothing, and the
-// orphan CF-5 exists to prevent comes back.
+// Empty-window reuse: a document opened from the empty launch window opens
+// into it, not beside it. The reuse candidate is a consume-once resource
+// reserved for a document that is genuinely being opened. A file that turns
+// out to be already open must NOT spend it — otherwise the empty window is
+// claimed, filled with nothing, and the orphaned empty window comes back.
 void TestOpenDedup::surfacingDoesNotConsumeTheEmptyWindowReuseCandidate() {
     QVERIFY(m_dir.isValid());
     const QString open = writeTinyPdf(m_dir.filePath("cf5_open.pdf"));
@@ -472,7 +472,7 @@ void TestOpenDedup::surfacingDoesNotConsumeTheEmptyWindowReuseCandidate() {
     QVERIFY(holder);
     QCOMPARE(holder->documentCount(), 1);
 
-    // An empty window alongside the document window — the CF-5 candidate.
+    // An empty window alongside the document window — the reuse candidate.
     MainWindow *empty = app()->ensureFreshWindow();
     QVERIFY(empty);
     QCOMPARE(empty->documentCount(), 0);
@@ -487,7 +487,7 @@ void TestOpenDedup::surfacingDoesNotConsumeTheEmptyWindowReuseCandidate() {
     // empty window, open a genuinely new file, and check that file landed
     // in it rather than in a third window. That was wrong twice over:
     //
-    //  1. It observed the invariant through activation state. CF-5 picks
+    //  1. It observed the invariant through activation state. Reuse picks
     //     its candidate from QApplication::activeWindow(), and the product
     //     code right there says why that is not dependable in this setting
     //     ("the launch-window case where offscreen/headless may not set an
@@ -503,7 +503,7 @@ void TestOpenDedup::surfacingDoesNotConsumeTheEmptyWindowReuseCandidate() {
     //     scratch on every call — there is no cross-call state that a
     //     surface could "spend". A candidate is eligible iff its window is
     //     still tracked and still empty, which is precisely what is
-    //     asserted below. The reuse mechanism itself is pre-existing CF-5
+    //     asserted below. The reuse mechanism itself is pre-existing
     //     behaviour with its own coverage in
     //     tests/uat/test_uat_empty_state.cpp (uat_empty_006/008/009/010),
     //     and re-testing it here bought nothing.

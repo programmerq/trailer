@@ -70,16 +70,16 @@ class IDocument {
     // Re-apply any theme-DERIVED palette role a document's view pinned
     // explicitly at construction time. Most adapters need no override here:
     // a plain QWidget re-reads its palette live on every paint, so Qt's
-    // QEvent::PaletteChange cascade (QStyleHints::setColorScheme, live since
-    // PR #105) already keeps it correct with zero extra work — see
+    // QEvent::PaletteChange cascade (from QStyleHints::setColorScheme)
+    // already keeps it correct with zero extra work — see
     // ImageDocument's QScrollArea (QPalette::Base, ImageAdapter.cpp) and
     // TwoPageView (same role, TwoPageView.cpp). The cascade skips any
     // *individual role* a widget explicitly set via setPalette(), though —
     // those stay pinned to whatever colour was current at the time. An
     // adapter that must pin a role because it wraps a third-party widget
     // with no other seam to influence (PdfDocument's QPdfView canvas
-    // surround, DR 2026-07-31-document-surround-colour-follows-base)
-    // overrides this to recompute and re-pin that role. Called by
+    // surround, see src/util/DocumentSurroundColor.h) overrides this to
+    // recompute and re-pin that role. Called by
     // MainWindow::refreshThemedIcons() for every open document in every
     // open window on every theme change (explicit or a live OS flip).
     virtual void refreshViewPalette() {}
@@ -123,7 +123,7 @@ class IDocument {
     virtual QSize contentSizeHint() const { return {}; }
     // True while this document's natural content size is known only
     // provisionally (e.g. a raster image's file-header size before the
-    // staged-open async decode, ADR 0008, has landed) rather than settled.
+    // staged-open async decode has landed) rather than settled.
     // imagePixelSize() / contentSizeHint() still return their best current
     // estimate; this flag tells a caller (the diagnostics/feedback report)
     // whether to present that estimate as final. Default false — most
@@ -233,8 +233,7 @@ class IDocument {
     // Save-As / Discard / Cancel just like a dirty document, and a Save
     // routes through Save-As so the user chooses a real filename. Once
     // saved to a user-chosen path this returns false. Default false —
-    // ordinary opened documents already have a real path. See ADR-0004
-    // (no silent data loss, ever).
+    // ordinary opened documents already have a real path.
     virtual bool isUntitled() const { return false; }
     virtual bool canUndo() const { return false; }
     virtual bool canRedo() const { return false; }
@@ -258,15 +257,15 @@ class IDocument {
         return false;
     }
     // Swap the entire image pixels with the provided replacement. Used
-    // by Phase 6 ML features (background removal, instant alpha, etc.)
+    // by the ML features (background removal, instant alpha, etc.)
     // to apply their output as a single undo step. The replacement
     // must have the same dimensions as the current image, or the call
     // fails with false. Implemented only by raster adapters.
     virtual bool replaceImage(const QImage & /*replacement*/) { return false; }
     // exportAs writes a copy in the requested format. `filterId` selects
     // a colour filter from filters/ImageFilter.h (empty / "none" = no
-    // filter). Images use this to implement DESIGN §6.3.7 Quartz-
-    // equivalent filters at export time; other adapters ignore it.
+    // filter). Images use this for the Export As… Filter choice
+    // (Quartz-equivalent filters); other adapters ignore it.
     virtual bool exportAs(const QString & /*destPath*/, const QString & /*format*/,
                           int /*quality*/ = -1, const QString & /*filterId*/ = {}) const {
         return false;
@@ -277,7 +276,7 @@ class IDocument {
     virtual bool supportsFileSizeReduction() const { return false; }
     virtual bool reduceFileSize(const QString & /*destPath*/) { return false; }
     // Write the document to destPath encrypted with `password`.
-    // Currently PDF-only (Phase 5). Non-const because the
+    // Currently PDF-only. Non-const because the
     // implementation may flush unsaved annotations into the underlying
     // PDF before writing.
     virtual bool supportsPasswordExport() const { return false; }
@@ -298,7 +297,7 @@ class IDocument {
     // for documents that don't support text search.
     virtual std::vector<int> pagesWithSearchMatches() const { return {}; }
 
-    // AcroForm filling (Phase 5). supportsFormFilling() is the cheap
+    // AcroForm filling. supportsFormFilling() is the cheap
     // capability check; formFields() enumerates all leaf fields once;
     // setFormFieldValue(id, value) writes to the in-memory QPDF graph
     // (persisted on the next save()).
@@ -348,7 +347,7 @@ class IDocument {
     // until the user explicitly Saves. Returns true if content was restored.
     virtual bool recoverFrom(const QString & /*sidecarPath*/) { return false; }
 
-    // --- External file-change tracking (ADR 2026-07-19) ------------------
+    // --- External file-change tracking -----------------------------------
     // Baseline captured at load time (and refreshed after each successful
     // save) so the save-time conflict guard and the ExternalChangeMonitor
     // both classify the on-disk state against the same reference. Adapters
@@ -362,12 +361,11 @@ class IDocument {
     }
     // True iff closing the document now would lose content the user cannot get
     // back — the predicate the close-time save prompt is gated on. This is
-    // isDirty() PLUS one non-edit case (CF-7): the backing file was DELETED on
+    // isDirty() PLUS one non-edit case: the backing file was DELETED on
     // disk while the doc was open, which makes the in-memory buffer the only
     // remaining copy even when no edit was ever made. Without this a clean doc
     // whose file vanished would close with no prompt and drop its buffer
-    // silently — the ADR-0004 no-silent-loss floor extended to a vanished file.
-    // See docs/decision-records/2026-07-20-conflict-banner-keep-mine-semantics.md.
+    // silently, losing content the user never chose to discard.
     bool hasUnsavedWork() const {
         return isDirty() || externalChangeState() == ExternalChangeState::Deleted;
     }
@@ -433,11 +431,10 @@ class IDocument {
   protected:
     // True iff overwriting `targetPath` right now would clobber an uncaused
     // external change. Consulted by each adapter's save() BEFORE it writes so
-    // no code path can silently overwrite a newer on-disk copy (the ADR-0004
-    // silent-clobber hole). Only guards a same-file overwrite of the
-    // baselined original — a Save-As to a new path is never a clobber. The
-    // one-shot force flag ("Keep mine") is consumed here so a deliberate
-    // clobber goes through exactly once.
+    // no code path can silently overwrite a newer on-disk copy. Only guards a
+    // same-file overwrite of the baselined original — a Save-As to a new path
+    // is never a clobber. The one-shot force flag ("Keep mine") is consumed
+    // here so a deliberate clobber goes through exactly once.
     bool saveWouldClobberExternalChange(const QString &targetPath) {
         // Save-As / first save to a different path: not an overwrite of the
         // file we baselined. Checked BEFORE the force flag is read so a

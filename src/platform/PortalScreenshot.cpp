@@ -91,7 +91,7 @@ bool portalScreenshotAvailable() {
     // against the bus daemon's known-names table and keeps the non-activating
     // semantics (it never starts the service). If the frontend is up but a
     // backend fails to export Screenshot, the actual capture call surfaces that
-    // honestly (Failed with a reason), which is the G3-correct place for it.
+    // honestly (Failed with a reason), which is the right place to report it.
     QDBusConnectionInterface *dbus = bus.interface();
     return dbus && dbus->isServiceRegistered(QLatin1String(kPortalService)).value();
 }
@@ -161,7 +161,7 @@ PortalCaptureResult capturePortalScreenshotToPng(const QString &outPngPath, bool
     // No Response signal before the timeout: the method call was accepted but
     // the portal never answered (wedged/slow backend). Treat as a failure so
     // the caller surfaces it, NOT as a user cancel (which would be a silent
-    // no-op — the exact G3 trap this backend exists to avoid).
+    // no-op — exactly the dead control this backend exists to avoid).
     if (!waiter.responded)
         return fail(PortalCaptureResult::Failed,
                     QStringLiteral("portal did not respond within the timeout"));

@@ -21,8 +21,8 @@ description: >-
   `actions/cache`-keyed so warm runs skip them entirely.
 
   Every dependency is probed before install, so this action also works
-  unchanged on an image that bakes the toolchain in — see
-  docs/ci/custom-runner-image.md.
+  unchanged on an image that bakes the toolchain in
+  (docker/runner/Dockerfile).
 
   Exports QT_WIN_DIR, QT_HOST_DIR, QPDF_DIR, ORT_WIN_DIR and
   MINGW_PREFIX to $GITHUB_ENV for the calling job's configure + wine

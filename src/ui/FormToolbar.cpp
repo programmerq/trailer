@@ -25,9 +25,9 @@ FormToolbar::FormToolbar(QWidget *parent) : QToolBar(parent) {
     m_group->setExclusive(true);
 
     // Leading expanding spacer pushes the form buttons to the trailing
-    // edge, right near the main toolbar's search field (ADR 0007,
-    // Option A, R2b — mirrors the main toolbar's spacer). Added before
-    // any real action so the whole tool group sits right-aligned.
+    // edge, right near the main toolbar's search field (mirrors the main
+    // toolbar's spacer). Added before any real action so the whole tool
+    // group sits right-aligned.
     auto *leadingSpacer = new QWidget(this);
     leadingSpacer->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
     addWidget(leadingSpacer);

@@ -16,8 +16,7 @@ class CancellationToken;
 class ModelRegistry;
 class OnnxSession;
 
-// MobileSAM-backed segmenter powering Instant Alpha (DESIGN §6.3.3)
-// and Smart Lasso (DESIGN §6.3.6).
+// MobileSAM-backed segmenter powering Instant Alpha and Smart Lasso.
 //
 // MobileSAM is architected as a one-shot **encoder** (ViT-Tiny,
 // ~28 MB, 80-120 ms on CPU) and a per-click **decoder** (~16 MB,

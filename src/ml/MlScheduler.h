@@ -27,10 +27,10 @@ class Settings;
 // the worker thread is freed for the user-facing click.
 //
 // The currently-running task continues to its next cancellation
-// checkpoint — we don't kill threads from outside, that's the
-// PHILOSOPHY ("no unsafe interruption") and the engineering reality
-// (ORT sessions hate having their stack ripped out). Workers poll
-// `CancellationToken::isCancelled()` between major steps.
+// checkpoint — we don't kill threads from outside: interrupting one
+// mid-step isn't safe, and ORT sessions hate having their stack ripped
+// out. Workers poll `CancellationToken::isCancelled()` between major
+// steps.
 enum class MlPriority : int {
     Idle = 0,        // Best-effort speculative work. First to be
                      // cancelled on policy changes (battery), last
@@ -186,8 +186,8 @@ class MlScheduler : public QObject {
     //         });
     //     });
     //
-    // See docs/CONVENTIONS.md §5 ("Weak references are QPointer<T>, never raw
-    // pointers"), whose "Broken if" clause names this exact symptom.
+    // Cancelling the task is no substitute: a worker already past its last
+    // cancellation checkpoint still posts.
     template <typename Fn> void postResultToGuiThread(Fn &&fn) {
         QMetaObject::invokeMethod(this, std::forward<Fn>(fn), Qt::QueuedConnection);
     }

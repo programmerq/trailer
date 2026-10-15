@@ -1,19 +1,17 @@
-// UAT harness — Two-page (facing) layout, PR1.
+// UAT harness — Two-page (facing) layout.
 //
 // Drives Application + MainWindow in-process under QT_QPA_PLATFORM=offscreen.
-// Each slot maps to a case in docs/uat/02-viewer.md (UAT-VWR-070..073) and
-// pins one clause of the accepted decision record
-// docs/decision-records/2026-07-21-two-page-layout.md:
+// Each slot pins one rule of the Two Pages layout:
 //
-//   UAT-VWR-070  toggle enablement (G3): enabled only for multi-page PDFs,
+//   UAT-VWR-070  toggle enablement: enabled only for multi-page PDFs,
 //                disabled-with-tooltip for images and single-page PDFs.
-//   UAT-VWR-071  cover-alone pairing + side-by-side geometry (clauses 1,2).
-//   UAT-VWR-072  per-page Actual Size + truthful zoom readout (clause 3),
-//                validated at the dpr matrix {1, 1.5, 2} (clause 4).
-//   UAT-VWR-073  honest degradation (D2-A, G3): markup / search disabled-
-//                with-tooltip in Two-Pages mode, re-enabled on leaving it.
-//   UAT-VWR-074  curated G2 evidence: Single/Two-Pages before/after pair on the
-//                same doc + the disabled-toggle+tooltip reconstruction.
+//   UAT-VWR-071  cover-alone pairing + side-by-side geometry.
+//   UAT-VWR-072  per-page Actual Size + truthful zoom readout,
+//                validated at the dpr matrix {1, 1.5, 2}.
+//   UAT-VWR-073  markup / search disabled-with-tooltip in Two-Pages mode
+//                until T-21 lands, re-enabled on leaving it.
+//   UAT-VWR-074  uncommitted Single/Two-Pages before/after PNGs of the same
+//                doc + the disabled-toggle+tooltip reconstruction.
 //
 // Lookups go through stable objectNames on MainWindow's actions and on the
 // TwoPageView widget, so the harness survives label / IA renames. The binary
@@ -88,7 +86,7 @@ QString writeSampleImage(const QString &path) {
     return path;
 }
 
-// A BOOK-like multi-page A4 PDF for the G2 evidence shots: page 1 is a distinct
+// A BOOK-like multi-page A4 PDF for the evidence shots: page 1 is a distinct
 // cover (title, no number), and every later page carries one large, centred page
 // number. Rendered big enough to survive the window-grab downscale, so a
 // reviewer can literally read the cover-alone-then-facing rhythm off the
@@ -233,7 +231,7 @@ class TestUatTwoPage : public QObject {
     void uat_vwr_071_coverAlonePairingGeometry();
     void uat_vwr_072_actualSizeTruthfulZoom();
     void uat_vwr_073_honestDegradationTooltips();
-    void uat_vwr_074_g2Evidence();
+    void uat_vwr_074_evidenceShots();
     void uat_vwr_075_navigationScrollsSpread();
     void uat_vwr_076_relayoutOnPageDelete();
     void uat_vwr_077_livePageTrackingOnFreeScroll();
@@ -258,7 +256,7 @@ void TestUatTwoPage::init() {
 }
 
 // UAT-VWR-070 — the "Two Pages" toggle is enabled only for multi-page PDFs;
-// disabled-with-tooltip for images and single-page PDFs (G3, no lying controls).
+// disabled-with-tooltip for images and single-page PDFs (no lying controls).
 void TestUatTwoPage::uat_vwr_070_toggleEnablementByDocType() {
     QVERIFY(m_scratch.isValid());
     auto *app = qobject_cast<Application *>(qApp);
@@ -391,9 +389,9 @@ void TestUatTwoPage::uat_vwr_072_actualSizeTruthfulZoom() {
                             .arg(doc->zoomFactor())));
 }
 
-// UAT-VWR-073 — honest degradation (D2-A, G3): in Two-Pages mode markup and
-// search are disabled-with-tooltip that says where to go, and both re-enable
-// when the user returns to Continuous.
+// UAT-VWR-073 — honest degradation until T-21 lands: in Two-Pages mode markup
+// and search are disabled-with-tooltip that says where to go, and both
+// re-enable when the user returns to Continuous.
 void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {
     QVERIFY(m_scratch.isValid());
     auto *app = qobject_cast<Application *>(qApp);
@@ -422,9 +420,9 @@ void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {
     QVERIFY2(twoPages && continuous, "view-mode actions must exist");
 
     // The read-only badge is the PRIMARY degradation signal — a compact
-    // in-context pill in the status bar (minimal-UI guideline, #116), not a
-    // full-width banner. Look it up by stable objectName; it is hidden outside
-    // Two-Pages mode, and the full sentence lives in its tooltip.
+    // in-context pill in the status bar, not a full-width banner. Look it up
+    // by stable objectName; it is hidden outside Two-Pages mode, and the full
+    // sentence lives in its tooltip.
     auto *badge = mw->findChild<QLabel *>(QStringLiteral("twoPageReadOnlyBadge"));
     QVERIFY2(badge, "Two-Pages read-only badge (objectName twoPageReadOnlyBadge) must exist");
     QVERIFY2(badge->toolTip().contains(
@@ -462,7 +460,7 @@ void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {
              qPrintable(QStringLiteral("search degrade tooltip should point back; got: '%1'")
                             .arg(find->toolTip())));
 
-    // G3 floor: the form-toolbar degrade tooltip must name FILLING FORMS — not
+    // The form-toolbar degrade tooltip must name FILLING FORMS — not
     // borrow the "mark up or search" copy (the fixed bug). It stays disabled.
     if (formToolbar) {
         QVERIFY2(!formToolbar->isEnabled(), "form toolbar must be disabled in Two-Pages mode");
@@ -482,19 +480,18 @@ void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {
     QVERIFY2(!badge->isVisible(), "read-only badge must hide again on leaving Two-Pages mode");
 }
 
-// UAT-VWR-074 — curated G2 evidence, HONESTLY re-shot. Grabs the SAME book-like
-// document in Single mode (before) and Two-Pages mode (after) — the required
-// before/after pair — plus the read-only disabled-toggle panel and a zoom shot
-// whose visible readout matches its true render scale. The after-shot shows the
-// compact read-only badge (the minimal-UI signal per #116, not a full-width
-// banner) and the cover-alone-then-facing rhythm (page 1 alone, then 2·3, 4·5).
-// Every zoom grab is taken AFTER the readout has refreshed via the
-// real zoom action, so the shot can never re-introduce the stale-readout bug
-// (a "100%" caption over a page painted at ~50%) that this re-shoot exists to
-// correct — uat_vwr_079 guards the invariant independently. Writes PNGs only
-// when TRAILER_TWO_PAGE_EVIDENCE_DIR is set; otherwise it still exercises the
-// same render path as a plain assertion so the slot is a real test in CI.
-void TestUatTwoPage::uat_vwr_074_g2Evidence() {
+// UAT-VWR-074 — evidence shots. Grabs the SAME book-like document in Single
+// mode (before) and Two-Pages mode (after) — the before/after pair — plus the
+// read-only disabled-toggle panel and a zoom shot whose visible readout
+// matches its true render scale. The after-shot shows the compact read-only
+// badge (not a full-width banner) and the cover-alone-then-facing rhythm
+// (page 1 alone, then 2·3, 4·5). Every zoom grab is taken AFTER the readout
+// has refreshed via the real zoom action, so the shot can never re-introduce
+// the stale-readout bug (a "100%" caption over a page painted at ~50%) —
+// uat_vwr_079 guards the invariant independently. Writes uncommitted PNGs
+// only when TRAILER_TWO_PAGE_EVIDENCE_DIR is set; otherwise it still exercises
+// the same render path as a plain assertion so the slot is a real test in CI.
+void TestUatTwoPage::uat_vwr_074_evidenceShots() {
     QVERIFY(m_scratch.isValid());
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
@@ -574,12 +571,11 @@ void TestUatTwoPage::uat_vwr_074_g2Evidence() {
     QVERIFY(!zoom100.isNull());
     save(zoom100.toImage(), QStringLiteral("tp-zoom100.png"));
 
-    // DISABLED TOGGLE + tooltip (G3). Read the tooltip text LIVE from the real
+    // DISABLED TOGGLE + tooltip. Read the tooltip text LIVE from the real
     // greyed m_twoPagesAction (opening a single-page PDF, then an image) rather
     // than retyping the strings, so the evidence cannot drift from the code. The
     // panel is a reconstruction because a hover-tooltip cannot be captured in an
-    // offscreen static grab — the accepted fallback per the G2 capture-method
-    // ruling — but every string in it is the actual QAction::toolTip().
+    // offscreen static grab, but every string in it is the actual QAction::toolTip().
     const QString singlePdf =
         writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_074_single.pdf")), 1);
     MainWindow *sw = openFreshWindow(app, singlePdf);
@@ -601,9 +597,9 @@ void TestUatTwoPage::uat_vwr_074_g2Evidence() {
     panel.setStyleSheet(QStringLiteral("background:#f4f4f4;"));
     auto *lay = new QVBoxLayout(&panel);
     // The read-only signal is now a COMPACT status-bar badge (a lock pill), not a
-    // full-width banner (minimal-UI guideline, #116). Show the pill left-aligned
-    // at its natural width with the full sentence as its tooltip caption below,
-    // mirroring the real m_readOnlyBadge style.
+    // full-width banner. Show the pill left-aligned at its natural width with
+    // the full sentence as its tooltip caption below, mirroring the real
+    // m_readOnlyBadge style.
     auto *badgeRow = new QWidget(&panel);
     auto *badgeLay = new QHBoxLayout(badgeRow);
     badgeLay->setContentsMargins(0, 0, 0, 0);
@@ -645,7 +641,7 @@ void TestUatTwoPage::uat_vwr_074_g2Evidence() {
 // UAT-VWR-075 — navigation stays live in Two-Pages mode. Previous/Next Page (and
 // thumbnail-click) route through IDocument::goToPage, which in two-up mode must
 // scroll the TwoPageView to the target page's spread — otherwise it would move
-// only the hidden QPdfView and read as an inert control (G3). Regression guard
+// only the hidden QPdfView and read as an inert control. Regression guard
 // for the correctness-review finding.
 void TestUatTwoPage::uat_vwr_075_navigationScrollsSpread() {
     QVERIFY(m_scratch.isValid());
@@ -1280,11 +1276,10 @@ void TestUatTwoPage::uat_vwr_101_modeSwitchPreservesCurrentPage() {
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
     // 24 pages is enough to have a "current page" far from page 1 without
-    // needing a synthetic hundreds-of-pages fixture (test-shape principle,
-    // TODO.md). Page 15 (0-based) is a cover-alone SPREAD-LEADING page
-    // (1-based page 16, an even page opens a facing pair), so entering
-    // Two-Pages mode from it lands on that same page without extra
-    // spread-arithmetic in the assertions below.
+    // needing a synthetic hundreds-of-pages fixture. Page 15 (0-based) is a
+    // cover-alone SPREAD-LEADING page (1-based page 16, an even page opens a
+    // facing pair), so entering Two-Pages mode from it lands on that same
+    // page without extra spread-arithmetic in the assertions below.
     const QString pdf =
         writeSamplePdf(m_scratch.filePath(QStringLiteral("uat_vwr_101.pdf")), 24);
     MainWindow *mw = openFreshWindow(app, pdf);
@@ -1420,7 +1415,7 @@ void TestUatTwoPage::uat_vwr_102_twoPagesEntryRefitsSpreadFromFitPage() {
     QVERIFY2(onePageWidthPts * 2.0 * singlePageFitZoom > double(mw->width()),
              "precondition: two pages at the single-page fit zoom must overflow the window");
 
-    // G2 evidence (before-switch state). Writes a PNG only when
+    // Evidence shot (before-switch state). Writes an uncommitted PNG only when
     // TRAILER_TWO_PAGE_EVIDENCE_DIR is set (mirrors uat_vwr_074's pattern
     // above); otherwise this exercises the same grab() path as a plain
     // no-op so the slot is a real test in CI either way.
@@ -1437,10 +1432,9 @@ void TestUatTwoPage::uat_vwr_102_twoPagesEntryRefitsSpreadFromFitPage() {
     twoPages->trigger();
     QApplication::processEvents();
     QCOMPARE(doc->viewMode(), ViewMode::TwoPages);
-    // G2 evidence (after-switch state) — the shot that shows the fix: the
-    // spread fits with no horizontal scrollbar, versus the pre-fix capture
-    // committed at docs/uat/images/2026-07-31-two-page-zoom-refit-*.png
-    // (page 1 spilled off the right edge with a populated scrollbar).
+    // Evidence shot (after-switch state) — the shot that shows the fix: the
+    // spread fits with no horizontal scrollbar, where before the fix page 1
+    // spilled off the right edge with a populated scrollbar.
     saveEvidence(QStringLiteral("vwr102-after-twopages.png"));
 
     // The spread must actually fit: no horizontal scrollbar populated by a

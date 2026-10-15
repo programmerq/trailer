@@ -11,8 +11,7 @@ namespace trailer {
 // baseline, the current on-disk state, and whether the in-memory buffer
 // has unsaved edits. Deliberately UI-free so it is unit-testable without
 // a widget or an event loop — the whole "is this a conflict?" decision
-// lives here as a free function, and the monitor / save-guard both consult
-// it. See docs/decision-records/2026-07-19-external-file-change-handling.md.
+// lives here as a free function that the monitor / save-guard both consult.
 enum class ExternalChangeState {
     // On-disk mtime + size match the baseline (or there is no baseline to
     // compare against, e.g. an untitled doc) — nothing to do.

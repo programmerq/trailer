@@ -305,7 +305,7 @@ All streams share one clock: the session's monotonic `elapsed_ms`.
 - **Camera keeps rolling** across app switches and pauses — it records
   the user's reactions, not the screen. One continuous
   `camera/camera-000.mov`; no audio (out of scope by design).
-- **Global input is recorded only while Preview is frontmost** (UXR-004).
+- **Global input is recorded only while Preview is frontmost.**
   While Trailer is frontmost its input is recorded Qt-side with widget
   context, so the global tap deliberately drops Trailer-frontmost input
   rather than emit a redundant second `source:"macos"` stream; while any

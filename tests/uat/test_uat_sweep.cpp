@@ -15,16 +15,14 @@
 //     and Sidebar docks (shown explicitly; they are hidden by default).
 //
 // Deterministic, hard oracle, fast — so it lives in the `uat` suite
-// beside the regression guards (NOT the speculative persona / vision
-// tier, which is advisory and lives elsewhere).
+// beside the regression guards.
 //
 // Knobs covered today: font scale and layout direction (in-process,
 // offscreen-safe), plus devicePixelRatio ∈ {1, 1.5, 2} injected
 // per-process via QT_SCALE_FACTOR by the CMake dpr matrix
 // (tests/uat/CMakeLists.txt, trailer_register_uat_dpr_matrix) — the whole
-// sweep re-runs under each dpr, closing the HiDPI blind spot in
-// docs/backlog/2026-07-16-hidpi-uat-harness.md. Dark theme still needs
-// Settings::theme() wired to QStyleHints::setColorScheme (deferred).
+// sweep re-runs under each dpr, closing the HiDPI blind spot. Dark theme
+// isn't swept yet.
 
 #include "app/Application.h"
 #include "document/IDocument.h"
@@ -286,11 +284,10 @@ void TestUatSweep::layoutSurvivesFontAndDirection() {
                      .arg(violations.join(QStringLiteral("\n  ")))));
 }
 
-// A11y guard (audit A-CRIT-1): every visible interactive button must
-// have a name a screen reader can announce, or it reads as a bare
-// "button". Walks the realized MainWindow chrome (incl. the markup
-// toolbar and the side docks). Font/direction-independent, so it runs
-// once rather than across the matrix.
+// A11y guard: every visible interactive button must have a name a screen
+// reader can announce, or it reads as a bare "button". Walks the realized
+// MainWindow chrome (incl. the markup toolbar and the side docks).
+// Font/direction-independent, so it runs once rather than across the matrix.
 void TestUatSweep::interactiveControlsHaveAccessibleNames() {
     QVERIFY(m_scratch.isValid());
     const QString pdf = writeTinyPdf(m_scratch.filePath(QStringLiteral("a11y.pdf")));

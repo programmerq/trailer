@@ -78,7 +78,7 @@ class UxPlatformCapture {
 
     // Master pause for screen-frame retention and global input
     // observation. The camera stream keeps rolling (it records the
-    // user, not the screen); see docs/ux-recorder.md.
+    // user, not the screen); see README.md.
     virtual void setPaused(bool paused) = 0;
     virtual bool isPaused() const = 0;
 };
@@ -87,7 +87,7 @@ class UxPlatformCapture {
 // StubUxPlatformCapture.cpp — exactly one is compiled in).
 std::unique_ptr<UxPlatformCapture> createUxPlatformCapture(UxCaptureContext context);
 
-// Relaunch-required-permission preflight for the startup gate (UXR-001).
+// Relaunch-required-permission preflight for the recorder's startup gate.
 //
 // macOS applies a Screen Recording grant only to FUTURE launches of a
 // binary — granting mid-session does not enable capture for the running

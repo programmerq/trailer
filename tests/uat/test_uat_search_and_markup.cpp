@@ -2,13 +2,7 @@
 //
 // Extends the in-process UAT runner with coverage for two areas that
 // users hit first on a real document: Find-in-PDF and the markup-undo
-// loop. Each slot maps to a case in docs/uat; the slot name ends with
-// the spec ID so a failing test points straight at the prose.
-//
-//   uat_vwr_061_findMatchesInPdfText     → docs/uat/02-viewer.md UAT-VWR-061
-//   uat_ann_010_rectangleToolCreates…    → docs/uat/05-annotations.md UAT-ANN-010
-//   uat_ann_012_lineToolCreates…         → docs/uat/05-annotations.md UAT-ANN-012
-//   uat_ann_060_undoAddRectangle         → docs/uat/05-annotations.md UAT-ANN-060
+// loop. Each slot name carries its UAT id (uat_vwr_061_… is UAT-VWR-061).
 //
 // These cases are deliberately thin: they drive the same public entry
 // points a user would hit (menu actions, toolbar actions, mouse drags
@@ -240,8 +234,8 @@ QString writePdfWithKeywordTimes(const QString &path, const QString &keyword, in
 // searchable) text on exactly the 0-based page indices in `pages`, one
 // match per listed page. Every other page gets keyword-free filler text
 // so the page exists but yields no search hit. This is the fixture the
-// position-aware seed threshold (ADR 0006) needs: matches on distinct,
-// known pages so the seed can be asserted against currentPage().
+// position-aware search seed needs: matches on distinct, known pages so
+// the seed can be asserted against currentPage().
 // Deterministic: page order is fixed and QPdfSearchModel streams
 // rowsInserted in page order.
 QString writePdfWithKeywordOnPages(const QString &path, const QString &keyword,
@@ -270,8 +264,8 @@ QString writePdfWithKeywordOnPages(const QString &path, const QString &keyword,
 // Like writePdfWithKeywordOnPages, but one designated `seedPage` carries
 // `seedPageCount` (>=2) occurrences of `keyword` stamped at known,
 // ASCENDING y positions — so reading order (top-to-bottom) is
-// deterministic and the tie-break rule (ADR 0006 item 3 / R4 — the
-// earliest-indexed match on the at/after-page seed wins) can be asserted.
+// deterministic and the tie-break rule (the earliest-indexed match on
+// the at/after-page seed wins) can be asserted.
 // Every other page in `pages` still gets exactly one match; `seedPage`
 // gets `seedPageCount` instead of one. QPdfSearchModel streams matches in
 // reading order within a page, so the topmost (smallest y) occurrence is
@@ -307,7 +301,7 @@ QString writePdfWithMultiMatchSeedPage(const QString &path, const QString &keywo
 }
 
 // Persistent screenshot dir (survives past the run, unlike
-// QTemporaryDir) for G2 evidence PNGs. Mirrors the helper in
+// QTemporaryDir; gitignored, never committed). Mirrors the helper in
 // test_uat_foundations.cpp; file-local so each translation unit keeps
 // its own copy.
 QString screenshotDir() {
@@ -319,11 +313,11 @@ QString screenshotDir() {
 void grabTo(QWidget *w, const QString &name) {
     const QString dir = screenshotDir();
     QVERIFY2(QDir().mkpath(dir) || QDir(dir).exists(),
-             qPrintable(QStringLiteral("G2 screenshot dir unavailable: %1").arg(dir)));
+             qPrintable(QStringLiteral("Screenshot dir unavailable: %1").arg(dir)));
     const QString path = QDir(dir).absoluteFilePath(name);
     const bool saved = w->grab().save(path, "PNG");
-    QVERIFY2(saved, qPrintable(QStringLiteral("G2 screenshot save failed: %1").arg(path)));
-    qInfo().noquote() << "G2-SCREENSHOT" << path;
+    QVERIFY2(saved, qPrintable(QStringLiteral("Screenshot save failed: %1").arg(path)));
+    qInfo().noquote() << "SCREENSHOT" << path;
 }
 
 // Reads the 0-based page of the currently-seeded search match straight
@@ -784,8 +778,8 @@ void TestUatSearchAndMarkup::uat_vwr_067_searchShowsMatchCounter() {
                              5000);
 
     // The counter is the SearchBar's only QLabel; it is always visible
-    // (G10/SC-MOD-1 — see SearchBar.cpp), blank until the document reports
-    // matches, then showing "<n> of <total>".
+    // (hiding it would shift the buttons beside it; see SearchBar.cpp),
+    // blank until the document reports matches, then "<n> of <total>".
     auto *counter = searchBar->findChild<QLabel *>();
     QVERIFY2(counter, "SearchBar match-counter label not found");
     QTRY_VERIFY_WITH_TIMEOUT(counter->isVisible() &&
@@ -794,18 +788,18 @@ void TestUatSearchAndMarkup::uat_vwr_067_searchShowsMatchCounter() {
 }
 
 // UAT-VWR-068 — Search seeds the first match at or after the current
-// page (ADR 0006, accepted — Option B). Opening Find while reading a
-// middle page must select the first match whose page is >= the current
-// page, wrapping to index 0 if the viewport is past the last match —
-// not the always-index-0 seed that shipped before. Coverage stays
+// page, so Find starts where the user is reading. Opening Find while
+// reading a middle page must select the first match whose page is >= the
+// current page, wrapping to index 0 if the viewport is past the last
+// match — not match 1 of the whole document. Coverage stays
 // whole-document (asserted in UAT-VWR-069); only the seed index moves.
 //
 // The seed is read ONLY after QTRY_VERIFY confirms the model is fully
 // populated. QPdfSearchModel streams rowsInserted in page order, so an
 // earlier-page match is inserted before the current-page match; the
-// full-population wait is the decisive async-populate guard (ADR 0006
-// R1/R2): if the seed froze on a provisional earlier-page match pushed
-// mid-stream, the at/after assertion below would fail.
+// full-population wait is the decisive async-populate guard: if the seed
+// froze on a provisional earlier-page match pushed mid-stream, the
+// at/after assertion below would fail.
 void TestUatSearchAndMarkup::uat_vwr_068_searchSeedsFirstMatchAtOrAfterCurrentPage() {
     QVERIFY(m_scratch.isValid());
     const QString keyword = QStringLiteral("zephyrquux");
@@ -878,7 +872,7 @@ void TestUatSearchAndMarkup::uat_vwr_068_searchSeedsFirstMatchAtOrAfterCurrentPa
     // The 1-based counter maps to that same match (4 of 4 here).
     QCOMPARE(doc->currentSearchMatchIndex(), static_cast<int>(matchPages.indexOf(11)) + 1);
 
-    // G2 evidence of the seeded-search state.
+    // Screenshot of the seeded-search state.
     grabTo(mw, QStringLiteral("vwr068_seed_at_or_after_page.png"));
 
     // (b) On-current-page equality (>=, not >). A match sitting ON the
@@ -894,11 +888,11 @@ void TestUatSearchAndMarkup::uat_vwr_068_searchSeedsFirstMatchAtOrAfterCurrentPa
 }
 
 // UAT-VWR-069 — The position-aware seed preserves whole-document
-// coverage (ADR 0006 guardian invariant). Only the initial seed index
-// moves; the populated result set still spans the whole document and
-// Find Previous from the seed reaches the earlier-page matches. Guards
-// against a naive "seed at current page" that would filter the results
-// to pages >= current and hide earlier hits.
+// coverage. Only the initial seed index moves; the populated result set
+// still spans the whole document and Find Previous from the seed reaches
+// the earlier-page matches. Guards against a naive "seed at current
+// page" that would filter the results to pages >= current and hide
+// earlier hits.
 void TestUatSearchAndMarkup::uat_vwr_069_searchSeedPreservesWholeDocumentCoverage() {
     QVERIFY(m_scratch.isValid());
     const QString keyword = QStringLiteral("zephyrquux");
@@ -971,12 +965,12 @@ void TestUatSearchAndMarkup::uat_vwr_069_searchSeedPreservesWholeDocumentCoverag
     QCOMPARE(currentSeedPage(view), 2);
 }
 
-// UAT-VWR-070 — Tie-break (ADR 0006 item 3 / R4): when the at/after-page
-// seed page carries several matches, the seed lands on the EARLIEST model
-// index on that page — the first match in reading order — not a later
-// occurrence. The fixture stamps TWO occurrences on the seed page at
-// known, ascending y positions, so a regression returning the LAST match
-// on the seed page lands on the higher index and fails this test.
+// UAT-VWR-070 — Tie-break: when the at/after-page seed page carries
+// several matches, the seed lands on the EARLIEST model index on that
+// page — the first match in reading order — not a later occurrence. The
+// fixture stamps TWO occurrences on the seed page at known, ascending y
+// positions, so a regression returning the LAST match on the seed page
+// lands on the higher index and fails this test.
 void TestUatSearchAndMarkup::uat_vwr_070_searchSeedTieBreakEarliestOnPage() {
     QVERIFY(m_scratch.isValid());
     const QString keyword = QStringLiteral("zephyrquux");
@@ -1049,16 +1043,16 @@ void TestUatSearchAndMarkup::uat_vwr_070_searchSeedTieBreakEarliestOnPage() {
 
 // UAT-VWR-103 — real dogfooding bug: "text highlighting works, but it
 // starts at match 1 being highlighted, even though I'm on page 161."
-// ADR 0006 already made the SEED position-aware (uat_vwr_068/069/070
-// pin that the MODEL's recorded seed index/page is correct), but none of
-// those assert the VIEWPORT actually moved there — only that the search
-// model's own Page role for the seeded index is right. A match that is
-// selected in the model but never brought on screen is functionally
-// invisible to the user, which reads exactly like "it started at match 1"
-// even when the model seeded correctly. This closes that gap: after
-// seeding from a middle page, the document's OWN current page (what the
-// sidebar and the visible QPdfView report) must equal the seeded match's
-// page — not just the model's Page role for that row.
+// The SEED is position-aware (uat_vwr_068/069/070 pin that the MODEL's
+// recorded seed index/page is correct), but none of those assert the
+// VIEWPORT actually moved there — only that the search model's own Page
+// role for the seeded index is right. A match that is selected in the
+// model but never brought on screen is functionally invisible to the
+// user, which reads exactly like "it started at match 1" even when the
+// model seeded correctly. This closes that gap: after seeding from a
+// middle page, the document's OWN current page (what the sidebar and the
+// visible QPdfView report) must equal the seeded match's page — not just
+// the model's Page role for that row.
 void TestUatSearchAndMarkup::uat_vwr_103_searchSeedScrollsViewportToMatch() {
     QVERIFY(m_scratch.isValid());
     const QString keyword = QStringLiteral("zephyrquux");
@@ -1311,11 +1305,10 @@ void TestUatSearchAndMarkup::uat_vwr_063_escapeClosesSearch() {
 }
 
 // UAT-VWR-064 — Each search hit shows up in the AnnotationOverlay's
-// search-highlight pass (the yellow "highlighter marker" siblings
-// the 2026-04-30 HITL pass asked for, separate from QPdfView's own
-// current-match painting). The overlay holds at least one rect per
-// match while the query is active; clearing the query drops every
-// rect back to zero.
+// search-highlight pass (the yellow "highlighter marker" siblings,
+// separate from QPdfView's own current-match painting). The overlay
+// holds at least one rect per match while the query is active; clearing
+// the query drops every rect back to zero.
 void TestUatSearchAndMarkup::uat_vwr_064_searchHighlightsFillOverlay() {
     QVERIFY(m_scratch.isValid());
     const QString keyword = QStringLiteral("manticore");
@@ -1586,7 +1579,7 @@ void TestUatSearchAndMarkup::uat_ann_012_lineToolCreatesAnnotation() {
 
 // UAT-ANN-017 — The Select tool must not create a shape on click-drag.
 //
-// Regression guard for the HITL fix where a drag drew a stray rectangle
+// Regression guard for a bug where a drag drew a stray rectangle
 // even with Select active. With Select active and nothing under the
 // drag, the store must be untouched and there must be nothing to undo.
 void TestUatSearchAndMarkup::uat_ann_017_selectToolDragDoesNotCreateAnnotation() {
@@ -1847,11 +1840,10 @@ void TestUatSearchAndMarkup::uat_ann_063_redoAfterUndo() {
 
 // UAT-ANN-070 — Hiding the markup toolbar restores text selection.
 //
-// Regression test for the 2026-04-24 HITL walkthrough: with the
-// Rectangle tool active, hiding the markup toolbar left the overlay
-// in Rectangle mode so click-drag drew shapes instead of selecting
-// text. The fix resets the active tool to Select on hide so the
-// overlay's Select branch (which forwards drags to
+// Regression test: with the Rectangle tool active, hiding the markup
+// toolbar left the overlay in Rectangle mode so click-drag drew shapes
+// instead of selecting text. The fix resets the active tool to Select on
+// hide so the overlay's Select branch (which forwards drags to
 // QPdfDocument::getSelection) runs instead. We assert both ends:
 // (1) after hide, the overlay reports Select as the active tool, and
 // (2) a drag after the hide produces no new shape annotation.
@@ -2020,17 +2012,16 @@ void TestUatSearchAndMarkup::uat_ann_082_textCentricToolsDisabledOnPlainImage() 
     QVERIFY2(redact->isEnabled(), "Redact must remain available on a plain image");
     QVERIFY2(rect->isEnabled(), "Rectangle (and other shape tools) remain available on images");
 
-    // G10/SC-CRIT-2 (docs/decision-records/2026-08-01-markup-toolbar-disable-not-hide.md):
-    // a disabled tool stays VISIBLE (in its normal toolbar slot) — it is no
-    // longer hidden, which is what used to collapse the slot and shift
-    // every action after it. G3: the disabled tool carries a non-empty
-    // tooltip explaining why.
-    QVERIFY2(underline->isVisible(), "G10: a disabled tool stays in the toolbar, not hidden");
-    QVERIFY2(highlight->isVisible(), "G10: a disabled tool stays in the toolbar, not hidden");
-    QVERIFY2(strike->isVisible(), "G10: a disabled tool stays in the toolbar, not hidden");
-    QVERIFY2(!underline->toolTip().isEmpty(), "G3: a disabled control states why");
-    QVERIFY2(!highlight->toolTip().isEmpty(), "G3: a disabled control states why");
-    QVERIFY2(!strike->toolTip().isEmpty(), "G3: a disabled control states why");
+    // A disabled tool stays VISIBLE in its normal toolbar slot: hiding it
+    // would collapse the slot and shift every action after it, and no
+    // control may move because unrelated state changed. The disabled tool
+    // carries a non-empty tooltip explaining why.
+    QVERIFY2(underline->isVisible(), "a disabled tool stays in the toolbar, not hidden");
+    QVERIFY2(highlight->isVisible(), "a disabled tool stays in the toolbar, not hidden");
+    QVERIFY2(strike->isVisible(), "a disabled tool stays in the toolbar, not hidden");
+    QVERIFY2(!underline->toolTip().isEmpty(), "a disabled control states why");
+    QVERIFY2(!highlight->toolTip().isEmpty(), "a disabled control states why");
+    QVERIFY2(!strike->toolTip().isEmpty(), "a disabled control states why");
 }
 
 // UAT-ANN-100 — Dropping a Text annotation no longer pops a modal
@@ -2759,10 +2750,10 @@ void TestUatSearchAndMarkup::uat_ann_126_selectAllThenDeleteRemovesAllInOneUndo(
 }
 
 // UAT-ANN-127 — Drag-to-move an annotation produces exactly one undo
-// step. Workstream D3 wraps the per-frame update() calls during a
-// drag inside beginCompound/endCompound; without it a 60-frame drag
-// pushed 60 history frames and Ctrl+Z unwound the drag in micro-
-// steps, hanging the UI on Sidebar rebuilds.
+// step. The per-frame update() calls during a drag are wrapped in
+// beginCompound/endCompound; without that a 60-frame drag pushed 60
+// history frames and Ctrl+Z unwound the drag in micro-steps, hanging
+// the UI on Sidebar rebuilds.
 void TestUatSearchAndMarkup::uat_ann_127_dragGeneratesOneUndoStep() {
     AnnEditingFixture f = buildAnnEditingFixture(m_scratch, QStringLiteral("127"));
     QVERIFY(f.overlay);
@@ -2811,10 +2802,7 @@ void TestUatSearchAndMarkup::uat_ann_127_dragGeneratesOneUndoStep() {
 // drawing tool (e.g. Rectangle) is active starts a NEW shape (draw-
 // first-on-press), rather than selecting the annotation underneath.
 //
-// This is the DRAWING-TOOL PARITY inversion of the pre-parity
-// UAT-ANN-128 (owner ruling "parity", 2026-07-20; ADR
-// docs/decision-records/2026-07-20-drawing-tool-parity.md). Before
-// parity a bounded-tool press selected the existing shape; now
+// DRAWING-TOOL PARITY: every drawing tool behaves like Ink, so
 // selection is Select-tool-only (Preview-style) and the press draws a
 // new overlapping shape. The press handler runs its select/move
 // hit-test ONLY for the Select tool.
@@ -2938,10 +2926,9 @@ void TestUatSearchAndMarkup::uat_ann_129_freehandPressOverInkStartsNewStroke() {
 // rectangle appears to vanish (off-page / zero-size bounds) and the
 // colour change is "lost" (overwritten by the garbage style).
 //
-// 2026-05-20 HITL pass surfaced the bug live. Fix: snapshot the
-// pre-dialog colour, then re-fetch by id AFTER the modal. This UAT
-// drives the Stroke handler with a synthetic mid-modal store
-// mutation (simulating any of the racing paths above) and asserts
+// Fix: snapshot the pre-dialog colour, then re-fetch by id AFTER the
+// modal. This UAT drives the Stroke handler with a synthetic mid-modal
+// store mutation (simulating any of the racing paths above) and asserts
 // the original rectangle survives with the new colour applied.
 void TestUatSearchAndMarkup::uat_ann_130_strokeDialogSurvivesStoreMutation() {
     AnnEditingFixture f = buildAnnEditingFixture(m_scratch, QStringLiteral("130"));
@@ -3052,13 +3039,10 @@ void TestUatSearchAndMarkup::uat_ann_130_strokeDialogSurvivesStoreMutation() {
 // markup toolbar STAYS on that tool (sticky-draw), so the user can draw
 // shape after shape without re-arming the tool between each.
 //
-// This is the DRAWING-TOOL PARITY inversion of the pre-parity
-// UAT-ANN-131 (owner ruling "parity", 2026-07-20; ADR
-// docs/decision-records/2026-07-20-drawing-tool-parity.md). Before
-// parity the bounded shapes auto-reverted to Select on commit; now they
-// match Ink and stay armed. Must drive through the MARKUP TOOLBAR: the
-// revert/sticky decision lives in MainWindow::onAnnotationCommitted,
-// which reads the toolbar's tool.
+// DRAWING-TOOL PARITY: the bounded shapes match Ink and stay armed
+// rather than reverting to Select on commit. Must drive through the
+// MARKUP TOOLBAR: the revert/sticky decision lives in
+// MainWindow::onAnnotationCommitted, which reads the toolbar's tool.
 void TestUatSearchAndMarkup::uat_ann_131_boundedShapeStaysStickyAfterCommit() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
@@ -3112,11 +3096,10 @@ void TestUatSearchAndMarkup::uat_ann_131_boundedShapeStaysStickyAfterCommit() {
 
 // UAT-ANN-132 — The free-form Freehand (Ink) tool is STICKY: after a
 // stroke commits it stays active (Preview-style), so consecutive
-// strokes all draw. This is the complement of UAT-ANN-131 (bounded
-// shapes flip back to Select on commit) and the regression guard for
-// CF-3 (backlog 2026-07-20-freehand-auto-revert-drawover-noop): the
-// auto-revert made the user's second draw-over drag silently become a
-// rubber-band selection with no feedback.
+// strokes all draw. This is the Ink twin of UAT-ANN-131 (bounded shapes
+// stay armed too) and the regression guard for an auto-revert that made
+// the user's second draw-over drag silently become a rubber-band
+// selection with no feedback.
 //
 // Must drive through the MARKUP TOOLBAR (not overlay->setActiveTool):
 // the auto-revert lives in MainWindow::onAnnotationCommitted, which
@@ -3172,7 +3155,7 @@ void TestUatSearchAndMarkup::uat_ann_132_freehandStaysStickyAfterStroke() {
     QCOMPARE(overlay->activeTool(), AnnotationTool::Ink);
 
     // A second press-drag therefore draws a SECOND stroke rather than
-    // rubber-band-selecting — the exact silent no-op CF-3 describes.
+    // rubber-band-selecting — the silent no-op this slot guards against.
     dragOnOverlay(overlay, QPoint(250, 290), QPoint(430, 300));
     QApplication::processEvents();
     QCOMPARE(store->count(), before + 2);
@@ -3186,8 +3169,6 @@ void TestUatSearchAndMarkup::uat_ann_132_freehandStaysStickyAfterStroke() {
 // arm the tool, draw one shape, then press-drag STARTING on top of that
 // shape — a NEW shape of the same type is created and the original is
 // neither selected nor moved. Selection is Select-tool-only (Preview).
-// Owner ruling "parity", 2026-07-20; ADR
-// docs/decision-records/2026-07-20-drawing-tool-parity.md.
 void TestUatSearchAndMarkup::uat_ann_133_boundedToolsDrawFirstOverExisting() {
     struct Case {
         const char *label;
@@ -3268,9 +3249,7 @@ void TestUatSearchAndMarkup::uat_ann_133_boundedToolsDrawFirstOverExisting() {
 // armed (toolbar AND overlay), so a second drag draws a second shape.
 // Driving through the toolbar is essential — the sticky/revert decision
 // lives in MainWindow::onAnnotationCommitted, which reads the toolbar's
-// tool (arming on the overlay bypasses it; see UAT-ANN-132). Owner
-// ruling "parity", 2026-07-20; ADR
-// docs/decision-records/2026-07-20-drawing-tool-parity.md.
+// tool (arming on the overlay bypasses it; see UAT-ANN-132).
 void TestUatSearchAndMarkup::uat_ann_134_boundedToolsAreStickyViaToolbar() {
     struct Case {
         const char *label;
@@ -3481,7 +3460,7 @@ void TestUatSearchAndMarkup::uat_ann_141_selectDragHighlightsLiveNotJustOnReleas
 }
 
 // UAT-ANN-142 — Select-tool cursor is an honest I-beam over selectable
-// text and the plain arrow everywhere else (G3: never a lying cursor).
+// text and the plain arrow everywhere else (a cursor must never lie).
 //
 // Owner dogfood report (2026-07-31): the cursor never changed to an
 // I-beam at all, even while actively selecting. setActiveTool(Select) set
@@ -3509,8 +3488,8 @@ void TestUatSearchAndMarkup::uat_ann_142_selectToolShowsIBeamOverTextArrowElsewh
     overlay->setActiveTool(AnnotationTool::Select);
 
     // No point-over-text provider wired yet: the cursor must stay the
-    // honest arrow — G3 forbids an I-beam that promises an interaction
-    // that can't happen.
+    // honest arrow — never an I-beam that promises an interaction that
+    // can't happen.
     sendMouse(overlay, QEvent::MouseMove, QPoint(250, 250), Qt::NoButton);
     QApplication::processEvents();
     QCOMPARE(overlay->cursorShapeForTest(), Qt::ArrowCursor);
@@ -3712,10 +3691,10 @@ void TestUatSearchAndMarkup::uat_ann_145_selectDragWorksOnInvisibleOcrLayerPdf()
     grabTo(mw, QStringLiteral("uat_ann_145_invisible_text_selected.png"));
 }
 
-// UAT-XCT-070 — Toolbar anchoring & overflow (ADR 0007, Option A).
+// UAT-XCT-070 — Toolbar anchoring & overflow.
 //
-// Geometry-provable (AGENTS.md G2) encoding of the four invariants the
-// accepted decision record establishes, driven under
+// Geometry checks of the four invariants that keep the main toolbar a
+// fixed top row with each contextual bar on its own row, driven under
 // QT_QPA_PLATFORM=offscreen:
 //
 //   #1 The main toolbar's top-left origin is stable when the form (or
@@ -3731,8 +3710,8 @@ void TestUatSearchAndMarkup::uat_ann_145_selectDragWorksOnInvisibleOcrLayerPdf()
 //      the leading markup neighbour + primary search do not move across
 //      the overflow appear/disappear transition.
 //
-// Grab evidence (G2 screenshots) is captured for the form-hidden,
-// form-shown, and narrow-overflow states.
+// Screenshots (uat-screenshots/, not committed) are grabbed for the
+// form-hidden, form-shown, and narrow-overflow states.
 void TestUatSearchAndMarkup::uat_xct_070_toolbarAnchoringAndOverflow() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(
@@ -3807,7 +3786,7 @@ void TestUatSearchAndMarkup::uat_xct_070_toolbarAnchoringAndOverflow() {
     QApplication::processEvents();
 
     const int minW = mw->minimumWidth();
-    QVERIFY2(minW > 0, "MainWindow must carry a minimum width (R3) so the primary "
+    QVERIFY2(minW > 0, "MainWindow must carry a minimum width so the primary "
                        "row never overflows search into its own chevron");
     mw->resize(minW, 750);
     QApplication::processEvents();
@@ -3840,21 +3819,21 @@ void TestUatSearchAndMarkup::uat_xct_070_toolbarAnchoringAndOverflow() {
     grabTo(mw, QStringLiteral("xct070_narrow_overflow.png"));
 
     // ---- Invariant #4: chevron width pinned + neighbours stable ----
-    // The R2 stylesheet (kToolbarExtensionPinStyle) pins the chevron's
+    // The pin stylesheet (kToolbarExtensionPinStyle) pins the chevron's
     // *content* width to 20px. The realised widget width is style-
     // dependent: Fusion frames it with ~1px on each side (→ 22px), other
     // styles add a different frame — so a hardcoded "== 22" only passes
     // under Fusion/headless-Linux and is a portability trap. Assert a
     // style-relative window instead: >= 20 (the stylesheet min-width
     // floor) and <= 24 (a generous frame allowance). This still
-    // discriminates against the R2 stylesheet being removed — the
+    // discriminates against the pin stylesheet being removed — the
     // unpinned default extent is ~12px, which is < 20 and fails the floor.
     constexpr int kChevronMinPin = 20; // stylesheet min-width floor
     constexpr int kChevronMaxPin = 24; // + frame allowance
     const int pinnedW = markupExt->width();
     QVERIFY2(pinnedW >= kChevronMinPin && pinnedW <= kChevronMaxPin,
              qPrintable(QStringLiteral("pinned chevron width %1 must be in the "
-                                       "style-relative range [%2,%3] (removing the R2 "
+                                       "style-relative range [%2,%3] (removing the pin "
                                        "stylesheet drops it to the ~12px default)")
                             .arg(pinnedW)
                             .arg(kChevronMinPin)
@@ -3919,16 +3898,16 @@ void TestUatSearchAndMarkup::uat_xct_070_toolbarAnchoringAndOverflow() {
     // width does not depend on the overflow state.
     QCOMPARE(pinnedW2, pinnedW);
 
-    // ---- R3 open-search overflow guard (ADR 0007, Option A, R3) ----
+    // ---- Open-search overflow guard (window minimum width) ----
     // The window minimum-width floor must fold in the OPENED search bar's
     // footprint, not merely the collapsed search icon it measured at build
     // time. Otherwise, at the minimum width, a user who OPENS Find gets the
     // SearchBar (maxWidth 360, non-trivial minimumSizeHint) shoved into the
     // main toolbar's OWN extension chevron — the exact HIG "trailing items
-    // stay visible at all sizes" violation R3 exists to prevent. Reproduce
-    // it: at the window minimum width, open the search bar and assert it
-    // sits fully inside the primary row and the main toolbar's own chevron
-    // never appears.
+    // stay visible at all sizes" violation the minimum width prevents.
+    // Reproduce it: at the window minimum width, open the search bar and
+    // assert it sits fully inside the primary row and the main toolbar's
+    // own chevron never appears.
     markupTb->hide();
     formTb->hide();
     mw->resize(mw->minimumWidth(), 750);
@@ -4039,16 +4018,16 @@ void TestUatSearchAndMarkup::uat_xct_074_formActivationWhileMarkupVisibleKeepsMa
 // row-break placement from the blob (matched by object name), which is
 // a *different* channel than the explicit markupToolbarVisible bool
 // RecentEntry also carries — restoreState() runs first and can silently
-// overwrite the construction-time order ADR 0007 established, even
-// though none of the three toolbars are user-movable and there is
-// therefore never a legitimate reason for the blob to carry a different
-// order. This reproduces exactly that: a blob saved under the PRE-ADR-
-// 0007 order (markup, form+break, main with NO break — main a tenant on
-// form's row) is planted as this document's persisted view-state, then
-// the document is opened for real. Before the fix
+// overwrite the construction-time order (main toolbar first, alone on
+// the top row), even though none of the three toolbars are user-movable
+// and there is therefore never a legitimate reason for the blob to carry
+// a different order. This reproduces exactly that: a blob saved under
+// the OLD order (markup, form+break, main with NO break — main a tenant
+// on form's row) is planted as this document's persisted view-state,
+// then the document is opened for real. Before the fix
 // (MainWindow::reassertToolbarLayout()), opening this document left
 // main looking fine until the form toolbar was shown — at which point
-// main jumped ~184px right, exactly the ADR 0007 "~183px" bug,
+// main jumped ~184px right, the original toolbar-anchoring bug,
 // resurrected from disk on a build that already has the construction-
 // time fix.
 void TestUatSearchAndMarkup::uat_xct_075_staleWindowStateBlobDoesNotResurrectOldToolbarOrder() {
@@ -4057,9 +4036,9 @@ void TestUatSearchAndMarkup::uat_xct_075_staleWindowStateBlobDoesNotResurrectOld
         m_scratch.filePath(QStringLiteral("uat_xct_075.pdf")), QStringLiteral("fixture"));
 
     // Build a throwaway QMainWindow that mimics the PRE-fix construction
-    // order exactly (see ADR 0007 "what ships today"): markup added,
-    // form added with a break before it, main added LAST with NO break
-    // before it (so main tenants on form's row).
+    // order exactly: markup added, form added with a break before it,
+    // main added LAST with NO break before it (so main tenants on form's
+    // row).
     QMainWindow legacy;
     auto *legacyMain = new QToolBar(QStringLiteral("Main"), &legacy);
     legacyMain->setObjectName(QStringLiteral("MainToolbar"));
@@ -4116,7 +4095,7 @@ void TestUatSearchAndMarkup::uat_xct_075_staleWindowStateBlobDoesNotResurrectOld
     const QPoint mainOriginFormShown = mainTb->mapTo(mw, QPoint(0, 0));
     grabTo(mw, QStringLiteral("xct075_stale_blob_form_shown.png"));
     QVERIFY2(mainOriginFormShown == mainOriginAfterOpen,
-             qPrintable(QStringLiteral("a stale windowState blob resurrected the pre-ADR-0007 "
+             qPrintable(QStringLiteral("a stale windowState blob resurrected the old "
                                        "toolbar order: main moved from (%1,%2) to (%3,%4) when "
                                        "the form toolbar was shown")
                             .arg(mainOriginAfterOpen.x())
@@ -4246,7 +4225,7 @@ void TestUatSearchAndMarkup::uat_xct_077_staleWindowStateBlobViaPerTypeDefaultAl
     const QString pdfPath = writePdfWithKeyword(
         m_scratch.filePath(QStringLiteral("uat_xct_077.pdf")), QStringLiteral("fixture"));
 
-    // Same throwaway pre-ADR-0007-order QMainWindow as UAT-XCT-075.
+    // Same throwaway old-order QMainWindow as UAT-XCT-075.
     QMainWindow legacy;
     auto *legacyMain = new QToolBar(QStringLiteral("Main"), &legacy);
     legacyMain->setObjectName(QStringLiteral("MainToolbar"));
@@ -4297,7 +4276,7 @@ void TestUatSearchAndMarkup::uat_xct_077_staleWindowStateBlobViaPerTypeDefaultAl
     const QPoint mainOriginFormShown = mainTb->mapTo(mw, QPoint(0, 0));
     QVERIFY2(mainOriginFormShown == mainOriginAfterOpen,
              qPrintable(QStringLiteral("per-type restore path: a stale windowState blob "
-                                       "resurrected the pre-ADR-0007 toolbar order: main moved "
+                                       "resurrected the old toolbar order: main moved "
                                        "from (%1,%2) to (%3,%4) when the form toolbar was shown")
                             .arg(mainOriginAfterOpen.x())
                             .arg(mainOriginAfterOpen.y())
@@ -4305,18 +4284,17 @@ void TestUatSearchAndMarkup::uat_xct_077_staleWindowStateBlobViaPerTypeDefaultAl
                             .arg(mainOriginFormShown.y())));
 }
 
-// UAT-XCT-079 / SC-CRIT-2 (docs/audit-2026-07-31-g10-deference.md; gate
-// G10, AGENTS.md): MarkupToolbar::setToolVisible() used to hide individual
-// tool QActions (Underline/Highlight/StrikeOut on hasTextLayer(); Instant
+// UAT-XCT-079 — Markup tools must not move when the document type
+// changes. MarkupToolbar::setToolVisible() used to hide individual tool
+// QActions (Underline/Highlight/StrikeOut on hasTextLayer(); Instant
 // Alpha/Smart Lasso on image+SAM eligibility). Hiding an action inside a
 // QToolBar collapses its slot, shifting every action after it — Redact,
 // Stroke, Fill, Width, and Dash all moved switching between an OCR'd PDF
-// tab and a plain-image tab. Fixed by MarkupToolbar::setToolEnabled()
-// (disable-with-tooltip, never hide — see
-// docs/decision-records/2026-08-01-markup-toolbar-disable-not-hide.md).
-// This drives the exact repro: two tabs in one window, one with a text
-// layer and one without, and asserts every trailing control's absolute
-// position across both directions of the switch.
+// tab and a plain-image tab. MarkupToolbar::setToolEnabled() disables
+// with a tooltip instead and never hides. This drives the exact repro:
+// two tabs in one window, one with a text layer and one without, and
+// asserts every trailing control's absolute position across both
+// directions of the switch.
 void TestUatSearchAndMarkup::uat_xct_079_markupToolbarActionsStayPutAcrossDocumentTypeSwitch() {
     QVERIFY(m_scratch.isValid());
     auto *app = qobject_cast<Application *>(qApp);
@@ -4397,8 +4375,8 @@ void TestUatSearchAndMarkup::uat_xct_079_markupToolbarActionsStayPutAcrossDocume
     dv->setCurrentIndex(1);
     QApplication::processEvents();
     QVERIFY2(!underline->isEnabled(), "text-aware tools must disable on a plain image");
-    QVERIFY2(underline->isVisible(), "G10: a disabled tool stays in the toolbar, not hidden");
-    QVERIFY2(!underline->toolTip().isEmpty(), "G3: a disabled control states why");
+    QVERIFY2(underline->isVisible(), "a disabled tool stays in the toolbar, not hidden");
+    QVERIFY2(!underline->toolTip().isEmpty(), "a disabled control states why");
     QCOMPARE(pos(redactWidget), redactBaseline);
     QCOMPARE(pos(strokeBtn), strokeBaseline);
     QCOMPARE(pos(fillBtn), fillBaseline);
@@ -4417,15 +4395,15 @@ void TestUatSearchAndMarkup::uat_xct_079_markupToolbarActionsStayPutAcrossDocume
     QCOMPARE(pos(dashCombo), dashBaseline);
 }
 
-// UAT-XCT-080 / SC-MOD-1 (docs/audit-2026-07-31-g10-deference.md; gate
-// G10, AGENTS.md): SearchBar's match counter used to hide() with no
-// query and show() once matches existed, shifting Prev/Next/Close
-// sideways by the counter's own width the moment the match count crossed
-// zero. Fixed by never hiding the counter (SearchBar.cpp) — it stays at a
-// fixed width, blank when there is nothing to report. This drives
-// setMatchCounter() directly (no real search backend needed) and asserts
-// the three buttons' absolute positions across both directions of the
-// zero-match crossing.
+// UAT-XCT-080 — SearchBar's Prev/Next/Close must not move as the match
+// count changes. The counter used to hide() with no query and show()
+// once matches existed, shifting Prev/Next/Close sideways by the
+// counter's own width the moment the match count crossed zero. Fixed by
+// never hiding the counter (SearchBar.cpp) — it stays at a fixed width,
+// blank when there is nothing to report. This drives setMatchCounter()
+// directly (no real search backend needed) and asserts the three
+// buttons' absolute positions across both directions of the zero-match
+// crossing.
 void TestUatSearchAndMarkup::uat_xct_080_searchBarNavButtonsStayPutAsMatchCountCrossesZero() {
     QVERIFY(m_scratch.isValid());
     const QString pdfPath = writePdfWithKeyword(

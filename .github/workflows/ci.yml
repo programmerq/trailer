@@ -25,7 +25,7 @@ on:
     # *required* checks, path-skipped PRs would hang on "Expected" — pair
     # this with a same-name no-op workflow on the inverse paths, or drop
     # paths-ignore. This is one reason wayland-smoke should stay a
-    # non-required (advisory) check for now (see docs/ci/wayland-tier.md).
+    # non-required (advisory) check for now.
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -71,10 +71,10 @@ concurrency:
 #     (`c++: fatal error: Killed signal terminated program cc1plus`).
 #   * CTEST_PARALLEL_LEVEL: 2 — deliberately NOT raised in lockstep.
 #     Two offscreen tests are known to fail only under CPU contention
-#     (docs/backlog/2026-08-03-load-sensitive-offscreen-test-races.md:
-#     test_perf_lazy_open and uat ocr_ev_20), so widening the test tier
-#     to 4 would buy a few seconds and pay for it in flakes. Raise this
-#     only once that backlog item closes.
+#     (test_perf_lazy_open, T-28; uat ocr_ev_20, which can read the progress
+#     widget before it reaches Terminal), so widening the test tier to 4
+#     would buy a few seconds and pay for it in flakes. Raise this only
+#     once both are fixed.
 env:
   CMAKE_BUILD_PARALLEL_LEVEL: 4
   CTEST_PARALLEL_LEVEL: 2
@@ -219,24 +219,24 @@ jobs:
     # This is the ONE check that proves Trailer loads the *wayland* Qt
     # platform plugin, maps a real xdg-shell surface on a real compositor,
     # and paints actual UI into it. Offscreen unit tests and the Wine tier
-    # structurally cannot prove that. See docs/ci/wayland-tier.md.
+    # structurally cannot prove that.
     #
     # The unit suite and UAT are DELIBERATELY NOT run under Wayland here
     # (they stay on offscreen in the build-and-test / release jobs), for
-    # honest, documented reasons from the Phase 1 investigation:
+    # honest reasons found when this tier was set up:
     #   * Unit suite under Wayland is 57/60, not 60/60. `test_dirty_marker_zoom`
-    #     HANGS: MainWindow::closeEvent (src/ui/MainWindow.cpp:4432)
+    #     HANGS: MainWindow::closeEvent
     #     auto-accepts the unsaved-changes modal ONLY under offscreen/minimal;
     #     under wayland it shows the real Save/Discard/Cancel dialog and blocks
     #     forever with no user. `test_image_scale` fails on fractional-scaling
     #     rounding (real-compositor DPR vs offscreen dpr=1), and
     #     `test_perf_freehand_repaint` is a wall-time perf budget that is noise
     #     under a compositor (the same `perf` tier the Wine job drops).
-    #   * UAT can't even be pointed at Wayland yet: tests/uat/CMakeLists.txt:15
+    #   * UAT can't even be pointed at Wayland yet: tests/uat/CMakeLists.txt
     #     forces QT_QPA_PLATFORM=offscreen as an unconditional per-test
     #     ENVIRONMENT property (overriding an ambient wayland), and the same
     #     modal hang hits 5 UAT binaries.
-    # Moving those under Wayland needs the Phase 3 modal-skip fix + a UAT
+    # Moving those under Wayland needs a modal-skip fix + a UAT
     # platform opt-in first; gating a fast PR loop on a known modal hang would
     # be dishonest bookkeeping. This mirrors the Wine tier's honest
     # `--label-exclude 'uat|perf'` exclusion, stated inline rather than hidden.
@@ -274,15 +274,14 @@ jobs:
         # install. On a GitHub-hosted runner neither package is preinstalled,
         # so this always installs; the `dpkg -s` probe is kept because the
         # same step has to stay correct on any image that does bake them in
-        # (docker/runner/Dockerfile does — see docs/ci/custom-runner-image.md).
+        # (docker/runner/Dockerfile does).
         #
         # sway drags a real dependency tree over the network on every run, so
         # a single mirror hiccup could red-gate unrelated PRs. Wrap
         # update+install in a bounded retry with backoff (same resilience the
         # toolchain installs use) to ride out a transient failure. Because
         # this job depends on a per-run apt fetch it SHOULD be kept a
-        # NON-REQUIRED (advisory) status check in branch protection — see
-        # docs/ci/wayland-tier.md.
+        # NON-REQUIRED (advisory) status check in branch protection.
         shell: bash
         run: |
           set -euo pipefail
@@ -334,8 +333,8 @@ jobs:
         # maps, then poll-captures with grim until a non-blank 1280x800 frame
         # lands. Self-contained: it uses ImageMagick `identify` when present and
         # falls back to a stdlib Python PNG analyzer otherwise. Deterministic
-        # hard oracle — but keep it a NON-REQUIRED status check until sway+grim
-        # are baked into the runner image (see docs/ci/wayland-tier.md).
+        # hard oracle — but keep it a NON-REQUIRED status check while sway+grim
+        # are apt-installed per run.
         run: bash scripts/wayland-smoke.sh
         env:
           WAYLAND_SMOKE_OUT: ${{ github.workspace }}/wayland-smoke.png

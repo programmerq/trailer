@@ -23,9 +23,8 @@
 // STRUCTURAL precondition instead — the property of the QAction graph
 // that the Cocoa bridge reacts to. That is a real oracle: with zero
 // ApplicationSpecificRole actions in the tree, the bridge has nothing to
-// append, so the duplication cannot occur on any platform. See the PR
-// body / docs/platform-conventions.md §2 for the honest statement of what
-// this does and does not cover.
+// append, so the duplication cannot occur on any platform. An item that
+// really must be app-wide has to be one QAction owned by Application.
 
 #include "app/Application.h"
 #include "ui/MainWindow.h"
@@ -95,7 +94,7 @@ class TestMenuPlacement : public QObject {
     // The invariant the fix must hold: exactly one Feedback Report item in
     // the command surface, however many windows have been opened/closed.
     void feedbackReportIsSinglePerWindowAndSurvivesWindowChurn();
-    // G4: the item lives in the same command surface (Help) on every OS.
+    // The item lives in the same command surface (Help) on every OS.
     void feedbackReportLivesInTheHelpMenu();
 };
 
@@ -180,7 +179,7 @@ void TestMenuPlacement::feedbackReportLivesInTheHelpMenu() {
     }
     QCOMPARE(found, 1);
     QVERIFY(feedback != nullptr);
-    // G3: this action never has an unavailable state — the report degrades
+    // This action never has an unavailable state — the report degrades
     // to header + platform info rather than refusing.
     QVERIFY(feedback->isEnabled());
     // NoRole is set explicitly. Qt's *default* is TextHeuristicRole, which

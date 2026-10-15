@@ -33,9 +33,8 @@ inline constexpr char kScreenCaptureExplainerKey[] = "screen_capture_explainer";
 enum class ScreenCapturePermissionState { Granted, Denied, Undetermined };
 
 // The action a call site should take, derived purely from the permission
-// state. The stills capture flow no longer shows a pre-permission explainer
-// (retired per the capture-permission-preflight ADR / owner decision
-// 2026-07-17), so the decision collapses to two outcomes.
+// state. The stills capture flow shows no pre-permission explainer (the OS
+// prompt is the one dialog), so the decision collapses to two outcomes.
 //   Proceed       — run the capture now (permission is Granted).
 //   RequestAccess — drive the OS permission request (prompts when truly
 //                   undetermined, silent no-op when denied), then capture only
@@ -102,18 +101,18 @@ ScreenCapturePermissionState queryScreenCapturePermissionState();
 bool requestScreenCaptureAccess();
 
 #ifdef TRAILER_UX_RECORDER
-// Recorder builds only (ADR 0014). In these builds Mechanism B — the recorder's
-// live macOS Screen Recording TCC gate in src/uxrecord/ — is the authoritative
-// Screen-Recording surface, and this first-use explainer (Mechanism A) must
-// defer to it so the two flows never double-prompt for the same permission.
+// Recorder builds only. In these builds the recorder's live macOS Screen
+// Recording TCC gate in src/uxrecord/ is the authoritative Screen-Recording
+// surface, and this first-use explainer must defer to it so the two flows
+// never double-prompt for the same permission.
 // Rather than have src/platform/ take a hard compile/link dependency on
 // src/uxrecord/, the recorder INJECTS a "is Screen Recording already granted?"
 // probe here at startup (Application wires it to trailer::uxScreenRecordingGranted()).
 // When the probe is set and reports granted, shouldShowScreenCaptureExplainer()
 // suppresses the explainer. The seam also makes the deference deterministically
 // testable without a live TCC state. Pass an empty std::function to clear it.
-// Entirely absent from default builds, which keep A standalone with no new
-// dependency (ADR 0014 consequences / G14.4).
+// Entirely absent from default builds, which keep the explainer standalone
+// with no new dependency.
 void setScreenRecordingGrantedProbe(std::function<bool()> probe);
 #endif
 

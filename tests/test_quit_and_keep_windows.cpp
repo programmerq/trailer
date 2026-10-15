@@ -1,10 +1,9 @@
 // Unit test — Quit modes, intercept, and kept-windows restore
-// (macOS "Quit and Keep Windows";
-// docs/decision-records/2026-07-16-quit-and-keep-windows.md).
+// (macOS "Quit and Keep Windows").
 //
 // Exercises the cross-platform, headless core of the feature through the
 // Application quit seams (performQuit + keeps-windows probe) and the
-// MainWindow prompt seams (close-response + Save-As path) that Item 1 added:
+// MainWindow prompt seams (close-response + Save-As path):
 //
 //   * KeepWindows quit raises NO prompt, writes the draft store, and quits.
 //   * Restore recreates the kept windows/documents; an untitled draft comes
@@ -15,13 +14,12 @@
 //     all-Discard / all-Save let the quit proceed.
 //   * The ⌥⌘Q "Quit and Keep Windows" QAction exists with the correct
 //     shortcut and routes to the KeepWindows path.
-//   * The OS NSQuitAlwaysKeepsWindows composition (D3): with the probe on,
+//   * The OS NSQuitAlwaysKeepsWindows composition: with the probe on,
 //     a plain Quit takes the keep path and the Option alternate offers the
 //     complement (prompt-and-close-clean).
 //
 // The native in-place Option menu swap and a real relaunch are NOT
-// exercisable offscreen; they are covered by the record's owner-manual
-// gate (clause 7).
+// exercisable offscreen; T-52: check them on a real Mac.
 
 #include "annotation/Annotation.h"
 #include "annotation/AnnotationJson.h"
@@ -72,8 +70,7 @@ namespace {
 // (matches tests/test_discard_file_integrity.cpp): Wine exports
 // ntdll!wine_get_version; real Windows and Linux/macOS return false. Used to
 // QSKIP the two cases that delete a file still held open by a live document —
-// see kWineOpenFileDeleteSkip and docs/backlog/2026-07-21-wine-keep-restore-
-// file-move-open-handle.md.
+// see kWineOpenFileDeleteSkip.
 bool runningUnderWine() {
 #ifdef Q_OS_WIN
     HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
@@ -95,14 +92,13 @@ bool runningUnderWine() {
 // thread-handle limitation). The real keep flow releases the document when the
 // process exits at ⌥⌘Q, before the user moves the file. Skipped under Wine (our
 // only automated Windows signal; the native-Windows job is disabled); asserted
-// in full on Linux. See docs/backlog/2026-07-21-wine-keep-restore-file-move-
-// open-handle.md.
+// in full on Linux. T-58: release the document before the remove, then drop
+// the skip.
 constexpr const char *kWineOpenFileDeleteSkip =
     "Wine/Windows: QFile::remove() of the kept file fails while the original "
     "document still holds it open (the harness keeps the pre-quit document alive "
     "via a no-op performQuit); POSIX unlink-of-open succeeds, so Linux asserts "
-    "this in full. See docs/backlog/2026-07-21-wine-keep-restore-file-move-open-"
-    "handle.md.";
+    "this in full. See TODO.md T-58.";
 
 // A deterministic, non-flat image so a lossy or truncated round-trip is
 // caught. ARGB32 with a per-pixel gradient across all channels.
@@ -234,7 +230,7 @@ PdfDocument *addPdfWindow(Application *app, const QString &path,
 }
 
 // Open a REAL on-disk image, then DELETE its backing file underneath the open
-// document (CF-7 "deleted underneath"). The doc stays CLEAN (never edited) and
+// document ("deleted underneath"). The doc stays CLEAN (never edited) and
 // TITLED, but its file is gone, so its in-memory raster is the last copy:
 // isDirty()==false, isUntitled()==false, externalChangeState()==Deleted, and
 // hasUnsavedWork()==true. Returns the raw doc pointer (owned by the window).
@@ -453,7 +449,7 @@ void TestQuitAndKeepWindows::init() {
     m_app = qobject_cast<Application *>(qApp);
     QVERIFY(m_app);
     // Default the seams to a no-op quit + OS-keeps-off so a stray quit in a
-    // slot cannot terminate the test process and D3 composition is neutral.
+    // slot cannot terminate the test process and the OS setting is neutral.
     m_app->setPerformQuitForTesting([] {});
     m_app->setQuitKeepsWindowsProbeForTesting([] { return false; });
     m_app->sessionDraftStore().clear();
@@ -1492,7 +1488,7 @@ void TestQuitAndKeepWindows::keepWindowsDirtyTitledImageRestoresDirtyWithPath() 
 }
 
 void TestQuitAndKeepWindows::deletedUnderneathDocIsPromptedOnNormalQuit() {
-    // CF-7 × #78 integration: a CLEAN, TITLED doc whose backing file was
+    // Deleted underneath, ⌘Q path: a CLEAN, TITLED doc whose backing file was
     // DELETED underneath has hasUnsavedWork()==true but isDirty()==false. The
     // ⌘Q (Normal) quit collection must include it — its in-memory buffer is
     // the last copy — so ⌘Q PROMPTS instead of silently quitting and dropping
@@ -1536,7 +1532,7 @@ void TestQuitAndKeepWindows::deletedUnderneathDocIsPromptedOnNormalQuit() {
 }
 
 void TestQuitAndKeepWindows::keepWindowsKeepsDeletedDocWithoutWritingBackingFile() {
-    // CF-7 × #78 integration, keep path: ⌥⌘Q (Quit and Keep Windows) keeps a
+    // Deleted underneath, keep path: ⌥⌘Q (Quit and Keep Windows) keeps a
     // deleted-underneath image doc WITHOUT prompting and WITHOUT writing its
     // (deleted) backing file. The raster is the last copy, so it is DRAFTED
     // into the session store (app-data) — not stored as a dangling path ref —

@@ -1,5 +1,5 @@
 // Unit tests for SignatureStore — the PNG + JSON on-disk layout that
-// backs the "Manage Signatures" dialog (design doc §6.4.3).
+// backs the "Manage Signatures" dialog.
 
 #include "signatures/SignatureStore.h"
 
