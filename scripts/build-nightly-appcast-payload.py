@@ -43,7 +43,7 @@ def main() -> int:
                 "Automated nightly build of Trailer's main branch. "
                 "The update CHANNEL is ed25519-signed; the app bundle "
                 "itself is unsigned/un-notarized (no Apple Developer "
-                "Program enrollment) -- see PHILOSOPHY.md."
+                "Program enrollment)."
             ),
             "assets": {
                 "macos": {

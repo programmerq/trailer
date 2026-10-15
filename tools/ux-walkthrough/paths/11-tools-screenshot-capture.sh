@@ -37,10 +37,10 @@
 #             ("Information"/"Success"/…) the grep would miss.
 #
 # HONEST PLATFORM BOUNDARIES:
-#   * Window/region capture are disabled on Linux (a G3 non-lying-control state
-#     with an explanatory note in the dialog); only whole-screen runs here.
+#   * Window/region capture are disabled on Linux (T-15; the dialog
+#     says why); only whole-screen runs here.
 #   * The macOS native TCC "Screen Recording" permission prompt is real-Mac only
-#     and routed to the owner checklist. Under Xvfb there is no OS permission
+#     and left to a real-Mac check (T-52). Under Xvfb there is no OS permission
 #     gate, so the whole app-side flow runs to completion.
 set -uo pipefail
 export PATH_NAME="tools-screenshot-capture"

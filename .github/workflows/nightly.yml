@@ -546,7 +546,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist/trailer-linux-x86_64
           cp build/trailer dist/trailer-linux-x86_64/
-          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+          cp LICENSE THIRD_PARTY_LICENSES.md PRODUCT.md README.md \
              dist/trailer-linux-x86_64/
           cp -r licenses/third-party dist/trailer-linux-x86_64/
           (cd dist && tar -czf nightly-trailer-linux-x86_64.tar.gz trailer-linux-x86_64)
@@ -645,7 +645,7 @@ jobs:
             bash scripts/build-windows.sh --in-container
           mkdir -p dist/trailer-windows-x86_64/imageformats
           cp "$QT_WIN_DIR"/plugins/imageformats/*.dll dist/trailer-windows-x86_64/imageformats/
-          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+          cp LICENSE THIRD_PARTY_LICENSES.md PRODUCT.md README.md \
              dist/trailer-windows-x86_64/
           cp -r licenses/third-party dist/trailer-windows-x86_64/
 
@@ -1231,7 +1231,7 @@ jobs:
             if [ -n "$WIN_TOTAL" ] && [ "$WIN_PASSED" = "$WIN_TOTAL" ]; then
               WIN_ROW="✅ build+unit+UAT (Wine UAT $WIN_PASSED/$WIN_TOTAL) — $WIN_COMPARE"
             elif [ -n "$WIN_TOTAL" ]; then
-              WIN_ROW="✅ build+unit, ⚠️ Wine UAT $WIN_PASSED/$WIN_TOTAL — $WIN_COMPARE — non-gating, see docs/backlog/2026-07-24-wine-uat-failures-triage.md"
+              WIN_ROW="✅ build+unit, ⚠️ Wine UAT $WIN_PASSED/$WIN_TOTAL — $WIN_COMPARE — non-gating (TODO.md T-58)"
             else
               WIN_ROW="✅ build+unit, ⚠️ Wine UAT count unavailable this run — $WIN_COMPARE"
             fi
@@ -1257,14 +1257,14 @@ jobs:
               "${{ steps.uat_compare.outputs.macos-suite-delta }}")"
             if [ "$MAC_CRASHED" = "true" ]; then
               if [ -n "$MAC_TOTAL" ]; then
-                MAC_ROW="✅ build+unit, 🔥 macOS UAT CRASHED ($MAC_PASSED/$MAC_TOTAL) — $MAC_COMPARE — informational, non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
+                MAC_ROW="✅ build+unit, 🔥 macOS UAT CRASHED ($MAC_PASSED/$MAC_TOTAL) — $MAC_COMPARE — informational, non-gating (TODO.md T-51)"
               else
-                MAC_ROW="✅ build+unit, 🔥 macOS UAT crashed (no count available this run) — $MAC_COMPARE — informational, non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
+                MAC_ROW="✅ build+unit, 🔥 macOS UAT crashed (no count available this run) — $MAC_COMPARE — informational, non-gating (TODO.md T-51)"
               fi
             elif [ -n "$MAC_TOTAL" ] && [ "$MAC_PASSED" = "$MAC_TOTAL" ]; then
               MAC_ROW="✅ build+unit+UAT ($MAC_PASSED/$MAC_TOTAL) — $MAC_COMPARE"
             elif [ -n "$MAC_TOTAL" ]; then
-              MAC_ROW="✅ build+unit, ⚠️ macOS UAT $MAC_PASSED/$MAC_TOTAL — $MAC_COMPARE — non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
+              MAC_ROW="✅ build+unit, ⚠️ macOS UAT $MAC_PASSED/$MAC_TOTAL — $MAC_COMPARE — non-gating (TODO.md T-51)"
             else
               MAC_ROW="✅ build+unit, ⚠️ macOS UAT count unavailable this run — $MAC_COMPARE"
             fi
@@ -1274,8 +1274,8 @@ jobs:
 
           {
             echo "Automated nightly build of Trailer's \`main\` branch. Unsigned,"
-            echo "like dev-build.yml's artifacts — see PHILOSOPHY.md for what to"
-            echo "expect from a 0.x build. A lane below marked ❌ is NOT included;"
+            echo "like dev-build.yml's artifacts. As a 0.x build, settings and behaviour"
+            echo "can still change between versions. A lane below marked ❌ is NOT included;"
             echo "see its job log in this run for what failed. Windows' Wine UAT"
             echo "and macOS's UAT counts (⚠️/🔥) are informational only — neither"
             echo "blocks the artifact; see each row's linked backlog item. The"
@@ -1423,7 +1423,7 @@ jobs:
             exit 0
           fi
           if [ -z "${TRAILER_UPDATE_SIGNING_KEY_B64:-}" ]; then
-            echo "::warning::TRAILER_UPDATE_SIGNING_KEY secret is not set — skipping the signed update feed for tonight. See docs/decision-records/2026-07-30-nightly-auto-update-channel.md for the exact key-generation and secret-storage commands."
+            echo "::warning::TRAILER_UPDATE_SIGNING_KEY secret is not set — skipping the signed update feed for tonight. See RELEASING.md \"Update-signing key\" for the key-generation and secret-storage commands."
             exit 0
           fi
           # "Create tag + GitHub Release" above may have exited early (its

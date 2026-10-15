@@ -443,7 +443,7 @@ jobs:
             bash scripts/build-windows.sh --in-container
           mkdir -p dist/trailer-windows-x86_64/imageformats
           cp "$QT_WIN_DIR"/plugins/imageformats/*.dll dist/trailer-windows-x86_64/imageformats/
-          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+          cp LICENSE THIRD_PARTY_LICENSES.md PRODUCT.md README.md \
              dist/trailer-windows-x86_64/
 
       - name: Upload Windows artifact

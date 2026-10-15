@@ -38,15 +38,15 @@ Pick the version number **at release time**, not in advance. Apply
 - **In 0.x**, a backward-incompatible change to user-visible
   behaviour, on-disk formats (settings, signature layout, recent-
   files schema, annotation persistence), the `IDocument`
-  interface, or the CLI surface bumps the **minor**. Until 1.0 we
-  permit that on minor bumps — see [PHILOSOPHY.md](PHILOSOPHY.md)
-  "What 1.0 means."
+  interface, or the CLI surface bumps the **minor**. Until 1.0 that
+  is allowed on any minor bump: "stable" is a goal, not a claim.
 - **Backward-compatible feature work** can also bump the minor in
   0.x, or sit alongside fixes in a patch — judgment call.
 - **Bugfix-only releases** bump the **patch**: `0.2.0 → 0.2.1`.
-- **1.0** is declared when on-disk formats and public APIs have
-  been stable for one or two minor cycles without thrash, *not* on
-  a calendar date. See PHILOSOPHY.md.
+- **1.0** is declared when PRODUCT.md's "Done means" jobs pass and
+  on-disk formats, menus, shortcuts and defaults have been stable
+  for one or two minor cycles without thrash, *not* on a calendar
+  date.
 
 Don't plan toward a future version number ("ship X by 0.3.0") —
 let the version fall out of the diff.
@@ -242,8 +242,8 @@ tagged release:
   exception: Windows' Wine UAT is **non-gating** (owner decision,
   2026-07-24) — a real Windows CI runner doesn't exist yet, Wine is a
   stand-in, and Wine UAT's own quirks (bootstrap run 30104846942 found
-  17/40 failures — see `docs/backlog/2026-07-24-wine-uat-failures-
-  triage.md`) shouldn't block a build+unit-green Windows artifact. The
+  17/40 failures; replacing Wine with native Windows CI is T-58)
+  shouldn't block a build+unit-green Windows artifact. The
   Wine UAT pass count still surfaces, non-silently, as an informational
   ⚠️ annotation on the release body's Windows row.
 - Each successful night is tagged `nightly-YYYYMMDD` (immutable, one per
@@ -279,6 +279,34 @@ tagged release:
   the Release, and the retention cleanup (previewed in the run's step
   summary instead). Pass `dry_run: false` to cut a real nightly on
   demand rather than waiting for the schedule.
+
+---
+
+## Update-signing key
+
+Every build trusts one ed25519 public key, embedded at build time and
+never fetched at runtime, so a compromised feed host can't name its own
+key.
+
+- The private key is the `TRAILER_UPDATE_SIGNING_KEY` GitHub Actions
+  secret: the base64 of a PEM made with
+  `openssl genpkey -algorithm ed25519 -out key.pem` (OpenSSL 3.x;
+  macOS's LibreSSL can't, see `scripts/find-openssl-ed25519.sh`), stored
+  as `base64 < key.pem | tr -d '\n'`. Keep a second copy in a password
+  manager: losing the key strands every installed build on its current
+  version.
+- CI derives the public key from that secret with
+  `scripts/derive-update-pubkey.sh --base64 -` and passes it to every
+  build lane as `-DTRAILER_UPDATE_PUBKEY`, so the trusted key and the
+  signing key can't disagree. Nothing is committed. A build without it
+  (local, PR, fork) has no update channel, and Check for Updates is
+  disabled with a tooltip. To make an update-capable local build:
+  `-DTRAILER_UPDATE_PUBKEY="$(scripts/derive-update-pubkey.sh key.pem)"`.
+- `nightly.yml` signs `appcast-nightly.json` with
+  `scripts/sign-update-feed.sh`. Without the secret that step warns and
+  skips, and the night ships with no feed.
+- Rotation isn't built. The plan: before switching keys, publish a
+  "new public key" entry signed by the old key.
 
 ---
 
@@ -348,8 +376,7 @@ build is failing and you keep pushing fixes:
 ## Things to keep an eye on
 
 - **Auto-updater integration.** **Wired for the nightly channel**
-  (2026-07-30, see
-  [`docs/decision-records/2026-07-30-nightly-auto-update-channel.md`](docs/decision-records/2026-07-30-nightly-auto-update-channel.md)):
+  (2026-07-30; key handling in "Update-signing key" below):
   a custom checker (`src/update/`), not Sparkle, verifying an
   ed25519-signed feed. `nightly.yml`'s "Build + sign nightly update
   feed" step (right after "Create tag + GitHub Release") signs and

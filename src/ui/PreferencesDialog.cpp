@@ -327,11 +327,9 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
         m_updatesChannelCombo->setObjectName(QStringLiteral("updatesChannelCombo"));
         m_updatesChannelCombo->addItem(tr("Nightly"), QStringLiteral("nightly"));
         m_updatesChannelCombo->addItem(tr("Stable"), QStringLiteral("stable"));
-        // Stable has no signed feed yet (release.yml doesn't publish one
-        // — only nightly.yml does today). Present-but-disabled rather
-        // than absent, so the control's shape doesn't need to change
-        // when the stable feed is wired (G3: the tooltip states why AND
-        // where the status lives).
+        // Stable has no signed feed yet (release.yml doesn't publish one;
+        // only nightly.yml does). T-14 removes this placeholder; T-69
+        // publishes the stable feed.
         const auto *stableModel = m_updatesChannelCombo->model();
         const int stableIndex = m_updatesChannelCombo->findData(QStringLiteral("stable"));
         if (stableIndex >= 0) {
@@ -340,8 +338,7 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
             if (itemModel) {
                 if (QStandardItem *item = itemModel->item(stableIndex)) {
                     item->setEnabled(false);
-                    item->setToolTip(tr("Stable-channel updates aren't published yet — "
-                                        "see ROADMAP.md \"Signed-update channel\". "
+                    item->setToolTip(tr("Stable-channel updates aren't published yet. "
                                         "Nightly is available today."));
                 }
             }

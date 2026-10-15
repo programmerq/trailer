@@ -35,10 +35,10 @@
 # under Tools. We drive Tools deliberately — trust the code.
 #
 # HONEST PLATFORM BOUNDARIES:
-#   * Window/region capture are disabled on Linux (a G3 non-lying-control
-#     state with an explanatory note in the dialog); only whole-screen runs.
+#   * Window/region capture are disabled on Linux (T-15; the dialog
+#     says why); only whole-screen runs.
 #   * The macOS native TCC "Screen Recording" permission prompt is real-Mac
-#     only and is routed to the owner checklist (SKILL.md). Under Xvfb there
+#     only and is left to a real-Mac check (T-52). Under Xvfb there
 #     is no OS permission gate, so we drive the whole app-side flow to
 #     completion.
 set -uo pipefail

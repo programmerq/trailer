@@ -9,13 +9,13 @@
 #      Screenshot ▸ (Whole Screen / Window / Selected Area), Scanner, Camera —
 #      both with NO document open and WITH a document open (the "vanish once a
 #      window is key" regression #86 fixes). Scanner/Camera are present but
-#      disabled with an honest tooltip (G3); Window/Selected-Area capture are
+#      disabled with an honest tooltip; Window/Selected-Area capture are
 #      disabled on Linux (QScreen fallback only does whole-screen).
 #   2. ⌘N / Ctrl+N == New from Clipboard. With an IMAGE on the clipboard the
 #      item is enabled and opens the image as a document.
 #   3. NON-IMAGE (plain text, not a file path) on the clipboard: the item is
 #      disabled and Ctrl+N is a SILENT no-op — NO dialog narrating the no-op
-#      (PHILOSOPHY → "No popup that just says no"). This is the owner taste rule.
+#      (no popup that only says no). This is the owner's taste rule.
 #
 # Resilient selectors: the File menu is opened by its Alt+F mnemonic (menu "f");
 # New from Clipboard is triggered by its QKeySequence::New shortcut (Ctrl+N),
@@ -37,7 +37,7 @@ step "file-menu-no-doc" \
 launch                      # no file arg -> empty state
 menu "f"                    # Alt+F opens the File menu; aboutToShow re-checks the clipboard
 note "clipboard not yet primed -> New from Clipboard should be DISABLED with the 'Copy an image or a file…' tooltip"
-note "acquire group: Screenshot ▸ present; Scanner + Camera present-but-disabled (G3 honest tooltip)"
+note "acquire group: Screenshot ▸ present; Scanner + Camera present-but-disabled (honest tooltip)"
 shot
 press "Escape"             # close the menu
 
@@ -59,7 +59,7 @@ step "text-clipboard-silent-noop" \
     "Ctrl+N with text on the clipboard does nothing and shows NO dialog — silent no-op (owner taste rule)."
 press "ctrl+n"             # trigger via the shortcut; disabled action must NOT fire, and no popup may appear
 _ms_sleep 700
-note "expect: still the empty state, NO 'clipboard is empty' dialog, NO new window (PHILOSOPHY → No popup that just says no)"
+note "expect: still the empty state, NO 'clipboard is empty' dialog, NO new window (no popup that only says no)"
 shot
 
 # --- Step 4: IMAGE clipboard -> menu item becomes enabled ------------------

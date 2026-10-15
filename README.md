@@ -1,19 +1,18 @@
 # Trailer
 
-Cross-platform PDF and image workbench. See [DESIGN.md](DESIGN.md) for the
-full specification, [PHILOSOPHY.md](PHILOSOPHY.md) for the hard
-constraints, and [AGENTS.md](AGENTS.md) for the current phase / sprint
-state.
+macOS Preview, cross-platform: open, read, mark up and lightly edit PDFs
+and images on macOS, Windows and Linux, with one set of habits everywhere.
 
 Trailer reads PDFs and the common image formats, supports markup,
 signatures, form filling, redaction, page operations (rotate / delete /
-move / crop / insert), and on-device ML features (background removal,
-Smart Lasso / Instant Alpha, OCR). It is local-first by construction:
-no accounts, no telemetry, no cloud sync. See `PHILOSOPHY.md` for the
-full list of non-negotiables.
+move / crop / insert), and on-device ML features (OCR, background
+removal, Smart Lasso / Instant Alpha). It is local-first by
+construction: no accounts, no telemetry, no cloud sync.
 
-Releases are tagged `v0.x.0`; see [CHANGELOG.md](CHANGELOG.md) for
-what shipped when, [ROADMAP.md](ROADMAP.md) for what's coming, and
+[PRODUCT.md](PRODUCT.md) says what Trailer is and the rules it follows,
+[TODO.md](TODO.md) holds all open work, and [AGENTS.md](AGENTS.md) says
+how to work on the code. Releases are tagged `v0.x.0`; see
+[CHANGELOG.md](CHANGELOG.md) for what shipped when and
 [RELEASING.md](RELEASING.md) for the maintainer release runbook.
 
 ## Requirements
@@ -184,14 +183,19 @@ default viewer, see
 ## Test
 
 ```sh
-ctest --test-dir build --output-on-failure
+ctest --test-dir build -LE uat --output-on-failure                           # unit + known-bug tests
+QT_QPA_PLATFORM=offscreen ctest --test-dir build -L uat --output-on-failure  # UAT: the whole app, offscreen
 ```
 
-CI runs the build + unit tests on **Linux** (Ubuntu 24.04, GCC) and
-**Windows** (windows-2022, MSVC 2022) on every push and pull request
-(`.github/workflows/ci.yml`). The Linux job uses ccache + mold for
-sub-minute warm builds; the Windows job uses ninja + cl.exe and
-caches the installed Qt via `jurplel/install-qt-action`.
+Known-bug tests (label `known-bug`) assert the correct behaviour for an
+open bug in TODO.md and expect today's failure; AGENTS.md explains how
+they flip when the bug is fixed.
+
+CI (`.github/workflows/ci.yml`) builds and runs the unit tests on
+**Linux** (Ubuntu 24.04, GCC) on every push and pull request, plus a
+MinGW cross-build of **Windows** whose unit tests run under Wine. There
+is no native Windows or macOS CI yet (T-58); the nightly workflow builds
+all three.
 
 ## Release process
 
@@ -255,7 +259,7 @@ fail-fast ordering still do.) Instead they are gated on a
 The macOS DMG contains an Apple Silicon (arm64) self-contained
 `Trailer.app` (Qt frameworks bundled via `macdeployqt`; qpdf
 statically linked from a source build inside CI). An Intel-Mac
-binary is tracked as future work — ONNX Runtime no longer
+binary is tracked as future work (T-30) — ONNX Runtime no longer
 publishes a macOS x86_64 / universal2 prebuilt upstream, so the
 choices are either an ML-disabled build that ships everywhere or a
 third-party ONNX x86_64 bundle; either is acceptable when someone
@@ -269,15 +273,14 @@ bypass users need to run on first launch (`xattr -dr
 com.apple.quarantine /Applications/Trailer.app`). An ed25519-signed
 auto-update channel — a custom checker, not Sparkle — is **shipped
 for the nightly channel** (Help → Check for Updates…, or Preferences
-→ Updates; see
-[`docs/decision-records/2026-07-30-nightly-auto-update-channel.md`](docs/decision-records/2026-07-30-nightly-auto-update-channel.md)).
+→ Updates; key handling is in
+[RELEASING.md](RELEASING.md#update-signing-key)).
 Those signatures protect the update channel itself and don't require
 Apple enrollment — Gatekeeper's quarantine gate is a separate system
 and still applies on every install, updates included; the updater
 clears the quarantine bit on its own downloads, but this has not yet
-been verified against real Gatekeeper enforcement on-device (see the
-decision record and the implementing PR). The stable (tagged-release)
-channel is not wired yet — tracked in [ROADMAP.md](ROADMAP.md).
+been verified against real Gatekeeper enforcement on-device (T-52). The
+stable (tagged-release) channel is not wired yet (T-69).
 
 **Dev builds.** For pre-merge dogfooding, the on-demand
 `.github/workflows/dev-build.yml` workflow (`workflow_dispatch`, or a
@@ -311,34 +314,24 @@ gh workflow run Release --ref=<SHA>
 to seed artifacts for that commit, wait for it to finish, then
 re-run the failed Publish Release job from the Actions tab.
 
-## Philosophy
+## Principles
 
 Trailer is built around a few hard-edged constraints — no ads, no
 telemetry, no accounts, no premium tier, no cloud sync, local-first.
-[PHILOSOPHY.md](PHILOSOPHY.md) spells them out and explains how the
-project intends to stay that way.
+[PRODUCT.md](PRODUCT.md) spells them out.
 
 ## Project docs
 
 | Doc | What it's for |
 |---|---|
-| [DESIGN.md](DESIGN.md) | Full product spec — phases, features, scope. |
-| [PHILOSOPHY.md](PHILOSOPHY.md) | Hard constraints — what stays in, what's off-limits, the friction-reduction rules. |
-| [ROADMAP.md](ROADMAP.md) | Tactical Now / Next / Later view of what's between releases. |
+| [PRODUCT.md](PRODUCT.md) | What Trailer is, who it's for, its priorities, and the rules that decide what it does. |
+| [TODO.md](TODO.md) | The one tracker: all open work, each entry with a pass/fail bar. |
+| [AGENTS.md](AGENTS.md) | How to work on the code, for people and coding agents. `CLAUDE.md` imports it. |
 | [CHANGELOG.md](CHANGELOG.md) | What shipped when, per release tag. Keep-a-Changelog format. |
-| [RELEASING.md](RELEASING.md) | Maintainer release runbook — VERSION bump, tag, draft release notes. |
-| [docs/CONVENTIONS.md](docs/CONVENTIONS.md) | Patterns the code already follows (document adapters, PdfCommand, AnnotationStore, UAT slot naming, vendored deps). Recipe-shaped — for adding new code that fits. |
-| [docs/smoke-session.md](docs/smoke-session.md) | Reference-user smoke-session protocol: a non-maintainer opens a fresh build and runs three tasks. Run before minor-version bumps. |
-| [docs/cross-platform-sprint.md](docs/cross-platform-sprint.md) | Planning artifact grouping current cross-platform packaging items into one sprint. |
-| [docs/in-flight-merge-plan.md](docs/in-flight-merge-plan.md) | Historical: the merge plan for PR #24 (the 4-wave HITL merge — landed 2026-05-20). The three CONVENTIONS sections it drafted are now applied as CONVENTIONS §§11-13; the doc is retained as the dependency / risk record. |
-| [docs/audit-2026-05-19.md](docs/audit-2026-05-19.md) | Multi-perspective audit (privacy / cross-platform / accessibility / failure-mode) with findings + an action register grouping what to do with each. |
-| [docs/packaging-macos.md](docs/packaging-macos.md) | macOS bundling/release reference. |
-| [docs/set-as-default-app.md](docs/set-as-default-app.md) | Per-OS steps to make Trailer the default PDF/image handler (macOS/Windows/Linux), for dogfooding on your own machine. |
-| [docs/icon-guidelines.md](docs/icon-guidelines.md) | Icon-family design brief. |
-| [docs/uat/](docs/uat/) | UAT case specs by area (foundations, viewer, PDF pages, image editing, annotations, cross-cutting, security). Each pairs 1:1 with a slot in `tests/uat/`. |
-| [AGENTS.md](AGENTS.md) | Entry point for AI coding agents. `CLAUDE.md` symlinks here. |
-| [TODO.md](TODO.md) | Deferred-work tracker, including dated HITL pass and smoke-session entries. |
-| [TODO-packaging.md](TODO-packaging.md) | Packaging-specific deferred work. |
+| [RELEASING.md](RELEASING.md) | Maintainer release runbook: VERSION bump, tag, release notes, the update-signing key. |
+| [docs/set-as-default-app.md](docs/set-as-default-app.md) | Per-OS steps to make Trailer the default PDF/image handler. |
+| [icon/README.md](icon/README.md) | How the app icon is generated. |
+| [src/uxrecord/README.md](src/uxrecord/README.md) | The developer-only UX session recorder. |
 | [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) | License attribution for shipped components. |
 
 ## License

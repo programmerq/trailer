@@ -26,9 +26,9 @@ plus PDF:
 | Icon | `.ico` | Optional — low-stakes either way. |
 
 The Linux `.desktop` (`platform/linux/trailer.desktop`) and the Windows MSI
-(`platform/windows/trailer.wxs`) both declare the full list above. Nothing
-in the repo currently supports HEIC/RAW/OpenEXR (Phase 6, unstarted per
-`ROADMAP.md`), so there's nothing to associate for those yet.
+(`platform/windows/trailer.wxs`) both declare the full list above. Trailer doesn't
+open HEIC yet (T-32), and RAW and OpenEXR are out of scope, so there's
+nothing to associate for those.
 
 ---
 
@@ -202,10 +202,8 @@ sudo cmake --install build
 (`.github/workflows/nightly.yml` "Stage Linux artifact" step) contains only
 the `trailer` binary and license text — it does **not** package
 `platform/linux/trailer.desktop`. `xdg-mime default` has nothing to point
-at until you install a `.desktop` file yourself. A backlog item tracks
-fixing this at the source
-(`docs/backlog/2026-07-30-nightly-linux-tarball-missing-desktop-file.md`);
-until then:
+at until you install a `.desktop` file yourself. T-67 tracks fixing
+this at the source; until then:
 
 1. Extract the tarball somewhere permanent, e.g. `~/apps/trailer/`.
 2. Copy the repo's `.desktop` file and point `Exec`/`Icon` at your install:
@@ -224,25 +222,3 @@ until then:
 *before* switching, so you have something to revert to — GNOME's default
 PDF viewer is usually `org.gnome.Evince.desktop` or `evince.desktop`; KDE's
 is usually `org.kde.okular.desktop`).
-
----
-
-## About the dogfood-default gate (read before you flip the switch)
-
-`AGENTS.md`'s **G8** gate defines the "dogfood-default milestone" as *"the
-point at which Trailer becomes the maintainer's own default app for these
-files,"* and that milestone is **owner-declared and observable** — it goes
-live only when the owner adds a `dogfood-default` marker (a dated entry in
-`ROADMAP.md`/the changelog, or a git tag named `dogfood-default`). Once
-that marker exists, the full accessibility checklist
-(`docs/accessibility-checklist.md`) becomes a real gate instead of the
-dormant per-PR no-regress rule it is today (see the existing backlog item
-`docs/backlog/2026-07-12-accessibility-dogfood-gate-marker.md`).
-
-**Following the steps in this doc does not itself declare that milestone.**
-You (the owner) making Trailer your personal default app is exactly the
-real-world event the milestone describes, but G8 only activates when you
-deliberately add the marker — not automatically because a default-app
-setting changed on your machine. Add the marker when you're ready to also
-take on the accessibility-checklist commitment that comes with it, not
-before.

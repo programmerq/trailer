@@ -13,7 +13,7 @@
 #     half — native Dock/Finder chrome, unobservable from any script, real
 #     or CI — and is exactly the gap that let ADR 0009 Option A ship
 #     looking correct while failing on the owner's real Tahoe dogfood (see
-#     docs/backlog/2026-07-17-adaptive-dock-icon-option-b.md). A green
+#     TODO.md T-63). A green
 #     result from this script is evidence toward, never a substitute for,
 #     the real-Mac visual check that backlog item's Threshold requires.
 #
@@ -68,7 +68,6 @@ else
     echo "       This means the ARTIFACT itself does not visibly carry the dark" >&2
     echo "       variant after actool compilation — even before asking whether" >&2
     echo "       macOS renders it. See the full output above for what actool" >&2
-    echo "       actually emitted, and docs/backlog/2026-07-17-adaptive-dock-" >&2
-    echo "       icon-option-b.md for the research context." >&2
+    echo "       actually emitted, and TODO.md T-63 for the research context." >&2
     exit 1
 fi

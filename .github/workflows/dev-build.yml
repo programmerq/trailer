@@ -181,7 +181,7 @@ jobs:
 
       - name: Stage Linux artifact
         # Same portable tarball shape as release.yml's linux-build on main:
-        # the first-party LICENSE plus THIRD_PARTY_LICENSES.md, PHILOSOPHY.md,
+        # the first-party LICENSE plus THIRD_PARTY_LICENSES.md, PRODUCT.md,
         # and README.md, plus the verbatim third-party license bundle
         # (`licenses/third-party/`). #61 landed on main, so release.yml now
         # copies licenses/third-party into its portable staging dir — this
@@ -190,7 +190,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist/trailer-linux-x86_64
           cp build/trailer dist/trailer-linux-x86_64/
-          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+          cp LICENSE THIRD_PARTY_LICENSES.md PRODUCT.md README.md \
              dist/trailer-linux-x86_64/
           # Ship the verbatim upstream dependency license texts alongside
           # the portable binary so the tarball carries the same third-party
@@ -264,7 +264,7 @@ jobs:
         # JPEG export plugin loads at runtime and the import walk can't
         # see runtime-loaded plugins. Mirrors release.yml's current
         # portable bundle on main (first-party LICENSE + THIRD_PARTY_-
-        # LICENSES.md + PHILOSOPHY.md + README.md + the verbatim
+        # LICENSES.md + PRODUCT.md + README.md + the verbatim
         # `licenses/third-party/` bundle). #61 landed, so release.yml now
         # copies licenses/third-party into the zip staging dir — this
         # mirrors it for parity (see the dev-linux note).
@@ -278,7 +278,7 @@ jobs:
             bash scripts/build-windows.sh --in-container
           mkdir -p dist/trailer-windows-x86_64/imageformats
           cp "$QT_WIN_DIR"/plugins/imageformats/*.dll dist/trailer-windows-x86_64/imageformats/
-          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+          cp LICENSE THIRD_PARTY_LICENSES.md PRODUCT.md README.md \
              dist/trailer-windows-x86_64/
           # Ship the verbatim upstream dependency license texts inside the
           # portable zip too, matching what the .msi installs under

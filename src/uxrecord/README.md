@@ -6,10 +6,9 @@ done in Trailer, what appeared on screen, the camera's view of the
 user, raw input, and the moments where Trailer was abandoned for
 Preview.
 
-**Open work:** known gaps and the active backlog (from reviewing real
-recording sessions) live in [ux-recorder-todo.md](ux-recorder-todo.md).
+**Open work:** TODO.md (T-84, and T-100 for the compiled-out facade).
 
-**Philosophy compliance.** PHILOSOPHY.md bans telemetry. This feature
+**Not telemetry.** PRODUCT.md bans telemetry. This feature
 is not telemetry: it is OFF at compile time by default, records only in
 builds explicitly compiled with the recorder enabled (and even then a
 single launch can opt out with `--no-ux-record`), writes only to the

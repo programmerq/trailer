@@ -1,1056 +1,821 @@
-# Trailer — Deferred Work
-
-Items noted during development that aren't blocking the current phase.
-Should be picked up before shipping or when the surrounding area is
-worked on.
-
-Three recurring sources feed this file:
-
-- **HITL passes** — the maintainer driving the actual app and writing
-  down what annoyed them. Captures power-user friction. Dated
-  subsections below (e.g. *2026-04-30 HITL pass*, *2026-05-19 HITL
-  pass*) are the precedent format.
-- **Reference-user smoke sessions** — a non-maintainer opening a
-  fresh build and performing three small tasks while a note-taker
-  records observations. Captures fresh-eyes friction, which tends to
-  point at different bugs than the HITL passes do. Protocol lives in
-  [`docs/smoke-session.md`](docs/smoke-session.md); findings land
-  here under a dated `## YYYY-MM-DD smoke session` subsection in the
-  same shape as the HITL entries.
-- **Multi-perspective audits** — read-only sweeps by reviewer-chair
-  agents (privacy, accessibility, security, etc.) that surface
-  structural gaps the live use doesn't expose. See
-  [`docs/audit-2026-05-19.md`](docs/audit-2026-05-19.md) for the
-  current snapshot.
-
-## 2026-08-06 HITL pass — Spotlight opened the same file twice
-
-Owner, macOS: typed a PDF's name into Spotlight while Trailer already had
-that exact file open. Two defects came out of one report.
-
-**Opening an already-open file opened it again** (fixed). Picking the
-*file* result spawned a second window over the same document — "this feels
-like I'm looking at two open files … opening it twice feels like *copying*
-the document." Beyond the confusion, two `IDocument`s over one path means
-two undo logs and two save paths onto the same bytes, so whichever window
-saved last silently won. `Application::openFiles` now resolves each path to
-a canonical on-disk key (`src/util/PathKey.h`, the rule `RecentFiles`
-already used) and, when that file is open, raises its window and selects
-its tab instead of creating anything. Dedup runs *before* `open_files_in`
-routing: the preference says where a **new** document lands, not whether
-one document may exist twice. Untitled / capture-origin documents are
-exempt — their backing file is a temp the user never chose. Spec:
-UAT-FND-053..058; guards: `tests/test_open_dedup.cpp`,
-`tests/uat/test_uat_open_already_open.cpp`.
-
-**Spotlight's *window* result fails with "Activate Tab"** (filed, not
-fixed). The same search also offers `<file> — Trailer / Window`; choosing
-it produces *The action "Activate Tab" could not run because an internal
-error occurred. (Shortcuts)*. Trailer's tabs are a `QTabWidget` central
-widget, not native `NSWindow` tabs, so macOS is offering an action against
-tabs it cannot address — and Qt has no cross-platform handle on `NSWindow`
-tabbing (it opts apps *out* of it by default). Fixing it properly means one
-`NSWindow` per document plus native tab-group wiring: architecture, not a
-patch. Filed as `docs/backlog/2026-08-06-macos-spotlight-activate-tab.md`.
-The first fix takes most of the sting out of it — the *file* result, the
-obvious one to pick, now surfaces the existing window correctly.
-
-## 2026-08-04 nightly macOS — LibreSSL red-gated `test_update_pubkey`
-
-`nightly-20260804` (run 30907188776, macOS job 91985006187) went red on the
-**macOS gating unit-test step** again, but for an unrelated reason: no DMG and
-no signed appcast, Linux and Windows green.
-
-```
-FAIL!  : TestUpdatePubkey::opensslSignedFeedVerifiesAgainstDerivedKey()
-         (openssl exited 1: Algorithm ed25519 not found
-          usage: genpkey [-algorithm alg] [cipher] [-genparam] [-out file] …)
-```
-
-macOS ships **LibreSSL** as `/usr/bin/openssl`, and LibreSSL's `genpkey` has
-no ed25519. The slot's guard was `haveTool("openssl", {"version"})` — which
-LibreSSL answers perfectly happily — so it proved *existence* and the very
-next line needed *capability*. The test had never run on a Mac before (PR #143
-merged after the 08-03 nightly), so 08-04 was its first execution there and
-the first time the two diverged.
-
-The shape of the fix is the lesson worth keeping: **probe the operation, not
-the tool's name — and not its version string either.** A version table needs
-maintaining and is wrong the moment a fork words its banner differently or
-backports a feature; running the command and looking at whether it worked
-cannot be wrong about the host it just ran on.
-`scripts/find-openssl-ed25519.sh` runs all three operations the shipped
-scripts use (`genpkey -algorithm ed25519`, `pkey -pubout -outform DER`,
-`pkeyutl -sign -rawin`), so a fork that gains keygen but still lacks raw
-signing is rejected at the gate instead of inside a test.
-
-It also *prefers* a real OpenSSL when one exists, rather than settling for the
-skip: Homebrew's `openssl@3` is keg-only, so it never shadows LibreSSL on
-PATH and has to be asked for by name — via `brew --prefix openssl@3`, a query,
-not a hardcoded `/opt/homebrew/...` path that would be wrong on Intel Macs and
-would go stale silently.
-
-The good news from the same run: **`test_ocr_window` passed on macOS
-(1.02 s)** for the first time since the crash — night 1 of the 3 that
-`docs/backlog/2026-08-03-macos-nightly-ocr-window-segv-confirm.md` requires.
-With `test_update_pubkey` fixed, that lane's gating step should be green, and
-the next macOS nightly should produce a four-asset release with the first
-signed appcast. Tracked as
-`docs/backlog/2026-08-04-macos-nightly-openssl-skip-confirm.md`.
-
-## 2026-08-03 nightly macOS SIGSEGV — ML worker result posted to a freed window
-
-`nightly-20260803` (run 30815465012) went red on the **macOS gating unit-test
-step** — `test_ocr_window` `SIGSEGV`, `SEGV_ACCERR` at `0x50`, every test
-function already `PASS`. No DMG was produced, so the release carries three
-assets and no signed appcast. Linux and Windows were green.
-
-Root cause (confirmed, not inferred): an `MlScheduler` worker handed its
-result back with `QMetaObject::invokeMethod(rawMainWindow, …,
-Qt::QueuedConnection)`. A queued invoke **posts an event to its context
-object**, and posting dereferences that object — so a window closed between
-`submit()` and the worker's post is touched twice after it is gone (inside
-`postEvent()` on the worker thread, then again when the main loop delivers
-the `QMetaCallEvent` into freed memory and runs the lambda's `self->m_member`
-accesses).
-
-Evidence trail, for the next person who has to re-open this:
-
-- The sibling crash reproduces on **Linux** under CPU saturation —
-  `test_quit_and_keep_windows`, **10 failures in 60 runs** (0 in 60 idle).
-  Four of those ten `gdb` dumps put the faulting frame in
-  `MainWindow::scheduleBackgroundCandidateScore`'s apply lambda, on a
-  `QHash` whose internal `Data*` read out as `0x30` / `0x1e0` — a freed
-  window. The other six land in unrelated Qt internals (event-filter walk,
-  posted-event dispatch, the raster paint engine): downstream damage from the
-  same lambda *writing* into freed memory a moment earlier.
-- **AddressSanitizer**, driven by the new deterministic guard against the
-  unfixed tree, reports `SEGV` in
-  `QApplicationPrivate::notify_helper` ← `notifyInternal2` ←
-  `sendPostedEvents` — the same frames the crash reports show.
-- The earlier `MlScheduler`-condvar diagnosis (backlog
-  `2026-08-03-quit-teardown-segfault-mlscheduler`, now closed) was **wrong**.
-  The parked `workerLoop()` / power-watcher frames appear in every dump only
-  because Qt's crash handler prints *all* threads; they are idle waiters, and
-  their mutex living at a stack address is expected because `Application` is
-  a stack object in `main()`.
-- The macOS `test_ocr_window` failure itself was **not** captured under a
-  debugger. It never builds a `MainWindow`, so the fixed `MainWindow` sites
-  cannot be its cause. Its only worker→GUI hop is `OcrController`'s result
-  post, which an instrumented build shows **racing document teardown on more
-  than half of all runs** (171 posts reached with an already-destroyed store
-  across 300 loaded runs; the common outcome is the safe one — the `QPointer`
-  is already null and Qt drops the call — the crash needs the destruction to
-  land inside the post itself). That path is fixed the same way, but the
-  attribution is inference from the mechanism, not a captured macOS stack.
-  **A macOS nightly is still the confirming run.**
-
-Fix: `MlScheduler::postResultToGuiThread()` — post to the scheduler (which
-joins the worker in its own destructor, so it is always a live context) and
-re-check the weak guard *inside* the GUI-thread lambda. Cancelling the task
-is not a substitute: a worker already past its cancellation checkpoint still
-posts. Written up as a rule in `docs/CONVENTIONS.md` §5.
-
-## 2026-08-03 slow-open investigation (nightly `0.3.1-dev+768.gce56b4b8`, macOS Tahoe arm64)
-
-Owner report: *"noticeably slower than I'd like … it shouldn't take multiple
-seconds to load the app and/or the file when opening a large PDF."* Three
-windows, one PDF each — **365 / 407 / 2603 pages**, all Continuous + Fit Page,
-all with a text layer; background OCR ON; all five ML models downloaded.
-
-Profiled on a Linux dev box (4-core Xeon @2.8 GHz, Qt 6.11, Release) against
-synthetic born-digital PDFs of matching page counts. **Numbers below are from
-that box, not the owner's M-series Mac** — the shape of the cost is what
-transfers, not the absolute milliseconds.
-
-**Where the time actually went.** Not OCR, not thumbnails. Every
-document→view coordinate conversion re-derived three whole-document
-aggregates by calling `QPdfDocument::pagePointSize()` on *every page*, twice.
-Those conversions run per polygon point of every selectable-text block, so the
-real cost was **O(points × pages)**. Opening one 2603-page PDF issued
-**739,417** `pagePointSize` calls; callgrind put `pagePointSize` at **64.7%**
-of all GUI-thread instructions during open. Fixed by a per-page-graph geometry
-cache (`PdfDocument::PageMetrics`) — 739,417 → 2,603 calls, first paint
-766 ms → 23 ms. Guard: `tests/test_perf_page_geometry.cpp`.
-
-**Hypotheses tested and killed:**
-
-- **Background OCR on documents that already have a text layer** — killed.
-  `PdfDocument::hasTextLayer()` returns true for every valid PDF and
-  `OcrController::onVisiblePageChanged()` returns on it *before* any enqueue,
-  so a PDF never queues an ambient OCR page. Pinned by
-  `uat_ocr_win_070_textLayerDocEnqueuesNothingEvenOnAHugeDoc`.
-- **Eager per-page work at open (thumbnails / outline)** — killed as a
-  *dominant* cost. Only 6 thumbnails render during open (correctly lazy); the
-  sidebar's per-row aspect probe cost 17 ms of 1,000 ms even at 2603 rows;
-  `QPdfBookmarkModel` construction was ~0 ms.
-
-**Measured but deliberately left (secondary, each bounded):**
-
-- `PdfDocument::ingestNativeTextLayer()` runs the native text extraction for
-  the visible page on the **GUI thread** at open — 27.5% of GUI-thread
-  instructions on the 365-page run, and it scales with glyphs on that page
-  (~120 ms extra on a page with twice the text). Bounded per *page*, not per
-  document, and it is what makes text selection live immediately. Moving it
-  off-thread is an architectural change, not a drive-by.
-- Two full qpdf `processFile` parses of the file per open. Both run on worker
-  threads (already fixed by #63), so they do not block the GUI thread, but on
-  a 4-core box they contend with it.
-- **App launch is not a separate problem.** `Application::restorePreviousSession()`
-  opens every previously-open file serially inside one `openFiles()` call, so
-  launch cost ≈ Σ(file-open cost). Three large PDFs is three sequential opens
-  on the GUI thread; the per-file fix above is what moves it.
-- `TwoPageView` has the same defect class at O(pages) per paint — promoted to
-  [`docs/backlog/2026-08-03-twopageview-recomputes-canvas-per-paint.md`](docs/backlog/2026-08-03-twopageview-recomputes-canvas-per-paint.md).
-  Only reachable in Two Pages view, so not implicated in this report.
-
-## 2026-08-02 owner dogfooding report (nightly `0.3.1-dev+768.gce56b4b8`, macOS Retina)
-
-Two findings from live use on macOS, both fixed in one PR
-(`claude/dogfood-menu-dup-and-paste-dpr`). Recorded here because the
-*diagnosis* is worth keeping even though the items themselves are closed.
-
-1. **"Feedback Report…" accumulated in the macOS application menu.** Four
-   identical items stacked between `Settings…` and `Services`; the attached
-   diagnostic report showed 2 open windows, and 4 MainWindows had been
-   constructed that session. Cause: the item carried
-   `QAction::ApplicationSpecificRole`. Every MainWindow builds its own menu
-   bar; on macOS that role relocates the item into the single **shared**
-   application menu, and unlike `AboutRole` / `PreferencesRole` / `QuitRole`
-   (which the Cocoa bridge merges into fixed slots — hence About and
-   Settings appearing exactly once) `ApplicationSpecificRole` items are
-   keyed on the per-`QAction` `QCocoaMenuItem` pointer and appended one per
-   window. Closing the window does not reliably remove its copy.
-   Fix: the item stays in the **Help** menu on all three platforms, which is
-   what `docs/platform-conventions.md` §2 already prescribed — the role was
-   a deviation from the documented convention, not just a Qt trap. General
-   rule now written down and pinned: **no per-window `QAction` may carry
-   `ApplicationSpecificRole`** (`tests/test_menu_placement.cpp`,
-   UAT-XCT-081).
-
-2. **A pasted macOS window screenshot opened 2x too large, and could not be
-   corrected crisply.** Reported 100% zoom, drew at twice the size of the
-   window it captured; ⌘− a few times landed on **51%**, i.e. resampled and
-   blurry, because 50% is not on the ×1.25 ladder. Two separable defects:
-   - the dpr recovery in `Application::newFromClipboard()` only matched a
-     **whole-screen** grab, so a window/region capture fell through to
-     dpr 1;
-   - the zoom ladder had no fixed stops at all, so neither the pixel-exact
-     factor *nor 100% itself* was reachable once you had left it.
-   Fix and, importantly, its **limits**: see
-   `docs/decision-records/2026-08-02-pasted-capture-scale-and-pixel-exact-zoom-stop.md`.
-   Trailer now reads the scale the source *declares* (the macOS pasteboard's
-   own bitmap resolution — the same fact Preview uses) and refuses to guess
-   when nothing declares one. On Windows and Linux nothing trustworthy is
-   available through Qt, so a HiDPI window screenshot pasted there still
-   opens at dpr 1; the pixel-exact zoom stop is the one-keystroke remedy.
-   Two follow-ups are tracked in `docs/backlog/`:
-   `2026-08-02-macos-paste-scale-realhw-verify` and
-   `2026-08-02-image-pixmap-rebuild-on-screen-dpr-change`.
-
-## 2026-05-20 HITL pass (post-#25, on `main`)
-
-Captured from a live walkthrough after PR #25 (Post-0.1.0 docs +
-release tooling + PDF page-op undo) landed. Each item is described in
-terms of the user-visible behaviour and the proposed fix.
-
-> **Note on the "in flight" branch:** at the start of this HITL pass,
-> [ROADMAP.md](ROADMAP.md)'s `## In flight (about to land)` section
-> still described the Wave 1-4 work as upcoming, even though PR #24
-> (`4dba247 HITL waves 1-4`) had already merged the work onto `main`
-> on 2026-05-19. The roadmap was authored *after* the merge but not
-> updated to reflect it. Items below that look like Wave 1 territory
-> (thumbnail density, search-bar collapse, markup-toolbar defaults)
-> are scoped against what actually landed in PR #24 and what's still
-> rough about it. The roadmap was reframed in the same PR as this
-> entry (`969d46f docs(roadmap): reframe after PR #24 landing +
-> post-#25 HITL`).
-
-### Thumbnail sidebar row height — fixed rows gap under non-portrait pages (diagnosed 2026-06-03)
-
-The 9beff07 / Workstream C work *did* land in PR #24: the logical
-thumbnail size dropped from `128×160` → `80×100`
-([src/ui/ThumbnailModel.h:47](src/ui/ThumbnailModel.h:47)), a custom
-`ThumbnailDelegate` paints the page number as an in-pixmap badge in
-the lower-right corner
-([src/ui/Sidebar.cpp:94-121](src/ui/Sidebar.cpp:94)), and its
-`sizeHint` returns `iconSize.height() + 2*kThumbVerticalPadding`
-(= 108 px) per item
-([src/ui/Sidebar.cpp:61-66](src/ui/Sidebar.cpp:61)).
-
-**Diagnosis (corrects the earlier "rows render taller" theory).** A
-throwaway probe logged the delegate's `sizeHint` against the live
-`QListView::visualRect` for a mixed portrait/landscape deck, at both
-1× and 2× device-pixel ratios. Every row, every time:
-`visualRect.height() == sizeHint.height() == 108`. **Qt honours the
-delegate exactly — rows are never taller than the delegate asks for,
-and DPR is not the cause** (the native-render + `setDevicePixelRatio`
-path keeps the logical thumbnail at 80×100 regardless of DPR; only the
-backing pixels scale 80×100 → 160×200 at 2×). The earlier "something keeps
-rows tall / `SizeHintRole` shadowing / DPR rounding" theory is wrong.
-
-> **Update 2026-07-16.** "DPR is not the cause" holds only for *this*
-> fixed-108px-row symptom. A **separate** devicePixelRatio double-scale was
-> later found in the scale-to-width delegate (post-0006): `paint` scaled a
-> dpr-stamped pixmap with `scaledToWidth(availW)`, painting at half the column
-> width on Retina. Fixed via `src/ui/ThumbnailPaint.h::scaleToLogicalWidth`
-> and pinned by `tests/test_thumbnail_paint.cpp`.
-
-The real cause of the visible gaps is **a fixed row height meeting a
-variable page aspect.** `sizeHint` always returns
-`iconSize.height() + 8` (= 108) — sized for a *full-height portrait*
-page. Measured painted-thumbnail heights inside that fixed 108 px row:
-
-| page          | thumb height | gap in row    |
-|---------------|--------------|---------------|
-| A4 portrait   | ~100 px      | 8 px (tight)  |
-| A4 landscape  | ~56 px       | **52 px**     |
-
-A typical **portrait** deck is therefore already tight (8 px is just
-the padding); the wasted space only shows up under **landscape / wide /
-mixed-orientation** pages, whose `KeepAspectRatio` fit is width-limited
-and leaves the bottom of the fixed-tall row empty. The original "wide
-gaps on a typical doc" report was either a mixed/landscape deck or
-predates the current `iconHeight+8` `sizeHint`.
-
-Before / after the proposed fix (mixed deck — blue = portrait, orange
-= landscape):
-
-| Before (current) | After (proposed) |
-|------------------|------------------|
-| ![before](docs/uat/images/thumbnail-rowheight-before.png) | ![after](docs/uat/images/thumbnail-rowheight-after-proposed.png) |
-
-**Recommended fix.** Make `ThumbnailDelegate::sizeHint` per-row:
-return `fittedThumbnailHeight(index) + 2*kThumbVerticalPadding`, where
-the fitted height is the page's aspect scaled into the icon box.
-`uniformItemSizes` is already `false`, so variable row heights are
-supported. To get the aspect *without* rendering every page inside
-`sizeHint`, expose a cheap page size / aspect via a model role
-(PDF: `QPdfDocument::pagePointSize`; image: pixel dimensions) and read
-it in the delegate. Portrait rows are unchanged; landscape rows
-collapse to hug the thumbnail — the "after" image above is exactly
-that, prototyped behind a throwaway env toggle.
-
-**Verdict:** the lowest-value Now #3 paper-cut — effectively a
-non-issue for portrait decks, worth doing for mixed-orientation decks.
-Pair the fix with a UAT that pins `visualRect.height()` ≈ the fitted
-thumbnail height for a landscape page (the 52 px gap is the regression
-oracle).
-
-### Rectangle annotation rough edges
-
-A live session placing one rectangle surfaced three problems. All
-three have landed.
-
-- ~~**Auto-switch to Select after placement.**~~ Done. MainWindow
-  now connects `AnnotationOverlay::annotationCommitted` to a slot
-  that flips the markup toolbar back to Select; the toolbar's
-  `activeToolChanged` propagates back to the overlay so toolbar UI
-  and overlay state stay in sync. Pinned by UAT-ANN-131. Sticky-
-  draw mode (keep the active tool checked after each commit)
-  remains an open opt-in setting if anyone misses chained shape
-  drawing.
-
-- ~~**Existing shapes are not restyleable from the Inspector.**~~
-  Done — same root cause as the "rectangles disappear" item
-  below. Both symptoms (colour-doesn't-change AND
-  rectangle-vanishes) were the dangling-pointer corruption playing
-  out in one of two ways depending on what the freed memory
-  happened to contain when the modal returned.
-
-- ~~**Rectangles disappear without explicit deletion.**~~ Done.
-  Root cause: `Inspector::Inspector` (lines 125-138 / 144-158)
-  held a raw `const Annotation*` from `AnnotationStore::find(id)`
-  across `QColorDialog::getColor`, which is modal and spins the
-  Qt event loop. Any store mutation that fired during the dialog
-  (auto-save flush, queued `AnnotationStore::changed` slot, undo
-  coalescing, etc.) could reallocate the underlying
-  `std::vector<Annotation>` and dangle the pointer. After the
-  modal returned, the dereference read garbage geometry/style and
-  `m_store->update(*stale_ptr)` wrote that garbage back to the
-  same id — which is why the rectangle "vanished" (off-page or
-  zero-size bounds) AND the colour change appeared to be lost.
-  Fix: snapshot the initial colour before the modal and re-fetch
-  the annotation by id after the dialog returns; mirror the same
-  shape in the Fill handler. Pinned by UAT-ANN-130.
-
-### Select All only selects annotations
-
-`Edit → Select All`
-([src/ui/MainWindow.cpp:640-644](src/ui/MainWindow.cpp:640)) routes
-to `AnnotationOverlay::selectAll()`, which multi-selects annotations
-on the current page. There's no path to "select the visible page
-raster so I can copy/paste it into a chat program." A common
-end-of-session flow is: mark up a page → select everything → copy →
-paste image into Slack / iMessage / etc.
-
-Proposal: keep `Cmd-A` as annotation-select when the overlay has
-focus *and* the page has annotations; otherwise (image documents,
-or a PDF page with no annotations and the page itself focused) treat
-`Cmd-A` as "select page for copy" and let `Cmd-C` push a rendered
-PNG of the page to the clipboard. A separate
-`Edit → Copy Page as Image` menu item may be clearer than overloading
-`Cmd-A`.
-
-### Content-aware initial UI defaults
-
-Wave 1 / Workstream I (per-file + per-type + per-window persistence)
-landed in PR #24 — that's the right floor. But on *first* open of a
-document, when there's no saved state for that file, we can do
-better than the global default by reading the document's contents:
-
-- **Lots of fillable AcroForm fields → start with form controls
-  shown.** The 2026-04-24 pass already auto-shows the form toolbar
-  on fillable PDFs, but the sidebar / Inspector / markup-toolbar
-  defaults still come from the global / per-type state. A document
-  with ≥ N AcroForm widgets (suggest ≥ 3) is unambiguously a form;
-  show the form toolbar, suppress the markup toolbar, and consider
-  defaulting the sidebar to hidden.
-
-- **Many pages → start with thumbnail sidebar open.** A document
-  with ≥ K pages (suggest ≥ 20) is one the user will want to
-  navigate by thumbnail; auto-popping
-  `Sidebar::Mode::Pages` on first open saves a click. Once
-  the user changes it, three-tier persistence carries forward.
-
-Heuristics should run only when no per-file state is on record; any
-explicit user adjustment wins and sticks.
-
-### Navigation shortcuts
-
-- ~~**No keyboard shortcut for page-mode (single / two / continuous).**~~
-  Mostly done. `Cmd-1` → Continuous and `Cmd-2` → Single Page are live;
-  `Cmd-3` is only *reserved* for Two Pages — that action stays disabled
-  for now, so the shortcut does nothing yet. This required moving the
-  zoom commands off the digit row (they clashed with the original
-  `Cmd-1`/`Cmd-3` proposal): Actual Size is now `Cmd-0`, Fit Page
-  `Cmd-9`. **Finding:** Qt's `QPdfView::PageMode` exposes only
-  `SinglePage` / `MultiPage`, no facing/two-up layout, so
-  `ViewMode::TwoPages` currently aliases `Continuous`. A real
-  side-by-side view needs a custom widget; tracked as a larger
-  follow-up. `Cmd-3` becomes functional when that lands.
-
-- **Continuous-mode `↓` step is too small.** With pages laid out
-  vertically, `↓` advances by the default
-  `QAbstractScrollArea` line-step, so reaching the next page on a
-  long doc takes dozens to hundreds of presses. Proposal: in
-  continuous mode, `↑` / `↓` step by approximately viewport height
-  (matching Preview / Acrobat); `PageDown` / `PageUp` should also
-  work. Single-page mode already advances by full page on arrows
-  via the existing nav wiring.
-
-### ~~Search "Close" button is non-functional~~ Done (`51e59e2`)
-
-Fixed exactly as diagnosed below: `hideSearchBar` / `showSearchBar`
-now drive `setVisible()` on the captured `m_searchBarAction`
-(the `QWidgetAction` from `addWidget`), so the toolbar slot collapses
-instead of leaving an empty gap. Esc and the X button share the path.
-
-The `SearchBar` close button is wired:
-[src/ui/SearchBar.cpp:43](src/ui/SearchBar.cpp:43) emits `dismissed`
-on click → [src/ui/MainWindow.cpp:145](src/ui/MainWindow.cpp:145)
-routes `dismissed` to `hideSearchBar` →
-[src/ui/MainWindow.cpp:702](src/ui/MainWindow.cpp:702) calls
-`m_searchBar->setVisible(false)`. Yet clicking close does not
-collapse the bar in the running app.
-
-Likely cause: the search bar is added to the main toolbar via
-`QToolBar::addWidget`
-([src/ui/MainWindow.cpp:606](src/ui/MainWindow.cpp:606)), which
-wraps the widget in an internally-owned `QWidgetAction`. Hiding
-the inner widget without also hiding the wrapping `QAction` leaves
-the toolbar slot occupied (visible empty space rather than
-collapsed). **Fix:** capture the `QAction *` returned by
-`m_mainToolbar->addWidget(m_searchBar)` and call `setVisible(false)`
-on the action in `hideSearchBar`, paired with `setVisible(true)`
-in the show path. Esc routes through the same `dismissed` signal,
-so this likely affects Esc-dismiss too.
-
-## 2026-05-19 HITL pass (live use on Windows 11; applies cross-platform)
-
-Driven by the user opening a real document on Windows and walking through
-the friction points. Landed as PR #24 in four waves; the items listed
-here are explicit scope deferrals from that pass — features that the PR
-addressed in a "good enough for now" form with a known better follow-up,
-or behaviours the four agents flagged but didn't fix.
-
-### Annotation handles (Workstream D follow-up)
-
-- **Shape-aware handles for Line / Arrow.** Wave 2 shrank the corner
-  handle hit-zone from 10×10 to 6×6 so the arrow body is reachable for
-  drag-to-move. The real fix is endpoint-only handles for the line-like
-  shapes: `handleAt()` should branch on `Annotation::type` and return
-  two endpoint zones for Line/Arrow + the existing four corner zones
-  for everything else. `handleRect()` for non-bbox handles needs to
-  stop relying on `viewBounds.topLeft()`/`bottomRight()`.
-
-### OCR (Workstream F follow-up)
-
-- **Embed OCR text on PDF export.** When the user exports an image to
-  PDF (`MainWindow::onExportAs` → PDF filter) or runs an OCR-required
-  export on a raster-text PDF, the recognised `TextBlock`s should be
-  embedded as an invisible PDF text layer so the exported file is
-  searchable in other PDF readers. The `SelectableTextStore` already
-  holds the geometry and text — wire it through `QPdfWriter`.
-- **Disk cache of OCR results.** In-memory only today; reopens re-OCR
-  the same pages. Key by `(file-path-hash, page-content-hash)` and
-  store under `AppPaths::cacheDir()`.
-- **Word-level selection.** PP-OCRv3 emits per-region polygons;
-  `SelectableTextLayer` snaps the selection to whole blocks. Splitting
-  each block into word-bounded sub-rects would feel more natural
-  matched against the displayed glyphs.
-- **Auto-trigger model download from background OCR submissions.**
-  Today only the explicit `Tools → Recognize Text…` dialog drives
-  `ensureOcrModelsReady` (the consent + download prompt). The
-  visible-page auto-pump silently no-ops when the model isn't on disk.
-  Surfacing a one-time "Recognize text on this document?" prompt the
-  first time auto-OCR would fire on a model-missing system would close
-  the loop, but the UX has to be carefully not-popup-shaped.
-
-### ML scheduler (Workstream J follow-up)
-
-- ~~**Linux power detection.**~~ Done (`9b24eb4`).
-  `src/platform/PowerSource.cpp` now scans `/sys/class/power_supply/*`:
-  online "Mains" adapter → `OnAC`, offline → `OnBattery`, no AC supply
-  (desktop / VM / container) → `OnAC` fallback.
-
-### SAM (Workstream G follow-up)
-
-- **Encoder cache eviction beyond simple LRU.** The 3-entry LRU is a
-  conservative default; if users hit memory pressure with multiple
-  large PDF pages cached, switch to a memory-budget-based policy or
-  expose a settings.toml knob.
-
-### Background removal (Workstream H follow-up)
-
-- **Disk cache of candidate scores.** The CPU heuristic runs once per
-  image-document open. Caching the result by file-path-hash would skip
-  the recompute on reopen.
-
-### General
-
-- **Sidebar differential update.** Wave 2 debounced
-  `AnnotationStore::changed` via 0-ms `singleShot`, which is the big
-  win. A follow-up could turn `Sidebar::refreshAnnotations` into a
-  proper add/remove/update diff against the `QListWidget` instead of a
-  clear-and-rebuild; not worth the complexity until profiling shows it
-  matters.
-- **Inspector debounce.** Same pattern as Sidebar, lower priority — the
-  Inspector's per-emit update is lighter (single annotation) so it
-  doesn't dominate the undo-replay cost today.
-- **Inspector tracking of restored chrome.** Workstream I restores
-  per-file / per-type window geometry + dock state + markup-toolbar
-  visibility; Inspector visibility isn't currently in that set. Adding
-  it would round out the persistence story.
-
-## 2026-04-30 HITL pass (live use on macOS)
-
-Captured from the user driving the actual app on a Mac. Each entry is
-a discrete change; we'll knock them out in priority order. Crossed-off
-items have landed; the commit hash is in the strikethrough line.
-
-> **2026-05-11 audit:** most of this section is already in the code.
-> Verified-done items are struck through with the reference; the only
-> remaining bullets are #1 (Dock-drop — needs runtime repro on
-> macOS), #16 (sidebar TOC / Highlights & Notes — placeholders,
-> blocked on underlying features), and #18 (search-match yellow —
-> needs a custom highlight overlay over `QPdfView`).
-
-### Bugs (data loss / broken affordance)
-
-1. ~~**Drag a file onto the Dock icon doesn't open it.**~~ Done.
-   In-process path pinned by `uat_fnd_050_fileOpenEventOpensWindow`
-   (synthesises a `QFileOpenEvent` with no windows open and
-   confirms a window is created). Live drag-onto-Dock confirmed
-   on macOS by the user on 2026-05-13. The Info.plist's
-   `CFBundleDocumentTypes` for `com.adobe.pdf` and `public.image`
-   is the LaunchServices-side prerequisite.
-2. ~~**`Cmd-Tab` while dragging a Zoom Lens leaves an undo-less
-   annotation.**~~ Done — `AnnotationOverlay` ctor wires
-   `applicationStateChanged` to `abortInFlightDrag`, which clears
-   `m_dragging` / `m_movingSelected` / `m_resizingHandle` /
-   `m_inkPoints` when the app goes inactive.
-3. ~~**Click-drag draws a red rectangle even with the Select tool
-   active.**~~ Done — `4b74f80` ("HITL round 1: Select-mode
-   preview, defaults, Inspector wiring, Dock open"). `paintEvent`
-   now guards on `m_tool != Select && m_tool != None` before
-   drawing the shape preview.
-4. ~~**Some PDF thumbnails render without paper-white in dark
-   mode.**~~ Done — `PdfDocument::renderThumbnail` composites the
-   rendered page over an opaque white canvas before returning.
-
-### UX defaults
-
-5. ~~**Default tool should be Select, not box-drawing.**~~ Done —
-   `MarkupToolbar` initialises with `selectAction->setChecked(true)`
-   and stores `m_tool = AnnotationTool::Select`. Tied to #3 which
-   also landed.
-6. ~~**Sidebar starts hidden by default.**~~ Done — `Sidebar` ships
-   `Mode::Hidden` as the default, `MainWindow` calls
-   `m_sidebar->hide()` on construction, and the main-toolbar
-   Sidebar picker shows "Hide Sidebar" checked at launch.
-7. ~~**Foreground color shouldn't default to red.**~~ Done —
-   `AnnotationStyle::stroke` defaults to `QColor(60, 60, 60)`
-   (dark grey).
-8. ~~**Inspector shortcut → ⌘I**~~ Done — wired to
-   `QKeySequence(tr("Ctrl+I"))` in `buildViewMenu`.
-9. ~~**macOS: launching with no files opens no window.**~~ Done
-   upstream in `8bd9ad0` ("Add macOS no-window file menu actions").
-10. ~~**Esc / Cmd-Tab / loss-of-focus deactivates Magnifier.**~~
-    Done — `MainWindow::keyPressEvent` un-checks the magnifier
-    action on Esc; `applicationStateChanged` un-checks it on app
-    deactivate.
-
-### Inspector + selection
-
-11. ~~**Clicking on a placed annotation should NOT auto-show the
-    Inspector.**~~ Done — `onAnnotationSelectionChanged` only
-    updates the Inspector's data layer; the comment explicitly
-    notes "DO NOT pop the pane open just because the user clicked."
-
-### Markup bar
-
-12. ~~**Replace text labels with SVG icons** appropriate to each
-    tool.~~ Done — 29 base + 6 filled SVG icons under
-    `resources/icons/actions/`, themed via `IconHelper` (commits
-    `ff8541a`, `0d7ea5b`, `fae4ccd`). See `docs/icon-guidelines.md`
-    for the family + artist brief, and `tools/generate_icon_sheet`
-    for a visual review.
-
-### Top-bar redesign
-
-13. ~~**Add a slim main toolbar**~~ Done — `buildMainToolbar` in
-    `MainWindow` builds the bar with sidebar-mode picker, zoom
-    (out / actual / in), rotate (L / R), markup-toggle, form-
-    toggle, and a search field anchored to the right. Markup and
-    form toolbars are mutually exclusive and locked
-    non-movable / non-floatable (commit `ff8541a`).
-    (Title-bar filename pulldown is platform-default chrome on
-    macOS and needs no special handling.)
-14. ~~**Window menu on macOS**~~ Done — `buildWindowMenu` adds
-    Minimize, Bring All to Front, and a dynamic per-window list
-    refreshed via `refreshWindowMenuList`.
-15. ~~**Go menu**~~ Done — `buildGoMenu` mirrors Preview's First /
-    Previous / Next / Last Page entries with the documented
-    shortcuts.
-
-### Sidebar modes
-
-16. ~~**Sidebar has explicit modes** (Hide is default).~~ Done as
-    of the 2026-05-13 pass. Hidden / Thumbnails / Search Results /
-    Table of Contents / Highlights & Notes all render. TOC reads
-    `QPdfBookmarkModel` through an `OutlineProxyModel` that maps
-    DisplayRole → Title; the picker entry is enabled per-doc by
-    `hasOutline()`. Highlights & Notes filters
-    `AnnotationStore::annotations()` to text-content types
-    (Highlight / Underline / StrikeOut / Note / Text / SpeechBubble)
-    and gates the picker entry on `Sidebar::highlightsAndNotesCount`,
-    refreshed on every store mutation. Pinned by `uat_toc_010..012`
-    and `uat_hn_010..012`.
-17. ~~**Some PDF thumbnails missing paper-white**~~ — duplicate of
-    #4 above; both fixed.
-
-### Search
-
-18. ~~**Search highlights matches in highlighter yellow.**~~ Done.
-    `AnnotationOverlay` gained a `setSearchHighlights` API; the
-    paint pass runs underneath user annotations and renders
-    siblings at low-opacity yellow with the current match at high
-    opacity plus a thin outline. `PdfDocument::refreshSearch
-    Highlights` walks `QPdfSearchModel::resultAtIndex(i).
-    rectangles()` and pushes the list on every search-model /
-    current-index change. Pinned by `uat_vwr_064`.
-19. ~~**"Match X of Y" indicator**~~ Done — `SearchBar::
-    setMatchCounter` is wired through every find / next / previous
-    handler in `MainWindow`.
-20. ~~**Search opens the thumbnail sidebar**~~ Done —
-    `Sidebar::Mode::SearchResults` populates from query matches and
-    the sidebar auto-switches to it on a non-empty query.
-
-### Misc
-
-21. ~~**`Tools → Reset Trailer Settings…`**~~ Done — see
-    `onResetTrailerSettings` in `MainWindow`; wipes Settings,
-    RecentFiles, CardStore, signature PNGs, and model cache after
-    explicit confirmation.
-22. ~~**`File → Export as PDF`** for image documents.~~ Done —
-    "PDF document (*.pdf)" is one of the file-type filters in
-    `MainWindow::onExportAs`.
-
-## UI
-
-- **Menu organisation review.** Some items currently under Tools may
-  belong under File (Export As, Take Screenshot) or Edit (Flip, Rotate,
-  Adjust Size, Adjust Colour). Revisit once Phase 4 markup actions land,
-  so we can organise them as a group.
-
-## Cross-cutting
-
-- **HiDPI / Retina support — partially done.** Qt 6 enables high-
-  DPI scaling by default (`AA_EnableHighDpiScaling` /
-  `AA_UseHighDpiPixmaps` are deprecated and effectively always-on),
-  so the widgets layer is correct out of the box. The remaining
-  gaps were in custom-rendered raster content that asked the
-  document for logical-pixel sized images and let Qt scale them up
-  blurry on 2x displays.
-  - ~~**Sidebar thumbnails.**~~ Done in `af6621c`
-    ("Sidebar thumbnails render at native resolution on Retina").
-    `ThumbnailModel` renders at `m_size * devicePixelRatio` native
-    pixels and stamps `setDevicePixelRatio` on the result so Qt
-    uses the high-DPI bitmap at logical layout size. No more soft
-    thumbnails on Retina.
-  - **Screenshot capture** (`screen->grabWindow(0)`) is already
-    DPR-correct: the returned pixmap is native pixels and saving
-    to PNG writes the high-resolution data.
-  - **Magnifier overlay** is DPR-correct because both the source
-    grab and the magnifier widget share the same screen DPR; Qt
-    handles the native-to-native sample.
-  - **SignatureCanvas render** already emits at 2× canvas
-    resolution.
-  - **Mixed-DPR multi-monitor** (window dragged between a 1x and a
-    2x display mid-session) is *not* handled: thumbnail cache
-    won't refresh on screen change. Edge case; deferred.
-  - **Test on 1x, 2x, 3x displays** — manual; CI is offscreen
-    only.
-
-- **PDF undo/redo — done for the five top-level mutations.** A
-  `PdfCommand` interface lives in `src/document/PdfCommands.h`,
-  paired with concrete commands for every qpdf-level page op the
-  user can trigger today: `RotatePageCommand`, `DeletePagesCommand`,
-  `MovePageCommand`, `InsertPagesCommand`, and `CropPageCommand`
-  (the last one batches an N-page crop into a single undoable
-  action). `PdfDocument` keeps undo / redo stacks of `PdfCommand`s
-  parallel to the AnnotationStore undo log.
-
-  ~~Better-but-bigger follow-up: merge the AnnotationStore log
-  and the PdfCommand stack into one chronological undo list.~~
-  Done — `IDocument::undo` / `redo` now pop a per-document
-  chronological log of typed entries (one per committed op), so
-  multi-action undo always pops the most recent thing the user
-  did, regardless of which subsystem produced it. `ImageDocument`
-  uses the same structure for its pixel-snapshot stack. Bounded
-  histories evict in lockstep with the log
-  (`AnnotationStore::historyEvicted` for annotations; local sync
-  in `ImageDocument::pushUndoSnapshot` for pixels), and the
-  dispatch guards log/stack desync at runtime (warn + no-op, not
-  a release-inert assert). The interim last-touched-stack
-  heuristic this replaced is gone.
-
-  Other small follow-ups in the same area:
-  - Annotation re-indexing on delete/move/insert. The undo
-    stacks don't currently coordinate with `AnnotationStore`'s
-    `Annotation::page` field, so an annotation on page 3 of a
-    4-page doc whose page 1 gets deleted still claims page 3
-    even though the actual page-3 content is now at index 2.
-    Save-time round-tripping papers over this for the simple
-    case but a sidebar that filters by page can show stale
-    results until the next reload. See `docs/uat/03-pdf-pages.md`
-    UAT-PDF-070 / UAT-PDF-071.
-
-- ~~**PDF save / export to a worker thread.**~~ Done — split into
-  `PdfDocument::saveBeginQpdfPhase` (worker-thread qpdf phase) and
-  `saveCommitOnUi` (UI-thread file rename + `QPdfDocument` reload).
-  `MainWindow::saveDocumentAsync` orchestrates via
-  `QFutureWatcher` with a `QProgressDialog`. Image saves stay
-  synchronous because `QImage::save` is already fast and wrapping
-  it in QtConcurrent::run only adds latency.
-
-## Annotations
-
-- **PDF annotation persistence — DONE for the data, /AP partial.**
-  The TODO entry that claimed "shapes/text/notes drawn over a PDF live
-  only in memory" was stale: `PdfEditor::writeAnnotations` /
-  `readAnnotations` round-trip 10 annotation subtypes (Rectangle,
-  Ellipse, Line, Arrow, Ink, Text, Note, HighlightShape, SpeechBubble,
-  Highlight, Underline, StrikeOut). Signature flattens into the
-  content stream; Redaction destroys content; ZoomLens has no
-  standard PDF subtype and is intentionally skipped.
-
-  **/AP appearance streams** are now emitted for **Rectangle,
-  HighlightShape, Ellipse, Line, Arrow, and Ink**. Each shape's
-  builder lives next to its property-only writer in
-  `PdfEditor.cpp`. The remaining types (FreeText for Text /
-  SpeechBubble, /QuadPoints-based Highlight / Underline / StrikeOut)
-  still rely on the property-based fallback. FreeText needs a font
-  resource in /Resources and a `BT` text block — non-trivial.
-  Highlight / Underline / StrikeOut typically render fine without
-  /AP because their /QuadPoints carry the geometry; viewers
-  reconstruct them from properties more reliably than they do for
-  shape annotations.
-
-- **PDF multi-page / continuous-mode overlay.** The annotation overlay
-  uses the `pageNavigator()->currentPage()` for its page reference and
-  centres it in the viewport. In `Continuous` mode that means annotations
-  only draw correctly on whatever QPdfView reports as the current page;
-  coordinates can drift on other visible pages. Revisit with a per-page
-  overlay or a view-geometry query that Qt PDF does not yet expose.
-
-## Screenshot
-
-- **Region / window / app pickers on Linux and Windows.** macOS uses
-  `screencapture -i`; Linux falls back to gnome-screenshot if available;
-  Windows currently only supports full-screen. Native region-select
-  overlays would be a follow-up.
-
-## UX polish pass (2026-04-24 HITL review)
-
-A human-in-the-loop walkthrough surfaced a batch of paper-cuts the
-automated UATs don't catch. These are grouped by theme so each can be
-picked up as a coherent increment rather than one sprawling "fix UX"
-task. When tackling any of these, land a UAT alongside it so the
-regression doesn't return the next time the surrounding code is
-rearranged.
-
-> **2026-05-11 audit:** most of this section is also already done.
-> Verified items struck through with a one-line implementation
-> pointer. Remaining: image-batch thumbnail-bar (partial — single
-> window works, multi-doc ThumbnailModel still TODO) and Trim My
-> Card. Contextual tool gating and signature-placement popover
-> were finished in the same audit pass.
-
-### Window / document model
-
-- **Window-per-file is now the default** (2026-04-24 pass). `open_files_in`
-  defaults to `new_window`; `openFiles({a, b, c})` spawns three windows.
-  `DocumentView` sets `tabBarAutoHide` so single-doc windows show no tab
-  strip. Tabs remain available as an opt-in via `open_files_in = "new_tab"`.
-- **Image-batch consolidation is partial.** `Application::openFiles`
-  now detects "all paths are images" and routes them into one window
-  so they share the QTabWidget tab strip — the user can flip through
-  them without arranging multiple frames. But the original ask was
-  "use the thumbnail bar for moving around," and the multi-document
-  ThumbnailModel mode is still TODO:
-  - `ThumbnailModel` is currently 1:1 with one `IDocument`. A
-    multi-doc mode would let the sidebar render "1 thumbnail per
-    document" instead of "1 thumbnail per page of one document."
-  - A window-level "document list" panel in `Sidebar` could replace
-    the tab strip for navigation. (Tabs work, the user feels the
-    strip is too clicky for a 5-photo batch.)
-- Revisit whether `MainWindow`'s `QTabWidget` central widget should be
-  replaced with a plain `QStackedWidget` once the tab codepath has no
-  remaining users. The `QTabWidget` + `tabBarAutoHide` pair is fine for
-  now but carries tab-specific API no longer reached in the default
-  flow.
-
-### PDF text selection + text-aware markup (bug, high priority)
-
-- ~~**Click-and-drag on a PDF with a text layer does not select
-  text.**~~ Done. `PdfDocument::createView` wires
-  `overlay->setTextSelectionProvider(...)` to
-  `QPdfDocument::getSelection`, so Select-mode drags populate
-  `m_pendingSelection` with text quads instead of drawing a shape.
-  The "even when the markup toolbar is not visible" case is
-  belt-and-suspenders covered by the new `visibilityChanged`
-  handler in `MainWindow` that resets the toolbar to Select on
-  hide (commit `ff8541a`).
-- ~~**Underline and Highlight must be text-aware.**~~ Done — the
-  `Highlight` / `Underline` / `StrikeOut` branch of
-  `mouseReleaseEvent` calls `m_textSelection(start, end, page)` and
-  stores the result in `Annotation::quads`. The annotation renderer
-  walks the quads, not a single bounding rect, so the highlight
-  follows wrapped text correctly.
-- ~~**Contextual tool availability.**~~ Done — `MarkupToolbar::
-  setToolVisible` hides (rather than disables) the text-aware
-  trio on documents without a text layer, and hides the preceding
-  separator when the whole group goes empty so the user doesn't
-  see two adjacent dividers around nothing. Pinned by
-  `test_markup_toolbar`.
-
-> **Update 2026-07-31 (owner dogfood report).** The "Done" above wired
-> the Select-tool drag → `m_pendingSelection` quads, but two things were
-> still missing/broken, reported as "click-drag does nothing" on macOS:
-> (1) `m_pendingSelection` was only recomputed in `mouseReleaseEvent`, so
-> the highlight never appeared *during* the drag — the user got zero
-> feedback until they lifted the mouse button; (2) there was no I-beam
-> cursor at all (`setActiveTool(Select)` set a static arrow on the false
-> assumption the overlay was transparent and `SelectableTextLayer`'s
-> cursor showed through — Select actually keeps the overlay opaque so it
-> can own the Highlight/Underline/StrikeOut drag-to-quads plumbing); and
-> (3) there was no keyboard Copy at all for a Select-tool text selection
-> (only the right-click Highlight/Underline/StrikeOut menu existed).
-> Fixed: `mouseMoveEvent` now live-recomputes `m_pendingSelection` on
-> every drag sample; a new `PointOverTextProvider` backs an honest
-> hover-only I-beam; a new `TextSelectionTextProvider` backs Ctrl+C /
-> Cmd+C. The "does nothing at all" half of the report turned out to be
-> the *same* two defects on a PDF with an **invisible** (OCR-style,
-> genuine PDF `3 Tr` render mode) text layer — `QPdfDocument::
-> getAllText()` / `getSelection()` are render-mode-agnostic, so no
-> separate fix was needed for that case; a synthetic Tr-3 fixture in
-> `tests/test_adapters.cpp` / `tests/uat/test_uat_search_and_markup.cpp`
-> (`pdfDocumentInvisibleRenderModeTextIsIngestedAndSelectable` /
-> `UAT-ANN-145`) regression-guards it. See `AnnotationOverlay.h`'s
-> "Tool-precedence rule" comment (above `setActiveTool`) for the full
-> None-vs-Select routing story. Two-Pages mode remains out of scope —
-> already tracked, unrelated to this fix, in
-> `docs/backlog/2026-07-21-two-page-overlay-search-parity.md`.
-
-> **Update 2026-08-01 (G10 audit, SC-CRIT-2).** The "Contextual tool
-> availability... hides (rather than disables)" call above is
-> **superseded**. `docs/audit-2026-07-31-g10-deference.md` found that
-> hiding a tool action collapses its slot in the shared markup-toolbar
-> row, shifting Redact / Stroke / Fill / Width / Dash every time the
-> current document's text-layer or SAM-eligibility capability changes —
-> a gate-G10 (spatial constancy) violation switching tabs between an
-> OCR'd PDF and a plain image reproduces directly. `MarkupToolbar::
-> setToolVisible` is now `setToolEnabled`: the text-aware trio and the
-> SAM pair stay visible, disabled-with-tooltip (G3) instead of hidden,
-> so every action keeps its on-screen position. The separator-hiding
-> half of the old behaviour is gone too — with every action always
-> visible, a separator is never left bounding an empty region, so there
-> is nothing left to hide. See
-> `docs/decision-records/2026-08-01-markup-toolbar-disable-not-hide.md`
-> for the full reasoning (G10, an accepted gate, outweighs the earlier
-> "hidden, not greyed" call for tool actions sharing one toolbar row).
-> Pinned by `test_markup_toolbar` and
-> `uat_ann_082_textCentricToolsDisabledOnPlainImage`.
-
-### Annotation editing — selection, move, resize, restyle
-
-- ~~**Annotations must be re-selectable after creation.**~~ Done.
-  `AnnotationOverlay` has full `hitTest`, `m_selectedAnnotationId`,
-  `ResizeHandle` corner-drag, body-drag-to-move, Delete /
-  Backspace, arrow-key nudge, and an Inspector pane that tracks
-  the selection. (See commits `3a9a5bc`, `d611d1b`, `0b8d274`.)
-- ~~**Markup toolbar default visibility.**~~ Done — on first
-  annotatable document `onCurrentDocumentChanged` auto-shows the
-  markup toolbar (per-doc one-shot; an explicit user-hide is
-  sticky).
-
-### Inline editing (no modal popups for things that live in the document)
-
-- ~~**Text boxes edit in place.**~~ Done — commit `deb1a40`
-  ("Capture annotation text inline instead of via modal
-  QInputDialog"). `AnnotationOverlay::m_inlineEditor` is a
-  `QPlainTextEdit` parented to the overlay that captures text on
-  blur / Enter and cancels on Escape.
-- ~~**Signature placement uses a popover, not a dialog.**~~ Done.
-  New `SignaturePicker::show` (in `src/ui/SignaturePicker.{h,cpp}`)
-  pops a `QMenu` of thumbnails anchored under the Sign-Here button
-  on the form toolbar. "Add Signature…" goes straight into the
-  capture dialog and the new signature is auto-armed on save (no
-  re-open-the-picker step). "Manage Signatures…" still opens the
-  full `SignaturesDialog` for add/remove flows. `FormToolbar::
-  signHereRequested` now carries the anchor position so the
-  popover lands under the button the user clicked, not in the
-  centre of the screen.
-
-### High-fidelity signature + freehand capture (hardware input)
-
-- **Signature canvas — DONE for the 80% case.** The 2026-04-29 pass
-  rebuilt `SignatureCanvas` to:
-  - Bigger default canvas (640×200) so signatures get pixels to
-    breathe and don't pixelate when stamped on a 300 DPI page.
-  - Render at 2x scale into the saved PNG so the cached raster is
-    sharp at output time.
-  - Pressure source priority: `QTabletEvent::pressure()` for
-    Wacom / Bamboo / Surface Pen, then `QPointerEvent::points()
-    .first().pressure()` for Apple Force Touch trackpads (Cocoa
-    backend in Qt 6.5+), then a 0.5 default for plain mice.
-  - Cubic pressure → width curve (1..7 px) for visible dynamic
-    range.
-  - Per-stroke 3-point centred moving average smoothing on
-    release, hides quantisation jitter from mouse / trackpad
-    input. Tablet pens are already smooth so the pass is
-    effectively a no-op for them.
-  - Sub-event sampling via `QPointerEvent::points()` so fast
-    strokes on a Force Touch trackpad don't lose intermediate
-    samples to OS coalescing.
-- **Vector storage as a sidecar.** Today the canvas stores strokes
-  in memory but writes only the rasterised PNG. A
-  `<id>.strokes.json` sidecar with `[stroke[(x,y,pressure)*]]*`
-  would let future viewers re-render at any DPI without
-  re-rasterising. Not blocking — the 2x raster is plenty for
-  paper-size output.
-- ~~**Pressure-aware Ink (Freehand) tool.**~~ Done — `Annotation`
-  gained a `pressures` parallel vector, AnnotationOverlay overrides
-  `tabletEvent` for stylus input and reads `QEventPoint::pressure`
-  for Force Touch trackpads. The on-screen renderer draws each
-  segment with its own pressure-derived width, and the saved /AP
-  Form XObject does the same per-segment width emission so the
-  rendered ink matches what the user drew. Caveat: PDF's standard
-  /Ink subtype carries only x/y in `/InkList`; cross-app
-  round-trip preserves the polyline shape but loses pressure
-  unless we add a Trailer-specific extension key (deferred).
-- **Apple Pencil / iOS** — out of scope. Trailer is Qt6 widgets,
-  desktop only. If a tablet build ever happens, QTouchEvent on
-  iPad surfaces Apple Pencil pressure / tilt and the existing
-  pressure pipeline could pick it up.
-
-### AcroForm fields — direct manipulation, not auto-magic
-
-The 2026-04-28 follow-up reframes this whole area: the user's actual
-need is "I see the field, I click it, I type." AutoFill (My Card →
-field-name matcher) is a gimmick dead end — even when it works it's
-solving a problem nobody asked us to solve, and any per-PDF tuning
-to make the matcher catch a specific form's quirks is wasted effort.
-The 2026-04-24 AutoFill fixes (commits a6ad259, c66091a area) still
-stand because they removed user-hostile behaviour (the modal popup,
-the silent stale overlay), but no further investment in the matcher
-is warranted.
-
-What to do instead:
-
-- ~~**Form widgets visible by default on any fillable PDF.**~~ Done.
-  `onCurrentDocumentChanged` auto-toggles `m_fillFormsAction` on the
-  first time it sees a fillable document (one-shot per-doc; an
-  explicit user-off is sticky).
-- ~~**A subtle visual cue for fillable regions.**~~ Done — `FormOverlay`
-  applies `border: 1px solid rgba(0, 100, 200, 80)` to every field
-  with `rgba(0, 100, 200, 220)` on focus. Matches the Preview
-  convention.
-- ~~**Tab navigates between fields in document order.**~~ Done —
-  `FormOverlay` sorts fields by reading order (page asc, top-y asc,
-  left-x asc) and chains them with `QWidget::setTabOrder`.
-- ~~**Demote AutoFill in the menu.**~~ Done — `Tools → Forms →`
-  submenu hosts `Fill Forms` and `AutoFill from My Card` as siblings
-  inside the submenu rather than peers at the top level.
-- **Trim My Card.** Still open. The 2026-04-24 review called it
-  "huge with tons of options." With AutoFill deprioritised, the card
-  is just the signature-block source plus a few address bits. Audit
-  the `MyCardDialog` fields hard.
-
-### Test-shape principle: synthesise variety, don't pin examples
-
-Captured 2026-04-28 after a near-miss with a real-world fixture.
-Pattern to avoid: writing a UAT whose floor is "this specific PDF
-the reviewer dropped on us yields N fills." Even gated on an env
-var that keeps the file out of the repo, the approach over-fits the
-test to one example — a regression in the matcher only trips the
-test if it happens to break THIS form, and a successful matcher
-change is hard to land because the floor was tuned to one corpus.
-
-Use generative fixtures instead:
-
-- A `writeRandomFormPdf(seed, recipe)` helper in the test harness
-  that emits a synthetic PDF with N text fields whose `/T` and `/TU`
-  are sampled from a corpus of real-world quirks (cryptic indices,
-  hierarchical dot-names, suffixed `_2/_3` duplicates, designer
-  typos, multi-purpose tooltip labels, etc.).
-- Assertions stated as **invariants**, not counts: "for every field
-  whose canonicalised name contains `email`, the recognized email
-  value is written" / "for every field whose canonicalised name
-  contains nothing recognisable, the value is empty after AutoFill."
-  Run across many seeds.
-- Keep `uat_af_010..030` (small, named cases — they document the
-  intended behaviour) but resist adding `uat_af_NNN_specific_form`
-  slots. If you find yourself wanting to, that's a signal the
-  generator needs a new quirk in its corpus.
-
-The same principle applies to OCR (don't pin to a single sample
-image), background removal (don't pin to a single subject photo),
-and any future feature where input variety is the whole point.
-
-### Cross-cutting polish items
-
-- **Designer / non-technical-user review.** Now codified as the
-  reference-user smoke session — see
-  [`docs/smoke-session.md`](docs/smoke-session.md) for the protocol
-  (fresh build, non-maintainer observer, three open-do-close cycles
-  on a text PDF + scanned PDF + photo, observations land in a dated
-  subsection of this file). The original bullets that lived here —
-  modal dialogs that interrupt, controls enabled-but-noop, hidden
-  entry points, lost direct manipulation, too-loud/too-quiet feedback
-  — are now covered as positive rules in PHILOSOPHY's *How Trailer
-  reduces friction* section. The trigger remains: schedule a smoke
-  session before any 1.0 polish milestone, and opportunistically
-  whenever a willing non-maintainer is in the room.
+# TODO
+
+Trailer's one tracker: every entry is open work, and nothing else in the repo tracks work. What
+Trailer won't do is in PRODUCT.md ("Not doing"), not here.
+
+**Entries**
+- Each entry has an id, a one-line title, tags, **Done when** (the pass/fail bar) and **Src**
+  (the evidence). Some also have **Test**: a known-bug test that fails today (below).
+- **Done when** names a state a reviewer can reach and observe. Where it says "at dpr 1 and 2" or
+  lists view modes, every combination must pass.
+
+**Closing and adding**
+- To close an entry, the PR that meets its bar deletes it and names the id in the commit subject,
+  e.g. `fix(T-07): …`. There is no status field and no done list.
+- To add an entry, take the next unused id (ids are never reused; the highest so far is T-127)
+  and put it under its priority. Land a failing test in the same PR when you can.
+- A code comment that points at open work says `// T-NN: …` and nothing more.
+
+**Known-bug tests**
+- `tests/test_known_bugs_*.cpp` (ctest label `known-bug`, run by PR CI on Linux) assert the
+  correct behaviour and mark today's failure with `QEXPECT_FAIL("", "T-NN: …", Abort)`.
+- A fix makes that check pass unexpectedly, which fails the run. The fixing PR deletes the
+  `QEXPECT_FAIL` line and this entry together, so the test becomes the regression test.
+
+**Priorities**
+- **P0**: data loss, a wrong save or undo, or a file that leaks what the user removed.
+- **P1**: the named friction: controls that move, popups that say no, status-bar clutter, broken
+  select/undo/zoom basics, text you can't select, HiDPI blur, slow open.
+- **P2**: Preview parity and polish.
+- **P3**: later, or stretch.
+
+**Tags:** `open` (open, render, perf), `nav` (navigation, zoom), `text` (selection, text),
+`annotations` (also page edits), `undo`, `save` (save, autosave, recovery), `chrome` (layout
+stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `packaging`
+(packaging, release, CI), `infra` (tests and infrastructure), `docs`, `security`, and
+`data-loss` where work can be lost.
+
+**Sources (Src)**
+- `file:line` refers to `09bc1e3` (origin/main, 2026-08-07). Removed files (the old TODO.md,
+  ROADMAP.md, `docs/backlog/`, decision records) can still be read with `git show 09bc1e3:<path>`.
+- Short ids such as MAP-1, SAV-3 or C7 name findings from the October 2026 audit, which lives
+  outside the repo. Each entry repeats what you need from it.
+
+## P0: data loss, wrong save or undo, leaks
+
+- **T-01 PDF Save re-appends every annotation already in the file.** `save` `data-loss`
+  - Done when:
+    - three Saves, each made after adding one mark, leave exactly 3 annotations in the file,
+      counted with a fresh `PdfEditor::readAnnotations()`;
+    - a file that arrives with 2 annotations still holds 2 after a clean Save, and after
+      Rotate + Save; Save As behaves the same;
+    - a file carrying other apps' annotations (a Highlight with /Popup, a reply with /IRT, /T
+      author, /NM, /RC rich text, /CA opacity, a Link) keeps its annotation count and those
+      keys, through three clean saves and one unrelated edit.
+  - The fix needs annotation identity: each annotation keeps its source object, and Save
+    rewrites only new or changed ones and deletes only removed ones. Clearing all managed
+    annotations and writing them again (what `writeRecoverySnapshot` does today) strips other
+    apps' metadata, so it is not a fix; the recovery sidecar has the same loss today.
+  - Test: `test_known_bugs_pdf_save` (checks tagged T-01).
+  - Src: SAV-1, C6. Each Save writes the store on top of what the file holds: three mark-and-save
+    rounds leave 1, 3, then 7 marks; a clean ⌘S doubles them. Other apps' annotations keep their
+    keys, but Save appends stripped copies of them (6 → 10 on the test file).
+    `PdfAdapter.cpp:2596-2604`; `PdfEditor.cpp:1030-1110`; `Annotation.h:99-113` (no source object
+    id, author or dates).
+- **T-02 Deleting, moving or inserting pages leaves marks on the wrong page, and Save then drops
+  or misplaces them.** `annotations` `data-loss`
+  - Done when: take a 3-page PDF with marks on pages 1 and 3.
+    - Deleting page 1 removes page 1's mark and shows the page-3 mark on the new page 2: in the
+      view, in the annotation store and in the saved file.
+    - Moving page 1 to the end carries its mark with it.
+    - Inserting a page at the front shifts both marks by one page.
+    - ⌘Z after each operation restores the previous placement.
+  - Test: `test_known_bugs_pdf_save` (T-02).
+  - Src: page operations never touch the annotation store (`PdfAdapter.cpp:2259-2276`,
+    `:2324-2343`, `:2345-2362`). After deleting page 1 and saving, page 1's mark lands on the new
+    page 1, page 3's mark is dropped from the file, and the store keeps it on a page that no
+    longer exists.
+- **T-03 Marks on rotated pages are saved away from where they were drawn.** `save` `data-loss`
+  - Done when: a rectangle drawn at the visible top-left of a page rotated 90°, 180° and 270°
+    shows at the same visible spot when pdfium renders the saved file with annotations on, and
+    Trailer re-reads it at that spot. The same holds on a cropped page.
+  - Test: `test_known_bugs_pdf_save` (T-03).
+  - Src: drawn at (20,20, 100×60), pdfium paints (762,20, 60×100). `PdfEditor.cpp:1030-1068`
+    ignores /Rotate and the CropBox.
+- **T-04 Zoom Lens marks vanish when a PDF is saved.** `save` `data-loss`
+  - Done when: a Zoom Lens drawn on a PDF is still present and editable after Save and reopen.
+    Until that works, the tool is disabled on PDFs with a tooltip saying it works on images.
+  - Test: `test_known_bugs_pdf_save` (T-04).
+  - Src: the store goes 1 → 0 on Save. `PdfEditor.cpp:674-678`.
+- **T-05 ⌘Z of a page operation after Save does nothing, marks the document edited, and can
+  make it unsaveable.** `undo` `data-loss`
+  - Done when: for delete, move, rotate, insert and crop, the sequence op → Save → ⌘Z restores
+    the pages exactly as before the op, and ⌘⇧Z re-applies it. `undo()` returns false whenever
+    nothing was reverted. Save never fails after an undo. A symmetry test over every PdfCommand,
+    run across a Save, proves this.
+  - Test: `test_known_bugs_pdf_save` (T-05; delete and move).
+  - Src: UND-1, UND-2. After Delete → Save → ⌘Z, `undo()` returns true, nothing changes, qpdf
+    warns "operation for dictionary attempted on object of type destroyed", and Save, Save As and
+    the recovery snapshot all fail from then on. After Move → Save → ⌘Z, ⌘⇧Z moves the page
+    again (a third order) and Save As writes it. Rotate, insert and crop undo correctly across a
+    Save today; delete and move don't.
+    - `PdfAdapter.cpp:2206` ignores `revert()`'s result.
+    - The commands hold objects of the editor that `saveCommitOnUi` replaces
+      (`PdfCommands.h:66-78`; `PdfAdapter.cpp:2634-2735`).
+- **T-06 On an image, ⌘Z after Save can never remove a mark.** `undo` `data-loss`
+  - Done when: on a PNG, the sequence draw a rectangle → Save → ⌘Z removes the rectangle from the
+    displayed pixels, and ⌘⇧Z restores it. A Save after the ⌘Z writes the file without it. After
+    Save, marks are still selectable and editable.
+  - Test: `test_known_bugs_image` (T-06).
+  - Src: UND-5. Save burns the mark into the pixels and clears it from the model
+    (`ImageAdapter.cpp:1383-1391`). ⌘Z re-adds the mark over the burned-in pixels; a second ⌘Z
+    leaves the pixels red with nothing left to undo.
+- **T-07 After a tab is dragged, commands act on the other document.** `save` `data-loss`
+  - Done when: in a two-tab image window, after dragging the first tab to second place, Save,
+    Rotate, ⌘Z, Select All, Close and Export each act on the selected tab's document. Test: after
+    `tabBar()->moveTab()`, `currentDocument()` matches the selected tab at every index.
+  - Test: `test_known_bugs_window` (T-07).
+  - Src: UND-9. `DocumentView.cpp:7` calls `setMovable(true)` and nothing handles `tabMoved`.
+    `DocumentView.cpp:27-33` looks documents up by index. Opening several images at once makes a
+    tabbed window, so this is reachable by default.
+- **T-08 A failed or cancelled PDF Save leaves the open document half-saved, and Cancel doesn't
+  stop Save As.** `save` `data-loss`
+  - Done when: an injected write failure, and Cancel pressed mid-save while that button exists,
+    each leave the open document with the same marks, page count and undo history as before. No
+    file appears at a Save As target. The next good Save writes each mark once.
+  - Src: `MainWindow.cpp:3247-3268` returns on `wasCanceled`, but the `QtConcurrent::run` worker
+    keeps going. `PdfAdapter.cpp:2596-2604` mutates the live editor; `:2626-2630` writes the
+    Save As target directly. Inferred from the code, not reproduced.
+- **T-09 Fit Width plus navigation, view-mode toggle or resize can freeze the UI at 100% CPU.**
+  `nav` `data-loss`
+  - Done when: these seeds of the random UI walk pass its per-step quiescence check at dpr 1 and
+    2, and so do 200 fresh seeds:
+    - the recorded seeds 720458898, 84349732 and 269782153;
+    - the random-walk seeds 3116271505, 516731256, 1970968076, 1628323449 and 2603950034.
+  - Src: the walk and its oracle are on branch `claude/trailer-coordinator-elk85x` (commits
+    `04429e4`, `1ba553a`, `0da986d`). gdb shows the GUI thread looping in
+    `QAbstractScrollAreaPrivate::layoutChildren_helper → postEvent`. Force-quitting loses
+    unsaved work.
+- **T-90 Redaction leaves the text readable on rotated and cropped pages.** `security` `data-loss`
+  - Done when: red text under a redaction box leaves 0 red pixels in the saved file at /Rotate
+    0, 90, 180 and 270 and on a page with a CropBox; the page keeps its orientation; and a page
+    that can't be rendered makes Save fail loudly instead of being skipped.
+  - Test: `test_known_bugs_pdf_files` (T-90).
+  - Src: C1. Red pixels before → after: unrotated 1,806 → 0; /Rotate 90 1,798 → 1,747 (readable,
+    page upside down, box on blank paper); cropped 1,806 → 2,843; /Rotate 180 covered but the
+    rotation is lost. The redacted page's text layer is gone, so searching the saved file won't
+    reveal the leak. `PdfEditor.cpp:965-1016`: raster size from the unrotated MediaBox, box
+    painted at displayed coordinates, a failed render silently skips the page.
+- **T-91 Password-protected PDFs go blank after any page operation, and Save misreports.**
+  `save` `data-loss`
+  - Done when: with a 3-page AES-256 PDF opened with its user password, Rotate keeps
+    pageCount 3 and the document dirty; Save returns true; reopening with the password shows the
+    rotation; the recovery snapshot succeeds; redaction works.
+  - Test: `test_known_bugs_pdf_files` (T-91).
+  - Src: C2. After Rotate, pageCount becomes 0 (blank view) and Save returns false even though it
+    has already rewritten the file. `PdfAdapter.cpp:2122-2125` (the viewer reload drops the
+    password), `:2690-2700` (the post-save editor reloads without unlocking);
+    `PdfEditor.cpp:933`. Owner-password-only files work.
+- **T-92 In-place Save deletes the file before replacing it, breaks symlinks, and resets
+  permissions.** `save` `data-loss`
+  - Done when:
+    - killing the process at every step of a save (fault injection at each file operation)
+      always leaves either the complete old file or the complete new one at the path;
+    - saving through a symlink updates the target and leaves the link a link;
+    - mode 0600 stays 0600; extended attributes and hard links are preserved;
+    - image saves get the same treatment (write a temp file in the same directory, then rename).
+  - Test: `test_known_bugs_pdf_files` (T-92; symlink and mode).
+  - Src: C3, SAV-4. The order is `unlink(target)` → `link(temp, target)` → `unlink(temp)`, so the
+    path is empty in between; with TMPDIR on another filesystem the bytes are copied while it
+    is empty. A 0600 file becomes 0644. If the step after the remove fails, `restoreOnFailure`
+    reloads the deleted path and the document vanishes. `PdfAdapter.cpp:2609-2610`, `:2663-2682`;
+    `TempPath.h:24-25`; `ImageAdapter.cpp:1384-1391` writes in place.
+- **T-96 Save rewrites unedited files, and JPEG Save re-encodes and drops EXIF.** `save` `data-loss`
+  - Done when: ⌘S on an unedited PDF or image leaves the file's bytes and mtime unchanged. Saving
+    an edited JPEG keeps its EXIF (orientation reset to 1), ICC profile and resolution, and does
+    not re-encode below the source quality.
+  - Test: `test_known_bugs_window` and `test_known_bugs_image` (T-96).
+  - Src: SAV-3, C7. `onSave` has no dirty gate (`MainWindow.cpp:3153-3171`). A JPEG is
+    re-encoded at Qt's default quality on every save (55,412 → ~12,400 bytes; error grows with
+    each save), and EXIF goes from 5 tags to 0 (`ImageAdapter.cpp:1385-1387`).
+- **T-102 Marks and text selection land on different content than the user pointed at.**
+  `text` `annotations` `data-loss`
+  - Done when, through MainWindow with real mouse events at positions found from rendered pixels,
+    for {Fit Page, Fit Width, 100 %, 50 %, 400 %} × {Single, Continuous, Two Pages} × logical
+    DPI {72, 96} × dpr {1, 2} × {document shorter and taller than the viewport}:
+    - a drag with the default tool from 2 px inside a word's left edge to 2 px inside its right
+      edge puts exactly that word on the clipboard;
+    - a rectangle drawn 6 px outside the word, then saved, is stored containing the word's
+      bounds with ≤ 2 pt slack per side.
+  - Test: `test_known_bugs_window` (T-102; Fit Page at DPI 96 and 72).
+  - Src: MAP-1..3. In the default view (Fit Page) a drag across "INVOICE" copies "VOICE", and a
+    box drawn around it is saved 31 pt right and 25 pt up. On Windows and Linux every zoom is
+    wrong, by about 750 px on page 3. `PdfAdapter.cpp:858-923`: page points are mapped with
+    `zoomFactor()`, which stays 1.0 in fit modes; QPdfView also scales by
+    `logicalDotsPerInch / 72`, which `src/` never reads; and an `extraY` term assumes vertical
+    centring that QPdfView doesn't do.
+
+## P1: the friction that was named
+
+- **T-10 Every PDF Save opens a window-modal "Saving…" dialog.** `dialogs`
+  - Done when: saving a PDF creates no dialog (test: no top-level QDialog appears between Save and
+    completion). The document stays scrollable while it writes, and the edited indicator clears
+    when the write lands. A save that takes over a second shows progress without a modal.
+  - Src: NO-7. `MainWindow.cpp:3232-3236`: QProgressDialog, WindowModal, `setMinimumDuration(0)`.
+- **T-11 The status bar is always shown, with success toasts and reserved slots that jump.**
+  `chrome`
+  - Done when: `statusBar()` is not visible in the empty, PDF, image and markup states on any OS,
+    and no text appears after a successful action ("✓ Saved.", "Page cropped.", "Page copied…",
+    "Trailer reset complete."). Anything that must still be shown appears in context and only
+    while its state is true (errors: T-111).
+  - Test: `test_known_bugs_window` (T-11).
+  - Src: SB-1, SB-2. Four fixed-width reserved slots take 1,045 px of a 1,280 px window, empty at
+    rest (`MainWindow.cpp:176-185`, `:636`, `:778`, `:885`, `:898`), and jump 1–4 px vertically
+    when one fills. `flashSuccess` at `:2293`, `:3230`, `:3302`, `:3585`, `:3685`, `:5495`.
+- **T-12 Find moves the toolbar, opens the sidebar, and leaves it open.** `chrome`
+  - Done when: ⌘F → type → Esc changes no main-toolbar control's or the document view's
+    `geometry()` at any step; the sidebar is visible after Esc iff it was before ⌘F; at window
+    widths ≥ 900 px the search field is visible at rest. Asserted in Continuous, Single and Two
+    Pages at dpr 1 and 2.
+  - Test: `test_known_bugs_window` (T-12).
+  - Src: JMP-3, JMP-5. The toolbar grows 33 → 39 px, all icons shift, the search control moves
+    1250 → 889 px, and the sidebar opens before anything is typed (document +266 px).
+    `MainWindow.cpp:1616-1660`; `:1626-1631` hides the widget but not its QWidgetAction.
+- **T-13 Tools ▸ Take Screenshot is a modal chooser with greyed options, duplicating File ▸
+  Screenshot.** `dialogs` `screenshot`
+  - Done when: the only entry point is File ▸ Take Screenshot ▸ From Selection… / From Window… /
+    From Entire Screen, with Preview's names. Each item starts its capture with no intermediate
+    dialog. Tools ▸ Take Screenshot and its chooser are gone.
+  - Src: NO-1. `MainWindow.cpp:2188` and `:3083-3151` (radio buttons disabled off macOS);
+    `Application.cpp:1326-1395`.
+- **T-14 The UI shows disabled placeholders.** `dialogs`
+  - Done when: the File menu has no Scanner or Camera items; the file-changed banner has no
+    disabled Compare button; Preferences offers no disabled Stable channel; Share… is absent
+    where it can't work.
+  - Src: NO-3. `Application.cpp:1391-1397`; `FileChangeBanner.cpp:36` and `:57-64`;
+    `PreferencesDialog.cpp:329-345`.
+- **T-15 Window and selection screenshots don't work on Windows or Linux.** `screenshot` `platform`
+  - Done when: on Windows 11 and on Linux (GNOME Wayland through the screenshot portal, and X11),
+    From Window… and From Selection… capture into a new untitled document at the screen's native
+    pixels. This is checked on a real desktop at dpr 1 and 2. The "isn't available on this
+    platform yet" tooltips are gone.
+  - Src: `Application.cpp:1361-1368`.
+- **T-16 Untitled screenshots and clipboard documents are lost on a crash.** `save` `data-loss`
+  - Done when: take a screenshot document and a New from Clipboard document, each with one mark,
+    and kill Trailer with SIGKILL 35 s after the edit. At the next launch both come back with the
+    image and the mark, still untitled.
+  - Src: `MainWindow.cpp:1049`, where auto-save skips untitled documents.
+- **T-17 ⌘A selects annotations instead of text, and can act on a background tab.** `text`
+  - Done when:
+    - With focus on the page, ⌘A selects all text in the document and ⌘C copies it. This holds
+      for native and OCR text, in Continuous, Single and Two Pages (decided: match Preview).
+    - With focus in the thumbnails, ⌘A selects all pages.
+    - In a two-tab window, ⌘A acts only on the visible tab.
+  - Src: `MainWindow.cpp:1570-1575` calls `findChild<AnnotationOverlay*>()->selectAll()`.
+- **T-18 Copy Page as Image leaves out the page's marks.** `text`
+  - Done when: Edit ▸ Copy Page as Image on a page with a rectangle and a text box puts an image
+    on the clipboard that shows both marks, at page size × screen dpr. Checked at dpr 1 and 2.
+  - Src: `MainWindow.cpp:3672-3685` uses `renderThumbnail`, which paints the raw page.
+- **T-19 Scanned PDFs are never OCR'd automatically.** `ocr`
+  - Done when:
+    - opening an image-only PDF, with the OCR model installed and background recognition on,
+      makes the visible page's text selectable with no user action;
+    - a born-digital PDF triggers no OCR; a mixed PDF OCRs only its image-only pages;
+    - the missing-model hint follows the same per-page rule;
+    - Recognize Text… no longer opens a page-range modal.
+  - Src: OCR-3, NO-6. `hasTextLayer()` returns `m_valid` (`PdfAdapter.h:139`), so the gates at
+    `OcrController.cpp:76` and `:280-284` stop every PDF. A per-page `pageHasText()` exists at
+    `PdfAdapter.cpp:1621` but runs on the GUI thread. `MainWindow.cpp:2818-2841`.
+- **T-20 OCR'd text selects whole blocks, not words.** `ocr` `text`
+  - Done when: dragging across two words of an OCR'd line selects and copies exactly those two
+    words, as native text does at the same spot. Checked in Continuous, Single and Two Pages at
+    dpr 1 and 2.
+  - Src: `SelectableTextLayer.cpp` does no word splitting.
+- **T-21 Two Pages is read-only (no markup, text selection or Find) and hides the markup
+  toolbar.** `text` `annotations`
+  - Done when, in Two Pages at dpr 1 and 2:
+    - every markup tool enabled in Single is enabled, and each mark lands on the correct page of
+      the spread (round-trip checked in Single);
+    - selecting text on either page copies only that page's text;
+    - Find highlights each match on its page and scrolls that spread into view;
+    - switching among Single, Continuous and Two Pages never changes any toolbar's visibility or
+      the document view's y-position;
+    - the Read-only badge and the "switch to Single" tooltip are gone.
+  - Test: `test_known_bugs_window` (T-21; toolbar visibility).
+  - Src: JMP-4, SEL-7. `MainWindow.cpp:862-885`, `:4655-4693`; `TwoPageView` has no mouse or key
+    handlers. Decided: keep Two Pages and fix it on the new page surface rather than remove it.
+- **T-22 Changing zoom mode loses your page.** `nav`
+  - Done when: open a 200-page A4 PDF in a 900×700 window, choose Continuous and Fit Page, go to
+    page 140, then choose Fit Width. `currentPage()` is 140, and the scroll position equals a
+    settled go-to-page-140 under Fit Width. The same holds for every zoom-mode change and every
+    switch among Continuous, Single and Two Pages, at dpr 1 and 2.
+  - Src: was `docs/backlog/2026-08-05-zoom-mode-change-drops-the-current-page.md`.
+- **T-23 The window waits for the whole PDF to load before its first paint.** `open`
+  - Done when: with every file read blocked, `openFiles()` returns, a posted event runs, and the
+    "Loading…" placeholder paints before the read is released. `addDocument` makes no
+    `pageCount()` call, not even inside recorder arguments (T-100).
+  - Src: `MainWindow.cpp:5250-5253`; `PdfAdapter.cpp:781-786`; `src/uxrecord/UxRecord.h:53`.
+- **T-24 GUI-thread work grows with page count: layout, sidebar and thumbnails.** `open`
+  - Done when these counting tests (no clocks) pass in Continuous, Single and Two Pages:
+    - the pages touched before the first frame are the same set for 1 and for 20,000 pages;
+    - the GUI thread makes 0 engine calls across open, 3 scroll steps, 1 zoom, 1 resize and a
+      mode switch;
+    - page-record visits per scroll, zoom or resize event are at most visits(N=1) + 4·⌈log2 N⌉;
+    - Two Pages relayout makes 0 `pagePointSize()` calls;
+    - the GUI thread's instruction count to the first frame grows by less than about 100
+      instructions per page between 20,000 and 40,000 pages (callgrind, `--separate-threads`).
+  - Src: QPdfView's Continuous layout walks every page on open, zoom and resize; Trailer adds
+    eight `pagePointSize` walks per page. `PdfAdapter.cpp:815-1471`; `TwoPageView.cpp:134-162`;
+    `Sidebar.cpp:316`; `ThumbnailModel.cpp:190-218`. `tests/test_perf_page_geometry.cpp:103`
+    asserts the O(pages) behaviour and must be inverted.
+- **T-25 Native text ingest re-parses the page once per line, on the GUI thread.** `open`
+  - Done when: on open, native-text ingest runs off the GUI thread with one `getAllText()` per
+    page; per-line queries remain only as a fallback; and every line's rectangle is within 1 pt
+    of the exact per-line extraction on a corpus with superscripts and subscripts, two columns,
+    rotated text, right-to-left text, ligatures and an OCR'd scan.
+  - Src: `PdfAdapter.cpp:1631-1690` (`:1672` runs once per line); about 0.3 s on a 20-page file.
+    A prototype that takes one `getAllText()` per page assigns wrong rectangles to lines with
+    superscripts, which is the T-102 class of bug, so it needs the corpus gate above.
+- **T-26 Opening a large image or animated GIF blocks the GUI for the full decode.** `open`
+  - Done when: with the image decode gated, `openFiles()` returns and the GUI thread has not run
+    `ensureDecoded()` before the gate is released. The badge scorer runs after the first paint,
+    off the GUI thread. Animated GIF frames decode off the GUI thread.
+  - Src: `MainWindow.cpp:3791-3822` and `:4297`; `ImageAdapter.cpp:302-311`.
+- **T-27 Images too large for Qt's default 256 MB decode limit don't open.** `open`
+  - Done when: a 96 MP JPEG and a 20,000 × 20,000 PNG open and display, decoding scaled when
+    needed. The allocation limit is set explicitly, with a rationale comment.
+  - Src: `ImageAdapter.cpp:348-352`.
+- **T-28 Perf tests skip or race instead of counting.** `infra`
+  - Done when:
+    - the counting tests in T-23, T-24 and T-26 run in PR CI without the `uat` label, each
+      marked QEXPECT_FAIL until its fix lands;
+    - the QSKIP at `test_perf_render_ordering.cpp:114` is gone;
+    - `test_perf_lazy_open` passes 50 of 50 runs alongside a parallel build.
+  - Src: `test_perf_lazy_open` failed 2 of 45 runs under load.
+- **T-29 Saving a PDF wipes its markup undo history.** `undo`
+  - Done when: add a mark, rotate a page, Save, then ⌘Z twice: the rotate is reverted, then the
+    mark, and the document is marked edited; ⌘⇧Z restores both. The same holds after Save As.
+  - Test: `test_known_bugs_pdf_save` (T-29).
+  - Src: UND-3. `PdfAdapter.cpp:2725` calls `clearHistory()` for annotations but keeps page-op
+    history, so ⌘Z after Save skips the newest mark and undoes an older rotate.
+- **T-30 No Trailer build runs on the reference Intel Mac.** `platform`
+  - Done when: the owner's choice (PRODUCT.md, open decision 2) is in place. Either a release DMG
+    launches and opens a PDF on the reference Intel Mac (x86_64, ML off, which needs T-49), or
+    the counting tests (T-24) and the cold-launch measurement (T-124) run on that machine under
+    Linux or Windows with the results recorded.
+  - Src: Qt 6.10+ needs macOS 13 and ONNX Runtime 1.25 needs 14, while 2014 Macs stop at
+    macOS 11 or 12. `cmake/OnnxRuntime.cmake:37-38` is FATAL on macOS x86_64.
+    `scripts/build-macos.sh:2-17` is arm64 only, and `:68` sets the floor to macOS 14.0.
+- **T-58 CI tests Windows only under Wine, and most of CI guards process, not the product.**
+  `packaging` `infra`
+  - Done when:
+    - every PR builds and runs the unit tests natively on Linux, Windows (MSVC) and macOS, and
+      UAT on Linux; release UAT runs on all three;
+    - the Wine and mingw lanes, the unused runner image, `dev-build.yml`, the Docker UAT, the UAT
+      ratchet and the release-script self-tests are gone, along with their workarounds
+      (`kWineSkip`, the configure-time font directory);
+    - the gating lanes build the shipped configuration (recorder off);
+    - main stays green on 10 consecutive pushes, and a re-run never flips a result.
+  - Src: about 4,400 lines of workflow YAML for about 2,300 lines of logic. The disabled MSVC job
+    (`ci.yml:506-596`) passed 36 of 37 runs before it was turned off; the Wine lane fails about 1
+    run in 3 and Wine UAT passes about half its cases. Main's last CI run is red from a Wine
+    flake. `tests/test_ml_callback_lifetime.cpp:271`; `tests/CMakeLists.txt:25`;
+    `tests/uat/CMakeLists.txt:19`.
+- **T-94 Annotations made by other apps are invisible in Trailer.** `annotations`
+  - Done when: a /Stamp and a /Polygon with appearance streams show in the view, thumbnails, Copy
+    Page as Image and print.
+  - Test: `test_known_bugs_pdf_files` (T-94).
+  - Src: C4. No file in `src` sets `QPdfDocumentRenderOptions::RenderFlag::Annotations`. Save
+    and recovery keep these annotations; they are just never drawn.
+- **T-95 Print leaves out annotations, signatures and unsaved marks, and rasterizes on the GUI
+  thread.** `print`
+  - Done when: printing to PDF a document with a saved mark and an unsaved mark contains both;
+    images print with their marks; the GUI thread stays responsive while printing (counted).
+  - Test: `test_known_bugs_pdf_files` (T-95).
+  - Src: C5. `PdfAdapter.cpp:2052-2099` renders `m_doc` with default flags; `ImageAdapter.cpp:
+    1517-1538` prints `m_image` without the overlay.
+- **T-97 Page operations cost O(document) on the GUI thread.** `open`
+  - Done when: rotate, delete and undo make O(1) engine calls on the GUI thread at N = 20,000
+    pages (counted at the engine boundary), and the first edit doesn't block on a whole-file
+    parse.
+  - Src: C8. One rotate takes 150 ms at 20,000 pages and 1,048 ms at 100,000; the first edit adds
+    a lazy qpdf parse (776 ms / 3,249 ms). `PdfAdapter.cpp:2100-2147` serializes the whole
+    document, closes, reloads and clears all OCR. A stable page model (source page, rotation,
+    crop; written out only at Save) fixes this together with T-05, T-103 and T-116.
+- **T-98 Saving a signed PDF silently invalidates the signature.** `save`
+  - Done when: a clean ⌘S on a PDF with a /Sig field leaves its bytes unchanged (T-96); editing
+    one shows an inline, non-modal notice that the signature will break, and Save defaults to a
+    copy unless the user confirms.
+  - Src: C10. Nothing in `src` handles /Sig or /ByteRange, and every Save is a full rewrite.
+- **T-103 Save, page operations and Undo move the reading position.** `nav`
+  - Done when: after Save, Save As, any page operation, Undo or Redo, the same document point
+    stays under the same viewport pixel (±2 px).
+  - Test: `test_known_bugs_window` (T-103).
+  - Src: JMP-1, JMP-2. Save resets scrollY 2113 → 0; rotating an unseen page moves the view
+    −840 px and Undo −420 px. Every page op reloads the viewer, and `jump(savedPage, {})` drops
+    the offset within the page (`PdfAdapter.cpp:2140-2166`, `:2694-2714`).
+- **T-104 Undoing back to the saved state leaves the document dirty, and the window is never
+  marked modified.** `undo` `save`
+  - Done when: edit then undo to the saved state, for a PDF rotate, a PDF mark and an image
+    rotate: no dirty marker, `isWindowModified()` false, and close doesn't prompt; Redo makes it
+    dirty again. After any edit `isWindowModified()` is true, so macOS shows the close-button dot
+    and "Edited". A document restored from crash recovery shows as edited.
+  - Test: `test_known_bugs_window` (T-104).
+  - Src: UND-4, SAV-5, SAV-8. `PdfAdapter.cpp:477-480`, `:2209`; `ImageAdapter.cpp:1133`; the
+    title uses a "• " prefix and `setWindowModified` is never called.
+- **T-107 Form-field edits can't be undone.** `undo`
+  - Done when: type in a form field, ⌘Z: the previous value is restored; ⌘⇧Z re-applies it.
+  - Src: UND-8. `PdfAdapter.cpp:2817-2825` marks the document dirty and records nothing.
+- **T-108 Auto-save rewrites every dirty document every 30 s on the GUI thread, even when
+  nothing changed.** `save` `open`
+  - Done when: a tick after no new edit writes nothing, and snapshot work causes no GUI-thread
+    stall over one frame (counted as GUI-thread engine and file calls: zero).
+  - Src: SAV-6. 69–88 ms per tick on a 300-page, 22.5 MB file, 247 ms with one redaction; about
+    2.7 GB an hour while a large document stays dirty. `MainWindow.cpp:995-1003`, `:1067`.
+- **T-110 Image windows show a permanent "install language pack" link.** `chrome` `ocr`
+  - Done when: with the OCR model bundled (PRODUCT.md, open decision 3) the link never shows;
+    otherwise it shows at most once per document, in context, with a dismiss.
+  - Src: SB-3. `MainWindow.cpp:722-733`, `:979-980`.
+- **T-112 Disabled items explain nothing, or point at other items.** `dialogs`
+  - Done when: a test walks every menu and toolbar action in the empty, PDF and image states, and
+    each disabled action is either self-evident (Undo, Redo, Cut, Copy, Paste) or has a tooltip
+    that differs from its label and says why (an image-only command on a PDF says it works on
+    images); switching between a PDF tab and an image tab moves no control; there is one OCR
+    command.
+  - Src: NO-2, NO-8. Nine disabled items on a PDF window have a tooltip that only repeats the
+    label (Adjust Size…, Adjust Colour…, Remove Background, Instant Alpha…, Smart Lasso…, Export
+    As…, Crop Image…, Fill Forms, and one since removed); "Re-run Text Recognition" is disabled
+    with a tooltip pointing to another item.
+- **T-115 OCR'd text can't be selected with the default tool, and the I-beam lies.** `ocr` `text`
+  - Done when, in the app's default state after OCR completes on an image and on a scanned PDF
+    page, driven through MainWindow with real events at positions found from pixels:
+    - hovering a word shows the I-beam, and the I-beam shows only where a drag would select;
+    - a drag across two words highlights exactly those glyphs;
+    - ⌘C and Edit ▸ Copy copy exactly those words;
+    - Find highlights a match on the glyphs.
+  - Src: OCR-1, OCR-2, OCR-5. The overlay takes the mouse with the default tool (Select), and
+    its Select path asks only the PDF text layer; OCR text selects only with tool None, which
+    the app never sets. `MainWindow.cpp:4045`; `MarkupToolbar.cpp:43`, `:170`;
+    `AnnotationOverlay.cpp:104-120`; `PdfAdapter.cpp:958-1027`.
+- **T-118 Images at Fit are drawn at 1x and upscaled on HiDPI screens.** `open`
+  - Done when: on a screen with dpr d, at any zoom, the displayed pixmap's device width is at
+    least min(source width, drawn logical width × d) − 1. PDFs stay as crisp as they are today
+    (fringe ratio within 25 % of a native render at dpr 1 and 2).
+  - Test: `test_known_bugs_image` (T-118, dpr 2 entry).
+  - Src: HD-1. A 4000×3000 photo at Fit gets a 997×748 pixmap drawn across 1,994 device px.
+    `ImageAdapter.cpp:94-97`, `:117-127`.
+- **T-120 The Edit menu has no Copy, Cut, Paste or Delete.** `text`
+  - Done when: Edit has Copy, enabled exactly when a selection exists and equal to ⌘C, and Cut,
+    Paste and Delete apply to marks, in every view mode.
+  - Src: SEL-6. ⌘C works only while the overlay or text layer has focus.
+    `MainWindow.cpp:1528-1610`.
+- **T-127 Dragging a page forward lands it one slot early, and no page can reach the end.**
+  `annotations`
+  - Done when: in a 4-page document, dragging page 1 in the sidebar to after page 2, after page 3
+    and to the end puts it 2nd, 3rd and 4th; `movePage(0, 3)` makes it last. A move that leaves
+    the order unchanged neither marks the document edited nor adds an undo step.
+  - Src: the sidebar's drop handler subtracts 1 for a forward move (`Sidebar.cpp:234`), and
+    `PdfEditor::movePage` subtracts 1 again (`PdfEditor.cpp:153`) and rejects any target past the
+    last index (`:146`). `movePage(0, 1)` and `movePage(1, 2)` change nothing but still mark the
+    document edited and push an undo step.
+
+## P2: Preview parity and polish
+
+- **T-31 Rotate ignores the thumbnail selection.** `annotations`
+  - Done when: with three thumbnails selected, Rotate Left rotates all three, and one ⌘Z
+    un-rotates all three.
+  - Src: `MainWindow.cpp:2313-2344` rotates `currentPage()` only.
+- **T-32 HEIC images don't open.** `open`
+  - Done when: an iPhone .heic opens with the right orientation on macOS, Windows and Linux, is
+    offered by the Open dialog's filter, and exports to JPEG and PNG.
+  - Src: `ImageAdapter.cpp:43-46` (`kExtensions`).
+- **T-33 A second drag-crop lands offset.** `annotations`
+  - Done when: on a page whose CropBox is already smaller than its MediaBox, a dragged crop
+    yields a CropBox equal to the drawn rectangle within 1 pt. Checked at dpr 1 and 2.
+  - Src: `PdfEditor.cpp:199-231`; `MainWindow.cpp:2257-2295`.
+- **T-34 Several untitled documents all read "Untitled".** `save`
+  - Done when: two open untitled documents read "Untitled" and "Untitled 2" in their tabs or
+    windows and in the close prompts.
+  - Src: `ImageAdapter.cpp:590-596`.
+- **T-35 Unsaved work lives in two stores, and Reset doesn't say what it leaves behind.** `save`
+  - Done when:
+    - recovery copies and ⌥⌘Q drafts share one store under AppPaths, and their existing tests
+      stay green;
+    - Reset Trailer's confirmation lists every store it deletes or keeps: the OCR cache is
+      deleted, and unsaved work is kept and named as kept;
+    - a test checks that the disk matches that list;
+    - Reset ends without a success toast.
+  - Src: `RecoveryStore.cpp:13-19` uses `QStandardPaths::AppDataLocation/autosave`;
+    `AppPaths.cpp:98-99`; `MainWindow.cpp:5456-5495`.
+- **T-36 Deleting or renaming a document's folder leaves the change monitor deaf.** `save`
+  `data-loss`
+  - Done when: the open file's parent directory is removed or renamed, then recreated with the
+    file, and the monitor still reports the next change. Checked by a headless
+    `ExternalChangeMonitor` test.
+  - Src: `ExternalChangeMonitor.cpp:62-70`.
+- **T-37 On macOS and Windows, the same file spelled with different letter case opens a second
+  copy.** `platform` `data-loss`
+  - Done when: with `Report.pdf` open, opening `report.pdf` brings the existing window forward on
+    macOS and Windows. On Linux, two files that differ only in case stay two documents.
+  - Src: `PathKey.h:21-28`.
+- **T-38 Two Pages has no cover toggle.** `nav`
+  - Done when: a View menu toggle switches Two Pages between two layouts and re-lays out live.
+    One shows page 1 alone, then [2,3], …; the other pairs [1,2], [3,4], …. The choice survives a
+    relaunch.
+  - Src: `TwoPageView.cpp:66` (`setCoverAlone` has no caller).
+- **T-39 Ctrl/⌘ + wheel and pinch don't zoom in Two Pages.** `nav`
+  - Done when: Ctrl/⌘ + wheel and trackpad pinch over a spread zoom it in and out, as in
+    Continuous, at dpr 1 and 2.
+  - Src: `TwoPageView.{h,cpp}` have no `wheelEvent`.
+- **T-40 Lines and arrows have no endpoint handles.** `annotations`
+  - Done when: a selected line or arrow shows a handle at each end. Dragging one moves only that
+    end, as a single undo step.
+  - Src: `AnnotationOverlay.cpp:1834-1845`.
+- **T-41 Saved text boxes carry no appearance stream.** `annotations`
+  - Done when: a text box or speech bubble saved by Trailer has an /AP, so pdfium renders its
+    text with annotations on. Also check it by hand in Preview.
+  - Src: `PdfEditor.cpp:620-626` writes /DA but no /AP.
+- **T-42 OCR text isn't embedded on PDF export.** `ocr`
+  - Done when: exporting an OCR'd scan writes an invisible text layer. Reopened with OCR off, in
+    Trailer and in pdfium, the recognised words can be found and selected.
+  - Src: old TODO.md:489-494.
+- **T-43 Images opened together don't share one sidebar.** `nav`
+  - Done when: opening five images together shows one window whose sidebar lists all five.
+    Clicking a thumbnail shows that image, and the selected tab and sidebar row stay in step.
+  - Src: old TODO.md:817-828.
+- **T-44 Thumbnail page numbers are painted over the page.** `chrome`
+  - Done when: each page number sits in a label row below its thumbnail, never over page content,
+    at dpr 1 and 2.
+  - Src: `Sidebar.cpp:129-153`.
+- **T-45 Session restore loads documents one after another.** `open`
+  - Done when: restoring five documents paints the frontmost document's first page before the
+    other four finish loading. This is an ordering test, with no clock.
+  - Src: `Application.cpp:1163-1185`.
+- **T-46 Every open runs a whole-document qpdf parse.** `open`
+  - Done when: opening a PDF runs no qpdf parse before page one shows, and at most one per
+    document. A 100,000-page file without annotations adds no qpdf memory until its first edit;
+    today the parse costs 1.43 s of CPU and 265 MB.
+  - Src: `PdfAdapter.cpp:507`.
+- **T-47 MainWindow is a 5,700-line god object, and documents are held by raw pointer.** `infra`
+  - Done when: no file in `src/ui/` exceeds 1,500 lines, and nothing outside `DocumentView`
+    caches a raw `IDocument*`. Documents are QObjects, held by QPointer or looked up per call. No
+    `findChild<AnnotationOverlay*>` remains. Split controllers out as the subsystem under each is
+    replaced, not as a separate big bang.
+  - Src: `onCurrentDocumentChanged` alone is 714 lines.
+- **T-48 53 modal call sites remain.** `dialogs`
+  - Done when: each site in a committed modal census is either a decision PRODUCT.md allows or
+    gone. The allowed decisions are a file or page-range pick, confirming irreversible loss,
+    one-time consent, and an error the UI can't show. The census gates in CI.
+  - Src: the census on branch `claude/trailer-coordinator-elk85x` (`0da986d`). Known noise: the
+    Export As pre-dialog (T-114), the Recognize Text page-range modal (T-19), the Saving… modal
+    (T-10), "Model Not Available — install manually" (`ModelManagerDialog.cpp:130`).
+- **T-49 Trailer can't be built without ONNX Runtime.** `packaging`
+  - Done when: configuring with ML off and no ONNX Runtime present builds the app and passes the
+    unit tests, and the ML commands are absent from the UI.
+  - Src: `CMakeLists.txt:239`; `cmake/OnnxRuntime.cmake:57` and `:78-115`.
+- **T-50 Most UAT binaries never run at dpr 2.** `infra`
+  - Done when: every UAT binary runs at dpr 1 and 2 through `trailer_register_uat_dpr_matrix`,
+    and they are green at release.
+  - Src: only 5 of 35 use it.
+- **T-51 The macOS UAT crashes in recognize-text on hosted runners.** `infra`
+  - Done when: the faulting stack is captured first. Then three consecutive macOS nightlies on new
+    main commits finish `test_uat_recognize_text` with `crashed=false`.
+  - Src: 8 of 12 nights crashed. valgrind memcheck on Linux finds 0 errors, but the slot that
+    runs the model was skipped there for lack of weights: capture the lldb stack on macOS, or run
+    that slot under ASan on Linux with the weights present.
+- **T-52 Nothing is checked on a real Mac or a real Windows desktop.** `infra` `platform`
+  - Done when: each of these passes once on a real Mac (arm64, macOS 14+) and on real Windows 11,
+    and the result is recorded in RELEASING.md:
+    - reopening the last document;
+    - pasted-capture scale at 2x;
+    - the macOS screen-capture picker flow;
+    - installing a nightly update.
+
+    A GUI smoke lane also runs in macOS and Windows CI.
+  - Src: `UpdateManager.cpp:215-221`.
+- **T-53 Updates install only on macOS.** `packaging`
+  - Done when: on Windows (MSI) and Linux (DEB, RPM, tarball), Check for Updates downloads the
+    next version, verifies its ed25519 signature, and either starts the platform installer or
+    states the one manual step.
+  - Src: `UpdateManager.cpp:211` (`#ifdef Q_OS_MACOS`).
+- **T-54 Packages ship a placeholder maintainer and homepage.** `packaging`
+  - Done when: no `TODO` placeholder such as `TODO@trailer.example.com` remains under
+    `packaging/` or `platform/`, and the DEB, RPM and AppStream metadata carry the real maintainer
+    and homepage.
+  - Src: `packaging/deb/DEBIAN/control:7` and `copyright:3`; `packaging/rpm/trailer.spec:7`,
+    `:61`, `:146` and `:148`; `metainfo.xml:10` and `:31`.
+- **T-55 About says "(Phase 1)" and credits no one, and the spelling is mixed.** `docs`
+  - Done when: About shows the real version and credits Qt (LGPL), qpdf, ONNX Runtime and each
+    model, with links to their licences. User-visible strings use US English throughout
+    ("Recognize", "Color").
+  - Src: NO-9. `MainWindow.cpp:5053-5058`, `:727-728`, `:2066`.
+- **T-57 Save errors don't say why.** `dialogs`
+  - Done when: a failed Save names the cause, such as permission denied or a full disk, and says
+    what to do next.
+  - Src: `MainWindow.cpp:3218`, `:3278` and `:3290`.
+- **T-99 Image undo memory is unbounded by size.** `undo`
+  - Done when: undo history per image stays under 4× the decoded image, with every step still
+    undoable, and rotate and flip are stored as operations, not pixels. An edited image holds no
+    full copy outside the history: today the finished decode keeps the originally decoded image
+    alive until the document closes (`ImageAdapter.cpp:348-374`).
+  - Test: `test_known_bugs_image` (T-99; history only).
+  - Src: C9, UND-10. `kMaxUndoSteps = 32` full-resolution copies (`ImageAdapter.cpp:71`,
+    `:1077-1080`): about 3 GB for a 24 MP photo.
+- **T-100 The compiled-out recorder still changes behaviour, and PR CI tests a different
+  configuration from the one that ships.** `infra`
+  - Done when: the no-op recorder facade doesn't evaluate its arguments (a macro or lambda); the
+    Linux PR job builds the shipped configuration (recorder off); and either product code holds
+    no recorder call sites (it attaches from outside, through an event filter and action
+    signals) or a test proves the compiled-out build has no side effects.
+  - Src: C11. The no-op `recordEvent` receives a fully built QJsonObject (`UxRecord.h:53`), so
+    `addDocument` forces the deferred open via `pageCount()` (`MainWindow.cpp:5251-5254`). The
+    Linux PR job configures `-DTRAILER_ENABLE_UX_RECORDER=ON` (`ci.yml:185`, `:322`). 26 recorder
+    references sit in 9 product files. In recorder builds, "Hand Off to Preview" saves to the
+    user's file on macOS (`UxTrailerHooks.cpp:287-293`): a dev tool must not write documents.
+- **T-101 Filled form values rely on NeedAppearances.** `annotations`
+  - Done when: a filled text field renders in pdfium with NeedAppearances off, and prints.
+  - Src: C15. `PdfEditor.cpp:1402-1416` writes /V and sets NeedAppearances but builds no /AP.
+- **T-105 Undo and Redo don't name the operation.** `undo`
+  - Done when: Edit ▸ Undo and Redo read "Undo Rotate", "Undo Delete Page", "Undo Add Rectangle"
+    and so on for every operation type.
+  - Src: UND-6. `MainWindow.cpp:1533`; `PdfCommand::description()` is never shown.
+- **T-106 A text box needs two ⌘Z to remove.** `undo`
+  - Done when: create a text box, type, commit, ⌘Z once: the box is gone.
+  - Src: UND-7. `AnnotationOverlay.cpp:916` commits in a second frame.
+- **T-109 Close → Save on a file changed on disk fails with a status-bar line.** `save`
+  - Done when: a close-time Save of an externally changed file offers the same Reload / Keep mine
+    choice as ⌘S.
+  - Src: SAV-7. `MainWindow.cpp:5773-5797` ("Could not save X; close cancelled.").
+- **T-111 Errors are posted to the status bar, out of view of what failed.** `dialogs`
+  - Done when: each failure shows on the document (a banner) or as a sheet and stays until
+    dismissed; no error is posted to the status bar.
+  - Src: SB-4. 18 `flashError` sites (12 s) and 8 `flashStatus` sites (4 s), `MainWindow.cpp:5227`,
+    `:5241`.
+- **T-113 Export As… is disabled for PDFs.** `dialogs`
+  - Done when: File ▸ Export… on a PDF exports pages to PNG, JPEG or TIFF, as Preview does.
+  - Src: NO-4. `MainWindow.cpp:4335`.
+- **T-114 Image Export shows a filter dialog before the save panel.** `dialogs`
+  - Done when: one dialog per Export, with format options inside the save panel.
+  - Src: NO-5. `MainWindow.cpp:2981-3006`.
+- **T-116 Any page operation discards OCR for every page.** `ocr`
+  - Done when: rotate page 1: page 2 keeps its OCR, and page 1's is rotated or recomputed once.
+  - Src: OCR-4. `PdfAdapter.cpp:2140-2146` clears all OCR.
+- **T-117 A drag that starts in the margin selects nothing.** `text`
+  - Done when: a drag from 25 px left of a line to its middle selects the first half of the line,
+    for native and OCR text.
+  - Src: SEL-4.
+- **T-119 Text selection stops at the page boundary.** `text`
+  - Done when: a drag from page 1's last line to page 2's first line copies both lines in order,
+    and a drag from mid-word copies from that glyph.
+  - Src: SEL-5. `SelectableTextLayer.cpp` handles the current page only.
+- **T-121 Invisible text (render mode 3) selects unreliably.** `text`
+  - Done when: on a page carrying invisible text over a scan (as ocrmypdf writes), and on the
+    owner's 365-page manual, a drag over a visible word copies that word.
+  - Src: SEL-8; was `docs/backlog/2026-07-31-pdf-text-render-mode-detection.md`.
+- **T-122 The search poll ticks every 150 ms forever.** `open`
+  - Done when: with no search active, no timer fires (checked with a timer-event counter over 5 s
+    of idle).
+  - Src: `MainWindow.cpp:244-263`; the comment says it only runs during a search.
+- **T-125 OCR on the reference machine is unmeasured.** `ocr`
+  - Done when: with the weights present, OCR of one 300 dpi page uses at most one worker thread
+    on battery, is cancellable within one page, makes no GUI-thread engine calls, and its time
+    on the reference machine is recorded.
+  - Src: no OCR run has been timed on old hardware.
+- **T-126 Releases are untested end to end.** `packaging`
+  - Done when: the release workflow produces every artifact from one tag; `dpkg-deb -c` on the
+    `.deb` lists `libonnxruntime`, and `ldd` of the installed binary in a clean `ubuntu:24.04`
+    container reports nothing "not found"; release notes name the right qpdf package
+    (`libqpdf29t64` on 24.04).
+  - Src: `release.yml` has succeeded 3 times, last on 2026-07-13, and its `.deb`/`.rpm` steps
+    have never run in a release. `scripts/bundle-qt-runtime.sh:60-64` drops libraries `ldd`
+    can't resolve. `release-publish.yml:250` says `libqpdf28`.
+
+## P3: later or stretch
+
+- **T-59 An external edit that keeps the size and mtime goes unnoticed.** `save`
+  - Done when: an overwrite with different content of the same length, within the same second,
+    is classified as a change. Checked by a headless `classifyExternalChange` test.
+  - Src: `ExternalChangeState.cpp:34`.
+- **T-60 Moving a window between dpr 1 and dpr 2 screens doesn't re-render the image.** `open`
+  - Done when: an image window dragged between a 2x and a 1x screen stays sharp (T-118 holds
+    within one frame). At the pixel-exact stop it stays unresampled, with the pixmap stamped with
+    the new screen's dpr. This has a test plus a real mixed-DPI check.
+  - Src: HD-3. `ImageAdapter.h:318`.
+- **T-61 ⌥⌘Q prompts when a PDF has page edits plus a pending redaction or signature.** `save`
+  - Done when: such a PDF is kept by ⌥⌘Q with no prompt. At launch it returns with both edits
+    intact, the annotation still editable, and the document dirty.
+  - Src: `Application.cpp:847-849`.
+- **T-62 The empty window's drop target uses a stock Qt icon.** `chrome`
+  - Done when: the Windows/Linux empty window shows Trailer's own drop-target artwork, crisp at
+    dpr 1 and 2.
+  - Src: `EmptyStateWidget.cpp:38`.
+- **T-63 The Dock icon doesn't follow dark mode.** `platform`
+  - Done when: on a real Mac in dark mode (Tahoe), the Dock icon shows the dark variant and flips
+    when Appearance is toggled.
+  - Src: the dark variants in `resources/macos/Assets.xcassets/AppIcon.appiconset` compile
+    without a warning, but none reach `Assets.car` (nightly macOS log, 2026-08-02): a macOS
+    `.appiconset` has no light/dark axis. The likely fix is an Icon Composer `.icon` source,
+    which needs Xcode 26+. First run `scripts/diagnose-appicon-dark-variants.sh` on a Mac to
+    rule out `assetutil` simply not listing the variants. Build wiring: `CMakeLists.txt:684-742`.
+    History: `git show 09bc1e3:docs/backlog/2026-07-17-adaptive-dock-icon-option-b.md`.
+- **T-64 Windows has no Jump List of recent files.** `platform`
+  - Done when: the taskbar icon's Jump List shows up to 10 recent files, from the same source as
+    the macOS Dock menu. It works even when Trailer isn't running, and picking a file opens it.
+  - Src: was `docs/backlog/2026-07-31-windows-jumplist-recents.md`.
+- **T-65 Spotlight's window result for an open document fails.** `platform`
+  - Done when: on macOS, choosing an open document's "… — Trailer / Window" Spotlight result
+    brings it to the front with no error notification. It is also acceptable for the result not
+    to be offered, as long as the file result still works.
+  - Src: was `docs/backlog/2026-08-06-macos-spotlight-activate-tab.md`.
+- **T-66 Problem reports can't tell invisible OCR text from visible text.** `ocr`
+  - Done when: given an ocrmypdf-style page (a scan with render-mode-3 text) and a born-digital
+    page, the feedback report states two different, correct text states without comparing
+    pixels.
+  - Src: `FeedbackReport.cpp:260-270`.
+- **T-67 The nightly Linux tarball has no .desktop file.** `packaging`
+  - Done when: the tarball contains `trailer.desktop` and an icon, so
+    `xdg-mime default trailer.desktop application/pdf` works after extraction with no hand edits.
+  - Src: `nightly.yml:548-552`.
+- **T-68 The UAT ratchet compares counts, not tests.** `infra`
+  - Done when: the ratchet is deleted with T-58, or `compare-uat-baseline.sh` reports `worse` when
+    a test that passed in the baseline fails, even if the passing total rose.
+  - Src: `scripts/compare-uat-baseline.sh:59-65`.
+- **T-69 The stable update channel isn't signed.** `packaging`
+  - Done when: the release workflow publishes an ed25519-signed stable appcast, and Preferences
+    offers Stable as a working choice.
+  - Src: `PreferencesDialog.cpp:329-345`.
+- **T-70 The macOS app bundle omits the licence files.** `packaging`
+  - Done when: `Trailer.app/Contents/Resources` contains LICENSE, THIRD_PARTY_LICENSES.md and
+    `licenses/third-party`.
+  - Src: `scripts/build-macos.sh:566`.
+- **T-71 The MSI shows no licence and isn't signed.** `packaging`
+  - Done when: the MSI shows the MIT licence and the third-party notices. A comment in
+    `trailer.wxs` settles the WiX 4 question and the Authenticode question (sign only if a
+    certificate is ever bought).
+  - Src: `platform/windows/trailer.wxs:6-11`.
+- **T-72 Linux distribution beyond DEB and RPM.** `packaging`
+  - Done when: one .desktop / metainfo / icon source feeds DEB, RPM and the tarball (there are two
+    copies today), and a Flathub manifest builds in CI. Each further channel the owner wants gets
+    its own entry: COPR, PPA, Snap, aarch64, GPG-signed RPM, AppStream screenshots.
+  - Src: the old `packaging/rpm/TODO-rpm-packaging.md` and `platform/linux/TODO-linux-packaging.md`.
+- **T-73 Accessibility for 1.0.** `chrome`
+  - Done when:
+    - an automated sweep finds an accessible name on every actionable control;
+    - every markup tool has a shortcut;
+    - colour swatches show their state without relying on colour;
+    - a signature can be typed;
+    - a keyboard-only run completes the PRODUCT.md "Done means" jobs at dpr 1 and 2;
+    - contrast meets WCAG AA, focus is always visible, Reduce Motion is honoured, and text scales
+      to 200 %.
+  - Src: `MarkupToolbar.cpp` has no `setShortcut`; `SignatureCaptureDialog.cpp:257`.
+- **T-75 Untrusted input has no size caps.** `security`
+  - Done when: clipboard images, form values and embedded /Contents above a stated cap are
+    refused with a message. File type is decided by content, not extension. EXIF location can be
+    stripped on Export. Password buffers are zeroed after use. Each of these has a unit test.
+  - Src: the May 2026 audit (`git show 09bc1e3:docs/audit-2026-05-19.md`), SEC-MOD-1, -3, -4 and
+    SEC-MIN-1..3.
+- **T-76 There is no local log file for diagnosing crashes.** `infra`
+  - Done when: Trailer writes a size-capped local log under `AppPaths::logsDir()` that Report a
+    Problem can attach. Nothing is uploaded.
+  - Src: `AppPaths.cpp:94`.
+- **T-77 AppPaths declares directories nothing uses.** `infra`
+  - Done when: AppPaths declares only directories that something reads or writes, which removes
+    versions, icc, filters and plugins.
+  - Src: `AppPaths.h:16-22`.
+- **T-78 Unit tests are missing.** `infra`
+  - Done when: unit tests cover a corrupt settings.toml, ModelDownloader errors,
+    AnnotationOverlay, Magnifier and Inspector. The recorder evidence test writes only to a temp
+    dir, and `test_pdf_editor` is split by area.
+  - Src: `test_uat_ux_recorder_evidence.cpp:59-74`.
+- **T-79 ML caches have no memory cap, and MlScheduler runs one job at a time.** `ocr`
+  - Done when: the SAM encoder cache and the background-removal cache stay under a stated cap
+    (with a test), and MlScheduler runs more than one job when cores allow.
+  - Src: old TODO.md:519-528.
+- **T-80 The sidebar rebuilds every row on any change, and the Inspector re-renders on every
+  slider tick.** `open`
+  - Done when: deleting one page updates only the affected thumbnail rows, and dragging an
+    Inspector slider re-renders at most once per frame.
+  - Src: old TODO.md:532-540.
+- **T-81 Inspector visibility isn't remembered.** `chrome`
+  - Done when: showing or hiding the Inspector survives a relaunch.
+  - Src: old TODO.md:541-544.
+- **T-82 Signatures are stored only as bitmaps, and ink pressure isn't saved.** `annotations`
+  - Done when: a captured signature keeps its strokes as vectors, so it can be placed at any size
+    without blur, and ink pressure survives a PDF save and reload.
+  - Src: old TODO.md:958-973.
+- **T-83 Read-only 3D viewing (OBJ, STL).** `open`
+  - Done when: after Tier 1 is complete, OBJ and STL files open read-only with orbit and zoom, and
+    a large mesh shows its first frame as fast as a PDF's first page.
+  - Src: PRODUCT.md, Tier 3.
+- **T-84 Leftovers in the UX recorder (a dev tool).** `infra`
+  - Done when: the recorder reports its input-permission state, and caps its camera storage.
+  - Src: `git show 09bc1e3:docs/ux-recorder-todo.md` (UXR-003, UXR-005).
+- **T-85 Nothing stops new network code from landing.** `infra`
+  - Done when: a CI check fails if a network class (QNetworkAccessManager, QTcpSocket,
+    QUdpSocket, QNetworkRequest, …) appears outside `src/ml/ModelDownloader.*`, `src/update/`
+    and their tests.
+  - Src: AGENTS.md, Hard constraints.
+- **T-86 The deleted-file banner says "Your edits are still open" when there are no edits.**
+  `dialogs`
+  - Done when: for a clean document whose file was deleted, the banner text doesn't mention edits.
+  - Src: `FileChangeBanner.cpp:103`.
+- **T-87 Open Recent is a flat list of up to 50 entries.** `chrome`
+  - Done when: Open Recent shows at most 10 entries, most recent first, open files included, as
+    on macOS (decided). History depth is unchanged.
+  - Src: `Settings.h:233` (`m_recentMax = 50`); `MainWindow.cpp:5012`.
+- **T-88 The macOS window picker lists Trailer's own windows.** `screenshot`
+  - Done when: on macOS, From Window… doesn't offer Trailer's own windows.
+  - Src: `MacScreenCapture.mm:195`.
+- **T-89 ML plumbing fails silently.** `ocr`
+  - Done when: if the OCR dictionary fails to load, the OCR controls are disabled with a tooltip
+    naming the cause. An unknown model id is handled without `Q_UNREACHABLE`.
+  - Src: `OcrEngine.cpp:353-355`; `ModelRegistry.cpp:43`.
+- **T-123 PDFs that forbid modification are edited without notice.** `save`
+  - Done when: PRODUCT.md states the policy for owner-password permission flags, and a PDF opened
+    with `--modify=none` behaves as it says.
+  - Src: Trailer edits such files without asking (verified with qpdf `--modify=none`).
+- **T-124 Cold launch to the first window has never been measured on the reference machine.**
+  `open`
+  - Done when: a developer-only flag (`--quit-after-first-frame`) reports launch-to-first-frame
+    time, and a run after a reboot on the reference machine is recorded. Never gated.
+  - Src: warm `trailer --version` takes 17–30 ms here; cold launch on old hardware is unknown.

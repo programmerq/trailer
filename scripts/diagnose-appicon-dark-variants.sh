@@ -7,7 +7,7 @@
 #
 # WHY THIS EXISTS. The nightly macOS lane's informational check greps
 # `assetutil --info` output for a dark/luminosity marker and reports it
-# missing (see docs/backlog/2026-07-17-adaptive-dock-icon-option-b.md).
+# missing (see TODO.md T-63).
 # That grep can only ever be *suggestive*: it is equally consistent with
 # "the dark bitmaps were dropped" and with "the dark bitmaps are present
 # but assetutil does not print an appearance axis for app-icon entries."
@@ -152,8 +152,8 @@ This CONTRADICTS the nightly lane's assetutil-based check, which means
 that check is a false negative and the Dock-swap failure has a different
 root cause. Do NOT spend Icon Composer authoring effort on the strength
 of the Option-B recommendation in
-docs/backlog/2026-07-17-adaptive-dock-icon-option-b.md — reopen the
-root-cause question first, and record this result there.
+TODO.md T-63 — reopen the root-cause question first, and record this
+result there.
 MSG
     exit 0
 fi

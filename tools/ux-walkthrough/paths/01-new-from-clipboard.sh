@@ -12,10 +12,10 @@
 #   (a) proves the harness can put a real image on the X clipboard and read
 #       it back (the input half of new-from-clipboard), and
 #   (b) reproduces the EXACT observable outcome of Application::newFromClipboard
-#       — clipboard image -> temp PNG -> openFiles() — so persona (A) can judge
+#       — clipboard image -> temp PNG -> openFiles() — so a reviewer can judge
 #       the resulting document against the zoom/size oracle.
 # The ⌘N binding and the menu wiring themselves are macOS-only and are routed
-# to the owner real-Mac checklist (SKILL.md), not asserted here.
+# to a real-Mac check (T-52), not asserted here.
 set -uo pipefail
 export PATH_NAME="new-from-clipboard"
 # shellcheck source=../lib/harness.sh

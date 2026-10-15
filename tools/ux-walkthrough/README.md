@@ -4,17 +4,12 @@ This is the **DRIVE + CAPTURE** half of the `ux-walkthrough` review gate. It
 drives the **real built `trailer` binary** through the nine ux-walkthrough
 golden paths under a **real X server (Xvfb) with a real window manager
 (openbox)**, and captures a screenshot after every scripted step into a
-per-run artifact directory. The **JUDGE** half is persona (A) in
-[`.claude/skills/ux-walkthrough/SKILL.md`](../../.claude/skills/ux-walkthrough/SKILL.md),
-which reads those per-step bundles and rates each step against the
-cognitive-walkthrough questions.
-
-It closes the backlog item
-`docs/backlog/2026-07-17-ux-walkthrough-drive-harness.md`.
+per-run artifact directory. Each `NN-*.png` has a sibling `NN-*.txt` with
+its label and expected effect; judge each step against the tables below.
 
 ## Why Xvfb + xdotool, not `QT_QPA_PLATFORM=offscreen`
 
-The backlog item sketched an in-process QTest/offscreen tier. This
+An in-process QTest/offscreen tier would be simpler. This
 implementation deliberately uses a **real X server** instead, because the
 whole point of the walkthrough gate is **real window-manager / focus / menu /
 modal behaviour** — the class of bug where a control or modal vanishes. Two
@@ -166,18 +161,17 @@ A review agent runs the harness, then reads each path's `NN-*.png` +
 `installNoWindowMenuBar`/`newFromClipboard`, ~lines 389–560) — **not compiled on
 Linux**. So this path proves the clipboard *input* half and reproduces the exact
 *outcome* of `Application::newFromClipboard` (clipboard image → temp PNG →
-`openFiles`); the ⌘N binding + menu wiring themselves route to the owner
-real-Mac checklist in the skill.
+`openFiles`); the ⌘N binding + menu wiring themselves need a real Mac (T-52).
 
 ### 02 — screenshot-acquire
 | step | screenshot should show | pass |
 |---|---|---|
-| 01 empty-state | empty state (drop target + Open File…) | G5 empty state visible |
-| 02 take-screenshot-dialog | the "Take Screenshot" modal; **Whole screen** enabled, **Single window / Region disabled with an explanatory note** | modal present; disabled controls are non-lying (G3) |
+| 01 empty-state | empty state (drop target + Open File…) | empty state visible |
+| 02 take-screenshot-dialog | the "Take Screenshot" modal; **Whole screen** enabled, **Single window / Region disabled with an explanatory note** | modal present; disabled controls say why |
 | 03 captured-image-opens | the captured X screen open as a document | capture opened as a document |
 
-**Boundary:** window/region capture are disabled on Linux (a G3
-non-lying-control state); the macOS native TCC "Screen Recording" prompt is
+**Boundary:** window/region capture are disabled on Linux
+(T-15); the macOS native TCC "Screen Recording" prompt is
 real-Mac only. Whole-screen capture genuinely runs under Xvfb via
 `QScreen::grabWindow(0)` — the path creates `~/Pictures` first, because the
 Linux capture saves to `QStandardPaths::PicturesLocation` and a bare CI
@@ -211,9 +205,9 @@ This path is the reason Tier-1 uses a real X server (see top).
 ### 05 — menu-IA + new-from-clipboard (PR #86)
 | step | screenshot should show | pass |
 |---|---|---|
-| 01 file-menu-no-doc | File menu open in the empty state: **New from Clipboard disabled** (empty clipboard), Open, Open Recent, **Screenshot ▸**, Scanner/Camera disabled | create/acquire group present with a no-doc; disabled items are non-lying (G3) |
+| 01 file-menu-no-doc | File menu open in the empty state: **New from Clipboard disabled** (empty clipboard), Open, Open Recent, **Screenshot ▸**, Scanner/Camera disabled | create/acquire group present with a no-doc; disabled items say why |
 | 02 text-clipboard-menu-disabled | File menu with plain **text** on the clipboard: New from Clipboard **still disabled** | non-image clipboard is not openable (`inspectClipboard`) |
-| 03 text-clipboard-silent-noop | after `Ctrl+N` with text: still empty state, **no dialog**, no new window | silent no-op (PHILOSOPHY → *No popup that just says no*) |
+| 03 text-clipboard-silent-noop | after `Ctrl+N` with text: still empty state, **no dialog**, no new window | silent no-op (no popup that only says no) |
 | 04 image-clipboard-menu-enabled | File menu with an **image** on the clipboard: New from Clipboard **enabled** | enable-gate tracks clipboard content |
 | 05 image-clipboard-opens-doc | `Ctrl+N` opens the clipboard image as a `trailer-clipboard-…` document | real Linux new-from-clipboard runs end-to-end via Qt's clipboard read |
 | 06 file-menu-with-doc | with a document open, the create/acquire group is **still present** | #86 anti-vanish fix (group no longer disappears once a window is key) |
@@ -229,7 +223,7 @@ is real, not a reproduction. The macOS no-window menu bar stays owner real-Mac.
 | step | screenshot should show | pass |
 |---|---|---|
 | 01–02 clean → auto-reload | a clean doc (VERSION A) whose file is overwritten on disk **silently reloads to VERSION B**, "Reloaded — the file changed on disk." status, **no banner** | clean external change auto-reloads Preview-style |
-| 03–04 dirty → conflict banner | a dirty doc (rotated, title `•`) whose file is overwritten shows the amber **"changed by another program while you had unsaved edits"** banner — Reload / Keep mine / **Compare (disabled, G3)** — edit intact | never auto-decides; no silent clobber |
+| 03–04 dirty → conflict banner | a dirty doc (rotated, title `•`) whose file is overwritten shows the amber **"changed by another program while you had unsaved edits"** banner — Reload / Keep mine / **Compare (disabled)** — edit intact | never auto-decides; no silent clobber |
 | 05 seam-menu-over-banner | File menu opens cleanly on top of the banner | #86 menu × #89 banner coexist |
 | 06–07 delete underneath | deleting the file shows **"deleted on disk … Save to recreate it"** banner with a Save button; document stays open | delete-underneath keeps the buffer |
 
@@ -264,8 +258,7 @@ Retina pinch-zoom drift is owner real-Mac.
 | 07 zoom-floor-clamp | readout bottoms out at **5%** | visible min clamp (`kZoomMin`) |
 | 08 zoom-ceiling-clamp | readout tops out at **3200%** | visible max clamp (`kZoomMax`) |
 
-**Known finding (referenced, not a harness failure):** backlog
-`2026-07-19-image-open-zoom-readout-mismatch.md` — on open the readout can print
+**Known finding (not a harness failure):** on open the readout can print
 a value (e.g. `5%`) that disagrees with the true render magnification; path 08 is
 the focused capture of that discrepancy for the judge. **Perf caveat (F6):** at
 extreme zoom the full-res pixmap rebuild is slow and can drop rapid keys, so on a
@@ -275,9 +268,9 @@ clamp. `SETTLE_MS` is bumped to 900 ms for this path.
 ### 09 — File → Screenshot → Whole Screen (direct, dialogless; PR #86)
 | step | screenshot should show | pass |
 |---|---|---|
-| 01 empty-state | G5 empty state | start state |
+| 01 empty-state | empty state | start state |
 | 02 file-menu-open | File menu with the **Screenshot ▸** acquire submenu | discoverable acquire surface present |
-| 03 screenshot-submenu-open | Screenshot submenu: **Whole Screen** enabled, **Window / Selected Area disabled** (G3) | Linux-correct submenu |
+| 03 screenshot-submenu-open | Screenshot submenu: **Whole Screen** enabled, **Window / Selected Area disabled** (T-15) | Linux-correct submenu |
 | 04 whole-screen-captures-doc | the captured screen open as a **`trailer-screenshot-…` document, with NO capture-mode dialog** in between | direct dialogless capture (contrast path 02's Tools dialog) |
 
 **Selector (fragile, documented):** the submenu items have no
@@ -289,16 +282,13 @@ dismiss the menu. **Graceful degrade:** if the capture document doesn't appear
 and captures the reachable menu state instead of hard-failing; the grab itself is
 proven under Xvfb by path 02 (shared `Application::captureScreenshot`).
 
-## What this tier cannot verify (owner real-Mac checklist)
+## What this tier cannot verify
 
-Per the decision record and the skill: HiDPI/dpr=2 sharpness (#1), the native
-TCC prompt (#6 native half), OS-level global-shortcut clashes (#7), and
-Dock/Services/native-menu-bar chrome stay on the owner's real-Mac milestone
-checklist in [`.claude/skills/ux-walkthrough/SKILL.md`](../../.claude/skills/ux-walkthrough/SKILL.md).
-Offscreen Xvfb is dpr=1.
+HiDPI/dpr=2 sharpness, the native macOS Screen Recording prompt, OS-level
+global-shortcut clashes, and Dock/Services/native-menu-bar chrome need a real
+Mac (T-52). Xvfb is dpr=1.
 
-## Curated evidence
+## Captures
 
-The pivotal per-path outcome shots from a real run are committed under
-`docs/uat/images/ux-walkthrough-*.png` (G2 evidence). Working/throwaway
-captures stay in the gitignored `uat-screenshots/` tree.
+Captures stay in the gitignored `uat-screenshots/` tree. Don't commit them;
+put the ones that matter in the PR description.
