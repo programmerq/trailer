@@ -12,7 +12,7 @@ Trailer won't do is in PRODUCT.md ("Not doing"), not here.
 **Closing and adding**
 - To close an entry, the PR that meets its bar deletes it and names the id in the commit subject,
   e.g. `fix(T-07): …`. There is no status field and no done list.
-- To add an entry, take the next unused id (ids are never reused; the highest so far is T-127)
+- To add an entry, take the next unused id (ids are never reused; the highest so far is T-128)
   and put it under its priority. Land a failing test in the same PR when you can.
 - A code comment that points at open work says `// T-NN: …` and nothing more.
 
@@ -117,7 +117,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Test: `test_known_bugs_window` (T-07).
   - Src: UND-9. `DocumentView.cpp:7` calls `setMovable(true)` and nothing handles `tabMoved`.
     `DocumentView.cpp:27-33` looks documents up by index. Opening several images at once makes a
-    tabbed window, so this is reachable by default.
+    tabbed window, so this is reachable by default. After the drag, clicking a tab also renames it
+    to the other document's name (tooltips stay right).
 - **T-08 A failed or cancelled PDF Save leaves the open document half-saved, and Cancel doesn't
   stop Save As.** `save` `data-loss`
   - Done when: an injected write failure, and Cancel pressed mid-save while that button exists,
@@ -138,24 +139,29 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     unsaved work.
 - **T-90 Redaction leaves the text readable on rotated and cropped pages.** `security` `data-loss`
   - Done when: red text under a redaction box leaves 0 red pixels in the saved file at /Rotate
-    0, 90, 180 and 270 and on a page with a CropBox; the page keeps its orientation; and a page
-    that can't be rendered makes Save fail loudly instead of being skipped.
-  - Test: `test_known_bugs_pdf_files` (T-90).
+    0, 90, 180 and 270 and on a page with a CropBox; the page keeps its orientation; links, form
+    fields and other annotations outside the boxes survive; and a page that can't be rendered
+    makes Save fail loudly instead of being skipped.
+  - Test: `test_known_bugs_pdf_files` (T-90; not the annotations).
   - Src: C1. Red pixels before → after: unrotated 1,806 → 0; /Rotate 90 1,798 → 1,747 (readable,
     page upside down, box on blank paper); cropped 1,806 → 2,843; /Rotate 180 covered but the
     rotation is lost. The redacted page's text layer is gone, so searching the saved file won't
-    reveal the leak. `PdfEditor.cpp:965-1016`: raster size from the unrotated MediaBox, box
-    painted at displayed coordinates, a failed render silently skips the page.
+    reveal the leak. `PdfEditor::applyRedactions` (`PdfEditor.cpp:901-1016`) renders the page as
+    displayed (rotation and CropBox applied) into a raster the size of the unrotated MediaBox,
+    paints the boxes at displayed coordinates, then keeps /Rotate and /CropBox, so the rotation
+    is applied twice. It also drops every /Annots entry on a redacted page (read in the code, not
+    tested), and a failed render silently skips the page.
 - **T-91 Password-protected PDFs go blank after any page operation, and Save misreports.**
   `save` `data-loss`
   - Done when: with a 3-page AES-256 PDF opened with its user password, Rotate keeps
     pageCount 3 and the document dirty; Save returns true; reopening with the password shows the
     rotation; the recovery snapshot succeeds; redaction works.
   - Test: `test_known_bugs_pdf_files` (T-91).
-  - Src: C2. After Rotate, pageCount becomes 0 (blank view) and Save returns false even though it
-    has already rewritten the file. `PdfAdapter.cpp:2122-2125` (the viewer reload drops the
-    password), `:2690-2700` (the post-save editor reloads without unlocking);
-    `PdfEditor.cpp:933`. Owner-password-only files work.
+  - Src: C2. After Rotate, pageCount becomes 0 (blank view) and the document reads as clean; Save
+    returns false even though the file it wrote is correct; the recovery snapshot fails too.
+    `PdfEditor::save` keeps the encryption on its preview and scratch copies, and the viewer and
+    scratch-editor reloads never pass the password (`PdfAdapter.cpp:2122-2125`, `:2690-2700`;
+    `PdfEditor.cpp:933`). Owner-password-only files work.
 - **T-92 In-place Save deletes the file before replacing it, breaks symlinks, and resets
   permissions.** `save` `data-loss`
   - Done when:
@@ -167,7 +173,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Test: `test_known_bugs_pdf_files` (T-92; symlink and mode).
   - Src: C3, SAV-4. The order is `unlink(target)` → `link(temp, target)` → `unlink(temp)`, so the
     path is empty in between; with TMPDIR on another filesystem the bytes are copied while it
-    is empty. A 0600 file becomes 0644. If the step after the remove fails, `restoreOnFailure`
+    is empty. Every save leaves mode 0644, so a 0600 file becomes world-readable and a 0664 file
+    loses group write. If the step after the remove fails, `restoreOnFailure`
     reloads the deleted path and the document vanishes. `PdfAdapter.cpp:2609-2610`, `:2663-2682`;
     `TempPath.h:24-25`; `ImageAdapter.cpp:1384-1391` writes in place.
 - **T-96 Save rewrites unedited files, and JPEG Save re-encodes and drops EXIF.** `save` `data-loss`
@@ -187,9 +194,10 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
       edge puts exactly that word on the clipboard;
     - a rectangle drawn 6 px outside the word, then saved, is stored containing the word's
       bounds with ≤ 2 pt slack per side.
-  - Test: `test_known_bugs_window` (T-102; Fit Page at DPI 96 and 72).
-  - Src: MAP-1..3. In the default view (Fit Page) a drag across "INVOICE" copies "VOICE", and a
-    box drawn around it is saved 31 pt right and 25 pt up. On Windows and Linux every zoom is
+  - Test: `test_known_bugs_window` (T-102; Fit Page, Fit Width and 100 % at DPI 96 and 72).
+  - Src: MAP-1..3. In the default view (Fit Page) a drag across "INVOICE" copies "VOICE" at 72
+    DPI and nothing at 96, and a box drawn around it is saved 31 pt right and 25 pt up. Fit Width
+    is wrong at both DPIs; 100 % is right at 72 DPI and wrong at 96. On Windows and Linux every zoom is
     wrong, by about 750 px on page 3. `PdfAdapter.cpp:858-923`: page points are mapped with
     `zoomFactor()`, which stays 1.0 in fit modes; QPdfView also scales by
     `logicalDotsPerInch / 72`, which `src/` never reads; and an `extraY` term assumes vertical
@@ -391,9 +399,10 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Done when: after Save, Save As, any page operation, Undo or Redo, the same document point
     stays under the same viewport pixel (±2 px).
   - Test: `test_known_bugs_window` (T-103).
-  - Src: JMP-1, JMP-2. Save resets scrollY 2113 → 0; rotating an unseen page moves the view
-    −840 px and Undo −420 px. Every page op reloads the viewer, and `jump(savedPage, {})` drops
-    the offset within the page (`PdfAdapter.cpp:2140-2166`, `:2694-2714`).
+  - Src: JMP-1, JMP-2. Save resets scrollY 2113 → 0, back to page 1. Undo or Redo of a rotation
+    of page 4 while page 3 is on screen jumps to the top of page 3 (1695 → 1454). Every page op
+    reloads the viewer, and `jump(savedPage, {})` drops the offset within the page
+    (`PdfAdapter.cpp:2140-2166`, `:2694-2714`).
 - **T-104 Undoing back to the saved state leaves the document dirty, and the window is never
   marked modified.** `undo` `save`
   - Done when: edit then undo to the saved state, for a PDF rotate, a PDF mark and an image
@@ -402,7 +411,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     and "Edited". A document restored from crash recovery shows as edited.
   - Test: `test_known_bugs_window` (T-104).
   - Src: UND-4, SAV-5, SAV-8. `PdfAdapter.cpp:477-480`, `:2209`; `ImageAdapter.cpp:1133`; the
-    title uses a "• " prefix and `setWindowModified` is never called.
+    title uses a "• " prefix and `setWindowModified` is never called. Undoing an image mark does
+    clear the dirty state; undoing a PDF mark doesn't.
 - **T-107 Form-field edits can't be undone.** `undo`
   - Done when: type in a form field, ⌘Z: the previous value is restored; ⌘⇧Z re-applies it.
   - Src: UND-8. `PdfAdapter.cpp:2817-2825` marks the document dirty and records nothing.
@@ -669,6 +679,13 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Src: `release.yml` has succeeded 3 times, last on 2026-07-13, and its `.deb`/`.rpm` steps
     have never run in a release. `scripts/bundle-qt-runtime.sh:60-64` drops libraries `ldd`
     can't resolve. `release-publish.yml:250` says `libqpdf28`.
+- **T-128 Redacting one word turns the whole page into a picture.** `annotations` `text`
+  - Done when: after redacting one word on a text page and saving, the rest of that page's text
+    can still be selected and found in Trailer and in pdfium, and the redacted word can't be
+    extracted by any tool (pdfium text, `qpdf --qdf` content streams). Images under a box are cut,
+    not just covered.
+  - Src: `PdfEditor::applyRedactions` replaces the page's content with a raster of the page
+    (`PdfEditor.cpp:901-1016`). Preview removes only what is under the box.
 
 ## P3: later or stretch
 
@@ -764,9 +781,7 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Src: `AppPaths.h:16-22`.
 - **T-78 Unit tests are missing.** `infra`
   - Done when: unit tests cover a corrupt settings.toml, ModelDownloader errors,
-    AnnotationOverlay, Magnifier and Inspector. The recorder evidence test writes only to a temp
-    dir, and `test_pdf_editor` is split by area.
-  - Src: `test_uat_ux_recorder_evidence.cpp:59-74`.
+    AnnotationOverlay, Magnifier and Inspector, and `test_pdf_editor` is split by area.
 - **T-79 ML caches have no memory cap, and MlScheduler runs one job at a time.** `ocr`
   - Done when: the SAM encoder cache and the background-removal cache stay under a stated cap
     (with a test), and MlScheduler runs more than one job when cores allow.

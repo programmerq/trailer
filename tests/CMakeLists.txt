@@ -164,6 +164,27 @@ trailer_add_test(test_update_pubkey test_update_pubkey.cpp)
 target_compile_definitions(test_update_pubkey PRIVATE
     "TRAILER_REPO_ROOT=\"${CMAKE_CURRENT_SOURCE_DIR}/..\"")
 
+# Known bugs. Each test asserts the behaviour a TODO.md entry's "Done when"
+# asks for, and marks today's failure with QEXPECT_FAIL("", "T-NN: ...", Abort).
+# A change that fixes T-NN makes that check pass unexpectedly, which fails the
+# run: delete the QEXPECT_FAIL line and the TODO.md entry in the same PR.
+# Linux CI runs these; the Wine and macOS lanes skip the label.
+function(trailer_add_known_bug_test name)
+    trailer_add_test(${name} ${name}.cpp)
+    set_tests_properties(${name} PROPERTIES LABELS "known-bug")
+endfunction()
+function(trailer_add_known_bug_variant name target env)
+    add_test(NAME ${name} COMMAND ${target})
+    set(_env ${_trailer_unit_env} ${env})
+    set_tests_properties(${name} PROPERTIES LABELS "known-bug" ENVIRONMENT "${_env}")
+endfunction()
+trailer_add_known_bug_test(test_known_bugs_pdf_save)
+trailer_add_known_bug_test(test_known_bugs_pdf_files)
+trailer_add_known_bug_test(test_known_bugs_image)
+trailer_add_known_bug_test(test_known_bugs_window)
+trailer_add_known_bug_variant(test_known_bugs_image_dpr2 test_known_bugs_image "QT_SCALE_FACTOR=2")
+trailer_add_known_bug_variant(test_known_bugs_window_dpi72 test_known_bugs_window "QT_FONT_DPI=72")
+
 # Structural, CI-safe performance tests. These assert ordering / counts /
 # thread facts (never wall-clock time) and read the checked-in reference
 # corpus at docs/perf/corpus/. TRAILER_PERF_CORPUS_DIR points each test
