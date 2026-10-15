@@ -15,7 +15,7 @@ Trailer won't do is in PRODUCT.md ("Not doing"), not here.
   is no status field and no done list.
 - A fix that meets only part of a bar deletes the `QEXPECT_FAIL` lines it fixed, keeps the
   entry, and narrows its Done when to what's left.
-- To add an entry, take the next unused id and update this line: the highest so far is T-133.
+- To add an entry, take the next unused id and update this line: the highest so far is T-134.
   Ids are never reused, and CI fails if an entry is above that number. Put the entry under its
   priority, with a failing test in the same PR when the bug can be reproduced offscreen.
 - A code comment that points at open work says `// T-NN: …` and nothing more.
@@ -415,14 +415,12 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     after `annotations()` starts the background load (`test_perf_lazy_open.cpp:205`), but that
     worker's own parse bumps the same global counter (`PdfAdapter.cpp:507-522`). Recording the
     thread of the first parse would make the check race-free.
-- **T-30 No Trailer build runs on the reference Intel Mac.** `platform`
-  - Done when: the owner's choice (PRODUCT.md, open decision 2) is in place. Either a release DMG
-    launches and opens a PDF on the reference Intel Mac (x86_64, ML off, which needs T-49), or
-    the counting tests (T-24) and the cold-launch measurement (T-124) run on that machine under
-    Linux or Windows, with the results in the closing PR's description.
-  - Src: Qt 6.10+ needs macOS 13 and ONNX Runtime 1.25 needs 14, while 2014 Macs stop at
-    macOS 11 or 12. `cmake/OnnxRuntime.cmake:37-38` is FATAL on macOS x86_64.
-    `scripts/build-macos.sh:2-17` is arm64 only, and `:68` sets the floor to macOS 14.0.
+- **T-30 Nothing has been measured on the reference Intel Mac.** `platform`
+  - Done when: the counting tests (T-24) and the cold-launch measurement (T-124) run on that
+    machine under Linux or Windows, with the results in the closing PR's description.
+  - Src: the owner chose it as a yardstick, not a build target (PRODUCT.md, 2026-10-15). No
+    official macOS build runs on it: Qt 6.10+ needs macOS 13 and ONNX Runtime 1.25 needs 14,
+    while 2014 Macs stop at macOS 11 or 12.
 - **T-58 CI tests Windows only under Wine, and most of CI guards process, not the product.**
   `packaging` `infra`
   - Done when:
@@ -492,8 +490,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Src: SAV-6. 69–88 ms per tick on a 300-page, 22.5 MB file, 247 ms with one redaction; about
     2.7 GB an hour while a large document stays dirty. `MainWindow.cpp:995-1003`, `:1067`.
 - **T-110 Image windows show a permanent "install language pack" link.** `chrome` `ocr`
-  - Done when: with the OCR model bundled (PRODUCT.md, open decision 3) the link never shows;
-    otherwise it shows at most once per document, in context, with a dismiss.
+  - Done when: the link never shows once the OCR model is bundled (T-134); until then it shows
+    at most once per document, in context, with a dismiss.
   - Src: SB-3. `MainWindow.cpp:722-733`, `:979-980`.
 - **T-112 Disabled items explain nothing, or point at other items.** `dialogs`
   - Done when: a test walks every menu and toolbar action in the empty, PDF and image states, and
@@ -745,6 +743,15 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Done when: with no search active, no timer fires (checked with a timer-event counter over 5 s
     of idle).
   - Src: `MainWindow.cpp:244-263`; the comment says it only runs during a search.
+- **T-134 The Latin OCR model isn't bundled, so scans aren't selectable on a fresh install.**
+  `ocr` `packaging`
+  - Done when: on a fresh install with no network, opening a scanned PDF and dragging across a
+    line selects and copies the right text with no download or consent prompt, on every OS's
+    package; the bundled weights are SHA-256 checked, listed in `THIRD_PARTY_LICENSES.md`, and
+    the model manager shows OCR as installed; background removal and Smart Lasso still ask
+    before downloading.
+  - Src: owner decision 2026-10-15 (PRODUCT.md). Detector 2.4 MB, recognizer 9.0 MB, direction
+    0.6 MB. Today every model downloads on first use (`src/ml/ModelDownloader.cpp`).
 - **T-125 OCR on the reference machine is unmeasured.** `ocr`
   - Done when: with the weights present, OCR of one 300 dpi page uses at most one worker thread
     on battery, is cancellable within one page, makes no GUI-thread engine calls, and its time

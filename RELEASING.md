@@ -375,9 +375,6 @@ Each push to a labelled PR reruns the whole matrix. While you iterate:
   is not in the Apple Developer Program. If that ever changes, a
   signing + notarization step plugs in between `make release` and
   the artifact upload in CI.
-- **Intel Mac binary (T-30).** When ML-disabled mode or a third-party
-  ONNX x86_64 build lands, the macOS artifact list grows by one
-  and `release-publish.yml`'s rename map needs the new entry.
 - **CHANGELOG drift.** If contributors forget to update
   `[Unreleased]`, `scripts/release-notes.sh v$PREV..HEAD` will
   surface what's missing — the script reads `git log`, not

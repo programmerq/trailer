@@ -12,8 +12,9 @@ every OS it is as good as Preview is on a Mac, so one set of habits works everyw
 - **Who:** today the owner (the maintainer), daily, on all three OSes. Later a wide audience who
   must not go "oof", so the defaults are right with zero configuration.
 - **Hardware yardstick:** the owner's ~12-year-old Intel Mac (a Core i3, 2014-era). The
-  performance rules below must hold there. Official macOS builds can't run on a Mac that old
-  today (arm64 only, macOS ≥ 14); see Open decisions.
+  performance rules below must hold there, measured under Linux or Windows: it is a yardstick,
+  not a build target (decided 2026-10-15), and official macOS builds stay arm64, macOS ≥ 14.
+  Tests count work, which holds on any machine.
 - **AI is progressive enhancement:** OCR, background removal and Smart Lasso make Trailer better
   when present; nothing else depends on them.
 - **Not** a Photoshop or Acrobat replacement, a cloud service, a collaboration tool, or a mobile
@@ -131,9 +132,11 @@ instructions each (TODO.md T-24 sets the bound). None of this may block the GUI 
 ### Tier 2: progressive enhancement (ML)
 OCR (PP-OCRv3) comes first. Users expect to select text in any scan or screenshot, so OCR'd text
 must behave exactly like native text, with no command to run. Then background removal (U²-Net)
-and Smart Lasso / Instant Alpha (MobileSAM). All run locally. Today each model downloads once,
-after consent, the first time its feature is used; its controls are disabled with a tooltip only
-when that model is set to Never Download (see Open decisions for bundling the OCR model). Work
+and Smart Lasso / Instant Alpha (MobileSAM). All run locally. The Latin OCR model (about 12 MB)
+ships with Trailer, so text in scans is selectable on first launch with no download or prompt
+(decided 2026-10-15; T-134). Every other model downloads once, after consent, the first time its
+feature is used; its controls are disabled with a tooltip only when that model is set to Never
+Download. Work
 stays near the visible page, uses one low-priority worker, can be cancelled, pauses on battery,
 and never substitutes a different result. Whole-document OCR runs only when the user asks for
 it: Recognize Text, or a search that needs it. Target: Trailer builds and is fully usable without
@@ -152,7 +155,9 @@ it. The UX session recorder is a developer tool, compiled out of every release b
 
 ## Your files are safe: the rules
 
-- Only an explicit Save or Save As writes your file. Every 30 s, unsaved edits go to a private
+- Only an explicit Save or Save As writes your file (decided 2026-10-15: no autosave into the
+  file; revisit Preview-style autosave only once the P0 save bugs are fixed and a pre-edit copy
+  is guaranteed). Every 30 s, unsaved edits go to a private
   recovery copy, and reopening the file restores them. Untitled documents (screenshots,
   clipboard) get no recovery copy yet (T-16).
 - **Closing:** unsaved changes prompt Save / Discard / Cancel; a clean document never asks. ⌘Q
@@ -225,15 +230,3 @@ dpr 1 and 2.
 
 Before 1.0, also: Preferences covers every setting and each survives a restart; every command
 works from the keyboard; every control has a screen-reader label.
-
-## Open decisions (owner)
-1. **Save model.** Keep the model above (explicit Save, a prompt on close, a recovery copy), or
-   adopt Preview's: autosave into the file, no prompt on close, and Revert To → Last Opened
-   backed by a guaranteed pre-edit copy. The current model stands until decided, and the P0
-   save fixes come first either way.
-2. **Old Intel Mac.** Official macOS builds can't run on it (Qt 6.10+ needs macOS 13, ONNX
-   Runtime 1.25 needs 14, builds are arm64 only). Options: use it as the performance yardstick
-   under Linux or Windows; or ship an Intel / older-macOS build with an older Qt and no ML.
-3. **OCR model.** Bundle the Latin OCR weights (about 12 MB) so text in scans is selectable with
-   no download and no consent prompt, or keep download-on-first-use for every model. Job 5 can't
-   pass on a fresh install without bundling.

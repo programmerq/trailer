@@ -23,7 +23,7 @@ how to work on the code. Releases are tagged `vX.Y.Z`; see
 - [qpdf](https://qpdf.sourceforge.io/) 11+ (lossless PDF page editing)
 - ONNX Runtime 1.25 for the on-device ML features. CMake uses an installed copy (or
   `-DTRAILER_ORT_ROOT=<dir>`), and otherwise downloads Microsoft's checksum-pinned prebuilt.
-  Microsoft publishes none for Intel Macs (T-30).
+  Microsoft publishes none for Intel Macs, and Trailer ships no Intel macOS build.
 - A C++20 compiler (MSVC 2022, GCC 11+, or Clang 14+)
 
 Qt PDF is not bundled in all distribution packages. If `find_package(Qt6
