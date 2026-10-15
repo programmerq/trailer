@@ -1,0 +1,65 @@
+{
+    "_readme": [
+        "Modal census golden: every modal call site under src/, as per-file, per-kind counts, compared verbatim by tests/uat/test_uat_modal_census.cpp (UAT-XCT-091).",
+        "Counted: argumentless .exec()/->exec() (dialogs, message boxes, progress dialogs, and the event loops and qApp->exec() that grep can't tell apart from them) and the static QMessageBox/QInputDialog/QFileDialog/QColorDialog/QFontDialog helpers. QMenu::exec(pos) is a transient popup and isn't counted.",
+        "To update, regenerate: TRAILER_CENSUS_WRITE=1 QT_QPA_PLATFORM=offscreen ./test_uat_modal_census, and show this file's diff in the PR so the reviewer sees what changed."
+    ],
+    "schema": 1,
+    "sites": {
+        "src/app/Application.cpp": {
+            "QFileDialog-static": 1,
+            "exec": 2
+        },
+        "src/document/ImageAdapter.cpp": {
+            "exec": 1
+        },
+        "src/document/PdfAdapter.cpp": {
+            "QInputDialog-static": 1,
+            "exec": 1
+        },
+        "src/main.cpp": {
+            "exec": 1
+        },
+        "src/ml/ModelRegistry.cpp": {
+            "exec": 1
+        },
+        "src/platform/PortalScreenshot.cpp": {
+            "exec": 1
+        },
+        "src/platform/ScreenCapturePermission.cpp": {
+            "exec": 1
+        },
+        "src/ui/FeedbackDialog.cpp": {
+            "exec": 1
+        },
+        "src/ui/Inspector.cpp": {
+            "QColorDialog-static": 2
+        },
+        "src/ui/MainWindow.cpp": {
+            "QFileDialog-static": 6,
+            "QInputDialog-static": 1,
+            "QMessageBox-static": 2,
+            "exec": 13
+        },
+        "src/ui/MarkupToolbar.cpp": {
+            "QColorDialog-static": 2
+        },
+        "src/ui/ModelManagerDialog.cpp": {
+            "QMessageBox-static": 3,
+            "exec": 4
+        },
+        "src/ui/SignatureCaptureDialog.cpp": {
+            "QFileDialog-static": 1
+        },
+        "src/ui/SignaturePicker.cpp": {
+            "exec": 2
+        },
+        "src/ui/SignaturesDialog.cpp": {
+            "QMessageBox-static": 2,
+            "exec": 1
+        },
+        "src/uxrecord/UxTrailerHooks.cpp": {
+            "QInputDialog-static": 1
+        }
+    }
+}

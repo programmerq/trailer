@@ -306,3 +306,48 @@ trailer_add_uat_test(test_uat_open_already_open test_uat_open_already_open.cpp)
 # Also emits the G2 evidence pair to $TRAILER_UPDATE_KEY_EVIDENCE_DIR when
 # set — run the same binary from a keyed and an unkeyed build tree.
 trailer_add_uat_test(test_uat_update_key_evidence test_uat_update_key_evidence.cpp)
+
+# Chrome census (UAT-XCT-090): walks the realized widget tree of each
+# canonical at-rest state and diffs the visible chrome against the golden
+# census/chrome-census.json. It is a worksheet for pruning chrome while
+# that work is under way, so it gates nothing: label `advisory`, never a
+# label containing "uat" (ctest -L/-LE match labels as regexes), with the
+# same offscreen environment as the UAT tests. Run it with
+# `ctest -L advisory`. Links qpdf for the AcroForm fixture (the form-PDF
+# state) and Qt PDF for the document view it drives.
+#
+# Both censuses bake the golden's source-tree path in at configure time,
+# so a TRAILER_CENSUS_WRITE=1 run rewrites the committed file in place.
+trailer_build_uat_exe(test_uat_chrome_census test_uat_chrome_census.cpp)
+target_link_libraries(test_uat_chrome_census PRIVATE Qt6::Pdf Qt6::PdfWidgets)
+if(TARGET qpdf::libqpdf)
+    target_link_libraries(test_uat_chrome_census PRIVATE qpdf::libqpdf)
+elseif(TARGET PkgConfig::QPDF)
+    target_link_libraries(test_uat_chrome_census PRIVATE PkgConfig::QPDF)
+endif()
+target_compile_definitions(test_uat_chrome_census PRIVATE
+    "TRAILER_CENSUS_GOLDEN_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/census\"")
+add_test(NAME test_uat_chrome_census COMMAND test_uat_chrome_census)
+set_tests_properties(test_uat_chrome_census PROPERTIES
+    LABELS "advisory"
+    ENVIRONMENT "${_trailer_uat_env}"
+)
+
+# Modal census (UAT-XCT-091 static + UAT-XCT-092 dynamic): (a) counts the
+# modal call sites under src/ (argumentless exec() and the static
+# QMessageBox/QInputDialog/QFileDialog/QColorDialog/QFontDialog helpers)
+# per file and diffs them against the golden census/modal-census.json;
+# (b) drives the read path (open/page/zoom/search/close) with a modal
+# sentinel and asserts QApplication::activeModalWidget() stays null.
+trailer_add_uat_test(test_uat_modal_census test_uat_modal_census.cpp)
+target_compile_definitions(test_uat_modal_census PRIVATE
+    "TRAILER_CENSUS_GOLDEN_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/census\""
+    "TRAILER_SOURCE_SRC_DIR=\"${CMAKE_SOURCE_DIR}/src\"")
+
+# Spatial-constancy sweep (UAT-XCT-093): every unrelated-state toggle
+# MainWindow offers x every visible control outside the document area,
+# asserting mapTo(window) positions hold under the toggle and return when
+# it is reverted. uat_zoom_ind_070's geometry oracle generalized; shares
+# the census's tree walk (uat_chrome_walk.h).
+trailer_add_uat_test(test_uat_constancy_sweep test_uat_constancy_sweep.cpp)
+target_link_libraries(test_uat_constancy_sweep PRIVATE Qt6::Pdf Qt6::PdfWidgets)

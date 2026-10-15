@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # One tracker: TODO.md holds all open work (AGENTS.md, "The tracker is
 # TODO.md, and nothing else"). This fails when the repo grows another
-# tracking file, when two TODO.md entries share an id, or when a known-bug
-# test names an id that TODO.md doesn't have.
+# tracking file, when two TODO.md entries share an id, or when a test marks
+# an open bug with an id that TODO.md doesn't have.
 #
 #   scripts/check-one-tracker.sh
 set -euo pipefail
@@ -35,10 +35,15 @@ done < <(git ls-files)
 dups=$(grep -oE '^- \*\*T-[0-9]+ ' TODO.md | grep -oE 'T-[0-9]+' | sort | uniq -d | tr '\n' ' ')
 [ -z "$dups" ] || fail "TODO.md: duplicate ids: $dups"
 
-# 3. Every id a known-bug test cites ("T-NN: ..." in its QEXPECT_FAIL) is open.
-for id in $(cat tests/test_known_bugs_*.cpp 2>/dev/null | grep -oE '"T-[0-9]+:' | tr -d '":' | sort -u); do
-    grep -qE "^- \*\*$id " TODO.md ||
-        fail "a known-bug test cites $id, which isn't in TODO.md (fixed? delete its QEXPECT_FAIL)"
+# 3. Every id a test marks as an open bug is open. Every .cpp and .h under
+#    tests/ is scanned for the string literal "T-NN: <reason>", which marks
+#    a known-bug QEXPECT_FAIL or a tolerated defect (the KnownDefect
+#    entries in tests/uat/test_uat_constancy_sweep.cpp).
+cited=$(grep -rhoE --include='*.cpp' --include='*.h' '"T-[0-9]+:' tests | tr -d '":' | sort -u || true)
+for id in $cited; do
+    grep -qE "^- \*\*$id " TODO.md && continue
+    files=$(grep -rlE --include='*.cpp' --include='*.h' "\"$id:" tests | sort | tr '\n' ' ')
+    fail "${files% }: cites $id, which isn't in TODO.md (fixed? delete its \"$id: ...\" marker)"
 done
 
 if [ "$status" -eq 0 ]; then
