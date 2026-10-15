@@ -1,0 +1,21 @@
+name: One tracker
+
+# TODO.md is the only tracker (AGENTS.md). Separate from ci.yml because
+# ci.yml skips Markdown-only changes, which is exactly when a stray
+# tracking file would land.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  one-tracker:
+    name: One tracker (TODO.md)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+      - run: bash scripts/check-one-tracker.sh
