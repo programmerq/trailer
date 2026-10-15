@@ -3,7 +3,7 @@
 // doc §6.4). We don't test the rendering; we test that clicking each
 // tool action emits `toolChanged` with the right AnnotationTool and
 // the expected preset text (✓ / ✗ glyph or empty), and that the
-// AutoFill / Sign Here buttons emit their own signals.
+// Sign Here button emits its own signal.
 
 #include "ui/FormToolbar.h"
 #include "ui/IconHelper.h"
@@ -28,7 +28,6 @@ class TestFormToolbar : public QObject {
     void textBoxEmitsTextToolWithEmptyPreset();
     void checkmarkEmitsTextToolWithCheckGlyph();
     void xMarkEmitsTextToolWithCrossGlyph();
-    void autoFillSignalFiresOnce();
     void signHereSignalFiresOnce();
     void toolsAreMutuallyExclusive();
     void everyActionHasARenderedIcon();
@@ -95,15 +94,6 @@ void TestFormToolbar::xMarkEmitsTextToolWithCrossGlyph() {
     QCOMPARE(args.at(0).value<AnnotationTool>(), AnnotationTool::Text);
     QCOMPARE(args.at(1).toString(), QStringLiteral(u"\u2717"));
     QCOMPARE(bar.pendingText(), QStringLiteral(u"\u2717"));
-}
-
-void TestFormToolbar::autoFillSignalFiresOnce() {
-    FormToolbar bar;
-    QSignalSpy spy(&bar, &FormToolbar::autoFillRequested);
-    QAction *a = findAction(&bar, QStringLiteral("AutoFill"));
-    QVERIFY(a);
-    a->trigger();
-    QCOMPARE(spy.count(), 1);
 }
 
 void TestFormToolbar::signHereSignalFiresOnce() {

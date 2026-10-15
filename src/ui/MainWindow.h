@@ -317,8 +317,6 @@ class MainWindow : public QMainWindow {
     // to fetch before firing, then reports the outcome (update found /
     // up to date / error) in a small modal.
     void onCheckForUpdates();
-    void onAutoFillCurrentForm();
-    void onManageMyCard();
     void onManageSignatures();
     // anchorGlobalPos is the screen-space position the FormToolbar
     // captured from the Sign-Here button before emitting; the
@@ -675,8 +673,6 @@ class MainWindow : public QMainWindow {
     // first opened doc has driven a resize so opening additional
     // tabs in the same window doesn't bounce the geometry around.
     bool m_initialSizingApplied = false;
-    QAction *m_autoFillFormAction = nullptr;
-    QAction *m_myCardAction = nullptr;
     QAction *m_manageSignaturesAction = nullptr;
     QAction *m_printAction = nullptr;
     QAction *m_shareAction = nullptr; // macOS-only; null on other platforms

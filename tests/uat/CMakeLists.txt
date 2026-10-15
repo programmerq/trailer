@@ -90,8 +90,6 @@ target_link_libraries(test_uat_password PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 trailer_add_uat_test(test_uat_forms test_uat_forms.cpp)
 target_link_libraries(test_uat_forms PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 
-trailer_add_uat_test(test_uat_autofill test_uat_autofill.cpp)
-target_link_libraries(test_uat_autofill PRIVATE Qt6::Pdf Qt6::PdfWidgets)
 
 trailer_add_uat_test(test_uat_signature test_uat_signature.cpp)
 target_link_libraries(test_uat_signature PRIVATE Qt6::Pdf Qt6::PdfWidgets)

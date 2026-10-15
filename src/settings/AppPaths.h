@@ -11,9 +11,9 @@ class AppPaths {
 
     static QString settingsFile();
     static QString recentFile();
-    static QString cardsFile();
+    // Written by the removed My Card / AutoFill feature; Reset still erases it.
+    static QString legacyCardsFile();
     static QString signaturesDir();
-    static QString autofillDir();
     static QString versionsDir();
     static QString ocrCacheDir();
     static QString iccDir();

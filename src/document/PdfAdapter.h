@@ -157,7 +157,6 @@ class PdfDocument : public IDocument {
     CapabilityNotifier *capabilityNotifier() override { return &m_capabilityNotifier; }
     bool setFormFieldValue(int id, const QString &value) override;
     void setFormFillingActive(bool active) override;
-    void refreshFormView() override;
     bool isDirty() const override { return m_dirty || m_annotationsModified; }
     // True iff this document carries STRUCTURAL (qpdf page-graph) edits —
     // rotate / delete / move / insert / crop — as opposed to only unsaved

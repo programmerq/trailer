@@ -39,9 +39,6 @@ class FormToolbar : public QToolBar {
     // doc->setAnnotationTool(tool) and prime doc->setPendingText(text)
     // so the next click on the canvas drops the correct glyph.
     void toolChanged(AnnotationTool tool, const QString &pendingText);
-    // Emitted when the user clicks "AutoFill" — wired to the
-    // AutoFill-cards feature. Handled in MainWindow.
-    void autoFillRequested();
     // Emitted when the user clicks "Sign Here" — wired to the Sign
     // tool feature (pick saved signature, place, flatten).
     // `anchorGlobalPos` is the screen-space position the receiver
@@ -66,7 +63,6 @@ class FormToolbar : public QToolBar {
     QActionGroup *m_group = nullptr;
     AnnotationTool m_tool = AnnotationTool::None;
     QString m_pendingText;
-    QAction *m_autoFillAction = nullptr;
     QAction *m_signHereAction = nullptr;
 };
 

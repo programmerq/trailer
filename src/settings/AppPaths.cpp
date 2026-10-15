@@ -59,16 +59,12 @@ QString AppPaths::recentFile() {
     return joinPath(dataDir(), QStringLiteral("recent.json"));
 }
 
-QString AppPaths::cardsFile() {
+QString AppPaths::legacyCardsFile() {
     return joinPath(dataDir(), QStringLiteral("cards.toml"));
 }
 
 QString AppPaths::signaturesDir() {
     return joinPath(dataDir(), QStringLiteral("signatures"));
-}
-
-QString AppPaths::autofillDir() {
-    return joinPath(dataDir(), QStringLiteral("autofill"));
 }
 
 QString AppPaths::versionsDir() {

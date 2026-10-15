@@ -35,7 +35,6 @@ void TestAppPaths::fileHelpersLiveUnderDirs() {
     QVERIFY(AppPaths::settingsFile().startsWith(settings));
     QVERIFY(AppPaths::recentFile().startsWith(data));
     QVERIFY(AppPaths::signaturesDir().startsWith(data));
-    QVERIFY(AppPaths::autofillDir().startsWith(data));
     QVERIFY(AppPaths::versionsDir().startsWith(data));
     QVERIFY(AppPaths::ocrCacheDir().startsWith(data));
     QVERIFY(AppPaths::iccDir().startsWith(data));

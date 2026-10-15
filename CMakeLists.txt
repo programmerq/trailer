@@ -273,10 +273,6 @@ set(TRAILER_SOURCES
     src/app/CommandLine.h
     src/diagnostics/FeedbackReport.cpp
     src/diagnostics/FeedbackReport.h
-    src/cards/CardStore.cpp
-    src/cards/CardStore.h
-    src/cards/MyCard.cpp
-    src/cards/MyCard.h
     src/document/DocumentRegistry.cpp
     src/document/DocumentRegistry.h
     src/document/IDocument.h
@@ -378,8 +374,6 @@ set(TRAILER_SOURCES
     src/ui/Magnifier.h
     src/ui/MarkupToolbar.cpp
     src/ui/MarkupToolbar.h
-    src/ui/MyCardDialog.cpp
-    src/ui/MyCardDialog.h
     src/ui/OcrResultsDialog.cpp
     src/ui/OcrResultsDialog.h
     src/ui/PreferencesDialog.cpp

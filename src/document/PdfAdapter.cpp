@@ -1122,8 +1122,8 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
     // The form overlay is populated lazily: at createView time the qpdf
     // editor is usually not yet loaded (deferred), so this seeds fields only
     // if it happens to be live already. The real population happens on demand
-    // in setFormFillingActive()/refreshFormView(), which force the editor
-    // load — so the initial empty overlay is expected and correct.
+    // in setFormFillingActive(), which forces the editor load — so the
+    // initial empty overlay is expected and correct.
     if (m_editor && m_editor->isValid()) {
         formOverlay->setFields(m_editor->readFormFields());
     }
@@ -2842,18 +2842,6 @@ void PdfDocument::setFormFillingActive(bool active) {
             m_formOverlay->hide();
         }
     }
-}
-
-void PdfDocument::refreshFormView() {
-    // Re-push field values into whichever widgets the overlay has
-    // already built. Called after bulk writes (AutoFill) so the user
-    // sees the new values immediately. Does not change the overlay's
-    // visibility — if form-filling is off the refresh is a no-op until
-    // the user toggles it on.
-    ensureEditorLoaded();
-    if (!m_formOverlay || !m_editor || !m_editor->isValid())
-        return;
-    m_formOverlay->setFields(m_editor->readFormFields());
 }
 
 bool PdfDocument::exportWithPassword(const QString &destPath, const QString &password) {

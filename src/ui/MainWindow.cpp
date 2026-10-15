@@ -12,18 +12,15 @@
 #include "CropPagesDialog.h"
 #include "IconHelper.h"
 #include "MarkupToolbar.h"
-#include "MyCardDialog.h"
 #include "PasswordExportDialog.h"
 #include "PreferencesDialog.h"
 #include "SignaturePicker.h"
 #include "SignaturesDialog.h"
 #include "FeedbackDialog.h"
 #include "FileChangeBanner.h"
-#include "cards/CardStore.h"
-#include "cards/MyCard.h"
 #include "document/ExternalChangeMonitor.h"
 #include "document/PdfAdapter.h"
-#include "document/PdfEditor.h" // FormField definition for AutoFill
+#include "document/PdfEditor.h"
 #include "SearchBar.h"
 #include "Sidebar.h"
 #include "annotation/AnnotationStore.h"
@@ -608,8 +605,6 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
                     doc->setPendingAnnotationText(pendingText);
                 }
             });
-    connect(m_formToolbar, &FormToolbar::autoFillRequested, this,
-            &MainWindow::onAutoFillCurrentForm);
     connect(m_formToolbar, &FormToolbar::signHereRequested, this, &MainWindow::onSignHere);
 
     buildMenus();
@@ -2147,13 +2142,8 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     connect(m_cropPagesDragAction, &QAction::triggered, this,
             &MainWindow::onCropPagesByDragging);
 
-    // Fill Forms stays at the top level — it's the primary affordance
-    // for working with a fillable PDF and the action that auto-toggles
-    // when an AcroForm is opened. AutoFill (My Card → field matcher)
-    // is a side feature and lives in a Forms submenu so the Tools menu
-    // doesn't crowd the form-filling area with two peers of unequal
-    // importance. My Card management lives next to AutoFill since it's
-    // only relevant if AutoFill is being used.
+    // Fill Forms is the primary affordance for working with a fillable
+    // PDF and the action that auto-toggles when an AcroForm is opened.
     m_fillFormsAction = toolsMenu->addAction(tr("&Fill Forms"));
     m_fillFormsAction->setCheckable(true);
     m_fillFormsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
@@ -2162,13 +2152,6 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
             doc->setFormFillingActive(on);
         }
     });
-
-    QMenu *formsSubmenu = toolsMenu->addMenu(tr("&Forms"));
-    m_autoFillFormAction = formsSubmenu->addAction(tr("&AutoFill from My Card"));
-    connect(m_autoFillFormAction, &QAction::triggered, this, &MainWindow::onAutoFillCurrentForm);
-
-    m_myCardAction = formsSubmenu->addAction(tr("My &Card…"));
-    connect(m_myCardAction, &QAction::triggered, this, &MainWindow::onManageMyCard);
 
     m_manageSignaturesAction = toolsMenu->addAction(tr("Manage &Signatures…"));
     connect(m_manageSignaturesAction, &QAction::triggered, this, &MainWindow::onManageSignatures);
@@ -4354,9 +4337,6 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // worker, so at open this reports "no forms yet" and the block re-runs a
     // moment later when the answer lands.
     refreshFormCapabilities(doc);
-    // My Card editor is always available — a user may want to edit
-    // their card even without a PDF open.
-    m_myCardAction->setEnabled(true);
 
     // Restore view-state in priority order (Workstream I):
     //   1. Per-file: the RecentEntry for this exact path, if it has
@@ -4805,7 +4785,6 @@ void MainWindow::refreshFormCapabilities(IDocument *doc) {
         m_fillFormsAction->setChecked(false);
     }
     m_fillFormsAction->setEnabled(hasForms);
-    m_autoFillFormAction->setEnabled(hasForms);
     // Auto-enable Fill Forms the first time we see a fillable document
     // so the user gets visible widgets + click-to-type without having
     // to discover the menu toggle. We only do this once per document
@@ -5056,86 +5035,6 @@ void MainWindow::onAbout() {
                           "<p>Cross-platform PDF and image workbench.</p>"
                           "<p>Version %1 (Phase 1)</p>")
                            .arg(QString::fromLatin1(TRAILER_VERSION_STRING)));
-}
-
-void MainWindow::onAutoFillCurrentForm() {
-    auto *doc = m_documentView->currentDocument();
-    if (!doc || !doc->supportsFormFilling()) {
-        flashStatus(tr("AutoFill: this document has no fillable form fields."));
-        return;
-    }
-
-    CardStore store;
-    store.load();
-
-    // If the user has no card yet, open the dialog inline so AutoFill
-    // has something to work with on first use. They can still Cancel.
-    if (!store.hasActive()) {
-        MyCardDialog dialog(this);
-        if (dialog.exec() != QDialog::Accepted)
-            return;
-        MyCard card = dialog.card();
-        if (card.label.isEmpty())
-            card.label = tr("My Card");
-        store.addCard(std::move(card));
-        store.save();
-    }
-
-    const MyCard card = store.activeCard();
-    const AutoFillResult r = autoFillDocument(doc, card);
-
-    // Push the new values into the form overlay so the user sees them
-    // immediately. Also turn on form-filling mode — AutoFill is a
-    // strong signal that the user wants to interact with the form
-    // (either to spot-check what was filled or to finish remaining
-    // fields by hand).
-    doc->refreshFormView();
-    if (r.filled > 0 && !m_fillFormsAction->isChecked()) {
-        m_fillFormsAction->setChecked(true); // triggers setFormFillingActive(true)
-    }
-
-    // Inline status message instead of a modal — the popup was a
-    // context-breaker on every invocation. "Filled 0 of N" still gets
-    // surfaced so the user knows nothing matched, but via the status
-    // bar which doesn't demand a click-through.
-    const QString label = card.label.isEmpty() ? tr("My Card") : card.label;
-    QString status;
-    if (r.filled == 0 && r.examined > 0) {
-        status = tr("AutoFill: \"%1\" matched none of the %2 text field(s). "
-                    "The PDF may use non-standard field names.")
-                     .arg(label)
-                     .arg(r.examined);
-    } else if (r.filled == 0) {
-        status = tr("AutoFill: no text fields to fill in this document.");
-    } else {
-        status = tr("AutoFill: filled %1 of %2 text field(s) from \"%3\".")
-                     .arg(r.filled)
-                     .arg(r.examined)
-                     .arg(label);
-    }
-    statusBar()->showMessage(status, 8000);
-}
-
-void MainWindow::onManageMyCard() {
-    CardStore store;
-    store.load();
-
-    MyCardDialog dialog(this);
-    if (store.hasActive()) {
-        dialog.setCard(store.activeCard());
-    }
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-
-    MyCard card = dialog.card();
-    if (card.label.isEmpty())
-        card.label = tr("My Card");
-    if (store.hasActive()) {
-        store.replaceCard(store.activeIndex(), std::move(card));
-    } else {
-        store.addCard(std::move(card));
-    }
-    store.save();
 }
 
 void MainWindow::onSignHere(const QPoint &anchorGlobalPos) {
@@ -5460,7 +5359,6 @@ void MainWindow::onResetTrailerSettings() {
                                 "This deletes:\n"
                                 "  • Preferences (theme, last-saved-dir, autoSave)\n"
                                 "  • Recent files history\n"
-                                "  • Saved cards (My Card data)\n"
                                 "  • Saved signatures\n"
                                 "  • Cached ML models (will re-download on next use)\n\n"
                                 "Open documents stay open — only Trailer's own state on "
@@ -5482,7 +5380,7 @@ void MainWindow::onResetTrailerSettings() {
 
     removeFile(AppPaths::settingsFile());
     removeFile(AppPaths::recentFile());
-    removeFile(AppPaths::cardsFile());
+    removeFile(AppPaths::legacyCardsFile());
     removeDir(AppPaths::signaturesDir());
     removeDir(AppPaths::modelsDir());
 

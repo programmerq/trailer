@@ -338,8 +338,7 @@ QAction *findFillFormsAction(MainWindow *mw) {
 
 // UAT-FRM-040 — Opening a fillable PDF auto-enables Fill Forms mode
 // so the user sees the editable widgets without having to discover the
-// menu toggle. This was the 2026-04-28 reframe of the AutoFill area:
-// users want "see the field, click, type", not matcher cleverness.
+// menu toggle: users want "see the field, click, type".
 void TestUatForms::uat_frm_040_fillFormsAutoEnabledOnFillablePdf() {
     QVERIFY(m_scratch.isValid());
     const QString path = writeFormPdf(m_scratch.filePath(QStringLiteral("frm040.pdf")));

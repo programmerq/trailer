@@ -48,7 +48,6 @@ constexpr IconEntry kIcons[] = {
     {"tool-underline",      ":/icons/actions/tool-underline.svg",      false},
     {"tool-strikeout",      ":/icons/actions/tool-strikeout.svg",      false},
     {"tool-redact",         ":/icons/actions/tool-redact.svg",         false},
-    {"tool-autofill",       ":/icons/actions/tool-autofill.svg",       false},
     {"tool-sign-here",      ":/icons/actions/tool-sign-here.svg",      false},
     {"tool-checkmark",      ":/icons/actions/tool-checkmark.svg",      false},
     {"tool-xmark",          ":/icons/actions/tool-xmark.svg",          false},

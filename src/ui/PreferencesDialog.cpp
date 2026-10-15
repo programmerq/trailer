@@ -431,7 +431,7 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
         auto *form = new QFormLayout(page);
 
         auto *note = new QLabel(
-            tr("Erase all Trailer settings, recent files, saved AutoFill cards, "
+            tr("Erase all Trailer settings, recent files, "
                "saved signatures and downloaded models, and return every "
                "preference to its default. This deletes real files on disk and "
                "cannot be undone."),

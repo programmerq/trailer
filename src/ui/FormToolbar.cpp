@@ -49,11 +49,6 @@ FormToolbar::FormToolbar(QWidget *parent) : QToolBar(parent) {
 
     addSeparator();
 
-    m_autoFillAction = addAction(tr("AutoFill"));
-    m_themedIcons.apply(m_autoFillAction, QStringLiteral(":/icons/actions/tool-autofill.svg"), this);
-    m_autoFillAction->setToolTip(tr("AutoFill — fill form fields from your saved card"));
-    connect(m_autoFillAction, &QAction::triggered, this, &FormToolbar::autoFillRequested);
-
     m_signHereAction = addAction(tr("Sign Here"));
     m_themedIcons.apply(m_signHereAction, QStringLiteral(":/icons/actions/tool-sign-here.svg"),
                         this);

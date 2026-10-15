@@ -54,7 +54,6 @@ const QStringList kAllIcons = {
     QStringLiteral("tool-underline"),
     QStringLiteral("tool-strikeout"),
     QStringLiteral("tool-redact"),
-    QStringLiteral("tool-autofill"),
     QStringLiteral("tool-sign-here"),
     QStringLiteral("tool-checkmark"),
     QStringLiteral("tool-xmark"),
