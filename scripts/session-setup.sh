@@ -11,7 +11,8 @@
 # takes about a second. A clean install took 22 s on 2026-10-15.
 #
 # CI builds against Qt's official binaries instead (.github/actions); the
-# Qt minor version matches.
+# Qt minor version matches. qpdf is pinned to Ubuntu 24.04's 11.9.0, the
+# oldest qpdf CI builds against.
 set -euo pipefail
 
 if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ] && [ "${TRAILER_SETUP_FORCE:-}" != "1" ]; then
@@ -48,10 +49,12 @@ fi
 
 # 2. Qt 6.11 (+ QtPdf, which conda-forge ships in qt6-webengine), qpdf,
 #    a matching GCC, cmake, ninja. Everything links against this prefix's
-#    own libstdc++, so use its compiler, not the system g++.
+#    own libstdc++, so use its compiler, not the system g++. qpdf stays at
+#    11.9.0 to match Linux CI: qpdf 12 made QPDFObjectHandle's accessors
+#    const, so code that compiles against 12 can fail there.
 if [ ! -e "${PREFIX}/lib/cmake/Qt6Pdf/Qt6PdfConfig.cmake" ]; then
     "${MM_DIR}/bin/micromamba" create -y -q -r "${MM_DIR}/root" -p "${PREFIX}" -c conda-forge \
-        qt6-main=6.11.2 qt6-webengine=6.11.2 qpdf cmake ninja cxx-compiler pkg-config
+        qt6-main=6.11.2 qt6-webengine=6.11.2 qpdf=11.9.0 cmake ninja cxx-compiler pkg-config
 fi
 
 # 3. ONNX Runtime C++ SDK, assembled from Microsoft's nuget package

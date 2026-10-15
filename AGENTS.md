@@ -117,14 +117,15 @@ Linux). Many distros package QtPdf separately, and Ubuntu 24.04's Qt (6.4) is to
     cmake --build build --parallel 4      # always pass a number: bare -j/--parallel is unbounded
 
 - **Cloud sessions (Claude Code on the web):** the SessionStart hook runs
-  `scripts/session-setup.sh`. It installs Qt 6.11 with QtPdf, qpdf, GCC, CMake and Ninja from
+  `scripts/session-setup.sh`. It installs Qt 6.11 with QtPdf, qpdf 11.9, GCC, CMake and Ninja from
   conda-forge, and ONNX Runtime from NuGet, into `/opt`, then writes
   `/etc/profile.d/trailer-toolchain.sh`. If CMake can't find Qt, `source` that file. Build with
   its compiler: the conda Qt needs its own libstdc++.
 - **ONNX Runtime:** found via `CMAKE_PREFIX_PATH` or `TRAILER_ORT_ROOT`; otherwise configure
   downloads it (SHA-pinned). There is no upstream macOS x86_64 build, and no ML-off option yet.
 - **qpdf:** configure accepts any version, but only 11 and later are supported (CI uses Ubuntu
-  24.04's 11.9).
+  24.04's 11.9). qpdf 12 made `QPDFObjectHandle`'s accessors const and 11.9's aren't, so don't
+  call them through a const handle: it compiles against 12 and fails on CI.
 - **Options:** `TRAILER_WERROR` (off; Qt/qpdf headers are noisy), `TRAILER_ENABLE_UX_RECORDER`
   (off; developer tool, never shipped), `TRAILER_ADAPTIVE_ICON` (on; macOS; needs full Xcode, so
   turn it off with only the Command Line Tools). `-Werror=switch` is always on.
