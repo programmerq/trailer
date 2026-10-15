@@ -70,11 +70,11 @@ concurrency:
 #     far inside 16 GB. Symptom to lower it: an OOM-killed compiler
 #     (`c++: fatal error: Killed signal terminated program cc1plus`).
 #   * CTEST_PARALLEL_LEVEL: 2 — deliberately NOT raised in lockstep.
-#     Two offscreen tests are known to fail only under CPU contention
-#     (test_perf_lazy_open, T-28; uat ocr_ev_20, which can read the progress
-#     widget before it reaches Terminal), so widening the test tier to 4
-#     would buy a few seconds and pay for it in flakes. Raise this only
-#     once both are fixed.
+#     Two offscreen tests are flaky: test_perf_lazy_open under CPU
+#     contention (T-28), and uat ocr_ev_20, which can miss the "No text
+#     found" message (T-129). Widening the test tier to 4 would buy a few
+#     seconds and pay for it in flakes. Raise this only once both are
+#     fixed.
 env:
   CMAKE_BUILD_PARALLEL_LEVEL: 4
   CTEST_PARALLEL_LEVEL: 2

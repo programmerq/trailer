@@ -54,6 +54,8 @@ Open bugs have failing-first tests: `tests/test_known_bugs_*.cpp`, ctest label `
 Each test asserts the correct behaviour and marks today's failure with
 `QEXPECT_FAIL("", "T-NN: ...", Abort)`. When a change fixes T-NN, that check passes unexpectedly
 and the test fails, so the fixing PR deletes the `QEXPECT_FAIL` line and the TODO.md entry.
+Every id cited outside TODO.md (a `// T-NN:` comment, a test marker) must be an open entry, and
+CI checks this, so the PR that closes an entry also updates what cites it.
 
 ## Done means a check someone else can run
 
@@ -78,7 +80,8 @@ Cover each of these, or say why it doesn't apply:
 - **Text:** native and OCR text can be selected, copied and searched in every view.
 - **Data and undo:** what is on disk after Save, Close, Quit, ⌥⌘Q and a crash. ⌘Z reverts
   exactly that operation.
-- **Furniture:** a test compares neighbouring controls' `geometry()` before and after.
+- **Furniture:** a test compares neighbouring controls' `geometry()` before and after (the
+  constancy sweep has a row per toggle).
 - **States and OS:** the empty, loading and error states touched, and where the feature lives
   on macOS, Windows and Linux.
 
@@ -111,10 +114,18 @@ package QtPdf separately.
 
 ## Test
 
-    ctest --test-dir build -LE uat --output-on-failure                           # unit + known-bug (PR CI)
-    QT_QPA_PLATFORM=offscreen ctest --test-dir build -L uat --output-on-failure  # UAT (release)
+    ctest --test-dir build -LE 'uat|advisory' --output-on-failure                     # unit + known-bug (PR CI)
+    QT_QPA_PLATFORM=offscreen ctest --test-dir build -L uat --output-on-failure       # UAT (release)
+    QT_QPA_PLATFORM=offscreen ctest --test-dir build -L advisory --output-on-failure  # never gates
 
-- UAT runs the real `Application` and `MainWindow` in-process under the offscreen platform.
+- UAT runs the real `Application` and `MainWindow` in-process under the offscreen platform. It
+  includes the modal census, which fails when a new modal appears, and the constancy sweep,
+  which fails when a control moves because unrelated chrome toggled. After an intended change,
+  regenerate a census golden (`tests/uat/census/`) with `TRAILER_CENSUS_WRITE=1` and show its
+  diff in the PR.
+- `advisory` tests never gate, and no CI lane runs them: the chrome census and the seeded random
+  UI walk (`tests/pbt/`; replay a failure with `TRAILER_PBT_SEED`). What they find becomes a
+  TODO.md entry and a known-bug test.
 - `-L`/`-LE` match labels as regexes, so any label containing `uat` joins UAT.
 - Every confirmed bug gets a test: a known-bug test while it is open, a regression test once
   fixed. Docs-only changes skip CI (`paths-ignore`).
@@ -158,9 +169,9 @@ Saving: only an explicit Save or Save As writes the user's file. The 30 s auto-s
   grabs come back black, so Linux capture uses the XDG portal.
 - **Releases:** never squash a release PR, because autotag tags the PR's HEAD SHA. Never tag a
   `-dev` version.
-- **Old comments** may cite decision records, gates (G1–G10), UAT spec ids or `docs/` files that
-  were deleted in the October 2026 reboot. They are in git history: `git show 09bc1e3:<path>`.
-  Don't restore them.
+- **History:** the decision records, gates (G1–G10), UAT spec docs and old `docs/` tree were
+  deleted in the October 2026 reboot, and comments now state their rules inline. The old files
+  are in git history (`git show 09bc1e3:<path>`). Don't restore them or cite them.
 
 ## Working rules
 

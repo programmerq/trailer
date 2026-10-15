@@ -119,8 +119,8 @@ make test-uat       # build + unit + UAT
    The wrapper auto-detects the deps from the install step (or set
    `$env:TRAILER_DEPS` to point elsewhere). It enters the MSVC dev
    shell, configures CMake with the right `CMAKE_PREFIX_PATH`, builds,
-   then runs `ctest -LE uat`. Pass `-RunUat` to also run the UAT
-   label. Pass `-Werror` to flip `TRAILER_WERROR=ON`.
+   then runs `ctest -LE 'uat|known-bug|advisory'`. Pass `-RunUat` to
+   also run the UAT label. Pass `-Werror` to flip `TRAILER_WERROR=ON`.
 
 4. To do the same by hand (without the wrapper), open a **Developer
    Command Prompt for VS 2022** and run:
@@ -134,7 +134,7 @@ make test-uat       # build + unit + UAT
    set PATH=%DEPS%\Qt\6.10.3\msvc2022_64\bin;%DEPS%\qpdf\bin;%PATH%
    set QT_QPA_PLATFORM=offscreen
    set QT_QPA_FONTDIR=%SystemRoot%\Fonts
-   cd build && ctest -C Release --output-on-failure --label-exclude uat
+   cd build && ctest -C Release --output-on-failure --label-exclude 'uat|known-bug|advisory'
    ```
 
 *Why `QT_QPA_FONTDIR`?* Under `QT_QPA_PLATFORM=offscreen`, Qt 6 on
@@ -183,8 +183,9 @@ default viewer, see
 ## Test
 
 ```sh
-ctest --test-dir build -LE uat --output-on-failure                           # unit + known-bug tests
-QT_QPA_PLATFORM=offscreen ctest --test-dir build -L uat --output-on-failure  # UAT: the whole app, offscreen
+ctest --test-dir build -LE 'uat|advisory' --output-on-failure                     # unit + known-bug tests
+QT_QPA_PLATFORM=offscreen ctest --test-dir build -L uat --output-on-failure       # UAT: the whole app, offscreen
+QT_QPA_PLATFORM=offscreen ctest --test-dir build -L advisory --output-on-failure  # chrome census, random UI walk
 ```
 
 Known-bug tests (label `known-bug`) assert the correct behaviour for an

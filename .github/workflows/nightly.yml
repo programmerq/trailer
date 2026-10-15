@@ -471,8 +471,8 @@ jobs:
       #
       # CTEST_PARALLEL_LEVEL stays 1 here, deliberately and unchanged.
       # This is the ONE lane that runs the full `ctest -L uat` tier, and
-      # two offscreen tests are known to fail only under CPU contention
-      # (test_perf_lazy_open, T-28, and uat ocr_ev_20; see ci.yml's env).
+      # two offscreen tests are flaky (test_perf_lazy_open, T-28, and uat
+      # ocr_ev_20, T-129; see ci.yml's env).
       # A serial test tier is the whole reason the nightly Linux UAT
       # result is trustworthy enough to gate on; widening it to chase a
       # few minutes would trade a hard oracle for a flaky one.

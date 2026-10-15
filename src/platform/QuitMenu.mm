@@ -49,7 +49,7 @@ namespace {
 // title contains "Quit", and as a last resort the application (first) menu's
 // last enabled item, which is where AppKit conventionally places Quit.
 //
-// MANUAL-VERIFY (owner, real Mac): confirm Qt's QuitRole item on the
+// T-52: on a real Mac, confirm Qt's QuitRole item on the
 // installed Qt version actually carries @selector(terminate:). If Qt ever
 // routes Quit through a different selector/target, the primary match stops
 // firing and we rely on the title/position fallback below — verify the swap

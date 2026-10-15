@@ -12,7 +12,7 @@ Trailer won't do is in PRODUCT.md ("Not doing"), not here.
 **Closing and adding**
 - To close an entry, the PR that meets its bar deletes it and names the id in the commit subject,
   e.g. `fix(T-07): …`. There is no status field and no done list.
-- To add an entry, take the next unused id (ids are never reused; the highest so far is T-128)
+- To add an entry, take the next unused id (ids are never reused; the highest so far is T-130)
   and put it under its priority. Land a failing test in the same PR when you can.
 - A code comment that points at open work says `// T-NN: …` and nothing more.
 
@@ -133,8 +133,9 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     2, and so do 200 fresh seeds:
     - the recorded seeds 720458898, 84349732 and 269782153;
     - the random-walk seeds 3116271505, 516731256, 1970968076, 1628323449 and 2603950034.
-  - Src: the walk and its oracle are on branch `claude/trailer-coordinator-elk85x` (commits
-    `04429e4`, `1ba553a`, `0da986d`). gdb shows the GUI thread looping in
+  - Src: `tests/pbt/test_pbt_walk_min.cpp` (label `advisory`). Replay a seed with
+    `TRAILER_PBT_SEED=<seed> QT_QPA_PLATFORM=offscreen ctest -R test_pbt_walk_min`, adding
+    `QT_SCALE_FACTOR=2` for dpr 2; all eight seeds fail today. gdb shows the GUI thread looping in
     `QAbstractScrollAreaPrivate::layoutChildren_helper → postEvent`. Force-quitting loses
     unsaved work.
 - **T-90 Redaction leaves the text readable on rotated and cropped pages.** `security` `data-loss`
@@ -216,7 +217,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     and no text appears after a successful action ("✓ Saved.", "Page cropped.", "Page copied…",
     "Trailer reset complete."). Anything that must still be shown appears in context and only
     while its state is true (errors: T-111).
-  - Test: `test_known_bugs_window` (T-11).
+  - Test: `test_known_bugs_window` (T-11). `test_uat_constancy_sweep` tolerates T-11 in its four
+    status-bar rows and, on Linux, fails once one stops moving; the fix deletes those entries.
   - Src: SB-1, SB-2. Four fixed-width reserved slots take 1,045 px of a 1,280 px window, empty at
     rest (`MainWindow.cpp:176-185`, `:636`, `:778`, `:885`, `:898`), and jump 1–4 px vertically
     when one fills. `flashSuccess` at `:2293`, `:3230`, `:3302`, `:3585`, `:3685`, `:5495`.
@@ -225,7 +227,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     `geometry()` at any step; the sidebar is visible after Esc iff it was before ⌘F; at window
     widths ≥ 900 px the search field is visible at rest. Asserted in Continuous, Single and Two
     Pages at dpr 1 and 2.
-  - Test: `test_known_bugs_window` (T-12).
+  - Test: `test_known_bugs_window` (T-12). `test_uat_constancy_sweep` tolerates T-12 in its Find
+    row (two entries), which the fix deletes.
   - Src: JMP-3, JMP-5. The toolbar grows 33 → 39 px, all icons shift, the search control moves
     1250 → 889 px, and the sidebar opens before anything is typed (document +266 px).
     `MainWindow.cpp:1616-1660`; `:1626-1631` hides the widget but not its QWidgetAction.
@@ -435,7 +438,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Src: NO-2, NO-8. Nine disabled items on a PDF window have a tooltip that only repeats the
     label (Adjust Size…, Adjust Colour…, Remove Background, Instant Alpha…, Smart Lasso…, Export
     As…, Crop Image…, Fill Forms, and one since removed); "Re-run Text Recognition" is disabled
-    with a tooltip pointing to another item.
+    with a tooltip pointing to another item. `test_uat_recognize_text` (uat_ocr_150, 160, 170)
+    pins that Re-run entry today and changes with this fix.
 - **T-115 OCR'd text can't be selected with the default tool, and the I-beam lies.** `ocr` `text`
   - Done when, in the app's default state after OCR completes on an image and on a scanned PDF
     page, driven through MainWindow with real events at positions found from pixels:
@@ -552,13 +556,15 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     `findChild<AnnotationOverlay*>` remains. Split controllers out as the subsystem under each is
     replaced, not as a separate big bang.
   - Src: `onCurrentDocumentChanged` alone is 714 lines.
-- **T-48 53 modal call sites remain.** `dialogs`
-  - Done when: each site in a committed modal census is either a decision PRODUCT.md allows or
-    gone. The allowed decisions are a file or page-range pick, confirming irreversible loss,
-    one-time consent, and an error the UI can't show. The census gates in CI.
-  - Src: the census on branch `claude/trailer-coordinator-elk85x` (`0da986d`). Known noise: the
-    Export As pre-dialog (T-114), the Recognize Text page-range modal (T-19), the Saving… modal
-    (T-10), "Model Not Available — install manually" (`ModelManagerDialog.cpp:130`).
+- **T-48 51 modal call sites remain.** `dialogs`
+  - Done when: each site in `tests/uat/census/modal-census.json` is either a decision PRODUCT.md
+    allows or gone. The allowed decisions are a file or page-range pick, confirming irreversible
+    loss, one-time consent, and an error the UI can't show.
+  - Src: `test_uat_modal_census` (label `uat`) fails when a site is added; after removing one,
+    regenerate the golden with `TRAILER_CENSUS_WRITE=1`. The 51 sites in 16 files include
+    `main.cpp`'s `app.exec()` and the recorder's dev-only prompt. Known noise: the Export As
+    pre-dialog (T-114), the Recognize Text page-range modal (T-19), the Saving… modal (T-10),
+    "Model Not Available — install manually" (`ModelManagerDialog.cpp:130`).
 - **T-49 Trailer can't be built without ONNX Runtime.** `packaging`
   - Done when: configuring with ML off and no ONNX Runtime present builds the app and passes the
     unit tests, and the ML commands are absent from the UI.
@@ -576,9 +582,16 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
 - **T-52 Nothing is checked on a real Mac or a real Windows desktop.** `infra` `platform`
   - Done when: each of these passes once on a real Mac (arm64, macOS 14+) and on real Windows 11,
     and the result is recorded in RELEASING.md:
-    - reopening the last document;
-    - pasted-capture scale at 2x;
-    - the macOS screen-capture picker flow;
+    - reopening the last document, including after Quit and Keep Windows;
+    - with no window open, launching or activating Trailer shows only the Dock icon and the menu
+      bar, with no panel or window;
+    - holding ⌥ swaps Quit for Quit and Keep Windows on the real Quit row;
+    - pasted-capture scale at 2x, and with two displays of different scale;
+    - trackpad pinch-zoom at 2x leaves marks where they were drawn;
+    - the macOS screen-capture picker flow, and the modal shown when capture starts with no
+      window open;
+    - the Dock's recent-documents menu, including when NSDocumentController isn't running;
+    - Help ▸ Feedback Report… appearing once in the macOS app menu with several windows open;
     - installing a nightly update.
 
     A GUI smoke lane also runs in macOS and Windows CI.
@@ -686,6 +699,19 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     not just covered.
   - Src: `PdfEditor::applyRedactions` replaces the page's content with a raster of the page
     (`PdfEditor.cpp:901-1016`). Preview removes only what is under the box.
+- **T-129 Recognize Text that finds nothing within a second says nothing.** `ocr`
+  - Done when: Recognize Text… on a page with no text always ends with a visible "No text found",
+    however fast recognition finishes, including with the progress reveal delay at 0; and UAT
+    `ocr_ev_20` passes 50 of 50 runs.
+  - Src: the batch reveal timer starts even at delay 0 (`OcrController.cpp:191`), and a batch
+    that finishes first stops it (`:215`), so MainWindow never calls `finishWithMessage`
+    (`MainWindow.cpp:940-944`). `ocr_ev_20` (`tests/uat/test_uat_ocr_evidence.cpp:244`) fails 6 of
+    40 runs alone.
+- **T-130 OCR boxes are axis-aligned, so selecting on a tilted scan is loose.** `ocr` `text`
+  - Done when: on a scan rotated 5°, a drag across two words of one line highlights those words
+    and nothing from the lines above or below, at dpr 1 and 2.
+  - Src: the detector's quadrilaterals are reduced to axis-aligned rectangles
+    (`OcrEngine.h:43-47`), so a tilted line's rectangle covers parts of its neighbours.
 
 ## P3: later or stretch
 
