@@ -13,9 +13,11 @@
 //   C  revert the toggle; assert positions returned to A (catches
 //      hysteresis — chrome that migrates a pixel per toggle cycle)
 //
-// Elements visible in only one snapshot are out of scope by
-// construction (appearing/disappearing is the census's business;
-// MOVING is this sweep's). mapTo(window) — not pos() — so a shifted
+// An element that APPEARS under a toggle is out of scope (that is the
+// census's business). One that DISAPPEARS (hidden, or destroyed and
+// rebuilt) fails the row unless the row lists it in mayHide: its position
+// can't be compared, so it must not drop out of the check silently.
+// mapTo(window) — not pos() — so a shifted
 // ancestor is charged to every control inside it, exactly as the user
 // experiences it. This is uat_zoom_ind_070's geometry oracle
 // generalized from one (readout, badge) pair to the whole inventory,
@@ -66,6 +68,13 @@
 // Delete the entry then, and the TODO.md entry if the bug is fixed.
 // Tolerances stay sharp: dx must be 0 unless the entry says otherwise,
 // so any NEW horizontal displacement under these toggles still fails.
+//
+// DPI SCOPE: the sweep is calibrated at the offscreen default logical DPI,
+// 96, which is where CI runs it. At QT_FONT_DPI=72 the ml-indicator and
+// read-only-badge content fits the bar's height, so their T-11 entries
+// tolerate nothing and the ratchet fails those rows. Run it at 72 only
+// after T-11 is fixed or those entries are made per-DPI. dpr 2 (at 96)
+// passes as at dpr 1.
 
 #include "app/Application.h"
 #include "document/IDocument.h"
@@ -203,7 +212,7 @@ QStringList compareSnapshots(const FurnitureSnapshot &before, const FurnitureSna
         defectHits->fill(0, knownDefects.size());
     QStringList violations;
     for (auto it = before.constBegin(); it != before.constEnd(); ++it) {
-        // Appeared/disappeared is the census's business, not the sweep's.
+        // vanished() reports elements that are gone from `after`.
         if (!after.contains(it.key()))
             continue;
         const QString id = it.value().first; // before-snapshot id, for messages
@@ -240,6 +249,20 @@ QStringList compareSnapshots(const FurnitureSnapshot &before, const FurnitureSna
     }
     violations.sort();
     return violations;
+}
+
+// Elements of `before` missing from `after`: hidden, or destroyed and
+// rebuilt. Their position can't be compared, so they fail the row unless it
+// lists them in `mayHide` (prefix match, like the whitelist).
+QStringList vanished(const FurnitureSnapshot &before, const FurnitureSnapshot &after,
+                     const QStringList &mayHide = {}) {
+    QStringList out;
+    for (auto it = before.constBegin(); it != before.constEnd(); ++it) {
+        if (!after.contains(it.key()) && !idWhitelisted(it.value().first, mayHide))
+            out << it.value().first;
+    }
+    out.sort();
+    return out;
 }
 
 } // namespace
@@ -305,12 +328,13 @@ MainWindow *TestUatConstancySweep::openPdfWindow(const QString &tag) {
     return nullptr; // never settled — fail loudly in the caller's QVERIFY
 }
 
-// Negative control: the comparator must flag real sibling displacement.
-// Inserting a permanent widget at the FRONT of the status bar's
-// right-anchored permanent block widens the block leftward and shifts
-// every reserved slot — exactly the shift the reserved slots exist to
-// prevent — so the sweep must report movers; if it reports none, every
-// verdict below is unsound.
+// Negative control: the comparator must flag real sibling displacement,
+// and vanished() a control that goes away. A permanent widget as wide as
+// the status bar, inserted at the FRONT of its permanent block, leaves no
+// free space to absorb it, so it pushes every reserved slot — exactly the
+// shift the reserved slots exist to prevent. (A narrower probe can land
+// in free space: at QT_FONT_DPI=72 a 17-character label moved nothing.)
+// If the sweep reports no movers, every verdict below is unsound.
 void TestUatConstancySweep::uat_xct_093_comparatorNegativeControl() {
     MainWindow *mw = openPdfWindow(QStringLiteral("negctl"));
     QVERIFY(mw);
@@ -323,6 +347,7 @@ void TestUatConstancySweep::uat_xct_093_comparatorNegativeControl() {
 
     auto *probe = new QLabel(QStringLiteral("probe-probe-probe"), mw);
     probe->setObjectName(QStringLiteral("constancyProbeLabel"));
+    probe->setMinimumWidth(mw->statusBar()->width());
     mw->statusBar()->insertPermanentWidget(0, probe);
     QApplication::processEvents();
 
@@ -337,6 +362,17 @@ void TestUatConstancySweep::uat_xct_093_comparatorNegativeControl() {
              "inserting a permanent status-bar widget displaced no sibling according to the "
              "comparator — the oracle is blind and every sweep verdict is unsound");
     qInfo().noquote() << "negative control detected" << violations.size() << "displaced elements";
+
+    auto *toolbar = mw->findChild<QToolBar *>(QStringLiteral("MainToolbar"));
+    QVERIFY(toolbar && before.contains(toolbar));
+    toolbar->hide();
+    QApplication::processEvents();
+    const QStringList hidden = vanished(before, furniturePositions(mw));
+    toolbar->show();
+    QApplication::processEvents();
+    QVERIFY2(hidden.contains(before.value(toolbar).first),
+             qPrintable(QStringLiteral("hiding the main toolbar was not reported; vanished: %1")
+                            .arg(hidden.join(QStringLiteral(", ")))));
 }
 
 void TestUatConstancySweep::uat_xct_093_togglesDoNotMoveFurniture_data() {
@@ -369,9 +405,12 @@ void TestUatConstancySweep::uat_xct_093_togglesDoNotMoveFurniture() {
     // header); a future entry MUST carry a comment saying why that
     // control legitimately moves. KnownDefect entries tolerate open bugs
     // (see the file header); add one only together with the TODO.md
-    // entry it names, whose fix deletes it.
+    // entry it names, whose fix deletes it. mayHide lists the controls a
+    // toggle legitimately hides or rebuilds; it is empty today too, and an
+    // entry needs the same why-comment.
     std::function<void()> apply, revert;
     QStringList whitelist;
+    QStringList mayHide;
     QList<KnownDefect> knownDefects;
 
     // The status-bar rows below share this entry: slots reserve width
@@ -529,6 +568,14 @@ void TestUatConstancySweep::uat_xct_093_togglesDoNotMoveFurniture() {
                             "or, if this toggle really does move it, add it to this row's "
                             "whitelist with a why-comment.")
                             .arg(toggleName, moved.join(QStringLiteral("\n  ")))));
+    const QStringList gone = vanished(baseline, during, mayHide);
+    QVERIFY2(gone.isEmpty(),
+             qPrintable(
+                 QStringLiteral("unrelated toggle '%1' hid or rebuilt furniture, so its position "
+                                "can't be checked:\n  %2\n"
+                                "  Keep the control in place, or, if this toggle really does hide "
+                                "it, add it to this row's mayHide with a why-comment.")
+                     .arg(toggleName, gone.join(QStringLiteral("\n  ")))));
 
     revert();
     QApplication::processEvents();
@@ -539,6 +586,10 @@ void TestUatConstancySweep::uat_xct_093_togglesDoNotMoveFurniture() {
                             "hysteresis after toggling '%1' off again — furniture did not return "
                             "to its baseline position:\n  %2")
                             .arg(toggleName, drifted.join(QStringLiteral("\n  ")))));
+    const QStringList notBack = vanished(baseline, after);
+    QVERIFY2(notBack.isEmpty(),
+             qPrintable(QStringLiteral("furniture missing after toggling '%1' off again:\n  %2")
+                            .arg(toggleName, notBack.join(QStringLiteral("\n  ")))));
 
     // Ratchet, like QEXPECT_FAIL's unexpected pass: a KnownDefect entry
     // that tolerated no movement under this toggle means its bug no
@@ -600,6 +651,10 @@ void TestUatConstancySweep::uat_xct_093_documentLifecycleDoesNotMoveFurniture() 
     QVERIFY2(moved.isEmpty(),
              qPrintable(QStringLiteral("opening a second document moved furniture:\n  %1")
                             .arg(moved.join(QStringLiteral("\n  ")))));
+    QStringList gone = vanished(baseline, afterOpen);
+    QVERIFY2(gone.isEmpty(),
+             qPrintable(QStringLiteral("opening a second document hid furniture:\n  %1")
+                            .arg(gone.join(QStringLiteral("\n  ")))));
 
     // Switch back to the first tab.
     dv->setCurrentIndex(0);
@@ -610,6 +665,9 @@ void TestUatConstancySweep::uat_xct_093_documentLifecycleDoesNotMoveFurniture() 
     moved = compareSnapshots(baseline, afterSwitch, {});
     QVERIFY2(moved.isEmpty(), qPrintable(QStringLiteral("switching tabs moved furniture:\n  %1")
                                              .arg(moved.join(QStringLiteral("\n  ")))));
+    gone = vanished(baseline, afterSwitch);
+    QVERIFY2(gone.isEmpty(), qPrintable(QStringLiteral("switching tabs hid furniture:\n  %1")
+                                            .arg(gone.join(QStringLiteral("\n  ")))));
 
     // Close the second document again.
     QVERIFY(QMetaObject::invokeMethod(dv, "onTabCloseRequested", Q_ARG(int, 1)));
@@ -619,6 +677,9 @@ void TestUatConstancySweep::uat_xct_093_documentLifecycleDoesNotMoveFurniture() 
     moved = compareSnapshots(baseline, afterClose, {});
     QVERIFY2(moved.isEmpty(), qPrintable(QStringLiteral("closing a document moved furniture:\n  %1")
                                              .arg(moved.join(QStringLiteral("\n  ")))));
+    gone = vanished(baseline, afterClose);
+    QVERIFY2(gone.isEmpty(), qPrintable(QStringLiteral("closing a document hid furniture:\n  %1")
+                                            .arg(gone.join(QStringLiteral("\n  ")))));
 }
 
 // Custom main: sandbox HOME before Application is constructed so

@@ -1,7 +1,7 @@
 {
     "_readme": [
         "Modal census golden: every modal call site under src/, as per-file, per-kind counts, compared verbatim by tests/uat/test_uat_modal_census.cpp (UAT-XCT-091).",
-        "Counted: argumentless .exec()/->exec() (dialogs, message boxes, progress dialogs, and the event loops and qApp->exec() that grep can't tell apart from them) and the static QMessageBox/QInputDialog/QFileDialog/QColorDialog/QFontDialog helpers. QMenu::exec(pos) is a transient popup and isn't counted.",
+        "Counted: argumentless .exec()/->exec() (dialogs, message boxes, progress dialogs, and the event loops and qApp->exec() that grep can't tell apart from them), the static QMessageBox/QInputDialog/QFileDialog/QColorDialog/QFontDialog helpers, and dialogs made modal without exec(): setWindowModality(Qt::WindowModal or Qt::ApplicationModal), setModal(true) and QDialog::open(). A dialog made modal and then exec()'d counts under both kinds. QMenu::exec(pos) is a transient popup and isn't counted.",
         "To update, regenerate: TRAILER_CENSUS_WRITE=1 QT_QPA_PLATFORM=offscreen ./test_uat_modal_census, and show this file's diff in the PR so the reviewer sees what changed."
     ],
     "schema": 1,
@@ -39,14 +39,19 @@
             "QFileDialog-static": 6,
             "QInputDialog-static": 1,
             "QMessageBox-static": 2,
-            "exec": 13
+            "exec": 13,
+            "setWindowModality": 1
         },
         "src/ui/MarkupToolbar.cpp": {
             "QColorDialog-static": 2
         },
         "src/ui/ModelManagerDialog.cpp": {
             "QMessageBox-static": 3,
-            "exec": 4
+            "exec": 4,
+            "setWindowModality": 2
+        },
+        "src/ui/OcrResultsDialog.cpp": {
+            "setModal": 1
         },
         "src/ui/SignatureCaptureDialog.cpp": {
             "QFileDialog-static": 1

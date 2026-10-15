@@ -25,6 +25,9 @@ Trailer won't do is in PRODUCT.md ("Not doing"), not here.
   correct behaviour and mark today's failure with `QEXPECT_FAIL("", "T-NN: …", Abort)`.
 - A fix makes that check pass unexpectedly, which fails the run. The fixing PR deletes the
   `QEXPECT_FAIL` line and this entry together, so the test becomes the regression test.
+- A Test line names any part of the bar its test doesn't check ("Not checked: …"). A flip
+  closes only what the test checks: the PR that deletes the entry shows the rest met, or it
+  narrows the Done when to what's left.
 
 **Priorities**
 - **P0**: in ordinary use (no crash, no unusual setup), Trailer damages a file or writes one
@@ -78,7 +81,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     - Moving page 1 to the end carries its mark with it.
     - Inserting a page at the front shifts both marks by one page.
     - ⌘Z after each operation restores the previous placement.
-  - Test: `test_known_bugs_pdf_save` (T-02).
+  - Test: `test_known_bugs_pdf_save` (T-02). Not checked: the view; moving page 1 to the end,
+    which no page can reach until T-127 is fixed (the test moves page 3 to the front instead).
   - Src: page operations never touch the annotation store (`PdfAdapter.cpp:2259-2276`,
     `:2324-2343`, `:2345-2362`). After deleting page 1 and saving, page 1's mark lands on the new
     page 1, page 3's mark is dropped from the file, and the store keeps it on a page that no
@@ -94,7 +98,7 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Done when: a Zoom Lens drawn on a PDF is still present and editable after Save and reopen.
     A stopgap PR may instead disable the tool on PDFs, with a tooltip saying it works on images;
     that stops the loss but closes nothing.
-  - Test: `test_known_bugs_pdf_save` (T-04).
+  - Test: `test_known_bugs_pdf_save` (T-04). Not checked: editing the lens after reopen.
   - Src: the store goes 1 → 0 on Save. `PdfEditor.cpp:674-678`.
 - **T-05 ⌘Z of a page operation after Save does nothing, marks the document edited, and can
   make it unsaveable.** `undo` `data-loss`
@@ -102,7 +106,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     the pages exactly as before the op, and ⌘⇧Z re-applies it. `undo()` returns false whenever
     nothing was reverted. Save never fails after an undo. A symmetry test over every PdfCommand,
     run across a Save, proves this.
-  - Test: `test_known_bugs_pdf_save` (T-05; delete and move).
+  - Test: `test_known_bugs_pdf_save` (T-05; delete and move). Not checked: rotate, insert and
+    crop, which undo correctly across a Save today; the symmetry test over every PdfCommand.
   - Src: UND-1, UND-2. After Delete → Save → ⌘Z, `undo()` returns true, nothing changes, qpdf
     warns "operation for dictionary attempted on object of type destroyed", and Save, Save As and
     the recovery snapshot all fail from then on. After Move → Save → ⌘Z, ⌘⇧Z moves the page
@@ -115,7 +120,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Done when: on a PNG, the sequence draw a rectangle → Save → ⌘Z removes the rectangle from the
     displayed pixels, and ⌘⇧Z restores it. A Save after the ⌘Z writes the file without it. After
     Save, marks are still selectable and editable.
-  - Test: `test_known_bugs_image` (T-06).
+  - Test: `test_known_bugs_image` (T-06). Not checked: selecting and editing the mark after Save;
+    the test checks only that it is still among the document's marks.
   - Src: UND-5. Save burns the mark into the pixels and clears it from the model
     (`ImageAdapter.cpp:1383-1391`). ⌘Z re-adds the mark over the burned-in pixels; a second ⌘Z
     leaves the pixels red with nothing left to undo.
@@ -162,11 +168,13 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     text with annotations on. Also check it by hand in Preview.
   - Src: `PdfEditor.cpp:620-626` writes /DA but no /AP.
 - **T-90 Redaction leaves the text readable on rotated and cropped pages.** `security` `data-loss`
-  - Done when: red text under a redaction box leaves 0 red pixels in the saved file at /Rotate
-    0, 90, 180 and 270 and on a page with a CropBox; the page keeps its orientation; links, form
-    fields and other annotations outside the boxes survive; and a page that can't be rendered
-    makes Save fail loudly instead of being skipped.
-  - Test: `test_known_bugs_pdf_files` (T-90; not the annotations).
+  - Done when: red text under a redaction box leaves 0 red pixels in the saved file, and none
+    of its text (text extraction finds none of it), at /Rotate 0, 90, 180 and 270 and on a page
+    with a CropBox; the page keeps its orientation; links, form fields and other annotations
+    outside the boxes survive; and a page that can't be rendered makes Save fail loudly instead
+    of being skipped.
+  - Test: `test_known_bugs_pdf_files` (T-90). Not checked: the links, form fields and other
+    annotations; a page that can't be rendered.
   - Src: C1. Red pixels before → after: unrotated 1,806 → 0; /Rotate 90 1,798 → 1,747 (readable,
     page upside down, box on blank paper); cropped 1,806 → 2,843; /Rotate 180 covered but the
     rotation is lost. The redacted page's text layer is gone, so searching the saved file won't
@@ -180,7 +188,9 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Done when: with a 3-page AES-256 PDF opened with its user password, Rotate keeps
     pageCount 3 and the document dirty; Save returns true; reopening with the password shows the
     rotation; the recovery snapshot succeeds; redaction works.
-  - Test: `test_known_bugs_pdf_files` (T-91).
+  - Test: `test_known_bugs_pdf_files` (T-91). Not checked: redaction; that the recovery snapshot
+    opens with the password and holds the mark (the test checks only that it is written and not
+    empty).
   - Src: C2. After Rotate, pageCount becomes 0 (blank view) and the document reads as clean; Save
     returns false even though the file it wrote is correct; the recovery snapshot fails too.
     `PdfEditor::save` keeps the encryption on its preview and scratch copies, and the viewer and
@@ -195,7 +205,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     - mode 0600 stays 0600, and extended attributes are preserved. (Other hard links to the
       file keep the old content: that is the accepted cost of an atomic replace.)
     - image saves get the same treatment (write a temp file in the same directory, then rename).
-  - Test: `test_known_bugs_pdf_files` (T-92; symlink and mode).
+  - Test: `test_known_bugs_pdf_files` (T-92; symlink and mode). Not checked: fault injection,
+    extended attributes, image saves.
   - Src: C3, SAV-4. The order is `unlink(target)` → `link(temp, target)` → `unlink(temp)`, so the
     path is empty in between; with TMPDIR on another filesystem the bytes are copied while it
     is empty. Every save leaves mode 0644, so a 0600 file becomes world-readable and a 0664 file
@@ -206,7 +217,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Done when: ⌘S on an unedited PDF or image leaves the file's bytes and mtime unchanged. Saving
     an edited JPEG keeps its EXIF (orientation reset to 1), ICC profile and resolution, and does
     not re-encode below the source quality.
-  - Test: `test_known_bugs_window` and `test_known_bugs_image` (T-96).
+  - Test: `test_known_bugs_window` and `test_known_bugs_image` (T-96). Not checked: the ICC
+    profile and resolution.
   - Src: SAV-3, C7. `onSave` has no dirty gate (`MainWindow.cpp:3153-3171`). A JPEG is
     re-encoded at Qt's default quality on every save (55,412 → ~12,400 bytes; error grows with
     each save), and EXIF goes from 5 tags to 0 (`ImageAdapter.cpp:1385-1387`).
@@ -226,8 +238,12 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     - a drag with the default tool from 2 px inside a word's left edge to 2 px inside its right
       edge puts exactly that word on the clipboard;
     - a rectangle drawn 6 px outside the word, then saved, is stored containing the word's
-      bounds with ≤ 2 pt slack per side.
-  - Test: `test_known_bugs_window` (T-102; Fit Page, Fit Width and 100 % at DPI 96 and 72).
+      bounds with ≤ 2 pt slack per side, and no side lies further outside the word than those
+      6 px (plus 1 px for rounding the ink box, in points at the zoom shown) plus 2 pt.
+  - Test: `test_known_bugs_window` (T-102): Fit Page, Fit Width and 100 % in Continuous on a
+    one-page document, at DPI 96 and 72, and at dpr 2 with DPI 96. Not checked: 50 % and
+    400 %; Single and Two Pages; dpr 2 at DPI 72; each zoom with a document both shorter and
+    taller than the viewport (the page fits at Fit Page and overflows at Fit Width and 100 %).
   - Src: MAP-1..3. In the default view (Fit Page) a drag across "INVOICE" copies "VOICE" at 72
     DPI and nothing at 96, and a box drawn around it is saved 31 pt right and 25 pt up. Fit Width
     is wrong at both DPIs; 100 % is right at 72 DPI and wrong at 96. On Windows and Linux every zoom is
@@ -251,7 +267,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     "Trailer reset complete."). Anything that must still be shown appears in context and only
     while its state is true. The status bar also carries every error today, so T-111 lands first
     or in the same PR.
-  - Test: `test_known_bugs_window` (T-11). `test_uat_constancy_sweep` tolerates T-11 in its four
+  - Test: `test_known_bugs_window` (T-11; the PDF state). Not checked: the empty, image and
+    markup states; success toasts. `test_uat_constancy_sweep` tolerates T-11 in its four
     status-bar rows and, on Linux, fails once one stops moving; the fix deletes those entries.
   - Src: SB-1, SB-2. Four fixed-width reserved slots take 1,045 px of a 1,280 px window, empty at
     rest (`MainWindow.cpp:176-185`, `:636`, `:778`, `:885`, `:898`), and jump 1–4 px vertically
@@ -261,8 +278,9 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     `geometry()` at any step; the sidebar is visible after Esc iff it was before ⌘F; at window
     widths ≥ 900 px the search field is visible at rest. Asserted in Continuous, Single and Two
     Pages at dpr 1 and 2.
-  - Test: `test_known_bugs_window` (T-12). `test_uat_constancy_sweep` tolerates T-12 in its Find
-    row (two entries), which the fix deletes.
+  - Test: `test_known_bugs_window` (T-12; Continuous). Not checked: the typing step; Single and
+    Two Pages. `test_uat_constancy_sweep` tolerates T-12 in its Find row (two entries), which the
+    fix deletes.
   - Src: JMP-3, JMP-5. The toolbar grows 33 → 39 px, all icons shift, the search control moves
     1250 → 889 px, and the sidebar opens before anything is typed (document +266 px).
     `MainWindow.cpp:1616-1660`; `:1626-1631` hides the widget but not its QWidgetAction.
@@ -302,8 +320,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Done when: in a window with two documents, on each tab, both right after opening and after a
     tab switch, selecting a mark shows it in the Inspector, Enter over a crop rectangle crops the
     page, and Instant Alpha and Smart Lasso change the shown image.
-  - Test: `test_known_bugs_window` (T-133) checks the Inspector on the tab opened second; crop
-    and the ML tools aren't tested.
+  - Test: `test_known_bugs_window` (T-133; the Inspector). Not checked: switching back to the
+    tab opened second; crop, Instant Alpha and Smart Lasso.
   - Src: `MainWindow.cpp:4095` connects these to `findChild<AnnotationOverlay *>()`, which in a
     two-tab window returns the hidden tab's layer, so the tab opened last is never connected and
     each tab switch connects the tab being left. The Instant Alpha and Smart Lasso handlers check
@@ -339,7 +357,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     - switching among Single, Continuous and Two Pages never changes any toolbar's visibility or
       the document view's y-position;
     - the Read-only badge and the "switch to Single" tooltip are gone.
-  - Test: `test_known_bugs_window` (T-21; toolbar visibility).
+  - Test: `test_known_bugs_window` (T-21; toolbar visibility). Not checked: markup on the
+    spread, text selection, Find, and the Read-only badge and its tooltip.
   - Src: JMP-4, SEL-7. `MainWindow.cpp:862-885`, `:4655-4693`; `TwoPageView` has no mouse or key
     handlers. Decided: keep Two Pages and fix it on the new page surface rather than remove it.
 - **T-22 Changing zoom mode loses your page.** `nav`
@@ -417,7 +436,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
 - **T-94 Annotations made by other apps are invisible in Trailer.** `annotations`
   - Done when: a /Stamp and a /Polygon with appearance streams show in the view, thumbnails, Copy
     Page as Image and print.
-  - Test: `test_known_bugs_pdf_files` (T-94).
+  - Test: `test_known_bugs_pdf_files` (T-94; the view). Not checked: thumbnails, Copy Page as
+    Image and print.
   - Src: C4. No file in `src` sets `QPdfDocumentRenderOptions::RenderFlag::Annotations`. Save
     and recovery keep these annotations; they are just never drawn.
 - **T-95 Print leaves out annotations, signatures and unsaved marks, and rasterizes on the GUI
@@ -425,7 +445,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Done when: printing to PDF a document with a saved mark and an unsaved mark contains both;
     images print with their marks; no page is rasterized on the GUI thread while printing
     (counted at the render call).
-  - Test: `test_known_bugs_pdf_files` (T-95).
+  - Test: `test_known_bugs_pdf_files` (T-95; PDFs). Not checked: images; rasterizing on the GUI
+    thread.
   - Src: C5. `PdfAdapter.cpp:2052-2099` renders `m_doc` with default flags; `ImageAdapter.cpp:
     1517-1538` prints `m_image` without the overlay.
 - **T-97 Page operations cost O(document) on the GUI thread.** `open`
@@ -439,7 +460,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
 - **T-103 Save, page operations and Undo move the reading position.** `nav`
   - Done when: after Save, Save As, any page operation, Undo or Redo, the same document point
     stays under the same viewport pixel (±2 px).
-  - Test: `test_known_bugs_window` (T-103).
+  - Test: `test_known_bugs_window` (T-103; Save, and Undo and Redo of a rotation). Not checked:
+    Save As; the page operations themselves; Undo and Redo of other operations.
   - Src: JMP-1, JMP-2. Save resets scrollY 2113 → 0, back to page 1. Undo or Redo of a rotation
     of page 4 while page 3 is on screen jumps to the top of page 3 (1695 → 1454). Every page op
     reloads the viewer, and `jump(savedPage, {})` drops the offset within the page
@@ -450,7 +472,8 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     rotate: no dirty marker, `isWindowModified()` false, and close doesn't prompt; Redo makes it
     dirty again. After any edit `isWindowModified()` is true, so macOS shows the close-button dot
     and "Edited". A document restored from crash recovery shows as edited.
-  - Test: `test_known_bugs_window` (T-104).
+  - Test: `test_known_bugs_window` (T-104). Not checked: Redo making the document dirty again;
+    the close prompt; a document restored from crash recovery.
   - Src: UND-4, SAV-5, SAV-8. `PdfAdapter.cpp:477-480`, `:2209`; `ImageAdapter.cpp:1133`; the
     title uses a "• " prefix and `setWindowModified` is never called. Undoing an image mark does
     clear the dirty state; undoing a PDF mark doesn't.
@@ -493,7 +516,9 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
   - Done when: on a screen with dpr d, at any zoom, the displayed pixmap's device width is at
     least min(source width, drawn logical width × d) − 1. PDFs stay as crisp as they are today
     (fringe ratio within 25 % of a native render at dpr 1 and 2).
-  - Test: `test_known_bugs_image` (T-118, dpr 2 entry).
+  - Test: `test_known_bugs_image` (T-118, dpr 2 entry; Fit). Not checked: other zooms; PDF
+    crispness. The test reads the pixmap the app hands its label (`labelPixmapForTest()`), not
+    a grab of the screen.
   - Src: HD-1. A 4000×3000 photo at Fit gets a 997×748 pixmap drawn across 1,994 device px.
     `ImageAdapter.cpp:94-97`, `:117-127`.
 - **T-120 The Edit menu has no Copy, Cut, Paste or Delete.** `text`
@@ -589,16 +614,18 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     `findChild<AnnotationOverlay*>` remains. Split controllers out as the subsystem under each is
     replaced, not as a separate big bang.
   - Src: `onCurrentDocumentChanged` alone is 714 lines.
-- **T-48 51 modal call sites remain.** `dialogs`
+- **T-48 55 modal call sites remain.** `dialogs`
   - Done when: every site in `tests/uat/census/modal-census.json`, except `main.cpp`'s event
     loop and the recorder's dev-only prompt, is gone or is a decision PRODUCT.md allows: a file
     or page-range pick, confirming irreversible loss, one-time consent, or an error the UI can't
     show.
   - Src: `test_uat_modal_census` (label `uat`) fails when a site is added; after removing one,
-    regenerate the golden with `TRAILER_CENSUS_WRITE=1`. The 51 sites in 16 files include
-    `main.cpp`'s `app.exec()` and the recorder's dev-only prompt. Known noise: the Export As
-    pre-dialog (T-114), the Recognize Text page-range modal (T-19), the Saving… modal (T-10),
-    "Model Not Available — install manually" (`ModelManagerDialog.cpp:130`).
+    regenerate the golden with `TRAILER_CENSUS_WRITE=1`. The 55 sites in 17 files include
+    `main.cpp`'s `app.exec()` and the recorder's dev-only prompt. A dialog made modal and then
+    exec()'d counts twice: the model download progress (`ModelManagerDialog.cpp:140`, `:345`)
+    and Recognize Text (`OcrResultsDialog.cpp:24`). Known noise: the Export As pre-dialog
+    (T-114), the Recognize Text page-range modal (T-19), the Saving… modal (T-10), "Model Not
+    Available — install manually" (`ModelManagerDialog.cpp:130`).
 - **T-49 Trailer can't be built without ONNX Runtime.** `packaging`
   - Done when: configuring with ML off and no ONNX Runtime present builds the app and passes the
     unit tests, and the ML commands are absent from the UI.
@@ -656,7 +683,9 @@ stability), `dialogs`, `ocr` (OCR and ML), `screenshot`, `print`, `platform`, `p
     undoable, and rotate and flip are stored as operations, not pixels. An edited image holds no
     full copy outside the history: today the finished decode keeps the originally decoded image
     alive until the document closes (`ImageAdapter.cpp:348-374`).
-  - Test: `test_known_bugs_image` (T-99; history only).
+  - Test: `test_known_bugs_image` (T-99): the heap held by 8 rotates and flips, and that each
+    undoes. Not checked: the decoded image kept outside the history (the heap is measured after
+    the decode). It needs glibc's `mallinfo2()` and skips elsewhere.
   - Src: C9, UND-10. `kMaxUndoSteps = 32` full-resolution copies (`ImageAdapter.cpp:71`,
     `:1077-1080`): about 3 GB for a 24 MP photo.
 - **T-100 The compiled-out recorder still changes behaviour, and PR CI tests a different

@@ -1,6 +1,7 @@
 // Known bugs in how Trailer reads, writes and renders PDF files: redaction, password-protected
 // files, the file identity of an in-place Save, print, and annotation types Trailer does not
-// manage. Fixtures are written at run time; pages are checked by counting coloured pixels.
+// manage. Fixtures are written at run time; pages are checked by counting coloured pixels and,
+// for redaction, by extracting their text.
 #include "annotation/Annotation.h"
 #include "annotation/AnnotationStore.h"
 #include "document/IDocument.h"
@@ -27,6 +28,7 @@
 #include <QPdfWriter>
 #include <QPrintDialog>
 #include <QPrinter>
+#include <QRegularExpression>
 #include <QScopeGuard>
 #include <QTemporaryDir>
 #include <QTimer>
@@ -100,6 +102,22 @@ QImage renderPage(const QString &path, int page = 0, bool withAnnotations = fals
     painter.drawImage(0, 0, raw);
     painter.end();
     return out;
+}
+
+// The text pdfium extracts from page `page` of `path`, without whitespace.
+QString pageText(const QString &path, int page = 0) {
+    QPdfDocument pdf;
+    if (pdf.load(path) != QPdfDocument::Error::None || page >= pdf.pageCount())
+        return QStringLiteral("(no such page)");
+    return pdf.getAllText(page).text().remove(QRegularExpression(QStringLiteral("\\s")));
+}
+
+// Whether `text` holds `word` read either way: on a page turned 180°, pdfium
+// extracts the text back to front ("1174TERCES").
+bool holdsWord(const QString &text, const QString &word) {
+    QString reversed = text;
+    std::reverse(reversed.begin(), reversed.end());
+    return text.contains(word) || reversed.contains(word);
 }
 
 // `pages` A4 pages, each with a black "Page N" line near the top.
@@ -397,6 +415,7 @@ void TestKnownBugsPdfFiles::redactionCoversTextOnRotatedAndCroppedPages() {
     const int headingBefore = countPixels(before, isBlue, {}, &heading);
     QVERIFY(headingBefore > 500);
     QVERIFY(!heading.intersects(secret));
+    QVERIFY(holdsWord(pageText(path), QStringLiteral("SECRET4711")));
 
     // A redaction over the secret as displayed, a few points larger all round.
     PdfDocument doc(path);
@@ -410,6 +429,10 @@ void TestKnownBugsPdfFiles::redactionCoversTextOnRotatedAndCroppedPages() {
 
     const QImage after = renderPage(path);
     QCOMPARE(after.size(), before.size());
+    // Removed from the file, not just painted over: no text extraction finds it.
+    const QString text = pageText(path);
+    QVERIFY2(!holdsWord(text, QStringLiteral("SECRET")) && !holdsWord(text, QStringLiteral("4711")),
+             qPrintable(QStringLiteral("the saved page's text: %1").arg(text)));
     QEXPECT_FAIL("rotate90",
                  "T-90: the rotated page is stretched to the MediaBox; the box misses the text",
                  Abort);

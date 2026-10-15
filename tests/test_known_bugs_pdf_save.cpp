@@ -47,6 +47,26 @@ QString writePdf(const QString &path, int pages, int firstWidth = 400) {
     return path;
 }
 
+// Copies `in` to `out`, giving page 1 a /CropBox `left` points in from the
+// MediaBox's left edge and `top` points down from its top edge.
+bool writeCropped(const QString &in, const QString &out, double left, double top) {
+    try {
+        QPDF pdf;
+        pdf.processFile(in.toLocal8Bit().constData());
+        QPDFPageObjectHelper page = QPDFPageDocumentHelper(pdf).getAllPages().at(0);
+        const QPDFObjectHandle::Rectangle media = page.getMediaBox().getArrayAsRectangle();
+        page.getObjectHandle().replaceKey(
+            "/CropBox", QPDFObjectHandle::newArray(QPDFObjectHandle::Rectangle(
+                            media.llx + left, media.lly, media.urx, media.ury - top)));
+        const QByteArray name = out.toLocal8Bit();
+        QPDFWriter writer(pdf, name.constData());
+        writer.write();
+        return true;
+    } catch (const std::exception &) {
+        return false;
+    }
+}
+
 QList<int> pageWidthList(const QString &path) {
     QList<int> widths;
     QPdfDocument pdf;
@@ -78,6 +98,16 @@ QString pageWidths(const QString &path) {
 }
 QString pageWidths(const PdfDocument &doc) {
     return joined(pageWidthList(doc));
+}
+
+// Page 1's width and the number of marks, e.g. "600 wide, 1 mark". On the
+// 400 x 600 fixture, 600 wide means page 1 is rotated a quarter turn.
+QString pageAndMarks(PdfDocument &doc) {
+    const int marks = doc.annotations()->count();
+    return QStringLiteral("%1 wide, %2 mark%3")
+        .arg(qRound(doc.pageSizeHint(0).width()))
+        .arg(marks)
+        .arg(marks == 1 ? QString() : QStringLiteral("s"));
 }
 
 Annotation rectMark(int page, const QRectF &bounds) {
@@ -336,18 +366,17 @@ class TestKnownBugsPdfSave : public QObject {
     void successiveSavesWriteEachMarkOnce();
     void saveKeepsMarkCountOfAnnotatedFile_data();
     void saveKeepsMarkCountOfAnnotatedFile();
-    void saveKeepsOtherAppsAnnotationsIntact_data();
     void saveKeepsOtherAppsAnnotationsIntact();
     void deletePageTakesItsMarkAndKeepsOthersOnTheirPages();
     void movePageKeepsMarksOnTheirPages();
     void insertPageKeepsMarksOnTheirPages();
-    void markOnRotatedPageSavesWhereDrawn_data();
-    void markOnRotatedPageSavesWhereDrawn();
+    void markOnRotatedOrCroppedPageSavesWhereDrawn_data();
+    void markOnRotatedOrCroppedPageSavesWhereDrawn();
     void zoomLensSurvivesSave();
     void undoPageOperationAfterSaveRestoresPages_data();
     void undoPageOperationAfterSaveRestoresPages();
-    void saveKeepsMarkupUndoHistory_data();
-    void saveKeepsMarkupUndoHistory();
+    void undoAfterSaveRevertsNewestFirst_data();
+    void undoAfterSaveRevertsNewestFirst();
 };
 
 void TestKnownBugsPdfSave::successiveSavesWriteEachMarkOnce_data() {
@@ -378,16 +407,18 @@ void TestKnownBugsPdfSave::successiveSavesWriteEachMarkOnce() {
 }
 
 void TestKnownBugsPdfSave::saveKeepsMarkCountOfAnnotatedFile_data() {
-    QTest::addColumn<int>("marks");
     QTest::addColumn<bool>("rotate");
-    QTest::newRow("clean save") << 1 << false;
-    QTest::newRow("rotate and save") << 2 << true;
+    QTest::addColumn<bool>("saveAs");
+    QTest::newRow("clean save") << false << false;
+    QTest::newRow("rotate and save") << true << false;
+    QTest::newRow("clean save as") << false << true;
+    QTest::newRow("rotate and save as") << true << true;
 }
 
 // T-01: PDF Save re-appends every annotation already in the file.
 void TestKnownBugsPdfSave::saveKeepsMarkCountOfAnnotatedFile() {
-    QFETCH(int, marks);
     QFETCH(bool, rotate);
+    QFETCH(bool, saveAs);
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString blank = writePdf(dir.filePath("blank.pdf"), 2);
@@ -395,13 +426,11 @@ void TestKnownBugsPdfSave::saveKeepsMarkCountOfAnnotatedFile() {
     {
         PdfEditor editor;
         QVERIFY(editor.load(blank));
-        std::vector<Annotation> fileMarks;
-        for (int i = 0; i < marks; ++i)
-            fileMarks.push_back(rectMark(0, QRectF(50 + 100 * i, 50, 40, 30)));
-        QVERIFY(editor.writeAnnotations(fileMarks));
+        QVERIFY(editor.writeAnnotations(
+            {rectMark(0, QRectF(50, 50, 40, 30)), rectMark(0, QRectF(150, 50, 40, 30))}));
         QVERIFY(editor.save(path));
     }
-    QCOMPARE(int(marksInFile(path).size()), marks);
+    QCOMPARE(int(marksInFile(path).size()), 2);
 
     PdfDocument doc(path);
     QVERIFY(doc.isValid());
@@ -411,43 +440,44 @@ void TestKnownBugsPdfSave::saveKeepsMarkCountOfAnnotatedFile() {
     } else {
         QVERIFY(!doc.isDirty());
     }
-    QVERIFY(doc.save());
+    const QString target = saveAs ? dir.filePath("copy.pdf") : path;
+    QVERIFY(doc.save(saveAs ? target : QString()));
     QEXPECT_FAIL("clean save", "T-01: a clean Save re-appends the marks already in the file",
                  Abort);
     QEXPECT_FAIL("rotate and save", "T-01: Save re-appends the marks already in the file", Abort);
-    QCOMPARE(int(marksInFile(path).size()), marks);
-}
-
-void TestKnownBugsPdfSave::saveKeepsOtherAppsAnnotationsIntact_data() {
-    QTest::addColumn<bool>("addMark");
-    QTest::newRow("clean save") << false;
-    QTest::newRow("after adding a mark on page 2") << true;
+    QEXPECT_FAIL("clean save as", "T-01: a clean Save As re-appends the marks already in the file",
+                 Abort);
+    QEXPECT_FAIL("rotate and save as", "T-01: Save As re-appends the marks already in the file",
+                 Abort);
+    QCOMPARE(int(marksInFile(target).size()), 2);
 }
 
 // T-01: PDF Save re-appends every annotation already in the file.
 void TestKnownBugsPdfSave::saveKeepsOtherAppsAnnotationsIntact() {
-    QFETCH(bool, addMark);
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = writeForeignAnnotatedPdf(dir.filePath("reviewed.pdf"));
     QCOMPARE(annotationCount(path, 0), 6);
     QCOMPARE(foreignAnnotationKeys(path), kForeignKeys);
 
+    // Three clean saves, then a mark on page 2 and a fourth save. After each,
+    // the annotations on pages 1 and 2, e.g. "6+0".
     PdfDocument doc(path);
     QVERIFY(doc.isValid());
-    if (addMark) {
-        doc.annotations()->add(rectMark(1, QRectF(300, 300, 40, 30)));
-        QVERIFY(doc.isDirty());
+    QStringList counts;
+    for (int save = 1; save <= 4; ++save) {
+        if (save == 4) {
+            doc.annotations()->add(rectMark(1, QRectF(300, 300, 40, 30)));
+            QVERIFY(doc.isDirty());
+        }
+        QVERIFY(doc.save());
+        // Authors, ids, dates, replies, popups, rich text, opacity and dashes stay.
+        QCOMPARE(foreignAnnotationKeys(path), kForeignKeys);
+        counts
+            << QStringLiteral("%1+%2").arg(annotationCount(path, 0)).arg(annotationCount(path, 1));
     }
-    QVERIFY(doc.save());
-    // Authors, ids, dates, replies, popups, rich text, opacity and dashes stay.
-    QCOMPARE(foreignAnnotationKeys(path), kForeignKeys);
-    QCOMPARE(annotationCount(path, 1), addMark ? 1 : 0);
-    QEXPECT_FAIL("clean save", "T-01: Save appends stripped copies of the other app's marks",
-                 Abort);
-    QEXPECT_FAIL("after adding a mark on page 2",
-                 "T-01: Save appends stripped copies of the other app's marks", Abort);
-    QCOMPARE(annotationCount(path, 0), 6);
+    QEXPECT_FAIL("", "T-01: each Save appends stripped copies of the other app's marks", Abort);
+    QCOMPARE(counts.join(QLatin1Char(' ')), QStringLiteral("6+0 6+0 6+0 6+1"));
 }
 
 // T-02: Deleting, moving or inserting pages leaves marks on the wrong page.
@@ -465,7 +495,13 @@ void TestKnownBugsPdfSave::deletePageTakesItsMarkAndKeepsOthersOnTheirPages() {
     QEXPECT_FAIL("", "T-02: deleting a page leaves the marks' page numbers unchanged", Continue);
     QCOMPARE(placement(doc.annotations()->annotations(), pageWidthList(doc)),
              QStringLiteral("x150@440"));
+    // ⌘Z brings the page back with its mark.
+    QVERIFY(doc.undo());
+    QCOMPARE(pageWidths(doc), QStringLiteral("400 420 440"));
+    QCOMPARE(placement(doc.annotations()->annotations(), pageWidthList(doc)),
+             QStringLiteral("x150@440, x50@400"));
 
+    doc.deletePages({0});
     QVERIFY(doc.save());
     QCOMPARE(pageWidths(path), QStringLiteral("420 440"));
     QEXPECT_FAIL("", "T-02: Save writes the marks to their old page numbers", Abort);
@@ -482,12 +518,19 @@ void TestKnownBugsPdfSave::movePageKeepsMarksOnTheirPages() {
     addMarksOnFirstAndLastPage(doc);
 
     // Page 3 moves to the front, which also shifts page 1 to second place.
+    // T-127: no page can reach the end, where the bar moves page 1.
     doc.movePage(2, 0);
     QCOMPARE(pageWidths(doc), QStringLiteral("440 400 420"));
     QEXPECT_FAIL("", "T-02: moving a page leaves the marks' page numbers unchanged", Continue);
     QCOMPARE(placement(doc.annotations()->annotations(), pageWidthList(doc)),
              QStringLiteral("x150@440, x50@400"));
+    // ⌘Z puts the page and the marks back.
+    QVERIFY(doc.undo());
+    QCOMPARE(pageWidths(doc), QStringLiteral("400 420 440"));
+    QCOMPARE(placement(doc.annotations()->annotations(), pageWidthList(doc)),
+             QStringLiteral("x150@440, x50@400"));
 
+    doc.movePage(2, 0);
     QVERIFY(doc.save());
     QCOMPARE(pageWidths(path), QStringLiteral("440 400 420"));
     QEXPECT_FAIL("", "T-02: Save writes the marks to their old page numbers", Abort);
@@ -510,7 +553,13 @@ void TestKnownBugsPdfSave::insertPageKeepsMarksOnTheirPages() {
     QEXPECT_FAIL("", "T-02: inserting a page leaves the marks' page numbers unchanged", Continue);
     QCOMPARE(placement(doc.annotations()->annotations(), pageWidthList(doc)),
              QStringLiteral("x150@440, x50@400"));
+    // ⌘Z removes the inserted page and leaves the marks where they were.
+    QVERIFY(doc.undo());
+    QCOMPARE(pageWidths(doc), QStringLiteral("400 420 440"));
+    QCOMPARE(placement(doc.annotations()->annotations(), pageWidthList(doc)),
+             QStringLiteral("x150@440, x50@400"));
 
+    QVERIFY(doc.insertPagesFrom(extra, 0));
     QVERIFY(doc.save());
     QCOMPARE(pageWidths(path), QStringLiteral("300 400 420 440"));
     QEXPECT_FAIL("", "T-02: Save writes the marks to their old page numbers", Abort);
@@ -518,20 +567,32 @@ void TestKnownBugsPdfSave::insertPageKeepsMarksOnTheirPages() {
              QStringLiteral("x150@440, x50@400"));
 }
 
-void TestKnownBugsPdfSave::markOnRotatedPageSavesWhereDrawn_data() {
+void TestKnownBugsPdfSave::markOnRotatedOrCroppedPageSavesWhereDrawn_data() {
     QTest::addColumn<int>("degrees");
-    QTest::newRow("0") << 0; // control: unrotated pages save correctly today
-    QTest::newRow("90") << 90;
-    QTest::newRow("180") << 180;
-    QTest::newRow("270") << 270;
+    QTest::addColumn<bool>("cropped");
+    QTest::addColumn<QSize>("displayed");
+    // Control: unrotated, uncropped pages save correctly today.
+    QTest::newRow("0") << 0 << false << QSize(400, 600);
+    QTest::newRow("90") << 90 << false << QSize(600, 400);
+    QTest::newRow("180") << 180 << false << QSize(400, 600);
+    QTest::newRow("270") << 270 << false << QSize(600, 400);
+    // A CropBox 50 pt in from the left edge and 80 pt down from the top.
+    QTest::newRow("cropped") << 0 << true << QSize(350, 520);
 }
 
 // T-03: Marks on rotated pages are saved away from where they were drawn.
-void TestKnownBugsPdfSave::markOnRotatedPageSavesWhereDrawn() {
+void TestKnownBugsPdfSave::markOnRotatedOrCroppedPageSavesWhereDrawn() {
     QFETCH(int, degrees);
+    QFETCH(bool, cropped);
+    QFETCH(QSize, displayed);
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
-    const QString path = writePdf(dir.filePath("rotated.pdf"), 1);
+    QString path = writePdf(dir.filePath("page.pdf"), 1);
+    if (cropped) {
+        const QString uncropped = path;
+        path = dir.filePath("cropped.pdf");
+        QVERIFY(writeCropped(uncropped, path, 50, 80));
+    }
     PdfDocument doc(path);
     QVERIFY(doc.isValid());
     if (degrees != 0)
@@ -543,7 +604,7 @@ void TestKnownBugsPdfSave::markOnRotatedPageSavesWhereDrawn() {
     doc.annotations()->add(mark);
     QVERIFY(doc.save());
 
-    QCOMPARE(displayedPageSize(path, 0), degrees % 180 ? QSize(600, 400) : QSize(400, 600));
+    QCOMPARE(displayedPageSize(path, 0), displayed);
     const std::vector<Annotation> reread = marksInFile(path);
     QCOMPARE(int(reread.size()), 1);
     QVERIFY2(sameRect(reread.front().bounds, drawn, 0.5),
@@ -553,6 +614,7 @@ void TestKnownBugsPdfSave::markOnRotatedPageSavesWhereDrawn() {
     QEXPECT_FAIL("90", "T-03: Save ignores the page's /Rotate", Abort);
     QEXPECT_FAIL("180", "T-03: Save ignores the page's /Rotate", Abort);
     QEXPECT_FAIL("270", "T-03: Save ignores the page's /Rotate", Abort);
+    QEXPECT_FAIL("cropped", "T-03: Save ignores the page's CropBox", Abort);
     QVERIFY2(sameRect(painted, drawn, 3.0),
              qPrintable(QStringLiteral("pdfium paints the mark at %1, drawn at %2")
                             .arg(rectText(painted), rectText(drawn))));
@@ -633,36 +695,73 @@ void TestKnownBugsPdfSave::undoPageOperationAfterSaveRestoresPages() {
     QEXPECT_FAIL("delete page 2", "T-05: the file keeps the page deleted", Abort);
     QEXPECT_FAIL("move page 3 to the front", "T-05: the file keeps the page moved", Abort);
     QCOMPARE(pageWidths(path), original);
+
+    // ⌘⇧Z re-applies the operation, and the next Save writes it.
+    QVERIFY(doc.redo());
+    QCOMPARE(pageWidths(doc), afterOperation);
+    QVERIFY(doc.isDirty());
+    QVERIFY(doc.save());
+    QCOMPARE(pageWidths(path), afterOperation);
 }
 
-void TestKnownBugsPdfSave::saveKeepsMarkupUndoHistory_data() {
+void TestKnownBugsPdfSave::undoAfterSaveRevertsNewestFirst_data() {
+    QTest::addColumn<bool>("markFirst");
     QTest::addColumn<bool>("saveAs");
-    QTest::newRow("save") << false;
-    QTest::newRow("save as") << true;
+    QTest::newRow("mark, rotate, save") << true << false;
+    QTest::newRow("mark, rotate, save as") << true << true;
+    QTest::newRow("rotate, mark, save") << false << false;
+    QTest::newRow("rotate, mark, save as") << false << true;
 }
 
-// T-29: Saving a PDF wipes its markup undo history.
-void TestKnownBugsPdfSave::saveKeepsMarkupUndoHistory() {
+// T-29: Saving a PDF wipes its markup undo history, so ⌘Z then undoes the wrong thing.
+void TestKnownBugsPdfSave::undoAfterSaveRevertsNewestFirst() {
+    QFETCH(bool, markFirst);
     QFETCH(bool, saveAs);
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = writePdf(dir.filePath("mark.pdf"), 1);
     PdfDocument doc(path);
+    // Loads the document first: rotatePage() drops a rotate on a document not loaded yet.
     QVERIFY(doc.isValid());
-    doc.annotations()->add(rectMark(0, QRectF(50, 50, 40, 30)));
-    QVERIFY(doc.canUndo());
+    const QString neither = QStringLiteral("400 wide, 0 marks");
+    const QString both = QStringLiteral("600 wide, 1 mark");
+    // What is left once the newer of the two edits is undone.
+    const QString older =
+        markFirst ? QStringLiteral("400 wide, 1 mark") : QStringLiteral("600 wide, 0 marks");
+    if (markFirst) {
+        doc.annotations()->add(rectMark(0, QRectF(50, 50, 40, 30)));
+        doc.rotatePage(0, 90);
+    } else {
+        doc.rotatePage(0, 90);
+        doc.annotations()->add(rectMark(0, QRectF(50, 50, 40, 30)));
+    }
+    QCOMPARE(pageAndMarks(doc), both);
     QVERIFY(doc.save(saveAs ? dir.filePath(QStringLiteral("copy.pdf")) : QString()));
     QVERIFY(!doc.isDirty());
-    QCOMPARE(doc.annotations()->count(), 1);
+    QCOMPARE(pageAndMarks(doc), both);
 
-    QEXPECT_FAIL("save", "T-29: Save clears the markup undo history", Abort);
-    QEXPECT_FAIL("save as", "T-29: Save As clears the markup undo history", Abort);
-    QVERIFY(doc.canUndo());
+    // ⌘Z reverts the newer edit, then the older one.
     QVERIFY(doc.undo());
-    QCOMPARE(doc.annotations()->count(), 0);
+    QEXPECT_FAIL("rotate, mark, save",
+                 "T-29: ⌘Z after Save skips the newer mark and reverts the rotate", Abort);
+    QEXPECT_FAIL("rotate, mark, save as",
+                 "T-29: ⌘Z after Save As skips the newer mark and reverts the rotate", Abort);
+    QCOMPARE(pageAndMarks(doc), older);
     QVERIFY(doc.isDirty());
+    const bool undid = doc.undo();
+    QEXPECT_FAIL("mark, rotate, save", "T-29: Save clears the markup undo history", Abort);
+    QEXPECT_FAIL("mark, rotate, save as", "T-29: Save As clears the markup undo history", Abort);
+    QCOMPARE(pageAndMarks(doc), neither);
+    QVERIFY(undid);
+    QVERIFY(doc.isDirty());
+    QVERIFY(!doc.canUndo());
+
+    // ⌘⇧Z re-applies the older edit, then the newer one.
     QVERIFY(doc.redo());
-    QCOMPARE(doc.annotations()->count(), 1);
+    QCOMPARE(pageAndMarks(doc), older);
+    QVERIFY(doc.redo());
+    QCOMPARE(pageAndMarks(doc), both);
+    QVERIFY(!doc.canRedo());
 }
 
 QTEST_MAIN(TestKnownBugsPdfSave)

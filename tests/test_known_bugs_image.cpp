@@ -7,6 +7,7 @@
 
 #include <QBuffer>
 #include <QByteArray>
+#include <QCryptographicHash>
 #include <QDataStream>
 #include <QFile>
 #include <QImage>
@@ -24,8 +25,14 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib> // defines __GLIBC__ when the C library is glibc
 #include <optional>
 #include <vector>
+
+#if defined(__GLIBC__) && (__GLIBC__ > 2 || (__GLIBC__ == 2 && __GLIBC_MINOR__ >= 33))
+#include <malloc.h>
+#define KNOWN_BUGS_HAVE_MALLINFO2 1
+#endif
 
 using namespace trailer;
 
@@ -48,12 +55,35 @@ bool isRed(const QImage &img, QPoint p) {
     return c.red() > 180 && c.green() < 80 && c.blue() < 80;
 }
 
-// What the user sees: the raster with the live marks drawn over it.
-QImage visiblePixels(const ImageDocument &doc, const QString &scratchPng) {
-    if (!doc.exportAs(scratchPng, QStringLiteral("png")))
-        return {};
-    return QImage(scratchPng);
+// Whether the view shows red at image pixel `p`. The grab of the image label
+// holds the raster and, as a child, the overlay with the live marks; at 100 %
+// one image pixel is one logical pixel of the label.
+bool shownRedAt(QWidget *label, QPoint p) {
+    QCoreApplication::processEvents();
+    const QImage grab = label->grab().toImage();
+    const qreal dpr = grab.devicePixelRatio();
+    return isRed(grab,
+                 QPoint(qRound((p.x() + 0.5) * dpr - 0.5), qRound((p.y() + 0.5) * dpr - 0.5)));
 }
+
+#ifdef KNOWN_BUGS_HAVE_MALLINFO2
+// Bytes in use on the C heap: what glibc has allocated in every arena, plus
+// its mmapped blocks, where large images usually live.
+qint64 heapBytesInUse() {
+    const struct mallinfo2 info = mallinfo2();
+    return static_cast<qint64>(info.uordblks + info.hblkhd);
+}
+
+// A digest of an image's size and pixels, so a test can recognise an earlier
+// state without holding a copy of it.
+QByteArray pixelDigest(const QImage &img) {
+    QCryptographicHash hash(QCryptographicHash::Sha1);
+    hash.addData(QByteArray::number(img.width()) + 'x' + QByteArray::number(img.height()));
+    hash.addData(
+        QByteArrayView(reinterpret_cast<const char *>(img.constBits()), img.sizeInBytes()));
+    return hash.result();
+}
+#endif
 
 QByteArray readFile(const QString &path) {
     QFile f(path);
@@ -271,26 +301,45 @@ void KnownBugsImage::undoAfterSaveRemovesMark() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
     const QString path = dir.filePath(QStringLiteral("mark.png"));
-    const QString scratch = dir.filePath(QStringLiteral("visible.png"));
     QImage base(64, 48, QImage::Format_RGB32);
     base.fill(QColor(0, 0, 255));
     QVERIFY(base.save(path));
     const QPoint onStroke(10, 20); // left edge of the rectangle
 
+    // The document in its view, at 100 %.
     ImageDocument doc(path);
+    QWidget host;
+    auto *layout = new QVBoxLayout(&host);
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto *scroll = qobject_cast<QScrollArea *>(doc.createView(&host));
+    QVERIFY(scroll);
+    layout->addWidget(scroll);
+    host.resize(200, 160);
+    host.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&host));
+    QVERIFY(doc.awaitDecodeForTest());
+    doc.zoomActual();
+    auto *label = qobject_cast<QLabel *>(scroll->widget());
+    QVERIFY(label);
+    QVERIFY(!shownRedAt(label, onStroke));
+
     doc.annotations()->add(redRectangle(QRectF(10, 10, 30, 20)));
-    QVERIFY(isRed(visiblePixels(doc, scratch), onStroke));
+    QVERIFY(shownRedAt(label, onStroke));
     QVERIFY(doc.save());
     QVERIFY(isRed(QImage(path), onStroke));
+    // Still a mark, not pixels.
+    QEXPECT_FAIL("", "T-06: Save burns the mark into the pixels and drops it from the marks",
+                 Continue);
+    QCOMPARE(doc.annotations()->count(), 1);
 
     QVERIFY(doc.undo());
     QEXPECT_FAIL("", "T-06: Save burns the mark into the pixels; undo restores only the mark list",
                  Abort);
-    QVERIFY(!isRed(visiblePixels(doc, scratch), onStroke));
+    QVERIFY(!shownRedAt(label, onStroke));
     QVERIFY(doc.isDirty());
 
     QVERIFY(doc.redo());
-    QVERIFY(isRed(visiblePixels(doc, scratch), onStroke));
+    QVERIFY(shownRedAt(label, onStroke));
 
     QVERIFY(doc.undo());
     QVERIFY(doc.save());
@@ -403,39 +452,46 @@ void KnownBugsImage::fitIsDrawnAtScreenResolution() {
 
 // T-99: Image undo memory is unbounded by size.
 void KnownBugsImage::undoMemoryStaysWithinFourImages() {
+#ifndef KNOWN_BUGS_HAVE_MALLINFO2
+    QSKIP("Counts the heap's bytes in use with glibc's mallinfo2(); known-bug tests run on Linux");
+#else
     QImage source(2000, 1500, QImage::Format_RGB32);
     source.fill(QColor(0, 128, 128));
     QPainter(&source).fillRect(0, 0, 100, 50, QColor(255, 0, 0));
     ImageDocument doc{QString()};
     doc.setImageForTest(source);
-    source = QImage(); // the document now holds the only reference
+    source = QImage(); // the document now holds the only copy
     const qint64 imageBytes = doc.image().sizeInBytes();
 
-    // The image before each operation. Implicit sharing keeps a copy
-    // attached for as long as the document still holds that buffer.
-    std::vector<QImage> before;
+    // Eight rotates and flips. The test keeps a digest of each earlier state,
+    // not the image, so what the heap gains is what the document holds.
+    std::vector<QByteArray> before;
+    before.reserve(8);
+    const qint64 heapBefore = heapBytesInUse();
     for (int i = 0; i < 8; ++i) {
-        before.push_back(doc.image());
+        before.push_back(pixelDigest(doc.image()));
         if (i % 2 == 0)
             doc.rotatePage(0, 90);
         else
             doc.flipHorizontal();
     }
+    const qint64 held = heapBytesInUse() - heapBefore;
     QVERIFY(doc.canUndo());
-    qint64 heldBytes = 0;
-    for (const QImage &img : before) {
-        if (!img.isDetached())
-            heldBytes += img.sizeInBytes();
-    }
+    // 1 MiB on top of four images covers the history's own bookkeeping; a
+    // fifth image (12 MB here) does not fit in it.
+    const qint64 allowed = 4 * imageBytes + (1 << 20);
     const QString detail =
-        QStringLiteral("history holds %1 bytes for a %2-byte image").arg(heldBytes).arg(imageBytes);
+        QStringLiteral("the heap grew by %1 bytes for a %2-byte image").arg(held).arg(imageBytes);
     QEXPECT_FAIL("", "T-99: every rotate and flip keeps a full copy; the cap is 32 steps", Abort);
-    QVERIFY2(heldBytes <= 4 * imageBytes, qPrintable(detail));
+    QVERIFY2(held <= allowed, qPrintable(detail));
 
-    // Bounded without giving up undo: all eight steps still undo.
-    for (int i = 0; i < 8; ++i)
+    // Bounded without giving up undo: each step undoes to the state before it.
+    for (int i = 7; i >= 0; --i) {
         QVERIFY(doc.undo());
-    QCOMPARE(doc.image(), before.front());
+        QCOMPARE(pixelDigest(doc.image()), before.at(static_cast<size_t>(i)));
+    }
+    QVERIFY(!doc.canUndo());
+#endif
 }
 
 QTEST_MAIN(KnownBugsImage)

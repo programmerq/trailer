@@ -151,9 +151,11 @@ Without `offscreen`, a test that closes a dirty window waits on the unsaved-chan
 - **UAT** runs the real `Application` and `MainWindow` in-process under the offscreen platform.
   Run it before pushing a change to `src/ui/` or `src/app/`. The modal census fails when a modal
   call site appears or goes; the constancy sweep fails when a control moves because unrelated
-  chrome toggled. After an intended change, regenerate the census golden in `tests/uat/census/`
-  (`modal-census.json`, or `chrome-census.json` for the advisory chrome census) with
-  `TRAILER_CENSUS_WRITE=1` and show its diff in the PR.
+  chrome toggled. The sweep is calibrated at logical DPI 96, where CI runs it: at 72, two of the
+  status-bar defects it tolerates don't reproduce, so their rows fail. After an intended change,
+  regenerate the census golden in `tests/uat/census/` (`modal-census.json`, or
+  `chrome-census.json` for the advisory chrome census) with `TRAILER_CENSUS_WRITE=1` and show
+  its diff in the PR.
 - **Advisory** tests never gate, and no CI lane runs them: the chrome census and the seeded
   random UI walk (`tests/pbt/`; replay a failure with `TRAILER_PBT_SEED`). What they find becomes
   a TODO.md entry, with a known-bug test once it reproduces deterministically.

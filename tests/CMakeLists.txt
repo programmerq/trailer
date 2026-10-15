@@ -184,6 +184,7 @@ trailer_add_known_bug_test(test_known_bugs_image)
 trailer_add_known_bug_test(test_known_bugs_window)
 trailer_add_known_bug_variant(test_known_bugs_image_dpr2 test_known_bugs_image "QT_SCALE_FACTOR=2")
 trailer_add_known_bug_variant(test_known_bugs_window_dpi72 test_known_bugs_window "QT_FONT_DPI=72")
+trailer_add_known_bug_variant(test_known_bugs_window_dpr2 test_known_bugs_window "QT_SCALE_FACTOR=2")
 
 # Structural, CI-safe performance tests. These assert ordering / counts /
 # thread facts (never wall-clock time) and read the checked-in reference

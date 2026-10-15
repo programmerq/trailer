@@ -3,8 +3,9 @@
 // from rendered pixels. Each check states the correct behaviour; checks that
 // fail today carry QEXPECT_FAIL with their tracker id.
 //
-// Two ctest entries run this binary: the default offscreen logical DPI (96,
-// as on Windows and Linux) and QT_FONT_DPI=72 (as on macOS).
+// Three ctest entries run this binary: the default offscreen logical DPI (96,
+// as on Windows and Linux), QT_FONT_DPI=72 (as on macOS), and
+// QT_SCALE_FACTOR=2 (dpr 2).
 
 #include "annotation/AnnotationStore.h"
 #include "app/Application.h"
@@ -588,17 +589,28 @@ void KnownBugsWindow::rectangleAroundWordIsSavedAroundIt() {
     const std::vector<Annotation> marks = saved.readAnnotations();
     QCOMPARE(int(marks.size()), 1);
     const QRectF box = marks.front().bounds;
+    // The box must contain the word, with 2 pt of slack per side, and reach no
+    // further out than the 6 px it was drawn outside the ink (plus 1 px for
+    // the ink box's rounding), in points at the zoom shown, plus that slack.
+    const double pxPerPt = word.width() / wordPt.width();
     const double slack = 2.0;
+    const double reach = 7.0 / pxPerPt + slack;
     const bool encloses =
         box.left() <= wordPt.left() + slack && box.top() <= wordPt.top() + slack &&
         box.right() >= wordPt.right() - slack && box.bottom() >= wordPt.bottom() - slack;
+    const bool hugs = box.left() >= wordPt.left() - reach && box.top() >= wordPt.top() - reach &&
+                      box.right() <= wordPt.right() + reach &&
+                      box.bottom() <= wordPt.bottom() + reach;
 
     QEXPECT_FAIL("fitPage", "T-102: Fit Page stores the mark at the wrong place", Abort);
     QEXPECT_FAIL("fitWidth", "T-102: Fit Width stores the mark at the wrong place", Abort);
     if (!logicalDpiIs72())
         QEXPECT_FAIL("actualSize", "T-102: at 96 DPI the mark misses the screen scale", Abort);
-    QVERIFY2(encloses, qPrintable(QStringLiteral("saved box %1 pt does not enclose the word %2 pt")
-                                      .arg(rectText(box), rectText(wordPt))));
+    QVERIFY2(encloses && hugs,
+             qPrintable(QStringLiteral("saved box %1 pt; it must contain the word %2 pt and stay "
+                                       "within %3 pt of it")
+                            .arg(rectText(box), rectText(wordPt))
+                            .arg(reach, 0, 'f', 1)));
 }
 
 // T-07: After a tab is dragged, commands act on the other document
@@ -901,6 +913,9 @@ void KnownBugsWindow::findAndEscapeLeaveLayoutUnchanged() {
     const QPoint viewBefore = documentViewPos(mw);
     const QSize viewSizeBefore = documentView(mw)->size();
     const bool sidebarBefore = mw->isSidebarVisible();
+    // The window is 1,280 px wide, so the search field shows at rest.
+    QEXPECT_FAIL("", "T-12: at rest the search field is collapsed to a button", Continue);
+    QVERIFY(searchBar->isVisible());
 
     QTest::keySequence(mw->windowHandle(), QKeySequence::Find);
     QTRY_VERIFY(searchBar->isVisible());
@@ -908,8 +923,9 @@ void KnownBugsWindow::findAndEscapeLeaveLayoutUnchanged() {
     const QList<ToolbarControl> during = mainToolbarControls(mw);
     const QRect viewDuring(documentViewPos(mw), documentView(mw)->size());
 
+    // keyClick delivers Esc before it returns. No wait for the field to hide:
+    // at rest it stays shown (checked above), and "after" must match "before".
     QTest::keyClick(mw->windowHandle(), Qt::Key_Escape);
-    QTRY_VERIFY(!searchBar->isVisible());
     settle();
     const QList<ToolbarControl> after = mainToolbarControls(mw);
 
@@ -952,8 +968,11 @@ void KnownBugsWindow::pdfWindowShowsNoStatusBar() {
     MainWindow *mw = openWindow({path});
     QVERIFY(mw);
     settle();
+    // Not statusBar(): it creates a bar when there is none, and a new bar
+    // reads as hidden until the event loop shows it.
+    auto *bar = mw->findChild<QStatusBar *>(QString(), Qt::FindDirectChildrenOnly);
     QEXPECT_FAIL("", "T-11: the status bar is always shown", Abort);
-    QVERIFY(!mw->statusBar()->isVisible());
+    QVERIFY(!bar || !bar->isVisible());
 }
 
 int main(int argc, char **argv) {

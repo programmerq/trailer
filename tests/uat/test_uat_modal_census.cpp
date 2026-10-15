@@ -7,9 +7,11 @@
 //
 //   STATIC (UAT-XCT-091): scan every source file under src/ for modal
 //   call sites — argumentless .exec()/->exec() calls (dialogs, message
-//   boxes, progress dialogs, event loops) and the static modal entry
+//   boxes, progress dialogs, event loops), the static modal entry
 //   points (QMessageBox::warning & friends, QInputDialog::get*,
-//   QFileDialog::get*, QColorDialog::getColor, QFontDialog::getFont) —
+//   QFileDialog::get*, QColorDialog::getColor, QFontDialog::getFont), and
+//   dialogs made modal without exec() (setWindowModality(Qt::WindowModal
+//   or Qt::ApplicationModal), setModal(true), QDialog::open()) —
 //   and diff the per-file, per-kind COUNTS against the committed golden
 //   tests/uat/census/modal-census.json. A modal call site added or
 //   removed anywhere under src/ fails until the golden is regenerated,
@@ -194,6 +196,20 @@ const QList<ModalMatcher> &modalMatchers() {
         // transient popup, not a modal dialog; see file header.
         {QStringLiteral("exec"),
          QRegularExpression(QStringLiteral("(\\.|->)\\s*exec\\s*\\(\\s*\\)"))},
+        // Modal without exec(): a dialog made modal and then shown (a
+        // QProgressDialog shows itself), or opened with QDialog::open(). A
+        // dialog made modal and then exec()'d counts under both kinds.
+        {QStringLiteral("setWindowModality"),
+         QRegularExpression(QStringLiteral("setWindowModality\\s*\\(\\s*Qt::(WindowModality::)?"
+                                           "(WindowModal|ApplicationModal)\\s*\\)"))},
+        {QStringLiteral("setModal"),
+         QRegularExpression(QStringLiteral("setModal\\s*\\(\\s*true\\s*\\)"))},
+        // QDialog::open() returns void, so it stands alone as a statement,
+        // while QTemporaryFile::open() returns a bool the caller tests. The
+        // receiver/member overload (QFileDialog::open(this, SLOT(...)) and
+        // the other dialogs') takes the receiver first.
+        {QStringLiteral("open"),
+         QRegularExpression(QStringLiteral("(\\.|->)\\s*open\\s*\\(\\s*(\\)\\s*;|this\\s*,)"))},
     };
     return matchers;
 }
@@ -325,13 +341,28 @@ void TestUatModalCensus::uat_xct_091_matcherNegativeControl() {
                        "        this, tr(\"split across lines\"), tr(\"still one site\"));\n"
                        "    loop->exec();\n"
                        "    menu.exec(QCursor::pos()); // popup with args: out of scope\n"
+                       "    progress.setWindowModality(Qt::WindowModal);\n"
+                       "    sheet->setWindowModality(Qt::NonModal);\n"
+                       "    // dialog.setWindowModality(Qt::ApplicationModal);\n"
+                       "    setModal(true);\n"
+                       "    setModal(false);\n"
+                       "    picker->open();\n"
+                       "    chooser.open(this, SLOT(onChosen()));\n"
+                       "    if (!scratch.open()) // a QTemporaryFile, tested: not a site\n"
+                       "        return;\n"
+                       "    log.open(QIODevice::WriteOnly);\n"
                        "}\n");
     const auto counts = countModalSites(stripComments(probe));
-    QVERIFY(counts.count(QStringLiteral("QMessageBox-static")) != 0);
-    QCOMPARE(counts.at(QStringLiteral("QMessageBox-static")), 2);
-    QVERIFY(counts.count(QStringLiteral("QInputDialog-static")) == 0);
-    QVERIFY(counts.count(QStringLiteral("exec")) != 0);
-    QCOMPARE(counts.at(QStringLiteral("exec")), 2);
+    const auto countOf = [&counts](const char *kind) {
+        const auto it = counts.find(QString::fromLatin1(kind));
+        return it == counts.end() ? 0 : it->second;
+    };
+    QCOMPARE(countOf("QMessageBox-static"), 2);
+    QCOMPARE(countOf("QInputDialog-static"), 0);
+    QCOMPARE(countOf("exec"), 2);
+    QCOMPARE(countOf("setWindowModality"), 1);
+    QCOMPARE(countOf("setModal"), 1);
+    QCOMPARE(countOf("open"), 2);
 }
 
 void TestUatModalCensus::uat_xct_091_staticModalSitesMatchGolden() {
@@ -355,10 +386,13 @@ void TestUatModalCensus::uat_xct_091_staticModalSitesMatchGolden() {
                                   "tests/uat/test_uat_modal_census.cpp (UAT-XCT-091).")
                 << QStringLiteral("Counted: argumentless .exec()/->exec() (dialogs, message "
                                   "boxes, progress dialogs, and the event loops and qApp->exec() "
-                                  "that grep can't tell apart from them) and the static "
+                                  "that grep can't tell apart from them), the static "
                                   "QMessageBox/QInputDialog/QFileDialog/QColorDialog/QFontDialog "
-                                  "helpers. QMenu::exec(pos) is a transient popup and isn't "
-                                  "counted.")
+                                  "helpers, and dialogs made modal without exec(): "
+                                  "setWindowModality(Qt::WindowModal or Qt::ApplicationModal), "
+                                  "setModal(true) and QDialog::open(). A dialog made modal and "
+                                  "then exec()'d counts under both kinds. QMenu::exec(pos) is a "
+                                  "transient popup and isn't counted.")
                 << QStringLiteral("To update, regenerate: TRAILER_CENSUS_WRITE=1 "
                                   "QT_QPA_PLATFORM=offscreen ./test_uat_modal_census, and show "
                                   "this file's diff in the PR so the reviewer sees what "
@@ -387,11 +421,14 @@ void TestUatModalCensus::uat_xct_091_staticModalSitesMatchGolden() {
              qPrintable(QStringLiteral("golden is not valid JSON: %1").arg(err.errorString())));
     const auto golden = jsonToCensus(doc.object().value(QStringLiteral("sites")).toObject());
 
-    // Matcher scope: the static census catches exec()/static-helper
-    // modals. QDialog::open() and setModal(true)+show() create real
-    // modals with neither and are NOT counted — the dynamic read-path
-    // sentinel (UAT-XCT-092) is the only guard for those. Extend the
-    // matcher before src/ grows such a site.
+    // Matcher scope: exec(), the static helpers, and modality set with
+    // setWindowModality()/setModal(true) or opened with QDialog::open().
+    // A modal made any other way (Qt::WA_ShowModal, a modality passed in
+    // a variable, open(receiver, member) with a receiver other than this,
+    // an exec() or open() called without a receiver from inside the
+    // dialog's own class) is NOT counted; the dynamic read-path sentinel
+    // (UAT-XCT-092) is the only guard for those. Extend the matcher before
+    // src/ grows such a site.
     QStringList diffs;
     for (const auto &[file, kinds] : census) {
         const auto git = golden.find(file);
