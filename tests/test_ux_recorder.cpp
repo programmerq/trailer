@@ -233,7 +233,7 @@ void TestUxRecorder::degradedStreamEventMapping() {
              QStringLiteral("input"));
     // Healthy / advisory events do NOT degrade a stream — notably the
     // input_monitoring_permission preflight (the tap often still
-    // delivers pointer events when it reports not-granted; T-84).
+    // delivers pointer events when it reports not-granted; todo/2026-10-15-ux-recorder-leftovers).
     QVERIFY(uxDegradedStreamForEventType(QStringLiteral("screen_frame")).isEmpty());
     QVERIFY(uxDegradedStreamForEventType(QStringLiteral("camera_started")).isEmpty());
     QVERIFY(uxDegradedStreamForEventType(QStringLiteral("input_monitoring_permission")).isEmpty());

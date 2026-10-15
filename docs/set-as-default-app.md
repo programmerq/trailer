@@ -27,7 +27,7 @@ plus PDF:
 
 The Linux `.desktop` (`platform/linux/trailer.desktop`) and the Windows MSI
 (`platform/windows/trailer.wxs`) both declare the full list above. Trailer doesn't
-open HEIC yet (T-32), and RAW and OpenEXR are out of scope, so there's
+open HEIC yet ([HEIC images don't open](../todo/2026-10-15-heic-doesnt-open.md)), and RAW and OpenEXR are out of scope, so there's
 nothing to associate for those.
 
 ---
@@ -200,7 +200,7 @@ sudo cmake --install build
 (`.github/workflows/nightly.yml` "Stage Linux artifact" step) contains only
 the `trailer` binary and license text — it does **not** package
 `platform/linux/trailer.desktop`. `xdg-mime default` has nothing to point
-at until you install a `.desktop` file yourself. T-67 tracks fixing
+at until you install a `.desktop` file yourself. [The nightly Linux tarball has no .desktop file](../todo/2026-10-15-nightly-tarball-desktop-file.md) tracks fixing
 this at the source; until then:
 
 1. Extract the tarball somewhere permanent, e.g. `~/apps/trailer/`.

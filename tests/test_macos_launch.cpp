@@ -16,7 +16,7 @@
 //     plugin off-Mac never raises and can't be driven into a genuinely
 //     Active zero-window state non-flakily, so it is NOT unit-tested here
 //     (see the note on the removed test below); it is covered by
-//     tests/uat/test_uat_empty_state.cpp (T-52: check it on a real Mac).
+//     tests/uat/test_uat_empty_state.cpp (todo/2026-10-15-real-desktop-checks: check it on a real Mac).
 //
 // Mirrors the custom-main + HOME-sandbox scaffolding of
 // test_uat_empty_state.cpp so Settings/RecentFiles write into a throwaway
@@ -52,7 +52,7 @@ class TestMacosLaunch : public QObject {
     // zero-window state non-flakily under CI. A synthetic bare
     // QEvent(ApplicationStateChange) does NOT make applicationState()==Active,
     // so it would assert nothing real. It is instead covered by
-    // tests/uat/test_uat_empty_state.cpp (T-52: check it on a real Mac).
+    // tests/uat/test_uat_empty_state.cpp (todo/2026-10-15-real-desktop-checks: check it on a real Mac).
 };
 
 void TestMacosLaunch::quitOnLastWindowClosedIsDisabled() {

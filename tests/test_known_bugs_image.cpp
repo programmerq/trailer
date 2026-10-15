@@ -296,7 +296,7 @@ class KnownBugsImage : public QObject {
     void undoMemoryStaysWithinFourImages();
 };
 
-// T-06: On an image, ⌘Z after Save can never remove a mark.
+// todo/2026-10-15-image-undo-after-save: On an image, ⌘Z after Save can never remove a mark.
 void KnownBugsImage::undoAfterSaveRemovesMark() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -328,12 +328,12 @@ void KnownBugsImage::undoAfterSaveRemovesMark() {
     QVERIFY(doc.save());
     QVERIFY(isRed(QImage(path), onStroke));
     // Still a mark, not pixels.
-    QEXPECT_FAIL("", "T-06: Save burns the mark into the pixels and drops it from the marks",
+    QEXPECT_FAIL("", "todo/2026-10-15-image-undo-after-save: Save burns the mark into the pixels and drops it from the marks",
                  Continue);
     QCOMPARE(doc.annotations()->count(), 1);
 
     QVERIFY(doc.undo());
-    QEXPECT_FAIL("", "T-06: Save burns the mark into the pixels; undo restores only the mark list",
+    QEXPECT_FAIL("", "todo/2026-10-15-image-undo-after-save: Save burns the mark into the pixels; undo restores only the mark list",
                  Abort);
     QVERIFY(!shownRedAt(label, onStroke));
     QVERIFY(doc.isDirty());
@@ -346,7 +346,7 @@ void KnownBugsImage::undoAfterSaveRemovesMark() {
     QVERIFY(!isRed(QImage(path), onStroke));
 }
 
-// T-96: Save rewrites unedited files; JPEG Save re-encodes and drops EXIF.
+// todo/2026-10-15-save-rewrites-unedited-files: Save rewrites unedited files; JPEG Save re-encodes and drops EXIF.
 void KnownBugsImage::editedJpegSaveKeepsExif() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -375,14 +375,14 @@ void KnownBugsImage::editedJpegSaveKeepsExif() {
     QVERIFY(isRed(reopened, kRedBlockShown));
 
     const std::optional<ExifTags> saved = readExif(readFile(path));
-    QEXPECT_FAIL("", "T-96: save() writes through QImageWriter, which writes no Exif", Abort);
+    QEXPECT_FAIL("", "todo/2026-10-15-save-rewrites-unedited-files: save() writes through QImageWriter, which writes no Exif", Abort);
     QVERIFY(saved.has_value());
     QCOMPARE(saved->make, source->make);
     QCOMPARE(saved->model, source->model);
     QCOMPARE(saved->dateTimeOriginal, source->dateTimeOriginal);
 }
 
-// T-96: Save rewrites unedited files; JPEG Save re-encodes and drops EXIF.
+// todo/2026-10-15-save-rewrites-unedited-files: Save rewrites unedited files; JPEG Save re-encodes and drops EXIF.
 void KnownBugsImage::editedJpegSaveKeepsSourceQuality() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -400,11 +400,11 @@ void KnownBugsImage::editedJpegSaveKeepsSourceQuality() {
     QVERIFY(savedSum > 0);
     const QString detail =
         QStringLiteral("luma steps sum %1, source %2").arg(savedSum).arg(sourceSum);
-    QEXPECT_FAIL("", "T-96: save() re-encodes at QImageWriter's default quality", Abort);
+    QEXPECT_FAIL("", "todo/2026-10-15-save-rewrites-unedited-files: save() re-encodes at QImageWriter's default quality", Abort);
     QVERIFY2(savedSum <= sourceSum, qPrintable(detail));
 }
 
-// T-118: Images at Fit are drawn at 1x and upscaled on HiDPI screens.
+// todo/2026-10-15-images-at-fit-blurry-hidpi: Images at Fit are drawn at 1x and upscaled on HiDPI screens.
 void KnownBugsImage::fitIsDrawnAtScreenResolution() {
     QImage source(4000, 3000, QImage::Format_RGB32);
     source.fill(Qt::white);
@@ -446,11 +446,11 @@ void KnownBugsImage::fitIsDrawnAtScreenResolution() {
                                .arg(needed)
                                .arg(dpr);
     if (dpr > 1.0)
-        QEXPECT_FAIL("", "T-118: the Fit pixmap is built at 1x and the screen upscales it", Abort);
+        QEXPECT_FAIL("", "todo/2026-10-15-images-at-fit-blurry-hidpi: the Fit pixmap is built at 1x and the screen upscales it", Abort);
     QVERIFY2(handed.width() >= needed, qPrintable(detail));
 }
 
-// T-99: Image undo memory is unbounded by size.
+// todo/2026-10-15-image-undo-memory-unbounded: Image undo memory is unbounded by size.
 void KnownBugsImage::undoMemoryStaysWithinFourImages() {
 #ifndef KNOWN_BUGS_HAVE_MALLINFO2
     QSKIP("Counts the heap's bytes in use with glibc's mallinfo2(); known-bug tests run on Linux");
@@ -482,7 +482,7 @@ void KnownBugsImage::undoMemoryStaysWithinFourImages() {
     const qint64 allowed = 4 * imageBytes + (1 << 20);
     const QString detail =
         QStringLiteral("the heap grew by %1 bytes for a %2-byte image").arg(held).arg(imageBytes);
-    QEXPECT_FAIL("", "T-99: every rotate and flip keeps a full copy; the cap is 32 steps", Abort);
+    QEXPECT_FAIL("", "todo/2026-10-15-image-undo-memory-unbounded: every rotate and flip keeps a full copy; the cap is 32 steps", Abort);
     QVERIFY2(held <= allowed, qPrintable(detail));
 
     // Bounded without giving up undo: each step undoes to the state before it.

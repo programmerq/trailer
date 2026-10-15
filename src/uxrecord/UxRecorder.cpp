@@ -415,7 +415,7 @@ QString uxDegradedStreamForEventType(const QString &type) {
     // Only hard failures map to a degraded stream. Notably absent:
     // input_monitoring_permission (granted:false) — that preflight is
     // advisory and the tap often still delivers pointer events even
-    // when it reports not-granted (T-84); only input_tap_unavailable
+    // when it reports not-granted (todo/2026-10-15-ux-recorder-leftovers); only input_tap_unavailable
     // means input capture truly didn't start.
     static const QHash<QString, QString> kMap = {
         {QStringLiteral("screen_capture_failed"), QStringLiteral("screen")},

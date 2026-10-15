@@ -12,8 +12,8 @@
 #     half — native Dock/Finder chrome, unobservable from any script, real
 #     or CI — and is exactly the gap that let the luminosity-variant asset
 #     catalog ship looking correct while failing on a real Tahoe Mac
-#     (T-63). A green result from this script is evidence toward, never a
-#     substitute for, the real-Mac visual check T-63 requires.
+#     (todo/2026-10-15-dock-icon-dark-mode). A green result from this script is evidence toward, never a
+#     substitute for, the real-Mac visual check todo/2026-10-15-dock-icon-dark-mode requires.
 #
 # scripts/build-macos.sh's own post-build verification keeps a SEPARATE,
 # non-fatal, informational version of this same grep (never fails a real
@@ -65,6 +65,6 @@ else
     echo "       This means the ARTIFACT itself does not visibly carry the dark" >&2
     echo "       variant after actool compilation — even before asking whether" >&2
     echo "       macOS renders it. See the full output above for what actool" >&2
-    echo "       actually emitted, and TODO.md T-63 for the research context." >&2
+    echo "       actually emitted, and todo/2026-10-15-dock-icon-dark-mode for the research context." >&2
     exit 1
 fi

@@ -17,7 +17,7 @@ namespace trailer {
 // mode: QPdfView has no two-up page mode, but keeps driving Single and
 // Continuous, which already work. Markup / selection / search are
 // disabled-with-tooltip (in MainWindow) in this mode.
-// T-21: markup, text selection and Find in Two Pages.
+// todo/2026-10-15-two-pages-read-only: markup, text selection and Find in Two Pages.
 //
 // Pairing comes from the pure trailer::spreadsFor() helper. Each page is
 // rendered at pts x zoom x devicePixelRatio device pixels and laid out at
@@ -38,7 +38,7 @@ class TwoPageView : public QAbstractScrollArea {
     // Cover-alone pairing: page 1 alone, then (2,3),(4,5)… Default ON: a
     // book opens with its cover alone, as in Preview; pairing (1,2) would
     // put every spread off by one.
-    // T-38: no caller sets this yet; the View-menu cover toggle will.
+    // todo/2026-10-15-two-pages-cover-toggle: no caller sets this yet; the View-menu cover toggle will.
     void setCoverAlone(bool coverAlone);
     bool coverAlone() const { return m_coverAlone; }
 

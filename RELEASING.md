@@ -240,8 +240,8 @@ tagged release:
 - **Partial success**: a lane's artifact is published only if its
   build and its gating tests pass, and a failing lane never holds
   back the others. Two UAT steps don't gate: Windows' Wine UAT
-  (Wine stands in for a real Windows runner, T-58) and macOS UAT
-  (it crashes in recognize-text on hosted runners, T-51). Their pass
+  (Wine stands in for a real Windows runner, [CI tests Windows only under Wine, and most of CI guards process, not the product](todo/2026-10-15-ci-windows-only-under-wine.md)) and macOS UAT
+  ([The macOS UAT crashes in recognize-text on hosted runners](todo/2026-10-15-macos-uat-ocr-crash.md)). Their pass
   counts still appear in the release body, and a final step turns
   the run red when either is worse than the previous nightly's.
 - Each successful night is tagged `nightly-YYYYMMDD` (immutable, one per
@@ -288,7 +288,7 @@ key.
   `scripts/derive-update-pubkey.sh --base64 -` and passes it to every
   nightly lane as `-DTRAILER_UPDATE_PUBKEY`, so the trusted key and the
   signing key can't disagree. Nothing is committed. A build without it
-  (local, PR, fork, and tagged releases until T-69) has no update
+  (local, PR, fork, and tagged releases until [The stable update channel isn't signed](todo/2026-10-15-stable-channel-unsigned.md)) has no update
   channel, and Check for Updates is disabled with a tooltip. To make an update-capable local build:
   `-DTRAILER_UPDATE_PUBKEY="$(scripts/derive-update-pubkey.sh key.pem)"`.
 - `nightly.yml` signs `appcast-nightly.json` with
@@ -363,14 +363,14 @@ Each push to a labelled PR reruns the whole matrix. While you iterate:
 
 ## Things to keep an eye on
 
-- **Stable update channel (T-69).** Only `nightly.yml` signs a
+- **Stable update channel ([The stable update channel isn't signed](todo/2026-10-15-stable-channel-unsigned.md)).** Only `nightly.yml` signs a
   feed (`appcast-nightly.json`, with `scripts/sign-update-feed.sh`).
   The tagged-release path needs the same step, with
   `scripts/build-nightly-appcast-payload.py` generalized, the
   `TRAILER_UPDATE_SIGNING_KEY` secret available to
   `release-publish.yml`, and the public key passed to every release
   lane as above. Until then a release build has Check for Updates
-  disabled, and Preferences shows a disabled Stable choice (T-14).
+  disabled, and Preferences shows a disabled Stable choice ([The UI shows disabled placeholders](todo/2026-10-15-disabled-placeholders.md)).
 - **Notarized macOS builds.** Off the table indefinitely — Trailer
   is not in the Apple Developer Program. If that ever changes, a
   signing + notarization step plugs in between `make release` and

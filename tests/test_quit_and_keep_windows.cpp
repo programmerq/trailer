@@ -19,7 +19,7 @@
 //     complement (prompt-and-close-clean).
 //
 // The native in-place Option menu swap and a real relaunch are NOT
-// exercisable offscreen; T-52: check them on a real Mac.
+// exercisable offscreen; todo/2026-10-15-real-desktop-checks: check them on a real Mac.
 
 #include "annotation/Annotation.h"
 #include "annotation/AnnotationJson.h"
@@ -92,13 +92,13 @@ bool runningUnderWine() {
 // thread-handle limitation). The real keep flow releases the document when the
 // process exits at ⌥⌘Q, before the user moves the file. Skipped under Wine (our
 // only automated Windows signal; the native-Windows job is disabled); asserted
-// in full on Linux. T-58: release the document before the remove, then drop
+// in full on Linux. todo/2026-10-15-ci-windows-only-under-wine: release the document before the remove, then drop
 // the skip.
 constexpr const char *kWineOpenFileDeleteSkip =
     "Wine/Windows: QFile::remove() of the kept file fails while the original "
     "document still holds it open (the harness keeps the pre-quit document alive "
     "via a no-op performQuit); POSIX unlink-of-open succeeds, so Linux asserts "
-    "this in full. See TODO.md T-58.";
+    "this in full. See todo/2026-10-15-ci-windows-only-under-wine.";
 
 // A deterministic, non-flat image so a lossy or truncated round-trip is
 // caught. ARGB32 with a per-pixel gradient across all channels.

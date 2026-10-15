@@ -527,7 +527,7 @@ void KnownBugsWindow::dragAcrossWordCopiesThatWord_data() {
     wordZoomRows();
 }
 
-// T-102: Marks and text selection land on different content than the user pointed at
+// todo/2026-10-15-marks-land-off-target: Marks and text selection land on different content than the user pointed at
 void KnownBugsWindow::dragAcrossWordCopiesThatWord() {
     QFETCH(QString, zoom);
     const QString path = writeInvoicePdf(fixture(QStringLiteral(".pdf")));
@@ -544,10 +544,10 @@ void KnownBugsWindow::dragAcrossWordCopiesThatWord() {
     dragOn(view->viewport(), QPoint(word.left() + 2, y), QPoint(word.right() - 2, y));
     QTest::keySequence(mw->windowHandle(), QKeySequence::Copy);
 
-    QEXPECT_FAIL("fitPage", "T-102: Fit Page maps the drag to the wrong text", Abort);
-    QEXPECT_FAIL("fitWidth", "T-102: Fit Width maps the drag to the wrong text", Abort);
+    QEXPECT_FAIL("fitPage", "todo/2026-10-15-marks-land-off-target: Fit Page maps the drag to the wrong text", Abort);
+    QEXPECT_FAIL("fitWidth", "todo/2026-10-15-marks-land-off-target: Fit Width maps the drag to the wrong text", Abort);
     if (!logicalDpiIs72())
-        QEXPECT_FAIL("actualSize", "T-102: at 96 DPI the drag misses the screen scale", Abort);
+        QEXPECT_FAIL("actualSize", "todo/2026-10-15-marks-land-off-target: at 96 DPI the drag misses the screen scale", Abort);
     QCOMPARE(QApplication::clipboard()->text(), QStringLiteral("INVOICE"));
 }
 
@@ -555,7 +555,7 @@ void KnownBugsWindow::rectangleAroundWordIsSavedAroundIt_data() {
     wordZoomRows();
 }
 
-// T-102: Marks and text selection land on different content than the user pointed at
+// todo/2026-10-15-marks-land-off-target: Marks and text selection land on different content than the user pointed at
 void KnownBugsWindow::rectangleAroundWordIsSavedAroundIt() {
     QFETCH(QString, zoom);
     const QString path = writeInvoicePdf(fixture(QStringLiteral(".pdf")));
@@ -602,10 +602,10 @@ void KnownBugsWindow::rectangleAroundWordIsSavedAroundIt() {
                       box.right() <= wordPt.right() + reach &&
                       box.bottom() <= wordPt.bottom() + reach;
 
-    QEXPECT_FAIL("fitPage", "T-102: Fit Page stores the mark at the wrong place", Abort);
-    QEXPECT_FAIL("fitWidth", "T-102: Fit Width stores the mark at the wrong place", Abort);
+    QEXPECT_FAIL("fitPage", "todo/2026-10-15-marks-land-off-target: Fit Page stores the mark at the wrong place", Abort);
+    QEXPECT_FAIL("fitWidth", "todo/2026-10-15-marks-land-off-target: Fit Width stores the mark at the wrong place", Abort);
     if (!logicalDpiIs72())
-        QEXPECT_FAIL("actualSize", "T-102: at 96 DPI the mark misses the screen scale", Abort);
+        QEXPECT_FAIL("actualSize", "todo/2026-10-15-marks-land-off-target: at 96 DPI the mark misses the screen scale", Abort);
     QVERIFY2(encloses && hugs,
              qPrintable(QStringLiteral("saved box %1 pt; it must contain the word %2 pt and stay "
                                        "within %3 pt of it")
@@ -613,7 +613,7 @@ void KnownBugsWindow::rectangleAroundWordIsSavedAroundIt() {
                             .arg(reach, 0, 'f', 1)));
 }
 
-// T-07: After a tab is dragged, commands act on the other document
+// todo/2026-10-15-dragged-tab-wrong-document: After a tab is dragged, commands act on the other document
 void KnownBugsWindow::currentDocumentFollowsDraggedTab() {
     // Two images opened together share one tabbed window.
     const QString alpha = m_dir.filePath(QStringLiteral("alpha.png"));
@@ -644,7 +644,7 @@ void KnownBugsWindow::currentDocumentFollowsDraggedTab() {
         QCOMPARE(dv->currentIndex(), i);
         QString shown;
         QTRY_VERIFY(!(shown = imageShown(dv->currentWidget())).isEmpty());
-        QEXPECT_FAIL("", "T-07: the document list is not reordered with the tabs", Abort);
+        QEXPECT_FAIL("", "todo/2026-10-15-dragged-tab-wrong-document: the document list is not reordered with the tabs", Abort);
         QCOMPARE(QFileInfo(dv->currentDocument()->filePath()).fileName(), shown);
     }
 }
@@ -655,7 +655,7 @@ void KnownBugsWindow::inspectorShowsMarkSelectedOnEitherTab_data() {
     QTest::newRow("openedSecond") << 1;
 }
 
-// T-133: In a two-tab window, the Inspector, crop, Instant Alpha and Smart Lasso can ignore the
+// todo/2026-10-15-inspector-wired-to-hidden-tab: In a two-tab window, the Inspector, crop, Instant Alpha and Smart Lasso can ignore the
 // shown tab
 void KnownBugsWindow::inspectorShowsMarkSelectedOnEitherTab() {
     QFETCH(int, tab);
@@ -717,7 +717,7 @@ void KnownBugsWindow::inspectorShowsMarkSelectedOnEitherTab() {
     bool shown = false;
     for (QLabel *label : pane->findChildren<QLabel *>())
         shown = shown || (label->isVisible() && label->text() == QStringLiteral("Rectangle"));
-    QEXPECT_FAIL("openedSecond", "T-133: this tab's marks aren't connected to the Inspector",
+    QEXPECT_FAIL("openedSecond", "todo/2026-10-15-inspector-wired-to-hidden-tab: this tab's marks aren't connected to the Inspector",
                  Abort);
     QVERIFY2(shown, "the Inspector's Properties tab doesn't show the selected rectangle");
 }
@@ -728,7 +728,7 @@ void KnownBugsWindow::saveLeavesUneditedFileUntouched_data() {
     QTest::newRow("jpeg") << QStringLiteral(".jpg");
 }
 
-// T-96: Save rewrites unedited files
+// todo/2026-10-15-save-rewrites-unedited-files: Save rewrites unedited files
 void KnownBugsWindow::saveLeavesUneditedFileUntouched() {
     QFETCH(QString, suffix);
     const QString path = fixture(suffix);
@@ -754,8 +754,8 @@ void KnownBugsWindow::saveLeavesUneditedFileUntouched() {
     actionNamed(mw, QStringLiteral("action.file.save"))->trigger();
     QTRY_VERIFY(!saveInFlight(mw));
 
-    QEXPECT_FAIL("pdf", "T-96: Save rewrites an unedited PDF", Abort);
-    QEXPECT_FAIL("jpeg", "T-96: Save re-encodes an unedited JPEG", Abort);
+    QEXPECT_FAIL("pdf", "todo/2026-10-15-save-rewrites-unedited-files: Save rewrites an unedited PDF", Abort);
+    QEXPECT_FAIL("jpeg", "todo/2026-10-15-save-rewrites-unedited-files: Save re-encodes an unedited JPEG", Abort);
     QCOMPARE(fileHash(path), hashBefore);
     QCOMPARE(QFileInfo(path).lastModified(QTimeZone::UTC), stamp);
 }
@@ -770,7 +770,7 @@ void KnownBugsWindow::undoToSavedStateClearsDirtyMarker_data() {
     QTest::newRow("imageMark") << QStringLiteral(".png") << true;
 }
 
-// T-104: Undo back to the saved state leaves the document dirty, and the window is never marked
+// todo/2026-10-15-undo-to-saved-stays-dirty: Undo back to the saved state leaves the document dirty, and the window is never marked
 // modified
 void KnownBugsWindow::undoToSavedStateClearsDirtyMarker() {
     QFETCH(QString, suffix);
@@ -809,15 +809,15 @@ void KnownBugsWindow::undoToSavedStateClearsDirtyMarker() {
 
     actionWithShortcut(mw, QKeySequence::Undo)->trigger();
     QVERIFY(!doc->canUndo());
-    QEXPECT_FAIL("pdfRotate", "T-104: undoing a page rotation leaves the PDF dirty", Abort);
-    QEXPECT_FAIL("pdfMark", "T-104: undoing a mark leaves the PDF dirty", Abort);
-    QEXPECT_FAIL("imageRotate", "T-104: undoing a rotation leaves the image dirty", Abort);
+    QEXPECT_FAIL("pdfRotate", "todo/2026-10-15-undo-to-saved-stays-dirty: undoing a page rotation leaves the PDF dirty", Abort);
+    QEXPECT_FAIL("pdfMark", "todo/2026-10-15-undo-to-saved-stays-dirty: undoing a mark leaves the PDF dirty", Abort);
+    QEXPECT_FAIL("imageRotate", "todo/2026-10-15-undo-to-saved-stays-dirty: undoing a rotation leaves the image dirty", Abort);
     QVERIFY2(!mw->windowTitle().startsWith(kDirtyMarker), qPrintable(mw->windowTitle()));
     QVERIFY(!doc->isDirty());
     QVERIFY(!mw->isWindowModified());
 }
 
-// T-104: Undo back to the saved state leaves the document dirty, and the window is never marked
+// todo/2026-10-15-undo-to-saved-stays-dirty: Undo back to the saved state leaves the document dirty, and the window is never marked
 // modified
 void KnownBugsWindow::editMarksWindowModified() {
     const QString path = writeMarkedPdf(fixture(QStringLiteral(".pdf")), 2);
@@ -829,7 +829,7 @@ void KnownBugsWindow::editMarksWindowModified() {
 
     actionNamed(mw, QStringLiteral("action.tools.rotateRight"))->trigger();
     QVERIFY(doc->isDirty());
-    QEXPECT_FAIL("", "T-104: an edit never sets the window's modified state", Abort);
+    QEXPECT_FAIL("", "todo/2026-10-15-undo-to-saved-stays-dirty: an edit never sets the window's modified state", Abort);
     QVERIFY(mw->isWindowModified());
 
     actionNamed(mw, QStringLiteral("action.file.save"))->trigger();
@@ -846,7 +846,7 @@ void KnownBugsWindow::readingPositionSurvivesSaveAndUndo_data() {
     QTest::newRow("redo") << QStringLiteral("redo");
 }
 
-// T-103: Save, page operations and Undo move the reading position
+// todo/2026-10-15-save-moves-reading-position: Save, page operations and Undo move the reading position
 void KnownBugsWindow::readingPositionSurvivesSaveAndUndo() {
     QFETCH(QString, op);
     const QString path = writeMarkedPdf(fixture(QStringLiteral(".pdf")), 4);
@@ -893,15 +893,15 @@ void KnownBugsWindow::readingPositionSurvivesSaveAndUndo() {
     QVERIFY(settledCentreMarker(view->viewport(), &after));
 
     const QPoint moved = after.topLeft() - before.topLeft();
-    QEXPECT_FAIL("save", "T-103: Save returns the view to the first page", Abort);
-    QEXPECT_FAIL("undo", "T-103: Undo jumps to the top of the page", Abort);
-    QEXPECT_FAIL("redo", "T-103: Redo jumps to the top of the page", Abort);
+    QEXPECT_FAIL("save", "todo/2026-10-15-save-moves-reading-position: Save returns the view to the first page", Abort);
+    QEXPECT_FAIL("undo", "todo/2026-10-15-save-moves-reading-position: Undo jumps to the top of the page", Abort);
+    QEXPECT_FAIL("redo", "todo/2026-10-15-save-moves-reading-position: Redo jumps to the top of the page", Abort);
     QVERIFY2(std::abs(moved.x()) <= 2 && std::abs(moved.y()) <= 2 && after.size() == before.size(),
              qPrintable(QStringLiteral("marker under the viewport centre was at %1, now %2")
                             .arg(rectText(before), rectText(after))));
 }
 
-// T-12: Opening Find moves the toolbar controls and opens the sidebar
+// todo/2026-10-15-find-moves-toolbar: Opening Find moves the toolbar controls and opens the sidebar
 void KnownBugsWindow::findAndEscapeLeaveLayoutUnchanged() {
     const QString path = writeMarkedPdf(fixture(QStringLiteral(".pdf")), 2);
     MainWindow *mw = openWindow({path});
@@ -914,7 +914,7 @@ void KnownBugsWindow::findAndEscapeLeaveLayoutUnchanged() {
     const QSize viewSizeBefore = documentView(mw)->size();
     const bool sidebarBefore = mw->isSidebarVisible();
     // The window is 1,280 px wide, so the search field shows at rest.
-    QEXPECT_FAIL("", "T-12: at rest the search field is collapsed to a button", Continue);
+    QEXPECT_FAIL("", "todo/2026-10-15-find-moves-toolbar: at rest the search field is collapsed to a button", Continue);
     QVERIFY(searchBar->isVisible());
 
     QTest::keySequence(mw->windowHandle(), QKeySequence::Find);
@@ -929,18 +929,18 @@ void KnownBugsWindow::findAndEscapeLeaveLayoutUnchanged() {
     settle();
     const QList<ToolbarControl> after = mainToolbarControls(mw);
 
-    QEXPECT_FAIL("", "T-12: Find grows the toolbar and moves its controls", Continue);
+    QEXPECT_FAIL("", "todo/2026-10-15-find-moves-toolbar: Find grows the toolbar and moves its controls", Continue);
     QCOMPARE(placements(during, before), placements(before, during));
     QCOMPARE(placements(after, after), placements(before, before));
-    QEXPECT_FAIL("", "T-12: Find opens the sidebar and moves the document", Continue);
+    QEXPECT_FAIL("", "todo/2026-10-15-find-moves-toolbar: Find opens the sidebar and moves the document", Continue);
     QCOMPARE(viewDuring, QRect(viewBefore, viewSizeBefore));
-    QEXPECT_FAIL("", "T-12: the sidebar Find opened stays open after Esc", Abort);
+    QEXPECT_FAIL("", "todo/2026-10-15-find-moves-toolbar: the sidebar Find opened stays open after Esc", Abort);
     QCOMPARE(mw->isSidebarVisible(), sidebarBefore);
     QCOMPARE(QRect(documentViewPos(mw), documentView(mw)->size()),
              QRect(viewBefore, viewSizeBefore));
 }
 
-// T-21: Two Pages is read-only and hides the markup toolbar
+// todo/2026-10-15-two-pages-read-only: Two Pages is read-only and hides the markup toolbar
 void KnownBugsWindow::viewModeSwitchKeepsToolbarsAndDocumentInPlace() {
     const QString path = writeMarkedPdf(fixture(QStringLiteral(".pdf")), 3);
     MainWindow *mw = openWindow({path});
@@ -957,12 +957,12 @@ void KnownBugsWindow::viewModeSwitchKeepsToolbarsAndDocumentInPlace() {
         a->trigger();
         settle();
         if (qstrcmp(mode, "action.view.twoPages") == 0)
-            QEXPECT_FAIL("", "T-21: Two Pages hides the markup toolbar", Abort);
+            QEXPECT_FAIL("", "todo/2026-10-15-two-pages-read-only: Two Pages hides the markup toolbar", Abort);
         QCOMPARE(toolbarsAndDocumentY(mw), start);
     }
 }
 
-// T-11: The status bar is always shown
+// todo/2026-10-15-status-bar-always-shown: The status bar is always shown
 void KnownBugsWindow::pdfWindowShowsNoStatusBar() {
     const QString path = writeMarkedPdf(fixture(QStringLiteral(".pdf")), 1);
     MainWindow *mw = openWindow({path});
@@ -971,7 +971,7 @@ void KnownBugsWindow::pdfWindowShowsNoStatusBar() {
     // Not statusBar(): it creates a bar when there is none, and a new bar
     // reads as hidden until the event loop shows it.
     auto *bar = mw->findChild<QStatusBar *>(QString(), Qt::FindDirectChildrenOnly);
-    QEXPECT_FAIL("", "T-11: the status bar is always shown", Abort);
+    QEXPECT_FAIL("", "todo/2026-10-15-status-bar-always-shown: the status bar is always shown", Abort);
     QVERIFY(!bar || !bar->isVisible());
 }
 

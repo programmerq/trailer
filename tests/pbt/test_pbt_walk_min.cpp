@@ -14,11 +14,11 @@
 // NEVER gate a merge or a release, because a random seed can find a new
 // bug in code the PR never touched. Run it with `ctest -L advisory`. A
 // failure here is a {seed, pageSpecs, actions} JSON to triage; a
-// confirmed defect gets a TODO.md entry and a deterministic test (a
+// confirmed defect gets a todo/ entry and a deterministic test (a
 // known-bug test while it is open), and the explorer stays out of the
 // gates.
 //
-// T-09: Fit Width plus navigation, a view-mode toggle or a resize can
+// todo/2026-10-15-fit-width-freeze: Fit Width plus navigation, a view-mode toggle or a resize can
 // freeze the GUI thread. These seeds fail the per-step quiescence check
 // today: 720458898, 84349732, 269782153, 3116271505, 516731256,
 // 1970968076, 1628323449, 2603950034.
@@ -452,7 +452,7 @@ void TestPbtWalkMin::walk_min() {
 
     // Hang forensics: qInfo/qWarning are BUFFERED by QtTest until the slot
     // finishes, so a walk that livelocks the GUI thread (observed: a
-    // posted-event storm under a seeded resize/fit combination, T-09)
+    // posted-event storm under a seeded resize/fit combination, todo/2026-10-15-fit-width-freeze)
     // would die under ctest's TIMEOUT leaving no trace at all. Write the
     // full generated input, and each step as it STARTS, straight to stderr
     // with an explicit flush: a killed run then still carries its input

@@ -17,7 +17,7 @@ namespace trailer {
 //                      pick authorises the capture without a separate TCC
 //                      grant. Apple-only; gated behind the capture_backend
 //                      setting and only selected once validated on-device.
-//                      T-52: check the picker flow on a real Mac.
+//                      todo/2026-10-15-real-desktop-checks: check the picker flow on a real Mac.
 //
 // API: this enum is serialised by its *string* mapping in settings.toml
 // (captureBackendToString / captureBackendFromString), never by ordinal —

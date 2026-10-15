@@ -418,7 +418,7 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
 
     // When the user opens a batch of images, route them all into one fresh
     // window so they share a tab strip rather than spawning N separate frames.
-    // T-43: images opened together don't share one sidebar.
+    // todo/2026-10-15-images-share-sidebar: images opened together don't share one sidebar.
     //
     // Reads `freshPaths`, not `paths`: an already-open image is surfaced
     // in its existing window and contributes nothing to a batch, so
@@ -1350,7 +1350,7 @@ void Application::addAcquireItems(QMenu *fileMenu, QWidget *captureContext) {
 #ifndef Q_OS_MACOS
     // Only whole-screen capture works via the QScreen fallback; Window and
     // Selected Area stay in place, disabled with a tooltip saying why.
-    // T-15: window and selection screenshots on Windows and Linux.
+    // todo/2026-10-15-window-screenshots-windows-linux: window and selection screenshots on Windows and Linux.
     window->setEnabled(false);
     window->setToolTip(tr("Window capture isn't available on this platform yet."));
     selectedArea->setEnabled(false);
@@ -1374,7 +1374,7 @@ void Application::addAcquireItems(QMenu *fileMenu, QWidget *captureContext) {
 #endif
 
     // Acquire sources with no backend yet, shown disabled with a tooltip.
-    // T-14: remove these disabled placeholders.
+    // todo/2026-10-15-disabled-placeholders: remove these disabled placeholders.
     auto *scanner = fileMenu->addAction(tr("Scanner"));
     scanner->setEnabled(false);
     scanner->setToolTip(tr("Scanner import isn't available yet."));
@@ -1545,7 +1545,7 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
     // capture context's screen when we have one, else the primary screen.
     // Known limitation: an interactive `screencapture -i` on a mixed-DPI
     // multi-monitor setup can land on a non-primary screen, so the recovered
-    // dpr may be wrong. T-52: check it on a real Mac with mixed DPI.
+    // dpr may be wrong. todo/2026-10-15-real-desktop-checks: check it on a real Mac with mixed DPI.
     QScreen *dprScreen = nullptr;
     if (context && context->window() && context->window()->windowHandle())
         dprScreen = context->window()->windowHandle()->screen();

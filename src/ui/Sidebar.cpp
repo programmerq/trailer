@@ -58,7 +58,7 @@ namespace {
 // number is a corner badge drawn on top of the thumbnail, not a text row
 // below it, so the only padding the item needs is breathing room above
 // and below the thumbnail.
-// T-44: page number moves to a row below the thumbnail.
+// todo/2026-10-15-thumbnail-numbers-over-page: page number moves to a row below the thumbnail.
 constexpr int kThumbVerticalPadding = 4;
 
 // Horizontal gutter between the thumbnail and each edge of the sidebar

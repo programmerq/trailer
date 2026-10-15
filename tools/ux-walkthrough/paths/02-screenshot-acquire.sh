@@ -34,10 +34,10 @@
 # under Tools. We drive Tools deliberately — trust the code.
 #
 # HONEST PLATFORM BOUNDARIES:
-#   * Window/region capture are disabled on Linux (T-15; the dialog
+#   * Window/region capture are disabled on Linux (todo/2026-10-15-window-screenshots-windows-linux; the dialog
 #     says why); only whole-screen runs.
 #   * The macOS native TCC "Screen Recording" permission prompt is real-Mac
-#     only and is left to a real-Mac check (T-52). Under Xvfb there
+#     only and is left to a real-Mac check (todo/2026-10-15-real-desktop-checks). Under Xvfb there
 #     is no OS permission gate, so we drive the whole app-side flow to
 #     completion.
 set -uo pipefail
@@ -64,7 +64,7 @@ step "take-screenshot-dialog" \
     "Tools -> Take Screenshot opens the capture-mode dialog (whole-screen; window/region disabled on Linux)."
 menupick t t           # Tools -> Take Screenshot (objectName action.tools.takeScreenshot; no shortcut post-#86)
 assert_window "Take Screenshot"
-boundary "Window/region modes disabled on Linux (non-lying control + note); the macOS TCC prompt needs a real Mac (TODO.md T-52)."
+boundary "Window/region modes disabled on Linux (non-lying control + note); the macOS TCC prompt needs a real Mac (todo/2026-10-15-real-desktop-checks)."
 shot
 
 # --- Step 3: confirm capture; captured screen opens as a document ----------

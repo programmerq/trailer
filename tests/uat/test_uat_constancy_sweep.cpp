@@ -53,27 +53,27 @@
 // legitimately moves under this toggle, forever"; a KnownDefect entry
 // says "this movement is an open bug, tolerated so the sweep holds the
 // line everywhere else until the fix lands". Each entry names its
-// TODO.md entry as "T-NN: <reason>" (scripts/check-one-tracker.sh fails
-// if that id isn't open). Two are open today; apart from T-12's
+// todo/ entry as "todo/YYYY-MM-DD-slug: <reason>" (scripts/check-one-tracker.sh
+// fails if that entry doesn't exist). Two are open today; apart from todo/2026-10-15-find-moves-toolbar's
 // re-shown search button, both move controls only vertically (the
 // reserved slots hold horizontally everywhere):
-//   T-11  status-bar slots reserve width but not HEIGHT; revealing taller
+//   todo/2026-10-15-status-bar-always-shown  status-bar slots reserve width but not HEIGHT; revealing taller
 //         content re-centres every permanent widget vertically
-//   T-12  opening Find grows the main-toolbar row (+3px on every row-1
+//   todo/2026-10-15-find-moves-toolbar  opening Find grows the main-toolbar row (+3px on every row-1
 //         control) and QToolBarLayout re-shows the "hidden" search icon
 //         beside the open field
 // The ratchet only tightens, like QEXPECT_FAIL's unexpected pass: on
 // Linux (where CI runs UAT), an entry that tolerated no movement under
 // its toggle fails that row, because its bug no longer reproduces there.
-// Delete the entry then, and the TODO.md entry if the bug is fixed.
+// Delete the entry then, and the todo/ entry if the bug is fixed.
 // Tolerances stay sharp: dx must be 0 unless the entry says otherwise,
 // so any NEW horizontal displacement under these toggles still fails.
 //
 // DPI SCOPE: the sweep is calibrated at the offscreen default logical DPI,
 // 96, which is where CI runs it. At QT_FONT_DPI=72 the ml-indicator and
-// read-only-badge content fits the bar's height, so their T-11 entries
+// read-only-badge content fits the bar's height, so their todo/2026-10-15-status-bar-always-shown entries
 // tolerate nothing and the ratchet fails those rows. Run it at 72 only
-// after T-11 is fixed or those entries are made per-DPI. dpr 2 (at 96)
+// after todo/2026-10-15-status-bar-always-shown is fixed or those entries are made per-DPI. dpr 2 (at 96)
 // passes as at dpr 1.
 
 #include "app/Application.h"
@@ -182,11 +182,11 @@ bool idWhitelisted(const QString &id, const QStringList &whitelist) {
 
 // An open bug (see file header): movement of `prefix` (or its subtree) is
 // tolerated — vertically only, unless allowDx — and reported via qInfo
-// with its TODO.md id instead of failing. The fix deletes the entry.
+// with its todo/ entry instead of failing. The fix deletes the entry.
 struct KnownDefect {
     QString prefix;
     bool allowDx;
-    // "T-NN: <short reason>", naming the open TODO.md entry.
+    // "todo/YYYY-MM-DD-slug: <short reason>", naming the open todo/ entry.
     QString todo;
     // Magnitude cap (px, per axis) on the tolerated movement. The known
     // defects measure 1-4 px; 8 gives headroom for font/DPI variance
@@ -404,7 +404,7 @@ void TestUatConstancySweep::uat_xct_093_togglesDoNotMoveFurniture() {
     // its known-defect tolerances. Whitelists are empty today (see file
     // header); a future entry MUST carry a comment saying why that
     // control legitimately moves. KnownDefect entries tolerate open bugs
-    // (see the file header); add one only together with the TODO.md
+    // (see the file header); add one only together with the todo/
     // entry it names, whose fix deletes it. mayHide lists the controls a
     // toggle legitimately hides or rebuilds; it is empty today too, and an
     // entry needs the same why-comment.
@@ -418,7 +418,7 @@ void TestUatConstancySweep::uat_xct_093_togglesDoNotMoveFurniture() {
     // permanent row vertically (dy only — dx stays hard-asserted).
     const KnownDefect statusBarHeightDefect{
         QStringLiteral("QStatusBar"), /*allowDx=*/false,
-        QStringLiteral("T-11: status-bar slots reserve width but not height")};
+        QStringLiteral("todo/2026-10-15-status-bar-always-shown: status-bar slots reserve width but not height")};
 
     // Status-bar content widgets are forced visible directly for the
     // geometry probe, uat_zoom_ind_070 style (their production trigger —
@@ -520,17 +520,17 @@ void TestUatConstancySweep::uat_xct_093_togglesDoNotMoveFurniture() {
             QVERIFY2(pumpUntil([searchBar] { return !searchBar->isVisible(); }, 2000),
                      "sanity: dismissing search collapses the bar");
         };
-        // Both entries are T-12; entries are checked first-match, so the
+        // Both entries are todo/2026-10-15-find-moves-toolbar; entries are checked first-match, so the
         // button's dx allowance precedes the toolbar-wide dy-only rule.
         const QString searchTodo =
-            QStringLiteral("T-12: Find grows the toolbar row and re-shows the search button");
+            QStringLiteral("todo/2026-10-15-find-moves-toolbar: Find grows the toolbar row and re-shows the search button");
         // The "hidden" icon is re-shown by QToolBarLayout (wrapper
         // QWidgetAction never hidden) and pushed left by the bar's width.
         // The re-shown button lands beside the open field — displaced by
         // the search bar's full width (~360 px measured offscreen), not
         // a few pixels, so it carries its own cap: bar width + headroom.
         // The cap still rings if the button ever lands somewhere new
-        // (e.g. a second row), and goes with the entry when T-12 is
+        // (e.g. a second row), and goes with the entry when todo/2026-10-15-find-moves-toolbar is
         // fixed.
         knownDefects << KnownDefect{QStringLiteral("MainToolbar/searchButton"),
                                     /*allowDx=*/true, searchTodo, /*maxAbsDelta=*/420};
@@ -603,8 +603,8 @@ void TestUatConstancySweep::uat_xct_093_togglesDoNotMoveFurniture() {
         const QString id = d.todo.section(QLatin1Char(':'), 0, 0);
         const QString stale =
             QStringLiteral("%1 no longer reproduces under toggle '%2' (nothing under '%3' "
-                           "moved): delete this row's KnownDefect entry for %1, and the TODO.md "
-                           "entry if the bug is fixed.")
+                           "moved): delete this row's KnownDefect entry for %1, and the %1.md "
+                           "file if the bug is fixed.")
                 .arg(id, toggleName, d.prefix);
 #ifdef Q_OS_LINUX
         QFAIL(qPrintable(stale));

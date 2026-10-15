@@ -1,6 +1,6 @@
 name: One tracker
 
-# TODO.md is the only tracker (AGENTS.md). Separate from ci.yml because
+# todo/ is the only tracker (AGENTS.md). Separate from ci.yml because
 # ci.yml skips Markdown-only changes, which is exactly when a stray
 # tracking file would land.
 
@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   one-tracker:
-    name: One tracker (TODO.md)
+    name: One tracker (todo/)
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

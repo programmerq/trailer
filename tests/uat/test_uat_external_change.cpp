@@ -150,7 +150,7 @@ class TestUatExternalChange : public QObject {
         mon->pokeForTest();
         QTRY_COMPARE_WITH_TIMEOUT(banner->mode(), FileChangeBanner::Mode::Conflict, 2000);
 
-        // T-14: Compare is a disabled placeholder (no diff view exists); remove it.
+        // todo/2026-10-15-disabled-placeholders: Compare is a disabled placeholder (no diff view exists); remove it.
         QVERIFY(!banner->compareEnabled());
         QVERIFY(!banner->compareTooltip().isEmpty());
         QVERIFY(banner->reloadEnabled());

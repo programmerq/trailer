@@ -9,7 +9,7 @@
 //   UAT-VWR-072  per-page Actual Size + truthful zoom readout,
 //                validated at the dpr matrix {1, 1.5, 2}.
 //   UAT-VWR-073  markup / search disabled-with-tooltip in Two-Pages mode
-//                until T-21 lands, re-enabled on leaving it.
+//                until todo/2026-10-15-two-pages-read-only lands, re-enabled on leaving it.
 //   UAT-VWR-074  uncommitted Single/Two-Pages before/after PNGs of the same
 //                doc + the disabled-toggle+tooltip reconstruction.
 //
@@ -389,7 +389,7 @@ void TestUatTwoPage::uat_vwr_072_actualSizeTruthfulZoom() {
                             .arg(doc->zoomFactor())));
 }
 
-// UAT-VWR-073 — honest degradation until T-21 lands: in Two-Pages mode markup
+// UAT-VWR-073 — honest degradation until todo/2026-10-15-two-pages-read-only lands: in Two-Pages mode markup
 // and search are disabled-with-tooltip that says where to go, and both
 // re-enable when the user returns to Continuous.
 void TestUatTwoPage::uat_vwr_073_honestDegradationTooltips() {

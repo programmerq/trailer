@@ -1,7 +1,7 @@
 # PRODUCT.md: what Trailer is
 
 What Trailer is, who it is for, and the rules that decide what it does. How to work on the
-code: [`AGENTS.md`](AGENTS.md). Open work: [`TODO.md`](TODO.md).
+code: [`AGENTS.md`](AGENTS.md). Open work: [`todo/`](todo/README.md).
 
 ## What it is
 
@@ -76,7 +76,7 @@ What this can't promise: a non-linearized PDF keeps its cross-reference table at
 file, and the engine parses all of it before page one, so a 100,000-page file costs a little
 more than a 1-page one (about 0.15 s of CPU with QtPdf). A damaged file needs a full scan. The
 GUI thread may also keep a small record per page (page sizes for scrolling), built in a few
-instructions each (TODO.md T-24 sets the bound). None of this may block the GUI thread.
+instructions each ([GUI-thread work grows with page count: layout, sidebar and thumbnails](todo/2026-10-15-gui-work-grows-with-pages.md) sets the bound). None of this may block the GUI thread.
 
 - Everything beyond page one runs lazily near the visible page, off the GUI thread, and can be
   cancelled.
@@ -134,7 +134,7 @@ OCR (PP-OCRv3) comes first. Users expect to select text in any scan or screensho
 must behave exactly like native text, with no command to run. Then background removal (U²-Net)
 and Smart Lasso / Instant Alpha (MobileSAM). All run locally. The Latin OCR model (about 12 MB)
 ships with Trailer, so text in scans is selectable on first launch with no download or prompt
-(decided 2026-10-15; T-134). Every other model downloads once, after consent, the first time its
+(decided 2026-10-15; [The Latin OCR model isn't bundled, so scans aren't selectable on a fresh install](todo/2026-10-15-bundle-ocr-model.md)). Every other model downloads once, after consent, the first time its
 feature is used; its controls are disabled with a tooltip only when that model is set to Never
 Download. Work
 stays near the visible page, uses one low-priority worker, can be cancelled, pauses on battery,
@@ -159,10 +159,10 @@ it. The UX session recorder is a developer tool, compiled out of every release b
   file; revisit Preview-style autosave only once the P0 save bugs are fixed and a pre-edit copy
   is guaranteed). Every 30 s, unsaved edits go to a private
   recovery copy, and reopening the file restores them. Untitled documents (screenshots,
-  clipboard) get no recovery copy yet (T-16).
+  clipboard) get no recovery copy yet ([Untitled screenshots and clipboard documents are lost on a crash](todo/2026-10-15-untitled-docs-lost-on-crash.md)).
 - **Closing:** unsaved changes prompt Save / Discard / Cancel; a clean document never asks. ⌘Q
   asks once per unsaved document. ⌥⌘Q (Quit and Keep Windows) asks nothing and restores the
-  unsaved work at the next launch; one case still asks (T-61).
+  unsaved work at the next launch; one case still asks ([⌥⌘Q prompts when a PDF has page edits plus a pending redaction or signature](todo/2026-10-15-quit-keep-windows-prompts.md)).
 - **File changed on disk:** a clean document reloads silently. With unsaved edits, a banner offers
   Reload or Keep mine. A save never overwrites a file that changed underneath it. If the file is
   deleted, your buffer stays and Save recreates the file.
@@ -172,7 +172,7 @@ it. The UX session recorder is a developer tool, compiled out of every release b
   dates and threads. Signatures and redactions are flattened into the page.
 - **Known violations:** the rules above are what Trailer must do. Today it breaks several of them
   (duplicated marks, marks on the wrong page or spot, lost undo, unsafe in-place saves,
-  redaction leaks, password-protected files going blank). The worst are P0 entries in TODO.md,
+  redaction leaks, password-protected files going blank). The worst are P0 entries in todo/,
   most with a failing-first test, and they come before new features.
 
 ## Hard constraints
@@ -195,10 +195,10 @@ it. The UX session recorder is a developer tool, compiled out of every release b
   download page must say so.
 - **Windows:** an MSI that registers file associations, and a zip.
 - **Linux:** DEB and RPM, both with .desktop and MIME types, and a tarball (no .desktop yet). The
-  DEB and RPM steps haven't run in a release yet (T-126).
+  DEB and RPM steps haven't run in a release yet ([Releases are untested end to end](todo/2026-10-15-release-end-to-end-test.md)).
 - **Updates:** Check for Updates reads a signed nightly feed. macOS installs the update and
-  relaunches; Windows and Linux don't install it yet (T-53). Tagged releases have no update
-  channel yet (T-69). See RELEASING.md.
+  relaunches; Windows and Linux don't install it yet ([Updates install only on macOS](todo/2026-10-15-updates-macos-only.md)). Tagged releases have no update
+  channel yet ([The stable update channel isn't signed](todo/2026-10-15-stable-channel-unsigned.md)). See RELEASING.md.
 
 ## When it's done: seven jobs
 Trailer is the owner's default PDF and image app on macOS, Windows and Linux, and the owner

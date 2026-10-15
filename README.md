@@ -10,7 +10,7 @@ removal, Smart Lasso / Instant Alpha). It is local-first by
 construction: no accounts, no telemetry, no cloud sync.
 
 [PRODUCT.md](PRODUCT.md) says what Trailer is and the rules it follows,
-[TODO.md](TODO.md) holds all open work, and [AGENTS.md](AGENTS.md) says
+[todo/](todo/README.md) holds all open work, one file per entry, and [AGENTS.md](AGENTS.md) says
 how to work on the code. Releases are tagged `vX.Y.Z`; see
 [CHANGELOG.md](CHANGELOG.md) for what shipped when and
 [RELEASING.md](RELEASING.md) for the maintainer release runbook.
@@ -154,7 +154,7 @@ image from [docker/windows/Dockerfile](docker/windows/Dockerfile) on first use, 
 release pipeline run the same cross-build without Docker
 (`.github/actions/setup-windows-cross`, then `scripts/build-windows.sh --in-container`), and PR
 CI runs the Windows unit tests under Wine. The native MSVC job in `ci.yml` is switched off
-(T-58), so the PowerShell scripts above are only exercised by hand.
+([CI tests Windows only under Wine, and most of CI guards process, not the product](todo/2026-10-15-ci-windows-only-under-wine.md)), so the PowerShell scripts above are only exercised by hand.
 
 ## Run
 
@@ -179,13 +179,13 @@ QT_QPA_PLATFORM=offscreen ctest --test-dir build -L advisory --output-on-failure
 ```
 
 Known-bug tests (label `known-bug`) assert the correct behaviour for an
-open bug in TODO.md and expect today's failure; AGENTS.md explains how
+open bug in todo/ and expect today's failure; AGENTS.md explains how
 they flip when the bug is fixed.
 
 On every pull request, CI (`.github/workflows/ci.yml`) builds on **Linux** (Ubuntu 24.04, GCC)
 and runs the unit and known-bug tests plus the two furniture tests (modal census, constancy
 sweep), and cross-builds **Windows** with MinGW to run its unit tests under Wine. Pull requests
-get no native Windows or macOS run yet (T-58); the nightly workflow builds and tests all three.
+get no native Windows or macOS run yet ([CI tests Windows only under Wine, and most of CI guards process, not the product](todo/2026-10-15-ci-windows-only-under-wine.md)); the nightly workflow builds and tests all three.
 
 ## Releases
 
@@ -194,7 +194,7 @@ is the runbook. Each release ships a Linux tarball, .deb and .rpm, a Windows zip
 an Apple Silicon macOS DMG. The macOS app is unsigned and not notarized, because Trailer isn't in
 the Apple Developer Program, so its first launch needs
 `xattr -dr com.apple.quarantine /Applications/Trailer.app`. Nightly builds also update themselves
-over an ed25519-signed feed (Help ▸ Check for Updates…); tagged releases don't yet (T-69).
+over an ed25519-signed feed (Help ▸ Check for Updates…); tagged releases don't yet ([The stable update channel isn't signed](todo/2026-10-15-stable-channel-unsigned.md)).
 
 ## Principles
 
@@ -207,7 +207,7 @@ telemetry, no accounts, no premium tier, no cloud sync, local-first.
 | Doc | What it's for |
 |---|---|
 | [PRODUCT.md](PRODUCT.md) | What Trailer is, who it's for, its priorities, and the rules that decide what it does. |
-| [TODO.md](TODO.md) | The one tracker: all open work, each entry with a pass/fail bar. |
+| [todo/](todo/README.md) | The one tracker: one file per open item, each with a pass/fail bar. |
 | [AGENTS.md](AGENTS.md) | How to work on the code, for people and coding agents. `CLAUDE.md` imports it. |
 | [CHANGELOG.md](CHANGELOG.md) | What shipped when, per release tag. Keep-a-Changelog format. |
 | [RELEASING.md](RELEASING.md) | Maintainer release runbook: VERSION bump, tag, release notes, the update-signing key. |

@@ -161,7 +161,7 @@ A review agent runs the harness, then reads each path's `NN-*.png` +
 `installNoWindowMenuBar`/`newFromClipboard`, ~lines 389–560) — **not compiled on
 Linux**. So this path proves the clipboard *input* half and reproduces the exact
 *outcome* of `Application::newFromClipboard` (clipboard image → temp PNG →
-`openFiles`); the ⌘N binding + menu wiring themselves need a real Mac (T-52).
+`openFiles`); the ⌘N binding + menu wiring themselves need a real Mac ([Nothing is checked on a real Mac or a real Windows desktop](../../todo/2026-10-15-real-desktop-checks.md)).
 
 ### 02 — screenshot-acquire
 | step | screenshot should show | pass |
@@ -171,7 +171,7 @@ Linux**. So this path proves the clipboard *input* half and reproduces the exact
 | 03 captured-image-opens | the captured X screen open as a document | capture opened as a document |
 
 **Boundary:** window/region capture are disabled on Linux
-(T-15); the macOS native TCC "Screen Recording" prompt is
+([Window and selection screenshots don't work on Windows or Linux](../../todo/2026-10-15-window-screenshots-windows-linux.md)); the macOS native TCC "Screen Recording" prompt is
 real-Mac only. Whole-screen capture genuinely runs under Xvfb via
 `QScreen::grabWindow(0)` — the path creates `~/Pictures` first, because the
 Linux capture saves to `QStandardPaths::PicturesLocation` and a bare CI
@@ -217,7 +217,7 @@ This path is the reason Tier-1 uses a real X server (see top).
 `Application::addNewFromClipboardAction` + `newFromClipboard` **cross-platform**
 (`MainWindow::buildMenus` calls them on every OS; the `#ifdef Q_OS_MACOS` is only
 the *no-window* menu bar), so the Linux `Ctrl+N` clipboard-open this path drives
-is real, not a reproduction. The macOS no-window menu bar needs a real Mac (T-52).
+is real, not a reproduction. The macOS no-window menu bar needs a real Mac ([Nothing is checked on a real Mac or a real Windows desktop](../../todo/2026-10-15-real-desktop-checks.md)).
 
 ### 06 — external file-change flows (PR #89)
 | step | screenshot should show | pass |
@@ -246,7 +246,7 @@ X-level asserts are the title dirty marker + fixture stem. Debounce ~250 ms
 **Selector (fragile, documented):** Freehand has no shortcut/menu, so it is
 clicked by a **client-relative pixel offset** (`TOOL_FREEHAND_DX/DY`); if the
 markup toolbar layout changes, re-tune those. dpr=1 under Xvfb; the residual #91
-Retina pinch-zoom drift needs a real Mac (T-52).
+Retina pinch-zoom drift needs a real Mac ([Nothing is checked on a real Mac or a real Windows desktop](../../todo/2026-10-15-real-desktop-checks.md)).
 
 ### 08 — zoom indicator / steps / open-at-100% (#76/#80/#88)
 | step | screenshot should show | pass |
@@ -270,7 +270,7 @@ clamp. `SETTLE_MS` is bumped to 900 ms for this path.
 |---|---|---|
 | 01 empty-state | empty state | start state |
 | 02 file-menu-open | File menu with the **Screenshot ▸** acquire submenu | discoverable acquire surface present |
-| 03 screenshot-submenu-open | Screenshot submenu: **Whole Screen** enabled, **Window / Selected Area disabled** (T-15) | Linux-correct submenu |
+| 03 screenshot-submenu-open | Screenshot submenu: **Whole Screen** enabled, **Window / Selected Area disabled** ([Window and selection screenshots don't work on Windows or Linux](../../todo/2026-10-15-window-screenshots-windows-linux.md)) | Linux-correct submenu |
 | 04 whole-screen-captures-doc | the captured screen open as a **`trailer-screenshot-…` document, with NO capture-mode dialog** in between | direct dialogless capture (contrast path 02's Tools dialog) |
 
 **Selector (fragile, documented):** the submenu items have no
@@ -286,7 +286,7 @@ proven under Xvfb by path 02 (shared `Application::captureScreenshot`).
 
 HiDPI/dpr=2 sharpness, the native macOS Screen Recording prompt, OS-level
 global-shortcut clashes, and Dock/Services/native-menu-bar chrome need a real
-Mac (T-52). Xvfb is dpr=1.
+Mac ([Nothing is checked on a real Mac or a real Windows desktop](../../todo/2026-10-15-real-desktop-checks.md)). Xvfb is dpr=1.
 
 ## Captures
 

@@ -2,7 +2,7 @@
 
 How to work on Trailer, for coding agents and people. `CLAUDE.md` is just `@AGENTS.md`.
 What the product is and the rules that decide what it does: [`PRODUCT.md`](PRODUCT.md).
-All open work: [`TODO.md`](TODO.md). Release runbook: [`RELEASING.md`](RELEASING.md).
+All open work: [`todo/`](todo/README.md), one file per entry. Release runbook: [`RELEASING.md`](RELEASING.md).
 
 ## What Trailer is
 
@@ -43,7 +43,8 @@ without any model.
     off by default; a build without `TRAILER_UPDATE_PUBKEY` never connects, and its Check for
     Updates is disabled.
   - Review: `grep -rnE 'QNetwork|QTcpSocket|QUdpSocket|QSslSocket|QWebSocket|QDnsLookup' src`
-    lists only those (T-85 will make CI check it).
+    lists only those. [Nothing stops new network code from landing](todo/2026-10-15-network-code-guard.md)
+    tracks making CI check it.
 - MIT licence; Qt is linked dynamically (LGPL). New dependencies go in `THIRD_PARTY_LICENSES.md`
   and `licenses/third-party/`.
 - A control that can't act now is disabled, with a tooltip saying why, and where to go when
@@ -54,30 +55,31 @@ without any model.
 - "The document is the subject; the furniture doesn't move." No permanent chrome repeating what
   the document shows. No control moves because unrelated state changed.
 
-## The tracker is TODO.md, and nothing else
+## The tracker is todo/, and nothing else
 
-All open work lives in [`TODO.md`](TODO.md); its header says how entries are written, added and
-closed. Don't create other tracking files: no backlog folders, roadmaps, per-feature todo lists,
+All open work lives in [`todo/`](todo/README.md), one file per entry, named for the date it was
+filed and a short slug (`todo/2026-10-15-save-not-atomic.md`); its README says how entries are
+written, cited, added and closed. One file per entry keeps parallel PRs from conflicting. Don't create other tracking files: no backlog folders, roadmaps, per-feature todo lists,
 decision-record folders or audit dumps in the repo. CI fails if one appears.
 
 Decisions live where they apply: a decision about code is a short comment next to that code,
-pinned by a test; a product decision goes in PRODUCT.md. A "Decided:" note in a TODO.md entry
+pinned by a test; a product decision goes in PRODUCT.md. A "Decided:" note in an entry
 moves to one of those when the entry closes.
 
 Open bugs get failing-first tests: `tests/test_known_bugs_*.cpp`, ctest label `known-bug`. File
 one with the entry whenever the bug can be reproduced offscreen; otherwise the entry says why
 not. Each test asserts the correct behaviour and marks today's failure with
-`QEXPECT_FAIL("", "T-NN: ...", Abort)`. When a change fixes T-NN, that check passes unexpectedly
-and the test fails, so the fixing PR deletes the `QEXPECT_FAIL` line and the TODO.md entry; the
-check stays where it is as the regression test.
+`QEXPECT_FAIL("", "todo/YYYY-MM-DD-slug: ...", Abort)`. When a change fixes the bug, that check
+passes unexpectedly and the test fails, so the fixing PR deletes the `QEXPECT_FAIL` line and the
+entry's file; the check stays where it is as the regression test.
 
-Every id cited anywhere outside TODO.md and CHANGELOG.md (a `// T-NN:` comment, a test marker,
-a doc) must be an open entry, so the PR that closes an entry also updates what cites it.
+Every entry cited anywhere outside CHANGELOG.md (a `// todo/YYYY-MM-DD-slug:` comment, a test
+marker, a Markdown link with the entry's title) must exist, so the PR that closes an entry also updates what cites it.
 `scripts/check-one-tracker.sh` checks this, and runs in CI on every PR.
 
 ## Every change carries a check someone else can run
 
-Before coding, the TODO.md entry or the PR description states the pass/fail line: a state a
+Before coding, the todo/ entry or the PR description states the pass/fail line: a state a
 reviewer can reach and what they observe there. Never an adjective like "smooth".
 
 Measure the real thing through the real entry point:
@@ -158,7 +160,7 @@ Without `offscreen`, a test that closes a dirty window waits on the unsaved-chan
   its diff in the PR.
 - **Advisory** tests never gate, and no CI lane runs them: the chrome census and the seeded
   random UI walk (`tests/pbt/`; replay a failure with `TRAILER_PBT_SEED`). What they find becomes
-  a TODO.md entry, with a known-bug test once it reproduces deterministically.
+  a todo/ entry, with a known-bug test once it reproduces deterministically.
 - **Labels** are set where tests are registered: `trailer_add_known_bug_test` in
   `tests/CMakeLists.txt`, `trailer_add_uat_test` in `tests/uat/CMakeLists.txt`,
   `trailer_add_pbt_test` in `tests/pbt/CMakeLists.txt`. `-L`/`-LE` match labels as regexes, so
@@ -194,7 +196,7 @@ Saving: only an explicit Save or Save As writes the user's file. The 30 s auto-s
   `AnnotationType` and `ModelId` are persisted: append only. New setting keys go in
   `Settings::volatilityOf`.
 - **Shortcuts:** `Qt::ControlModifier` is ⌘ on macOS and Ctrl elsewhere; `Qt::MetaModifier` is ⌃
-  on macOS and the Windows/Super key elsewhere (T-131).
+  on macOS and the Windows/Super key elsewhere ([Quit and Keep Windows answers to the wrong keys](todo/2026-10-15-quit-keep-windows-keys.md)).
 - **Status bar:** `QStatusBar` permanent widgets move as one block. A transient readout is an
   overlay (`repositionZoomIndicator`).
 - **Menus:** call `QMenu::setToolTipsVisible(true)`, or disabled items can't explain themselves.
@@ -210,15 +212,15 @@ Saving: only an explicit Save or Save As writes the user's file. The 30 s auto-s
   event loop, like `ModalSentinel` in `tests/uat/test_uat_modal_census.cpp`.
 - **Screen capture:** a macOS Screen Recording grant applies from the next launch. XWayland
   grabs come back black, so Linux capture uses the XDG portal.
-- **No macOS PR lane yet (T-58):** a change to `src/platform/*.mm` isn't compiled before merge,
+- **No macOS PR lane yet ([CI tests Windows only under Wine, and most of CI guards process, not the product](todo/2026-10-15-ci-windows-only-under-wine.md)):** a change to `src/platform/*.mm` isn't compiled before merge,
   so say so in the PR. The Wine lane fails about one run in three; a failure in a test your
-  change doesn't touch gets one re-run and a mention of T-58.
+  change doesn't touch gets one re-run and a mention of [CI tests Windows only under Wine, and most of CI guards process, not the product](todo/2026-10-15-ci-windows-only-under-wine.md).
 - **Releases:** never squash a release PR, because autotag tags the PR's HEAD SHA. Never tag a
   `-dev` version.
 - **History:** the decision records, gates (G1–G10), UAT spec docs and the old `docs/` tree
   (all but `docs/set-as-default-app.md`) were deleted in the October 2026 reboot, and comments
   now state their rules inline. The old files are in git history (`git show 09bc1e3:<path>`).
-  Don't restore them or cite them from code; a TODO.md Src may point at them for history.
+  Don't restore them or cite them from code; an entry's Src may point at them for history.
 
 ## Working rules
 
@@ -227,8 +229,8 @@ Saving: only an explicit Save or Save As writes the user's file. The 30 s auto-s
 - The owner reviews and merges. Don't merge your own PR.
 - Before pushing: build, run the unit tests and `scripts/check-one-tracker.sh`, and UAT when
   the change touches `src/ui/` or `src/app/`.
-- Name the TODO ids a PR closes in its title and its commit subjects, e.g.
-  `fix(T-05, T-97): …`, so the id survives any merge method.
+- Name each entry a PR closes in its description and in the commit body
+  (`Closes todo/YYYY-MM-DD-slug.`), so the record survives any merge method.
 - A user-visible change adds a line under `[Unreleased]` in `CHANGELOG.md`.
 - Open the PR description with what you need from the reviewer, or "Nothing; ready to merge".
   Then say what changed for the user, then show the evidence.

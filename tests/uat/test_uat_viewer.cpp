@@ -495,7 +495,7 @@ void TestUatViewer::uat_vwr_111_nonRescalingResizeLeavesTheViewAlone() {
 
     // Choose the zoom mode BEFORE navigating anywhere, so this slot stays
     // clear of a separate defect:
-    // T-22: switching zoom mode after navigating leaves the page navigator
+    // todo/2026-10-15-zoom-mode-loses-page: switching zoom mode after navigating leaves the page navigator
     // reporting the old page while the scroll offset means a different one.
     doc->setViewMode(ViewMode::Continuous);
     doc->zoomFitWidth();

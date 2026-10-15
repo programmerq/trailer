@@ -6,7 +6,7 @@ done in Trailer, what appeared on screen, the camera's view of the
 user, raw input, and the moments where Trailer was abandoned for
 Preview.
 
-**Open work:** TODO.md (T-84, and T-100 for the compiled-out facade).
+**Open work:** [Leftovers in the UX recorder (a dev tool)](../../todo/2026-10-15-ux-recorder-leftovers.md), and [The compiled-out recorder still changes behaviour, and PR CI tests a different configuration from the one that ships](../../todo/2026-10-15-recorder-changes-behaviour.md) for the compiled-out facade.
 
 **Not telemetry.** PRODUCT.md bans telemetry. This feature
 is not telemetry: it is OFF at compile time by default, records only in

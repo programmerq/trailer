@@ -46,7 +46,7 @@ endfunction()
 # dpr is QGuiApplication::primaryScreen()->devicePixelRatio(), which the
 # offscreen plugin fixes at startup). This closes the HiDPI blind spot:
 # dpr=1-only runs hid the #55 thumbnail and #76 capture-blur bugs that broke
-# on Retina. T-50: most UAT binaries don't register through it yet.
+# on Retina. todo/2026-10-15-uat-dpr2-coverage: most UAT binaries don't register through it yet.
 #
 # All three entries carry the plain `uat` label so they gate at release
 # like the rest of the suite (AGENTS.md "Test"); they carry NO label
@@ -107,7 +107,7 @@ trailer_add_uat_test(test_uat_recognize_text test_uat_recognize_text.cpp)
 trailer_add_uat_test(test_uat_ocr_disk_cache test_uat_ocr_disk_cache.cpp)
 
 # External file-change handling: silent clean-reload, dirty-conflict banner,
-# deleted banner, disabled Compare placeholder (T-14). Also writes a before/
+# deleted banner, disabled Compare placeholder (todo/2026-10-15-disabled-placeholders). Also writes a before/
 # after PNG pair (not committed) when TRAILER_EXTCHANGE_EVIDENCE_DIR is set.
 trailer_add_uat_test(test_uat_external_change test_uat_external_change.cpp)
 
@@ -196,7 +196,7 @@ trailer_register_uat_dpr_matrix(test_uat_staged_image_open)
 trailer_add_uat_test(test_uat_empty_state test_uat_empty_state.cpp)
 
 # File-menu IA redesign UAT: ⌘N = New from Clipboard, Screenshot submenu +
-# Scanner/Camera placeholders (T-14), acquire group stays present with a
+# Scanner/Camera placeholders (todo/2026-10-15-disabled-placeholders), acquire group stays present with a
 # document window open, non-image clipboard disables + no-ops New from
 # Clipboard, dead ⌘⇧3 removed.
 # Drives Application + MainWindow; PDF fixture uses QPdfWriter (QtGui),

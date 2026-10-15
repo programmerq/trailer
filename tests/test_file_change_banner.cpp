@@ -18,7 +18,7 @@ class TestFileChangeBanner : public QObject {
     }
 
     // Conflict mode exposes Reload + Keep mine, and Compare is present but
-    // DISABLED with an explanatory tooltip (T-14: remove this placeholder).
+    // DISABLED with an explanatory tooltip (todo/2026-10-15-disabled-placeholders: remove this placeholder).
     void conflictModeOffersReloadKeepAndDisabledCompare() {
         FileChangeBanner banner;
         banner.showConflict();

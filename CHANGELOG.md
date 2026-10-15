@@ -52,9 +52,9 @@ entries terse and user-visible; CI / infrastructure churn lives in the
 - **One tracker.** The design spec, philosophy, roadmap, decision records,
   backlog folder, UAT spec docs and agent skills are replaced by
   `PRODUCT.md` (what Trailer is and its rules), `AGENTS.md` (how to work
-  on the code) and a single `TODO.md`. A CI check fails if another
-  tracking file appears.
-- **Known-bug tests.** Most open P0 bugs in `TODO.md`, and some others,
+  on the code) and `todo/`, one file per open item named for its date and
+  a short slug. A CI check fails if another tracking file appears.
+- **Known-bug tests.** Most open P0 bugs in `todo/`, and some others,
   have a test that asserts the right behaviour and expects today's
   failure (ctest label `known-bug`), so the fix turns it into a
   regression test.

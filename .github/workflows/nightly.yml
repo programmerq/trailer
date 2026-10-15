@@ -17,9 +17,9 @@
 #     pass/fail plumbing. TWO deliberate exceptions: Windows' "UAT suite
 #     (Wine)" step carries `continue-on-error: true` — Wine UAT is
 #     informational, not gating, until a real Windows CI runner exists
-#     (T-58); see that step's comment. macOS's "UAT suite" step carries the
+#     (todo/2026-10-15-ci-windows-only-under-wine); see that step's comment. macOS's "UAT suite" step carries the
 #     same `continue-on-error: true` — its UAT has never once passed
-#     (T-51), so gating on it would withhold an otherwise-green macOS build
+#     (todo/2026-10-15-macos-uat-ocr-crash), so gating on it would withhold an otherwise-green macOS build
 #     indefinitely; see that step's comment. Both lanes' real pass counts
 #     still surface, non-silently, in the release body's status table
 #     (never just dropped);
@@ -133,7 +133,7 @@
 #     test lands red before its fix. It produced a false REGRESSED on
 #     nightly-20260801's macOS lane (40/41 → 40/42, pass count flat).
 #     Absolute-count comparison has a narrower residual blind spot — a
-#     regression masked by a new passing test the same night. T-68: compare
+#     regression masked by a new passing test the same night. todo/2026-10-15-uat-ratchet-counts: compare
 #     per-test identity instead.
 #   - Degrade gracefully, always: no previous release, no asset on it, an
 #     asset that fails to parse, or a previous night where the lane itself
@@ -471,8 +471,8 @@ jobs:
       #
       # CTEST_PARALLEL_LEVEL stays 1 here, deliberately and unchanged.
       # This is the ONE lane that runs the full `ctest -L uat` tier, and
-      # two offscreen tests are flaky (test_perf_lazy_open, T-28, and uat
-      # ocr_ev_20, T-129; see ci.yml's env).
+      # two offscreen tests are flaky (test_perf_lazy_open, todo/2026-10-15-perf-tests-race, and uat
+      # ocr_ev_20, todo/2026-10-15-recognize-text-silent-on-nothing; see ci.yml's env).
       # A serial test tier is the whole reason the nightly Linux UAT
       # result is trustworthy enough to gate on; widening it to chase a
       # few minutes would trade a hard oracle for a flaky one.
@@ -690,7 +690,7 @@ jobs:
         # green (57/57) but Wine UAT at 23/40. Wine is a stand-in for Windows,
         # not the platform Trailer ships to, so a UAT regression under Wine
         # emulation specifically must not block a build+unit-green Windows
-        # artifact from publishing. T-58: gate on UAT from a real Windows runner
+        # artifact from publishing. todo/2026-10-15-ci-windows-only-under-wine: gate on UAT from a real Windows runner
         # instead. `continue-on-error: true` masks this step's CONCLUSION to
         # success (so the job's own `result`, and the `if: success()`-gated
         # staging steps below, are unaffected by a Wine UAT failure), while the
@@ -857,7 +857,7 @@ jobs:
         # so the count alone would under-communicate it; the log is grepped
         # separately for a crash signature and surfaced as its own flag rather
         # than folded silently into the N/M count. Becomes gating once the
-        # suite is green (T-51 tracks the crash).
+        # suite is green (todo/2026-10-15-macos-uat-ocr-crash tracks the crash).
         id: macos_uat
         continue-on-error: true
         working-directory: build-macos
@@ -1212,7 +1212,7 @@ jobs:
             if [ -n "$WIN_TOTAL" ] && [ "$WIN_PASSED" = "$WIN_TOTAL" ]; then
               WIN_ROW="✅ build+unit+UAT (Wine UAT $WIN_PASSED/$WIN_TOTAL) — $WIN_COMPARE"
             elif [ -n "$WIN_TOTAL" ]; then
-              WIN_ROW="✅ build+unit, ⚠️ Wine UAT $WIN_PASSED/$WIN_TOTAL — $WIN_COMPARE — non-gating (TODO.md T-58)"
+              WIN_ROW="✅ build+unit, ⚠️ Wine UAT $WIN_PASSED/$WIN_TOTAL — $WIN_COMPARE — non-gating (todo/2026-10-15-ci-windows-only-under-wine)"
             else
               WIN_ROW="✅ build+unit, ⚠️ Wine UAT count unavailable this run — $WIN_COMPARE"
             fi
@@ -1237,14 +1237,14 @@ jobs:
               "${{ steps.uat_compare.outputs.macos-suite-delta }}")"
             if [ "$MAC_CRASHED" = "true" ]; then
               if [ -n "$MAC_TOTAL" ]; then
-                MAC_ROW="✅ build+unit, 🔥 macOS UAT CRASHED ($MAC_PASSED/$MAC_TOTAL) — $MAC_COMPARE — informational, non-gating (TODO.md T-51)"
+                MAC_ROW="✅ build+unit, 🔥 macOS UAT CRASHED ($MAC_PASSED/$MAC_TOTAL) — $MAC_COMPARE — informational, non-gating (todo/2026-10-15-macos-uat-ocr-crash)"
               else
-                MAC_ROW="✅ build+unit, 🔥 macOS UAT crashed (no count available this run) — $MAC_COMPARE — informational, non-gating (TODO.md T-51)"
+                MAC_ROW="✅ build+unit, 🔥 macOS UAT crashed (no count available this run) — $MAC_COMPARE — informational, non-gating (todo/2026-10-15-macos-uat-ocr-crash)"
               fi
             elif [ -n "$MAC_TOTAL" ] && [ "$MAC_PASSED" = "$MAC_TOTAL" ]; then
               MAC_ROW="✅ build+unit+UAT ($MAC_PASSED/$MAC_TOTAL) — $MAC_COMPARE"
             elif [ -n "$MAC_TOTAL" ]; then
-              MAC_ROW="✅ build+unit, ⚠️ macOS UAT $MAC_PASSED/$MAC_TOTAL — $MAC_COMPARE — non-gating (TODO.md T-51)"
+              MAC_ROW="✅ build+unit, ⚠️ macOS UAT $MAC_PASSED/$MAC_TOTAL — $MAC_COMPARE — non-gating (todo/2026-10-15-macos-uat-ocr-crash)"
             else
               MAC_ROW="✅ build+unit, ⚠️ macOS UAT count unavailable this run — $MAC_COMPARE"
             fi
@@ -1258,7 +1258,7 @@ jobs:
             echo "can still change between versions. A lane below marked ❌ is NOT included;"
             echo "see its job log in this run for what failed. Windows' Wine UAT"
             echo "and macOS's UAT counts (⚠️/🔥) are informational only — neither"
-            echo "blocks the artifact; see each row's TODO.md entry. The"
+            echo "blocks the artifact; see each row's todo/ entry. The"
             echo "'REGRESSED'/'IMPROVED'/'unchanged' clause is the UAT ratchet —"
             echo "see the workflow's header comment — and DOES gate the run's own"
             echo "pass/fail signal (never the artifact) when a lane regresses."

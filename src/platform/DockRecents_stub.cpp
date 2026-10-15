@@ -4,7 +4,7 @@
 // File > Open Recent menu (RecentFiles) on every platform; only the
 // macOS-native "not-running" Dock surface is missing here, so the
 // feature's SHAPE differs per OS but it is not dropped.
-// T-64: Windows has no Jump List of recent files.
+// todo/2026-10-15-windows-jump-list: Windows has no Jump List of recent files.
 
 namespace trailer {
 

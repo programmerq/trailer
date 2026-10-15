@@ -10,7 +10,7 @@
 # exclude them (`--label-exclude 'uat|advisory'` in .github/workflows/),
 # the release UAT run selects only `-L uat`, and the walk runs only when
 # invoked (`ctest -L advisory`). A defect the explorer finds gets a
-# TODO.md entry and a deterministic test (a known-bug test while it is
+# todo/ entry and a deterministic test (a known-bug test while it is
 # open) — the explorer itself stays out of the gates permanently.
 
 # Same offscreen environment as tests/uat/CMakeLists.txt (see the
@@ -29,7 +29,7 @@ function(trailer_add_pbt_test name source)
     trailer_set_warnings(${name})
     add_test(NAME ${name} COMMAND ${name})
     # TIMEOUT: a healthy walk finishes in seconds, but some seeds
-    # LIVELOCK the GUI thread in a posted-event storm (T-09), and ctest's
+    # LIVELOCK the GUI thread in a posted-event storm (todo/2026-10-15-fit-width-freeze), and ctest's
     # default 1500 s timeout would let such a run burn 25 min. 300 s is
     # ~100x a healthy run and small enough that a hung walk reads as the
     # FAILURE it is, quickly. Range tried: 60 (too tight for a loaded

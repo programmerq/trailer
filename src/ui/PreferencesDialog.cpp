@@ -323,7 +323,7 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
         m_updatesChannelCombo->addItem(tr("Nightly"), QStringLiteral("nightly"));
         m_updatesChannelCombo->addItem(tr("Stable"), QStringLiteral("stable"));
         // Stable has no signed feed yet (release.yml doesn't publish one;
-        // only nightly.yml does). T-14 removes this placeholder; T-69
+        // only nightly.yml does). todo/2026-10-15-disabled-placeholders removes this placeholder; todo/2026-10-15-stable-channel-unsigned
         // publishes the stable feed.
         const auto *stableModel = m_updatesChannelCombo->model();
         const int stableIndex = m_updatesChannelCombo->findData(QStringLiteral("stable"));

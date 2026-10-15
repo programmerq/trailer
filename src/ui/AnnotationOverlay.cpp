@@ -1836,7 +1836,7 @@ QRectF AnnotationOverlay::handleRect(const QRectF &viewBounds, ResizeHandle whic
     // move drag) away from the move path. 6×6 is small enough that even
     // short shapes have a graspable body, and large enough for keyboard-
     // and-mouse desktop users to land on with a normal pointer.
-    // T-40: endpoint-only handles for Line/Arrow.
+    // todo/2026-10-15-line-endpoint-handles: endpoint-only handles for Line/Arrow.
     constexpr double kSize = 6.0; // view-space px per side
     constexpr double kHalf = kSize / 2.0;
     QPointF c;

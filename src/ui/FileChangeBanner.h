@@ -12,7 +12,7 @@ namespace trailer {
 //
 //   * Conflict — the file changed externally while we have unsaved edits.
 //     Offers [Reload (discard my edits)] / [Keep mine] / [Compare]. Compare is
-//     a disabled-with-tooltip placeholder; no diff view exists (T-14).
+//     a disabled-with-tooltip placeholder; no diff view exists (todo/2026-10-15-disabled-placeholders).
 //   * Deleted — the file was removed on disk. Offers [Save] (recreates it).
 //
 // A clean-doc external change is handled silently by an auto-reload and never

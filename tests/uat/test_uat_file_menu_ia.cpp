@@ -6,7 +6,7 @@
 //     the former standalone "New" (blank window) binding.
 //   - "Acquire" is dissolved into direct File-menu entries: a Screenshot
 //     submenu (Whole Screen / Window / Selected Area) plus visible-but-
-//     disabled Scanner / Camera placeholders with honest tooltips (T-14).
+//     disabled Scanner / Camera placeholders with honest tooltips (todo/2026-10-15-disabled-placeholders).
 //   - These create/acquire commands stay reachable whether or not a
 //     document window is key (the regression: they used to live only in
 //     the macOS no-window bar and vanished the moment a window became

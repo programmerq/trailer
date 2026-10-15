@@ -682,7 +682,7 @@ if(APPLE AND EXISTS "${TRAILER_MACOS_ICON}")
     )
 endif()
 
-# Adaptive (light/dark) app icon. T-63: the Dock never shows the dark one.
+# Adaptive (light/dark) app icon. todo/2026-10-15-dock-icon-dark-mode: the Dock never shows the dark one.
 # Compile the luminosity Asset Catalog (resources/macos/Assets.xcassets,
 # AppIcon set with light + `luminosity: dark` variants fed by the existing
 # trailer_*/trailer-dark_* PNGs) into Assets.car and drop it into the

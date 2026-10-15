@@ -59,7 +59,7 @@
 #      passes on the same night (40/41 -> 41/43 could be +2 new passes
 #      and 1 regression). Closing that needs the summary to carry the
 #      per-test name->status map and a set comparison; it is a schema
-#      change, not a tweak to this rule. T-68: carry per-test identity
+#      change, not a tweak to this rule. todo/2026-10-15-uat-ratchet-counts: carry per-test identity
 #      in the baseline.
 #
 # DEGRADE GRACEFULLY (never a false regression): no previous summary file,

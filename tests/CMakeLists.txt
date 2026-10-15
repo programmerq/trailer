@@ -54,7 +54,7 @@ trailer_add_test(test_open_dedup test_open_dedup.cpp)
 # setvbuf@plt calls at the top of main; there is no QTEST_MAIN). Nobody knew,
 # because ctest only prints output for FAILING tests and nothing on that lane
 # had failed before — every passing test's output is equally invisible.
-# T-58: replace the Wine lane with native Windows CI.
+# todo/2026-10-15-ci-windows-only-under-wine: replace the Wine lane with native Windows CI.
 #
 # ctest's own pass/fail reporting DOES work there. So it is the only usable
 # oracle on that lane, and this block turns it into a per-check one:
@@ -164,10 +164,11 @@ trailer_add_test(test_update_pubkey test_update_pubkey.cpp)
 target_compile_definitions(test_update_pubkey PRIVATE
     "TRAILER_REPO_ROOT=\"${CMAKE_CURRENT_SOURCE_DIR}/..\"")
 
-# Known bugs. Each test asserts the behaviour a TODO.md entry's "Done when"
-# asks for, and marks today's failure with QEXPECT_FAIL("", "T-NN: ...", Abort).
-# A change that fixes T-NN makes that check pass unexpectedly, which fails the
-# run: delete the QEXPECT_FAIL line and the TODO.md entry in the same PR.
+# Known bugs. Each test asserts the behaviour a todo/ entry's "Done when" asks
+# for, and marks today's failure with
+# QEXPECT_FAIL("", "todo/YYYY-MM-DD-slug: ...", Abort). A change that fixes the
+# bug makes that check pass unexpectedly, which fails the run: delete the
+# QEXPECT_FAIL line and the entry's file in the same PR.
 # Linux CI runs these; the Wine and macOS lanes skip the label.
 function(trailer_add_known_bug_test name)
     trailer_add_test(${name} ${name}.cpp)

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# One tracker: TODO.md holds all open work (AGENTS.md, "The tracker is
-# TODO.md, and nothing else"). This fails when the repo grows another
-# tracking file, when two TODO.md entries share an id, or when a file cites
-# an id that TODO.md doesn't have.
+# One tracker: todo/ holds all open work, one file per entry (todo/README.md).
+# This fails when the repo grows another tracking file, when an entry's file
+# name or shape is wrong, or when a file cites an entry that doesn't exist.
 #
 #   scripts/check-one-tracker.sh
 set -euo pipefail
@@ -14,49 +13,51 @@ fail() {
     status=1
 }
 
+slug_re='[0-9]{4}-[0-9]{2}-[0-9]{2}(-[a-z0-9]+)+'
+
 # 1. No other tracking files or folders.
 while IFS= read -r path; do
-    [ "$path" = "TODO.md" ] && continue
+    case "$path" in todo/*) continue ;; esac
     lower=$(printf '%s' "$path" | tr '[:upper:]' '[:lower:]')
     case "/$lower" in
     */backlog/* | */decision-records/* | */decisions/* | */adr/* | */adrs/* | */audits/*)
-        fail "$path: tracking folder; open work goes in TODO.md"
+        fail "$path: tracking folder; open work goes in todo/"
         continue
         ;;
     esac
     case "${lower##*/}" in
     todo*.md | *-todo.md | *_todo.md | backlog*.md | roadmap*.md | audit-*.md)
-        fail "$path: tracking file; open work goes in TODO.md"
+        fail "$path: tracking file; open work goes in todo/"
         ;;
     esac
 done < <(git ls-files)
 
-# 2. Entry ids are unique, and the header's "highest so far" covers them,
-#    so the next id is never one that was used before. An empty TODO.md
-#    passes.
-ids=$(grep -oE '^- \*\*T-[0-9]+ ' TODO.md | grep -oE '[0-9]+' || true)
-dups=$(printf '%s\n' $ids | sort | uniq -d | sed 's/^/T-/' | tr '\n' ' ')
-[ -z "${dups// /}" ] || fail "TODO.md: duplicate ids: $dups"
-highest=$(grep -oE 'the highest so far is T-[0-9]+' TODO.md | grep -oE '[0-9]+$' || true)
-max=$(printf '%s\n' $ids | sort -n | tail -1)
-if [ -z "$highest" ]; then
-    fail "TODO.md: the header must say \"the highest so far is T-NN\" on one line"
-elif [ -n "$max" ] && [ "$max" -gt "$highest" ]; then
-    fail "TODO.md: T-$max is above \"the highest so far is T-$highest\"; update the header"
-fi
+# 2. Every entry is todo/<date>-<slug>.md and has a title, a priority and a
+#    Done when. Nothing else lives in todo/ but the README.
+while IFS= read -r path; do
+    [ "$path" = "todo/README.md" ] && continue
+    name=${path#todo/}
+    if ! printf '%s' "$name" | grep -qxE "${slug_re}\.md"; then
+        fail "$path: entries are named todo/YYYY-MM-DD-short-slug.md (lower case)"
+        continue
+    fi
+    head -1 "$path" | grep -qE '^# .' || fail "$path: the first line is the title, as '# Title'"
+    grep -qE '^Priority: P[0-3]\.' "$path" || fail "$path: needs a 'Priority: P0.' line (P0 to P3)"
+    grep -qE '^- Done when\b' "$path" || fail "$path: needs a '- Done when' line"
+done < <(git ls-files -co --exclude-standard todo/)
 
-# 3. Every id cited outside TODO.md is open: the "T-NN: <reason>" markers
-#    in known-bug QEXPECT_FAILs and the constancy sweep's KnownDefect
-#    entries, and every "T-NN" in a comment or doc. The PR that closes an
-#    entry must update what cites it. CHANGELOG.md is history and may name
-#    closed ids.
-cited=$(git grep -h -o -I -E '(^|[^A-Za-z0-9_])T-[0-9]+' -- . ':!TODO.md' ':!CHANGELOG.md' |
-    grep -oE 'T-[0-9]+' | sort -u || true)
-for id in $cited; do
-    grep -qE "^- \*\*$id " TODO.md && continue
-    files=$(git grep -l -I -E "(^|[^A-Za-z0-9_])$id([^0-9]|\$)" -- . ':!TODO.md' ':!CHANGELOG.md' |
-        tr '\n' ' ')
-    fail "${files% }: cites $id, which isn't in TODO.md (fixed? update or drop the reference)"
+# 3. Every entry cited anywhere exists: "todo/<slug>" in code, tests and
+#    known-bug markers, "todo/<slug>.md" in Markdown links, and "(<slug>.md)"
+#    links between entries. The PR that closes an entry must update what
+#    cites it. CHANGELOG.md is history and may name closed entries.
+cited=$( {
+    git grep -h -o -I -E "todo/${slug_re}" -- . ':!CHANGELOG.md' | sed 's#^todo/##' || true
+    git grep -h -o -I -E "\]\(${slug_re}\.md\)" -- 'todo/*.md' | sed -E 's#^\]\(##; s#\.md\)$##' || true
+} | sort -u)
+for slug in $cited; do
+    [ -f "todo/$slug.md" ] && continue
+    files=$(git grep -l -I -F "$slug" -- . ':!CHANGELOG.md' | tr '\n' ' ')
+    fail "${files% }: cites $slug, which isn't in todo/ (fixed? update or drop the reference)"
 done
 
 if [ "$status" -eq 0 ]; then

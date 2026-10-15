@@ -104,7 +104,7 @@ struct DocumentSnapshot {
     // fields are the per-page (not per-document) decomposition —
     // deliberately scoped to what is cheaply and reliably computable; see
     // formatMarkdown for how they combine into a labeled inference.
-    // T-66: they can't yet tell visible text from an invisible OCR layer.
+    // todo/2026-10-15-problem-report-ocr-text: they can't yet tell visible text from an invisible OCR layer.
     //
     // IDocument::pageHasText() for the CURRENTLY DISPLAYED page: true iff
     // Qt's PDF text extraction (QPdfDocument::getAllText) returns

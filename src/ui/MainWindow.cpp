@@ -858,7 +858,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // lives in its tooltip; each disabled control also keeps its own
     // why/where tooltip. Shown only in Two-Pages mode by
     // onCurrentDocumentChanged.
-    // T-21: make Two Pages editable and drop this badge.
+    // todo/2026-10-15-two-pages-read-only: make Two Pages editable and drop this badge.
     m_readOnlyBadge = new QLabel(tr("Read-only"), this);
     m_readOnlyBadge->setObjectName(QStringLiteral("twoPageReadOnlyBadge"));
     m_readOnlyBadge->setToolTip(
@@ -1135,7 +1135,7 @@ void MainWindow::buildMenus() {
     // the share picker needs a real file path on disk.
     // The action is always created. On platforms without a working share
     // implementation it is shown disabled with a tooltip pointing at the
-    // real alternative (T-14: it should be absent there instead).
+    // real alternative (todo/2026-10-15-disabled-placeholders: it should be absent there instead).
     // Created via makeDisabledAction so the File menu is guaranteed to
     // render this disabled-state tooltip. On platforms where sharing
     // works we clear the explanation and re-enable; updateActionStates()
@@ -2233,7 +2233,7 @@ void MainWindow::onCropRectCommitted(const QRectF &docRect, int page) {
     // page's current /CropBox (what QPdfView displays), while cropPage
     // trims relative to the /MediaBox. These coincide on an un-cropped
     // page, so the first drag-crop is exact.
-    // T-33: re-cropping an ALREADY-cropped page via drag is offset by the
+    // todo/2026-10-15-second-crop-offset: re-cropping an ALREADY-cropped page via drag is offset by the
     // existing CropBox inset (the numeric dialog is MediaBox-absolute too).
     const QSizeF pageSize = doc->pageSizeHint(page);
     if (pageSize.isEmpty()) {
@@ -4570,7 +4570,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // modes rather than silently no-opping. This override runs after the
     // per-capability enablement above so it wins in two-up mode and restores
     // the normal state on the way out.
-    // T-21: bring markup, text selection and Find to Two Pages.
+    // todo/2026-10-15-two-pages-read-only: bring markup, text selection and Find to Two Pages.
     const bool twoPageMode =
         doc && doc->supportsViewModes() && doc->viewMode() == ViewMode::TwoPages;
     if (twoPageMode) {

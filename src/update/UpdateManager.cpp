@@ -213,7 +213,7 @@ void UpdateManager::installAndRelaunch() {
     // installers use), and relaunch. This path is exercised structurally in
     // code review but has NOT been run against a real signed nightly on
     // real Gatekeeper hardware yet, so it is not asserted as proven here.
-    // T-52: install a nightly update on a real Mac.
+    // todo/2026-10-15-real-desktop-checks: install a nightly update on a real Mac.
     clearQuarantine(m_downloadedPath);
 
     QProcess attach;
@@ -319,7 +319,7 @@ void UpdateManager::installAndRelaunch() {
     // run it themselves; the file's SHA256 already matched what the signed
     // feed committed to, so this is a safe manual handoff, not a
     // downgrade in trust.
-    // T-53: updates install only on macOS.
+    // todo/2026-10-15-updates-macos-only: updates install only on macOS.
     const QString dir = QFileInfo(m_downloadedPath).absolutePath();
 #if defined(Q_OS_WIN)
     QProcess::startDetached(QStringLiteral("explorer.exe"),

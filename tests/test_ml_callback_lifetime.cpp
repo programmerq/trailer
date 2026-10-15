@@ -136,14 +136,14 @@ void trace(const char *phase) {
 // platform Trailer ships to, and the use-after-free this file guards is
 // platform-independent — a raw pointer posted to a destroyed QObject. The
 // guard runs, and fails against unfixed code, on Linux and macOS. What IS
-// lost: Windows-specific coverage of that guard. T-58: run it on native
+// lost: Windows-specific coverage of that guard. todo/2026-10-15-ci-windows-only-under-wine: run it on native
 // Windows CI and drop this skip.
 constexpr const char *kWineSkip =
     "Wine-only: this binary dies with ZERO captured output on the Wine lane "
     "(two runs, ~1.4s, only failure in 65) and unbuffered stdio + flushing "
     "phase markers did not change that, so there is no evidence of what fails "
     "— the same opaque signature that 21 UAT tests already carry. The guard "
-    "itself is platform-independent and runs on Linux/macOS. See TODO.md T-58.";
+    "itself is platform-independent and runs on Linux/macOS. See todo/2026-10-15-ci-windows-only-under-wine.";
 
 MainWindow *currentMainWindow() {
     const QWidgetList tops = QApplication::topLevelWidgets();

@@ -1659,7 +1659,7 @@ void TestUatFoundations::uat_fnd_014_untitledCloseReshapeAndTabTitleEvidence() {
 // UAT-FND-040 — File → Share is ALWAYS present in the File menu. On
 // platforms that have a native share-sheet (macOS via
 // NSSharingServicePicker) it is enabled and wired; elsewhere it is
-// present-but-disabled with an explanatory tooltip (T-14: it should be
+// present-but-disabled with an explanatory tooltip (todo/2026-10-15-disabled-placeholders: it should be
 // absent there instead, which will change this test).
 // This test only checks presence; firing the picker is platform-
 // modal and not UAT-friendly.

@@ -385,7 +385,7 @@ void TestKnownBugsPdfSave::successiveSavesWriteEachMarkOnce_data() {
     QTest::newRow("save as") << true;
 }
 
-// T-01: PDF Save re-appends every annotation already in the file.
+// todo/2026-10-15-save-reappends-annotations: PDF Save re-appends every annotation already in the file.
 void TestKnownBugsPdfSave::successiveSavesWriteEachMarkOnce() {
     QFETCH(bool, saveAs);
     QTemporaryDir dir;
@@ -401,8 +401,8 @@ void TestKnownBugsPdfSave::successiveSavesWriteEachMarkOnce() {
         QVERIFY(doc.save(saveAs ? target : QString()));
         counts << QString::number(marksInFile(target).size());
     }
-    QEXPECT_FAIL("save", "T-01: each Save re-appends the marks already in the file", Abort);
-    QEXPECT_FAIL("save as", "T-01: each Save As re-appends the marks already in the file", Abort);
+    QEXPECT_FAIL("save", "todo/2026-10-15-save-reappends-annotations: each Save re-appends the marks already in the file", Abort);
+    QEXPECT_FAIL("save as", "todo/2026-10-15-save-reappends-annotations: each Save As re-appends the marks already in the file", Abort);
     QCOMPARE(counts.join(QLatin1Char(' ')), QStringLiteral("1 2 3"));
 }
 
@@ -415,7 +415,7 @@ void TestKnownBugsPdfSave::saveKeepsMarkCountOfAnnotatedFile_data() {
     QTest::newRow("rotate and save as") << true << true;
 }
 
-// T-01: PDF Save re-appends every annotation already in the file.
+// todo/2026-10-15-save-reappends-annotations: PDF Save re-appends every annotation already in the file.
 void TestKnownBugsPdfSave::saveKeepsMarkCountOfAnnotatedFile() {
     QFETCH(bool, rotate);
     QFETCH(bool, saveAs);
@@ -442,17 +442,17 @@ void TestKnownBugsPdfSave::saveKeepsMarkCountOfAnnotatedFile() {
     }
     const QString target = saveAs ? dir.filePath("copy.pdf") : path;
     QVERIFY(doc.save(saveAs ? target : QString()));
-    QEXPECT_FAIL("clean save", "T-01: a clean Save re-appends the marks already in the file",
+    QEXPECT_FAIL("clean save", "todo/2026-10-15-save-reappends-annotations: a clean Save re-appends the marks already in the file",
                  Abort);
-    QEXPECT_FAIL("rotate and save", "T-01: Save re-appends the marks already in the file", Abort);
-    QEXPECT_FAIL("clean save as", "T-01: a clean Save As re-appends the marks already in the file",
+    QEXPECT_FAIL("rotate and save", "todo/2026-10-15-save-reappends-annotations: Save re-appends the marks already in the file", Abort);
+    QEXPECT_FAIL("clean save as", "todo/2026-10-15-save-reappends-annotations: a clean Save As re-appends the marks already in the file",
                  Abort);
-    QEXPECT_FAIL("rotate and save as", "T-01: Save As re-appends the marks already in the file",
+    QEXPECT_FAIL("rotate and save as", "todo/2026-10-15-save-reappends-annotations: Save As re-appends the marks already in the file",
                  Abort);
     QCOMPARE(int(marksInFile(target).size()), 2);
 }
 
-// T-01: PDF Save re-appends every annotation already in the file.
+// todo/2026-10-15-save-reappends-annotations: PDF Save re-appends every annotation already in the file.
 void TestKnownBugsPdfSave::saveKeepsOtherAppsAnnotationsIntact() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -476,11 +476,11 @@ void TestKnownBugsPdfSave::saveKeepsOtherAppsAnnotationsIntact() {
         counts
             << QStringLiteral("%1+%2").arg(annotationCount(path, 0)).arg(annotationCount(path, 1));
     }
-    QEXPECT_FAIL("", "T-01: each Save appends stripped copies of the other app's marks", Abort);
+    QEXPECT_FAIL("", "todo/2026-10-15-save-reappends-annotations: each Save appends stripped copies of the other app's marks", Abort);
     QCOMPARE(counts.join(QLatin1Char(' ')), QStringLiteral("6+0 6+0 6+0 6+1"));
 }
 
-// T-02: Deleting, moving or inserting pages leaves marks on the wrong page.
+// todo/2026-10-15-page-edits-misplace-marks: Deleting, moving or inserting pages leaves marks on the wrong page.
 void TestKnownBugsPdfSave::deletePageTakesItsMarkAndKeepsOthersOnTheirPages() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -492,7 +492,7 @@ void TestKnownBugsPdfSave::deletePageTakesItsMarkAndKeepsOthersOnTheirPages() {
     doc.deletePages({0});
     QCOMPARE(pageWidths(doc), QStringLiteral("420 440"));
     // Page 1's mark goes with the page; page 3's mark stays on page 3, now page 2.
-    QEXPECT_FAIL("", "T-02: deleting a page leaves the marks' page numbers unchanged", Continue);
+    QEXPECT_FAIL("", "todo/2026-10-15-page-edits-misplace-marks: deleting a page leaves the marks' page numbers unchanged", Continue);
     QCOMPARE(placement(doc.annotations()->annotations(), pageWidthList(doc)),
              QStringLiteral("x150@440"));
     // ⌘Z brings the page back with its mark.
@@ -504,11 +504,11 @@ void TestKnownBugsPdfSave::deletePageTakesItsMarkAndKeepsOthersOnTheirPages() {
     doc.deletePages({0});
     QVERIFY(doc.save());
     QCOMPARE(pageWidths(path), QStringLiteral("420 440"));
-    QEXPECT_FAIL("", "T-02: Save writes the marks to their old page numbers", Abort);
+    QEXPECT_FAIL("", "todo/2026-10-15-page-edits-misplace-marks: Save writes the marks to their old page numbers", Abort);
     QCOMPARE(placement(marksInFile(path), pageWidthList(path)), QStringLiteral("x150@440"));
 }
 
-// T-02: Deleting, moving or inserting pages leaves marks on the wrong page.
+// todo/2026-10-15-page-edits-misplace-marks: Deleting, moving or inserting pages leaves marks on the wrong page.
 void TestKnownBugsPdfSave::movePageKeepsMarksOnTheirPages() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -518,10 +518,10 @@ void TestKnownBugsPdfSave::movePageKeepsMarksOnTheirPages() {
     addMarksOnFirstAndLastPage(doc);
 
     // Page 3 moves to the front, which also shifts page 1 to second place.
-    // T-127: no page can reach the end, where the bar moves page 1.
+    // todo/2026-10-15-page-drag-lands-early: no page can reach the end, where the bar moves page 1.
     doc.movePage(2, 0);
     QCOMPARE(pageWidths(doc), QStringLiteral("440 400 420"));
-    QEXPECT_FAIL("", "T-02: moving a page leaves the marks' page numbers unchanged", Continue);
+    QEXPECT_FAIL("", "todo/2026-10-15-page-edits-misplace-marks: moving a page leaves the marks' page numbers unchanged", Continue);
     QCOMPARE(placement(doc.annotations()->annotations(), pageWidthList(doc)),
              QStringLiteral("x150@440, x50@400"));
     // ⌘Z puts the page and the marks back.
@@ -533,12 +533,12 @@ void TestKnownBugsPdfSave::movePageKeepsMarksOnTheirPages() {
     doc.movePage(2, 0);
     QVERIFY(doc.save());
     QCOMPARE(pageWidths(path), QStringLiteral("440 400 420"));
-    QEXPECT_FAIL("", "T-02: Save writes the marks to their old page numbers", Abort);
+    QEXPECT_FAIL("", "todo/2026-10-15-page-edits-misplace-marks: Save writes the marks to their old page numbers", Abort);
     QCOMPARE(placement(marksInFile(path), pageWidthList(path)),
              QStringLiteral("x150@440, x50@400"));
 }
 
-// T-02: Deleting, moving or inserting pages leaves marks on the wrong page.
+// todo/2026-10-15-page-edits-misplace-marks: Deleting, moving or inserting pages leaves marks on the wrong page.
 void TestKnownBugsPdfSave::insertPageKeepsMarksOnTheirPages() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -550,7 +550,7 @@ void TestKnownBugsPdfSave::insertPageKeepsMarksOnTheirPages() {
 
     QVERIFY(doc.insertPagesFrom(extra, 0));
     QCOMPARE(pageWidths(doc), QStringLiteral("300 400 420 440"));
-    QEXPECT_FAIL("", "T-02: inserting a page leaves the marks' page numbers unchanged", Continue);
+    QEXPECT_FAIL("", "todo/2026-10-15-page-edits-misplace-marks: inserting a page leaves the marks' page numbers unchanged", Continue);
     QCOMPARE(placement(doc.annotations()->annotations(), pageWidthList(doc)),
              QStringLiteral("x150@440, x50@400"));
     // ⌘Z removes the inserted page and leaves the marks where they were.
@@ -562,7 +562,7 @@ void TestKnownBugsPdfSave::insertPageKeepsMarksOnTheirPages() {
     QVERIFY(doc.insertPagesFrom(extra, 0));
     QVERIFY(doc.save());
     QCOMPARE(pageWidths(path), QStringLiteral("300 400 420 440"));
-    QEXPECT_FAIL("", "T-02: Save writes the marks to their old page numbers", Abort);
+    QEXPECT_FAIL("", "todo/2026-10-15-page-edits-misplace-marks: Save writes the marks to their old page numbers", Abort);
     QCOMPARE(placement(marksInFile(path), pageWidthList(path)),
              QStringLiteral("x150@440, x50@400"));
 }
@@ -580,7 +580,7 @@ void TestKnownBugsPdfSave::markOnRotatedOrCroppedPageSavesWhereDrawn_data() {
     QTest::newRow("cropped") << 0 << true << QSize(350, 520);
 }
 
-// T-03: Marks on rotated pages are saved away from where they were drawn.
+// todo/2026-10-15-rotated-page-marks-shift-on-save: Marks on rotated pages are saved away from where they were drawn.
 void TestKnownBugsPdfSave::markOnRotatedOrCroppedPageSavesWhereDrawn() {
     QFETCH(int, degrees);
     QFETCH(bool, cropped);
@@ -611,16 +611,16 @@ void TestKnownBugsPdfSave::markOnRotatedOrCroppedPageSavesWhereDrawn() {
              qPrintable(QStringLiteral("Trailer re-reads the mark at %1, drawn at %2")
                             .arg(rectText(reread.front().bounds), rectText(drawn))));
     const QRectF painted = paintedRedBox(path, 0);
-    QEXPECT_FAIL("90", "T-03: Save ignores the page's /Rotate", Abort);
-    QEXPECT_FAIL("180", "T-03: Save ignores the page's /Rotate", Abort);
-    QEXPECT_FAIL("270", "T-03: Save ignores the page's /Rotate", Abort);
-    QEXPECT_FAIL("cropped", "T-03: Save ignores the page's CropBox", Abort);
+    QEXPECT_FAIL("90", "todo/2026-10-15-rotated-page-marks-shift-on-save: Save ignores the page's /Rotate", Abort);
+    QEXPECT_FAIL("180", "todo/2026-10-15-rotated-page-marks-shift-on-save: Save ignores the page's /Rotate", Abort);
+    QEXPECT_FAIL("270", "todo/2026-10-15-rotated-page-marks-shift-on-save: Save ignores the page's /Rotate", Abort);
+    QEXPECT_FAIL("cropped", "todo/2026-10-15-rotated-page-marks-shift-on-save: Save ignores the page's CropBox", Abort);
     QVERIFY2(sameRect(painted, drawn, 3.0),
              qPrintable(QStringLiteral("pdfium paints the mark at %1, drawn at %2")
                             .arg(rectText(painted), rectText(drawn))));
 }
 
-// T-04: Zoom Lens marks vanish when a PDF is saved.
+// todo/2026-10-15-zoom-lens-marks-lost-on-save: Zoom Lens marks vanish when a PDF is saved.
 void TestKnownBugsPdfSave::zoomLensSurvivesSave() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -635,12 +635,12 @@ void TestKnownBugsPdfSave::zoomLensSurvivesSave() {
     QCOMPARE(doc.annotations()->count(), 1);
     QVERIFY(doc.save());
 
-    QEXPECT_FAIL("", "T-04: Save drops the Zoom Lens from the document", Continue);
+    QEXPECT_FAIL("", "todo/2026-10-15-zoom-lens-marks-lost-on-save: Save drops the Zoom Lens from the document", Continue);
     QCOMPARE(doc.annotations()->count(), 1);
     int lensesInFile = 0;
     for (const Annotation &a : marksInFile(path))
         lensesInFile += a.type == AnnotationType::ZoomLens ? 1 : 0;
-    QEXPECT_FAIL("", "T-04: Save does not write the Zoom Lens to the file", Abort);
+    QEXPECT_FAIL("", "todo/2026-10-15-zoom-lens-marks-lost-on-save: Save does not write the Zoom Lens to the file", Abort);
     QCOMPARE(lensesInFile, 1);
 }
 
@@ -651,7 +651,7 @@ void TestKnownBugsPdfSave::undoPageOperationAfterSaveRestoresPages_data() {
     QTest::newRow("move page 3 to the front") << false << QStringLiteral("440 400 420");
 }
 
-// T-05: ⌘Z of a page operation after Save does nothing, yet marks the document edited.
+// todo/2026-10-15-page-op-undo-after-save: ⌘Z of a page operation after Save does nothing, yet marks the document edited.
 void TestKnownBugsPdfSave::undoPageOperationAfterSaveRestoresPages() {
     QFETCH(bool, deletePage);
     QFETCH(QString, afterOperation);
@@ -673,27 +673,27 @@ void TestKnownBugsPdfSave::undoPageOperationAfterSaveRestoresPages() {
 
     const bool undone = doc.undo();
     const bool restored = pageWidths(doc) == original;
-    QEXPECT_FAIL("delete page 2", "T-05: undo after Save does not bring the page back", Continue);
-    QEXPECT_FAIL("move page 3 to the front", "T-05: undo after Save does not move the page back",
+    QEXPECT_FAIL("delete page 2", "todo/2026-10-15-page-op-undo-after-save: undo after Save does not bring the page back", Continue);
+    QEXPECT_FAIL("move page 3 to the front", "todo/2026-10-15-page-op-undo-after-save: undo after Save does not move the page back",
                  Continue);
     QCOMPARE(pageWidths(doc), original);
     // Neither undo()'s result nor the edited flag may claim a change that did not happen.
-    QEXPECT_FAIL("delete page 2", "T-05: undo() reports success but reverted nothing", Continue);
-    QEXPECT_FAIL("move page 3 to the front", "T-05: undo() reports success but reverted nothing",
+    QEXPECT_FAIL("delete page 2", "todo/2026-10-15-page-op-undo-after-save: undo() reports success but reverted nothing", Continue);
+    QEXPECT_FAIL("move page 3 to the front", "todo/2026-10-15-page-op-undo-after-save: undo() reports success but reverted nothing",
                  Continue);
     QVERIFY2(!undone || restored, "undo() returned true but the pages did not change");
-    QEXPECT_FAIL("delete page 2", "T-05: the undo that did nothing marks the document edited",
+    QEXPECT_FAIL("delete page 2", "todo/2026-10-15-page-op-undo-after-save: the undo that did nothing marks the document edited",
                  Continue);
     QEXPECT_FAIL("move page 3 to the front",
-                 "T-05: the undo that did nothing marks the document edited", Continue);
+                 "todo/2026-10-15-page-op-undo-after-save: the undo that did nothing marks the document edited", Continue);
     QVERIFY2(!doc.isDirty() || restored,
              "the document is marked edited but its pages did not change");
 
     // A Save after the undo succeeds and writes the restored pages.
-    QEXPECT_FAIL("delete page 2", "T-05: Save fails after the undo", Continue);
+    QEXPECT_FAIL("delete page 2", "todo/2026-10-15-page-op-undo-after-save: Save fails after the undo", Continue);
     QVERIFY(doc.save());
-    QEXPECT_FAIL("delete page 2", "T-05: the file keeps the page deleted", Abort);
-    QEXPECT_FAIL("move page 3 to the front", "T-05: the file keeps the page moved", Abort);
+    QEXPECT_FAIL("delete page 2", "todo/2026-10-15-page-op-undo-after-save: the file keeps the page deleted", Abort);
+    QEXPECT_FAIL("move page 3 to the front", "todo/2026-10-15-page-op-undo-after-save: the file keeps the page moved", Abort);
     QCOMPARE(pageWidths(path), original);
 
     // ⌘⇧Z re-applies the operation, and the next Save writes it.
@@ -713,7 +713,7 @@ void TestKnownBugsPdfSave::undoAfterSaveRevertsNewestFirst_data() {
     QTest::newRow("rotate, mark, save as") << false << true;
 }
 
-// T-29: Saving a PDF wipes its markup undo history, so ⌘Z then undoes the wrong thing.
+// todo/2026-10-15-save-wipes-markup-undo: Saving a PDF wipes its markup undo history, so ⌘Z then undoes the wrong thing.
 void TestKnownBugsPdfSave::undoAfterSaveRevertsNewestFirst() {
     QFETCH(bool, markFirst);
     QFETCH(bool, saveAs);
@@ -743,14 +743,14 @@ void TestKnownBugsPdfSave::undoAfterSaveRevertsNewestFirst() {
     // ⌘Z reverts the newer edit, then the older one.
     QVERIFY(doc.undo());
     QEXPECT_FAIL("rotate, mark, save",
-                 "T-29: ⌘Z after Save skips the newer mark and reverts the rotate", Abort);
+                 "todo/2026-10-15-save-wipes-markup-undo: ⌘Z after Save skips the newer mark and reverts the rotate", Abort);
     QEXPECT_FAIL("rotate, mark, save as",
-                 "T-29: ⌘Z after Save As skips the newer mark and reverts the rotate", Abort);
+                 "todo/2026-10-15-save-wipes-markup-undo: ⌘Z after Save As skips the newer mark and reverts the rotate", Abort);
     QCOMPARE(pageAndMarks(doc), older);
     QVERIFY(doc.isDirty());
     const bool undid = doc.undo();
-    QEXPECT_FAIL("mark, rotate, save", "T-29: Save clears the markup undo history", Abort);
-    QEXPECT_FAIL("mark, rotate, save as", "T-29: Save As clears the markup undo history", Abort);
+    QEXPECT_FAIL("mark, rotate, save", "todo/2026-10-15-save-wipes-markup-undo: Save clears the markup undo history", Abort);
+    QEXPECT_FAIL("mark, rotate, save as", "todo/2026-10-15-save-wipes-markup-undo: Save As clears the markup undo history", Abort);
     QCOMPARE(pageAndMarks(doc), neither);
     QVERIFY(undid);
     QVERIFY(doc.isDirty());

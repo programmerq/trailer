@@ -113,7 +113,7 @@ void TestPerfRenderOrdering::firstPageRendersBeforeWholeFileConsumed() {
     // streamed-open wiring makes the progressive path observable.
     QSKIP("first-page-before-full-read not yet observable on this corpus: pdfium consumed "
           "100% of the small 20-page PDF before rendering page 0 (no progressive/linearized "
-          "partial-read path is exercised). T-28 tracks making it observable.");
+          "partial-read path is exercised). todo/2026-10-15-perf-tests-race tracks making it observable.");
 }
 
 QTEST_MAIN(TestPerfRenderOrdering)

@@ -175,7 +175,7 @@ class PdfDocument : public IDocument {
     // canDraftForKeep). Forces a synchronous annotation load first so the
     // check sees the COMPLETE set (never a racy, still-loading store) — hence
     // non-const (the sync load commits the deferred annotation result).
-    // T-61: ⌥⌘Q should keep such a PDF without prompting.
+    // todo/2026-10-15-quit-keep-windows-prompts: ⌥⌘Q should keep such a PDF without prompting.
     bool hasPendingDestructiveAnnotation();
     // Rehydrate this document from a kept-windows draft on session restore:
     // re-apply `annotations` (the document's unsaved annotations, captured

@@ -7,7 +7,7 @@
 #
 # WHY THIS EXISTS. The nightly macOS lane's informational check greps
 # `assetutil --info` output for a dark/luminosity marker and reports it
-# missing (see TODO.md T-63).
+# missing (see todo/2026-10-15-dock-icon-dark-mode).
 # That grep can only ever be *suggestive*: it is equally consistent with
 # "the dark bitmaps were dropped" and with "the dark bitmaps are present
 # but assetutil does not print an appearance axis for app-icon entries."
@@ -141,7 +141,7 @@ supported light/dark axis.
 
   -> The asset-catalog route (Option A) is a dead end. Proceed to Option B
      (Icon Composer .icon source, same build wiring) and record the outcome
-     in TODO.md T-63.
+     in todo/2026-10-15-dock-icon-dark-mode.
 MSG
     exit 0
 else
@@ -152,7 +152,7 @@ This CONTRADICTS the nightly lane's assetutil-based check, which means
 that check is a false negative and the Dock-swap failure has a different
 root cause. Do NOT spend Icon Composer authoring effort on the strength
 of the Option-B recommendation in
-TODO.md T-63 — reopen the root-cause question first, and record this
+todo/2026-10-15-dock-icon-dark-mode — reopen the root-cause question first, and record this
 result there.
 MSG
     exit 0

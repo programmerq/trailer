@@ -22,7 +22,7 @@
 // release that cross-thread handle, so save()'s same-file QFile::remove(backing)
 // fails. Real Windows (process-global FILE handles) and Linux release it fine,
 // so this flow runs and is asserted in full on Linux; only the Wine emulator
-// skips it. T-58: run it on native Windows CI and drop the Wine skip.
+// skips it. todo/2026-10-15-ci-windows-only-under-wine: run it on native Windows CI and drop the Wine skip.
 
 #include "annotation/Annotation.h"
 #include "annotation/AnnotationStore.h"
@@ -68,7 +68,7 @@ constexpr const char *kWineSameFileSaveSkip =
     "qpdf editor holds the backing file; Wine does not release that cross-thread handle, "
     "so the same-file Save's QFile::remove(backing) fails. Real Windows (process-global "
     "FILE handles) and Linux release it fine — this flow is covered fully on Linux. "
-    "See TODO.md T-58.";
+    "See todo/2026-10-15-ci-windows-only-under-wine.";
 
 QByteArray sha256Of(const QString &path) {
     QFile f(path);

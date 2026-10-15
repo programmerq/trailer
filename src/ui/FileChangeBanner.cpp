@@ -54,7 +54,7 @@ FileChangeBanner::FileChangeBanner(QWidget *parent) : QFrame(parent) {
     m_dismissButton->setFlat(true);
     m_dismissButton->setStyleSheet(QStringLiteral("QPushButton { color: #5a4a12; }"));
 
-    // T-14: Compare is a disabled placeholder for a diff view that doesn't
+    // todo/2026-10-15-disabled-placeholders: Compare is a disabled placeholder for a diff view that doesn't
     // exist; remove it. Until then its tooltip says WHY it can't act.
     m_compareButton->setEnabled(false);
     m_compareButton->setToolTip(

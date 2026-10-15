@@ -396,7 +396,7 @@ void TestKnownBugsPdfFiles::redactionCoversTextOnRotatedAndCroppedPages_data() {
     QTest::newRow("cropped150") << 0 << 150.0;
 }
 
-// T-90: Redaction leaves text visible on rotated and cropped pages
+// todo/2026-10-15-redaction-rotated-cropped-pages: Redaction leaves text visible on rotated and cropped pages
 void TestKnownBugsPdfFiles::redactionCoversTextOnRotatedAndCroppedPages() {
     QFETCH(int, rotate);
     QFETCH(double, cropInset);
@@ -434,20 +434,20 @@ void TestKnownBugsPdfFiles::redactionCoversTextOnRotatedAndCroppedPages() {
     QVERIFY2(!holdsWord(text, QStringLiteral("SECRET")) && !holdsWord(text, QStringLiteral("4711")),
              qPrintable(QStringLiteral("the saved page's text: %1").arg(text)));
     QEXPECT_FAIL("rotate90",
-                 "T-90: the rotated page is stretched to the MediaBox; the box misses the text",
+                 "todo/2026-10-15-redaction-rotated-cropped-pages: the rotated page is stretched to the MediaBox; the box misses the text",
                  Abort);
     QEXPECT_FAIL("rotate270",
-                 "T-90: the rotated page is stretched to the MediaBox; the box misses the text",
+                 "todo/2026-10-15-redaction-rotated-cropped-pages: the rotated page is stretched to the MediaBox; the box misses the text",
                  Abort);
     QEXPECT_FAIL("cropped150",
-                 "T-90: the cropped page is stretched to the MediaBox; the box misses the text",
+                 "todo/2026-10-15-redaction-rotated-cropped-pages: the cropped page is stretched to the MediaBox; the box misses the text",
                  Abort);
     QCOMPARE(countPixels(after, isRed), 0);
 
     // The page reads as it did before: the heading is still where it was.
     const int headingAfter = countPixels(after, isBlue, heading);
     QEXPECT_FAIL("rotate180",
-                 "T-90: /Rotate turns the already rotated raster again; the page flips upright",
+                 "todo/2026-10-15-redaction-rotated-cropped-pages: /Rotate turns the already rotated raster again; the page flips upright",
                  Abort);
     QVERIFY2(headingAfter >= headingBefore / 2,
              qPrintable(QStringLiteral("heading pixels in place: %1 before, %2 after")
@@ -455,7 +455,7 @@ void TestKnownBugsPdfFiles::redactionCoversTextOnRotatedAndCroppedPages() {
                             .arg(headingAfter)));
 }
 
-// T-91: Password-protected PDFs go blank after any page operation, and Save misreports
+// todo/2026-10-15-encrypted-pdf-blank-after-edit: Password-protected PDFs go blank after any page operation, and Save misreports
 void TestKnownBugsPdfFiles::encryptedPdfKeepsPagesAfterPageOperation() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -471,13 +471,13 @@ void TestKnownBugsPdfFiles::encryptedPdfKeepsPagesAfterPageOperation() {
     QCOMPARE(doc->pageCount(), 3);
 
     doc->rotatePage(0, 90);
-    QEXPECT_FAIL("", "T-91: the view reloads the edited copy without the password", Continue);
+    QEXPECT_FAIL("", "todo/2026-10-15-encrypted-pdf-blank-after-edit: the view reloads the edited copy without the password", Continue);
     QCOMPARE(doc->pageCount(), 3);
-    QEXPECT_FAIL("", "T-91: the failed reload leaves the document marked clean", Abort);
+    QEXPECT_FAIL("", "todo/2026-10-15-encrypted-pdf-blank-after-edit: the failed reload leaves the document marked clean", Abort);
     QVERIFY(doc->isDirty());
 }
 
-// T-91: Password-protected PDFs go blank after any page operation, and Save misreports
+// todo/2026-10-15-encrypted-pdf-blank-after-edit: Password-protected PDFs go blank after any page operation, and Save misreports
 void TestKnownBugsPdfFiles::encryptedPdfSavesPageOperation() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -493,7 +493,7 @@ void TestKnownBugsPdfFiles::encryptedPdfSavesPageOperation() {
         QCOMPARE(doc->pageCount(), 3);
         doc->rotatePage(0, 90);
         const bool saved = doc->save();
-        QEXPECT_FAIL("", "T-91: Save reloads the saved file without the password", Continue);
+        QEXPECT_FAIL("", "todo/2026-10-15-encrypted-pdf-blank-after-edit: Save reloads the saved file without the password", Continue);
         QVERIFY(saved);
     }
 
@@ -509,7 +509,7 @@ void TestKnownBugsPdfFiles::encryptedPdfSavesPageOperation() {
         qPrintable(QStringLiteral("page 1 is %1 x %2 pt").arg(first.width()).arg(first.height())));
 }
 
-// T-91: Password-protected PDFs go blank after any page operation, and Save misreports
+// todo/2026-10-15-encrypted-pdf-blank-after-edit: Password-protected PDFs go blank after any page operation, and Save misreports
 void TestKnownBugsPdfFiles::encryptedPdfWritesRecoverySnapshot() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -527,12 +527,12 @@ void TestKnownBugsPdfFiles::encryptedPdfWritesRecoverySnapshot() {
 
     const QString sidecar = dir.filePath(QStringLiteral("locked.recovery.pdf"));
     const bool written = doc->writeRecoverySnapshot(sidecar);
-    QEXPECT_FAIL("", "T-91: the snapshot copy is reopened without the password", Abort);
+    QEXPECT_FAIL("", "todo/2026-10-15-encrypted-pdf-blank-after-edit: the snapshot copy is reopened without the password", Abort);
     QVERIFY(written);
     QVERIFY(QFileInfo(sidecar).size() > 0);
 }
 
-// T-91: Password-protected PDFs go blank after any page operation, and Save misreports
+// todo/2026-10-15-encrypted-pdf-blank-after-edit: Password-protected PDFs go blank after any page operation, and Save misreports
 void TestKnownBugsPdfFiles::ownerPasswordOnlyPdfSavesPageOperation() {
     // Control case: restricted permissions and no open password. Passes today.
     QTemporaryDir dir;
@@ -564,7 +564,7 @@ void TestKnownBugsPdfFiles::ownerPasswordOnlyPdfSavesPageOperation() {
     QVERIFY(first.width() > first.height());
 }
 
-// T-92: In-place Save deletes the file before replacing it, breaks symlinks, and resets permissions
+// todo/2026-10-15-save-not-atomic: In-place Save deletes the file before replacing it, breaks symlinks, and resets permissions
 void TestKnownBugsPdfFiles::saveThroughSymlinkUpdatesTargetAndKeepsLink() {
 #ifdef Q_OS_WIN
     QSKIP("Needs POSIX symlinks");
@@ -582,10 +582,10 @@ void TestKnownBugsPdfFiles::saveThroughSymlinkUpdatesTargetAndKeepsLink() {
     doc.annotations()->add(redRectangle(false));
     QVERIFY(doc.save());
 
-    QEXPECT_FAIL("", "T-92: Save replaces the symlink with a regular file", Continue);
+    QEXPECT_FAIL("", "todo/2026-10-15-save-not-atomic: Save replaces the symlink with a regular file", Continue);
     QVERIFY(QFileInfo(link).isSymLink());
     const QStringList target = annotationSubtypes(real);
-    QEXPECT_FAIL("", "T-92: Save leaves the symlink's target unchanged", Abort);
+    QEXPECT_FAIL("", "todo/2026-10-15-save-not-atomic: Save leaves the symlink's target unchanged", Abort);
     QVERIFY2(target.contains(QStringLiteral("/Square")),
              qPrintable(QStringLiteral("target annotations: [%1]").arg(target.join(u','))));
 #endif
@@ -597,7 +597,7 @@ void TestKnownBugsPdfFiles::saveKeepsFileMode_data() {
     QTest::newRow("0664") << 0664;
 }
 
-// T-92: In-place Save deletes the file before replacing it, breaks symlinks, and resets permissions
+// todo/2026-10-15-save-not-atomic: In-place Save deletes the file before replacing it, breaks symlinks, and resets permissions
 void TestKnownBugsPdfFiles::saveKeepsFileMode() {
 #ifdef Q_OS_WIN
     QSKIP("Needs POSIX file modes");
@@ -621,8 +621,8 @@ void TestKnownBugsPdfFiles::saveKeepsFileMode() {
     QVERIFY(doc.save());
     QVERIFY(annotationSubtypes(path).contains(QStringLiteral("/Square")));
 
-    QEXPECT_FAIL("0600", "T-92: Save recreates the file with the default mode", Abort);
-    QEXPECT_FAIL("0664", "T-92: Save recreates the file with the default mode", Abort);
+    QEXPECT_FAIL("0600", "todo/2026-10-15-save-not-atomic: Save recreates the file with the default mode", Abort);
+    QEXPECT_FAIL("0664", "todo/2026-10-15-save-not-atomic: Save recreates the file with the default mode", Abort);
     QCOMPARE(fileMode(path), expected);
 #endif
 }
@@ -633,7 +633,7 @@ void TestKnownBugsPdfFiles::printIncludesAnnotations_data() {
     QTest::newRow("unsaved") << false;
 }
 
-// T-95: Print leaves out annotations
+// todo/2026-10-15-print-drops-annotations: Print leaves out annotations
 void TestKnownBugsPdfFiles::printIncludesAnnotations() {
 #if defined(Q_OS_WIN) || defined(Q_OS_MACOS)
     QSKIP("The print dialog is native here and cannot be answered from a test");
@@ -663,8 +663,8 @@ void TestKnownBugsPdfFiles::printIncludesAnnotations() {
     QVERIFY(countPixels(page, isInk) > 100); // the page's own text
     const int red = countPixels(page, isRed);
     const double area = mark.bounds.width() * mark.bounds.height();
-    QEXPECT_FAIL("saved", "T-95: print renders pages without their annotations", Abort);
-    QEXPECT_FAIL("unsaved", "T-95: print leaves out marks that are not saved yet", Abort);
+    QEXPECT_FAIL("saved", "todo/2026-10-15-print-drops-annotations: print renders pages without their annotations", Abort);
+    QEXPECT_FAIL("unsaved", "todo/2026-10-15-print-drops-annotations: print leaves out marks that are not saved yet", Abort);
     QVERIFY2(
         red >= area / 2,
         qPrintable(QStringLiteral("%1 red pixels printed; the mark covers %2").arg(red).arg(area)));
@@ -678,7 +678,7 @@ void TestKnownBugsPdfFiles::viewShowsUnmanagedAnnotationTypes_data() {
     QTest::newRow("polygon") << false << kPolygonRect;
 }
 
-// T-94: Annotation types Trailer doesn't manage are invisible
+// todo/2026-10-15-foreign-annotations-invisible: Annotation types Trailer doesn't manage are invisible
 void TestKnownBugsPdfFiles::viewShowsUnmanagedAnnotationTypes() {
     QFETCH(bool, stamp);
     QFETCH(QRectF, rect);
@@ -711,15 +711,15 @@ void TestKnownBugsPdfFiles::viewShowsUnmanagedAnnotationTypes() {
     const double drawnArea = area * (page.width() / 612.0) * (page.width() / 612.0);
 
     const int red = countPixels(grab, isRed);
-    QEXPECT_FAIL("stamp", "T-94: the view renders pages without annotation appearances", Abort);
-    QEXPECT_FAIL("polygon", "T-94: the view renders pages without annotation appearances", Abort);
+    QEXPECT_FAIL("stamp", "todo/2026-10-15-foreign-annotations-invisible: the view renders pages without annotation appearances", Abort);
+    QEXPECT_FAIL("polygon", "todo/2026-10-15-foreign-annotations-invisible: the view renders pages without annotation appearances", Abort);
     QVERIFY2(red >= drawnArea / 2,
              qPrintable(QStringLiteral("%1 red pixels in the view; the appearance covers %2")
                             .arg(red)
                             .arg(drawnArea)));
 }
 
-// T-94: Annotation types Trailer doesn't manage are invisible
+// todo/2026-10-15-foreign-annotations-invisible: Annotation types Trailer doesn't manage are invisible
 void TestKnownBugsPdfFiles::saveKeepsUnmanagedAnnotationTypes() {
     // Save keeps them in the file. Passes today.
     QTemporaryDir dir;

@@ -39,7 +39,7 @@
 #    open is real, not a reproduction.
 #
 # BOUNDARY: the macOS-native no-window / Dock-reopen behaviour and ⌘-key
-# specifics need a real Mac (T-52); this tier proves the cross-platform
+# specifics need a real Mac (todo/2026-10-15-real-desktop-checks); this tier proves the cross-platform
 # openFiles() reuse guard under a real WM.
 set -uo pipefail
 export PATH_NAME="empty-window-reuse"

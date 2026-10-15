@@ -516,7 +516,7 @@ else
     # Informational only — NEVER fails the build. The check above confirms
     # AppIcon exists in the compiled catalog; it does NOT confirm the dark
     # luminosity variant survived compilation. The 2026-07-31 investigation
-    # (TODO.md T-63) found that actool's app-icon compile path can
+    # (todo/2026-10-15-dock-icon-dark-mode) found that actool's app-icon compile path can
     # substitute its own generated icon in place of the source .xcassets
     # bitmaps under conditions that are not fully documented — so "the
     # source .xcassets has a dark variant" (true today, see
@@ -532,7 +532,7 @@ else
         echo "    (info) compiled catalog also mentions a dark/luminosity marker"
     else
         echo "    (info) compiled catalog does NOT visibly mention dark/luminosity —"
-        echo "           see TODO.md T-63"
+        echo "           see todo/2026-10-15-dock-icon-dark-mode"
     fi
 fi
 

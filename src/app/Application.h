@@ -410,7 +410,7 @@ class Application : public QApplication {
     // PROMPTED, never silently dropped — and caches the result here so the
     // capture pass does not re-serialize. Cleared at the start of every
     // KeepWindows quit so a stale pointer can never be reused.
-    // T-61: ⌥⌘Q should keep a PDF with page edits plus a pending redaction.
+    // todo/2026-10-15-quit-keep-windows-prompts: ⌥⌘Q should keep a PDF with page edits plus a pending redaction.
     mutable QHash<IDocument *, QByteArray> m_keepStructuralSnapshotCache;
     // Test seams — see the *ForTesting setters. m_performQuit defaults to
     // QCoreApplication::quit; m_quitKeepsWindowsProbe defaults to the

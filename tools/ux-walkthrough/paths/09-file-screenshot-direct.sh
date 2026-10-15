@@ -52,7 +52,7 @@
 #   the submenu-open state, and whatever results (a captured document, or the
 #   post-trigger state), and marks a documented boundary instead of failing when
 #   no capture document appears. The macOS native /usr/sbin/screencapture path
-#   and its TCC "Screen Recording" prompt need a real Mac (TODO.md T-52).
+#   and its TCC "Screen Recording" prompt need a real Mac (todo/2026-10-15-real-desktop-checks).
 set -uo pipefail
 export PATH_NAME="file-screenshot-direct"
 # shellcheck source=../lib/harness.sh
