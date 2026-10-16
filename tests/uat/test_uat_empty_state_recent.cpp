@@ -2,8 +2,7 @@
 //
 // Drives Application + MainWindow in-process under
 // QT_QPA_PLATFORM=offscreen to exercise the empty-state welcome
-// surface's inline Open Recent list (backlog
-// 2026-07-12-empty-state-open-recent-list):
+// surface's inline Open Recent list:
 //   - After files have been opened, the empty state exposes an inline
 //     recent list populated from the RecentFiles model, one entry per
 //     recent file, each labelled with its display name.
@@ -12,14 +11,10 @@
 //   - When there are no recent files, the recent section is hidden — no
 //     empty placeholder (no-lying-controls / no-empty-affordance).
 //
-// A separate evidence slot writes curated before/after grab() PNGs of
-// the SAME window (empty recents vs populated) to
-// $TRAILER_WELCOME_EVIDENCE_DIR when set — the G2 UX-Done artifact.
-// Unset, that slot still asserts the wired behaviour like the rest.
-//
-// This is a NEW harness file (not an edit to test_uat_empty_state.cpp)
-// to avoid colliding with the open PR #95, which also touches the shared
-// empty-state harness.
+// A separate evidence slot writes before/after grab() PNGs of the SAME
+// window (empty recents vs populated) to $TRAILER_WELCOME_EVIDENCE_DIR
+// when set; they are local files, not committed. Unset, that slot still
+// asserts the wired behaviour like the rest.
 //
 // Mirrors the custom-main + HOME-sandbox + init() scaffolding of
 // test_uat_empty_state.cpp so Settings/RecentFiles write into a
@@ -218,10 +213,10 @@ void TestUatEmptyStateRecent::uat_empty_recent_030_noRecentsHidesSection() {
     QCOMPARE(empty->recentEntryCount(), 0);
 }
 
-// G2 before/after evidence: the SAME window with an empty recents model
-// (no list — the pre-change look) and after recents are populated (the
-// inline list appears). Writes PNGs only when $TRAILER_WELCOME_EVIDENCE_DIR
-// is set; otherwise it still asserts the state transition.
+// Before/after screenshots of the SAME window with an empty recents model
+// (no list) and after recents are populated (the inline list appears).
+// Writes uncommitted PNGs only when $TRAILER_WELCOME_EVIDENCE_DIR is set;
+// otherwise it still asserts the state transition.
 void TestUatEmptyStateRecent::uat_empty_recent_090_beforeAfterEvidence() {
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);

@@ -10,9 +10,8 @@ class QActionGroup;
 
 namespace trailer {
 
-// Lightweight toolbar for filling PDFs that lack real AcroForm fields.
-// Per DESIGN.md §6.4: "a 'Text Box' tool that lets the user place a
-// text box for free-typing on PDFs that lack proper form fields."
+// Lightweight toolbar for filling PDFs that lack real AcroForm fields: its
+// Text Box tool places a text box the user free-types into.
 //
 // Separate from MarkupToolbar so "filling" and "marking up" stay
 // conceptually distinct in the UI — a user can show only this toolbar
@@ -39,9 +38,6 @@ class FormToolbar : public QToolBar {
     // doc->setAnnotationTool(tool) and prime doc->setPendingText(text)
     // so the next click on the canvas drops the correct glyph.
     void toolChanged(AnnotationTool tool, const QString &pendingText);
-    // Emitted when the user clicks "AutoFill" — wired to the
-    // AutoFill-cards feature. Handled in MainWindow.
-    void autoFillRequested();
     // Emitted when the user clicks "Sign Here" — wired to the Sign
     // tool feature (pick saved signature, place, flatten).
     // `anchorGlobalPos` is the screen-space position the receiver
@@ -66,7 +62,6 @@ class FormToolbar : public QToolBar {
     QActionGroup *m_group = nullptr;
     AnnotationTool m_tool = AnnotationTool::None;
     QString m_pendingText;
-    QAction *m_autoFillAction = nullptr;
     QAction *m_signHereAction = nullptr;
 };
 

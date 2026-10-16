@@ -22,8 +22,8 @@ std::optional<Settings::Volatility> Settings::volatilityOf(QAnyStringView key) {
     // (exact dotted path) or be covered by a prefix rule below; the
     // registry-completeness test (tests/test_settings_volatility.cpp)
     // walks a saved settings.toml and asserts every leaf key resolves.
-    // All current keys are Live — the machinery only bites once a
-    // RestartRequired key is introduced. See docs/CONVENTIONS.md §15.
+    // A key whose consumer reads it once at startup must be RestartRequired,
+    // so Preferences shows a restart hint instead of silently ignoring edits.
     struct Entry {
         QLatin1StringView key;
         Volatility volatility;

@@ -1,5 +1,4 @@
-// macOS backend for the UX recorder (see UxPlatformCapture.h and
-// docs/ux-recorder.md):
+// macOS backend for the UX recorder (see UxPlatformCapture.h and README.md):
 //
 //   screen   ScreenCaptureKit display stream → JPEG frame sequence
 //            under screen/, retained only while Trailer or Preview is
@@ -454,7 +453,7 @@ void MacUxPlatformCapture::onShareableContent(SCShareableContent *content, NSErr
     // is far more robust (no re-filtering when windows are created or
     // closed) at the cost of including third-party windows that
     // overlap the screen while Trailer/Preview is frontmost — fine for
-    // a private developer recorder; documented in docs/ux-recorder.md.
+    // a private developer recorder; documented in README.md.
     SCDisplay *display = content.displays.firstObject;
     const CGDirectDisplayID mainId = CGMainDisplayID();
     for (SCDisplay *candidate in content.displays) {
@@ -896,8 +895,8 @@ void MacUxPlatformCapture::handleTapEvent(CGEventType type, CGEventRef event) {
         return;
     }
     const int front = m_front.load();
-    // Only retain global-tap input while *Preview* is frontmost
-    // (UXR-004). While Trailer is frontmost the Qt-side capture already
+    // Only retain global-tap input while *Preview* is frontmost.
+    // While Trailer is frontmost the Qt-side capture already
     // records the same input WITH widget context, so a tap copy here
     // would be a redundant second source:"macos" pointer/key stream and
     // a double-counting trap for analysis. While any unrelated app is
@@ -996,7 +995,7 @@ std::unique_ptr<UxPlatformCapture> createUxPlatformCapture(UxCaptureContext cont
     return std::make_unique<MacUxPlatformCapture>(std::move(context));
 }
 
-// UXR-001 startup gate helpers. Read-only check + (separately) the
+// Startup gate helpers. Read-only check + (separately) the
 // system request, kept apart so the normal preflight never pops a
 // prompt; see UxPlatformCapture.h.
 bool uxScreenRecordingGranted() {

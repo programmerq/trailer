@@ -80,17 +80,14 @@ void applySwatch(QToolButton *btn, QColor c) {
 
 } // namespace
 
-// G10 (deference): no visible "Inspector" caption — same defect class, and
-// same fix, as Sidebar's "Sidebar" caption (Sidebar.cpp; DR
-// 2026-07-31-dock-panel-labels-removed-accessible-names-kept; filed as
-// backlog item docs/backlog/2026-07-31-inspector-dock-title-names-itself.md
-// by the concurrent G10 audit, PR #134, closed here). windowTitle() stays
-// "Inspector" (below, unchanged) — a QDockWidget's built-in accessibility
-// interface reads it directly for the screen-reader name and does NOT fall
-// back to accessibleName() the way most widgets do (verified empirically;
-// see Sidebar.cpp's constructor comment for the full explanation) — and
-// only the painted caption is replaced, via the same
-// buildTextlessDockTitleBar() helper Sidebar uses (IconHelper.{h,cpp}).
+// No visible "Inspector" caption: a panel labelled with its own name is
+// chrome announcing itself (same fix as Sidebar's "Sidebar" caption, see
+// Sidebar.cpp). windowTitle() stays "Inspector" (below, unchanged) — a
+// QDockWidget's built-in accessibility interface reads it directly for the
+// screen-reader name and does NOT fall back to accessibleName() the way most
+// widgets do (verified empirically; see Sidebar.cpp's constructor comment
+// for the full explanation) — and only the painted caption is replaced, via
+// the same buildTextlessDockTitleBar() helper Sidebar uses (IconHelper.{h,cpp}).
 // Inspector, unlike Sidebar, keeps Qt's DEFAULT dock features (this class
 // never called setFeatures()), which include DockWidgetFloatable, so the
 // shared helper also gives it a float button — full parity with the native
@@ -159,8 +156,8 @@ Inspector::Inspector(QWidget *parent) : QDockWidget(tr("Inspector"), parent) {
         // the dialog (auto-save, queued changed-slot, undo coalescing, etc.)
         // can reallocate the vector and dangle the pointer. Reading initial
         // up front and re-fetching after the dialog closes is the safe
-        // pattern. UAT-ANN-130 pins this; the 2026-05-20 HITL pass surfaced
-        // the symptom (rectangle vanishes after a Stroke colour pick).
+        // pattern. UAT-ANN-130 pins this (symptom: the rectangle vanished
+        // after a Stroke colour pick).
         const int id = m_id;
         QColor initial;
         if (const Annotation *a = m_store->find(id))
@@ -455,7 +452,7 @@ void Inspector::rebuildDocumentInfo() {
     }
     // Use hasUnsavedWork() (not isDirty()) so this matches the title-bar "•"
     // and the close-prompt predicate: a CLEAN doc whose backing file was
-    // externally deleted (CF-7) has unsaved work and must read as Modified,
+    // externally deleted has unsaved work and must read as Modified,
     // not "Clean" — the Inspector would otherwise contradict the title.
     m_docDirtyLabel->setText(m_doc->hasUnsavedWork() ? tr("Modified") : tr("Clean"));
 }

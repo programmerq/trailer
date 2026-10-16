@@ -1,9 +1,8 @@
-// UAT harness — Instant Alpha + Smart Lasso (Phase 6 §6.3.3 / §6.3.6,
-// DESIGN §6.1.5).
+// UAT harness — Instant Alpha + Smart Lasso.
 //
-// Workstream G moved both features out of the modal `SamSegmentDialog`
-// into in-document tool modes on the markup toolbar's overlay. The
-// harness now drives the AnnotationOverlay + SamController directly.
+// Both features are in-document tool modes on the markup toolbar's
+// overlay, not a modal dialog, so the harness drives the
+// AnnotationOverlay + SamController directly.
 //
 //   uat_sam_010_instantAlphaMenuActionWired
 //       Tools → Instant Alpha… exists and is enabled for an image

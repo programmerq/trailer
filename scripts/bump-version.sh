@@ -32,8 +32,8 @@
 #   scripts/bump-version.sh set X.Y.Z[-suffix]
 #       Set VERSION explicitly. Last-resort escape hatch.
 #
-# Trailer follows SemVer (with 0.x caveats — see PHILOSOPHY.md "What
-# 1.0 means" and RELEASING.md "Version numbering"). This script does
+# Trailer follows SemVer (with 0.x caveats — see RELEASING.md
+# "Version numbering"). This script does
 # not pick which bump to apply — that's a release-time human
 # decision. It only enforces correctness once you've decided.
 #

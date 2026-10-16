@@ -1,15 +1,15 @@
 // Regression guard for inline validation in the "Export as Password-Protected
-// PDF" dialog (backlog 2026-07-15-password-export-inline-validation). The
-// earlier flow accepted any input and popped a QMessageBox::warning on
-// mismatch/empty, throwing away the already-chosen destination. The new
-// dialog validates inline: OK is disabled until both fields are non-empty and
-// equal, with a hint (and matching tooltip) explaining why.
+// PDF" dialog. The earlier flow accepted any input and popped a
+// QMessageBox::warning on mismatch/empty, throwing away the already-chosen
+// destination. The new dialog validates inline: OK is disabled until both
+// fields are non-empty and equal, with a hint (and matching tooltip)
+// explaining why.
 //
-// Threshold (G1, from the backlog item): the OK button is disabled until both
+// Threshold: the OK button is disabled until both
 // password fields are non-empty and equal, with an inline hint explaining
 // why. Mismatched/empty passwords cannot be submitted.
 //
-// Setting TRAILER_GRAB_DIR makes the test also write offscreen G2 evidence
+// Setting TRAILER_GRAB_DIR makes the test also write offscreen evidence
 // grabs of each validation state.
 
 #include "ui/PasswordExportDialog.h"
@@ -113,9 +113,9 @@ void TestPasswordExportDialog::okTracksValidityLive() {
 
 void TestPasswordExportDialog::hintMirroredInOkTooltip() {
     trailer::PasswordExportDialog dlg;
-    // While disabled, the OK button carries the "why" as a tooltip (G3).
+    // While disabled, the OK button carries the "why" as a tooltip.
     QVERIFY2(!dlg.okButton()->toolTip().isEmpty(),
-             "disabled OK must carry a tooltip explaining why (G3)");
+             "disabled OK must carry a tooltip explaining why");
     QCOMPARE(dlg.okButton()->toolTip(), dlg.hintLabel()->text());
     // When valid, there is nothing to explain -> tooltip clears.
     dlg.passwordEdit()->setText(QStringLiteral("pw"));

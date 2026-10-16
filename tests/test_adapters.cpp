@@ -178,9 +178,9 @@ class TestAdapters : public QObject {
     void recognizeTextSkipsDialogForSinglePage();
     // Item C — honest completion feedback.
     void ocrBatchWithZeroBlocksReportsNoTextFound();
-    // Page-changed signal (backlog 2026-07-12-page-changed-signal-no-poll):
-    // PdfDocument exposes a real page-changed signal via PageChangeNotifier,
-    // and single-frame image documents expose none.
+    // Page-changed signal: PdfDocument exposes a real page-changed signal
+    // via PageChangeNotifier (no polling), and single-frame image documents
+    // expose none.
     void pdfDocumentPageChangeNotifierFiresOnPageChange();
     void imageDocumentHasNoPageChangeNotifier();
 };
@@ -286,8 +286,8 @@ void TestAdapters::imageDocumentZoomResizesPixmap() {
 
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
     QVERIFY(view != nullptr);
-    // Staged open (ADR 0008): createView paints a placeholder and the real
-    // pixmap swaps in off-thread. Await the swap before reading the pixmap.
+    // Staged open: createView paints a placeholder and the real pixmap swaps
+    // in off-thread. Await the swap before reading the pixmap.
     QVERIFY(doc.awaitDecodeForTest());
 
     // Find the QLabel inside the QScrollArea that owns the pixmap.
@@ -323,15 +323,15 @@ void TestAdapters::imageDocumentStagedOpenShowsLoadingPlaceholder() {
     auto *label = qobject_cast<QLabel *>(scroll->widget());
     QVERIFY(label != nullptr);
 
-    // Staged open (ADR 0008): the window is drawn from the header hint but the
-    // placeholder starts BLANK — no pixmap and no text during the grace window.
+    // Staged open: the window is drawn from the header hint but the placeholder
+    // starts BLANK — no pixmap and no text during the grace window.
     QVERIFY2(label->pixmap().isNull(), "placeholder must not show a decoded pixmap yet");
     QVERIFY2(label->text().isEmpty(), "placeholder text must be deferred (blank grace window)");
     QVERIFY2(doc.placeholderTextTimerActiveForTest(), "the grace timer must be pending");
 
     // Once the grace elapses (simulated) while the decode is still in flight,
     // the honest "Loading image…" text appears — a visible loading state, not a
-    // blank/stub the user could mistake for an empty or broken file (G3).
+    // blank/stub the user could mistake for an empty or broken file.
     doc.triggerPlaceholderTextTimerForTest();
     QVERIFY2(label->text().contains(QStringLiteral("Loading")),
              qPrintable(QStringLiteral("expected a loading placeholder, got text '%1'")
@@ -433,7 +433,7 @@ void TestAdapters::imageDocumentDecodeFailureReportsNoCapabilities() {
 
     // Capabilities MUST now be honest: a null decoded image is not
     // zoomable/editable/searchable and has no page. Otherwise the controls
-    // would stay enabled-but-inert against a null image (G3 — lying controls).
+    // would stay enabled-but-inert against a null image (lying controls).
     QVERIFY2(!doc.supportsZoom(), "failed decode must not report zoom support");
     QVERIFY2(!doc.supportsEditing(), "failed decode must not report edit support");
     QVERIFY2(!doc.supportsThumbnails(), "failed decode must not report thumbnails");
@@ -593,10 +593,10 @@ void TestAdapters::pdfDocumentAcceptsSearchQueryWithoutView() {
     missing.clearSearch();
 }
 
-// R2/backlog 2026-07-13: pageHasText() is a real per-page probe — true
-// for a born-digital page, false for a text-less (blank/scanned) page.
-// This is the guard that keeps the Recognize-text notice off text-layer
-// docs, distinct from the coarse hasTextLayer() capability stub.
+// pageHasText() is a real per-page probe — true for a born-digital page,
+// false for a text-less (blank/scanned) page. This is the guard that keeps
+// the Recognize-text notice off text-layer docs, distinct from the coarse
+// hasTextLayer() capability stub.
 void TestAdapters::pdfDocumentPageHasTextDistinguishesTextFromBlankPage() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -1117,9 +1117,9 @@ void TestAdapters::imageDocumentExportAsJpegWritesFile() {
     QVERIFY(!reloaded.isNull());
 }
 
-// Regression guard for the HITL ask "File > Export as PDF for image
-// documents." An image must export as a genuine, openable one-page
-// PDF (the "I have a photo of the form but my CPA wants a PDF" flow).
+// Regression guard: File > Export as PDF works for image documents. An
+// image must export as a genuine, openable one-page PDF (the "I have a
+// photo of the form but my CPA wants a PDF" flow).
 void TestAdapters::imageDocumentExportsImageAsSinglePagePdf() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());
@@ -1515,8 +1515,8 @@ void TestAdapters::imageDocumentZoomFitPageEntersFitInViewMode() {
 
     ImageDocument doc(path);
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
-    // Staged open (ADR 0008): await the off-thread decode swap before the
-    // fit math, which needs the decoded image size.
+    // Staged open: await the off-thread decode swap before the fit math,
+    // which needs the decoded image size.
     QVERIFY(doc.awaitDecodeForTest());
     auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
@@ -1539,7 +1539,7 @@ void TestAdapters::imageDocumentZoomFitWidthEntersFitToWidthMode() {
 
     ImageDocument doc(path);
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
-    QVERIFY(doc.awaitDecodeForTest()); // ADR 0008: await the off-thread decode swap
+    QVERIFY(doc.awaitDecodeForTest()); // await the off-thread decode swap
     auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(500, 100);
@@ -1558,7 +1558,7 @@ void TestAdapters::imageDocumentExplicitZoomReturnsToCustomMode() {
 
     ImageDocument doc(path);
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
-    QVERIFY(doc.awaitDecodeForTest()); // ADR 0008: await the off-thread decode swap
+    QVERIFY(doc.awaitDecodeForTest()); // await the off-thread decode swap
     auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(200, 200);
@@ -1595,7 +1595,7 @@ void TestAdapters::imageDocumentZoomInStepsByQuarter() {
     ImageDocument doc(path);
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
     QVERIFY(view != nullptr);
-    QVERIFY(doc.awaitDecodeForTest()); // ADR 0008: await the off-thread decode swap
+    QVERIFY(doc.awaitDecodeForTest()); // await the off-thread decode swap
 
     doc.zoomActual();
     QVERIFY(qFuzzyCompare(doc.scaleFactor(), 1.0));
@@ -1637,7 +1637,7 @@ void TestAdapters::imageDocumentReapplyFitModeRefitsOnResize() {
 
     ImageDocument doc(path);
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
-    QVERIFY(doc.awaitDecodeForTest()); // ADR 0008: await the off-thread decode swap
+    QVERIFY(doc.awaitDecodeForTest()); // await the off-thread decode swap
     auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(200, 200);
@@ -1675,10 +1675,9 @@ void TestAdapters::pdfViewReflowsOnResizeInFitInView() {
 
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
     QVERIFY(view != nullptr);
-    // Since the two-page AUGMENT wiring (decision record
-    // 2026-07-21-two-page-layout, D1-A), createView returns a QStackedWidget
-    // hosting the QPdfView (Single/Continuous) and the custom TwoPageView, so
-    // reach the QPdfView by search rather than by casting the returned widget.
+    // createView returns a QStackedWidget hosting the QPdfView
+    // (Single/Continuous) and the custom TwoPageView, so reach the QPdfView by
+    // search rather than by casting the returned widget.
     auto *pdfView = view->findChild<QPdfView *>();
     QVERIFY2(pdfView != nullptr, "expected createView to host a QPdfView");
 
@@ -1757,8 +1756,8 @@ void TestAdapters::pdfDownArrowStepsPageImmediatelyInFitMode() {
     doc.setViewMode(ViewMode::SinglePage);
 
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
-    // createView returns a QStackedWidget wrapping the QPdfView since the
-    // two-page AUGMENT wiring (D1-A); find the QPdfView within it.
+    // createView returns a QStackedWidget wrapping the QPdfView and the
+    // TwoPageView; find the QPdfView within it.
     auto *pdfView = view->findChild<QPdfView *>();
     QVERIFY(pdfView != nullptr);
     // Show/resize through the wrapping QStackedWidget so its stacked layout
@@ -1810,7 +1809,7 @@ void TestAdapters::imageDocumentResizeDoesNothingInCustomMode() {
 
     ImageDocument doc(path);
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
-    QVERIFY(doc.awaitDecodeForTest()); // ADR 0008: await the off-thread decode swap
+    QVERIFY(doc.awaitDecodeForTest()); // await the off-thread decode swap
     auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(200, 200);
@@ -1839,7 +1838,7 @@ void TestAdapters::imageDocumentResizeEventTriggersRefit() {
 
     ImageDocument doc(path);
     std::unique_ptr<QWidget> view(doc.createView(nullptr));
-    QVERIFY(doc.awaitDecodeForTest()); // ADR 0008: await the off-thread decode swap
+    QVERIFY(doc.awaitDecodeForTest()); // await the off-thread decode swap
     auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(400, 200);
@@ -1865,8 +1864,8 @@ void TestAdapters::imageDocumentResizeEventTriggersRefit() {
                             .arg(scaleAfter)));
 }
 
-// Regression guard for the unified chronological undo log (roadmap
-// Now #4). Interleaving a qpdf page op, an annotation edit, then another
+// Regression guard for the unified chronological undo log.
+// Interleaving a qpdf page op, an annotation edit, then another
 // page op must undo in strict reverse-chronological order — the old
 // most-recently-touched-stack heuristic undid both page ops first and
 // the annotation last, so after two undos the document was in a state
@@ -2445,11 +2444,11 @@ void TestAdapters::ocrBatchWithZeroBlocksReportsNoTextFound() {
              QStringLiteral("Text recognition cancelled — no changes saved"));
 }
 
-// Backlog 2026-07-12-page-changed-signal-no-poll (1): PdfDocument fires a real
-// page-changed signal on every current-page change. The former 150 ms polls in
-// MainWindow and the Sidebar are replaced by connecting to this notifier, so it
-// must fire (with the new page index) when the page moves — here via goToPage(),
-// which routes through the same navigator jump the keyboard/thumbnail paths use.
+// PdfDocument fires a real page-changed signal on every current-page change.
+// The former 150 ms polls in MainWindow and the Sidebar are replaced by
+// connecting to this notifier, so it must fire (with the new page index) when
+// the page moves — here via goToPage(), which routes through the same
+// navigator jump the keyboard/thumbnail paths use.
 void TestAdapters::pdfDocumentPageChangeNotifierFiresOnPageChange() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

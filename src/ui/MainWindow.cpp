@@ -12,18 +12,15 @@
 #include "CropPagesDialog.h"
 #include "IconHelper.h"
 #include "MarkupToolbar.h"
-#include "MyCardDialog.h"
 #include "PasswordExportDialog.h"
 #include "PreferencesDialog.h"
 #include "SignaturePicker.h"
 #include "SignaturesDialog.h"
 #include "FeedbackDialog.h"
 #include "FileChangeBanner.h"
-#include "cards/CardStore.h"
-#include "cards/MyCard.h"
 #include "document/ExternalChangeMonitor.h"
 #include "document/PdfAdapter.h"
-#include "document/PdfEditor.h" // FormField definition for AutoFill
+#include "document/PdfEditor.h"
 #include "SearchBar.h"
 #include "Sidebar.h"
 #include "annotation/AnnotationStore.h"
@@ -113,34 +110,33 @@ namespace trailer {
 
 // Defined in the anonymous namespace further down; forward-declared so the
 // missing-model hint's Install link (wired in the constructor) can reach the
-// shared one-time-consent download flow (ADR 0002 §3).
+// shared one-time-consent download flow.
 namespace {
 bool ensureOcrModelsReady(MainWindow *parent, OcrEngine &engine);
 
 // Class-targeted stylesheet that pins the built-in QToolBar overflow
 // chevron (objectName qt_toolbar_ext_button) to a fixed width so
-// toggling the "show more" popup never reflows adjacent widgets
-// (ADR 0007, Option A, R2). 20px matches the toolbars' 18px iconSize.
+// toggling the "show more" popup never reflows adjacent widgets.
+// 20px matches the toolbars' 18px iconSize.
 QString kToolbarExtensionPinStyle() {
     return QStringLiteral(
         "QToolBarExtension#qt_toolbar_ext_button { min-width: 20px; max-width: 20px; }");
 }
 
-// G10 (spatial constancy, AGENTS.md; SC-CRIT-1,
-// docs/audit-2026-07-31-g10-deference.md): QStatusBar::addPermanentWidget()
-// packs every permanent widget into ONE right-anchored box layout, so any
-// member's width changing -- including a hide/show collapsing it to or from
-// zero -- shifts every OTHER member, regardless of insertion order. This is
-// the exact mechanism the m_zoomIndicator floating-overlay fix documents at
-// its own construction site (DR 2026-07-31-transient-zoom-readout): that
-// fix removed ONE widget (the zoom readout) from the chain by floating it,
-// but the remaining permanent widgets -- m_mlIndicator, the large-doc/
-// missing-model OCR hints, m_readOnlyBadge, m_mlProgress -- still toggle
-// independently of each other (ML activity, OCR-hint dismissal, Two-Pages
-// mode, OCR batch progress), so any one can nudge a sibling the user is
-// looking at. Concretely: switching to Two-Pages while an OCR batch runs
-// slid the ML progress bar's Cancel button sideways -- a control the user
-// may be mid-click on.
+// Controls must not move when unrelated state changes, but
+// QStatusBar::addPermanentWidget() packs every permanent widget into ONE
+// right-anchored box layout, so any member's width changing -- including a
+// hide/show collapsing it to or from zero -- shifts every OTHER member,
+// regardless of insertion order. This is the exact mechanism the
+// m_zoomIndicator floating-overlay fix documents at its own construction
+// site: that fix removed ONE widget (the zoom readout) from the chain by
+// floating it, but the remaining permanent widgets -- m_mlIndicator, the
+// large-doc/missing-model OCR hints, m_readOnlyBadge, m_mlProgress -- still
+// toggle independently of each other (ML activity, OCR-hint dismissal,
+// Two-Pages mode, OCR batch progress), so any one can nudge a sibling the
+// user is looking at. Concretely: switching to Two-Pages while an OCR batch
+// runs slid the ML progress bar's Cancel button sideways -- a control the
+// user may be mid-click on.
 //
 // Fix: wrap each permanent widget in a fixed-width slot that is ALWAYS
 // present in the status bar's layout (added once here, never itself
@@ -175,6 +171,10 @@ QString kToolbarExtensionPinStyle() {
 // permanent-widget region exactly as it did before this change.
 QWidget *reserveStatusBarSlot(QWidget *content, int width) {
     auto *slot = new QWidget(content->parentWidget());
+    // Named "<content>.slot" for the chrome census and constancy sweep
+    // (tests/uat/): the slot, not its content, is always visible.
+    if (!content->objectName().isEmpty())
+        slot->setObjectName(content->objectName() + QStringLiteral(".slot"));
     slot->setFixedWidth(width);
     auto *layout = new QHBoxLayout(slot);
     layout->setContentsMargins(0, 0, 0, 0);
@@ -302,7 +302,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // same Save/Discard/Cancel flow as closeEvent) for dirty docs AND for
     // untitled docs (content-bearing but backed only by a transient temp
     // file — clean yet unsaved to any real location, so closing silently
-    // would lose the pasted/acquired content; ADR-0004). A CLEAN, titled
+    // would lose the pasted/acquired content). A CLEAN, titled
     // doc is never prompted — that guard keeps never-worry-save and
     // auto-saved docs from nagging when nothing is lost. (Note: under the
     // recovery-sidecar model auto-save no longer clears dirty, so an
@@ -312,10 +312,10 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     connect(m_documentView, &DocumentView::documentCloseRequested, this,
             [this](IDocument *doc, bool *veto) {
                 // hasUnsavedWork() (not isDirty()) so a CLEAN doc whose backing
-                // file was DELETED on disk (buffer is the last copy — CF-7)
-                // still gets the Save/Discard/Cancel prompt instead of closing
-                // silently. isUntitled() keeps #78's prompt for a content-bearing
-                // untitled doc backed only by a transient temp file.
+                // file was DELETED on disk (buffer is the last copy) still gets
+                // the Save/Discard/Cancel prompt instead of closing silently.
+                // isUntitled() keeps the prompt for a content-bearing untitled
+                // doc backed only by a transient temp file.
                 if (doc && (doc->hasUnsavedWork() || doc->isUntitled())) {
                     *veto = !confirmCloseDirtyDoc(doc);
                 } else if (doc && !doc->filePath().isEmpty()) {
@@ -370,7 +370,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         // raw IDocument*. Without this flush both are left dangling the
         // instant a tab closes, and the next posted refresh/paint
         // dereferences freed memory — a hard SIGSEGV reachable by closing
-        // one tab of two. See docs/CONVENTIONS.md §13.
+        // one tab of two.
         if (m_sidebar) {
             m_sidebar->forgetDocument(doc);
         }
@@ -392,10 +392,9 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     auto *documentLayout = new QVBoxLayout(m_documentPage);
     documentLayout->setContentsMargins(0, 0, 0, 0);
     documentLayout->setSpacing(0);
-    // Non-modal file-change banner sits ABOVE the document view (ADR
-    // 2026-07-19). Hidden until an external change conflicts with unsaved
-    // edits or the file is deleted; a clean external change reloads silently
-    // and never shows it.
+    // Non-modal file-change banner sits ABOVE the document view. Hidden
+    // until an external change conflicts with unsaved edits or the file is
+    // deleted; a clean external change reloads silently and never shows it.
     m_fileChangeBanner = new FileChangeBanner(m_documentPage);
     m_fileChangeBanner->hide();
     documentLayout->addWidget(m_fileChangeBanner);
@@ -409,7 +408,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         auto *doc = m_documentView->currentDocument();
         if (!doc)
             return;
-        // "Keep mine" no longer writes to disk on click (ADR 2026-07-20). It
+        // "Keep mine" doesn't write to disk on click. It
         // resolves the conflict in the user's favour WITHOUT a silent write:
         // the (already-dirty) buffer is kept, and the load-time baseline is
         // refreshed to the current on-disk identity so the save-time guard now
@@ -508,12 +507,11 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_magnifier = new Magnifier(this);
 
     m_markupToolbar = new MarkupToolbar(this);
-    // Pin the overflow chevron to a fixed width (ADR 0007, Option A,
-    // R2). A class-targeted stylesheet is creation-timing-independent
-    // and, unlike setFixedSize on the instance, survives
-    // QToolBarLayout's per-relayout setGeometry — so toggling the
-    // "show more" popup never reflows the chevron's neighbours. 20px
-    // matches the toolbars' 18px iconSize.
+    // Pin the overflow chevron to a fixed width. A class-targeted
+    // stylesheet is creation-timing-independent and, unlike setFixedSize
+    // on the instance, survives QToolBarLayout's per-relayout setGeometry
+    // — so toggling the "show more" popup never reflows the chevron's
+    // neighbours. 20px matches the toolbars' 18px iconSize.
     m_markupToolbar->setStyleSheet(kToolbarExtensionPinStyle());
     addToolBar(Qt::TopToolBarArea, m_markupToolbar);
     m_markupToolbar->hide();
@@ -575,7 +573,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
             });
 
     m_formToolbar = new FormToolbar(this);
-    // Pin the form toolbar's overflow chevron too (ADR 0007, R2).
+    // Pin the form toolbar's overflow chevron too.
     m_formToolbar->setStyleSheet(kToolbarExtensionPinStyle());
     addToolBar(Qt::TopToolBarArea, m_formToolbar);
     // Force the form toolbar onto its own row so it never shares a
@@ -608,8 +606,6 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
                     doc->setPendingAnnotationText(pendingText);
                 }
             });
-    connect(m_formToolbar, &FormToolbar::autoFillRequested, this,
-            &MainWindow::onAutoFillCurrentForm);
     connect(m_formToolbar, &FormToolbar::signHereRequested, this, &MainWindow::onSignHere);
 
     buildMenus();
@@ -628,7 +624,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_mlIndicator->setFrameStyle(QFrame::StyledPanel | QFrame::Sunken);
     m_mlIndicator->setMargin(2);
     m_mlIndicator->setVisible(false);
-    // G10/SC-CRIT-1 (see reserveStatusBarSlot()'s and slotWidthFor()'s
+    // Fixed slot (see reserveStatusBarSlot()'s and slotWidthFor()'s
     // comments): reserves this label's own measured sizeHint ("ML" +
     // frame/margin, on whatever font THIS platform resolves) with a safety
     // buffer, so toggling it never nudges a sibling permanent widget, and
@@ -655,7 +651,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // current document has more pages than the auto-OCR pump will
     // handle (>50) and the visible page has no cached OCR results.
     // The chip's link triggers a UserAction OCR for the visible
-    // page. PHILOSOPHY: no popup that says "no" — this is the
+    // page. Never a popup that only says "no" — this is the
     // affordance to *do* the thing, not the modal that says we
     // didn't.
     auto *hint = new QWidget(this);
@@ -663,9 +659,9 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     auto *hintLayout = new QHBoxLayout(hint);
     hintLayout->setContentsMargins(0, 0, 0, 0);
     hintLayout->setSpacing(4);
-    // Benefit-first wording (ADR 0002 §3 / ADR 0006): the link routes
-    // through the same one-time-consent download flow the compliant
-    // paths use — no "model"/"OCR" jargon, no silent no-op.
+    // Benefit-first wording: the link routes through the same
+    // one-time-consent download flow the compliant paths use — no
+    // "model"/"OCR" jargon, no silent no-op.
     auto *hintLabel = new QLabel(tr("This page's text isn't selectable yet."), hint);
     auto *hintLink = new QLabel(
         tr("<a href=\"#recognize\">Recognize text on this page</a>"), hint);
@@ -676,7 +672,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         auto *doc = m_documentView->currentDocument();
         if (!doc || !doc->supportsSelectableText())
             return;
-        // Route through the sanctioned consent/download gate (ADR 0006):
+        // Route through the sanctioned consent/download gate:
         // mirror onRecognizeText and the compliant m_ocrModelMissingHint
         // handler rather than calling submitUserPages() directly (which
         // silently no-ops when the language model is absent). The test
@@ -695,7 +691,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         m_ocrController->submitUserPages(doc, {page}, /*forceRerun=*/false);
     });
     // Dismiss (×) affordance — a permanent status-bar widget with no way
-    // out reads as a stuck control (ADR 0006). Dismissal is per-document
+    // out reads as a stuck control. Dismissal is per-document
     // (reset on document change) so it stays hidden for the doc the user
     // dismissed it on but returns for the next document.
     auto *hintDismiss = new QToolButton(hint);
@@ -715,14 +711,13 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     hint->setVisible(false);
     m_largeDocOcrHint = hint;
 
-    // ADR 0002 §3: non-modal in-context hint shown when auto-OCR would run
-    // but the language model is absent. Benefit-first wording, no jargon;
-    // the link enters the sanctioned one-time-consent download flow (the
-    // only popup allowed here). State-driven via autoOcrModelMissing()
-    // (wired further down, once m_ocrController's other connections are in
-    // scope). Built immediately after m_largeDocOcrHint, not where ADR 0002
-    // originally placed it, because the two share ONE reserved status-bar
-    // slot below (SC-CRIT-1 / G10) and are easier to audit as a pair.
+    // Non-modal in-context hint shown when auto-OCR would run but the
+    // language model is absent. Benefit-first wording, no jargon; the link
+    // enters the sanctioned one-time-consent download flow (the only popup
+    // allowed here). State-driven via autoOcrModelMissing() (wired further
+    // down, once m_ocrController's other connections are in scope). Built
+    // immediately after m_largeDocOcrHint because the two share ONE
+    // reserved status-bar slot below and are easier to audit as a pair.
     m_ocrModelMissingHint = new QLabel(
         tr("This document's text isn't searchable — "
            "<a href=\"#install\">install language pack</a> to recognise it."),
@@ -751,7 +746,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         }
     });
 
-    // G10/SC-CRIT-1 (see reserveStatusBarSlot()'s and slotWidthFor()'s
+    // Shared slot (see reserveStatusBarSlot()'s and slotWidthFor()'s
     // comments above): one reserved slot hosts BOTH OCR hints rather than
     // one each. They are provably mutually exclusive
     // (OcrController::evaluateAutoOcrModel's `!isLargeDoc()` guard), so at
@@ -768,6 +763,8 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         qMax(hint->sizeHint().width(), m_ocrModelMissingHint->sizeHint().width()) +
         kSlotSafetyMargin;
     auto *ocrHintSlot = new QWidget(this);
+    // Named for the chrome census (tests/uat/test_uat_chrome_census.cpp).
+    ocrHintSlot->setObjectName(QStringLiteral("ocrHintSlot"));
     ocrHintSlot->setFixedWidth(kOcrHintSlotWidth);
     auto *ocrHintSlotLayout = new QHBoxLayout(ocrHintSlot);
     ocrHintSlotLayout->setContentsMargins(0, 0, 0, 0);
@@ -778,28 +775,25 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     statusBar()->addPermanentWidget(ocrHintSlot);
     refreshMlIndicator();
 
-    // TRANSIENT zoom-% HUD (DR 2026-07-31-transient-zoom-readout).
-    // Hidden at rest -- an explicit zoom action reveals it, then it
-    // fades back out. Driven by updateZoomIndicator() from the zoom
-    // actions and doc-changed path.
+    // TRANSIENT zoom-% HUD. Hidden at rest -- an explicit zoom action
+    // reveals it, then it fades back out. Driven by updateZoomIndicator()
+    // from the zoom actions and doc-changed path.
     //
-    // G10 (spatial constancy): this was FIRST built as a status-bar
-    // addPermanentWidget() entry (placed last, hoping "rightmost" would
-    // insulate its siblings). That did not hold up: Qt's QStatusBar
-    // keeps the whole permanent-widget row right-anchored as one block,
-    // so ANY member's width changing -- including the last one growing
-    // from 0 (hidden) to its text width (revealed) -- shifts the
-    // block's left edge, and therefore every OTHER permanent widget in
-    // it, regardless of insertion order. uat_zoom_ind_070 caught this
-    // directly (a sibling badge measured moving ~41px). Fixed by taking
-    // it out of that shared layout entirely: m_zoomIndicator is a
-    // FLOATING overlay parented straight to the MainWindow, positioned
-    // by repositionZoomIndicator() (bottom-right of the document area,
-    // called on construction and resizeEvent()), not managed by any
-    // box layout -- so its own visibility can never move a sibling.
-    // This is also why it is a genuine reveal-then-hide and not a
-    // permanently-reserved-but-blank slot: hidden means zero footprint
-    // anywhere, not an invisible placeholder occupying layout space.
+    // Controls must not move when unrelated state changes, so this is NOT
+    // a status-bar addPermanentWidget() entry, even placed last: Qt's
+    // QStatusBar keeps the whole permanent-widget row right-anchored as one
+    // block, so ANY member's width changing -- including the last one
+    // growing from 0 (hidden) to its text width (revealed) -- shifts the
+    // block's left edge, and therefore every OTHER permanent widget in it,
+    // regardless of insertion order (uat_zoom_ind_070 measured a sibling
+    // badge moving ~41px). Instead m_zoomIndicator is a FLOATING overlay
+    // parented straight to the MainWindow, positioned by
+    // repositionZoomIndicator() (bottom-right of the document area, called
+    // on construction and resizeEvent()), not managed by any box layout --
+    // so its own visibility can never move a sibling. This is also why it
+    // is a genuine reveal-then-hide and not a permanently-reserved-but-blank
+    // slot: hidden means zero footprint anywhere, not an invisible
+    // placeholder occupying layout space.
     m_zoomIndicator = new QLabel(this);
     m_zoomIndicator->setObjectName(QStringLiteral("zoomIndicator"));
     m_zoomIndicator->setAlignment(Qt::AlignCenter);
@@ -816,13 +810,12 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     m_zoomIndicator->setVisible(false);
 
     // Reveal-then-fade machinery. kZoomIndicatorVisibleMs/-FadeMs are
-    // hand-tuned (PHILOSOPHY.md "Hand-tuned values stay hand-tuned"):
-    // 1500ms mirrors the dwell of macOS's own volume/brightness HUD --
-    // long enough to read a 2-3 digit percentage without feeling nagged;
-    // 400ms is fast enough not to feel laggy while still reading as a
-    // deliberate dismissal rather than a hard cut. Revisit if dogfooding
-    // finds the readout vanishing before it can be read (raise the hold)
-    // or lingering as unwanted chrome (lower either).
+    // hand-tuned: 1500ms mirrors the dwell of macOS's own volume/brightness
+    // HUD -- long enough to read a 2-3 digit percentage without feeling
+    // nagged; 400ms is fast enough not to feel laggy while still reading as
+    // a deliberate dismissal rather than a hard cut. Raise the hold if the
+    // readout vanishes before it can be read; lower either if it lingers as
+    // unwanted chrome.
     constexpr int kZoomIndicatorVisibleMs = 1500;
     constexpr int kZoomIndicatorFadeMs = 400;
     m_zoomIndicatorVisibleMs = kZoomIndicatorVisibleMs;
@@ -845,8 +838,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         if (!m_zoomIndicator || !m_zoomIndicator->isVisible())
             return;
         if (platform::prefersReducedMotion()) {
-            // Reduce Motion: snap-hide, no animated fade (docs/
-            // accessibility-checklist.md row A6).
+            // Reduce Motion: snap-hide, no animated fade.
             m_zoomIndicator->setVisible(false);
             if (m_zoomIndicatorOpacity)
                 m_zoomIndicatorOpacity->setOpacity(1.0);
@@ -859,17 +851,14 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         m_zoomIndicatorFadeAnim->start();
     });
 
-    // Two-Pages read-only badge (decision record 2026-07-21-two-page-layout,
-    // D2-A; gate G3; minimal-UI guideline docs/ux-guidelines.md, #116). A
-    // compact lock pill sitting with the other permanent status-bar widgets —
-    // the ambient-status surface the guideline blesses. (The zoom readout is
-    // no longer one of those siblings — DR 2026-07-31-transient-zoom-readout
-    // made it a floating overlay outside this shared row.) It is the
-    // always-visible PRIMARY read-only signal, but it RECEDES (a small
-    // badge, not a full-width banner). The full "switch to Single or Continuous
-    // to edit" sentence lives in its tooltip; the per-control disabled tooltips
-    // stay as the G3 floor. Shown only in Two-Pages mode by
+    // Two-Pages read-only badge: a compact lock pill sitting with the other
+    // permanent status-bar widgets. It is the always-visible PRIMARY
+    // read-only signal, but it RECEDES (a small badge, not a full-width
+    // banner). The full "switch to Single or Continuous to edit" sentence
+    // lives in its tooltip; each disabled control also keeps its own
+    // why/where tooltip. Shown only in Two-Pages mode by
     // onCurrentDocumentChanged.
+    // todo/2026-10-15-two-pages-read-only: make Two Pages editable and drop this badge.
     m_readOnlyBadge = new QLabel(tr("Read-only"), this);
     m_readOnlyBadge->setObjectName(QStringLiteral("twoPageReadOnlyBadge"));
     m_readOnlyBadge->setToolTip(
@@ -878,25 +867,28 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
         "#twoPageReadOnlyBadge { background-color: #fff4d6; border: 1px solid "
         "#e6c86a; border-radius: 4px; color: #5a4a12; padding: 1px 6px; }"));
     m_readOnlyBadge->setVisible(false);
-    // G10/SC-CRIT-1: reserves this badge's own measured, styled sizeHint
+    // Fixed slot: reserves this badge's own measured, styled sizeHint
     // (including its stylesheet's border/padding, on whatever font THIS
     // platform resolves) with a safety buffer — see reserveStatusBarSlot()'s
     // and slotWidthFor()'s comments above.
     statusBar()->addPermanentWidget(reserveStatusBarSlot(m_readOnlyBadge, slotWidthFor(m_readOnlyBadge)));
 
-    // ADR 0002: richer progress+cancel widget for foreground ML ops.
+    // Richer progress+cancel widget for foreground ML ops.
     // Sits next to the ambient m_mlIndicator dot (which stays untouched).
     // OcrController's batch signals drive it; the reveal is delayed so
     // sub-threshold batches never flicker it. See wiring below.
     m_mlProgress = new MlProgressWidget(this);
-    // G10/SC-CRIT-1: this is the widget the audit's concrete repro names —
-    // its Cancel button is a control the user may be mid-click on, so its
-    // reserved slot (m_mlProgress->maxWidth(), computed from THIS
-    // platform's live font metrics at construction time — see that
-    // method's doc comment for why a hardcoded literal broke Windows-
-    // cross-build-under-Wine CI) must never move for any sibling's sake.
+    // Named for the chrome census and constancy sweep (tests/uat/); its
+    // reserved slot below becomes "mlProgress.slot".
+    m_mlProgress->setObjectName(QStringLiteral("mlProgress"));
+    // This is the widget whose movement hurts most: its Cancel button is a
+    // control the user may be mid-click on, so its reserved slot
+    // (m_mlProgress->maxWidth(), computed from THIS platform's live font
+    // metrics at construction time — see that method's doc comment for why
+    // a hardcoded literal broke Windows-cross-build-under-Wine CI) must
+    // never move for any sibling's sake.
     statusBar()->addPermanentWidget(reserveStatusBarSlot(m_mlProgress, m_mlProgress->maxWidth()));
-    // ADR 0002 §1: elapsed-time reassurance for INDETERMINATE reveals.
+    // Elapsed-time reassurance for INDETERMINATE reveals.
     // Ticks once a second while a single-page / unknown-length op is
     // revealed and appends "· Ns" past 10s. Started in the indeterminate
     // branch below; stopped on finish/abort so it never runs while idle.
@@ -947,8 +939,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     });
     // Silent teardown (supersede / document switch or close): drive the
     // widget straight back to idle with NO terminal message and disable the
-    // scoped cancel action so ⌘. never points at a dead batch (ADR 0002
-    // review items 2/7).
+    // scoped cancel action so ⌘. never points at a dead batch.
     connect(m_ocrController, &OcrController::ocrBatchAborted, this, [this]() {
         m_ocrElapsedTimer->stop();
         m_ocrRevealed = false;
@@ -959,11 +950,11 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     connect(m_mlProgress, &MlProgressWidget::cancelRequested, m_ocrController,
             &OcrController::cancelActiveBatch);
 
-    // ADR 0002: Esc is intentionally NOT globally bound to cancel — it is
-    // overloaded (find bar, popovers) and a bare-Esc global cancel is the
-    // accidental-loss trap flagged in the persona review. The ✕ button and
-    // ⌘. (Ctrl+.) cover the cancel gesture (B6); ⌘. is scoped to a running
-    // foreground op via setEnabled() above.
+    // Esc is intentionally NOT globally bound to cancel — it is overloaded
+    // (find bar, popovers), and a bare-Esc global cancel would throw away
+    // work by accident. The ✕ button and ⌘. (Ctrl+.) cover the cancel
+    // gesture; ⌘. is scoped to a running foreground op via setEnabled()
+    // above.
     m_cancelMlAction = new QAction(tr("Cancel ML Operation"), this);
     m_cancelMlAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_Period));
     m_cancelMlAction->setEnabled(false);
@@ -973,13 +964,13 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
 
     // m_ocrModelMissingHint is constructed earlier, alongside
     // m_largeDocOcrHint (see that block) — the two share ONE reserved
-    // status-bar slot (SC-CRIT-1 / G10) because they are provably mutually
-    // exclusive; building them adjacently keeps that pairing legible
-    // instead of splitting it across two distant constructor blocks.
+    // status-bar slot because they are provably mutually exclusive;
+    // building them adjacently keeps that pairing legible instead of
+    // splitting it across two distant constructor blocks.
     connect(m_ocrController, &OcrController::autoOcrModelMissing, this,
             [this](bool missing) { m_ocrModelMissingHint->setVisible(missing); });
 
-    // ADR 0002 §3: re-derive auto-OCR / the missing-model hint on PAGE
+    // Re-derive auto-OCR / the missing-model hint on PAGE
     // change, not just document change. IDocument is not a QObject, but its
     // PageChangeNotifier is — onCurrentDocumentChanged() connects the active
     // document's notifier to onActivePageChanged(), which re-derives the
@@ -987,11 +978,11 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // text page to a scanned page must surface the hint). No polling timer.
 
     // Auto-save loop. Tick every 30 s; each tick writes a RECOVERY SIDECAR
-    // (not the backing file — see autoSaveDirtyDocs() and DR
-    // 2026-07-19-autosave-recovery-sidecar) for any document that is dirty
-    // AND has an established path. Untitled documents are skipped — auto-save
-    // shouldn't pick a destination for the user. The timer respects
-    // Settings::autoSave and pauses while the user has it disabled.
+    // (never the backing file — see autoSaveDirtyDocs()) for any document
+    // that is dirty AND has an established path. Untitled documents are
+    // skipped — auto-save shouldn't pick a destination for the user. The
+    // timer respects Settings::autoSave and pauses while the user has it
+    // disabled.
     // 30 s: frequent enough that a crash loses at most ~30 s of markup, rare
     // enough that snapshotting a large PDF doesn't churn. Range tried: 10 s
     // (too much snapshot churn on big docs) … 60 s (too much work at risk on
@@ -1007,7 +998,7 @@ MainWindow::MainWindow(Application *app, QWidget *parent) : QMainWindow(parent),
     // document, so show the empty-state welcome surface.
     updateEmptyState();
 
-    // Developer UX recorder (docs/ux-recorder.md). Inline no-op in
+    // Developer UX recorder (src/uxrecord/README.md). No-op in
     // default builds and whenever no session is active (e.g. a
     // recorder build launched with --no-ux-record); otherwise installs
     // the recording indicator, the Recording menu, and the semantic
@@ -1021,14 +1012,13 @@ void MainWindow::autoSaveDirtyDocs() {
         return;
     const int total = m_documentView->documentCount();
     bool savedAny = false;
-    // Mute #89's external-change monitor for the whole auto-save pass. This is
-    // now DEFENSIVE only: under the recovery-sidecar model (DR
-    // 2026-07-19-autosave-recovery-sidecar) auto-save writes ONLY to the
-    // recovery sidecar in app-data (QStandardPaths::AppDataLocation/autosave)
-    // and its scratch temp — never the backing file and never the source
-    // directory the monitor watches (ExternalChangeMonitor watches the source
-    // file + its parent dir) — so an auto-save tick cannot self-trigger a
-    // reload/banner. The mute is retained to preserve #89's invariant that our
+    // Mute the external-change monitor for the whole auto-save pass. This is
+    // DEFENSIVE only: auto-save writes ONLY to the recovery sidecar in
+    // app-data (QStandardPaths::AppDataLocation/autosave) and its scratch
+    // temp — never the backing file and never the source directory the
+    // monitor watches (ExternalChangeMonitor watches the source file + its
+    // parent dir) — so an auto-save tick cannot self-trigger a
+    // reload/banner. The mute is retained to preserve the invariant that our
     // own writes never trip the watcher, even if a future save path changes.
     if (m_externalChangeMonitor)
         m_externalChangeMonitor->mute(true);
@@ -1037,7 +1027,7 @@ void MainWindow::autoSaveDirtyDocs() {
         if (!m_documentView->documentAt(i, &doc) || !doc)
             continue;
         // Gate on isDirty(), NOT hasUnsavedWork(): a clean-but-externally-
-        // deleted doc (CF-7) has hasUnsavedWork()==true, but silently
+        // deleted doc has hasUnsavedWork()==true, but silently
         // recreating a file the user may have deleted on purpose, on a timer,
         // is worse than leaving it for the explicit banner-Save. This
         // asymmetry with the close/quit predicates is deliberate.
@@ -1054,14 +1044,12 @@ void MainWindow::autoSaveDirtyDocs() {
         // persist the work to the backing file anyway.
         if (doc == m_docSaveInFlight)
             continue;
-        // Write-side never-worry-save invariant
-        // (docs/decision-records/2026-07-19-autosave-recovery-sidecar.md,
-        // amending ADR 0004): auto-save must NEVER write the user's backing
-        // file. It persists to a recovery sidecar in app-data instead, so no
-        // path except an explicit Save/Save-As touches the source, and an
-        // explicit Discard leaves the on-disk file byte-identical. Crash
-        // safety (never silently lose in-memory work) is met by reopen
-        // restoring from this sidecar.
+        // Write-side never-worry-save invariant: auto-save must NEVER write
+        // the user's backing file. It persists to a recovery sidecar in
+        // app-data instead, so no path except an explicit Save/Save-As
+        // touches the source, and an explicit Discard leaves the on-disk file
+        // byte-identical. Crash safety (never silently lose in-memory work)
+        // is met by reopen restoring from this sidecar.
         RecoveryStore &store = m_app->recoveryStore();
         const QString sidecar = store.sidecarPathFor(doc->filePath());
         if (doc->writeRecoverySnapshot(sidecar)) {
@@ -1072,23 +1060,17 @@ void MainWindow::autoSaveDirtyDocs() {
     if (m_externalChangeMonitor)
         m_externalChangeMonitor->mute(false);
     if (savedAny) {
-        // G10 (deference): a "Recovery Snapshot Saved" status-bar toast is
-        // permanent-surface chrome narrating routine background work the
-        // user didn't ask about and can't act on — this is the exact
-        // motivating example named in docs/ux-guidelines.md's anti-pattern
-        // list for this gate, and see DR
-        // 2026-07-31-recovery-snapshot-toast-silent. Never-worry-save means
-        // the snapshot itself is silent-by-design (PHILOSOPHY.md); the
-        // toast about it was the app narrating that it did its job. The
-        // document's unsaved-work signal the user actually needs stays
-        // visible without it: the title-bar "•" dirty marker
-        // (updateTitleForDocument, guarded by tests/test_dirty_marker_zoom.cpp)
-        // and the Feedback Report's "(unsaved changes)" line
-        // (src/diagnostics/FeedbackReport.cpp) both read isDirty() directly
-        // and are unaffected by this change. The local session-recording
-        // trail (uxrecord — never shown to the user, never sent anywhere;
-        // active only during an owner-run HITL capture) still logs the
-        // event so a review pass can see when a snapshot protected work.
+        // No toast: a "Recovery Snapshot Saved" status-bar message would be
+        // chrome narrating routine background work the user didn't ask about
+        // and can't act on. The snapshot is silent by design. The document's
+        // unsaved-work signal the user actually needs stays visible without
+        // it: the title-bar "•" dirty marker (updateTitleForDocument, guarded
+        // by tests/test_dirty_marker_zoom.cpp) and the Feedback Report's
+        // "(unsaved changes)" line (src/diagnostics/FeedbackReport.cpp) both
+        // read isDirty() directly. The local session-recording trail
+        // (uxrecord — never shown to the user, never sent anywhere; active
+        // only while a developer records a session) still logs the event so
+        // a review pass can see when a snapshot protected work.
         uxrecord::recordEvent(QStringLiteral("operation_succeeded"),
                               QJsonObject{{QStringLiteral("message"),
                                            QStringLiteral("Recovery snapshot saved.")}});
@@ -1151,13 +1133,11 @@ void MainWindow::buildMenus() {
     // isAvailable() == false until xdg-email / WinShare are wired
     // up. When available, the action is gated on a saved file because
     // the share picker needs a real file path on disk.
-    // The action is always created so the capability is visible. On
-    // platforms without a working share implementation it is shown
-    // disabled with a tooltip pointing at the real alternative, rather
-    // than silently hidden (owner policy: unavailable capabilities are
-    // disabled + explained, never dropped from the menu).
+    // The action is always created. On platforms without a working share
+    // implementation it is shown disabled with a tooltip pointing at the
+    // real alternative (todo/2026-10-15-disabled-placeholders: it should be absent there instead).
     // Created via makeDisabledAction so the File menu is guaranteed to
-    // render this disabled-state tooltip (G3). On platforms where sharing
+    // render this disabled-state tooltip. On platforms where sharing
     // works we clear the explanation and re-enable; updateActionStates()
     // then gates it on whether the document has a file path.
     m_shareAction = makeDisabledAction(
@@ -1226,19 +1206,19 @@ void MainWindow::buildMenus() {
 
     helpMenu->addSeparator();
 
-    // Help menu on every platform (macOS/Windows/Linux) — see
-    // docs/platform-conventions.md's per-OS shape note for this action.
-    // Enabled whenever this build HAS an update-signing key: the manual
-    // one-shot check is independent of the Preferences → Updates
-    // auto-check toggle (G3), so the toggle never disables it.
+    // Help menu on every platform (macOS/Windows/Linux): the update checker
+    // is our own, not Sparkle, so one menu-construction site serves all
+    // three. Enabled whenever this build HAS an update-signing key: the
+    // manual one-shot check is independent of the Preferences → Updates
+    // auto-check toggle, so the toggle never disables it.
     //
     // A build configured without TRAILER_UPDATE_PUBKEY (every ordinary
     // local build, PR, and fork — see cmake/UpdatePublicKey.h.in) embeds
     // no key and can never verify a feed, so the item is disabled with a
     // tooltip saying why and where to go, rather than left clickable to
-    // produce a guaranteed error (G3: no lying controls). The item stays
-    // PRESENT and in the same position in both states — only its enabled
-    // state changes — so nothing around it reflows (G10).
+    // produce a guaranteed error. The item stays PRESENT and in the same
+    // position in both states — only its enabled state changes — so
+    // nothing around it reflows.
     auto *checkForUpdatesAction = helpMenu->addAction(tr("Check for &Updates…"));
     checkForUpdatesAction->setObjectName(QStringLiteral("action.help.checkForUpdates"));
     if (Update::UpdateManager::isChannelProvisioned()) {
@@ -1251,21 +1231,18 @@ void MainWindow::buildMenus() {
                "automatic updates."));
         // Without this the tooltip above never renders: QMenu suppresses
         // action tooltips by default, so a disabled item would explain
-        // itself to nobody — which is the G3 violation, not the fix for
-        // it. Guarded by uat_fnd_043, which sweeps every menu for exactly
-        // this mistake.
+        // itself to nobody — a lying control, not the fix for one. Guarded
+        // by uat_fnd_043, which sweeps every menu for exactly this mistake.
         helpMenu->setToolTipsVisible(true);
     }
 
     // Local-only diagnostic report (no network call, ever — see
     // src/diagnostics/FeedbackReport.h). Always enabled: it degrades
     // to header + platform info rather than needing anything to be
-    // "ready" first (G3 — no lying controls; there's nothing here that
-    // can be unavailable).
+    // "ready" first (there's nothing here that can be unavailable).
     //
     // Placement: the Help menu on all three platforms, exactly like the
-    // "Check for Updates…" item above it — see docs/platform-conventions.md
-    // §2 (Help row) and its "Check for Updates… placement" note.
+    // "Check for Updates…" item above it.
     //
     // Do NOT give this (or any other per-window action) a
     // QAction::ApplicationSpecificRole. On macOS that role relocates the
@@ -1275,9 +1252,8 @@ void MainWindow::buildMenus() {
     // ApplicationSpecificRole item separately — QCocoaMenuLoader keys them
     // on the per-QAction QCocoaMenuItem pointer, so each MainWindow
     // contributes its own copy and closing the window does not reliably
-    // remove it. The owner's 2026-08-02 dogfooding report showed FOUR
-    // "Feedback Report…" items stacked in the application menu after four
-    // windows had been constructed in one session. Pinned by
+    // remove it: four windows constructed in one session left FOUR
+    // "Feedback Report…" items stacked in the application menu. Pinned by
     // tests/test_menu_placement.cpp.
     auto *feedbackAction = helpMenu->addAction(tr("&Feedback Report…"));
     feedbackAction->setObjectName(QStringLiteral("action.help.feedbackReport"));
@@ -1317,16 +1293,15 @@ void MainWindow::buildMainToolbar() {
     // behaviour); they just don't render next to the glyph. The menu
     // bar remains the discoverable surface for unfamiliar users.
     m_mainToolbar->setToolButtonStyle(Qt::ToolButtonIconOnly);
-    // Pin the main toolbar's overflow chevron too (ADR 0007, R2).
+    // Pin the main toolbar's overflow chevron too.
     m_mainToolbar->setStyleSheet(kToolbarExtensionPinStyle());
-    // Anchor the main toolbar top-left on its own row (ADR 0007,
-    // Option A, R1). The top area was appended markup, form, main —
-    // so main, added last, ended up as a tenant on the form toolbar's
-    // row and got shoved right whenever the form bar was shown.
+    // Anchor the main toolbar top-left on its own row, so showing the
+    // form bar never shoves it right (appended last, after markup and
+    // form, main would be a tenant on the form toolbar's row).
     // insertToolBar puts main at the FRONT of the top-area order
     // (main, markup, form); with a break before markup (below) and
-    // before form (insertToolBarBreak(m_formToolbar), ~:359) and NO
-    // break before main, main owns row 1
+    // before form (insertToolBarBreak(m_formToolbar), in the
+    // constructor) and NO break before main, main owns row 1
     // permanently while markup or form take row 2.
     insertToolBar(m_markupToolbar, m_mainToolbar);
     insertToolBarBreak(m_markupToolbar);
@@ -1334,6 +1309,8 @@ void MainWindow::buildMainToolbar() {
     // Sidebar mode picker. Each entry calls Sidebar::setMode; the
     // checked state mirrors back via Sidebar::modeChanged.
     auto *sidebarBtn = new QToolButton(m_mainToolbar);
+    // Named for the chrome census (tests/uat/test_uat_chrome_census.cpp).
+    sidebarBtn->setObjectName(QStringLiteral("sidebarModePicker"));
     sidebarBtn->setText(tr("Sidebar"));
     m_themedIcons.apply(sidebarBtn, QStringLiteral(":/icons/actions/panel-sidebar.svg"),
                         m_mainToolbar);
@@ -1414,13 +1391,15 @@ void MainWindow::buildMainToolbar() {
     // the toolbar (rather than swapping widgets) preserves the
     // signals and counter state wired up in the constructor.
     m_searchButton = new QToolButton(m_mainToolbar);
+    // Named for the chrome census and constancy sweep (tests/uat/).
+    m_searchButton->setObjectName(QStringLiteral("searchButton"));
     m_themedIcons.apply(m_searchButton, QStringLiteral(":/icons/actions/view-search.svg"),
                         m_mainToolbar);
     m_searchButton->setToolButtonStyle(Qt::ToolButtonIconOnly);
     m_searchButton->setToolTip(
         tr("Search (%1)").arg(QKeySequence(QKeySequence::Find).toString(QKeySequence::NativeText)));
     // Icon-only with no text would read as a bare "button" to a screen
-    // reader; give it an explicit accessible name (audit A-CRIT-1).
+    // reader; give it an explicit accessible name.
     m_searchButton->setAccessibleName(tr("Search"));
     connect(m_searchButton, &QToolButton::clicked, this, &MainWindow::showSearchBar);
     m_mainToolbar->addWidget(m_searchButton);
@@ -1440,7 +1419,7 @@ void MainWindow::buildMainToolbar() {
     }
 
     // Guarantee the primary row never overflows its trailing search
-    // into its own chevron (ADR 0007, Option A, R3). Qt overflows the
+    // into its own chevron. Qt overflows the
     // trailing-most items first, and search is the last widget on the
     // main row, so without a floor a narrow-enough window would hide
     // search behind the main toolbar's own "show more" menu — breaking
@@ -1482,13 +1461,13 @@ void MainWindow::reassertToolbarLayout() {
     // QMainWindow::restoreState() restores the top toolbar area's order
     // and row-break placement from the blob, matched to our toolbars by
     // object name (MainToolbar / MarkupToolbar / FormToolbar) — it does
-    // not know or care that ADR 0007 fixed the construction-time order
-    // in buildMainToolbar(). A blob captured under an older arrangement
+    // not know or care about the construction-time order
+    // buildMainToolbar() sets. A blob captured under an older arrangement
     // (or any future arrangement change we haven't made yet) silently
     // wins over the canonical order the moment restoreState() runs,
     // reproducing exactly the "form toolbar shoves main toolbar right"
-    // bug ADR 0007 fixed at construction time, but from persisted state
-    // instead. None of the three toolbars are user-movable/floatable
+    // bug that buildMainToolbar()'s order prevents, but from persisted
+    // state instead. None of the three toolbars are user-movable/floatable
     // (see MarkupToolbar/FormToolbar ctors and buildMainToolbar()  —
     // placement is intentional, not user-configurable), so a persisted
     // blob never has a legitimate reason to override the order. Call
@@ -1703,13 +1682,13 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
     // Insertion order below is deliberately Cmd-1, Cmd-2, Cmd-3 top-to-
     // bottom (Continuous, Single Page, Two Pages) — NOT the order the
     // three actions happen to be discussed in comments or wired up
-    // elsewhere. Gate G10 (spatial constancy, AGENTS.md) forbids a menu
-    // whose item order depends on which mode is active — a fixed order
-    // here, driven only by insertion sequence, is what keeps the position
-    // constant regardless of doc->viewMode(); which item is checked is a
-    // separate, orthogonal concern (see syncViewModeActions()). Do not
-    // reorder these three blocks to "match" some other grouping — that is
-    // exactly the regression uat_fnd_093 pins.
+    // elsewhere. Menus never reorder: no item order may depend on which
+    // mode is active, and a fixed order here, driven only by insertion
+    // sequence, is what keeps the position constant regardless of
+    // doc->viewMode(); which item is checked is a separate, orthogonal
+    // concern (see syncViewModeActions()). Do not reorder these three
+    // blocks to "match" some other grouping — that is exactly the
+    // regression uat_fnd_093 pins.
     m_continuousAction = viewMenu->addAction(tr("Continuous"));
     m_continuousAction->setObjectName(QStringLiteral("action.view.continuous"));
     m_continuousAction->setCheckable(true);
@@ -1732,11 +1711,11 @@ void MainWindow::buildViewMenu(QMenu *viewMenu) {
         }
     });
 
-    // Two Pages (Cmd-3) drives the custom TwoPageView (decision record
-    // 2026-07-21-two-page-layout, D1-A). makeDisabledAction starts it disabled
-    // with an explanatory tooltip and enables tooltips on the View menu; the
+    // Two Pages (Cmd-3) drives the custom TwoPageView; QPdfView keeps Single
+    // and Continuous. makeDisabledAction starts it disabled with an
+    // explanatory tooltip and enables tooltips on the View menu; the
     // per-document enable/tooltip is (re)computed in onCurrentDocumentChanged
-    // (enabled only for multi-page PDFs; G3 no-lying-controls otherwise).
+    // (enabled only for multi-page PDFs, disabled with a why otherwise).
     m_twoPagesAction = makeDisabledAction(
         viewMenu, tr("Two Pages"),
         tr("Two-page layout needs a multi-page PDF."));
@@ -2039,6 +2018,10 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     // explicit call is needed.
 
     m_rotateLeftAction = toolsMenu->addAction(tr("Rotate &Left"));
+    // Named for the chrome census (tests/uat/test_uat_chrome_census.cpp),
+    // like its twin below (named for tools/ux-walkthrough); unnamed, the
+    // census would key off the translatable label text.
+    m_rotateLeftAction->setObjectName(QStringLiteral("action.tools.rotateLeft"));
     m_themedIcons.apply(m_rotateLeftAction, QStringLiteral(":/icons/actions/page-rotate-left.svg"),
                         this);
     m_rotateLeftAction->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_L));
@@ -2092,21 +2075,21 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
         tr("Open a document to recognize text."));
     connect(m_recognizeTextAction, &QAction::triggered, this, &MainWindow::onRecognizeText);
 
-    // Re-run entry for single-page docs (backlog 2026-07-15-single-page-
-    // force-rerun): the Recognize Text… dialog hosts the force-rerun
-    // checkbox, but single-page docs skip that dialog, leaving no way to
-    // replace a page's non-empty-but-wrong OCR. This sibling entry reaches
-    // submitUserPages(forceRerun=true) directly. Starts disabled with a
-    // why/where tooltip; refreshRerunRecognizeAction() re-evaluates it.
+    // Re-run entry for single-page docs: the Recognize Text… dialog hosts
+    // the force-rerun checkbox, but single-page docs skip that dialog,
+    // leaving no way to replace a page's non-empty-but-wrong OCR. This
+    // sibling entry reaches submitUserPages(forceRerun=true) directly.
+    // Starts disabled with a why/where tooltip; refreshRerunRecognizeAction()
+    // re-evaluates it.
     //
-    // The entry doubles as the recognised-text STATUS glyph (owner HITL on
-    // #114 replaced the transient status-bar cue with this): it is made
-    // checkable so the native menu checkmark renders when the current page
-    // has recognised, selectable text — a subtle, in-context glyph rather
-    // than long-form status-bar prose. It is a status indicator, not a user
-    // toggle, so refreshRerunRecognizeAction() always re-derives the checked
-    // state from hasResults() and onRerunRecognizeText() re-asserts it after
-    // the auto-toggle a checkable QAction performs on trigger.
+    // The entry doubles as the recognised-text STATUS glyph (in place of a
+    // transient status-bar cue): it is made checkable so the native menu
+    // checkmark renders when the current page has recognised, selectable
+    // text — a subtle, in-context glyph rather than long-form status-bar
+    // prose. It is a status indicator, not a user toggle, so
+    // refreshRerunRecognizeAction() always re-derives the checked state from
+    // hasResults() and onRerunRecognizeText() re-asserts it after the
+    // auto-toggle a checkable QAction performs on trigger.
     m_rerunRecognizeAction = makeDisabledAction(
         toolsMenu, tr("Re-run Text &Recognition"),
         tr("Open a single-page document with recognised text to re-run recognition."));
@@ -2138,22 +2121,16 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     m_cropPagesAction = toolsMenu->addAction(tr("&Crop Pages…"));
     connect(m_cropPagesAction, &QAction::triggered, this, &MainWindow::onCropPages);
 
-    // Direct-manipulation crop (backlog
-    // 2026-07-15-crop-pages-direct-manipulation): draw the crop
-    // rectangle on the page with a live dimmed preview instead of
-    // guessing four millimetre margins in a no-preview modal. The
-    // numeric dialog above stays for users who want exact margins.
+    // Direct-manipulation crop: draw the crop rectangle on the page with
+    // a live dimmed preview instead of guessing four millimetre margins in
+    // a no-preview modal. The numeric dialog above stays for users who
+    // want exact margins.
     m_cropPagesDragAction = toolsMenu->addAction(tr("Crop Pages by &Dragging"));
     connect(m_cropPagesDragAction, &QAction::triggered, this,
             &MainWindow::onCropPagesByDragging);
 
-    // Fill Forms stays at the top level — it's the primary affordance
-    // for working with a fillable PDF and the action that auto-toggles
-    // when an AcroForm is opened. AutoFill (My Card → field matcher)
-    // is a side feature and lives in a Forms submenu so the Tools menu
-    // doesn't crowd the form-filling area with two peers of unequal
-    // importance. My Card management lives next to AutoFill since it's
-    // only relevant if AutoFill is being used.
+    // Fill Forms is the primary affordance for working with a fillable
+    // PDF and the action that auto-toggles when an AcroForm is opened.
     m_fillFormsAction = toolsMenu->addAction(tr("&Fill Forms"));
     m_fillFormsAction->setCheckable(true);
     m_fillFormsAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_F));
@@ -2162,13 +2139,6 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
             doc->setFormFillingActive(on);
         }
     });
-
-    QMenu *formsSubmenu = toolsMenu->addMenu(tr("&Forms"));
-    m_autoFillFormAction = formsSubmenu->addAction(tr("&AutoFill from My Card"));
-    connect(m_autoFillFormAction, &QAction::triggered, this, &MainWindow::onAutoFillCurrentForm);
-
-    m_myCardAction = formsSubmenu->addAction(tr("My &Card…"));
-    connect(m_myCardAction, &QAction::triggered, this, &MainWindow::onManageMyCard);
 
     m_manageSignaturesAction = toolsMenu->addAction(tr("Manage &Signatures…"));
     connect(m_manageSignaturesAction, &QAction::triggered, this, &MainWindow::onManageSignatures);
@@ -2182,9 +2152,7 @@ void MainWindow::buildToolsMenu(QMenu *toolsMenu) {
     // No shortcut: ⌘⇧3 is OS-reserved on macOS (global capture) and
     // never reaches Trailer — a binding that can't fire is a lying
     // control. File → Screenshot's explicit modes are the discoverable
-    // path (see DR 2026-07-18-file-menu-acquire-ia, Option A — "delete the
-    // dead ⌘⇧3 binding"; the "Dead ⌘⇧3 removed" checkable threshold,
-    // uat_fmia_006).
+    // path. uat_fmia_006 checks that no menu action owns ⌘⇧3.
     connect(m_screenshotAction, &QAction::triggered, this, &MainWindow::onTakeScreenshot);
 
     toolsMenu->addSeparator();
@@ -2214,10 +2182,8 @@ void MainWindow::onCropPages() {
     const double b = dialog.bottomMm() * kMmToPt;
     if (l == 0.0 && t == 0.0 && r == 0.0 && b == 0.0) {
         // A committed action that no-ops must say why rather than
-        // looking like nothing happened (PHILOSOPHY → How Trailer
-        // reduces friction; backlog 2026-07-15-crop-pages-direct-
-        // manipulation threshold: an all-zero OK gives visible
-        // feedback).
+        // looking like nothing happened: an all-zero OK gets visible
+        // feedback.
         flashStatus(tr("No crop applied — all four margins were zero."));
         return;
     }
@@ -2266,11 +2232,9 @@ void MainWindow::onCropRectCommitted(const QRectF &docRect, int page) {
     // Assumption: the overlay's doc coordinates are relative to the
     // page's current /CropBox (what QPdfView displays), while cropPage
     // trims relative to the /MediaBox. These coincide on an un-cropped
-    // page — the threshold's flow — so the first drag-crop is exact.
-    // Re-cropping an ALREADY-cropped page via drag would be offset by
-    // the existing CropBox inset; that (rare) case, and the matching
-    // MediaBox-absolute behaviour of the numeric dialog, is a tracked
-    // follow-up, not a regression this PR introduces.
+    // page, so the first drag-crop is exact.
+    // todo/2026-10-15-second-crop-offset: re-cropping an ALREADY-cropped page via drag is offset by the
+    // existing CropBox inset (the numeric dialog is MediaBox-absolute too).
     const QSizeF pageSize = doc->pageSizeHint(page);
     if (pageSize.isEmpty()) {
         flashError(tr("Crop failed — could not read the page size."));
@@ -2285,8 +2249,8 @@ void MainWindow::onCropRectCommitted(const QRectF &docRect, int page) {
         return;
     }
     // Drop back to the Select tool so the freshly-cropped page is
-    // immediately interactive (matches the one-shot behaviour of the
-    // drawing tools) and the crop scrim clears.
+    // immediately interactive and the crop scrim clears. Crop is
+    // one-shot; the drawing tools stay armed.
     doc->setAnnotationTool(AnnotationTool::Select);
     m_sidebar->refreshThumbnails();
     onCurrentDocumentChanged(doc);
@@ -2486,13 +2450,13 @@ void MainWindow::onAdjustColour() {
 }
 
 void MainWindow::onRemoveBackground() {
-    // Re-entrancy / cancel affordance (DR 2026-07-21). The op has no progress
-    // widget, so the menu entry itself is the only surface. Re-invoking it
-    // while an op is calculating is the sanctioned CANCEL gesture: flip the
-    // running op's token and return. The GUI-thread apply step then drops the
-    // (null) result without touching the document — the pre-op image is left
-    // byte-for-byte intact (the byte-preservation invariant, formerly ADR 0002
-    // §2). One op runs at a time, so a second submission can never stack.
+    // Re-entrancy / cancel affordance. The op has no progress widget, so the
+    // menu entry itself is the only surface. Re-invoking it while an op is
+    // calculating is the sanctioned CANCEL gesture: flip the running op's
+    // token and return. The GUI-thread apply step then drops the (null)
+    // result without touching the document — the pre-op image is left
+    // byte-for-byte intact (cancel never writes a partial result). One op
+    // runs at a time, so a second submission can never stack.
     if (m_bgRemovalActive) {
         if (m_bgRemovalToken)
             m_bgRemovalToken->cancel();
@@ -2571,19 +2535,18 @@ void MainWindow::onRemoveBackground() {
     //     shutdown its destructor blocks until the worker drains, and
     //     in-flight tokens flip via cancelAll() if a future caller
     //     wires that into the close path);
-    //   - the wave-2 status-bar indicator shows "Removing background…"
-    //     while the work is in flight, replacing the modal
-    //     QProgressDialog the previous implementation used (the user
-    //     gets non-blocking feedback at the bottom-right of the window
-    //     instead of a centred modal that steals focus);
+    //   - the ambient status-bar ML indicator carries "Removing
+    //     background…" in its tooltip while the work is in flight —
+    //     non-blocking feedback at the bottom-right of the window instead
+    //     of a centred modal that steals focus;
     //   - the battery-policy reactor sees this is UserAction and lets
     //     it run regardless of mlRunOnBattery — a no-op behaviourally
     //     for this priority, but the right plumbing for consistency
-    //     with other features in this wave.
+    //     with other ML features.
     //
     // The result-application step lands back on the GUI thread via
-    // QMetaObject::invokeMethod so we can safely touch ImageDocument
-    // and the sidebar. PHILOSOPHY: on null/failure we simply do not
+    // MlScheduler::postResultToGuiThread so we can safely touch
+    // ImageDocument and the sidebar. On null/failure we simply do not
     // apply — no popup, no flashError. Transient inference failure is
     // rare; the user can re-run from the menu, or open
     // Tools → Manage ML Models…  to verify the cache (which is also
@@ -2608,8 +2571,8 @@ void MainWindow::onRemoveBackground() {
             // or switched away between submission and completion, drop the
             // result so we don't mutate a different document underfoot. On
             // cancel/failure we simply do not apply: the pre-op image is left
-            // byte-for-byte intact (formerly ADR 0002 §2). A transient failure
-            // surfaces the "Failed" glyph so the user knows a retry is worth it.
+            // byte-for-byte intact. A transient failure surfaces the "Failed"
+            // glyph so the user knows a retry is worth it.
             scheduler->postResultToGuiThread(
                 [guard, doc, imgDoc, result, cancelled, succeeded]() {
                     // Window closed mid-flight: nothing left to update, and the
@@ -2681,18 +2644,18 @@ bool ensureSamModelsReady(MainWindow *parent, SamSession &session) {
     return requestModelDownload(req);
 }
 
-// Tools-menu shortcut for Instant Alpha / Smart Lasso. The Workstream G
-// rework moved the segmentation interaction out of a modal dialog and
-// onto the document overlay. The menu entries stay so existing
-// keyboard shortcuts and the Tools menu surface still trigger the
-// feature; both reduce to "show the markup toolbar, activate the
-// right tool, run the encoder download dialog once if needed".
+// Tools-menu shortcut for Instant Alpha / Smart Lasso. The segmentation
+// interaction lives on the document overlay, not in a modal dialog. The
+// menu entries stay so existing keyboard shortcuts and the Tools menu
+// surface still trigger the feature; both reduce to "show the markup
+// toolbar, activate the right tool, run the encoder download dialog once
+// if needed".
 void activateSamTool(MainWindow *parent, MarkupToolbar *toolbar, AnnotationTool tool) {
     if (!parent || !toolbar)
         return;
     // Ensure the models are on disk before flipping the tool — the
     // download progress dialog is reachable through the existing
-    // ModelDownloadRequest plumbing. PHILOSOPHY: this is the only
+    // ModelDownloadRequest plumbing. This is the only
     // popup in the SAM flow (one-time consent for a download); the
     // rest of the interaction is inline.
     SamSession session(&parent->app()->modelRegistry());
@@ -2750,11 +2713,10 @@ void MainWindow::onInstantAlpha() {
         return;
     if (!dynamic_cast<ImageDocument *>(doc))
         return;
-    // Workstream G: the modal SamSegmentDialog is gone. The menu entry
-    // now just activates the InstantAlpha tool mode on the markup
-    // toolbar (showing the toolbar first if it was hidden), and the
-    // user paints on the document directly. The toolbar's tool radio
-    // is the source of truth.
+    // No modal: the menu entry just activates the InstantAlpha tool mode
+    // on the markup toolbar (showing the toolbar first if it was hidden),
+    // and the user paints on the document directly. The toolbar's tool
+    // radio is the source of truth.
     activateSamTool(this, m_markupToolbar, AnnotationTool::InstantAlpha);
 }
 
@@ -2896,8 +2858,8 @@ void MainWindow::onRerunRecognizeText() {
 
     m_ocrController->submitUserPages(doc, {page}, /*forceRerun=*/true);
     // Action feedback on the user's explicit click (mirrors onRecognizeText's
-    // flash) — this is confirmation of an invoked action, not the passive
-    // "now selectable" cue the owner's #114 HITL removed. The glyph was
+    // flash) — this is confirmation of an invoked action, not a passive
+    // "now selectable" cue, which would be clutter. The glyph was
     // already re-derived at the top of this slot; submitPage's async
     // invalidate → pageChanged and the subsequent put() re-derive it again as
     // the fresh result lands.
@@ -2915,12 +2877,12 @@ void MainWindow::refreshRerunRecognizeAction() {
     const bool base = canOcr && singlePage && hasResults;
 
     // Status glyph: the native menu checkmark is on exactly when the current
-    // page carries recognised, selectable text (owner HITL on #114 — this
-    // replaces the transient status-bar cue). Re-derived here rather than
-    // toggled, so it never lies: it turns on when OCR lands and off when the
-    // text is invalidated. Applies to any single-page doc with results
-    // (single-page images and scanned single-page PDFs alike), not images
-    // only — the same condition (`base`) that makes the entry actionable.
+    // page carries recognised, selectable text (in place of status-bar
+    // text). Re-derived here rather than toggled, so it never lies: it turns
+    // on when OCR lands and off when the text is invalidated. Applies to any
+    // single-page doc with results (single-page images and scanned
+    // single-page PDFs alike), not images only — the same condition (`base`)
+    // that makes the entry actionable.
     m_rerunRecognizeAction->setChecked(base);
 
     // Same ML-policy gate as applyMlPolicy() for the Recognize entry: if the
@@ -2939,7 +2901,7 @@ void MainWindow::refreshRerunRecognizeAction() {
     }
     m_rerunRecognizeAction->setEnabled(base && !policyBlocks);
 
-    // G3 (no lying controls): every disabled reason gets a tooltip that says
+    // No lying controls: every disabled reason gets a tooltip that says
     // WHY and, where there is a next step, WHERE to go. The enabled state gets
     // a plain what-it-does tooltip.
     if (base && !policyBlocks) {
@@ -2969,9 +2931,9 @@ void MainWindow::onSelectableTextPageChanged(int page) {
     Q_UNUSED(page);
     // OCR results just changed for the active document's page. The
     // recognised-and-selectable status is surfaced only through the Re-run
-    // Text Recognition menu entry's checkmark glyph + enabled state (owner
-    // HITL on #114: the former transient status-bar cue was distracting long-
-    // form text). refreshRerunRecognizeAction() re-derives that glyph from
+    // Text Recognition menu entry's checkmark glyph + enabled state
+    // (status-bar text would be distracting long-form prose).
+    // refreshRerunRecognizeAction() re-derives that glyph from
     // hasResults(currentPage()), which flips true when the first OCR pass
     // lands after open (covers single-page images and scanned single-page
     // PDFs alike). No status-bar text, no modal — the document stays the
@@ -2984,10 +2946,10 @@ void MainWindow::onExportAs() {
     if (!doc)
         return;
 
-    // Pre-dialog: let the user pick a Quartz-equivalent filter
-    // (DESIGN §6.3.7). Default is "None" so the old one-step flow is
-    // still a single Cancel-or-Enter away — users who don't know
-    // about filters pay no extra clicks.
+    // Pre-dialog: let the user pick a Quartz-equivalent filter. Default
+    // is "None" so the old one-step flow is still a single
+    // Cancel-or-Enter away — users who don't know about filters pay no
+    // extra clicks.
     QDialog dialog(this);
     dialog.setWindowTitle(tr("Export As"));
     auto *form = new QFormLayout(&dialog);
@@ -3100,7 +3062,7 @@ void MainWindow::onTakeScreenshot() {
     // native Wayland and a BLACK pixmap under XWayland. Gate this dialog
     // consistently with the File → Screenshot menu (Application::addAcquireItems)
     // — disable the Whole Screen radio with an honest tooltip instead of leaving
-    // it enabled to look actionable, which would make it a lying control (G3).
+    // it enabled to look actionable, which would make it a lying control.
     // (The OK button stays enabled; if the user accepts anyway, the capture
     // choke point resolves to Unavailable and flashes the SAME honest message
     // rather than producing a null/black file — an honest degrade, never a
@@ -3142,11 +3104,11 @@ void MainWindow::onTakeScreenshot() {
 
     // Same capture backend as File → Screenshot (Application owns it so both
     // the per-window menu and the macOS no-window bar share it). Both the
-    // ScreenCaptureKit picker backend (PR #72) and the screencapture shell-out
-    // live inside Application::captureScreenshot; the permission preflight +
-    // graceful denial-degrade (the screen-capture preflight ADR) gates only the
-    // shell-out path there, and the explainer is retired for stills — we lean
-    // on the OS Screen Recording prompt directly.
+    // ScreenCaptureKit picker backend and the screencapture shell-out live
+    // inside Application::captureScreenshot; the permission preflight (check
+    // the grant before the OS capture UI, degrade gracefully when denied)
+    // gates only the shell-out path there, and stills get no explainer — we
+    // lean on the OS Screen Recording prompt directly.
     m_app->captureScreenshot(mode, this);
 }
 
@@ -3157,12 +3119,12 @@ void MainWindow::onSave() {
     // A path-less doc, or an untitled transient import (whose only path
     // is a temp file the user never chose), must route through Save-As
     // so the user picks a real destination rather than overwriting the
-    // temp file (ADR-0004).
+    // temp file.
     if (doc->filePath().isEmpty() || doc->isUntitled()) {
         onSaveAs();
         return;
     }
-    // Save-time conflict guard (ADR 2026-07-19): if the file changed under us,
+    // Save-time conflict guard: if the file changed under us,
     // surface the conflict banner instead of clobbering the newer on-disk
     // copy. The user resolves it with Reload / Keep mine.
     if (guardSaveAgainstExternalChange(doc))
@@ -3194,7 +3156,7 @@ void MainWindow::saveDocumentAsync(IDocument *doc, const QString &targetPath) {
     // Mute the external-change monitor across our own write so the resulting
     // filesystem events don't self-trigger a spurious reload/banner. The
     // adapter refreshes its baseline on success, so even a stray post-unmute
-    // event classifies as NoChange (ADR 2026-07-19). Only mute when we're
+    // event classifies as NoChange. Only mute when we're
     // saving the file the monitor is currently watching.
     const bool muteMonitor =
         m_externalChangeMonitor && m_externalChangeMonitor->path() == targetPath;
@@ -3312,10 +3274,10 @@ void MainWindow::retargetExternalChangeMonitor(IDocument *doc) {
         return;
     // A single monitor + banner track the CURRENT document. Switching docs
     // drops the previous doc's banner and repoints the watcher; untitled docs
-    // (empty path) clear the watch. Known limitation: a conflict raised on a
-    // background tab is re-evaluated when the user returns to it (the monitor
-    // re-points and the save-guard still fires), not shown while it's hidden —
-    // documented in the ADR.
+    // (empty path) clear the watch. Accepted limitation: a conflict raised on
+    // a background tab is re-evaluated when the user returns to it (the
+    // monitor re-points and the save-guard still fires), not shown while
+    // it's hidden.
     if (m_fileChangeBanner)
         m_fileChangeBanner->dismiss();
     m_externalChangeMonitor->setPath(doc ? doc->filePath() : QString());
@@ -3360,7 +3322,7 @@ void MainWindow::onExternalFileDeleted() {
     // Keep the buffer; the banner's Save recreates the file on disk.
     m_fileChangeBanner->showDeleted();
     // Refresh the title/tab so the "•" unsaved marker appears — a deleted
-    // backing file now counts as unsaved work (CF-7), even for a clean doc.
+    // backing file now counts as unsaved work, even for a clean doc.
     updateTitleForDocument(doc);
 }
 
@@ -3532,8 +3494,7 @@ void MainWindow::onExportPasswordProtected() {
     // fields are non-empty and equal, so acceptance guarantees a valid,
     // non-empty password. The destination chosen in Step 1 is held in
     // destPath across the whole flow, so a corrected typo never sends the user
-    // back through the Save picker (backlog
-    // 2026-07-15-password-export-inline-validation).
+    // back through the Save picker.
     PasswordExportDialog dialog(this);
     if (dialog.exec() != QDialog::Accepted)
         return;
@@ -3614,8 +3575,8 @@ void MainWindow::repositionZoomIndicator() {
     // Bottom-right of the document area, clear of the status bar and
     // the corner size-grip -- the same corner macOS's own transient
     // HUDs (volume/brightness) favour. Margins are small, fixed offsets
-    // (not hand-tuned magic numbers in the PHILOSOPHY sense -- purely
-    // cosmetic breathing room, not a threshold anything depends on).
+    // (purely cosmetic breathing room, not a tuned threshold anything
+    // depends on).
     constexpr int kMarginRight = 16;
     constexpr int kMarginBottom = 16;
     const int statusBarHeight = statusBar() && statusBar()->isVisible() ? statusBar()->height() : 0;
@@ -3635,9 +3596,8 @@ void MainWindow::updateZoomIndicator(bool reveal) {
     auto *doc = m_documentView->currentDocument();
     // Keep the zoom actions' tooltips naming the live percent regardless
     // of the transient readout's own visibility, so "what zoom am I at"
-    // has an always-reachable, on-demand answer (DR 2026-07-31-
-    // transient-zoom-readout) even while the status-bar label is hidden
-    // or mid-fade.
+    // has an always-reachable, on-demand answer even while the readout is
+    // hidden or mid-fade.
     auto applyZoomTooltips = [this](const QString &percent) {
         const auto withPercent = [&percent](const QString &base) {
             return percent.isEmpty() ? base : base + QStringLiteral(" (%1)").arg(percent);
@@ -3694,7 +3654,7 @@ void MainWindow::updateTitleForDocument(IDocument *doc) {
     }
     const QString name = doc->displayName();
     // hasUnsavedWork() so the "•" also shows for a clean doc whose backing file
-    // was deleted on disk (CF-7) — its buffer is the only remaining copy.
+    // was deleted on disk — its buffer is the only remaining copy.
     const QString marker = doc->hasUnsavedWork() ? QStringLiteral("• ") : QString();
     setWindowTitle(tr("%1%2 — Trailer").arg(marker, name));
     // setWindowFilePath bridges to NSWindow::representedFilename on
@@ -3870,12 +3830,12 @@ void MainWindow::updateRemoveBackgroundBadge(IDocument *doc) {
     if (!m_removeBackgroundAction)
         return;
 
-    // DR 2026-07-21-bg-removal-menu-status-glyph: the menu entry's icon is the
-    // single, subtle status surface for background removal (no progress bar /
-    // spinner). The transient op status is layered OVER the candidate-
-    // recommendation "sparkle" badge, in priority order below. Only when the
-    // op is idle (Available) does the entry fall through to the recommendation
-    // badge — its original behaviour.
+    // The menu entry's icon is the single, subtle status surface for
+    // background removal (no progress bar / spinner). The transient op
+    // status is layered OVER the candidate-recommendation "sparkle" badge,
+    // in priority order below. Only when the op is idle (Available) does the
+    // entry fall through to the recommendation badge — its original
+    // behaviour.
     const QString calcTip = tr("Removing background… (choose again to cancel)");
     const QString failedTip = tr("Couldn't remove the background — choose again to try once more.");
 
@@ -3948,7 +3908,7 @@ void MainWindow::updateRemoveBackgroundBadge(IDocument *doc) {
 }
 
 void MainWindow::finishBackgroundRemoval(bool cancelled, bool succeeded) {
-    // GUI-thread teardown for a finished op (DR 2026-07-21). Idempotent: a
+    // GUI-thread teardown for a finished op. Idempotent: a
     // no-op if no op is active (e.g. a stray second invoke). Clears the in-
     // flight guard + token, then maps the outcome to the next glyph state:
     //   - succeeded  → Available (the new image is applied by the caller)
@@ -3993,8 +3953,8 @@ void MainWindow::scheduleScrollPositionRestore(IDocument *doc, int page, int scr
             // the same number land somewhere else entirely (in the reported
             // case, 4514px pointed at page 12 of 12). If applying it would
             // move us off the restored page, DROP it and keep the page top.
-            // A dropped stale refinement is a drop, not a substitution (G3):
-            // the user still gets the page they asked for.
+            // Dropping a stale refinement isn't a substitution: the user
+            // still gets the page they asked for.
             const int pageTop = doc->scrollY();
             doc->applyScrollY(scrollY);
             if (page >= 0 && doc->currentPage() != page)
@@ -4013,7 +3973,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     applyInitialWindowSize(doc);
 
     // Follow the new document's file for external changes and drop any banner
-    // that belonged to the doc we're leaving (ADR 2026-07-19).
+    // that belonged to the doc we're leaving.
     retargetExternalChangeMonitor(doc);
 
     // Update the auto-OCR controller. It cancels in-flight
@@ -4030,8 +3990,8 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             m_ocrController->onVisiblePageChanged(doc->currentPage());
         } else {
             // Null / non-OCR document: re-derive so a missing-model hint
-            // left over from the previous document hides (ADR 0002 review
-            // item 2). onVisiblePageChanged wouldn't run for these.
+            // left over from the previous document hides; onVisiblePageChanged
+            // wouldn't run for these.
             m_ocrController->refreshModelHint();
         }
     }
@@ -4098,9 +4058,8 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             // Auto-switch the toolbar back to Select after a one-shot
             // shape commit. Without this the user must manually click
             // Select on the markup toolbar before they can grab the
-            // shape they just drew to move or resize it — the 2026-05-20
-            // HITL pass flagged the friction. Sticky-draw mode (keep
-            // the active tool after commit) would be an opt-in setting.
+            // shape they just drew to move or resize it. Sticky-draw
+            // tools are the exception (see isStickyDrawTool).
             // The toolbar's setActiveTool() flips the action's checked
             // state, which fires activeToolChanged → setAnnotationTool
             // on the doc → overlay->setActiveTool(Select), so the
@@ -4221,11 +4180,11 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     m_continuousAction->setEnabled(hasModes);
 
     const bool multiplePages = doc && doc->pageCount() > 1;
-    // Two Pages toggle (G3, no lying controls): enabled ONLY for multi-page
-    // PDFs (a facing spread needs pages to face). Disabled-with-tooltip that
-    // says WHY for every other case — image, single-page PDF, no document —
-    // per decision record 2026-07-21-two-page-layout clause 5. The tooltip is
-    // only meaningful when the action is disabled, so it is cleared when enabled.
+    // Two Pages toggle: enabled ONLY for multi-page PDFs (a facing spread
+    // needs pages to face). Disabled-with-tooltip that says WHY for every
+    // other case — image, single-page PDF, no document — never
+    // enabled-but-inert. The tooltip is only meaningful when the action is
+    // disabled, so it is cleared when enabled.
     const bool twoPagesOk = hasModes && multiplePages;
     m_twoPagesAction->setEnabled(twoPagesOk);
     if (twoPagesOk) {
@@ -4278,7 +4237,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             }
         }
         action->setEnabled(baseEnabled && !policyBlocksPending);
-        // PHILOSOPHY: when a feature is unavailable because of the
+        // When a feature is unavailable because of the
         // ML-policy gate, the menu entry stays disabled and the
         // tooltip points the user at exactly where to fix it. No
         // popup, ever — the user clicks the menu, sees a greyed-out
@@ -4297,7 +4256,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     scheduleBackgroundCandidateScore(doc);
     // A transient Failed glyph belongs to the op that produced it, not to the
     // newly-selected document — clear it on a document change so it doesn't
-    // bleed across docs (DR 2026-07-21). A genuinely in-flight op keeps its
+    // bleed across docs. A genuinely in-flight op keeps its
     // Calculating glyph (it is still running against its original document).
     if (m_bgRemovalStatus == BgRemovalStatus::Failed)
         m_bgRemovalStatus = BgRemovalStatus::Available;
@@ -4306,14 +4265,14 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
                   {ModelId::MobileSamEncoder, ModelId::MobileSamDecoder});
     applyMlPolicy(m_smartLassoAction, canEdit && isImage,
                   {ModelId::MobileSamEncoder, ModelId::MobileSamDecoder});
-    // Recognize Text reads pixels for both images and PDFs (Workstream
-    // F brought PDFs into scope). Documents that don't expose a
-    // SelectableTextStore (StubAdapter) stay disabled.
+    // Recognize Text reads pixels for both images and PDFs. Documents
+    // that don't expose a SelectableTextStore (StubAdapter) stay
+    // disabled.
     const bool canOcr = doc != nullptr && doc->supportsSelectableText();
     applyMlPolicy(m_recognizeTextAction, canOcr,
                   {ModelId::PpOcrDetector, ModelId::PpOcrRecognizerLatin});
     if (canOcr && m_recognizeTextAction && !m_recognizeTextAction->isEnabled()) {
-        // ADR 0002 §3 / G6: the base doc type supports OCR but policy is
+        // The base doc type supports OCR but policy is
         // blocking the one-time download — override the shared tooltip
         // with benefit-first wording that names the download path and
         // avoids the "model"/"OCR" jargon token.
@@ -4339,7 +4298,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     m_insertPagesAction->setEnabled(isPdfLike);
     m_cropPagesAction->setEnabled(isPdfLike);
     // Drag-to-crop targets PDF pages. When it can't act, disable it and
-    // say why + where to go (G3: no lying controls) rather than letting
+    // say why + where to go rather than letting
     // the user pick it and hit a dead end.
     m_cropPagesDragAction->setEnabled(isPdfLike);
     m_cropPagesDragAction->setToolTip(
@@ -4354,11 +4313,8 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // worker, so at open this reports "no forms yet" and the block re-runs a
     // moment later when the answer lands.
     refreshFormCapabilities(doc);
-    // My Card editor is always available — a user may want to edit
-    // their card even without a PDF open.
-    m_myCardAction->setEnabled(true);
 
-    // Restore view-state in priority order (Workstream I):
+    // Restore view-state in priority order:
     //   1. Per-file: the RecentEntry for this exact path, if it has
     //      captured state — zoom, scroll, page, sidebar mode,
     //      markup-toolbar visibility, window geometry/state.
@@ -4366,9 +4322,9 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     //      type (PDF / Image). Applied only when there's no per-file
     //      state and the doc has a recognised type.
     //   3. Otherwise: leave the constructor / hardcoded defaults in
-    //      place. The hardcoded defaults are owned by Workstream A
-    //      (fit-to-content / sidebar hidden / markup-toolbar hidden);
-    //      this path just falls through to whatever they end up being.
+    //      place (fit-to-content / sidebar hidden / markup-toolbar
+    //      hidden); this path just falls through to whatever they end
+    //      up being.
     //
     // One-shot per document — switching tabs after manual navigation
     // must not bounce back to the saved page.
@@ -4409,7 +4365,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             // Restoring page-then-zoom, as this block used to, landed a
             // 12-page PDF on page 12: goToPage() set a pixel offset that
             // the following fit-zoom re-interpreted against a much shorter
-            // document. (2026-08-03 dogfooding report.)
+            // document.
             m_sidebar->setMode(static_cast<Sidebar::Mode>(static_cast<int>(entry.sidebarMode)));
             // restoreState() walks every dock/toolbar this MainWindow owns
             // and sets its visibility from the blob, so the explicit
@@ -4419,7 +4375,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             }
             if (!entry.windowState.isEmpty()) {
                 restoreState(entry.windowState);
-                // Re-pin the ADR-0007 canonical toolbar order — see
+                // Re-pin the canonical toolbar order — see
                 // reassertToolbarLayout() for why the blob can never be
                 // trusted to carry it correctly.
                 reassertToolbarLayout();
@@ -4439,8 +4395,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             // Per-type fallback: apply the last-closed defaults for
             // this document's type, if any.
             //
-            // DR 2026-07-31-per-type-restore-excludes-content-relative-state:
-            // per-type restore is a "last-closed-of-type" convenience, not a
+            // Per-type restore is a "last-closed-of-type" convenience, not a
             // promise about THIS document, so it only carries
             // content-INDEPENDENT state forward -- sidebar mode,
             // markup-toolbar visibility, dock/toolbar layout (windowState),
@@ -4449,12 +4404,13 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             // Custom zoom (a raw percentage chosen to fit ONE document's
             // pixel dimensions) and windowGeometry (a size/position chosen
             // for ONE document's content, or simply whatever the window
-            // happened to be at close) are never restored here -- closeEvent
-            // below symmetrically never WRITES them into the per-type
-            // default either, so `def.zoomMode` can only be a semantic mode
-            // and `def.windowGeometry` is always empty; the checks here are
-            // the load-bearing guard against an already-installed default
-            // from before this fix, or a future regression.
+            // happened to be at close) are never restored here -- the capture
+            // below (captureViewStateForRestore) symmetrically never WRITES
+            // them into the per-type default either, so `def.zoomMode` can
+            // only be a semantic mode and `def.windowGeometry` is always
+            // empty; the checks here are the load-bearing guard against an
+            // already-installed default from before this fix, or a future
+            // regression.
             // applyInitialWindowSize(), called earlier in this same
             // function, already computed a content-fit window size for this
             // document; leaving that stand is the correct default. Reported
@@ -4470,7 +4426,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
                 m_sidebar->setMode(static_cast<Sidebar::Mode>(static_cast<int>(def.sidebarMode)));
                 if (!def.windowState.isEmpty()) {
                     restoreState(def.windowState);
-                    // Re-pin the ADR-0007 canonical toolbar order — see
+                    // Re-pin the canonical toolbar order — see
                     // reassertToolbarLayout() for why the blob can never
                     // be trusted to carry it correctly.
                     reassertToolbarLayout();
@@ -4483,7 +4439,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
             }
         }
 
-        // Content-aware first-open defaults (roadmap Now #3): when the
+        // Content-aware first-open defaults: when the
         // user has no saved per-file state, let the document's own
         // contents pick the sidebar — long docs open to page thumbnails
         // for navigation; shorter forms force the sidebar hidden for a
@@ -4534,14 +4490,13 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // available on plain images — it operates on pixel rectangles, not
     // glyphs.
     //
-    // G10/SC-CRIT-2 (docs/decision-records/2026-08-01-markup-toolbar-disable-not-hide.md):
-    // disabled-with-tooltip, not hidden. Hiding collapsed each tool's slot
+    // Disabled-with-tooltip, not hidden: hiding collapses each tool's slot
     // in the shared toolbar row, shifting Redact / Stroke / Fill / Width /
     // Dash every time the current document's text-layer capability
-    // changed — e.g. switching tabs between an OCR'd PDF and a plain
-    // image — a G10 spatial-constancy violation this record reverses the
-    // prior hide-based call to fix. The tooltip states why and where to
-    // go, matching the Tools menu's own Recognize Text… entry.
+    // changes — e.g. switching tabs between an OCR'd PDF and a plain
+    // image — and controls must not move when unrelated state changes. The
+    // tooltip states why and where to go, matching the Tools menu's own
+    // Recognize Text… entry.
     const bool hasText = doc && doc->hasTextLayer();
     const QString textAwareTip =
         tr("Available once this page has recognisable text — "
@@ -4552,7 +4507,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
 
     // SAM tools (Instant Alpha / Smart Lasso): image-only, and only
     // when the MobileSAM models are reachable (cached on disk, or
-    // policy allows downloading them). Same G10 reasoning as the
+    // policy allows downloading them). Same reasoning as the
     // text-aware trio above; the wording mirrors the Tools-menu entries
     // for these same two features (m_instantAlphaAction /
     // m_smartLassoAction, gated by applyMlPolicy() above in this same
@@ -4570,7 +4525,7 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
         }
     }
     const bool samToolsEnabled = samImageEligible && samPolicyAllows;
-    // G3: state why, and where to go only when there is a next step. A
+    // State why, and where to go only when there is a next step. A
     // non-image document (a PDF, or any format SAM can't run against) has
     // nowhere to go — the format itself can't support the operation, so
     // "why" alone suffices. A blocked download policy DOES have a next
@@ -4609,21 +4564,19 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     syncViewModeActions(doc);
     updateTitleForDocument(doc);
 
-    // Honest degradation in Two-Pages mode (decision record
-    // 2026-07-21-two-page-layout, D2-A; gate G3). The first shipping two-up
-    // increment does not yet reproject markup, text-selection, or search onto
-    // the spread geometry, so those controls are disabled-with-tooltip that
-    // points back to the working modes rather than silently no-opping. Full
-    // parity is the COMMITTED PR2 follow-up
-    // (docs/backlog/2026-07-21-two-page-overlay-search-parity). This override
-    // runs after the per-capability enablement above so it wins in two-up mode
-    // and restores the normal state on the way out.
+    // Honest degradation in Two-Pages mode. Two Pages doesn't yet reproject
+    // markup, text-selection, or search onto the spread geometry, so those
+    // controls are disabled-with-tooltip that points back to the working
+    // modes rather than silently no-opping. This override runs after the
+    // per-capability enablement above so it wins in two-up mode and restores
+    // the normal state on the way out.
+    // todo/2026-10-15-two-pages-read-only: bring markup, text selection and Find to Two Pages.
     const bool twoPageMode =
         doc && doc->supportsViewModes() && doc->viewMode() == ViewMode::TwoPages;
     if (twoPageMode) {
         // Primary signal: the always-visible, compact read-only badge in the
         // status bar (its tooltip carries the full "switch to edit" sentence).
-        // The per-control tooltips below remain as the G3 no-lying-controls floor.
+        // Each control below also keeps its own why/where tooltip.
         if (m_readOnlyBadge)
             m_readOnlyBadge->setVisible(true);
         const QString why =
@@ -4699,8 +4652,8 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
         }
     }
 
-    // Large-doc OCR hint chip. Dismissal is keyed per-document (ADR
-    // 0006), so switching documents does not clear another document's
+    // Large-doc OCR hint chip. Dismissal is keyed per-document, so
+    // switching documents does not clear another document's
     // dismissal. Visibility is derived by the shared helper, also re-run
     // on page change (PageChangeNotifier → onActivePageChanged) and after
     // OCR (SelectableTextStore::changed) so the notice self-clears.
@@ -4716,8 +4669,8 @@ void MainWindow::onCurrentDocumentChanged(IDocument *doc) {
     // it fires later and reads the settled scale. `this` is the timer's
     // context object, so a window closed before it fires cancels it; the
     // readout itself re-reads the current document, tolerating a tab
-    // switch in the interim. (Live update during a window drag remains a
-    // documented pre-existing limitation — IDocument is not a QObject.)
+    // switch in the interim. (It doesn't update live during a window drag:
+    // IDocument is not a QObject.)
     QTimer::singleShot(0, this, [this]() { updateZoomIndicator(); });
 }
 
@@ -4726,8 +4679,8 @@ void MainWindow::onActivePageChanged(int /*page*/) {
     if (!doc || !m_ocrController)
         return;
     // Re-derive the large-doc recognize notice so it self-clears / re-shows
-    // for the page just landed on (ADR 0006). The helper short-circuits on the
-    // cheap guards before it ever probes pageHasText(), so this stays light.
+    // for the page just landed on. The helper short-circuits on the cheap
+    // guards before it ever probes pageHasText(), so this stays light.
     updateLargeDocOcrHint();
     // Read the page from the CURRENT document rather than trusting the signal's
     // argument: this slot is connected to each visited document's notifier
@@ -4758,8 +4711,8 @@ void MainWindow::updateLargeDocOcrHint() {
         const int page = doc->currentPage();
         auto *store = doc->selectableText();
         // Show only for a genuinely text-less page: no cached OCR results
-        // AND no native text layer (ADR 0006 — the missing real per-page
-        // guard was why this fired on born-digital docs).
+        // AND no native text layer (without this per-page guard the notice
+        // fired on born-digital docs).
         if (store && !store->hasResults(page)) {
             bool hasText;
             if (m_pageHasTextCacheDoc == doc && m_pageHasTextCachePage == page) {
@@ -4805,7 +4758,6 @@ void MainWindow::refreshFormCapabilities(IDocument *doc) {
         m_fillFormsAction->setChecked(false);
     }
     m_fillFormsAction->setEnabled(hasForms);
-    m_autoFillFormAction->setEnabled(hasForms);
     // Auto-enable Fill Forms the first time we see a fillable document
     // so the user gets visible widgets + click-to-type without having
     // to discover the menu toggle. We only do this once per document
@@ -4836,7 +4788,7 @@ void MainWindow::onDocumentCapabilitiesChanged() {
             m_sidebar->setMode(*mode);
         }
     }
-    // Staged image open (ADR 0008): an ImageDocument fires this once its
+    // Staged image open: an ImageDocument fires this once its
     // off-thread decode + async initial fit have settled the scale. The zoom
     // readout was populated synchronously at open from the pre-fit placeholder
     // value; refresh it now so it matches the on-screen magnification instead
@@ -4845,12 +4797,12 @@ void MainWindow::onDocumentCapabilitiesChanged() {
     // the already-correct zoom).
     updateZoomIndicator();
 
-    // Staged image open, decode-FAILURE path (ADR 0008): when a decode fails
+    // Staged image open, decode-FAILURE path: when a decode fails
     // (valid header, corrupt/truncated body) the image's capabilities flip
     // from their provisional (pending) true — under which onCurrentDocumentChanged
     // ENABLED these controls at open — back to false. Re-apply the
     // capability-gated action states so the edit/zoom/print/search controls
-    // DISABLE instead of staying enabled-but-inert against a null image (G3).
+    // DISABLE instead of staying enabled-but-inert against a null image.
     // This intentionally mirrors the enable block in onCurrentDocumentChanged;
     // the two are kept in sync by hand because IDocument is not a QObject with
     // per-capability change signals. For a PDF (notifier fires for the forms
@@ -4882,8 +4834,8 @@ void MainWindow::onDocumentCapabilitiesChanged() {
         // An image that finished decoding with no usable pixels. The document
         // view already shows the "Could not decode image:" reason; give the
         // now-disabled controls a matching tooltip so hovering explains the
-        // greyed-out state — there is nowhere to go, so "why" alone suffices
-        // (G3). ML/OCR actions can't act on a null image either.
+        // greyed-out state — there is nowhere to go, so "why" alone
+        // suffices. ML/OCR actions can't act on a null image either.
         const QString why = tr("This image could not be opened.");
         for (QAction *a :
              {m_zoomInAction, m_zoomOutAction, m_zoomActualAction, m_zoomFitAction,
@@ -4929,18 +4881,13 @@ namespace {
 // tool between each. Non-sticky tools instead flip back to Select on
 // commit so the freshly-drawn item can be grabbed to move/resize.
 //
-// CF-3 (backlog 2026-07-20-freehand-auto-revert-drawover-noop): the
-// free-form Ink tool auto-reverted after every stroke, so the user's
-// second draw-over drag silently became a rubber-band selection. Ink
-// is inherently multi-stroke (you sketch, you don't place one mark),
-// so it is sticky.
+// Ink is inherently multi-stroke (you sketch, you don't place one
+// mark), so it is sticky: auto-reverting after every stroke silently
+// turned the second draw-over drag into a rubber-band selection.
 //
-// DRAWING-TOOL PARITY (owner ruling "parity", 2026-07-20; ADR
-// docs/decision-records/2026-07-20-drawing-tool-parity.md): the open
-// question from PR #91 — whether the bounded shape tools should match
-// Ink — was answered "parity". Rectangle / Ellipse / Line / Arrow now
-// join Ink as sticky, alongside the draw-first-on-press half in
-// AnnotationOverlay::mousePressEvent. The two behaviours ship together
+// Drawing-tool parity: Rectangle / Ellipse / Line / Arrow are sticky
+// like Ink, alongside the draw-first-on-press half in
+// AnnotationOverlay::mousePressEvent. The two behaviours go together
 // so the bounded tools feel like Ink end-to-end.
 //
 // Deliberately EXCLUDED (stay one-shot → revert to Select): the
@@ -4948,13 +4895,12 @@ namespace {
 // path — they open an inline editor and return before emitting
 // annotationCommitted), the text-markup tools (Highlight / Underline /
 // StrikeOut), and the other stamp/region tools (HighlightShape /
-// Redaction / ZoomLens / Signature). None were named in the parity
-// ruling; each places a single item, and reverting to Select keeps the
-// just-placed item immediately grabbable.
+// Redaction / ZoomLens / Signature). Each places a single item, and
+// reverting to Select keeps the just-placed item immediately grabbable.
 bool isStickyDrawTool(AnnotationTool tool) {
     switch (tool) {
-    case AnnotationTool::Ink:       // free-form sketch — inherently multi-stroke (CF-3)
-    case AnnotationTool::Rectangle: // bounded shapes — owner "parity" ruling, 2026-07-20
+    case AnnotationTool::Ink:       // free-form sketch — inherently multi-stroke
+    case AnnotationTool::Rectangle: // bounded shapes — sticky, like Ink
     case AnnotationTool::Ellipse:
     case AnnotationTool::Line:
     case AnnotationTool::Arrow:
@@ -4978,8 +4924,8 @@ void MainWindow::onAnnotationCommitted(int /*id*/) {
     // a no-op when the requested tool already matches the current one.
     if (!m_markupToolbar)
         return;
-    // Sticky-draw tools (Ink today) stay armed so consecutive strokes
-    // all draw — see isStickyDrawTool above (CF-3). Without this, the
+    // Sticky-draw tools (Ink and shapes) stay armed so consecutive
+    // strokes all draw — see isStickyDrawTool above. Without this, the
     // toolbar reverts to Select mid-sketch and the next drag becomes a
     // selection rubber-band instead of a stroke.
     if (isStickyDrawTool(m_markupToolbar->activeTool()))
@@ -5054,88 +5000,8 @@ void MainWindow::onAbout() {
     QMessageBox::about(this, tr("About Trailer"),
                        tr("<h3>Trailer</h3>"
                           "<p>Cross-platform PDF and image workbench.</p>"
-                          "<p>Version %1 (Phase 1)</p>")
+                          "<p>Version %1</p>")
                            .arg(QString::fromLatin1(TRAILER_VERSION_STRING)));
-}
-
-void MainWindow::onAutoFillCurrentForm() {
-    auto *doc = m_documentView->currentDocument();
-    if (!doc || !doc->supportsFormFilling()) {
-        flashStatus(tr("AutoFill: this document has no fillable form fields."));
-        return;
-    }
-
-    CardStore store;
-    store.load();
-
-    // If the user has no card yet, open the dialog inline so AutoFill
-    // has something to work with on first use. They can still Cancel.
-    if (!store.hasActive()) {
-        MyCardDialog dialog(this);
-        if (dialog.exec() != QDialog::Accepted)
-            return;
-        MyCard card = dialog.card();
-        if (card.label.isEmpty())
-            card.label = tr("My Card");
-        store.addCard(std::move(card));
-        store.save();
-    }
-
-    const MyCard card = store.activeCard();
-    const AutoFillResult r = autoFillDocument(doc, card);
-
-    // Push the new values into the form overlay so the user sees them
-    // immediately. Also turn on form-filling mode — AutoFill is a
-    // strong signal that the user wants to interact with the form
-    // (either to spot-check what was filled or to finish remaining
-    // fields by hand).
-    doc->refreshFormView();
-    if (r.filled > 0 && !m_fillFormsAction->isChecked()) {
-        m_fillFormsAction->setChecked(true); // triggers setFormFillingActive(true)
-    }
-
-    // Inline status message instead of a modal — the popup was a
-    // context-breaker on every invocation. "Filled 0 of N" still gets
-    // surfaced so the user knows nothing matched, but via the status
-    // bar which doesn't demand a click-through.
-    const QString label = card.label.isEmpty() ? tr("My Card") : card.label;
-    QString status;
-    if (r.filled == 0 && r.examined > 0) {
-        status = tr("AutoFill: \"%1\" matched none of the %2 text field(s). "
-                    "The PDF may use non-standard field names.")
-                     .arg(label)
-                     .arg(r.examined);
-    } else if (r.filled == 0) {
-        status = tr("AutoFill: no text fields to fill in this document.");
-    } else {
-        status = tr("AutoFill: filled %1 of %2 text field(s) from \"%3\".")
-                     .arg(r.filled)
-                     .arg(r.examined)
-                     .arg(label);
-    }
-    statusBar()->showMessage(status, 8000);
-}
-
-void MainWindow::onManageMyCard() {
-    CardStore store;
-    store.load();
-
-    MyCardDialog dialog(this);
-    if (store.hasActive()) {
-        dialog.setCard(store.activeCard());
-    }
-    if (dialog.exec() != QDialog::Accepted)
-        return;
-
-    MyCard card = dialog.card();
-    if (card.label.isEmpty())
-        card.label = tr("My Card");
-    if (store.hasActive()) {
-        store.replaceCard(store.activeIndex(), std::move(card));
-    } else {
-        store.addCard(std::move(card));
-    }
-    store.save();
 }
 
 void MainWindow::onSignHere(const QPoint &anchorGlobalPos) {
@@ -5144,10 +5010,10 @@ void MainWindow::onSignHere(const QPoint &anchorGlobalPos) {
         return;
 
     // Popover anchored under the Sign-Here button on the form
-    // toolbar (per the 2026-04-24 review: "Signature placement uses
-    // a popover, not a dialog"). The picker handles "Add…" inline —
-    // user goes through capture and the new signature is auto-armed
-    // as if they'd picked it from an existing list.
+    // toolbar: signature placement uses a popover, not a dialog. The
+    // picker handles "Add…" inline — user goes through capture and the
+    // new signature is auto-armed as if they'd picked it from an
+    // existing list.
     const QPoint anchor = anchorGlobalPos.isNull() ? QCursor::pos() : anchorGlobalPos;
     const QString id = SignaturePicker::show(this, anchor);
     if (id.isEmpty())
@@ -5399,12 +5265,12 @@ void MainWindow::refreshThemedIcons() {
     // re-run it for the current document so the badge, if showing, re-tints.
     updateRemoveBackgroundBadge(m_documentView ? m_documentView->currentDocument() : nullptr);
     // Re-derive any theme-locked palette role a document's view pinned at
-    // construction (e.g. PdfDocument's QPdfView canvas-surround colour, DR
-    // 2026-07-31-document-surround-colour-follows-base) — Qt's palette-
-    // change cascade skips a role a widget explicitly set via setPalette(),
-    // so it would otherwise go stale on a live theme flip. Every open tab
-    // in this window, not just the current one — refreshViewPalette() is a
-    // no-op default for adapters (image, stub) that never pin a role.
+    // construction (e.g. PdfDocument's QPdfView canvas-surround colour, see
+    // documentSurroundColor()) — Qt's palette-change cascade skips a role a
+    // widget explicitly set via setPalette(), so it would otherwise go stale
+    // on a live theme flip. Every open tab in this window, not just the
+    // current one — refreshViewPalette() is a no-op default for adapters
+    // (image, stub) that never pin a role.
     if (m_documentView) {
         const int total = m_documentView->documentCount();
         for (int i = 0; i < total; ++i) {
@@ -5436,10 +5302,10 @@ void MainWindow::onCheckForUpdates() {
     // Opens the same Preferences → Updates pane the auto-check policy
     // and manual check both render into, so there is exactly one place
     // in the UI that shows "checking / up to date / update available /
-    // error" (easier to keep honest than a second, parallel modal
-    // flow). The URL about to be fetched is disclosed via
+    // error" (easier to keep honest than a parallel modal flow). The
+    // URL about to be fetched is disclosed via
     // UpdateManager::checkStarted before the request fires, matching
-    // ModelDownloader's consent framing (AGENTS.md "Networking").
+    // ModelDownloader's consent framing (AGENTS.md "Hard constraints").
     PreferencesDialog dlg(m_app->settings(), this);
     dlg.setManageModelsCallback([this]() { showModelManagerDialog(this, m_app); });
     dlg.setResetAllCallback([this]() { onResetTrailerSettings(); });
@@ -5460,7 +5326,6 @@ void MainWindow::onResetTrailerSettings() {
                                 "This deletes:\n"
                                 "  • Preferences (theme, last-saved-dir, autoSave)\n"
                                 "  • Recent files history\n"
-                                "  • Saved cards (My Card data)\n"
                                 "  • Saved signatures\n"
                                 "  • Cached ML models (will re-download on next use)\n\n"
                                 "Open documents stay open — only Trailer's own state on "
@@ -5482,7 +5347,7 @@ void MainWindow::onResetTrailerSettings() {
 
     removeFile(AppPaths::settingsFile());
     removeFile(AppPaths::recentFile());
-    removeFile(AppPaths::cardsFile());
+    removeFile(AppPaths::legacyCardsFile());
     removeDir(AppPaths::signaturesDir());
     removeDir(AppPaths::modelsDir());
 
@@ -5572,7 +5437,6 @@ void MainWindow::captureViewStateForRestore() {
         // closed-of-type wins; the loop overwrites typeSnapshot
         // each iteration so the final doc's state is what lands.
         //
-        // DR 2026-07-31-per-type-restore-excludes-content-relative-state:
         // zoomMode/zoomFactor and windowGeometry are content-relative --
         // meaningful only for the document that produced them -- so they
         // are deliberately NOT captured here, symmetric with
@@ -5659,7 +5523,7 @@ void MainWindow::closeEvent(QCloseEvent *event) {
     // sees one prompt — the doc they were just looking at.
     // Prompt for dirty docs AND for untitled docs (clean but backed only
     // by a transient temp file — closing silently would lose the
-    // pasted/acquired content; ADR-0004).
+    // pasted/acquired content).
     std::vector<IDocument *> dirty;
     dirty.reserve(static_cast<size_t>(total));
     // hasUnsavedWork() (not isDirty()) so a clean doc whose backing file was
@@ -5697,11 +5561,11 @@ std::vector<IDocument *> MainWindow::collectDirtyDocsForQuit() const {
     // Mirror closeEvent's dirty-doc walk: current document first (so the
     // user usually sees just one prompt — the doc they were looking at),
     // then the rest, de-duplicated. hasUnsavedWork() OR untitled qualifies:
-    // hasUnsavedWork() (= isDirty() || externally-deleted, CF-7) so a clean
+    // hasUnsavedWork() (= isDirty() || externally-deleted) so a clean
     // doc whose backing file was deleted underneath is prompted on ⌘Q instead
     // of quitting silently (its buffer is the last copy); an untitled doc is
     // clean but backed only by a transient temp file, so quitting without a
-    // prompt would likewise lose its content (ADR-0004).
+    // prompt would likewise lose its content.
     std::vector<IDocument *> dirty;
     const int total = m_documentView->documentCount();
     dirty.reserve(static_cast<size_t>(total));

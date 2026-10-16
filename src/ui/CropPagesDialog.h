@@ -15,13 +15,11 @@ namespace trailer {
 // meaningless noise — there is nothing else to apply it to — so the
 // checkbox is hidden and cropping targets the sole page (the same path
 // the multi-page dialog takes when the box is left unchecked). This keeps
-// the dialog honest about the choices it actually offers (PHILOSOPHY →
-// *How Trailer reduces friction*; sibling of the Recognize-Text
-// page-range friction). Ratified in
-// docs/decision-records/0012-crop-single-page-apply-all-checkbox.md.
+// the dialog honest about the choices it actually offers: a choice that
+// can't change the result only costs attention.
 //
-// Behaviour for a multi-page document is unchanged: the checkbox is shown,
-// checked by default, and applyToAllPages() reflects it.
+// On a multi-page document the checkbox is shown, checked by default, and
+// applyToAllPages() reflects it.
 class CropPagesDialog : public QDialog {
     Q_OBJECT
 
@@ -39,7 +37,7 @@ class CropPagesDialog : public QDialog {
     // the current page only.
     bool applyToAllPages() const;
 
-    // Exposed for regression tests and G2 evidence grabs.
+    // Exposed for regression tests and screenshot grabs.
     QCheckBox *applyToAllCheckBox() const { return m_allPagesCheck; }
 
   private:

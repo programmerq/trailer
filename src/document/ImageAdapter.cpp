@@ -96,10 +96,8 @@ constexpr size_t kMaxUndoSteps = 32;
 // added detail (the source has no more pixels to give), so the general
 // resample branch is deliberately left as it was.
 //
-// This duplicates the scale-to-logical technique in
-// src/ui/ThumbnailPaint.h (scaleToLogicalWidth, PR #70, currently
-// unmerged); when that PR lands, consider consolidating on the shared
-// helper. See docs/backlog/2026-07-16-hidpi-uat-harness.md.
+// This duplicates the scale-to-logical technique in src/ui/ThumbnailPaint.h
+// (scaleToLogicalWidth); the two could share one helper.
 QPixmap buildDisplayPixmap(const QImage &img, double logicalScale, double screenDpr) {
     const qreal dpr = img.devicePixelRatio() > 0.0 ? img.devicePixelRatio() : 1.0;
     const double pixelExact = trailer::pixelExactZoomFactor(dpr, screenDpr);
@@ -311,10 +309,10 @@ ImageDocument::ImageDocument(QString path) : m_path(std::move(path)) {
         m_image = reader.read();
         m_decoded = true;
     } else {
-        // Staged open (ADR 0008, image path = Option B): read ONLY the
-        // header for an immediate contentSizeHint, then decode the full
-        // image off the GUI thread. No reader.read() here — that full-pixel
-        // decode is exactly what this staging moves off the calling thread.
+        // Staged open: read ONLY the header for an immediate
+        // contentSizeHint, then decode the full image off the GUI thread. No
+        // reader.read() here — that full-pixel decode is exactly what this
+        // staging moves off the calling thread.
         m_headerSize = reader.size();
         if (!m_path.isEmpty() && !m_headerSize.isEmpty())
             startDecode();
@@ -331,7 +329,7 @@ ImageDocument::ImageDocument(QString path) : m_path(std::move(path)) {
         });
     // Record the on-disk identity we just read so the save-time conflict
     // guard and the ExternalChangeMonitor can tell a later external write
-    // apart from our own (ADR 2026-07-19).
+    // apart from our own.
     captureFileBaseline();
 }
 
@@ -342,9 +340,9 @@ void ImageDocument::startDecode() {
     const QString path = m_path;
     // Fresh QImageReader constructed inside the worker — shares nothing with
     // the GUI thread (QImage is reentrant + copy-on-write), mirroring the
-    // "throwaway instance, shares nothing" discipline ADR 0006 adopted for
-    // the PDF annotation sweep. autoTransform matches the header read so the
-    // EXIF-oriented pixels agree with the size hint.
+    // "throwaway instance, shares nothing" discipline of the PDF annotation
+    // sweep. autoTransform matches the header read so the EXIF-oriented
+    // pixels agree with the size hint.
     m_decodeFuture = QtConcurrent::run([path]() -> QImage {
         QImageReader reader(path);
         reader.setAutoTransform(true);
@@ -388,7 +386,7 @@ void ImageDocument::onDecodeFinished(int generation) {
         // honest error and notify: capabilities have flipped from their
         // provisional (pending) true back to false, so MainWindow must
         // re-disable the edit/zoom/print/search controls it enabled at open
-        // (G3 — no enabled-but-inert controls). Cancel the loading-text timer:
+        // (no enabled-but-inert controls). Cancel the loading-text timer:
         // the "Could not decode" text replaces the (blank or loading) grace.
         m_viewPopulated = true;
         cancelPlaceholderTextTimer();
@@ -635,12 +633,12 @@ QWidget *ImageDocument::createView(QWidget *parent) {
             // Already decoded — install the real content synchronously.
             installDecodedContent();
         } else {
-            // Staged open in flight (ADR 0008): draw the header-sized window
+            // Staged open in flight: draw the header-sized window
             // NOW but leave the placeholder BLANK. The honest "Loading image…"
             // text is deferred by kPlaceholderTextDelayMs so a fast decode
             // swaps in the real image without the text flashing for one frame;
             // a decode that outlasts the grace window gets the text via the
-            // timer and keeps it until the swap (owner request, PR #109).
+            // timer and keeps it until the swap.
             // onDecodeFinished / installDecodedContent cancel the timer.
             const QSize hint = contentSizeHint();
             if (!hint.isEmpty())
@@ -687,7 +685,7 @@ void ImageDocument::markCaptureOrigin(double dpr) {
     // already logical, so leave the image untouched (no behavior change
     // vs an ordinary open beyond the Actual-Size default).
     //
-    // Staged open (ADR 0008): the capture's full decode may still be in
+    // Staged open: the capture's full decode may still be in
     // flight (m_image null) — this is called right after open, before the
     // window is sized. Record the dpr so it is stamped onto m_image when the
     // pixels are adopted (ensureDecoded), and so contentSizeHint divides the
@@ -745,7 +743,7 @@ void ImageDocument::restoreFromDraft(const QImage &img, const QString &path, boo
 void ImageDocument::zoomIn() {
     // An explicit user zoom must act, even if it arrives during the brief
     // staged-open decode window: supportsZoom() is true from the header, so a
-    // no-op here would be a lying control (G3). ensureDecoded() blocks on the
+    // no-op here would be a lying control. ensureDecoded() blocks on the
     // in-flight worker (bounded, GUI-thread-only) so the zoom always applies.
     ensureDecoded();
     // An explicit zoom supersedes the one-shot initial fit-to-content: cancel
@@ -813,13 +811,12 @@ void ImageDocument::reapplyFitMode() {
     const QSizeF logical = m_image.deviceIndependentSize();
     if (availW <= 0 || logical.width() <= 0.0)
         return;
-    // Notify only when the recompute actually MOVES the scale (2026-07-26
-    // hardening): a resize that lands on the same effective fit percentage
-    // (e.g. a sub-pixel viewport jitter) has nothing new to tell the
-    // readout, and holding the notifyChanged() call to genuine changes
-    // keeps this method's side effects to the minimum the G1 threshold
-    // ("readout matches render") actually requires — it fires no more
-    // often than the render itself changes.
+    // Notify only when the recompute actually MOVES the scale: a resize
+    // that lands on the same effective fit percentage (e.g. a sub-pixel
+    // viewport jitter) has nothing new to tell the readout, and holding the
+    // notifyChanged() call to genuine changes keeps this method's side
+    // effects to the minimum that "the readout matches the render" requires
+    // — it fires no more often than the render itself changes.
     const double previousScale = m_scale;
     if (m_zoomMode == ZoomMode::FitToWidth) {
         applyScale(static_cast<double>(availW) / logical.width());
@@ -843,15 +840,14 @@ void ImageDocument::reapplyFitMode() {
     // that first tick). FitModeResizeWatcher calls reapplyFitMode() on
     // every later viewport Resize event too (a window resize, or — on some
     // platforms — the layout settling in a further pass after the initial
-    // fit already committed a scale). Before this fix that later path
-    // silently rescaled the render without telling MainWindow to refresh
-    // the zoomIndicator label: a real product bug (a "lying control" per
-    // PHILOSOPHY.md), not a test artifact — the status-bar percentage
+    // fit already committed a scale). Without this, that later path would
+    // silently rescale the render without telling MainWindow to refresh
+    // the zoomIndicator label (a lying control): the status-bar percentage
     // could freeze at a stale value while the image kept rescaling
-    // underneath it. Caught by
-    // TestImageScale::readoutMatchesRenderAfterAsyncFit failing on the
-    // macOS CI runner, where the two settle-widths straddle a rounding
-    // boundary that Linux/Wine's offscreen geometry happened not to hit.
+    // underneath it. TestImageScale::readoutMatchesRenderAfterAsyncFit
+    // guards this; it shows on the macOS CI runner, where the two
+    // settle-widths straddle a rounding boundary that Linux/Wine's
+    // offscreen geometry happens not to hit.
     // notifyChanged() is the same signal applyInitialFitZoom() already
     // fires; MainWindow::onDocumentCapabilitiesChanged() just re-reads
     // the current zoomFactor(), so firing it more often here is cheap and
@@ -939,7 +935,7 @@ void ImageDocument::applyInitialFitZoom() {
         m_initialZoomApplied = true;
         m_zoomMode = ZoomMode::Actual;
         applyScale(1.0);
-        // Staged open (ADR 0008): the scale is only decided now, on this
+        // Staged open: the scale is only decided now, on this
         // async tick after the off-thread decode landed. Notify so MainWindow
         // refreshes the zoom readout against the settled factor instead of the
         // pre-fit placeholder value (the capabilitiesChanged reuse; the image
@@ -1375,9 +1371,9 @@ bool ImageDocument::save(const QString &newPath) {
     const QString target = newPath.isEmpty() ? m_path : newPath;
     if (target.isEmpty())
         return false;
-    // Save-time conflict guard (ADR 2026-07-19): refuse to overwrite the
-    // baselined original if it changed under us and this isn't a deliberate
-    // "Keep mine" clobber. The caller surfaces the conflict banner.
+    // Save-time conflict guard: refuse to overwrite the baselined original if
+    // it changed under us and this isn't a deliberate "Keep mine" clobber.
+    // The caller surfaces the conflict banner.
     if (saveWouldClobberExternalChange(target))
         return false;
     const QImage out = flattenAnnotations(m_image, m_annotations.annotations());

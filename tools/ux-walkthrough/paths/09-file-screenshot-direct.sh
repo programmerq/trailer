@@ -52,7 +52,7 @@
 #   the submenu-open state, and whatever results (a captured document, or the
 #   post-trigger state), and marks a documented boundary instead of failing when
 #   no capture document appears. The macOS native /usr/sbin/screencapture path
-#   and its TCC "Screen Recording" prompt are real-Mac only -> owner checklist.
+#   and its TCC "Screen Recording" prompt need a real Mac (todo/2026-10-15-real-desktop-checks).
 set -uo pipefail
 export PATH_NAME="file-screenshot-direct"
 # shellcheck source=../lib/harness.sh
@@ -86,7 +86,7 @@ step "screenshot-submenu-open" \
 xdotool key --clearmodifiers Down; _settle    # Open… -> Open Recent
 xdotool key --clearmodifiers Down; _settle    # Open Recent -> Screenshot
 xdotool key --clearmodifiers Right; _settle   # open the Screenshot submenu (Whole Screen auto-highlighted, first item)
-note "Whole Screen enabled; Window / Selected Area disabled on Linux with an honest tooltip (G3, Application.cpp:516 #ifndef Q_OS_MACOS)"
+note "Whole Screen enabled; Window / Selected Area disabled on Linux with an honest tooltip (Application.cpp:516 #ifndef Q_OS_MACOS)"
 note "SELECTOR: focus-stable arrow-key nav — type-ahead did not register in this session; no shortcut/objectName/mnemonic exists (see header)"
 shot
 

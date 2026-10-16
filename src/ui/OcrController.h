@@ -28,7 +28,7 @@ class SelectableTextStore;
 // MainWindow. Holds a shared OcrEngine and a small bookkeeping table
 // keyed by (document*, page) so we don't submit the same work twice.
 //
-// Submission shape (Workstream F; lazy window per ADR 0013 §G13.3):
+// Submission shape:
 //   - On every current-page change, submit OCR for the visible page
 //     at `VisiblePage` priority. Cancel any pending VisiblePage that
 //     no longer matches the new page.
@@ -37,8 +37,8 @@ class SelectableTextStore;
 //     fall outside the new window gets cancelled when the user jumps
 //     somewhere unrelated — the window recenters on demand.
 //   - The lazy window applies uniformly to small and large/multi-page
-//     documents: a large doc is no longer cancelled down to nothing on
-//     the ambient path (it recenters on jump like any other doc).
+//     documents: a large doc is not cancelled down to nothing on the
+//     ambient path (it recenters on jump like any other doc).
 //   - The explicit Recognize Text… dialog submits work at
 //     `UserAction` priority (higher than VisiblePage), with the
 //     user's selected pages.
@@ -77,31 +77,30 @@ class OcrController : public QObject {
     // that "has a text layer in a watermark only" can be re-OCR'd
     // even though hasTextLayer() returns true.
     //
-    // This is the batch that drives the status-bar progress widget
-    // (ADR 0002): it emits ocrBatchStarted / ocrBatchProgress /
-    // ocrBatchFinished and, after the reveal delay, ocrBatchShouldReveal.
+    // This is the batch that drives the status-bar progress widget: it
+    // emits ocrBatchStarted / ocrBatchProgress / ocrBatchFinished and,
+    // after the reveal delay, ocrBatchShouldReveal.
     void submitUserPages(IDocument *doc, std::vector<int> pages, bool forceRerun);
 
-    // Cancel the active UserAction batch (ADR 0002 §2). Flips every
-    // outstanding BATCH-TRACKED token so in-flight pages discard their
-    // partial result and not-yet-started pages never run, stops the
-    // completion count, and emits ocrBatchFinished(true). Idempotent — a
-    // no-op when no batch is active. Ambient auto-OCR (visible-page ±kLazyWindowRadius)
-    // is deliberately NOT affected — only batch-tracked handles are
-    // cancelled.
+    // Cancel the active UserAction batch. Flips every outstanding
+    // BATCH-TRACKED token so in-flight pages discard their partial result
+    // and not-yet-started pages never run, stops the completion count, and
+    // emits ocrBatchFinished(true). Idempotent — a no-op when no batch is
+    // active. Ambient auto-OCR (visible-page ±kLazyWindowRadius) is
+    // deliberately NOT affected — only batch-tracked handles are cancelled.
     void cancelActiveBatch();
 
     // Re-derive the missing-model in-context hint for the current
     // document/page, including the doc==null and non-OCR-document cases
     // (which emit autoOcrModelMissing(false) so a stale hint hides on a
-    // document switch or close). ADR 0002 §3. Cheap; MainWindow calls it
-    // on every current-document change.
+    // document switch or close). Cheap; MainWindow calls it on every
+    // current-document change.
     void refreshModelHint();
 
-    // Reveal-delay threshold (ADR 0002 G2). A batch that finishes before
-    // this elapses never reveals the progress widget. Settable so tests
-    // can drive it to 0 (reveal immediately) or a large value (never)
-    // without wall-clock waiting.
+    // Reveal-delay threshold. A batch that finishes before this elapses
+    // never reveals the progress widget. Settable so tests can drive it to
+    // 0 (reveal immediately) or a large value (never) without wall-clock
+    // waiting.
     void setProgressRevealDelayMs(int ms) { m_revealDelayMs = ms; }
     int progressRevealDelayMs() const { return m_revealDelayMs; }
 
@@ -116,10 +115,10 @@ class OcrController : public QObject {
     void setRecognizerForTesting(RecognizeFn fn) { m_recognizer = std::move(fn); }
     void setModelReadyForTesting(std::optional<bool> ready) { m_modelReadyOverride = ready; }
 
-    // Test seam: replace the on-disk OCR result cache (ADR 0013 §G13.4)
-    // with one pointed at a temporary directory so tests never touch the
-    // real data dir. Null disables the disk tier entirely. In production
-    // the controller constructs a cache over AppPaths::ocrCacheDir().
+    // Test seam: replace the on-disk OCR result cache with one pointed at a
+    // temporary directory so tests never touch the real data dir. Null
+    // disables the disk tier entirely. In production the controller
+    // constructs a cache over AppPaths::ocrCacheDir().
     void setDiskCacheForTesting(std::shared_ptr<OcrDiskCache> cache) {
         m_diskCache = std::move(cache);
     }
@@ -140,36 +139,31 @@ class OcrController : public QObject {
     void cancelAll();
 
     // Page-count threshold above which a document counts as "large".
-    // No longer gates the ambient enqueue (large docs now get the same
-    // lazy ±kLazyWindowRadius window — ADR 0013 §G13.3); it drives the
-    // missing-model hint exclusion (evaluateAutoOcrModel) and MainWindow's
-    // large-doc "Recognize text on this page" notice. Exposed for tests;
-    // matches the value in the spec (>50 pages).
+    // It doesn't gate the ambient enqueue (large docs get the same lazy
+    // ±kLazyWindowRadius window); it drives the missing-model hint
+    // exclusion (evaluateAutoOcrModel) and MainWindow's large-doc
+    // "Recognize text on this page" notice. Exposed for tests.
     static constexpr int kLargeDocPageThreshold = 50;
 
     // Pixel-area ceiling for EAGER auto-OCR on a single-page document
-    // (ADR G13.1). "Small" is a single-page document (images always are)
-    // whose source pixel area is ≤ 4 MP (2048×2048). A single image at or
-    // below this area auto-OCRs in the background on open; a larger single
-    // image is deliberately NOT greedy — auto-OCRing a huge scan on open
-    // would cook the CPU — so it falls to on-demand recognition (manual
-    // Recognize Text at UserAction priority, or the search kick), which
-    // bypass this gate. Exposed for tests. Multi-page docs are governed by
-    // isLargeDoc() instead.
+    // (images always are): ≤ 4 MP (2048×2048). One such page recognises on
+    // the worker well inside a sub-1s budget and can't cook the CPU; area,
+    // not colour depth, is what drives OCR cost. At or below it the page
+    // auto-OCRs in the background on open; a larger one is NOT greedy and
+    // falls to on-demand recognition (manual Recognize Text, or the search
+    // kick), which bypasses this gate. Change it only for a real image near
+    // the boundary where eager-vs-lazy is measurably wrong. Exposed for
+    // tests. Multi-page docs are governed by isLargeDoc() instead.
     static constexpr int kEagerOcrMaxPixels = 2048 * 2048; // 4,194,304 px
 
-    // PHILOSOPHY: hand-tuned values stay hand-tuned. Radius of the lazy
-    // ambient-OCR window centred on the visible page (ADR 0013 §G13.3,
-    // docs/decision-records/0013-image-ocr-pipeline-lazy-window-bounded-cache.md):
+    // Radius of the lazy ambient-OCR window centred on the visible page:
     // the visible page and the ±kLazyWindowRadius pages around it are
     // OCR-submitted; everything outside the window is cancelled. N = 2 (a
-    // 5-page window) is the ratified value. Range considered ±1..±3: ±1
-    // (the prior value) under-covers the thumbnails just above/below the
-    // fold on a jump; ±3 widens the speculative Prefetch burst against the
-    // don't-cook-the-CPU budget with no measured benefit. Change it only
-    // with the measured reopen evidence ADR 0013 names — a real jump/scan
-    // pattern where ±2 stalls, or a measured CPU/battery cost. Exposed for
-    // tests.
+    // 5-page window). Range considered ±1..±3: ±1 under-covers the
+    // thumbnails just above/below the fold on a jump; ±3 widens the
+    // speculative Prefetch burst against the CPU budget with no measured
+    // benefit. Change it only for a measured jump/scan pattern where ±2
+    // stalls, or a measured CPU/battery cost. Exposed for tests.
     static constexpr int kLazyWindowRadius = 2;
 
     // True when the document's page count exceeds the auto-OCR
@@ -186,7 +180,7 @@ class OcrController : public QObject {
 
   signals:
     // Emitted at the start of a submitUserPages batch with the number
-    // of pages that will be OCR'd (ADR 0002 G1).
+    // of pages that will be OCR'd.
     void ocrBatchStarted(int total);
     // Emitted each time a page's result is resolved on the GUI thread.
     void ocrBatchProgress(int completed, int total);
@@ -201,17 +195,17 @@ class OcrController : public QObject {
     // drives the widget straight back to idle (no "cancelled — no changes
     // saved" terminal message) and disables the scoped cancel action.
     // Distinct from ocrBatchFinished so a supersede/teardown never flashes
-    // the misleading cancel message (ADR 0002 review items 2/7).
+    // the misleading cancel message.
     void ocrBatchAborted();
-    // Emitted after the reveal delay iff the batch is still running
-    // (ADR 0002 G2). MainWindow reveals the progress widget here, not on
-    // ocrBatchStarted, so sub-threshold batches never flicker it.
+    // Emitted after the reveal delay iff the batch is still running.
+    // MainWindow reveals the progress widget here, not on ocrBatchStarted,
+    // so sub-threshold batches never flicker it.
     void ocrBatchShouldReveal();
 
-    // State-driven auto-OCR readiness signal (ADR 0002 §3). true when
-    // the visible document would auto-OCR but the language model is not
-    // installed; false otherwise. Re-derived on every document/page
-    // change so the in-context hint is persistent, not fire-once.
+    // State-driven auto-OCR readiness signal. true when the visible
+    // document would auto-OCR but the language model is not installed;
+    // false otherwise. Re-derived on every document/page change so the
+    // in-context hint is persistent, not fire-once.
     void autoOcrModelMissing(bool missing);
 
   private:
@@ -227,7 +221,7 @@ class OcrController : public QObject {
     // Value stored per pending key: the scheduler task id plus whether the
     // submission is part of a user-action batch. batchTracked lets
     // cancelActiveBatch() cancel ONLY batch handles and leave ambient
-    // (visible-page ±kLazyWindowRadius) submissions running (ADR 0002 review item 3).
+    // (visible-page ±kLazyWindowRadius) submissions running.
     struct PendingEntry {
         MlTaskId id = 0;
         bool batchTracked = false;
@@ -251,8 +245,7 @@ class OcrController : public QObject {
     // GUI-thread callback invoked when a batch page resolves (stored or
     // discarded). `epoch` identifies the batch that scheduled the page;
     // stragglers from a superseded/torn-down batch carry a stale epoch and
-    // are ignored so they can't inflate the CURRENT batch's counter (ADR
-    // 0002 review item 1).
+    // are ignored so they can't inflate the CURRENT batch's counter.
     void onBatchPageResolved(int epoch);
 
     // Silent teardown of the active-batch bookkeeping: deactivate, stop
@@ -281,15 +274,15 @@ class OcrController : public QObject {
     // when the controller frees; the shared_ptr defers OcrEngine
     // destruction until the lambda exits.
     std::shared_ptr<OcrEngine> m_engine;
-    // Bounded on-disk OCR result cache (ADR 0013 §G13.4). shared_ptr so a
-    // worker's GUI-thread apply lambda can capture it to write-through
-    // even for ambient (non-batch) pages where `self` is null. Read-
-    // through happens on the UI thread in submitPage(); all access is
-    // UI-thread, so the cache needs no internal locking.
+    // Bounded on-disk OCR result cache. shared_ptr so a worker's GUI-thread
+    // apply lambda can capture it to write-through even for ambient
+    // (non-batch) pages where `self` is null. Read-through happens on the
+    // UI thread in submitPage(); all access is UI-thread, so the cache
+    // needs no internal locking.
     std::shared_ptr<OcrDiskCache> m_diskCache;
     std::unordered_map<PendingKey, PendingEntry, PendingKeyHash> m_pending;
 
-    // --- UserAction batch tracking (ADR 0002) ---
+    // --- UserAction batch tracking ---
     bool m_batchActive = false;
     int m_batchTotal = 0;
     int m_batchCompleted = 0;
@@ -303,7 +296,7 @@ class OcrController : public QObject {
     // apply lambda captures the value current at submit time and hands it
     // back to onBatchPageResolved(), which ignores any that don't match
     // the live batch. Guards against a superseded batch's late workers
-    // inflating the new batch's completion count (ADR 0002 review item 1).
+    // inflating the new batch's completion count.
     int m_batchEpoch = 0;
     // Shared with each page's GUI-thread apply step. Flipped by
     // cancelActiveBatch(); the apply step checks it (both run on the GUI
@@ -311,13 +304,12 @@ class OcrController : public QObject {
     // rather than persisting a half-recognised page.
     std::shared_ptr<std::atomic<bool>> m_batchCancelled;
     QTimer *m_revealTimer = nullptr;
-    // PHILOSOPHY: hand-tuned values stay hand-tuned. Reveal delay is the
-    // grace period before an in-flight batch surfaces the progress widget
-    // (ADR 0002 §1 "~1s"; B5's floor is "<1s: no looped animation"). The
-    // range considered was 600–1200ms: below ~800ms fast batches flicker
-    // the widget for work that's already done; above ~1200ms a genuinely
-    // slow batch feels unacknowledged. 1000ms sits in the middle and
-    // matches the ADR. Bump it only if users report the widget flashing on
+    // Reveal delay: the grace period before an in-flight batch surfaces
+    // the progress widget (NN/g: work under ~1s shows no looped
+    // animation). The range considered was 600–1200ms: below ~800ms fast
+    // batches flicker the widget for work that's already done; above
+    // ~1200ms a genuinely slow batch feels unacknowledged. 1000ms sits in
+    // the middle. Bump it only if users report the widget flashing on
     // trivially fast batches (raise) or feeling unresponsive on slow ones
     // (lower); it is settable per-run for tests.
     int m_revealDelayMs = 1000;
@@ -327,7 +319,7 @@ class OcrController : public QObject {
     bool m_destroying = false;
     // Last value emitted through autoOcrModelMissing(). Cached so the
     // signal fires only on a real state change, not on every page/document
-    // re-derivation (ADR 0002 review item 9).
+    // re-derivation.
     std::optional<bool> m_lastModelMissing;
 
     // Test seams (see setters above).

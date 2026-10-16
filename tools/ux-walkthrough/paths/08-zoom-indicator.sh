@@ -72,7 +72,7 @@ shot
 
 step "zoom-in-3" "Ctrl+= again: readout continues to track the render."
 press "ctrl+equal"
-note "expect ~195%; steps are geometric x1.25 (non-round by the accepted zoom-polish decision, backlog 2026-07-16)"
+note "expect ~195%; steps are geometric x1.25 (non-round by design)"
 shot
 
 # --- Step 6: zoom-out ------------------------------------------------------

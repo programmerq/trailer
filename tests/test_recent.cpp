@@ -187,7 +187,7 @@ void TestRecent::extendedViewStateRoundTrips() {
 }
 
 void TestRecent::legacyViewStateLoadsGracefully() {
-    // Simulate a pre-Workstream-I recent.json that only carries the
+    // Simulate an older recent.json that only carries the
     // original fields. The new entries should default sensibly:
     //   - sidebarMode derived from sidebar_visible (true → Pages).
     //   - zoomMode defaults to Custom.

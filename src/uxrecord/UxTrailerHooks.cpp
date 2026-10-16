@@ -193,7 +193,7 @@ void attachToMainWindow(MainWindow *window) {
     // persists for the whole session.
     QObject::connect(rec, &UxRecorder::captureIssue, window, &MainWindow::flashError);
 
-    // Persistent degraded-stream state on the chip (UXR-002): once a
+    // Persistent degraded-stream state on the chip: once a
     // stream fails, relabel to e.g. "● REC · no screen" in amber and
     // list the streams in the tooltip, for the rest of the session —
     // so an unattended degraded session is obvious at a glance, not

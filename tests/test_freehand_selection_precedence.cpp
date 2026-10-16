@@ -131,14 +131,12 @@ void TestFreehandSelectionPrecedence::selectToolStillSelectsOnClick() {
     QCOMPARE(store.count(), 1);
 }
 
-// DRAWING-TOOL PARITY (owner ruling "parity", 2026-07-20; ADR
-// docs/decision-records/2026-07-20-drawing-tool-parity.md): the BOUNDED
-// shape tools (Rectangle / Ellipse / Line / Arrow) now match Ink's
-// draw-first-on-press. A press-drag that STARTS over an existing
-// annotation must begin a NEW shape of the active tool's type — never
-// select or move the shape underneath (selection is Select-tool-only,
-// Preview-style). This inverts the pre-parity UAT-ANN-128, where a
-// bounded-tool press selected the existing shape.
+// DRAWING-TOOL PARITY: the BOUNDED shape tools (Rectangle / Ellipse /
+// Line / Arrow) match Ink's draw-first-on-press. A press-drag that STARTS
+// over an existing annotation must begin a NEW shape of the active tool's
+// type — never select or move the shape underneath (selection is
+// Select-tool-only, Preview-style). This inverts the pre-parity
+// UAT-ANN-128, where a bounded-tool press selected the existing shape.
 void TestFreehandSelectionPrecedence::boundedToolPressStartsNewShape() {
     struct Case {
         AnnotationTool tool;

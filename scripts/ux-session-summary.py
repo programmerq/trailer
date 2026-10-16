@@ -4,7 +4,7 @@
 Usage:
     python3 scripts/ux-session-summary.py <session-dir>
 
-Stdlib only, read only, local only (docs/ux-recorder.md). Exits
+Stdlib only, read only, local only (src/uxrecord/README.md). Exits
 non-zero when the session fails basic validation (unparseable JSONL,
 missing required files, non-monotonic sequence numbers) so it can
 double as a sanity check in scripts.

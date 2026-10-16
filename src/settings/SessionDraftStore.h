@@ -19,8 +19,8 @@ namespace trailer {
 // edits) is stored as an ANNOTATED_PATH: the on-disk file plus a JSON
 // payload of its unsaved annotations, so on restore the file reopens and
 // the annotations re-apply as individually editable objects, still dirty.
-// See docs/decision-records/2026-07-16-quit-and-keep-windows.md
-// (D1 → app-managed draft store; PDF annotation-persistence refinement).
+// The store is app-managed rather than Cocoa state restoration, which Qt
+// doesn't expose and which would restore a window without its content.
 // A PDF with STRUCTURAL page edits (rotate/delete/move/crop/insert) is
 // stored as a STRUCTURAL_DRAFT: the edited-PDF blob bytes (the qpdf command
 // list cannot be serialized — the commands hold live in-memory object
@@ -28,7 +28,6 @@ namespace trailer {
 // path is carried alongside so Save re-associates to it. On restore the
 // original reopens, the blob is loaded into a private editor copy, and the
 // doc is marked dirty with the original file untouched.
-// See docs/backlog/2026-07-19-structural-pdf-keep-fidelity.md.
 struct SessionDocDescriptor {
     enum class Kind { Path, Draft, AnnotatedPath, StructuralDraft };
 
@@ -59,7 +58,7 @@ struct SessionDocDescriptor {
     // so an unsaved Retina screenshot (dpr 2.0, capture-origin) would
     // otherwise restore at dpr 1.0 — double its logical size and losing the
     // Actual-Size zoom default. We persist both explicitly and re-apply
-    // them on restore. See the #76 HiDPI work + the decision record.
+    // them on restore.
     QByteArray bytes;
     QString format = QStringLiteral("png");
     bool untitled = false;

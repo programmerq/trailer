@@ -82,7 +82,7 @@ test:
 	# developer's own Linux box, not a memory-capped CI pod, so honor an
 	# explicit CMAKE_BUILD_PARALLEL_LEVEL if set, else default to nproc.
 	cmake --build build --parallel "$${CMAKE_BUILD_PARALLEL_LEVEL:-$$(nproc)}"
-	cd build && QT_QPA_PLATFORM=offscreen ctest --output-on-failure --label-exclude uat
+	cd build && QT_QPA_PLATFORM=offscreen ctest --output-on-failure --label-exclude 'uat|advisory'
 test-uat:
 	scripts/run-uat.sh --host
 else ifneq (,$(findstring MINGW,$(HOST_UNAME))$(findstring MSYS,$(HOST_UNAME))$(findstring Windows,$(HOST_UNAME)))

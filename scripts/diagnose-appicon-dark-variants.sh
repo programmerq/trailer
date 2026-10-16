@@ -7,13 +7,13 @@
 #
 # WHY THIS EXISTS. The nightly macOS lane's informational check greps
 # `assetutil --info` output for a dark/luminosity marker and reports it
-# missing (see docs/backlog/2026-07-17-adaptive-dock-icon-option-b.md).
+# missing (see todo/2026-10-15-dock-icon-dark-mode).
 # That grep can only ever be *suggestive*: it is equally consistent with
 # "the dark bitmaps were dropped" and with "the dark bitmaps are present
 # but assetutil does not print an appearance axis for app-icon entries."
 # Those two have completely different fixes, and the expensive decision
-# downstream (author an Icon Composer .icon for ADR 0009 Option B) is
-# only correct under the first.
+# downstream (replace this asset catalog, "Option A", with an Icon Composer
+# .icon, "Option B") is only correct under the first.
 #
 # THE TEST. Compile the catalog twice with the SAME actool invocation the
 # real build uses (CMakeLists.txt's TRAILER_ADAPTIVE_ICON block):
@@ -139,9 +139,9 @@ The nightly lane's assetutil check was reporting the truth, and no actool
 flag or Contents.json key recovers them: a macOS .appiconset has no
 supported light/dark axis.
 
-  -> ADR 0009 Option A is a dead end. Proceed to Option B (Icon Composer
-     .icon source, same build wiring) and record the outcome as an
-     accepted update to ADR 0009.
+  -> The asset-catalog route (Option A) is a dead end. Proceed to Option B
+     (Icon Composer .icon source, same build wiring) and record the outcome
+     in todo/2026-10-15-dock-icon-dark-mode.
 MSG
     exit 0
 else
@@ -152,8 +152,8 @@ This CONTRADICTS the nightly lane's assetutil-based check, which means
 that check is a false negative and the Dock-swap failure has a different
 root cause. Do NOT spend Icon Composer authoring effort on the strength
 of the Option-B recommendation in
-docs/backlog/2026-07-17-adaptive-dock-icon-option-b.md — reopen the
-root-cause question first, and record this result there.
+todo/2026-10-15-dock-icon-dark-mode — reopen the root-cause question first, and record this
+result there.
 MSG
     exit 0
 fi

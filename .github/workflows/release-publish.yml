@@ -47,7 +47,7 @@ permissions:
 jobs:
   publish:
     name: Attach prior build to GitHub Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       # Required by softprops/action-gh-release to create / update
@@ -189,8 +189,8 @@ jobs:
           # CHANGELOG) because it's per-platform mechanics that don't
           # change release-over-release; the CHANGELOG is what changes.
           cat >> "$BODY_FILE" <<EOF
-          See PHILOSOPHY.md for what to expect from a 0.x build of
-          Trailer.
+          This is a 0.x build of Trailer: settings, file formats and
+          behaviour can still change between minor versions.
 
           ### macOS (Apple Silicon): drag-to-Applications install
 

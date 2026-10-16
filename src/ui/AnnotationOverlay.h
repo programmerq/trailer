@@ -116,7 +116,7 @@ class AnnotationOverlay : public QWidget {
     // hover cursor (see "Tool-precedence rule" above setActiveTool()) — it
     // never gates whether a click/drag is routed, only what cursor glyph
     // is honest to show. If unset, the cursor never claims text is
-    // selectable (G3): Select falls back to the plain arrow.
+    // selectable: Select falls back to the plain arrow.
     using PointOverTextProvider = std::function<bool(QPointF viewPt, int page)>;
     void setPointOverTextProvider(PointOverTextProvider fn);
 
@@ -207,8 +207,7 @@ class AnnotationOverlay : public QWidget {
     // arithmetic.
     QRectF selectedViewRectForTest() const;
 
-    // --- Direct-manipulation page crop (backlog
-    // 2026-07-15-crop-pages-direct-manipulation) ---
+    // --- Direct-manipulation page crop ---
     // When the CropRect tool is active the overlay draws a
     // page-anchored crop rectangle (stored in DOCUMENT space, so it
     // survives zoom / dpr changes exactly like every other overlay

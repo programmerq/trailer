@@ -188,7 +188,7 @@ void TestAnnotationStore::redoStackClearsOnNewMutation() {
     QVERIFY(store.find(id) == nullptr);
 }
 
-// Workstream D3 — a "user gesture" wrapped in beginCompound/endCompound
+// A "user gesture" wrapped in beginCompound/endCompound
 // produces exactly one undo step regardless of how many update() calls
 // fired during the gesture. Mirrors the 60-frame drag case in the
 // AnnotationOverlay: 60 update()s should collapse into one Ctrl+Z.
@@ -339,7 +339,7 @@ void TestAnnotationStore::setMaxUndoDepthTrimsExistingFramesInLockstep() {
     QCOMPARE(store.maxUndoDepth(), size_t{1});
 }
 
-// Perf sanity for Workstream E.1 — undo on a large store must not be
+// Perf sanity — undo on a large store must not be
 // O(N * undoSteps). Pre-fix, every undo rescanned the annotation list
 // to recompute m_nextId; with 200 annotations and 50 undos that's
 // 10k iterations purely for id bookkeeping, plus the vector copy.

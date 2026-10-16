@@ -7,11 +7,11 @@
 
 using namespace trailer;
 
-// Exhaustive unit tests for the pure facing-page pairing rule `spreadsFor`.
+// Exhaustive unit tests for the pure facing-page pairing rule `spreadsFor`
+// (cover alone, then {2,3}, {4,5}…; or {1,2}, {3,4}… with coverAlone off).
 // The function is GUI-free (no Qt-UI deps), so every pairing for the small
 // page counts that exercise all branches — empty, lone cover, exact pairs,
-// trailing unpaired page — is pinned here headlessly. See
-// docs/decision-records/2026-07-21-two-page-layout.md for the ratified rule.
+// trailing unpaired page — is pinned here headlessly.
 class TestSpreadLayout : public QObject {
     Q_OBJECT
 

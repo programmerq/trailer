@@ -13,10 +13,9 @@ class QSpinBox;
 
 namespace trailer {
 
-// Parameter-supply dialog for Tools → Recognize Text… Replaces the
-// previous "dump extracted text into a QPlainTextEdit" results dialog
-// (Workstream F): OCR results now feed the in-document
-// SelectableTextStore so the user reads and selects them in-place.
+// Parameter-supply dialog for Tools → Recognize Text… OCR results
+// feed the in-document SelectableTextStore, so the user reads and
+// selects them in place rather than in a results window.
 //
 // The user supplies:
 //   - Pages: Current / All / Range (with from/to spin boxes).

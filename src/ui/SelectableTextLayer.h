@@ -143,8 +143,8 @@ class SelectableTextLayer : public QWidget {
     // Lazy cache: m_viewBlocks is keyed by m_cachePage / the store's
     // current contents. We don't have a fine-grained "store
     // generation" counter, so cache invalidation is on every
-    // pageChanged() / on every setStore(). For Phase 6 this is
-    // good enough; if it shows up in profiling, swap for a real
+    // pageChanged() / on every setStore(). This is good enough
+    // until it shows up in profiling; then swap for a real
     // monotonic counter.
     mutable std::vector<ViewBlock> m_viewBlocks;
     mutable int m_cachePage = -1;

@@ -41,7 +41,7 @@ int main(int argc, char *argv[]) {
     // instrumentation. This whole block is compiled out of default
     // builds — they never record and the flags don't exist.
     if (!cli.uxNoRecord) {
-        // Gate on relaunch-required permissions first (UXR-001), so a
+        // Gate on relaunch-required permissions first, so a
         // first run without Screen Recording doesn't silently record a
         // screenless session. The user can still proceed degraded.
         switch (app.preflightUxRecording()) {
@@ -57,7 +57,7 @@ int main(int argc, char *argv[]) {
 #endif
 
     if (cli.paths.isEmpty()) {
-        // Workstream I: "quit and keep windows" across every platform.
+        // Session restore, on every platform.
         // If the user had files open at the last quit AND opted in to
         // session restore (default: on), reopen them now. Explicit CLI
         // args always win — they're a direct request that overrides the

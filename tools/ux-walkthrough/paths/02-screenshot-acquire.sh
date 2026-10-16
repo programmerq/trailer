@@ -11,10 +11,9 @@
 # branch) and opens the grab as a document — which works under Xvfb.
 #
 # SELECTOR NOTE: this action carries a stable objectName but NO keyboard
-# shortcut — PR #86 removed the OS-reserved ⌘⇧3 binding as a lying control
-# (DR 2026-07-18-file-menu-acquire-ia). We reach it by menu mnemonic
-# (Tools -> Take Screenshot => Alt+T, then T), which is stable across the
-# File-menu IA rename and needs no pixel geometry.
+# shortcut — PR #86 removed the OS-reserved ⌘⇧3 binding as a lying control.
+# We reach it by menu mnemonic (Tools -> Take Screenshot => Alt+T, then T),
+# which is stable across the File-menu IA rename and needs no pixel geometry.
 #
 # TOOLS vs FILE — the crux, verified against merged code (2026-07-20):
 # there are TWO distinct capture entry points post-#86, and this path drives
@@ -27,7 +26,7 @@
 #     rename it — it only stripped its dead ⌘⇧3 shortcut.
 #   * File -> "Screenshot" submenu (Whole Screen / Window / Selected Area) —
 #     added by #86 via Application::addAcquireItems (src/app/Application.cpp).
-#     This is the DISCOVERABLE acquire surface the DR calls canonical, but its
+#     This is the canonical, DISCOVERABLE acquire surface, but its
 #     items carry NO objectName and fire captureScreenshot DIRECTLY with no
 #     dialog. It cannot satisfy this path's "Take Screenshot" modal assertion.
 # So an audit note reading "File -> Screenshot" describes the discoverable
@@ -35,10 +34,10 @@
 # under Tools. We drive Tools deliberately — trust the code.
 #
 # HONEST PLATFORM BOUNDARIES:
-#   * Window/region capture are disabled on Linux (a G3 non-lying-control
-#     state with an explanatory note in the dialog); only whole-screen runs.
+#   * Window/region capture are disabled on Linux (todo/2026-10-15-window-screenshots-windows-linux; the dialog
+#     says why); only whole-screen runs.
 #   * The macOS native TCC "Screen Recording" permission prompt is real-Mac
-#     only and is routed to the owner checklist (SKILL.md). Under Xvfb there
+#     only and is left to a real-Mac check (todo/2026-10-15-real-desktop-checks). Under Xvfb there
 #     is no OS permission gate, so we drive the whole app-side flow to
 #     completion.
 set -uo pipefail
@@ -65,7 +64,7 @@ step "take-screenshot-dialog" \
     "Tools -> Take Screenshot opens the capture-mode dialog (whole-screen; window/region disabled on Linux)."
 menupick t t           # Tools -> Take Screenshot (objectName action.tools.takeScreenshot; no shortcut post-#86)
 assert_window "Take Screenshot"
-boundary "Window/region modes disabled on Linux (non-lying control + note); macOS TCC prompt -> owner real-Mac checklist."
+boundary "Window/region modes disabled on Linux (non-lying control + note); the macOS TCC prompt needs a real Mac (todo/2026-10-15-real-desktop-checks)."
 shot
 
 # --- Step 3: confirm capture; captured screen opens as a document ----------

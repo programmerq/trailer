@@ -1,6 +1,5 @@
 // UAT evidence harness — representative offscreen grab() PNGs for the
-// screen-capture permission preflight PR (the screen-capture preflight ADR,
-// 2026-07-16-capture-permission-preflight.md).
+// screen-capture permission preflight (local files, not committed).
 //
 // The pre-permission explainer is retired for the stills capture flow (owner
 // decision 2026-07-17) — the flow now leans on the OS Screen Recording prompt

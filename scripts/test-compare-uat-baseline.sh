@@ -116,7 +116,7 @@ check "40/40 -> 39/45: regression not masked by suite growth" \
 # Steady state and improvement.
 # ---------------------------------------------------------------------
 make_baseline "$BASE" success 21 40 false
-check "21/40 -> 21/40: a known, already-backlogged bad count stays green" \
+check "21/40 -> 21/40: a known, already-tracked bad count stays green" \
   same 0   wine_uat "$BASE" success 21 40 false
 
 make_baseline "$BASE" success 21 40 false

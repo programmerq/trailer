@@ -13,20 +13,19 @@ namespace trailer {
 
 // Custom two-up (facing-page) surface for Two-Pages view mode. Renders a
 // CONTINUOUS vertical stack of facing spreads (Apple Preview "Two Pages"
-// shape), not a paged single-spread widget — the scroll model ratified in
-// docs/decision-records/2026-07-21-two-page-layout.md (D3-A). It is used ONLY
-// in Two-Pages mode; QPdfView keeps driving Single and Continuous (D1-A,
-// AUGMENT). Markup / selection / search are honestly degraded (disabled-with-
-// tooltip in MainWindow) in this mode; overlay/search/selection parity is the
-// committed PR2 follow-up (docs/backlog/2026-07-21-two-page-overlay-search-parity).
+// shape), not a paged single-spread widget. It is used ONLY in Two-Pages
+// mode: QPdfView has no two-up page mode, but keeps driving Single and
+// Continuous, which already work. Markup / selection / search are
+// disabled-with-tooltip (in MainWindow) in this mode.
+// todo/2026-10-15-two-pages-read-only: markup, text selection and Find in Two Pages.
 //
 // Pairing comes from the pure trailer::spreadsFor() helper. Each page is
 // rendered at pts x zoom x devicePixelRatio device pixels and laid out at
 // pts x zoom logical units, so a HiDPI display shows a crisp spread with the
-// same logical geometry as a 1x display (record clause 4). "Actual Size" is
-// zoom factor 1.0 == 1 PDF point -> 1 logical pixel per page (clause 3); the
-// zoom factor is shared with QPdfView so the zoom-% readout is truthful across
-// all three modes.
+// same logical geometry as a 1x display. "Actual Size" is zoom factor 1.0 ==
+// 1 PDF point -> 1 logical pixel per page (not "the spread fits the
+// window"); the zoom factor is shared with QPdfView so the zoom-% readout is
+// truthful across all three modes.
 class TwoPageView : public QAbstractScrollArea {
     Q_OBJECT
 
@@ -36,13 +35,10 @@ class TwoPageView : public QAbstractScrollArea {
     // The QPdfDocument to render. Not owned; must outlive this view.
     void setDocument(QPdfDocument *doc);
 
-    // Cover-alone pairing: page 1 alone, then (2,3),(4,5)… Default ON (the
-    // book-like default ratified for PR1; no user-facing toggle yet).
-    // NOTE: setCoverAlone()/coverAlone()/spreads() are intentionally unused in
-    // PR1 — the record scopes the user-facing cover-alone toggle out of PR1.
-    // They are the thin seam PR2 consumes when it wires that toggle and
-    // reprojects overlays onto the spread geometry; kept minimal so the seam
-    // costs nothing. Remove them if PR2's shape ends up differing.
+    // Cover-alone pairing: page 1 alone, then (2,3),(4,5)… Default ON: a
+    // book opens with its cover alone, as in Preview; pairing (1,2) would
+    // put every spread off by one.
+    // todo/2026-10-15-two-pages-cover-toggle: no caller sets this yet; the View-menu cover toggle will.
     void setCoverAlone(bool coverAlone);
     bool coverAlone() const { return m_coverAlone; }
 

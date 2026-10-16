@@ -1,9 +1,7 @@
 // UAT harness — Viewer (navigation)
 //
 // Drives the Application + MainWindow in-process under
-// QT_QPA_PLATFORM=offscreen. Each slot maps to a case in
-// docs/uat/02-viewer.md; the slot name ends with the UAT ID so a
-// failure points straight at the spec case.
+// QT_QPA_PLATFORM=offscreen. Each slot name carries its UAT-VWR id.
 //
 // Today this covers continuous-mode keyboard navigation. It is the
 // natural home for future viewer-navigation pins (single-page
@@ -65,7 +63,7 @@ QString writeSamplePdf(const QString &path, int pages) {
 }
 
 // Same as writeSamplePdf, but the page number is drawn large enough to
-// read in a grabbed window shot — the G2 evidence pair is worthless if a
+// read in a grabbed window shot — a before/after pair is worthless if a
 // reviewer cannot see WHICH page is on screen.
 QString writeBigNumberedPdf(const QString &path, int pages) {
     QPdfWriter writer(path);
@@ -255,10 +253,10 @@ void TestUatViewer::uat_vwr_025_continuousArrowStepsByViewport() {
 }
 
 // UAT-VWR-101 — Small image ignores a stale per-type Custom zoom
-// default. Owner dogfooding report (2026-07-31): a fresh 504x375 JPEG
-// opened at "Zoom: Custom (80%)" because an earlier, unrelated, larger
-// image's manual zoom had become the per-type Image default. See DR
-// 2026-07-31-per-type-restore-excludes-content-relative-state.
+// default. A fresh 504x375 JPEG once opened at "Zoom: Custom (80%)"
+// because an earlier, unrelated, larger image's manual zoom had become
+// the per-type Image default. A per-type default restores a zoom mode,
+// never a raw Custom factor that only fit another document.
 void TestUatViewer::uat_vwr_101_smallImageIgnoresStalePerTypeZoom() {
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
@@ -495,12 +493,10 @@ void TestUatViewer::uat_vwr_111_nonRescalingResizeLeavesTheViewAlone() {
     QScrollBar *vbar = view->verticalScrollBar();
     QVERIFY(vbar);
 
-    // Choose the zoom mode BEFORE navigating anywhere. Navigating first
-    // and switching mode after would leave the page navigator reporting
-    // the old page while the scroll offset means a different one — a
-    // separate, pre-existing defect, filed as
-    // docs/backlog/2026-08-05-zoom-mode-change-drops-the-current-page.md
-    // and deliberately not entangled with this slot.
+    // Choose the zoom mode BEFORE navigating anywhere, so this slot stays
+    // clear of a separate defect:
+    // todo/2026-10-15-zoom-mode-loses-page: switching zoom mode after navigating leaves the page navigator
+    // reporting the old page while the scroll offset means a different one.
     doc->setViewMode(ViewMode::Continuous);
     doc->zoomFitWidth();
     for (int i = 0, previous = -1; i < 16 && vbar->maximum() != previous; ++i) {
@@ -548,7 +544,7 @@ void TestUatViewer::uat_vwr_111_nonRescalingResizeLeavesTheViewAlone() {
              "reported page; re-tune the parking offset if QPdfView's rule changed");
 }
 
-// UAT-VWR-111 — curated G2 before/after evidence for the resize anchor.
+// UAT-VWR-111 — before/after screenshots (uncommitted) for the resize anchor.
 //
 // Uses ONLY pre-existing public API, so this identical slot builds and
 // runs against a tree WITHOUT the fix as well as with it — which is how
@@ -565,7 +561,7 @@ void TestUatViewer::uat_vwr_111_nonRescalingResizeLeavesTheViewAlone() {
 void TestUatViewer::uat_vwr_111_resizeKeepsPageEvidence() {
     const QString dir = QString::fromLocal8Bit(qgetenv("TRAILER_RESIZE_ANCHOR_EVIDENCE_DIR"));
     if (dir.isEmpty())
-        QSKIP("Set TRAILER_RESIZE_ANCHOR_EVIDENCE_DIR to emit the G2 evidence pair");
+        QSKIP("Set TRAILER_RESIZE_ANCHOR_EVIDENCE_DIR to emit the evidence pair");
     QVERIFY(m_scratch.isValid());
     QDir().mkpath(dir);
 
@@ -607,7 +603,7 @@ void TestUatViewer::uat_vwr_111_resizeKeepsPageEvidence() {
     const QPixmap pm = mw->grab();
     QVERIFY(!pm.isNull());
     QVERIFY2(pm.save(QDir(dir).filePath(name), "PNG"), qPrintable(name));
-    qInfo().noquote() << "G2-SCREENSHOT" << QDir(dir).filePath(name)
+    qInfo().noquote() << "SCREENSHOT" << QDir(dir).filePath(name)
                       << "— asked for page" << (kTargetPage + 1) << ", showing page"
                       << (doc->currentPage() + 1);
 }

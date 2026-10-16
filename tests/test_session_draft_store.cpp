@@ -1,12 +1,12 @@
 // Unit test — SessionDraftStore round-trip (macOS "Quit and Keep Windows"
-// draft store; docs/decision-records/2026-07-16-quit-and-keep-windows.md).
+// draft store).
 //
-// The decisive threshold from that record (clause 2): an unsaved/untitled
-// document's BYTES survive a serialize→restore round-trip byte-for-byte,
-// and its untitled flag is preserved. This exercises the store in
-// isolation — no GUI, no Application — feeding it known non-trivial bytes
-// across multiple documents and windows and asserting exact equality on
-// the way back out, plus hasSession()/clear() lifecycle.
+// The decisive threshold: an unsaved/untitled document's BYTES survive a
+// serialize→restore round-trip byte-for-byte, and its untitled flag is
+// preserved. This exercises the store in isolation — no GUI, no
+// Application — feeding it known non-trivial bytes across multiple
+// documents and windows and asserting exact equality on the way back out,
+// plus hasSession()/clear() lifecycle.
 //
 // Guileless main (QCoreApplication): the store deals only in JSON + byte
 // blobs, so no QPA platform is required.

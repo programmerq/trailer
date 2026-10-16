@@ -98,9 +98,8 @@ bool runningUnderWine() {
 // Wine leaves a crashing Qt test completely silent: stdout is block-buffered
 // into ctest's pipe so nothing is flushed on an abnormal exit, and the lane
 // sets WINEDEBUG=-all so Wine's own crash text is suppressed too. CI then
-// reports an opaque "***Failed" with ZERO captured output — exactly the
-// diagnose-by-guessing trap docs/backlog/2026-07-24-wine-uat-failures-triage.md
-// warns about, and exactly what this file hit on its first CI run. The
+// reports an opaque "***Failed" with ZERO captured output, leaving the cause
+// to guesswork — exactly what this file hit on its first CI run. The
 // mitigations are unbuffered stdio (see main()) plus these phase markers, which
 // only print under Wine so the Linux/macOS lanes stay quiet.
 void trace(const char *phase) {
@@ -127,30 +126,24 @@ void trace(const char *phase) {
 //     qpdf + ONNX + a Wine prefix) that this project's dev boxes do not carry,
 //     so every iteration costs a self-hosted CI cycle.
 //
-// This is not a novel signature: `2026-07-24-wine-uat-failures-triage` records
-// TWENTY-ONE tests failing under Wine with zero captured output, and its own
-// conclusion is that the first action is to make them legible, not to fix them
-// one at a time. Until that observability work lands, a per-test Wine skip is
-// the honest outcome — the same call already made for two other Wine-only
-// unit-test artifacts (2026-07-19-wine-cross-thread-editor-save,
-// 2026-07-21-wine-keep-restore-file-move-open-handle).
+// This is not a novel signature: TWENTY-ONE UAT tests failed under Wine with
+// zero captured output, so fixing them one at a time would be guesswork. A
+// per-test Wine skip is the honest outcome — the same call already made for
+// two other Wine-only unit-test artifacts (test_discard_file_integrity's
+// same-file save, test_quit_and_keep_windows' delete of an open file).
 //
 // What is NOT lost by skipping here: Wine is a stand-in for Windows, not a
 // platform Trailer ships to, and the use-after-free this file guards is
 // platform-independent — a raw pointer posted to a destroyed QObject. The
 // guard runs, and fails against unfixed code, on Linux and macOS. What IS
-// lost: Windows-specific coverage of that guard. Tracked with a checkable
-// re-enable threshold in
-// docs/backlog/2026-08-03-wine-ml-callback-lifetime-skip.md.
+// lost: Windows-specific coverage of that guard. todo/2026-10-15-ci-windows-only-under-wine: run it on native
+// Windows CI and drop this skip.
 constexpr const char *kWineSkip =
     "Wine-only: this binary dies with ZERO captured output on the Wine lane "
     "(two runs, ~1.4s, only failure in 65) and unbuffered stdio + flushing "
     "phase markers did not change that, so there is no evidence of what fails "
-    "— the same opaque signature that 21 UAT tests already carry. Blocked on "
-    "the Wine observability work in "
-    "docs/backlog/2026-07-24-wine-uat-failures-triage.md. The guard itself is "
-    "platform-independent and runs on Linux/macOS. See "
-    "docs/backlog/2026-08-03-wine-ml-callback-lifetime-skip.md.";
+    "— the same opaque signature that 21 UAT tests already carry. The guard "
+    "itself is platform-independent and runs on Linux/macOS. See todo/2026-10-15-ci-windows-only-under-wine.";
 
 MainWindow *currentMainWindow() {
     const QWidgetList tops = QApplication::topLevelWidgets();
@@ -228,7 +221,7 @@ using GatePtr = std::shared_ptr<Gate>;
 // the same snapshot, leaving the loop to qobject_cast a freed QObject. Windows
 // has more of those helper top-levels than the Linux offscreen platform, so
 // this is the kind of latent hazard that only shows up on that lane
-// (docs/CONVENTIONS.md §5 — weak references are QPointer, never raw).
+// (weak references are QPointer, never raw).
 void closeAndDeleteAllWindows() {
     QList<QPointer<QWidget>> tops;
     const QWidgetList snapshot = QApplication::topLevelWidgets();
@@ -405,9 +398,8 @@ int main(int argc, char *argv[]) {
     // FIRST statement, deliberately. ctest pipes stdout, which makes it
     // block-buffered on Windows, and a process that dies abnormally loses
     // 100% of what it wrote. This binary failed twice on the Wine lane with
-    // ZERO captured bytes; unbuffered stdio is the mechanism
-    // docs/backlog/2026-07-24-wine-uat-failures-triage.md prescribes for
-    // making that legible. Costs nothing anywhere else — keep it.
+    // ZERO captured bytes; unbuffered stdio is what makes that legible.
+    // Costs nothing anywhere else — keep it.
     std::setvbuf(stdout, nullptr, _IONBF, 0);
     std::setvbuf(stderr, nullptr, _IONBF, 0);
     std::fputs("[boot] main() entered\n", stdout);

@@ -41,7 +41,7 @@ QString TestModelRegistry::fixturePath() const {
 }
 
 // SHA256 of tests/fixtures/identity.onnx. Pinned at fixture creation
-// time (ModelRegistry test, Phase 6A).
+// time.
 static constexpr auto kIdentitySha256 =
     "990fbeccb7919f483797eeaf8513aac5496a672ab35c1335d07d18948780b800";
 

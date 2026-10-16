@@ -20,8 +20,6 @@ namespace trailer {
 //     notice the replacement and re-arm the file watch),
 //   * debounce a burst of filesystem events into one signal,
 //   * mute itself around our own saves so a self-write never self-triggers.
-//
-// See docs/decision-records/2026-07-19-external-file-change-handling.md.
 class ExternalChangeMonitor : public QObject {
     Q_OBJECT
 

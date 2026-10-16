@@ -159,11 +159,11 @@ Application::Application(int &argc, char **argv) : QApplication(argc, argv) {
     m_registry.registerAdapter(std::make_unique<ImageAdapter>());
 
 #ifdef TRAILER_UX_RECORDER
-    // ADR 0014: let Mechanism A (the screenshot-import Screen-Recording
-    // explainer in src/platform/) defer to Mechanism B's authoritative live
-    // TCC gate so the two never double-prompt for the same macOS permission.
-    // Injected here (rather than src/platform/ depending on src/uxrecord/) and
-    // compiled out of default builds, which keep A standalone (G14.4).
+    // Let the screenshot-import Screen-Recording explainer (src/platform/)
+    // defer to the recorder's authoritative live TCC gate, so the two never
+    // double-prompt for the same macOS permission. Injected here (rather than
+    // src/platform/ depending on src/uxrecord/) and compiled out of default
+    // builds, which keep the explainer standalone.
     setScreenRecordingGrantedProbe([] { return uxScreenRecordingGranted(); });
 #endif
 
@@ -219,11 +219,11 @@ Application::UxRecordDecision Application::preflightUxRecording() {
     // this OS) → record straight away, no dialog. Once the user grants
     // it once, they never see this again.
     if (uxScreenRecordingGranted()) {
-        // ADR 0014 (G14.2): the permission is resolved for this session, so
-        // burn Mechanism A's first-use explainer flag too. That way granting
-        // Screen Recording (including via B's Open-Settings path on a prior
-        // launch) also suppresses the screenshot-import explainer — the two
-        // flows share suppression state instead of re-asking independently.
+        // The permission is resolved for this session, so burn the
+        // screenshot-import explainer's first-use flag too. That way granting
+        // Screen Recording (including via this gate's Open-Settings path on a
+        // prior launch) also suppresses that explainer — the two flows share
+        // suppression state instead of re-asking independently.
         //
         // Only acknowledge (which does a disk save()) when the flag isn't
         // already set — otherwise every recorder launch re-saves settings for
@@ -240,8 +240,8 @@ Application::UxRecordDecision Application::preflightUxRecording() {
     }
 
     // Missing → don't silently start a session that records no screen
-    // frames (the failure mode that wasted a real 6-minute session,
-    // UXR-001). One blocking, actionable dialog instead.
+    // frames (the failure mode that wasted a real 6-minute session).
+    // One blocking, actionable dialog instead.
     QMessageBox box;
     box.setIcon(QMessageBox::Warning);
     box.setWindowTitle(tr("UX Recorder — Screen Recording not enabled"));
@@ -365,12 +365,11 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
 
     // --- Already-open documents are surfaced, never opened twice. ---
     //
-    // Owner HITL report 2026-08-06 (macOS): picking a file from Spotlight
-    // while Trailer already had that exact file open produced a SECOND
-    // window over the same file — "this feels like I'm looking at two open
-    // files". It is worse than a cosmetic duplicate: two IDocument
-    // instances over one path means two undo logs and two save paths onto
-    // the same bytes, so whichever window saves last silently wins.
+    // Opening a file that is already open (e.g. picking it in Spotlight)
+    // must not create a SECOND window over the same file. That is worse
+    // than a cosmetic duplicate: two IDocument instances over one path
+    // means two undo logs and two save paths onto the same bytes, so
+    // whichever window saves last silently wins.
     //
     // This runs BEFORE any mode routing on purpose. `open_files_in`
     // (SameWindow / NewTab / NewWindow) answers "where does a NEW document
@@ -417,15 +416,9 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
         return nullptr;
     };
 
-    // Heuristic from the 2026-04-24 HITL feedback: "if there are
-    // multiple single-page files open, like multiple images opened
-    // together, we'll use the thumbnail bar for moving around."
-    // The full thumbnail-bar mode is a bigger refactor, but the
-    // first half of the request — keep them in one window — is
-    // already supported by the QTabWidget central widget. When the
-    // user opens a batch of images, route them all into one fresh
-    // window so they share a tab strip rather than spawning N
-    // separate frames.
+    // When the user opens a batch of images, route them all into one fresh
+    // window so they share a tab strip rather than spawning N separate frames.
+    // todo/2026-10-15-images-share-sidebar: images opened together don't share one sidebar.
     //
     // Reads `freshPaths`, not `paths`: an already-open image is surfaced
     // in its existing window and contributes nothing to a batch, so
@@ -450,7 +443,7 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
     };
     const bool batchedImages = mode == OpenFilesIn::NewWindow && isImageBatch();
 
-    // CF-5: In NewWindow mode, reuse an empty/untouched launch window for
+    // In NewWindow mode, reuse an empty/untouched launch window for
     // the FIRST opened document — and for an image batch's shared window —
     // instead of spawning a second window and orphaning the empty one
     // (matches Preview.app). "Empty/untouched" == a live MainWindow with
@@ -506,10 +499,10 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
         //
         // Note where this sits: BEFORE m_registry.open() — no second
         // IDocument is ever constructed — and before any target is
-        // chosen, so a surfaced file cannot consume the CF-5 empty-window
+        // chosen, so a surfaced file cannot consume the empty-window
         // reuse candidate. That candidate is reserved for a document that
         // is genuinely being opened; spending it here would orphan the
-        // empty launch window the CF-5 block exists to save.
+        // empty launch window the reuse block above exists to save.
         if (dedupOpenDocuments) {
             int tabIndex = -1;
             if (MainWindow *existing = windowForOpenPath(path, &tabIndex)) {
@@ -578,7 +571,7 @@ void Application::openFiles(const QStringList &paths, bool markUntitled) {
                 // One window per file. Even when `paths` has
                 // multiple entries we spawn a separate window for
                 // each so the user can arrange them independently.
-                // CF-5: the FIRST file reuses an empty launch window
+                // The FIRST file reuses an empty launch window
                 // if one is available (consume-once), then subsequent
                 // files spawn fresh.
                 target = takeReuseOrFresh();
@@ -674,12 +667,10 @@ void Application::notifyWindowsRecentChanged() {
 //     QMenu construction below run identically on every platform, so a
 //     Linux/Windows/CI build exercises the exact same code the macOS
 //     build does, and
-//   - a headless UAT slot can grab() the constructed QMenu for G2
-//     evidence without needing Q_OS_MACOS at all (see
-//     tests/uat/test_uat_dock_recents.cpp).
+//   - a headless UAT slot can grab() the constructed QMenu without
+//     needing Q_OS_MACOS at all (see tests/uat/test_uat_dock_recents.cpp).
 // The only OS-observable EFFECT is macOS-only (Dock chrome + Launch
-// Services); the construction is shared. This is the shared entry-point
-// G4 asks a single-host PR to name.
+// Services); the construction is shared.
 void Application::refreshDockRecents() {
     // Existence-filtered, capped, most-recent-first — see
     // RecentFiles::existingEntries for why the filter belongs here and
@@ -739,23 +730,23 @@ void Application::onWindowDestroyed(QObject *window) {
 }
 
 bool Application::requestQuit(QuitMode mode) {
-    // Decision-record refinement (2026-07-19): the EXPLICIT menu commands are
-    // decoupled from the OS `NSQuitAlwaysKeepsWindows` setting. That setting
-    // governs only macOS's own automatic window auto-restoration; it does NOT
-    // flip what ⌘Q / ⌥⌘Q do here. So the mapping is fixed and honest:
-    //   QuitMode::KeepWindows (⌥⌘Q) — ALWAYS keeps, NEVER prompts.
+    // The EXPLICIT menu commands are decoupled from the OS
+    // `NSQuitAlwaysKeepsWindows` setting. That setting governs only macOS's
+    // own automatic window auto-restoration; it does NOT flip what ⌘Q / ⌥⌘Q
+    // do here. So the mapping is fixed and honest:
+    //   QuitMode::KeepWindows (⌥⌘Q) — keeps the windows; prompts only for
+    //                                 a dirty document it can't draft.
     //   QuitMode::Normal      (⌘Q)  — ALWAYS runs the per-doc Save/Discard/
     //                                 Cancel prompt.
-    // (The m_quitKeepsWindowsProbe seam is retained — it still feeds the
-    // native macOS chrome and the decoupling regression test — but it no
-    // longer changes which branch an explicit command takes.)
+    // (m_quitKeepsWindowsProbe is still set, but nothing reads it; the
+    // decoupling regression test sets it to prove it changes nothing.)
     if (mode == QuitMode::KeepWindows) {
         // Fresh snapshot cache per quit attempt: canDraftForKeep populates it
         // with the proven-producible structural-PDF bytes below, and a stale
         // entry keyed by a since-freed doc pointer must never be reused.
         m_keepStructuralSnapshotCache.clear();
         // KeepWindows keeps what it can draft and prompts for anything dirty
-        // it cannot (ADR-0004 no-silent-loss floor). An unsaved/untitled
+        // it cannot, so no edit is ever silently lost. An unsaved/untitled
         // document that is NOT losslessly draftable — a pathless PDF, an image
         // with a null raster — would otherwise be stored as a clean
         // {kind:"path"} reference and restore with its edits gone. For exactly
@@ -824,7 +815,7 @@ bool Application::requestQuit(QuitMode mode) {
 bool Application::canDraftForKeep(IDocument *doc) const {
     // "Draftable" == the kept-windows capture can persist this document's
     // unsaved state with NO user interaction, so ⌥⌘Q keeps it silently
-    // instead of falling back to the ADR-0004 per-doc prompt.
+    // instead of falling back to the per-doc Save/Discard/Cancel prompt.
     //
     //  * Image doc with a non-null raster — captured byte-for-byte as PNG.
     //  * PDF whose dirtiness is ANNOTATION-ONLY and which has an on-disk
@@ -838,8 +829,7 @@ bool Application::canDraftForKeep(IDocument *doc) const {
     //    restore (recoverFrom) with Save re-pointed to the original and the
     //    doc marked dirty. The qpdf command list cannot be serialized (its
     //    commands hold live in-memory object handles), so we persist the
-    //    edited bytes instead. See
-    //    docs/backlog/2026-07-19-structural-pdf-keep-fidelity.md.
+    //    edited bytes instead.
     //
     // A pathless PDF cannot be reopened from / re-associated to disk, so it is
     // not draftable and falls back to the per-doc prompt.
@@ -933,11 +923,11 @@ QList<SessionWindowDescriptor> Application::captureSessionForKeep() const {
             auto *img = dynamic_cast<ImageDocument *>(doc);
             auto *pdf = dynamic_cast<PdfDocument *>(doc);
             // hasUnsavedWork() (not bare isDirty()) so a CLEAN image doc whose
-            // backing file was DELETED underneath (CF-7) is DRAFTED here — its
+            // backing file was DELETED underneath is DRAFTED here — its
             // in-memory raster is the last copy. Without this it would fall to
             // the else-branch and be stored as a {kind:"path"} reference to a
             // file that no longer exists, silently losing the raster on
-            // restore. isUntitled() keeps #78's untitled-draft case.
+            // restore. isUntitled() keeps untitled documents drafted too.
             const bool dirtyOrUntitled = doc->isUntitled() || doc->hasUnsavedWork();
             // Only draft a dirty/untitled doc we can capture without a prompt.
             // A dirty non-draftable doc has already been resolved (saved or
@@ -1301,8 +1291,7 @@ void Application::refreshClipboardActions() {
             continue;
         p->setEnabled(ok);
         // Disabled + tooltip is the honest state — never a popup that
-        // just says the clipboard is empty (PHILOSOPHY → No popup that
-        // just says "no").
+        // just says the clipboard is empty.
         p->setToolTip(ok ? QString()
                          : tr("Copy an image or a file to the clipboard, then use this to open it."));
     }
@@ -1329,7 +1318,7 @@ void Application::addAcquireItems(QMenu *fileMenu, QWidget *captureContext) {
     // Screenshot as an explicit-mode submenu. The OS picker hides its
     // mode switch behind an undiscoverable spacebar cycle; surfacing
     // Whole Screen / Window / Selected Area as named items makes the
-    // modes discoverable (see DR 2026-07-18-file-menu-acquire-ia, Option A).
+    // modes discoverable.
     QMenu *screenshotMenu = fileMenu->addMenu(tr("Screenshot"));
     screenshotMenu->setToolTipsVisible(true);
 
@@ -1359,9 +1348,9 @@ void Application::addAcquireItems(QMenu *fileMenu, QWidget *captureContext) {
             [this, captureContext]() { captureScreenshot(ShotMode::Region, captureContext); });
 
 #ifndef Q_OS_MACOS
-    // Only whole-screen capture is meaningful via the QScreen fallback.
-    // Keep Window / Selected Area visible-but-disabled with an honest
-    // tooltip rather than dropping them (G3 + G4).
+    // Only whole-screen capture works via the QScreen fallback; Window and
+    // Selected Area stay in place, disabled with a tooltip saying why.
+    // todo/2026-10-15-window-screenshots-windows-linux: window and selection screenshots on Windows and Linux.
     window->setEnabled(false);
     window->setToolTip(tr("Window capture isn't available on this platform yet."));
     selectedArea->setEnabled(false);
@@ -1370,10 +1359,9 @@ void Application::addAcquireItems(QMenu *fileMenu, QWidget *captureContext) {
     // Wayland whole-screen capture needs the XDG screenshot portal (a
     // client-side grab yields only a null pixmap there). When no portal is
     // running, disable Whole Screen with an explaining tooltip rather than
-    // letting the click silently produce nothing (G3; backlog
-    // 2026-07-12-wayland-screenshot-portal). Re-evaluated on every open so a
-    // portal that starts mid-session re-enables the item. On X11/Windows this
-    // is a no-op — isWaylandSession() is false, so the item stays enabled.
+    // letting the click silently produce nothing. Re-evaluated on every open
+    // so a portal that starts mid-session re-enables the item. On X11/Windows
+    // this is a no-op — isWaylandSession() is false, so the item stays enabled.
     auto refreshWholeScreen = [wholeScreen]() {
         const bool ok = !trailer::isWaylandSession() || trailer::portalScreenshotAvailable();
         wholeScreen->setEnabled(ok);
@@ -1385,9 +1373,8 @@ void Application::addAcquireItems(QMenu *fileMenu, QWidget *captureContext) {
     connect(screenshotMenu, &QMenu::aboutToShow, this, refreshWholeScreen);
 #endif
 
-    // Placeholders for acquire sources with no backend yet. Present but
-    // disabled + tooltip (G3; do not hide roadmap acquire sources here —
-    // they are peers of Screenshot on the acquire surface).
+    // Acquire sources with no backend yet, shown disabled with a tooltip.
+    // todo/2026-10-15-disabled-placeholders: remove these disabled placeholders.
     auto *scanner = fileMenu->addAction(tr("Scanner"));
     scanner->setEnabled(false);
     scanner->setToolTip(tr("Scanner import isn't available yet."));
@@ -1443,7 +1430,7 @@ void Application::newFromClipboard() {
 
     // Nothing openable on the clipboard. The ⌘N item is disabled in this
     // state, so reaching here means a programmatic trigger — say nothing
-    // (no narration popup). See PHILOSOPHY → No popup that just says "no".
+    // (no popup that only says "no").
 }
 
 void Application::captureScreenshot(ShotMode mode, QWidget *context) {
@@ -1455,13 +1442,11 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
     // Screen / Window modes but NOT for a freeform Region rectangle — Region
     // (and any picker Unavailable/Failed) falls through to the screencapture
     // path below. On a clean pick we're done; a picker cancel is a
-    // self-caused no-op (say nothing, per PHILOSOPHY → No popup that just
-    // says "no").
+    // self-caused no-op, so say nothing.
     //
     // The picker uses the system picker itself as the consent surface, so it
     // is intentionally NOT gated by the Screen-Recording TCC preflight that
-    // guards the screencapture shell-out below (different consent model —
-    // docs/decision-records/2026-07-16-capture-permission-preflight.md).
+    // guards the screencapture shell-out below (different consent model).
     const auto backend = trailer::effectiveCaptureBackend(
         m_settings.captureBackend(), trailer::screenCaptureKitAvailable(),
         /*freeformRegion=*/mode == ShotMode::Region);
@@ -1480,13 +1465,13 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
                    << "screencapture:" << err;
     }
 
-    // --- screencapture shell-out path (TCC-gated by PR #77) ---
+    // --- screencapture shell-out path ---
     // Preflight the live Screen Recording TCC state before touching the OS
-    // selection UI (the screen-capture preflight ADR). This gates ONLY the
-    // /usr/sbin/screencapture shell-out; the picker path above is intentionally
-    // ungated (different consent model). The pre-permission explainer is retired
-    // for stills (owner decision 2026-07-17); we lean on the OS Screen Recording
-    // prompt directly.
+    // selection UI, so a denied permission never opens a crosshair that
+    // captures nothing. This gates ONLY the /usr/sbin/screencapture shell-out;
+    // the picker path above is intentionally ungated (different consent model).
+    // Stills show no pre-permission explainer; we lean on the OS Screen
+    // Recording prompt directly.
     const ScreenCapturePermissionState state = queryScreenCapturePermissionState();
 
     // The native capture block. Hides the capture context (if any) so it
@@ -1560,7 +1545,7 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
     // capture context's screen when we have one, else the primary screen.
     // Known limitation: an interactive `screencapture -i` on a mixed-DPI
     // multi-monitor setup can land on a non-primary screen, so the recovered
-    // dpr may be wrong; owner to confirm on hardware.
+    // dpr may be wrong. todo/2026-10-15-real-desktop-checks: check it on a real Mac with mixed DPI.
     QScreen *dprScreen = nullptr;
     if (context && context->window() && context->window()->windowHandle())
         dprScreen = context->window()->windowHandle()->screen();
@@ -1578,8 +1563,7 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
     // Pick the capture path from the session type + portal availability.
     // X11/xcb/Windows -> QScreen::grabWindow (a client-side root grab works).
     // Wayland -> the XDG screenshot portal (grabWindow returns null there);
-    // Wayland with no portal -> honest-degrade, never a silent null (G3,
-    // backlog 2026-07-12-wayland-screenshot-portal).
+    // Wayland with no portal -> honest-degrade, never a silent null.
     switch (trailer::chooseLinuxScreenshotBackend(trailer::isWaylandSession(),
                                                   trailer::portalScreenshotAvailable())) {
     case trailer::LinuxScreenshotBackend::Portal: {
@@ -1625,7 +1609,7 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
     case trailer::LinuxScreenshotBackend::Unavailable:
         // Wayland with no screenshot portal. The menu item is disabled +
         // tooltipped for this state, but a programmatic/edge trigger can still
-        // land here — degrade honestly rather than emit a silent null (G3).
+        // land here — degrade honestly rather than emit a silent null.
         if (auto *mw = qobject_cast<MainWindow *>(context))
             mw->flashError(tr("Screenshot capture needs a desktop screenshot portal, "
                               "which isn't running."));
@@ -1639,9 +1623,8 @@ void Application::captureScreenshot(ShotMode mode, QWidget *context) {
 #ifdef Q_OS_MACOS
 void Application::showScreenRecordingNeededModal() {
     // No status bar in the no-window Acquire flow — surface the recoverable
-    // degrade as one actionable modal with a direct route to the setting. This
-    // ask-first modal is the sanctioned pattern (PHILOSOPHY allows popups for
-    // non-self-evident errors).
+    // degrade as one actionable modal with a direct route to the setting. A
+    // popup is allowed here: it reports an error the UI can't make obvious.
     QMessageBox box;
     box.setIcon(QMessageBox::Warning);
     box.setWindowTitle(tr("Acquire from Screenshot"));
@@ -1726,10 +1709,9 @@ bool Application::event(QEvent *event) {
     // closing the last window leaves just the dock icon + global menu bar.
     // Re-activating the app with zero windows (dock click, Cmd-Tab back in)
     // deliberately does NOTHING automatic: no file-open panel is presented.
-    // Owner ruling (backlog 2026-07-12-macos-launch-no-open-panel): macOS
-    // launch/activation with no windows is dock icon + menu bar only, and an
-    // automatically-presented Open panel — whose dismissal read as an
-    // unwanted quit — is removed. ⌘O / File → Open remain explicit user
+    // macOS launch/activation with no windows is dock icon + menu bar only:
+    // an automatically-presented Open panel was removed because dismissing
+    // it read as an unwanted quit. ⌘O / File → Open remain explicit user
     // actions that open the panel (see installNoWindowMenuBar's openAction).
     // We therefore no longer special-case ApplicationStateChange here.
     return QApplication::event(event);

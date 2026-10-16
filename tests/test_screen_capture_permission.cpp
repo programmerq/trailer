@@ -1,8 +1,7 @@
 // Unit test — Screen Recording pre-permission explainer gate.
 //
 // Exercises the pure, platform-agnostic first-run gate that backs the
-// macOS "Screen Recording" pre-permission explainer (backlog
-// 2026-07-13-macos-screenrecording-services-clarity). The gate must:
+// macOS "Screen Recording" pre-permission explainer. The gate must:
 //   - report "show" (shouldShow==true) while unacknowledged,
 //   - NOT burn the flag on a mere query, so cancelling the explainer (query
 //     without acknowledge) shows it again next time,
@@ -108,14 +107,14 @@ void TestScreenCapturePermission::persistsAcrossReload() {
 }
 
 #ifdef TRAILER_UX_RECORDER
-// Recorder builds only (ADR 0014). Mechanism B — the recorder's live macOS
+// Recorder builds only. Mechanism B — the recorder's live macOS
 // Screen Recording TCC gate — is authoritative there, and this first-use
 // explainer (Mechanism A) defers to it via an injected granted-probe
 // (setScreenRecordingGrantedProbe). These cases drive that probe directly so
 // the deference is exercised deterministically, without a live TCC state (the
 // non-mac stub reports granted=true, but injection lets us test BOTH outcomes).
 
-// G14.2: when the live TCC grant reports granted, the explainer must NOT show
+// When the live TCC grant reports granted, the explainer must NOT show
 // even on a fresh profile with the screen_capture_explainer flag unset —
 // otherwise the recorder gate and the screenshot explainer double-prompt for
 // the same permission.
@@ -150,16 +149,16 @@ void TestScreenCapturePermission::explainerShownWhenRecorderTccNotGranted() {
              "After acknowledge (still not granted) the explainer suppresses as before");
 }
 
-// Application-level wiring lock (ADR 0014, G14.2). The stubbed cases above
-// drive the probe and the flag independently; this one exercises the exact
-// pair of calls Application makes in sequence — setScreenRecordingGrantedProbe
-// (from the constructor) then acknowledgeScreenCaptureExplainer (from the
-// granted preflightUxRecording() branch) — to pin the integration the unit
-// tests miss. Beyond asserting the explainer is suppressed, it clears the probe
-// afterwards and asserts suppression HOLDS: proving the granted preflight
-// actually persisted the first-use flag (so a later non-recorder build, which
-// has no probe, also stays suppressed) rather than leaning on the live probe
-// alone. That persistence is the whole point of burning the flag when granted.
+// Application-level wiring lock. The stubbed cases above drive the probe and
+// the flag independently; this one exercises the exact pair of calls
+// Application makes in sequence — setScreenRecordingGrantedProbe (from the
+// constructor) then acknowledgeScreenCaptureExplainer (from the granted
+// preflightUxRecording() branch) — to pin the integration the unit tests miss.
+// Beyond asserting the explainer is suppressed, it clears the probe afterwards
+// and asserts suppression HOLDS: proving the granted preflight actually
+// persisted the first-use flag (so a later non-recorder build, which has no
+// probe, also stays suppressed) rather than leaning on the live probe alone.
+// That persistence is the whole point of burning the flag when granted.
 void TestScreenCapturePermission::grantedPreflightSuppressesAndPersistsExplainer() {
     QTemporaryDir dir;
     QVERIFY(dir.isValid());

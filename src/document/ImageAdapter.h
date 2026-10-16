@@ -41,7 +41,7 @@ class ImageDocument : public IDocument {
 
     DocumentType documentType() const override { return DocumentType::Image; }
 
-    // Fires once the staged-open (ADR 0008) async decode + initial fit have
+    // Fires once the staged-open async decode + initial fit have
     // landed, so MainWindow can refresh the zoom readout against the settled
     // scale (reuses the same wiring PdfDocument uses for its async form probe).
     CapabilityNotifier *capabilityNotifier() override { return &m_capabilityNotifier; }
@@ -58,12 +58,12 @@ class ImageDocument : public IDocument {
         // screenshot (device px stamped dpr=2) this is half the raw px —
         // avoiding the "open oversized then shrink to fit" behavior.
         //
-        // Staged open (ADR 0008, image path): before the async full decode
-        // lands, m_image is null but the header-only size read at
-        // construction gives the immediate hint. Ordinary file opens are
-        // dpr 1, so header px == logical px; a capture stamps its dpr via
-        // markCaptureOrigin BEFORE the window is sized, so divide by that
-        // known dpr to land the same logical size the decoded image would.
+        // Staged open: before the async full decode lands, m_image is null
+        // but the header-only size read at construction gives the immediate
+        // hint. Ordinary file opens are dpr 1, so header px == logical px; a
+        // capture stamps its dpr via markCaptureOrigin BEFORE the window is
+        // sized, so divide by that known dpr to land the same logical size
+        // the decoded image would.
         if (!m_image.isNull())
             return m_image.deviceIndependentSize().toSize();
         if (m_animated || m_headerSize.isEmpty())
@@ -115,7 +115,7 @@ class ImageDocument : public IDocument {
     // null image or any other page index. No rendering — used by the
     // sidebar to size the thumbnail row by aspect. Uses the header size
     // read at open while the async decode is still pending, so the sidebar
-    // can size rows before the pixels land (staged open, ADR 0008).
+    // can size rows before the pixels land (staged open).
     QSizeF pageSizeHint(int pageIndex) const override {
         if (pageIndex != 0)
             return {};
@@ -183,7 +183,7 @@ class ImageDocument : public IDocument {
     bool cropToRect(int x, int y, int width, int height) override;
     QSize imagePixelSize() const override { return deviceSize(); }
     // See IDocument::contentSizePending. True only while the off-thread
-    // full-resolution decode (ADR 0008) is genuinely in flight — i.e.
+    // full-resolution decode is genuinely in flight — i.e.
     // imagePixelSize() is currently answering from m_headerSize rather than
     // the decoded QImage. Never true for an animated GIF (decoded
     // synchronously at construction) or once the decode has settled
@@ -202,7 +202,7 @@ class ImageDocument : public IDocument {
             return imageDpr();
         return m_pendingCaptureDpr > 1.0 ? m_pendingCaptureDpr : 1.0;
     }
-    // Read-only access to the current raster buffer. Used by Phase 6
+    // Read-only access to the current raster buffer. Used by the ML
     // features (background removal, instant alpha, Smart Lasso) that
     // feed pixels into ONNX models. Returns a shallow copy — QImage is
     // copy-on-write, so this is cheap.
@@ -264,7 +264,7 @@ class ImageDocument : public IDocument {
     // dpr > 1 and non-1.0 scale without needing a real widget/event loop.
     QPointF docToViewForTest(QPointF p) const { return mapDocToView(p); }
     QPointF viewToDocForTest(QPointF p) const { return mapViewToDoc(p); }
-    // Staged-open (ADR 0008) test hooks.
+    // Staged-open test hooks.
     // True while the off-GUI-thread full decode kicked at open has NOT yet
     // completed — i.e. the full-pixel decode did not run synchronously on
     // the calling thread. The structural proxy in test_perf_gui_thread_io
@@ -327,11 +327,11 @@ class ImageDocument : public IDocument {
     // header read at open, before the async full decode lands, and after a
     // SUCCESSFUL decode. Keyed to available-OR-in-flight so a still image's
     // capabilities never falsely read as unsupported during the brief
-    // off-thread decode window (ADR 0008, image path). Crucially, once the
-    // decode has FINISHED (m_decoded) the header-size "pending" no longer
-    // counts: a decode that produced a null image (valid header, corrupt
-    // body) is genuinely unavailable, so capabilities go false and the
-    // controls disable rather than stay enabled-but-inert (G3).
+    // off-thread decode window. Crucially, once the decode has FINISHED
+    // (m_decoded) the header-size "pending" no longer counts: a decode that
+    // produced a null image (valid header, corrupt body) is genuinely
+    // unavailable, so capabilities go false and the controls disable rather
+    // than stay enabled-but-inert.
     bool imageAvailableOrPending() const {
         if (!m_image.isNull())
             return true;
@@ -345,9 +345,9 @@ class ImageDocument : public IDocument {
         return !m_image.isNull() ? m_image.size()
                                  : (m_animated ? QSize() : m_headerSize);
     }
-    // Kick the full-resolution decode on a worker thread (ADR 0008 Option
-    // B, image path). Records a new decode generation so a superseding
-    // reload/recovery can make the stale finished callback a no-op.
+    // Kick the full-resolution decode on a worker thread. Records a new
+    // decode generation so a superseding reload/recovery can make the stale
+    // finished callback a no-op.
     void startDecode();
     // Block on the in-flight worker decode and adopt its pixels. A no-op
     // once decoded, or when no decode is in flight (empty path / injected
@@ -368,7 +368,7 @@ class ImageDocument : public IDocument {
     // path (already-decoded / injected image) and the async swap. Idempotent
     // via m_viewPopulated.
     void installDecodedContent();
-    // Staged-open delayed placeholder (ADR 0008, owner refinement PR #109):
+    // Staged-open delayed placeholder:
     // start / cancel the grace timer that defers the "Loading image…" text,
     // and the slot that shows the text only if the decode is still in flight.
     void startPlaceholderTextTimer();
@@ -503,7 +503,7 @@ class ImageDocument : public IDocument {
     // than fit-capped-at-100%. Ordinary file opens leave this false.
     bool m_captureOrigin = false;
 
-    // --- Staged (async) open state (ADR 0008, image path = Option B) ---
+    // --- Staged (async) open state ---
     // Header-only size read at construction for a still image, used for
     // the immediate contentSizeHint / placeholder sizing before the
     // full-pixel decode lands. Empty for animated / unreadable files.
@@ -536,17 +536,16 @@ class ImageDocument : public IDocument {
     // before the loading text is drawn, so a fast decode swaps in the real
     // image without the text ever flashing for a single frame — while a
     // slow/large decode still gets a visible loading state once the grace
-    // elapses (owner request on PR #109, 2026-07-21; ADR 0008 update note).
-    // Range considered: 0 (text immediately — the pre-refinement behaviour that
-    // flashed) up to ~2000 (a slow decode risks looking hung with no feedback);
-    // 1000 ms tracks the NN/g ~1 s "flow" limit cited in
-    // docs/performance-budgets.md. Symptom to change: LOWER if the blank window
-    // reads as a stall on common hardware; RAISE if the text still flashes for
-    // ordinary local opens on the reference machine. Injectable per-document
-    // for deterministic tests via setPlaceholderTextDelayForTest().
+    // elapses. Range considered: 0 (text immediately, which flashed) up to
+    // ~2000 (a slow decode risks looking hung with no feedback); 1000 ms
+    // tracks the NN/g ~1 s "flow" response-time limit. Symptom to change:
+    // LOWER if the blank window reads as a stall on common hardware; RAISE if
+    // the text still flashes for ordinary local opens on the reference
+    // machine. Injectable per-document for deterministic tests via
+    // setPlaceholderTextDelayForTest().
     int m_placeholderTextDelayMs = 1000;
     // Fires when the async initial fit lands so MainWindow refreshes the zoom
-    // readout (staged open, ADR 0008). Declared last so it outlives nothing
+    // readout (staged open). Declared last so it outlives nothing
     // that needs it during teardown.
     CapabilityNotifier m_capabilityNotifier;
 };

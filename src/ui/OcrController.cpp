@@ -21,9 +21,9 @@ OcrController::OcrController(Application *app, QObject *parent)
     : QObject(parent), m_app(app),
       m_engine(std::make_shared<OcrEngine>(app ? &app->modelRegistry() : nullptr)),
       m_diskCache(std::make_shared<OcrDiskCache>()) {
-    // Single-shot reveal timer (ADR 0002 G2). Fires once per batch after
-    // the reveal delay; if the batch is still running we ask MainWindow
-    // to surface the progress widget. Ops that finish first stop it.
+    // Single-shot reveal timer. Fires once per batch after the reveal
+    // delay; if the batch is still running we ask MainWindow to surface
+    // the progress widget. Ops that finish first stop it.
     m_revealTimer = new QTimer(this);
     m_revealTimer->setSingleShot(true);
     connect(m_revealTimer, &QTimer::timeout, this, [this]() {
@@ -58,7 +58,7 @@ void OcrController::onVisiblePageChanged(int page) {
         return;
     auto *doc = m_doc;
     // Re-derive the auto-OCR missing-model state on every page change so
-    // the in-context hint is persistent, not fire-once (ADR 0002 §3).
+    // the in-context hint is persistent, not fire-once.
     evaluateAutoOcrModel(doc, page);
     if (!doc->supportsSelectableText())
         return;
@@ -75,26 +75,26 @@ void OcrController::onVisiblePageChanged(int page) {
     // edge cases.
     if (doc->hasTextLayer())
         return;
-    // ADR 0002 §3: on the ambient path, if the language model isn't
-    // installed we no longer silently no-op. evaluateAutoOcrModel() above
-    // has already surfaced the non-modal in-context hint; skip the
-    // submission (there is nothing to run yet) and re-evaluate on the
-    // next page/document change once the model may have landed.
+    // On the ambient path, a missing language model is not a silent no-op:
+    // evaluateAutoOcrModel() above has already surfaced the non-modal
+    // in-context hint; skip the submission (there is nothing to run yet)
+    // and re-evaluate on the next page/document change once the model may
+    // have landed.
     if (!modelReady())
         return;
-    // ADR G13.1: eager auto-OCR is for SMALL single-page documents only.
+    // Eager auto-OCR is for SMALL single-page documents only.
     // A single-page document whose page pixel area exceeds ~4 MP
     // (kEagerOcrMaxPixels, 2048×2048) is NOT greedy — auto-OCRing a huge
     // scan on open would cook the CPU. Such a page falls through to on-
     // demand recognition (manual Recognize Text at UserAction priority, or
     // the search kick), both of which run regardless of this gate. Only
     // the ambient/VisiblePage auto path is affected here.
-    // NOTE: pageSizeHint() reports the image's decoded pixel dimensions
-    // for images — the case this gate targets — and the image is already
-    // decoded on open in the current (non-staged) path. Multi-page docs
-    // are handled by isLargeDoc() above, so this only trims the single-
-    // page eager case; a doc that reports no size hint (area 0) is treated
-    // as small and still auto-OCRs.
+    // NOTE: for images (the case this gate targets) pageSizeHint() reports
+    // the pixel size read from the file header at open, so the gate works
+    // before the background decode finishes. Multi-page docs are handled
+    // by isLargeDoc() above, so this only trims the single-page eager
+    // case; a doc that reports no size hint (area 0) is treated as small
+    // and still auto-OCRs.
     if (doc->pageCount() == 1) {
         const QSizeF hint = doc->pageSizeHint(page);
         const qint64 area =
@@ -102,12 +102,11 @@ void OcrController::onVisiblePageChanged(int page) {
         if (area > kEagerOcrMaxPixels)
             return;
     }
-    // Build the lazy OCR window (ADR 0013 §G13.3): the visible page plus
-    // the ±kLazyWindowRadius pages around it, clamped to the document. This
+    // Build the lazy OCR window: the visible page plus the
+    // ±kLazyWindowRadius pages around it, clamped to the document. This
     // applies uniformly to small and large/multi-page documents — a large
-    // doc is no longer cancelled down to nothing; it gets the same
-    // recenter-on-jump window so navigating a big document OCRs on demand
-    // instead of never.
+    // doc gets the same recenter-on-jump window, so navigating a big
+    // document OCRs on demand instead of never.
     std::vector<int> window;
     window.reserve(static_cast<size_t>(2 * kLazyWindowRadius + 1));
     for (int p = page - kLazyWindowRadius; p <= page + kLazyWindowRadius; ++p) {
@@ -116,13 +115,13 @@ void OcrController::onVisiblePageChanged(int page) {
     }
     // Cancel anything pending for pages outside the new window. On a jump
     // this recenters OCR: the previous window's speculative pages are
-    // cancelled and the new window's pages submitted (G13.3 assertion ii).
+    // cancelled and the new window's pages submitted.
     cancelPagesNotMatching(doc, window);
     // Visible page is highest of the auto priorities; the rest of the
     // window runs as Prefetch (first to be cancelled, and battery-suppressed
-    // when run_on_battery=false — G13.3 assertion iv). Ambient submissions
-    // are never batch-tracked — they must not drive the progress widget nor
-    // be user-cancellable.
+    // when run_on_battery=false). Ambient submissions are never
+    // batch-tracked — they must not drive the progress widget nor be
+    // user-cancellable.
     submitPage(doc, page, MlPriority::VisiblePage, /*forceRerun=*/false, /*batchTracked=*/false);
     for (int p : window) {
         if (p != page)
@@ -156,8 +155,8 @@ void OcrController::submitUserPages(IDocument *doc, std::vector<int> pages, bool
     // A fresh explicit batch supersedes any still-active one. Tear the old
     // batch down SILENTLY — cancelActiveBatch() would surface a misleading
     // "cancelled — no changes saved" terminal message that the new reveal
-    // would immediately overwrite (ADR 0002 review item 7). ocrBatchAborted
-    // drives the widget straight to idle; the new batch's reveal takes over.
+    // would immediately overwrite. ocrBatchAborted drives the widget
+    // straight to idle; the new batch's reveal takes over.
     if (m_batchActive) {
         deactivateBatch();
         cancelBatchTrackedHandles();
@@ -165,8 +164,8 @@ void OcrController::submitUserPages(IDocument *doc, std::vector<int> pages, bool
     }
 
     // Count the in-range pages up front — that's the batch total the
-    // progress widget reports (ADR 0002 G1). Out-of-range indices are
-    // dropped and never counted.
+    // progress widget reports. Out-of-range indices are dropped and never
+    // counted.
     std::vector<int> valid;
     for (int page : pages) {
         if (page >= 0 && page < doc->pageCount())
@@ -177,7 +176,7 @@ void OcrController::submitUserPages(IDocument *doc, std::vector<int> pages, bool
 
     // New batch identity: workers scheduled below capture this epoch and
     // hand it back on completion so a superseded batch's stragglers are
-    // ignored (ADR 0002 review item 1).
+    // ignored.
     ++m_batchEpoch;
     m_batchActive = true;
     m_batchTotal = static_cast<int>(valid.size());
@@ -204,8 +203,7 @@ void OcrController::submitUserPages(IDocument *doc, std::vector<int> pages, bool
 void OcrController::onBatchPageResolved(int epoch) {
     // Ignore stragglers from a batch that has since been superseded or
     // torn down: their epoch no longer matches the live batch, so counting
-    // them would inflate the current batch's progress (ADR 0002 review
-    // item 1).
+    // them would inflate the current batch's progress.
     if (!m_batchActive || epoch != m_batchEpoch)
         return;
     ++m_batchCompleted;
@@ -236,7 +234,7 @@ void OcrController::deactivateBatch() {
         m_revealTimer->stop();
     // Flip the shared apply guard so any GUI-thread apply steps still to
     // come discard their (possibly partial) page rather than persisting a
-    // half-recognised page (ADR 0002 §2, per-page granularity).
+    // half-recognised page. Pages already applied keep their text.
     if (m_batchCancelled)
         m_batchCancelled->store(true);
 }
@@ -245,7 +243,7 @@ void OcrController::cancelBatchTrackedHandles() {
     // Cancel and forget only batch-tracked scheduler tasks so not-yet-
     // started batch pages never run and in-flight recognition bails at its
     // next checkpoint. Ambient (visible-page ±kLazyWindowRadius) submissions
-    // are left running (ADR 0002 review item 3).
+    // are left running.
     MlScheduler *sched = m_app ? &m_app->mlScheduler() : nullptr;
     for (auto it = m_pending.begin(); it != m_pending.end();) {
         if (it->second.batchTracked) {
@@ -284,8 +282,7 @@ void OcrController::evaluateAutoOcrModel(IDocument *doc, int page) {
                               !isLargeDoc();
     const bool missing = wouldAutoOcr && !modelReady();
     // Emit only on a real change so a stale hint clears exactly once and
-    // steady-state page scrolling doesn't re-fire the signal (ADR 0002
-    // review item 9).
+    // steady-state page scrolling doesn't re-fire the signal.
     if (m_lastModelMissing.has_value() && *m_lastModelMissing == missing)
         return;
     m_lastModelMissing = missing;
@@ -305,8 +302,8 @@ void OcrController::cancelAll() {
     // flip the apply guard, and orphan stragglers. Unlike cancelActiveBatch
     // there is no user "cancelled" message; instead we emit ocrBatchAborted
     // so a REVEALED progress widget returns to idle and the scoped cancel
-    // action disables (ADR 0002 review item 2). Suppressed during
-    // destruction, when the signal targets may already be gone.
+    // action disables. Suppressed during destruction, when the signal
+    // targets may already be gone.
     const bool hadBatch = m_batchActive;
     if (m_batchActive)
         deactivateBatch();
@@ -393,14 +390,14 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
     // than the OCR pass it can let us skip.
     const std::uint64_t contentHash = hashImageContent(source);
 
-    // On-disk cache read-through (ADR 0013 §G13.4). The disk tier is keyed
-    // by the content hash alone, so a page whose pixels match a previously
-    // recognized page — this document on a later launch, or a different
-    // document with identical pixels — restores its text WITHOUT re-OCR.
-    // This is the reopen/dedup win. A force-rerun deliberately bypasses the
-    // read (the user asked to recompute) and drops any stale disk entry for
-    // this content so a re-OCR that yields fewer/garbage blocks can't leave
-    // the old result behind to be served next visit.
+    // On-disk cache read-through. The disk tier is keyed by the content
+    // hash alone, so a page whose pixels match a previously recognized
+    // page — this document on a later launch, or a different document with
+    // identical pixels — restores its text WITHOUT re-OCR. This is the
+    // reopen/dedup win. A force-rerun deliberately bypasses the read (the
+    // user asked to recompute) and drops any stale disk entry for this
+    // content so a re-OCR that yields fewer/garbage blocks can't leave the
+    // old result behind to be served next visit.
     if (m_diskCache) {
         if (!forceRerun) {
             if (auto cached = m_diskCache->load(contentHash)) {
@@ -413,14 +410,14 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
     }
 
     // Ambient re-OCR skip for a page that already OCR'd to ZERO usable
-    // blocks at this exact content (ADR G13.1/G13.2). Such a page never
-    // gets a put() (hasResults stays false, so the completion status stays
-    // an honest "No text found"), which means hasResults() above can't be
-    // the skip key for it — without this memo onVisiblePageChanged would
-    // re-render + re-OCR every text-less page on every visit. wasAttempted
-    // matches only while the content hash is unchanged; a page edit yields
-    // a new hash and re-OCRs. Force-rerun bypasses (and invalidate() above
-    // has already dropped the memo).
+    // blocks at this exact content. Such a page never gets a put()
+    // (hasResults stays false, so the completion status stays an honest
+    // "No text found"), which means hasResults() above can't be the skip
+    // key for it — without this memo onVisiblePageChanged would re-render +
+    // re-OCR every text-less page on every visit. wasAttempted matches only
+    // while the content hash is unchanged; a page edit yields a new hash
+    // and re-OCRs. Force-rerun bypasses (and invalidate() above has already
+    // dropped the memo).
     if (!forceRerun && store->wasAttempted(page, contentHash)) {
         return SubmitResult::Cached;
     }
@@ -464,8 +461,8 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
 
     // Batch-tracked pages carry the controller + the shared cancel guard
     // into the apply step so completion can be counted and a cancelled
-    // page's partial blocks discarded (ADR 0002 §2/§3). Ambient pages
-    // carry neither — they never touch the progress widget.
+    // page's partial blocks discarded. Ambient pages carry neither — they
+    // never touch the progress widget.
     QPointer<OcrController> self(batchTracked ? this : nullptr);
     std::shared_ptr<std::atomic<bool>> cancelGuard = batchTracked ? m_batchCancelled : nullptr;
     // Identity of the batch this page belongs to (batch-tracked only).
@@ -494,12 +491,12 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
             if (!recognizer && !engine->isModelReady()) {
                 // Still resolve the batch page so the count can complete.
                 // The hop is unconditional (the scheduler is always a live
-                // context) and `self` is re-checked on the GUI thread; the
-                // pre-2026-08-03 shape posted to `self` itself, which is the
-                // use-after-free MlScheduler::postResultToGuiThread()
-                // documents. Note this must NOT be keyed off storePtr, which
-                // may be null here — that would silently drop the queued call
-                // and stall the batch count (ADR 0002 review item 8).
+                // context) and `self` is re-checked on the GUI thread;
+                // posting to `self` itself would be the use-after-free
+                // MlScheduler::postResultToGuiThread() documents. Note this
+                // must NOT be keyed off storePtr, which may be null here —
+                // that would silently drop the queued call and stall the
+                // batch count.
                 scheduler->postResultToGuiThread(
                     [self, epoch]() { if (self) self->onBatchPageResolved(epoch); });
                 return;
@@ -529,12 +526,11 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
             scheduler->postResultToGuiThread(
                 [storePtr, self, cancelGuard, page, contentHash, cancelled, epoch, diskCache,
                  out = std::move(out)]() mutable {
-                    // No-partial-write guard (ADR 0002 §2): if the batch
-                    // was cancelled (or this page's token flipped mid-
-                    // flight), discard the blocks rather than persist a
-                    // half-recognised page. Runs on the GUI thread, same
-                    // as cancelActiveBatch(), so the flag read is race-
-                    // free.
+                    // No-partial-write guard: if the batch was cancelled
+                    // (or this page's token flipped mid-flight), discard
+                    // the blocks rather than persist a half-recognised
+                    // page. Runs on the GUI thread, same as
+                    // cancelActiveBatch(), so the flag read is race-free.
                     const bool discard =
                         cancelled || (cancelGuard && cancelGuard->load());
                     // Silent-discard of an empty layer (Item C): a page that
@@ -546,12 +542,12 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
                     // reason — retry once the model lands.)
                     if (!discard && storePtr) {
                         if (!out.empty()) {
-                            // Write-through to the on-disk tier (ADR 0013
-                            // §G13.4) BEFORE the move, so the recognized
-                            // text survives reopen. Keyed by content hash;
-                            // the store already holds the doc-space-scaled
-                            // blocks and the disk copy matches, so a later
-                            // read-through put()s them straight back.
+                            // Write-through to the on-disk tier BEFORE the
+                            // move, so the recognized text survives reopen.
+                            // Keyed by content hash; the store already holds
+                            // the doc-space-scaled blocks and the disk copy
+                            // matches, so a later read-through put()s them
+                            // straight back.
                             if (diskCache)
                                 diskCache->store(contentHash, out);
                             storePtr->put(page, contentHash, std::move(out));
@@ -561,11 +557,11 @@ OcrController::SubmitResult OcrController::submitPage(IDocument *doc, int page, 
                             // path's cache-skip (wasAttempted) stops re-OCRing
                             // this page on every visit, WITHOUT a put() — so
                             // hasResults(page) stays false and the completion
-                            // status stays an honest "No text found" (ADR
-                            // G13.1/G13.2). An edit changes the hash and re-
-                            // OCRs. Skipped when the model wasn't ready (that
-                            // path returns before this apply step) so an
-                            // absent-model no-op still retries once it lands.
+                            // status stays an honest "No text found". An
+                            // edit changes the hash and re-OCRs. Skipped when
+                            // the model wasn't ready (that path returns
+                            // before this apply step) so an absent-model
+                            // no-op still retries once it lands.
                             storePtr->markAttempted(page, contentHash);
                         }
                     }

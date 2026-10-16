@@ -39,9 +39,9 @@ endfunction()
 trailer_add_test(test_settings   test_settings.cpp)
 trailer_add_test(test_settings_volatility test_settings_volatility.cpp)
 trailer_add_test(test_recent     test_recent.cpp)
-# Already-open dedup (owner HITL 2026-08-06): canonicalPathKey's identity
-# rule, Application::windowForOpenPath, and the openFiles surface-don't-
-# reopen behaviour across all three open_files_in modes.
+# Already-open dedup: canonicalPathKey's identity rule,
+# Application::windowForOpenPath, and the openFiles surface-don't-reopen
+# behaviour across all three open_files_in modes.
 trailer_add_test(test_open_dedup test_open_dedup.cpp)
 
 # --- Per-slot ctest entries for test_open_dedup (KEEP — not scaffolding) ---
@@ -54,7 +54,7 @@ trailer_add_test(test_open_dedup test_open_dedup.cpp)
 # setvbuf@plt calls at the top of main; there is no QTEST_MAIN). Nobody knew,
 # because ctest only prints output for FAILING tests and nothing on that lane
 # had failed before — every passing test's output is equally invisible.
-# Tracked as docs/backlog/2026-08-06-wine-lane-emits-no-test-output.md.
+# todo/2026-10-15-ci-windows-only-under-wine: replace the Wine lane with native Windows CI.
 #
 # ctest's own pass/fail reporting DOES work there. So it is the only usable
 # oracle on that lane, and this block turns it into a per-check one:
@@ -120,7 +120,6 @@ trailer_add_test(test_dark_icon_contrast test_dark_icon_contrast.cpp)
 trailer_add_test(test_crop_pages_dialog test_crop_pages_dialog.cpp)
 trailer_add_test(test_crop_direct_manipulation test_crop_direct_manipulation.cpp)
 trailer_add_test(test_password_export_dialog test_password_export_dialog.cpp)
-trailer_add_test(test_cards test_cards.cpp)
 trailer_add_test(test_signatures test_signatures.cpp)
 trailer_add_test(test_image_filter test_image_filter.cpp)
 trailer_add_test(test_image_scale test_image_scale.cpp)
@@ -165,14 +164,37 @@ trailer_add_test(test_update_pubkey test_update_pubkey.cpp)
 target_compile_definitions(test_update_pubkey PRIVATE
     "TRAILER_REPO_ROOT=\"${CMAKE_CURRENT_SOURCE_DIR}/..\"")
 
+# Known bugs. Each test asserts the behaviour a todo/ entry's "Done when" asks
+# for, and marks today's failure with
+# QEXPECT_FAIL("", "todo/YYYY-MM-DD-slug: ...", Abort). A change that fixes the
+# bug makes that check pass unexpectedly, which fails the run: delete the
+# QEXPECT_FAIL line and the entry's file in the same PR.
+# Linux CI runs these; the Wine and macOS lanes skip the label.
+function(trailer_add_known_bug_test name)
+    trailer_add_test(${name} ${name}.cpp)
+    set_tests_properties(${name} PROPERTIES LABELS "known-bug")
+endfunction()
+function(trailer_add_known_bug_variant name target env)
+    add_test(NAME ${name} COMMAND ${target})
+    set(_env ${_trailer_unit_env} ${env})
+    set_tests_properties(${name} PROPERTIES LABELS "known-bug" ENVIRONMENT "${_env}")
+endfunction()
+trailer_add_known_bug_test(test_known_bugs_pdf_save)
+trailer_add_known_bug_test(test_known_bugs_pdf_files)
+trailer_add_known_bug_test(test_known_bugs_image)
+trailer_add_known_bug_test(test_known_bugs_window)
+trailer_add_known_bug_variant(test_known_bugs_image_dpr2 test_known_bugs_image "QT_SCALE_FACTOR=2")
+trailer_add_known_bug_variant(test_known_bugs_window_dpi72 test_known_bugs_window "QT_FONT_DPI=72")
+trailer_add_known_bug_variant(test_known_bugs_window_dpr2 test_known_bugs_window "QT_SCALE_FACTOR=2")
+
 # Structural, CI-safe performance tests. These assert ordering / counts /
 # thread facts (never wall-clock time) and read the checked-in reference
-# corpus at docs/perf/corpus/. TRAILER_PERF_CORPUS_DIR points each test
+# corpus at tests/perf/corpus/. TRAILER_PERF_CORPUS_DIR points each test
 # at that directory (CMAKE_CURRENT_SOURCE_DIR here is <repo>/tests).
 function(trailer_add_perf_test name source)
     trailer_add_test(${name} ${source})
     target_compile_definitions(${name} PRIVATE
-        "TRAILER_PERF_CORPUS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/../docs/perf/corpus\"")
+        "TRAILER_PERF_CORPUS_DIR=\"${CMAKE_CURRENT_SOURCE_DIR}/perf/corpus\"")
     # Tag the structural perf tier with a ctest label so CI can target it
     # (e.g. `ctest --label-exclude perf` on the Wine runner, which can't
     # meet the threading/paint assumptions these tests make).
@@ -199,3 +221,4 @@ if(TRAILER_ENABLE_UX_RECORDER)
 endif()
 
 add_subdirectory(uat)
+add_subdirectory(pbt)

@@ -1,16 +1,15 @@
 // UAT harness — Feedback / Diagnostic Report (Help menu)
 //
-// Covers UAT-XCT-071..073 in docs/uat/06-cross-cutting.md: the Help menu
-// item is always enabled (G3 — no lying controls: this feature never has
-// an "unavailable" state, it degrades instead), the dialog shows the full
-// report text (not just a clipboard copy — the user must be able to read
-// it), the "Include full file paths" checkbox defaults off and toggles
-// path visibility live, and Copy to Clipboard puts the exact on-screen
-// text on the clipboard.
+// Covers UAT-XCT-071..073: the Help menu item is always enabled (this
+// feature never has an "unavailable" state, it degrades instead), the
+// dialog shows the full report text (not just a clipboard copy — the user
+// must be able to read it), the "Include full file paths" checkbox
+// defaults off and toggles path visibility live, and Copy to Clipboard
+// puts the exact on-screen text on the clipboard.
 //
-// When TRAILER_FEEDBACK_EVIDENCE_DIR is set, also writes the curated G2
-// evidence PNGs: the dialog with a document open (default, paths
-// omitted) and the empty-state dialog reachable with zero windows open.
+// When TRAILER_FEEDBACK_EVIDENCE_DIR is set, also writes uncommitted PNGs
+// there: the dialog with a document open (default, paths omitted) and the
+// empty-state dialog reachable with zero windows open.
 //
 // Mirrors the custom-main + HOME-sandbox scaffolding of
 // test_uat_preferences.cpp so Settings/RecentFiles write into a
@@ -118,7 +117,7 @@ void TestUatFeedback::init() {
     QApplication::processEvents();
 }
 
-// UAT-XCT-071 — Feedback Report menu item is always enabled (G3).
+// UAT-XCT-071 — Feedback Report menu item is always enabled.
 // The report degrades (header + platform info only) rather than the
 // control ever going grey — there is no "unavailable" state to gate on.
 void TestUatFeedback::uat_xct_071_menuItemAlwaysEnabled() {
@@ -131,7 +130,7 @@ void TestUatFeedback::uat_xct_071_menuItemAlwaysEnabled() {
     QAction *action = findMenuAction(mw->menuBar(), QStringLiteral("&Help"),
                                       QStringLiteral("&Feedback Report…"));
     QVERIFY2(action, "Help menu must carry a Feedback Report… item");
-    QVERIFY2(action->isEnabled(), "Feedback Report… must always be enabled (G3)");
+    QVERIFY2(action->isEnabled(), "Feedback Report… must always be enabled");
 
     // Same with zero documents open (Windows/Linux empty-state window) —
     // still enabled, still produces a report (degraded, not blocked).
@@ -194,8 +193,8 @@ void TestUatFeedback::uat_xct_073_checkboxTogglesPathsAndCopyMatchesVisibleText(
     QCOMPARE(QGuiApplication::clipboard()->text(), dlg.reportText());
 }
 
-// UAT-XCT-081 (docs/uat/06-cross-cutting.md) — "Feedback Report…" does not
-// accumulate in the command surface as windows are opened and closed.
+// UAT-XCT-081 — "Feedback Report…" does not accumulate in the command
+// surface as windows are opened and closed.
 //
 // Owner dogfooding, 2026-08-02 (macOS Retina): FOUR identical "Feedback
 // Report…" items stacked in the application menu after four MainWindows had
@@ -240,8 +239,7 @@ void TestUatFeedback::uat_xct_081_feedbackItemDoesNotAccumulateAcrossWindows() {
         QVERIFY2(promotedToAppMenu == 0,
                  "no per-window action may claim ApplicationSpecificRole — each one becomes a "
                  "separate item in the shared macOS application menu");
-        // And it is reachable where docs/platform-conventions.md §2 says it
-        // is: the Help menu, on every platform.
+        // And it lives in the Help menu, on every platform.
         QAction *fromMenu =
             findMenuAction(mw->menuBar(), QStringLiteral("&Help"), QStringLiteral("&Feedback Report…"));
         QVERIFY2(fromMenu, "Feedback Report… is not in the Help menu");
@@ -249,8 +247,8 @@ void TestUatFeedback::uat_xct_081_feedbackItemDoesNotAccumulateAcrossWindows() {
     }
 }
 
-// Curated G2 evidence (only when TRAILER_FEEDBACK_EVIDENCE_DIR is set):
-// the dialog with a document open (default state, paths omitted) and the
+// Uncommitted PNGs (only when TRAILER_FEEDBACK_EVIDENCE_DIR is set): the
+// dialog with a document open (default state, paths omitted) and the
 // dialog reachable from a zero-document window (the empty-state case).
 void TestUatFeedback::uat_fbk_090_evidenceShots() {
     const QString dir = evidenceDir();
@@ -321,7 +319,7 @@ void TestUatFeedback::uat_fbk_090_evidenceShots() {
     // these platforms. That identity IS the evidence for those platforms —
     // the fix does not reshape their command surface. The macOS half (the
     // item moving out of the shared application menu) cannot be captured
-    // offscreen; see UAT-XCT-081's "known coverage limit".
+    // offscreen.
     {
         for (auto *w : QApplication::topLevelWidgets()) {
             if (qobject_cast<MainWindow *>(w))

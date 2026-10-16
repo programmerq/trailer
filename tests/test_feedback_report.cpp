@@ -227,7 +227,7 @@ void TestFeedbackReport::imageDimensionsAndDprAreRenderedWithUnits() {
 }
 
 void TestFeedbackReport::pendingImageDecodeIsReportedHonestly() {
-    // ADR 0008 staged open: the async full-resolution decode hasn't
+    // Staged open: the async full-resolution decode hasn't
     // landed yet, but the file header already gave a size estimate.
     AppSnapshot s = minimalSnapshot();
     WindowSnapshot w;

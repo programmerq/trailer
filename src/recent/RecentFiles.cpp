@@ -108,7 +108,7 @@ void RecentFiles::load() {
         entry.zoomFactor = obj.value(QStringLiteral("zoom_factor")).toDouble(0.0);
         entry.scrollY = obj.value(QStringLiteral("scroll_y")).toInt(0);
         entry.sidebarVisible = obj.value(QStringLiteral("sidebar_visible")).toBool(true);
-        // Workstream-I additions: zoomMode / sidebarMode / markupToolbarVisible /
+        // Later additions: zoomMode / sidebarMode / markupToolbarVisible /
         // window geometry+state. Older recent.json files without these keys
         // load with sensible defaults — sidebarMode falls back to the legacy
         // sidebar_visible bool (Hidden vs Pages) so existing installs keep
@@ -122,7 +122,7 @@ void RecentFiles::load() {
         } else {
             // Legacy fallback: only "visible / hidden" was tracked. Map
             // visible→Pages because that's the only useful sidebar state
-            // a pre-Workstream-I install could have had.
+            // an older install could have had.
             entry.sidebarMode = entry.sidebarVisible ? SidebarMode::Pages : SidebarMode::Hidden;
         }
         entry.markupToolbarVisible =
@@ -166,7 +166,7 @@ void RecentFiles::save() const {
         // key keeps a faithful value for any older reader.
         obj.insert(QStringLiteral("sidebar_visible"),
                    entry.sidebarMode != SidebarMode::Hidden);
-        // Workstream-I additions. Always emit the enum keys so the
+        // Later additions. Always emit the enum keys so the
         // load path can disambiguate "set to default" vs "missing"
         // — but skip the geometry / state blobs when empty so the
         // JSON stays compact for unseen entries.

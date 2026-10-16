@@ -15,9 +15,9 @@ using namespace trailer;
 
 // Integration test for the save-time conflict guard on a real adapter
 // (ImageDocument — its save() is synchronous, so no event loop needed). This
-// is the must-have that plugs the ADR-0004 silent-clobber hole: a save must
-// NOT overwrite a file that changed under us unless the user explicitly
-// forces it.
+// is the must-have that plugs the silent-clobber hole: a save must NOT
+// overwrite a file that changed under us unless the user explicitly forces
+// it.
 class TestExternalChangeGuard : public QObject {
     Q_OBJECT
 

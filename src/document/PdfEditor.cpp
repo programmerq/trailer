@@ -1293,7 +1293,7 @@ std::vector<Annotation> PdfEditor::readAnnotations() const {
 }
 
 // ---------------------------------------------------------------------------
-// AcroForm field access (Phase 5)
+// AcroForm field access
 // ---------------------------------------------------------------------------
 
 bool PdfEditor::hasFormFields() const {

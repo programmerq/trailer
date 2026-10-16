@@ -2,8 +2,7 @@
 //
 // Drives Application + MainWindow in-process under
 // QT_QPA_PLATFORM=offscreen to exercise the Window-menu maximize/restore
-// action's dynamic label (backlog
-// 2026-07-12-maximize-restore-dynamic-label):
+// action's dynamic label:
 //   - On Win/Linux the action reads "&Maximize" while the window is
 //     normal and flips to "&Restore" once the window is maximized,
 //     tracking the live window state (via changeEvent) — and back again
@@ -11,10 +10,10 @@
 //   - On macOS the action keeps the static native "&Zoom" label (the
 //     platform-native shape); the dynamic relabel is non-mac only.
 //
-// A gated evidence slot writes a grab() of the open Window menu (static
-// "Maximize" vs "Restore") to $TRAILER_WINDOWMENU_EVIDENCE_DIR when set —
-// the G2 UX-Done artifact. Menus can be awkward to render offscreen, so
-// the slot degrades to the text assertion if the grab is empty.
+// A gated evidence slot writes an uncommitted grab() of the open Window menu
+// (static "Maximize" vs "Restore") to $TRAILER_WINDOWMENU_EVIDENCE_DIR when
+// set. Menus can be awkward to render offscreen, so the slot degrades to the
+// text assertion if the grab is empty.
 //
 // Mirrors the custom-main + HOME-sandbox + init() scaffolding of
 // test_uat_empty_state.cpp.
@@ -126,10 +125,10 @@ void TestUatWindowMenuMaximize::uat_winmenu_010_labelTracksWindowState() {
 #endif
 }
 
-// G2 evidence: render the open Window menu in both states. Menus are
+// Evidence: render the open Window menu in both states. Menus are
 // awkward to grab offscreen; if the grab comes back empty the slot falls
 // back to the label assertion (which the case above already guarantees),
-// and the PR notes the menu image is a best-effort supplement.
+// so the menu image is a best-effort supplement.
 void TestUatWindowMenuMaximize::uat_winmenu_090_menuEvidence() {
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);

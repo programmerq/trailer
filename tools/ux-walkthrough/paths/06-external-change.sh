@@ -10,7 +10,7 @@
 #   B. DIRTY conflict banner — a DIRTY doc whose file is overwritten mid-session
 #      raises the non-modal in-window amber banner:
 #         "This file was changed by another program while you had unsaved edits."
-#      with Reload (discard my edits) / Keep mine / Compare (disabled, G3).
+#      with Reload (discard my edits) / Keep mine / Compare (disabled).
 #      It must NOT auto-decide (never clobber the user's edits).
 #   C. DELETE underneath — deleting the file on disk keeps the buffer and shows:
 #         "This file was deleted on disk. Your edits are still open — Save to recreate it."
@@ -83,7 +83,7 @@ step "dirty-external-change-shows-banner" \
 cp "$IMG_B" "$BACKING"     # 'another program' writes while we hold unsaved edits
 _ms_sleep 1300
 note "expect banner text: 'This file was changed by another program while you had unsaved edits.'"
-note "expect buttons: Reload (discard my edits) | Keep mine | Compare (DISABLED w/ tooltip, G3). Edit must be intact — no clobber."
+note "expect buttons: Reload (discard my edits) | Keep mine | Compare (DISABLED w/ tooltip). Edit must be intact — no clobber."
 shot
 
 # Integration seam: does opening the File menu on top of the banner misbehave?

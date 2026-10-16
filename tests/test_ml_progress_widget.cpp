@@ -1,4 +1,4 @@
-// Focused widget test for MlProgressWidget (ADR 0002 Feature 1).
+// Focused widget test for MlProgressWidget.
 //
 // Exercises the status-bar progress+cancel widget in isolation — no ML
 // dependencies, no scheduler. Asserts the determinate / indeterminate

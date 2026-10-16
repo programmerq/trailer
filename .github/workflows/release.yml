@@ -57,8 +57,7 @@ permissions:
 #
 # Build level raised 2 -> 4 with the 2026-08-05 hosted-runner migration
 # (a standard hosted runner on a public repo is 4 vCPU / 16 GB). The
-# ctest level is deliberately left at 2 — see ci.yml's env comment and
-# docs/backlog/2026-08-03-load-sensitive-offscreen-test-races.md.
+# ctest level is deliberately left at 2 — see ci.yml's env comment.
 env:
   CMAKE_BUILD_PARALLEL_LEVEL: 4
   CTEST_PARALLEL_LEVEL: 2
@@ -72,7 +71,7 @@ jobs:
     # already-released check still fails red because that's a real
     # duplicate-release bug.
     name: Pre-flight checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Run when: (a) manual dispatch, (b) any push to an RC-labeled PR
     # (opened/synchronize/reopened), or (c) the `release-candidate`
     # label specifically being added. Adding any *other* label to an
@@ -148,15 +147,14 @@ jobs:
 
   linux-build:
     # UAT gates the per-OS build matrix: a UAT failure short-circuits
-    # the release before any expensive artifact is built (see the
-    # release-uat-before-build backlog item). precheck stays in
+    # the release before any expensive artifact is built. precheck stays in
     # `needs:` because the `if:` references needs.precheck.outputs.*;
     # a plain (non-always()) `if:` still requires every listed need to
     # succeed, so adding `uat` orders this job after it and fails fast.
     needs: [precheck, uat]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: Linux build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -189,7 +187,7 @@ jobs:
 
       - name: Unit tests
         working-directory: build
-        run: ctest -C Release --output-on-failure --label-exclude uat
+        run: ctest -C Release --output-on-failure --label-exclude 'uat|advisory'
         env:
           QT_QPA_PLATFORM: offscreen
 
@@ -202,7 +200,7 @@ jobs:
         run: |
           mkdir -p dist/trailer-linux-x86_64
           cp build/trailer dist/trailer-linux-x86_64/
-          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+          cp LICENSE THIRD_PARTY_LICENSES.md PRODUCT.md README.md \
              dist/trailer-linux-x86_64/
           # Ship the verbatim upstream dependency license texts alongside
           # the portable binary so the tarball carries the same third-party
@@ -273,8 +271,7 @@ jobs:
 
   windows-cross:
     # UAT gates the per-OS build matrix: a UAT failure short-circuits
-    # the release before any expensive artifact is built (see the
-    # release-uat-before-build backlog item). precheck stays in
+    # the release before any expensive artifact is built. precheck stays in
     # `needs:` because the `if:` references needs.precheck.outputs.*;
     # a plain (non-always()) `if:` still requires every listed need to
     # succeed, so adding `uat` orders this job after it and fails fast.
@@ -293,7 +290,7 @@ jobs:
     # into trailer-windows-x86_64.zip because release-publish.yml's rename
     # step looks for dist/trailer-windows-x86_64.zip when promoting a
     # build to a GitHub Release.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Wine is slow regardless of host, and the first cold run cross-builds
     # qpdf/libjpeg and downloads Qt (~2.6 GB) before the cache warms —
     # keep the release-job headroom.
@@ -361,7 +358,7 @@ jobs:
             bash scripts/build-windows.sh --in-container
           mkdir -p dist/trailer-windows-x86_64/imageformats
           cp "$QT_WIN_DIR"/plugins/imageformats/*.dll dist/trailer-windows-x86_64/imageformats/
-          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+          cp LICENSE THIRD_PARTY_LICENSES.md PRODUCT.md README.md \
              dist/trailer-windows-x86_64/
           # Ship the verbatim upstream dependency license texts inside the
           # portable zip too, matching what the .msi installs under
@@ -370,12 +367,12 @@ jobs:
 
       - name: Wine unit tests
         # Cheap Windows-behaviour insurance before shipping a release:
-        # same `--label-exclude 'uat|perf'` selector CI's windows-cross-
-        # build job runs (26/26 green locally). The UAT tier needs a
+        # same `--label-exclude 'uat|perf|known-bug|advisory'` selector CI's windows-cross-
+        # build job runs. The UAT tier needs a
         # windowed platform plugin Wine's offscreen doesn't provide, and
         # wall-time perf budgets are noise under the Wine emulator — they
-        # run natively on Linux (the project's no-CI-wall-time-gate
-        # ruling). Every test
+        # run natively on Linux (AGENTS.md: count work, never gate on wall
+        # time). Every test
         # .exe lands in build-win/ root, so the DLLs it loads must sit
         # beside it — copy the Bundle step's import-walked DLLs back next
         # to the exes, then add the two test-only extras the import walk
@@ -400,7 +397,7 @@ jobs:
              "$QT_WIN_DIR"/plugins/platforms/qwindows.dll build-win/platforms/
           cp "$QT_WIN_DIR"/plugins/imageformats/*.dll build-win/imageformats/
           cd build-win
-          ctest -C Release --label-exclude 'uat|perf' --output-on-failure
+          ctest -C Release --label-exclude 'uat|perf|known-bug|advisory' --output-on-failure
 
       - name: Stage Windows artifact
         # Zip the bundled directory into the exact filename
@@ -471,14 +468,13 @@ jobs:
     # doesn't spend ~an hour of macOS wall-time until UAT and the faster
     # platforms pass. (Cost is no longer the reason — standard hosted
     # runners, macOS included, are free and unlimited on a public repo;
-    # fail-fast ordering is, and remains.) UAT is the primary fail-fast gate
-    # (see the release-uat-before-build backlog item); linux-build and
-    # windows-cross already gate on `uat` too, so listing them here also
-    # transitively orders macos-build after UAT. precheck stays in
-    # `needs:` because the `if:` below references needs.precheck.outputs.*;
-    # a plain (non-always()) `if:` still requires every listed need to
-    # succeed, so adding these jobs is sufficient to order macos-build
-    # after them.
+    # fail-fast ordering is, and remains.) UAT is the primary fail-fast gate;
+    # linux-build and windows-cross already gate on `uat` too, so listing
+    # them here also transitively orders macos-build after UAT. precheck
+    # stays in `needs:` because the `if:` below references
+    # needs.precheck.outputs.*; a plain (non-always()) `if:` still requires
+    # every listed need to succeed, so adding these jobs is sufficient to
+    # order macos-build after them.
     needs: [precheck, uat, linux-build, windows-cross]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: macOS .app build (Apple Silicon)
@@ -528,9 +524,9 @@ jobs:
     needs: [precheck]
     if: needs.precheck.outputs.is-release-ready == 'true'
     name: UAT
-    # ubuntu-latest: this job builds and runs a Docker image, so it needs
+    # ubuntu-24.04: this job builds and runs a Docker image, so it needs
     # a Docker daemon on the runner. The hosted image ships Docker+Buildx.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v7
@@ -542,8 +538,8 @@ jobs:
         # plugin available. The two levels are passed into the container
         # explicitly (workflow `env:` doesn't cross the `docker run`
         # boundary) and match the workflow-level values: build 4 (one job
-        # per vCPU on a hosted runner), ctest 2 (held down on purpose —
-        # docs/backlog/2026-08-03-load-sensitive-offscreen-test-races.md).
+        # per vCPU on a hosted runner), ctest 2 (held down on purpose — see
+        # ci.yml's env comment).
         run: |
           docker run --rm -v "$PWD":/work -w /work \
             -e CMAKE_BUILD_PARALLEL_LEVEL=4 -e CTEST_PARALLEL_LEVEL=2 \

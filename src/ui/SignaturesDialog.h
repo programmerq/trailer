@@ -17,7 +17,7 @@ namespace trailer {
 // Signatures…. Users pick one from the list to preview it; the
 // currently-selected signature becomes the "active" one that the
 // Sign tool places on the page (persisted via m_store.setActive
-// semantics in the future; Phase 5 just returns the selected id).
+// semantics in the future; for now it just returns the selected id).
 class SignaturesDialog : public QDialog {
     Q_OBJECT
   public:

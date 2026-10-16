@@ -136,10 +136,10 @@ void TestCaptureBackend::settingsUnknownStringIsSafeDefault() {
 }
 
 // The Wayland/Linux capture-backend selection rule (pure, no platform calls).
-// This is the deterministic core the backlog item's threshold turns on: on
-// Wayland the affordance routes to the Portal when one is available, and to
-// Unavailable (the honest-degrade signal) when it is not — never to a
-// grabWindow that would silently return null.
+// This is the deterministic core of Wayland capture: on Wayland the
+// affordance routes to the Portal when one is available, and to Unavailable
+// (the honest-degrade signal) when it is not — never to a grabWindow that
+// would silently return null.
 void TestCaptureBackend::linuxScreenshotPolicy() {
     using B = LinuxScreenshotBackend;
     // Not Wayland (X11 / xcb / offscreen / Windows): always the client-side
@@ -307,7 +307,7 @@ void TestCaptureBackend::livePortalCaptureOrSkip() {
     const auto r = trailer::capturePortalScreenshotToPng(out, /*interactive=*/false, &err);
     // A non-interactive whole-screen grab should not be Cancelled; Ok is the
     // expected outcome, and any failure must carry a reason (never a silent
-    // null — the property the backlog item guards).
+    // null).
     if (r == trailer::PortalCaptureResult::Cancelled)
         QSKIP("portal reported the request cancelled — not a deterministic outcome to assert");
     QVERIFY2(r == trailer::PortalCaptureResult::Ok,

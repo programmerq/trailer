@@ -222,7 +222,7 @@ void TestUxRecorder::staleRecordingSessionIsMarkedCrashed() {
 }
 
 void TestUxRecorder::degradedStreamEventMapping() {
-    // The pure classifier the start() chokepoint uses (UXR-002).
+    // The pure classifier the start() chokepoint uses.
     QCOMPARE(uxDegradedStreamForEventType(QStringLiteral("screen_capture_failed")),
              QStringLiteral("screen"));
     QCOMPARE(uxDegradedStreamForEventType(QStringLiteral("screen_recording_permission_pending")),
@@ -233,7 +233,7 @@ void TestUxRecorder::degradedStreamEventMapping() {
              QStringLiteral("input"));
     // Healthy / advisory events do NOT degrade a stream — notably the
     // input_monitoring_permission preflight (the tap often still
-    // delivers pointer events when it reports not-granted; UXR-003).
+    // delivers pointer events when it reports not-granted; todo/2026-10-15-ux-recorder-leftovers).
     QVERIFY(uxDegradedStreamForEventType(QStringLiteral("screen_frame")).isEmpty());
     QVERIFY(uxDegradedStreamForEventType(QStringLiteral("camera_started")).isEmpty());
     QVERIFY(uxDegradedStreamForEventType(QStringLiteral("input_monitoring_permission")).isEmpty());

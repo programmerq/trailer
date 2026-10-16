@@ -1,16 +1,16 @@
-// UAT harness — External file-change handling (ADR 2026-07-19)
+// UAT harness — External file-change handling
 //
 // Drives the Application + MainWindow in-process under
-// QT_QPA_PLATFORM=offscreen. Covers the behaviour matrix from
-// docs/decision-records/2026-07-19-external-file-change-handling.md:
+// QT_QPA_PLATFORM=offscreen. Covers what happens when the open file
+// changes on disk:
 //   * clean doc + external change  -> silent auto-reload (no banner)
 //   * dirty doc + external change  -> non-modal conflict banner
 //   * deleted on disk              -> deleted banner, buffer kept
-//   * Compare is a disabled G3 placeholder
+//   * Compare is present but disabled, with a tooltip
 //
-// It also emits the G2 before/after evidence PNGs (normal document view vs.
-// the same view with the conflict banner) when TRAILER_EXTCHANGE_EVIDENCE_DIR
-// is set; otherwise it just asserts the wired behaviour like any other slot.
+// It also writes before/after PNGs (normal document view vs. the same view
+// with the conflict banner) to TRAILER_EXTCHANGE_EVIDENCE_DIR when set; they
+// are not committed. Otherwise it just asserts the wired behaviour.
 //
 // Labelled `uat` in CTest (runs under `ctest -L uat`).
 
@@ -67,8 +67,8 @@ void triggerSave(MainWindow *mw) {
     }
 }
 
-// Curated G2 evidence dir (opt-in): committed PNGs are produced by pointing
-// this at docs/uat/images/. Absent -> the slot still asserts behaviour.
+// Opt-in screenshot dir; the PNGs are local and not committed. Absent -> the
+// slot still asserts behaviour.
 QString evidenceDir() { return qEnvironmentVariable("TRAILER_EXTCHANGE_EVIDENCE_DIR"); }
 
 void grabTo(QWidget *w, const QString &name) {
@@ -78,7 +78,7 @@ void grabTo(QWidget *w, const QString &name) {
     QDir().mkpath(dir);
     const QString path = QDir(dir).absoluteFilePath(name);
     w->grab().save(path, "PNG");
-    qInfo().noquote() << "G2-SCREENSHOT" << path;
+    qInfo().noquote() << "SCREENSHOT" << path;
 }
 
 } // namespace
@@ -115,8 +115,8 @@ class TestUatExternalChange : public QObject {
     }
 
     // UAT-EXT-001: dirty doc + external change -> non-modal conflict banner
-    // with Reload + Keep mine, and a DISABLED Compare placeholder (G3). Emits
-    // the G2 before/after evidence pair.
+    // with Reload + Keep mine, and a DISABLED Compare placeholder. Grabs the
+    // before/after screenshot pair when the evidence dir is set.
     void uat_ext_001_dirtyConflictShowsBanner() {
         auto *app = qobject_cast<Application *>(qApp);
         QVERIFY(app);
@@ -150,7 +150,7 @@ class TestUatExternalChange : public QObject {
         mon->pokeForTest();
         QTRY_COMPARE_WITH_TIMEOUT(banner->mode(), FileChangeBanner::Mode::Conflict, 2000);
 
-        // G3: Compare is present but disabled with an explanatory tooltip.
+        // todo/2026-10-15-disabled-placeholders: Compare is a disabled placeholder (no diff view exists); remove it.
         QVERIFY(!banner->compareEnabled());
         QVERIFY(!banner->compareTooltip().isEmpty());
         QVERIFY(banner->reloadEnabled());
@@ -210,7 +210,7 @@ class TestUatExternalChange : public QObject {
         QCOMPARE(doc->pageCount(), 1);
 
         QApplication::processEvents();
-        // G2 evidence: the deleted-on-disk marker banner (Save recreates).
+        // Screenshot: the deleted-on-disk banner (Save recreates the file).
         grabTo(mw, QStringLiteral("external-change-deleted-marker.png"));
     }
 
@@ -289,7 +289,7 @@ class TestUatExternalChange : public QObject {
         QVERIFY(!doc->isDirty());
     }
 
-    // UAT-EXT-006 (CF-7): a CLEAN document whose backing file is DELETED on
+    // UAT-EXT-006: a CLEAN document whose backing file is DELETED on
     // disk must count as having unsaved work for close purposes — the buffer is
     // then the ONLY remaining copy, so closing it silently would lose it. After
     // the delete is detected the doc shows the "•" dirty marker, and invoking
@@ -317,7 +317,7 @@ class TestUatExternalChange : public QObject {
 
         IDocument *doc = currentDoc(mw);
         QVERIFY(doc);
-        // The doc is clean (never edited) — this is the crux of CF-7.
+        // The doc is clean (never edited): only the deletion makes it unsaved.
         QVERIFY(!doc->isDirty());
 
         // Another program deletes the backing file out from under us.
@@ -325,8 +325,8 @@ class TestUatExternalChange : public QObject {
         mon->pokeForTest();
         QTRY_COMPARE_WITH_TIMEOUT(banner->mode(), FileChangeBanner::Mode::Deleted, 2000);
 
-        // CF-7 fix, part 1: the vanished-file doc now advertises unsaved work
-        // and shows the "•" marker even though no edit was ever made.
+        // The vanished-file doc advertises unsaved work and shows the "•"
+        // marker even though no edit was ever made.
         QVERIFY(doc->hasUnsavedWork());
         QVERIFY(mw->windowTitle().contains(QStringLiteral("• ")));
 
@@ -335,8 +335,8 @@ class TestUatExternalChange : public QObject {
         // (the OS title bar, which also carries it, is outside a widget grab).
         dv->setTabBarAutoHide(false);
         QApplication::processEvents();
-        // G2 evidence: clean doc whose file was deleted now carries the "•"
-        // unsaved marker on its tab, alongside the deleted banner (CF-7).
+        // Screenshot: the clean doc whose file was deleted carries the "•"
+        // unsaved marker on its tab, alongside the deleted banner.
         grabTo(mw, QStringLiteral("deleted-clean-doc-dirty-marker.png"));
         dv->setTabBarAutoHide(true);
 
@@ -344,10 +344,10 @@ class TestUatExternalChange : public QObject {
         banner->dismiss();
         QApplication::processEvents();
 
-        // CF-7 fix, part 2: closing now runs the unsaved-changes prompt. Force
-        // Cancel so the prompt's veto keeps the doc — pre-fix the close guard
-        // only fired for isDirty() docs, so a clean-but-deleted doc closed with
-        // NO prompt and the buffer (the last copy) was lost silently.
+        // Closing runs the unsaved-changes prompt. Force Cancel so the prompt's
+        // veto keeps the doc; a close guard that checked only isDirty() would
+        // close a clean-but-deleted doc with NO prompt and silently lose the
+        // buffer (the last copy).
         mw->setCloseResponseForTesting(MainWindow::CloseResponse::Cancel);
         const int before = dv->documentCount();
         QMetaObject::invokeMethod(dv, "onTabCloseRequested", Qt::DirectConnection,
@@ -357,7 +357,7 @@ class TestUatExternalChange : public QObject {
         QCOMPARE(dv->documentCount(), before);
     }
 
-    // UAT-EXT-007 (CF-6): "Keep mine" no longer writes to disk on click. It
+    // UAT-EXT-007: "Keep mine" doesn't write to disk on click. It
     // keeps the (dirty) buffer, refreshes the baseline so the conflict clears,
     // and dismisses the banner — the file is overwritten only by the user's
     // next EXPLICIT Save, which then succeeds without re-prompting.
@@ -412,7 +412,7 @@ class TestUatExternalChange : public QObject {
         QVERIFY(readAllBytes(path) != externalBytes); // our buffer won
     }
 
-    // UAT-EXT-008 (CF-6): "Dismiss" is distinct from "Keep mine" — it only
+    // UAT-EXT-008: "Dismiss" is distinct from "Keep mine" — it only
     // hides the banner and leaves the conflict guard ARMED, so the next Save
     // re-detects the conflict and re-raises the banner (no silent clobber).
     void uat_ext_008_dismissLeavesGuardArmed() {

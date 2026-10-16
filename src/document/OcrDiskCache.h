@@ -11,12 +11,11 @@
 
 namespace trailer {
 
-// Bounded, content-hash-keyed, on-disk LRU cache of per-page OCR
-// results (ADR 0013 §G13.4). This is the persistence tier that sits
-// UNDER the per-document, in-memory `SelectableTextStore`: OCR survives
-// application restart / document reopen without re-running the model,
-// while the total on-disk footprint is capped so it can never grow
-// unbounded.
+// Bounded, content-hash-keyed, on-disk LRU cache of per-page OCR results.
+// This is the persistence tier that sits UNDER the per-document, in-memory
+// `SelectableTextStore`: OCR survives application restart / document
+// reopen without re-running the model, while the total on-disk footprint
+// is capped so it can never grow unbounded.
 //
 // Keying — CONTENT HASH ALONE. Entries are keyed by the 64-bit source-
 // image content hash (`hashImageContent` / `SelectableTextStore::
@@ -27,11 +26,10 @@ namespace trailer {
 // hash and simply MISSES the cache. The content-hash key IS the
 // invalidation seam: there is no separate "wipe on reload" step — a
 // changed page can never be served stale because its hash no longer
-// matches any entry (ADR 0013 §G13.4 (ii)/(iii)).
+// matches any entry.
 //
 // Transparency. Nothing about this cache is ever user-visible — no
-// setting, no status text, no menu (ADR 0013 §G13.4 (iv) / owner
-// directive "the user shouldn't know if we cache").
+// setting, no status text, no menu: the user shouldn't know we cache.
 //
 // Threading. All access is expected on the GUI thread (the OcrController
 // reads through on submit and writes through in the store's GUI-thread
@@ -39,17 +37,15 @@ namespace trailer {
 // from a worker thread.
 class OcrDiskCache {
   public:
-    // PHILOSOPHY: hand-tuned values stay hand-tuned. Total on-disk size
-    // ceiling for the OCR result cache. 256 MB is the value ratified in
-    // ADR 0013 §G13.4 (it mirrors the 256 MB thumbnail-cache budget
-    // landed in PR #55 for one memory story). Range/symptom to change:
+    // Hand-tuned total on-disk size ceiling for the OCR result cache.
+    // 256 MB mirrors the 256 MB thumbnail-cache budget (kThumbCacheBudgetKB
+    // in ThumbnailModel.cpp) for one memory story. Range/symptom to change:
     // too small and a large multi-page scan thrashes (constant re-OCR of
     // pages that were evicted between visits); too large and the cache
     // wastes disk. Serialized OCR blocks are small (KB per page), so
     // 256 MB holds a very large working set of recognized pages. Change
-    // this only with the measured reopen evidence ADR 0013 names
-    // ("Evidence required to reopen" (d)) — a usage pattern where the
-    // ceiling demonstrably thrashes or is wastefully large.
+    // this only for a measured usage pattern where the ceiling
+    // demonstrably thrashes or is wastefully large.
     static constexpr std::int64_t kOcrDiskCacheCeilingBytes =
         static_cast<std::int64_t>(256) * 1024 * 1024;
 

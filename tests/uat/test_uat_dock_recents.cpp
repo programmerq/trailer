@@ -13,13 +13,13 @@
 //     shows up in the actual constructed menu end-to-end.
 //   - Clearing recents (Application::clearRecent) empties the Dock menu.
 //
-// What this harness CANNOT cover (see UAT-FND-064 and the PR's owner
-// verification checklist): whether macOS actually renders this QMenu when
-// the Dock icon is right-clicked (QMenu::setAsDockMenu() is native Dock
-// chrome — no offscreen surface renders it), and the entirely-separate
-// "Trailer isn't running" path (src/platform/DockRecents.mm,
-// NSDocumentController), which by definition has no live process for an
-// offscreen harness to drive. Both need a real Mac.
+// What this harness CANNOT cover (see the PR's owner verification
+// checklist): whether macOS actually renders this QMenu when the Dock icon
+// is right-clicked (QMenu::setAsDockMenu() is native Dock chrome — no
+// offscreen surface renders it), and the entirely-separate "Trailer isn't
+// running" path (src/platform/DockRecents.mm, NSDocumentController), which
+// by definition has no live process for an offscreen harness to drive.
+// Both need a real Mac.
 //
 // Mirrors the custom-main + HOME-sandbox + init() scaffolding of
 // test_uat_empty_state.cpp so Settings/RecentFiles write into a
@@ -188,10 +188,10 @@ void TestUatDockRecents::uat_fnd_063_chosenEntryOpensTheFile() {
     QCOMPARE(dockMenuTexts(app).first(), QStringLiteral("a.pdf"));
 }
 
-// G2 evidence: grab() the constructed Dock menu (empty vs populated), the
-// same "popup then grab" technique as test_uat_window_menu_maximize.cpp.
-// This captures the menu's CONTENT, not its attachment to a real Dock —
-// see the file header and UAT-FND-063/064 for what remains real-Mac-only.
+// Evidence: grab() the constructed Dock menu (empty vs populated) into
+// $TRAILER_DOCKRECENTS_EVIDENCE_DIR (uncommitted), the same "popup then grab"
+// technique as test_uat_window_menu_maximize.cpp. This captures the menu's
+// CONTENT, not its attachment to a real Dock (see the file header).
 void TestUatDockRecents::uat_fnd_063_090_menuEvidence() {
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);

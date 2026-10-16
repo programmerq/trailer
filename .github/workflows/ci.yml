@@ -25,7 +25,7 @@ on:
     # *required* checks, path-skipped PRs would hang on "Expected" — pair
     # this with a same-name no-op workflow on the inverse paths, or drop
     # paths-ignore. This is one reason wayland-smoke should stay a
-    # non-required (advisory) check for now (see docs/ci/wayland-tier.md).
+    # non-required (advisory) check for now.
     paths-ignore:
       - '**.md'
       - 'docs/**'
@@ -70,11 +70,11 @@ concurrency:
 #     far inside 16 GB. Symptom to lower it: an OOM-killed compiler
 #     (`c++: fatal error: Killed signal terminated program cc1plus`).
 #   * CTEST_PARALLEL_LEVEL: 2 — deliberately NOT raised in lockstep.
-#     Two offscreen tests are known to fail only under CPU contention
-#     (docs/backlog/2026-08-03-load-sensitive-offscreen-test-races.md:
-#     test_perf_lazy_open and uat ocr_ev_20), so widening the test tier
-#     to 4 would buy a few seconds and pay for it in flakes. Raise this
-#     only once that backlog item closes.
+#     Two offscreen tests are flaky: test_perf_lazy_open under CPU
+#     contention (todo/2026-10-15-perf-tests-race), and uat ocr_ev_20, which can miss the "No text
+#     found" message (todo/2026-10-15-recognize-text-silent-on-nothing). Widening the test tier to 4 would buy a few
+#     seconds and pay for it in flakes. Raise this only once both are
+#     fixed.
 env:
   CMAKE_BUILD_PARALLEL_LEVEL: 4
   CTEST_PARALLEL_LEVEL: 2
@@ -88,7 +88,7 @@ jobs:
     # Needs nothing but bash + coreutils, so it stays off the heavy
     # build path and fails the workflow the moment the regex drifts.
     name: Version gating
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 3
     steps:
       - uses: actions/checkout@v7
@@ -125,7 +125,7 @@ jobs:
 
   build-and-test:
     name: Linux build + unit tests
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Prefer fast fail over patient hang, but a cold-cache build overran
     # 18 min on the old self-hosted runners and got cancelled before
     # ccache was populated. The setup-linux-build action installs mold +
@@ -152,7 +152,7 @@ jobs:
           # STILL REQUIRED after the move to GitHub-hosted runners, for a
           # different reason than before. It was here because the custom
           # trailer-runner image shipped an EMPTY apt index. A hosted
-          # ubuntu-latest image instead ships an index snapshotted when the
+          # ubuntu-24.04 image instead ships an index snapshotted when the
           # image was built; between weekly image refreshes that snapshot
           # goes stale and `apt-get install` 404s on a package whose
           # version has moved on the mirrors. Either way the action must
@@ -189,17 +189,26 @@ jobs:
 
       - name: Unit tests
         # UAT tests (label `uat`) drive the full Application +
-        # MainWindow stack and need a windowed Qt platform plugin. The
-        # fast PR loop excludes them; they run on tag via release.yml's
-        # UAT step or manually via uat-dispatch.yml.
+        # MainWindow stack offscreen. The fast PR loop leaves most of them
+        # to nightly.yml and release.yml (the next step runs two). `advisory`
+        # tests (the random UI walk in tests/pbt/ and the chrome census)
+        # never gate a merge; run them with `ctest -L advisory`.
         working-directory: build
-        run: ctest -C Release --output-on-failure --label-exclude uat
+        run: ctest -C Release --output-on-failure --label-exclude 'uat|advisory'
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Furniture tests (modal census, constancy sweep)
+        # Two `uat` tests that decide whether a PR adds a popup or moves a
+        # control, so they gate every PR rather than waiting for nightly.
+        working-directory: build
+        run: ctest -C Release --output-on-failure -R '^test_uat_(modal_census|constancy_sweep)$'
         env:
           QT_QPA_PLATFORM: offscreen
 
   wayland-smoke:
     name: Wayland launch + screenshot smoke
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Least privilege: this job checks out, builds, and uploads one PNG
     # artifact — no extra token scope beyond the workflow-level read.
     permissions:
@@ -216,24 +225,24 @@ jobs:
     # This is the ONE check that proves Trailer loads the *wayland* Qt
     # platform plugin, maps a real xdg-shell surface on a real compositor,
     # and paints actual UI into it. Offscreen unit tests and the Wine tier
-    # structurally cannot prove that. See docs/ci/wayland-tier.md.
+    # structurally cannot prove that.
     #
     # The unit suite and UAT are DELIBERATELY NOT run under Wayland here
     # (they stay on offscreen in the build-and-test / release jobs), for
-    # honest, documented reasons from the Phase 1 investigation:
+    # honest reasons found when this tier was set up:
     #   * Unit suite under Wayland is 57/60, not 60/60. `test_dirty_marker_zoom`
-    #     HANGS: MainWindow::closeEvent (src/ui/MainWindow.cpp:4432)
+    #     HANGS: MainWindow::closeEvent
     #     auto-accepts the unsaved-changes modal ONLY under offscreen/minimal;
     #     under wayland it shows the real Save/Discard/Cancel dialog and blocks
     #     forever with no user. `test_image_scale` fails on fractional-scaling
     #     rounding (real-compositor DPR vs offscreen dpr=1), and
     #     `test_perf_freehand_repaint` is a wall-time perf budget that is noise
     #     under a compositor (the same `perf` tier the Wine job drops).
-    #   * UAT can't even be pointed at Wayland yet: tests/uat/CMakeLists.txt:15
+    #   * UAT can't even be pointed at Wayland yet: tests/uat/CMakeLists.txt
     #     forces QT_QPA_PLATFORM=offscreen as an unconditional per-test
     #     ENVIRONMENT property (overriding an ambient wayland), and the same
     #     modal hang hits 5 UAT binaries.
-    # Moving those under Wayland needs the Phase 3 modal-skip fix + a UAT
+    # Moving those under Wayland needs a modal-skip fix + a UAT
     # platform opt-in first; gating a fast PR loop on a known modal hang would
     # be dishonest bookkeeping. This mirrors the Wine tier's honest
     # `--label-exclude 'uat|perf'` exclusion, stated inline rather than hidden.
@@ -259,7 +268,7 @@ jobs:
           # STILL REQUIRED after the move to GitHub-hosted runners, for a
           # different reason than before. It was here because the custom
           # trailer-runner image shipped an EMPTY apt index. A hosted
-          # ubuntu-latest image instead ships an index snapshotted when the
+          # ubuntu-24.04 image instead ships an index snapshotted when the
           # image was built; between weekly image refreshes that snapshot
           # goes stale and `apt-get install` 404s on a package whose
           # version has moved on the mirrors. Either way the action must
@@ -271,15 +280,14 @@ jobs:
         # install. On a GitHub-hosted runner neither package is preinstalled,
         # so this always installs; the `dpkg -s` probe is kept because the
         # same step has to stay correct on any image that does bake them in
-        # (docker/runner/Dockerfile does — see docs/ci/custom-runner-image.md).
+        # (docker/runner/Dockerfile does).
         #
         # sway drags a real dependency tree over the network on every run, so
         # a single mirror hiccup could red-gate unrelated PRs. Wrap
         # update+install in a bounded retry with backoff (same resilience the
         # toolchain installs use) to ride out a transient failure. Because
         # this job depends on a per-run apt fetch it SHOULD be kept a
-        # NON-REQUIRED (advisory) status check in branch protection — see
-        # docs/ci/wayland-tier.md.
+        # NON-REQUIRED (advisory) status check in branch protection.
         shell: bash
         run: |
           set -euo pipefail
@@ -331,8 +339,8 @@ jobs:
         # maps, then poll-captures with grim until a non-blank 1280x800 frame
         # lands. Self-contained: it uses ImageMagick `identify` when present and
         # falls back to a stdlib Python PNG analyzer otherwise. Deterministic
-        # hard oracle — but keep it a NON-REQUIRED status check until sway+grim
-        # are baked into the runner image (see docs/ci/wayland-tier.md).
+        # hard oracle — but keep it a NON-REQUIRED status check while sway+grim
+        # are apt-installed per run.
         run: bash scripts/wayland-smoke.sh
         env:
           WAYLAND_SMOKE_OUT: ${{ github.workspace }}/wayland-smoke.png
@@ -363,7 +371,7 @@ jobs:
     # qpdf prefixes are all `actions/cache`-keyed, so a warm run skips
     # them entirely, whereas re-introducing `docker build` would rebuild
     # a multi-GB image layer set on every run for no gain.
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Wine is slow regardless of host (~2.5-3 s startup per test binary).
     # The first cold run also cross-builds qpdf/libjpeg and downloads Qt
     # (~2.6 GB) before the cache warms, so give it release-job headroom.
@@ -384,7 +392,7 @@ jobs:
           # STILL REQUIRED after the move to GitHub-hosted runners, for a
           # different reason than before. It was here because the custom
           # trailer-runner image shipped an EMPTY apt index. A hosted
-          # ubuntu-latest image instead ships an index snapshotted when the
+          # ubuntu-24.04 image instead ships an index snapshotted when the
           # image was built; between weekly image refreshes that snapshot
           # goes stale and `apt-get install` 404s on a package whose
           # version has moved on the mirrors. Either way the action must
@@ -443,7 +451,7 @@ jobs:
             bash scripts/build-windows.sh --in-container
           mkdir -p dist/trailer-windows-x86_64/imageformats
           cp "$QT_WIN_DIR"/plugins/imageformats/*.dll dist/trailer-windows-x86_64/imageformats/
-          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+          cp LICENSE THIRD_PARTY_LICENSES.md PRODUCT.md README.md \
              dist/trailer-windows-x86_64/
 
       - name: Upload Windows artifact
@@ -455,11 +463,12 @@ jobs:
 
       - name: Wine unit tests
         # Mirrors the Linux job's selector but also drops the `perf` tier
-        # (`--label-exclude 'uat|perf'`) so this stays a real Windows-
+        # (`--label-exclude 'uat|perf|known-bug|advisory'`) so this stays a real Windows-
         # behaviour gate, not a toy: the UAT tier needs a windowed platform
         # plugin Wine's offscreen doesn't provide, and wall-time perf
         # budgets are noise under the Wine emulator — they run natively on
-        # Linux (the project's no-CI-wall-time-gate perf ruling).
+        # Linux (AGENTS.md: count work, never gate on wall time). Known-bug
+        # tests expect today's failure on Linux and run only there.
         # CMAKE_CROSSCOMPILING_EMULATOR is applied via an incremental
         # reconfigure (it's baked into CTestTestfile.cmake at generate
         # time) so ctest launches each .exe under wine.
@@ -501,7 +510,7 @@ jobs:
              "$QT_WIN_DIR"/plugins/platforms/qwindows.dll build-win/platforms/
           cp "$QT_WIN_DIR"/plugins/imageformats/*.dll build-win/imageformats/
           cd build-win
-          ctest -C Release --label-exclude 'uat|perf' --output-on-failure
+          ctest -C Release --label-exclude 'uat|perf|known-bug|advisory' --output-on-failure
 
   # Disabled 2026-07-09 to conserve Actions usage (Windows runners bill at
   # a 2x minute multiplier). NOTE (2026-08-05): that cost reason no longer
@@ -590,14 +599,14 @@ jobs:
         # comment in tests/uat/CMakeLists.txt.
         working-directory: build
         shell: pwsh
-        run: ctest -C Release --output-on-failure --label-exclude uat
+        run: ctest -C Release --output-on-failure --label-exclude 'uat|known-bug|advisory'
         env:
           QT_QPA_PLATFORM: offscreen
           QT_QPA_FONTDIR: C:\Windows\Fonts
 
   clang-format:
     name: clang-format (advisory)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     # Advisory only — output goes to the job summary so the diff is
     # visible without bouncing merges. Flip to required once the tree

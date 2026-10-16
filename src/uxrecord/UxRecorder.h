@@ -21,11 +21,10 @@ class UxQtEventCapture;
 // Map a capture event type to the stream it degrades ("screen",
 // "camera", "input", "platform"), or "" if the event is not a
 // capture failure. Pure + free so it can be unit-tested without a
-// recorder; the start() classifier and tests share it. See UXR-002 in
-// docs/ux-recorder-todo.md.
+// recorder; the start() classifier and tests share it.
 QString uxDegradedStreamForEventType(const QString &type);
 
-// Owner of one --ux-record session (docs/ux-recorder.md).
+// Owner of one --ux-record session (see README.md).
 //
 // Platform-neutral half of the recorder: creates the session
 // directory under AppPaths::uxSessionsDir(), owns events.jsonl
@@ -43,7 +42,7 @@ QString uxDegradedStreamForEventType(const QString &type);
 // whose pid is gone and rewrites them as "crashed".
 //
 // Strictly local output — no network classes are used anywhere in
-// src/uxrecord/ (PHILOSOPHY.md "No telemetry").
+// src/uxrecord/ (PRODUCT.md: no telemetry).
 class UxRecorder : public QObject {
     Q_OBJECT
 
@@ -88,13 +87,13 @@ class UxRecorder : public QObject {
     // via degradedStreamsChanged for the recording indicator. The
     // start() classifier calls this through uxDegradedStreamForEventType;
     // exposed publicly so tests can drive it directly. GUI-thread only;
-    // idempotent per stream; no-op once recording has stopped. UXR-002.
+    // idempotent per stream; no-op once recording has stopped.
     void reportStreamDegraded(const QString &stream);
     QStringList degradedStreams() const { return m_degradedStreams; }
 
     bool platformCaptureSupported() const;
     // Master pause for screen-frame retention + global input
-    // observation (camera keeps rolling; see docs/ux-recorder.md).
+    // observation (camera keeps rolling; see README.md).
     void setVisualCapturePaused(bool paused);
     bool visualCapturePaused() const;
 
@@ -107,7 +106,7 @@ class UxRecorder : public QObject {
     // The sorted set of degraded streams, emitted whenever it grows.
     // Drives the persistent "● REC · no screen" indicator state so a
     // degraded stream is visible for the whole session, not just at
-    // the moment it failed. UXR-002.
+    // the moment it failed.
     void degradedStreamsChanged(const QStringList &streams);
 
   private:
@@ -137,7 +136,7 @@ class UxRecorder : public QObject {
     quint64 m_markerCount = 0;
     // Sorted, de-duplicated set of degraded capture streams. Touched
     // only on the GUI thread (reportStreamDegraded), read by
-    // writeManifest. UXR-002.
+    // writeManifest.
     QStringList m_degradedStreams;
 };
 

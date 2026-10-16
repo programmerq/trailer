@@ -1,6 +1,6 @@
-// Regression guard — audit finding CF-4: the title-bar unsaved-changes
-// "•" dirty marker must NOT clear when the user zooms a document that is
-// dirty only via annotations.
+// Regression guard: the title-bar unsaved-changes "•" dirty marker must
+// NOT clear when the user zooms a document that is dirty only via
+// annotations.
 //
 // The marker is rebuilt by MainWindow::updateTitleForDocument, which reads
 // IDocument::isDirty() (annotations OR page-commands OR pixel edits). A
@@ -112,7 +112,7 @@ QString writePdf(const QString &path) {
     QPdfWriter writer(path);
     writer.setPageSize(QPageSize(QPageSize::A4));
     QPainter p(&writer);
-    p.drawText(100, 100, QStringLiteral("CF-4 fixture"));
+    p.drawText(100, 100, QStringLiteral("dirty-zoom fixture"));
     p.end();
     return path;
 }
@@ -193,18 +193,19 @@ void TestDirtyMarkerZoom::annotationDirtyMarkerSurvivesZoom() {
 
     // The marker must survive — the document is still unsaved.
     QVERIFY2(doc->isDirty(), "zoom must not clear the document's dirty state");
-    QVERIFY2(mw->windowTitle().contains(kDot),
-             qPrintable(QStringLiteral("CF-4: dirty dot cleared after zoom; title was '%1'")
-                            .arg(mw->windowTitle())));
+    QVERIFY2(
+        mw->windowTitle().contains(kDot),
+        qPrintable(
+            QStringLiteral("dirty dot cleared after zoom; title was '%1'").arg(mw->windowTitle())));
 }
 
 void TestDirtyMarkerZoom::pdfAnnotationDirtyMarkerSurvivesZoom() {
     // PDF variant: unlike images (whose isDirty() reads the annotation
     // vector directly), a PdfDocument tracks annotation dirtiness in a
     // SEPARATE m_annotationsModified flag, OR-ed with the page-command
-    // m_dirty inside isDirty(). This is exactly the "separate source" the
-    // audit worried the zoom-path title refresh might read partially, so
-    // the PDF path gets its own guard.
+    // m_dirty inside isDirty(). This is exactly the "separate source" a
+    // zoom-path title refresh could read partially, so the PDF path gets
+    // its own guard.
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
 
@@ -261,7 +262,7 @@ void TestDirtyMarkerZoom::pdfAnnotationDirtyMarkerSurvivesZoom() {
 
     QVERIFY2(doc->isDirty(), "zoom must not clear the PDF's dirty state");
     QVERIFY2(mw->windowTitle().contains(kDot),
-             qPrintable(QStringLiteral("CF-4 (PDF): dirty dot cleared after zoom; title '%1'")
+             qPrintable(QStringLiteral("(PDF) dirty dot cleared after zoom; title '%1'")
                             .arg(mw->windowTitle())));
 }
 
@@ -301,7 +302,7 @@ void TestDirtyMarkerZoom::cleanDocumentZoomAddsNoMarker() {
                             .arg(mw->windowTitle())));
 }
 
-// G3 regression: a staged image open (ADR 0008) whose async decode FAILS
+// Lying-control regression: a staged image open whose async decode FAILS
 // (valid header, corrupt/truncated body) must not leave the edit/zoom actions
 // enabled-but-inert. They are enabled at open while the decode is pending;
 // once it fails, the capability notifier fires and MainWindow must DISABLE
@@ -336,19 +337,18 @@ void TestDirtyMarkerZoom::corruptImageDisablesEditAndZoomActions() {
     QCOMPARE(doc->pageCount(), 0);
 
     // And the controls MainWindow enabled at open (while pending) are now
-    // disabled with an explanatory tooltip — not enabled-but-inert (G3).
+    // disabled with an explanatory tooltip — not enabled-but-inert.
     QAction *zin = zoomInAction(mw);
     QVERIFY2(zin, "Zoom In action not found");
     QVERIFY2(!zin->isEnabled(),
              "Zoom In must be DISABLED for an undecodable image, not enabled-but-inert");
-    QVERIFY2(!zin->toolTip().isEmpty(),
-             "disabled Zoom In should carry a 'why' tooltip (G3)");
+    QVERIFY2(!zin->toolTip().isEmpty(), "disabled Zoom In should carry a 'why' tooltip");
 
     QAction *rot = findActionByText(mw, QStringLiteral("Rotate Left"));
     QVERIFY2(rot, "Rotate Left action not found");
     QVERIFY2(!rot->isEnabled(), "Rotate Left must be disabled for an undecodable image");
 
-    // G3 evidence: when TRAILER_STAGED_OPEN_EVIDENCE_DIR is set, grab the
+    // Evidence: when TRAILER_STAGED_OPEN_EVIDENCE_DIR is set, grab the
     // window showing the decode-failed state — the main toolbar's zoom/rotate
     // buttons rendered DISABLED (greyed) above the "Could not decode image:"
     // view. Offscreen static grabs can't render a hover tooltip, so the

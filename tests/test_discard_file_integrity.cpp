@@ -1,12 +1,11 @@
-// P0 data-integrity regression guard (owner HITL, 2026-07-19):
+// P0 data-integrity regression guard for this user report:
 //
 //   "I closed the window and chose 'don't save', but it absolutely
 //    changed the file. We don't want to lose data, but we don't want
 //    to overwrite data either."
 //
 // This is the WRITE-SIDE twin of the never-worry-save invariant. The dual
-// invariant (docs/decision-records/2026-07-19-autosave-recovery-sidecar.md,
-// amending ADR 0004):
+// invariant:
 //   (1) never silently LOSE in-memory work, and
 //   (2) never silently WRITE the backing file.
 // No path writes the backing file except an explicit Save/Save-As; auto-save
@@ -23,7 +22,7 @@
 // release that cross-thread handle, so save()'s same-file QFile::remove(backing)
 // fails. Real Windows (process-global FILE handles) and Linux release it fine,
 // so this flow runs and is asserted in full on Linux; only the Wine emulator
-// skips it. See docs/backlog/2026-07-19-wine-cross-thread-editor-save.md.
+// skips it. todo/2026-10-15-ci-windows-only-under-wine: run it on native Windows CI and drop the Wine skip.
 
 #include "annotation/Annotation.h"
 #include "annotation/AnnotationStore.h"
@@ -54,8 +53,7 @@ namespace {
 // True only when the process runs under the Wine emulator. Canonical detection:
 // Wine exports ntdll!wine_get_version. Real Windows and Linux/macOS return
 // false. Used to QSKIP the two open->annotate->same-file-Save cases under Wine
-// only — see the file header and
-// docs/backlog/2026-07-19-wine-cross-thread-editor-save.md.
+// only — see the file header.
 bool runningUnderWine() {
 #ifdef Q_OS_WIN
     HMODULE ntdll = GetModuleHandleW(L"ntdll.dll");
@@ -70,7 +68,7 @@ constexpr const char *kWineSameFileSaveSkip =
     "qpdf editor holds the backing file; Wine does not release that cross-thread handle, "
     "so the same-file Save's QFile::remove(backing) fails. Real Windows (process-global "
     "FILE handles) and Linux release it fine — this flow is covered fully on Linux. "
-    "See docs/backlog/2026-07-19-wine-cross-thread-editor-save.md.";
+    "See todo/2026-10-15-ci-windows-only-under-wine.";
 
 QByteArray sha256Of(const QString &path) {
     QFile f(path);

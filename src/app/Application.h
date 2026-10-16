@@ -38,13 +38,12 @@ enum class ShotMode { Screen, Window, Region };
 
 // How a quit request should treat the open windows/documents.
 //   Normal      — prompt to save/name every unsaved or untitled document,
-//                 one at a time (ADR-0004 close-save at quit); Cancel on
-//                 any prompt aborts the quit.
+//                 one at a time, as closing it would; Cancel on any prompt
+//                 aborts the quit.
 //   KeepWindows — no prompt: serialize the open-window set, including the
 //                 bytes of unsaved/untitled documents, to the draft store
 //                 so the next launch restores them (macOS "Quit and Keep
 //                 Windows", ⌥⌘Q).
-// See docs/decision-records/2026-07-16-quit-and-keep-windows.md.
 enum class QuitMode { Normal, KeepWindows };
 
 class Application : public QApplication {
@@ -62,7 +61,7 @@ class Application : public QApplication {
     // flagged untitled (see IDocument::isUntitled) — used by the macOS
     // clipboard / screenshot import paths, whose backing file is a
     // transient temp file the user never chose. Untitled docs prompt
-    // Save-As on close instead of closing silently (ADR-0004).
+    // Save-As on close instead of closing silently.
     //
     // A path that is ALREADY OPEN is surfaced, not opened again: its
     // window is raised and activated with that document made the current
@@ -148,12 +147,12 @@ class Application : public QApplication {
 
     // Route a quit request through the requested mode. The explicit menu
     // commands map fixedly: ⌘Q → Normal (ALWAYS runs the per-doc prompt),
-    // ⌥⌘Q → KeepWindows (ALWAYS keeps, NEVER prompts). The OS
-    // NSQuitAlwaysKeepsWindows setting no longer flips this — it governs
-    // only macOS's own window auto-restoration, not what these commands do
-    // (decision-record refinement 2026-07-19). Returns true if the quit
-    // proceeded (performQuit was invoked), false if it was aborted (a Normal
-    // prompt was Cancelled) — nothing is written on abort.
+    // ⌥⌘Q → KeepWindows (keeps the windows; prompts only for a dirty
+    // document it can't draft). The OS
+    // NSQuitAlwaysKeepsWindows setting doesn't flip this — it governs only
+    // macOS's own window auto-restoration, not what these commands do. Returns
+    // true if the quit proceeded (performQuit was invoked), false if it was
+    // aborted (a prompt was Cancelled) — nothing is written on abort.
     bool requestQuit(QuitMode mode);
 
     // Recreate the windows/documents held in the kept-windows draft store,
@@ -171,9 +170,8 @@ class Application : public QApplication {
 
     // Test seams. performQuit is what requestQuit calls to actually quit —
     // overridable so a headless test asserts quit-was-called vs aborted
-    // without terminating the test process. The keeps-windows probe feeds
-    // the D3 OS-setting composition; default reads NSQuitAlwaysKeepsWindows
-    // (false off macOS).
+    // without terminating the test process. The keeps-windows probe defaults
+    // to NSQuitAlwaysKeepsWindows (false off macOS); requestQuit ignores it.
     void setPerformQuitForTesting(std::function<void()> fn) { m_performQuit = std::move(fn); }
     void setQuitKeepsWindowsProbeForTesting(std::function<bool()> fn) {
         m_quitKeepsWindowsProbe = std::move(fn);
@@ -189,8 +187,8 @@ class Application : public QApplication {
         m_draftStore = SessionDraftStore(dir);
     }
     // The constructed Dock-menu QMenu (see refreshDockRecents()). Exposed
-    // read-only so a UAT slot can grab() it for G2 evidence and assert its
-    // action list without a real Dock to attach it to — the menu's
+    // read-only so a UAT slot can grab() it and assert its action list
+    // without a real Dock to attach it to — the menu's
     // CONSTRUCTION is identical on every platform; only whether macOS's
     // Dock ever renders it differs. May be null before the first
     // refreshDockRecents() call (there isn't one — the constructor always
@@ -207,7 +205,7 @@ class Application : public QApplication {
     void startUxRecording();
 
 #ifdef TRAILER_UX_RECORDER
-    // Outcome of the pre-recording permission gate (UXR-001).
+    // Outcome of the pre-recording permission gate.
     enum class UxRecordDecision {
         Start, // record this launch (permissions ok, or "Record Without Screen")
         Skip,  // run Trailer normally, no session this launch
@@ -218,7 +216,7 @@ class Application : public QApplication {
     // Before recording, check that grant and — if missing — show one
     // blocking dialog (open Settings & quit / record without screen /
     // don't record). Returns Start immediately when the grant is present
-    // (or off macOS). Called from main.cpp; see docs/ux-recorder.md.
+    // (or off macOS). Called from main.cpp; see src/uxrecord/README.md.
     UxRecordDecision preflightUxRecording();
 #endif
 
@@ -315,7 +313,7 @@ class Application : public QApplication {
     // selected, both of which the user just asked for.
     //
     // Knock-on worth knowing: activating a document window makes it
-    // QApplication::activeWindow(), which is what the CF-5 empty-window
+    // QApplication::activeWindow(), which is what openFiles' empty-window
     // reuse block reads. So a surface legitimately changes which window a
     // LATER open would consider for reuse — an empty window that was
     // frontmost no longer is. That is correct (the user did bring the
@@ -332,16 +330,12 @@ class Application : public QApplication {
     // keeps its enabled state + tooltip live. QPointer entries survive
     // the owning menu/window being destroyed.
     void registerClipboardAction(QAction *action);
-    // True iff `doc`'s current content can be captured LOSSLESSLY as a
-    // kept-windows draft blob with no user interaction — i.e. it is an image
-    // document with a non-null raster we can PNG-encode. A dirty/untitled
-    // document for which this is false (a PDF with unsaved annotations, an
-    // image whose raster is null) must NOT be silently persisted as a clean
-    // path reference; requestQuit(KeepWindows) falls back to the ADR-0004
-    // per-document Save/Discard/Cancel prompt for exactly those before
-    // quitting, so their edits are saved or explicitly discarded. See the
-    // decision record (KeepWindows keeps what it can draft, prompts for
-    // anything dirty it cannot).
+    // True iff `doc`'s current content can be kept as a draft with no user
+    // interaction (the definition lists which documents qualify). A
+    // dirty/untitled document for which this is false must NOT be silently
+    // persisted as a clean path reference; requestQuit(KeepWindows) falls
+    // back to the per-document Save/Discard/Cancel prompt for exactly those
+    // before quitting, so their edits are saved or explicitly discarded.
     bool canDraftForKeep(IDocument *doc) const;
     // Clear the autosave recovery sidecar (#90 RecoveryStore) for every kept
     // document in `session` that has an on-disk original path. A ⌥⌘Q keep
@@ -358,9 +352,9 @@ class Application : public QApplication {
     void installNoWindowMenuBar();
     void openFilesFromDialog();
     // Shared degrade UI for the no-window Acquire flow: one actionable modal
-    // pointing at System Settings ▸ Screen Recording (the screen-capture
-    // preflight ADR). The windowed path degrades via MainWindow::flashError
-    // instead; captureScreenshot picks the right one by context.
+    // pointing at System Settings ▸ Screen Recording. The windowed path
+    // degrades via MainWindow::flashError instead; captureScreenshot picks
+    // the right one by context.
     void showScreenRecordingNeededModal();
 #endif
     // Keep two native macOS surfaces in sync with RecentFiles, both capped
@@ -415,8 +409,8 @@ class Application : public QApplication {
     // the doc is snapshottable — an unsnapshottable structural PDF must be
     // PROMPTED, never silently dropped — and caches the result here so the
     // capture pass does not re-serialize. Cleared at the start of every
-    // KeepWindows quit so a stale pointer can never be reused. See
-    // docs/backlog/2026-07-20-nondestructive-structural-redaction-keep.md.
+    // KeepWindows quit so a stale pointer can never be reused.
+    // todo/2026-10-15-quit-keep-windows-prompts: ⌥⌘Q should keep a PDF with page edits plus a pending redaction.
     mutable QHash<IDocument *, QByteArray> m_keepStructuralSnapshotCache;
     // Test seams — see the *ForTesting setters. m_performQuit defaults to
     // QCoreApplication::quit; m_quitKeepsWindowsProbe defaults to the

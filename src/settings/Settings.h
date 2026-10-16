@@ -24,7 +24,7 @@ namespace trailer {
 // classification cannot drift apart. Nested TOML tables are flattened
 // with '.' (e.g. [ml.scheduler].run_on_battery ->
 // "ml.scheduler.run_on_battery"), matching how that completeness test
-// walks the saved file. See docs/CONVENTIONS.md §15.
+// walks the saved file.
 namespace SettingsKeys {
 inline constexpr QLatin1StringView Theme{"general.theme"};
 inline constexpr QLatin1StringView OpenFilesIn{"general.open_files_in"};
@@ -41,14 +41,12 @@ inline constexpr QLatin1StringView MlPreloadSegmentationOnToolActivation{
 inline constexpr QLatin1StringView MlRunOnBattery{"ml.scheduler.run_on_battery"};
 // [updates] table — see PreferencesDialog's Updates pane and
 // src/update/UpdateManager.h. autoCheckEnabled is OFF by default: an
-// update check is an outbound network call, and PHILOSOPHY requires
-// "no new outbound network calls without an explicit, off-by-default
-// user toggle." The "Check for Updates…" menu action itself is not
-// gated by this setting — it always runs a one-shot check with the
-// same URL-disclosure consent framing as ModelDownloader; this toggle
-// only controls whether Trailer checks automatically in the
-// background. See docs/decision-records/2026-07-30-nightly-auto-
-// update-channel.md.
+// update check is an outbound network call, and Trailer makes none on
+// its own without an explicit, off-by-default user toggle. The "Check for
+// Updates…" menu action itself is not gated by this setting — it always
+// runs a one-shot check with the same URL-disclosure consent framing as
+// ModelDownloader; this toggle only controls whether Trailer checks
+// automatically in the background.
 inline constexpr QLatin1StringView UpdatesAutoCheckEnabled{"updates.auto_check_enabled"};
 inline constexpr QLatin1StringView UpdatesChannel{"updates.channel"};
 inline constexpr QLatin1StringView UpdatesLastCheckedUtc{"updates.last_checked_utc"};
@@ -87,9 +85,8 @@ class Settings {
     // Whether a change to a setting takes effect while Trailer is running
     // (Live) or only after a restart (RestartRequired). Every persisted
     // key is classified in the registry backing volatilityOf(); a
-    // RestartRequired key surfaces a restart hint in Preferences. Today
-    // every key is Live, so the machinery is dormant until the first
-    // RestartRequired key is added. See docs/CONVENTIONS.md §15.
+    // RestartRequired key surfaces a restart hint in Preferences, so a key
+    // read only at startup never silently ignores a change.
     enum class Volatility { Live, RestartRequired };
 
     // Classify a persisted settings key (a dotted path from
@@ -116,9 +113,9 @@ class Settings {
     // Persisted as a string under [general].capture_backend. Defaults to
     // the long-standing Screencapture (/usr/sbin/screencapture) path — the
     // ScreenCaptureKit picker backend is opt-in and only takes effect on
-    // macOS 14+ once selected AND validated on-device (see ADR 0015).
-    // RestartRequired: the backend is resolved at the capture call site, so
-    // a change is picked up cleanly only on a fresh run.
+    // macOS 14+ once selected AND validated on-device.
+    // Classified RestartRequired, although Application::captureScreenshot()
+    // re-reads it on every capture. It has no Preferences control yet.
     trailer::CaptureBackend captureBackend() const { return m_captureBackend; }
     void setCaptureBackend(trailer::CaptureBackend value);
 
@@ -150,9 +147,8 @@ class Settings {
     QString lastSaveDir() const { return m_lastSaveDir; }
     void setLastSaveDir(const QString &value);
 
-    // [ml.scheduler] knobs (see PHILOSOPHY: don't chew battery
-    // greedily). Read by MlScheduler when deciding whether to admit
-    // speculative work.
+    // [ml.scheduler] knobs (don't chew battery greedily). Read by
+    // MlScheduler when deciding whether to admit speculative work.
     //
     //   mlRecognizeTextInBackground — run OCR on currently-visible
     //     pages so the search index is warm. Off => OCR only fires
@@ -196,9 +192,9 @@ class Settings {
     void setUpdatesLastCheckedUtc(const QString &value);
 
     // Whether the user has seen the one-time "redaction is not
-    // defence-grade" warning (DESIGN §6.11.6). True = do not show
-    // again; false = show on next redaction attempt. Convenience
-    // wrapper around the generic firstUseAcknowledged store.
+    // defence-grade" warning. True = do not show again; false = show on
+    // next redaction attempt. Convenience wrapper around the generic
+    // firstUseAcknowledged store.
     bool redactionWarningAcknowledged() const {
         return firstUseAcknowledged(QStringLiteral("redaction"));
     }
@@ -222,9 +218,9 @@ class Settings {
   private:
     QString m_filePath;
     Theme m_theme = Theme::System;
-    // Window-per-file is the default after the 2026-04-24 HITL review
-    // ("tabs are mostly in the way"). Tabs remain available as an opt-in
-    // by setting open_files_in = "new_tab" in settings.toml.
+    // Window-per-file is the default (tabs were mostly in the way). Tabs
+    // remain available as an opt-in by setting open_files_in = "new_tab"
+    // in settings.toml.
     OpenFilesIn m_openFilesIn = OpenFilesIn::NewWindow;
     // Safe default: the existing screencapture path, so runtime behaviour is
     // unchanged until the picker backend is validated on-device.
@@ -263,8 +259,7 @@ Theme themeFromString(const QString &value);
 //   Light  → Qt::ColorScheme::Light  (force light regardless of OS)
 //   Dark   → Qt::ColorScheme::Dark   (force dark regardless of OS)
 // A free function (not a member, no QApplication needed) so the mapping
-// is unit-testable in isolation. See Application::applyTheme and
-// docs/decision-records/2026-07-20-theme-applies-live.md.
+// is unit-testable in isolation. See Application::applyTheme.
 Qt::ColorScheme colorSchemeFor(Theme value);
 
 QString openFilesInToString(OpenFilesIn value);

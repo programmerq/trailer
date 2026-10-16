@@ -13,26 +13,20 @@
 // Surfaces swept:
 //   - The MainWindow shell with a document open, including the Inspector
 //     and Sidebar docks (shown explicitly; they are hidden by default).
-//   - MyCardDialog — the densest plain-form dialog (~14 fields); the
-//     HITL pass called it "huge with tons of options", so it is the most
-//     likely to clip under a large font or RTL.
 //
 // Deterministic, hard oracle, fast — so it lives in the `uat` suite
-// beside the regression guards (NOT the speculative persona / vision
-// tier, which is advisory and lives elsewhere).
+// beside the regression guards.
 //
 // Knobs covered today: font scale and layout direction (in-process,
 // offscreen-safe), plus devicePixelRatio ∈ {1, 1.5, 2} injected
 // per-process via QT_SCALE_FACTOR by the CMake dpr matrix
 // (tests/uat/CMakeLists.txt, trailer_register_uat_dpr_matrix) — the whole
-// sweep re-runs under each dpr, closing the HiDPI blind spot in
-// docs/backlog/2026-07-16-hidpi-uat-harness.md. Dark theme still needs
-// Settings::theme() wired to QStyleHints::setColorScheme (deferred).
+// sweep re-runs under each dpr, closing the HiDPI blind spot. Dark theme
+// isn't swept yet.
 
 #include "app/Application.h"
 #include "document/IDocument.h"
 #include "ui/MainWindow.h"
-#include "ui/MyCardDialog.h"
 
 #include <QAbstractButton>
 #include <QAbstractSpinBox>
@@ -195,8 +189,6 @@ class TestUatSweep : public QObject {
 
     void layoutSurvivesFontAndDirection_data();
     void layoutSurvivesFontAndDirection();
-    void cardDialogSurvivesFontAndDirection_data();
-    void cardDialogSurvivesFontAndDirection();
     void interactiveControlsHaveAccessibleNames();
 
   private:
@@ -292,39 +284,10 @@ void TestUatSweep::layoutSurvivesFontAndDirection() {
                      .arg(violations.join(QStringLiteral("\n  ")))));
 }
 
-void TestUatSweep::cardDialogSurvivesFontAndDirection_data() { addFontDirectionRows(); }
-
-void TestUatSweep::cardDialogSurvivesFontAndDirection() {
-    QFETCH(int, fontPt);
-    QFETCH(int, direction);
-    applyCell(fontPt, direction);
-
-    // ~14 plain QLineEdits + an OK/Cancel button box. Shown at its own
-    // size hint so a violation means the dialog's layout genuinely fails
-    // to give a child its minimum under this font/direction.
-    MyCardDialog dlg;
-    dlg.resize(dlg.sizeHint());
-    dlg.show();
-    QApplication::processEvents();
-
-    int checked = 0;
-    const QStringList violations = collectLayoutViolations(&dlg, checked);
-    const QString tag = QString::fromLatin1(QTest::currentDataTag());
-    QVERIFY2(checked > 0, "MyCardDialog realized no interactive controls?");
-    QVERIFY2(violations.isEmpty(),
-             qPrintable(
-                 QStringLiteral("MyCardDialog layout violations in cell [%1] (%2 controls checked):\n  %3")
-                     .arg(tag)
-                     .arg(checked)
-                     .arg(violations.join(QStringLiteral("\n  ")))));
-    dlg.close();
-}
-
-// A11y guard (audit A-CRIT-1): every visible interactive button must
-// have a name a screen reader can announce, or it reads as a bare
-// "button". Walks the realized MainWindow chrome (incl. the markup
-// toolbar and the side docks). Font/direction-independent, so it runs
-// once rather than across the matrix.
+// A11y guard: every visible interactive button must have a name a screen
+// reader can announce, or it reads as a bare "button". Walks the realized
+// MainWindow chrome (incl. the markup toolbar and the side docks).
+// Font/direction-independent, so it runs once rather than across the matrix.
 void TestUatSweep::interactiveControlsHaveAccessibleNames() {
     QVERIFY(m_scratch.isValid());
     const QString pdf = writeTinyPdf(m_scratch.filePath(QStringLiteral("a11y.pdf")));

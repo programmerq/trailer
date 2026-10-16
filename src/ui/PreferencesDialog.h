@@ -27,10 +27,9 @@ class UpdateManager;
 // A tabbed QDialog surfacing every setting that has a wired backend
 // today: General, Files, Machine Learning, Advanced. The dialog holds
 // a reference to the live Settings object and mutates it only on OK —
-// Cancel writes nothing. Setters on Settings do not auto-save (see
-// docs/CONVENTIONS.md discrepancy note), so accept() batches every
-// changed control value into the Settings object and issues a single
-// save().
+// Cancel writes nothing. Setters on Settings do not auto-save, so
+// accept() batches every changed control value into the Settings object
+// and issues a single save().
 //
 // OK persists only what the user actually changed: a per-control
 // baseline is snapshotted whenever the controls are (re)synced from
@@ -39,14 +38,14 @@ class UpdateManager;
 // (e.g. an out-of-range recent_max) from being written back on an
 // untouched OK.
 //
-// Two scattered menu actions are co-located here as buttons via
-// injected callbacks (Manage ML Models…, Reset Trailer Settings…);
-// when a callback is unset its button is disabled rather than lying
-// about being actionable. See docs/decisions/0001..0002.
+// Two Tools-menu actions are duplicated here as buttons via injected
+// callbacks (Manage ML Models…, Reset Trailer Settings…); the menu entries
+// stay. When a callback is unset its button is disabled rather than lying
+// about being actionable.
 //
-// DESIGN §2.4.2 reset mandate: every editable control carries an inline,
-// right-aligned "Reset to default" revert icon (enabled only when the
-// control differs from its default), plus a dialog-level Restore
+// Every editable control carries an inline, right-aligned "Reset to
+// default" revert icon (enabled only when it differs from its default) so
+// a mis-set preference is easy to undo, plus a dialog-level Restore
 // Defaults button. Resets change the UI only; nothing persists until OK.
 class PreferencesDialog : public QDialog {
     Q_OBJECT
@@ -63,11 +62,11 @@ class PreferencesDialog : public QDialog {
 
     // Wires the Updates tab's live actions (Check Now / Download &
     // Install / Install & Relaunch) to a real UpdateManager. Until
-    // called, those controls stay disabled with an explanatory tooltip
-    // (G3) — same pattern as setManageModelsCallback. The channel
-    // selector and auto-check checkbox work regardless (they only
-    // touch Settings), so this only gates the network-driving buttons.
-    // Does not take ownership; `manager` must outlive the dialog.
+    // called, those controls stay disabled with an explanatory tooltip —
+    // same pattern as setManageModelsCallback. The channel selector and
+    // auto-check checkbox work regardless (they only touch Settings), so
+    // this only gates the network-driving buttons. Does not take
+    // ownership; `manager` must outlive the dialog.
     void setUpdateManager(Update::UpdateManager *manager);
 
     // Switches the tab widget to the Updates pane. Used by Help → Check

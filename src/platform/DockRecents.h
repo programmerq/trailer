@@ -29,11 +29,9 @@ namespace trailer {
 // an #ifdef Q_OS_MACOS of their own.
 class DockRecents {
   public:
-    // The owner asked for "the 10 most recent files" (see the PR this
-    // shipped in); this is that literal spec value, not an independently
-    // hand-tuned constant, so it carries no separate tuning rationale
-    // (PHILOSOPHY's "hand-tuned values" rule doesn't apply — there is no
-    // range that was tried, only the one number requested).
+    // The owner asked for "the 10 most recent files"; this is that literal
+    // spec value, not an independently hand-tuned constant, so it carries
+    // no tuning rationale (no range was tried, only the one number requested).
     static constexpr int kMaxSystemRecents = 10;
 
     // Replace the macOS system Recent Documents list with exactly

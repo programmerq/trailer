@@ -6,7 +6,7 @@
 
 using namespace trailer;
 
-// Tests for the in-window file-change banner: mode transitions, the G3
+// Tests for the in-window file-change banner: mode transitions, the
 // disabled-Compare placeholder, and the button→signal wiring.
 class TestFileChangeBanner : public QObject {
     Q_OBJECT
@@ -18,7 +18,7 @@ class TestFileChangeBanner : public QObject {
     }
 
     // Conflict mode exposes Reload + Keep mine, and Compare is present but
-    // DISABLED with an explanatory tooltip (G3: no lying controls).
+    // DISABLED with an explanatory tooltip (todo/2026-10-15-disabled-placeholders: remove this placeholder).
     void conflictModeOffersReloadKeepAndDisabledCompare() {
         FileChangeBanner banner;
         banner.showConflict();
@@ -31,7 +31,7 @@ class TestFileChangeBanner : public QObject {
         QVERIFY(!banner.saveEnabled()); // Save is a Deleted-mode control
     }
 
-    // CF-6: both action labels state their CONSEQUENCE. Reload discards edits;
+    // Both action labels state their CONSEQUENCE. Reload discards edits;
     // Keep mine keeps the user's version and the file is overwritten only by a
     // later explicit Save — the label must NOT claim an immediate overwrite.
     void conflictLabelsStateConsequences() {
@@ -44,7 +44,7 @@ class TestFileChangeBanner : public QObject {
         QVERIFY(banner.keepMineText().contains(QStringLiteral("overwrite")));
     }
 
-    // CF-6: "Keep mine" is the visually-weighted primary/default action (the
+    // "Keep mine" is the visually-weighted primary/default action (the
     // non-destructive-until-save choice); Dismiss is flat/passive.
     void conflictKeepMineIsWeightedDefault() {
         FileChangeBanner banner;

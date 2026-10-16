@@ -7,10 +7,10 @@
 namespace trailer {
 
 namespace {
-// PHILOSOPHY: hand-tuned values stay hand-tuned. Debounce window for
-// collapsing a burst of filesystem events (an editor that writes via
-// truncate-then-append, or an atomic temp+rename, can fire several
-// directory/file events in quick succession) into a single classification.
+// Hand-tuned debounce window for collapsing a burst of filesystem events
+// (an editor that writes via truncate-then-append, or an atomic temp+rename,
+// can fire several directory/file events in quick succession) into a single
+// classification.
 // Range considered: 100–500ms. Below ~150ms a multi-event save still slips
 // through as two signals (double reload); above ~350ms a genuine external
 // change feels laggy to notice. 250ms collapses the storm without a

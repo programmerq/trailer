@@ -147,7 +147,7 @@ void OcrDiskCache::store(std::uint64_t contentHash,
                          const std::vector<OcrEngine::TextBlock> &blocks) {
     // A text-less page has nothing worth persisting, and writing an empty
     // entry would let a later load() report a "hit" for a page that has no
-    // text — the honesty seam (ADR 0013 §G13.2) lives one layer up, but we
+    // text — the honest "No text found" outcome is kept one layer up, but we
     // reinforce it here by refusing to cache empties.
     if (blocks.empty())
         return;

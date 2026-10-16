@@ -11,7 +11,7 @@ class QToolButton;
 namespace trailer {
 
 // Status-bar progress + cancel affordance for long-running ML
-// operations (ADR 0002). Deliberately self-contained: it knows nothing
+// operations. Deliberately self-contained: it knows nothing
 // about OcrController, MlScheduler or any ML type — MainWindow drives it
 // by calling begin*/setProgress/finishWithMessage in response to a
 // controller's batch signals, and forwards the widget's cancelRequested()
@@ -19,8 +19,8 @@ namespace trailer {
 // and reusable by future ops (background removal) without a dependency
 // edge into the ML layer.
 //
-// One indicator style is fixed per run (ADR 0002 §1 / B5 "never switch
-// spinner↔bar"): determinate when the unit count is known (OCR batch of
+// One indicator style is fixed per run, never switching spinner↔bar
+// mid-task: determinate when the unit count is known (OCR batch of
 // N pages), indeterminate otherwise (background removal, single-page).
 // setElapsedSeconds() appends reassurance text past 10s WITHOUT changing
 // the style — it stays a busy bar.
@@ -47,7 +47,7 @@ class MlProgressWidget : public QWidget {
     void setProgress(int done);
 
     // Indeterminate only: once s >= 10, append " · Ns" to the label as
-    // reassurance (ADR 0002 §1). Not a style switch — the bar stays busy.
+    // reassurance. Not a style switch — the bar stays busy.
     void setElapsedSeconds(int s);
 
     // Hide the bar and ✕, show `msg` for a short hold, then goIdle().
@@ -65,18 +65,17 @@ class MlProgressWidget : public QWidget {
     State state() const { return m_state; }
 
     // Test seam: how long the terminal message lingers before goIdle().
-    // Production default (~3s) matches ADR 0002; tests set it to 0 to
+    // Production default is 3s (m_terminalHoldMs); tests set it to 0 to
     // observe the return-to-idle without wall-clock waiting.
     void setTerminalHoldMs(int ms) { m_terminalHoldMs = ms; }
 
-    // G10 (spatial constancy, AGENTS.md): MainWindow reserves a fixed-width
-    // status-bar slot for this widget (src/ui/MainWindow.cpp,
-    // reserveStatusBarSlot()) so an unrelated sibling widget toggling never
-    // nudges the Cancel button the user may be mid-click on (SC-CRIT-1,
-    // docs/audit-2026-07-31-g10-deference.md). maxWidth() is the width
-    // that slot must reserve; it stays >= this widget's true maximum
-    // sizeHint in every state (Running/determinate, Running/indeterminate,
-    // Terminal) or the reservation is a lie.
+    // MainWindow reserves a fixed-width status-bar slot for this widget
+    // (src/ui/MainWindow.cpp, reserveStatusBarSlot()) so an unrelated
+    // sibling widget toggling never nudges the Cancel button the user may
+    // be mid-click on. maxWidth() is the width that slot must reserve; it
+    // stays >= this widget's true maximum sizeHint in every state
+    // (Running/determinate, Running/indeterminate, Terminal) or the
+    // reservation is a lie.
     //
     // CROSS-PLATFORM CORRECTNESS NOTE (2026-08-01): this used to be a
     // `static constexpr int kMaxWidth` derived from label-width literals
@@ -141,14 +140,14 @@ class MlProgressWidget : public QWidget {
     int m_done = 0;
     int m_elapsed = 0;
     QString m_baseLabel;
-    // PHILOSOPHY: hand-tuned values stay hand-tuned. How long the terminal
-    // "complete / cancelled — no changes saved" message lingers before the
-    // widget hides itself. The range considered was 2000–4000ms: below ~2s
-    // the outcome message is gone before a glancing user reads it; above
-    // ~4s a dead status-bar message overstays and reads as stuck. 3000ms
-    // reads as an acknowledgement without lingering. Change it only if the
-    // terminal message is reported as missed (raise) or as stale/stuck
-    // (lower); tests set it to 0/10ms to observe return-to-idle instantly.
+    // How long the terminal "complete / cancelled — no changes saved"
+    // message lingers before the widget hides itself. The range considered
+    // was 2000–4000ms: below ~2s the outcome message is gone before a
+    // glancing user reads it; above ~4s a dead status-bar message overstays
+    // and reads as stuck. 3000ms reads as an acknowledgement without
+    // lingering. Change it only if the terminal message is reported as
+    // missed (raise) or as stale/stuck (lower); tests set it to 0/10ms to
+    // observe return-to-idle instantly.
     int m_terminalHoldMs = 3000;
 };
 

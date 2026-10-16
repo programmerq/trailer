@@ -1,5 +1,4 @@
-// Unit test — Screen Capture permission preflight flow
-// (the screen-capture preflight ADR, 2026-07-16-capture-permission-preflight.md).
+// Unit test — Screen Capture permission preflight flow.
 //
 // Exercises the pure, platform-agnostic pieces of the screen-capture
 // permission preflight layer that gate the `screencapture` call site

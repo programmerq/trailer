@@ -28,7 +28,7 @@ FileChangeBanner::FileChangeBanner(QWidget *parent) : QFrame(parent) {
     m_message->setWordWrap(true);
     layout->addWidget(m_message, 1);
 
-    // Both action labels state their CONSEQUENCE (CF-6): Reload discards the
+    // Both action labels state their CONSEQUENCE: Reload discards the
     // user's edits; Keep mine keeps the user's version and the file is
     // overwritten only by their next explicit Save — no write happens on click.
     m_reloadButton = new QPushButton(tr("Reload (discard my edits)"), this);
@@ -37,7 +37,7 @@ FileChangeBanner::FileChangeBanner(QWidget *parent) : QFrame(parent) {
     m_saveButton = new QPushButton(tr("Save"), this);
     m_dismissButton = new QPushButton(tr("Dismiss"), this);
 
-    // Visually-weighted default (CF-6): "Keep mine" is the recommended,
+    // Visually-weighted default: "Keep mine" is the recommended,
     // non-destructive-until-save choice, so it is the primary/default button
     // (platform-native default affordance + an accent fill so the weighting is
     // visible in the banner). Reload is a normal secondary button; Dismiss is
@@ -54,9 +54,8 @@ FileChangeBanner::FileChangeBanner(QWidget *parent) : QFrame(parent) {
     m_dismissButton->setFlat(true);
     m_dismissButton->setStyleSheet(QStringLiteral("QPushButton { color: #5a4a12; }"));
 
-    // Compare is a G3-honest placeholder: present so the option is discoverable
-    // once a diff view exists, but disabled with a tooltip that says WHY —
-    // never a lying control that would silently do something else.
+    // todo/2026-10-15-disabled-placeholders: Compare is a disabled placeholder for a diff view that doesn't
+    // exist; remove it. Until then its tooltip says WHY it can't act.
     m_compareButton->setEnabled(false);
     m_compareButton->setToolTip(
         tr("Comparing the two versions isn't available yet — a side-by-side "

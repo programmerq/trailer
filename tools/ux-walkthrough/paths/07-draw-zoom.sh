@@ -31,7 +31,7 @@
 #
 # HARNESS BOUNDARY: dpr=1 under Xvfb. The residual #91 "zoom drift" suspect is
 # continuous trackpad pinch-zoom on Retina (dpr=2), which a headless X server
-# cannot generate — that stays on the owner real-Mac checklist. This path
+# cannot generate — that needs a real Mac (todo/2026-10-15-real-desktop-checks). This path
 # proves the discrete-zoom anchoring seam, which is what is reachable here.
 set -uo pipefail
 export PATH_NAME="draw-zoom"

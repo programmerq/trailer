@@ -17,8 +17,8 @@ namespace {
 
 // Manifest schema version. Bump on any incompatible change to the layout
 // so a store written by an older/newer build is rejected cleanly (restore
-// returns empty) rather than mis-parsed — the honest-restore posture the
-// decision record demands (better to not restore than to restore wrong).
+// returns empty) rather than mis-parsed: better to not restore than to
+// restore wrong.
 constexpr int kManifestVersion = 1;
 
 QString blobName(int windowIndex, int docIndex, const QString &format) {

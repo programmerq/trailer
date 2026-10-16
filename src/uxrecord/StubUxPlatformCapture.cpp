@@ -45,7 +45,7 @@ std::unique_ptr<UxPlatformCapture> createUxPlatformCapture(UxCaptureContext cont
 }
 
 // No relaunch-required screen permission concept off macOS: report
-// granted so the startup gate (UXR-001) never blocks a non-macOS
+// granted so the startup gate never blocks a non-macOS
 // recorder build, and make the request a no-op.
 bool uxScreenRecordingGranted() {
     return true;

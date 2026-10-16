@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Golden path 10 — EMPTY-WINDOW REUSE (CF-5), the Preview-style no-orphan rule.
+# Golden path 10 — EMPTY-WINDOW REUSE, the Preview-style no-orphan rule.
 #
 # Persona-(A) goal: when the user has the empty launch window in front of them
 # and opens (or pastes, or batch-opens) a document, that document should land
@@ -7,8 +7,8 @@
 # orphan the empty one — WHILE never clobbering a window that already holds a
 # real document.
 #
-# This path exists to replace the PR's "CF-5 reuse can't be checked offscreen"
-# caveat with DRIVEN, WM-visible results. The reuse decision lives entirely in
+# Reuse can't be checked offscreen, so this path checks it with DRIVEN,
+# WM-visible results. The reuse decision lives entirely in
 # Application::openFiles() (src/app/Application.cpp, the `reuseCandidate` /
 # `takeReuseOrFresh` logic): it only fires under a real activeWindow()/single
 # live window, and it is exactly the class of behaviour a real X server +
@@ -39,8 +39,8 @@
 #    open is real, not a reproduction.
 #
 # BOUNDARY: the macOS-native no-window / Dock-reopen behaviour and ⌘-key
-# specifics stay on the owner real-Mac checklist; this tier proves the
-# cross-platform openFiles() reuse guard under a real WM.
+# specifics need a real Mac (todo/2026-10-15-real-desktop-checks); this tier proves the cross-platform
+# openFiles() reuse guard under a real WM.
 set -uo pipefail
 export PATH_NAME="empty-window-reuse"
 # shellcheck source=../lib/harness.sh
@@ -179,4 +179,4 @@ if [ "$_ANY_FAIL" -ne 0 ]; then
     _log "path complete WITH FAILURES (see the *_ FAIL lines above)"
     exit 1
 fi
-_log "path complete — all CF-5 reuse / no-clobber assertions PASS"
+_log "path complete — all empty-window reuse / no-clobber assertions PASS"

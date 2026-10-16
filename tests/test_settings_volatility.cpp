@@ -85,7 +85,7 @@ void TestSettingsVolatility::registryCoversEveryPersistedKey() {
         const std::optional<Settings::Volatility> v = Settings::volatilityOf(qkey);
         QVERIFY2(v.has_value(),
                  qPrintable(QStringLiteral("persisted key missing from the volatility "
-                                           "registry (see docs/CONVENTIONS.md §15): %1")
+                                           "registry (Settings::volatilityOf): %1")
                                 .arg(qkey)));
     }
 }

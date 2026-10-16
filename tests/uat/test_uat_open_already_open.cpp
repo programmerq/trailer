@@ -1,21 +1,20 @@
 // UAT harness — "opening an already-open file surfaces the existing
 // window" (UAT-FND-053..058).
 //
-// Owner HITL report, 2026-08-06 (macOS): typing a PDF's name into
-// Spotlight while Trailer already had that exact file open produced a
-// SECOND window showing the same file. Two IDocument instances over one
-// path means two undo logs and two save paths onto the same bytes — the
-// document stops being the subject and starts being a copy.
+// The reported bug (macOS): typing a PDF's name into Spotlight while
+// Trailer already had that exact file open produced a SECOND window
+// showing the same file. Two IDocument instances over one path means two
+// undo logs and two save paths onto the same bytes — the document stops
+// being the subject and starts being a copy.
 //
-// This file deliberately calls ONLY stable, pre-existing public API
+// This file deliberately calls ONLY public API that predates the fix
 // (Application::openFiles / newFromClipboard / windowCount / settings,
-// MainWindow::documentCount / documentAt / currentDocumentIndex) — no
-// symbol this PR introduces (Application::windowForOpenPath,
-// MainWindow::showDocumentAt, trailer::canonicalPathKey) — so this SAME
-// file builds and runs unmodified against the tree BEFORE and AFTER the
-// fix. That is what makes the G2 evidence a genuine before/after pair
-// rather than two unrelated captures, and it is the same discipline
-// test_uat_deference_evidence.cpp follows.
+// MainWindow::documentCount / documentAt / currentDocumentIndex) — not
+// Application::windowForOpenPath, MainWindow::showDocumentAt or
+// trailer::canonicalPathKey — so this SAME file builds and runs unmodified
+// against the tree BEFORE and AFTER the fix. That makes its screenshots a
+// genuine before/after pair rather than two unrelated captures, the same
+// discipline test_uat_deference_evidence.cpp follows.
 //
 // The evidence slot emits its PNG to $TRAILER_OPENDEDUP_EVIDENCE_DIR when
 // set and QSKIPs when unset, matching the evidence-dir convention used
@@ -50,8 +49,8 @@ using namespace trailer;
 
 namespace {
 
-// Fixed window size for the evidence composite so the committed
-// before/after PNGs are directly comparable frame-for-frame.
+// Fixed window size for the evidence composite so the before/after
+// PNGs are directly comparable frame-for-frame.
 constexpr int kEvidenceWindowW = 720;
 constexpr int kEvidenceWindowH = 520;
 constexpr int kEvidenceGap = 18;
@@ -141,7 +140,7 @@ QString evidenceDir() {
 // caption strip carrying that window's LIVE windowTitle(). The BEFORE
 // tree leaves two windows here and the AFTER tree one, so a single
 // composite shows the whole defect and the whole fix in the same frame —
-// the same-state requirement G2's before/after rule imposes.
+// a before/after pair must show the same state.
 //
 // The caption strip exists because QWidget::grab() captures the client
 // area only: the OS title bar (where the document's name lives, and
@@ -195,7 +194,7 @@ void grabAllWindows(const QString &dir, const QString &name) {
 
     const QString path = QDir(dir).absoluteFilePath(name);
     canvas.save(path, "PNG");
-    qInfo().noquote() << "G2-SCREENSHOT" << path << "windows=" << wins.size();
+    qInfo().noquote() << "SCREENSHOT" << path << "windows=" << wins.size();
 }
 
 } // namespace
@@ -442,15 +441,15 @@ void TestUatOpenAlreadyOpen::uat_fnd_058_untitledImportsNeverDedup() {
     QCOMPARE(totalDocs, 2);
 }
 
-// G2 evidence (before/after pair). Runs the exact reported flow — open a
-// file, then ask to open that same file again — and composites every
-// resulting window into one PNG. Built against the pre-fix tree it yields
-// the two-window "looks like two open files" frame; against the fixed
-// tree, one window with the document current.
+// Before/after screenshot (uncommitted). Runs the exact reported flow —
+// open a file, then ask to open that same file again — and composites
+// every resulting window into one PNG. Built against the pre-fix tree it
+// yields the two-window "looks like two open files" frame; against the
+// fixed tree, one window with the document current.
 void TestUatOpenAlreadyOpen::uat_fnd_053_090_openAlreadyOpenEvidence() {
     const QString dir = evidenceDir();
     if (dir.isEmpty())
-        QSKIP("Set TRAILER_OPENDEDUP_EVIDENCE_DIR to emit the G2 evidence PNG.");
+        QSKIP("Set TRAILER_OPENDEDUP_EVIDENCE_DIR to emit the evidence PNG.");
 
     QVERIFY(m_scratch.isValid());
     // A recognisable, owner-report-shaped name so the shot reads as the

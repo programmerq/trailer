@@ -1,4 +1,4 @@
-// UAT harness — Redaction tool (Phase 5 §6.11).
+// UAT harness — Redaction tool.
 //
 // Places a Redaction annotation over part of a page and saves. The
 // save-time pipeline must replace the page's content stream with a

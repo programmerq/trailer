@@ -3,13 +3,12 @@
 # Builds docker/runner/Dockerfile (the trailer-k8s runner image with the
 # full Linux + Windows-cross toolchain baked in) and pushes it to
 # ghcr.io/programmerq/trailer-runner. Switching the ARC runner-set onto
-# this image is a one-line change documented in
-# docs/ci/custom-runner-image.md.
+# this image is a one-line change (see docker/runner/Dockerfile's header).
 #
-# IMPORTANT: these jobs run on ubuntu-latest (a GitHub-HOSTED runner),
+# IMPORTANT: these jobs run on ubuntu-24.04 (a GitHub-HOSTED runner),
 # NOT a self-hosted label. Building a Docker image needs a Docker daemon,
 # which the k8s pods deliberately lack (that's the whole reason the
-# build/test jobs run dockerless); ubuntu-latest ships Docker + Buildx.
+# build/test jobs run dockerless); ubuntu-24.04 ships Docker + Buildx.
 # (This comment described the intent since the file was written, but both
 # jobs were in fact pinned to `trailer-k8s` — a Docker-image build on a
 # runner with no Docker daemon. Corrected 2026-08-05 in the same pass
@@ -56,7 +55,7 @@ jobs:
     # Publish only on the real triggers (push-to-main / manual / weekly).
     # PRs use the build-only pr-validate job below — never push.
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v7
@@ -92,7 +91,7 @@ jobs:
     # PR gate: prove the recipe still builds and the baked tooling works,
     # without logging in or pushing anything to GHCR.
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     # No packages:write here — this job never touches the registry.
     permissions:

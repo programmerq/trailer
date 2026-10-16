@@ -17,7 +17,7 @@
 # setup actions (a Qt/ONNX bump shouldn't force an image rebuild).
 #
 # To switch the ARC runner-set onto this image, change the one line in
-# the runner-set values (see docs/ci/custom-runner-image.md):
+# the runner-set values (the runner container's image; `helm upgrade`):
 #   image: ghcr.io/programmerq/trailer-runner:latest
 #
 # Built + published by .github/workflows/build-runner-image.yml (which
@@ -190,12 +190,11 @@ RUN apt-get update \
 #   * sway   — wlroots compositor; runs headless (WLR_BACKENDS=headless) with
 #              the pixman software renderer (no GPU in the k8s pods). Chosen
 #              over weston because weston's headless backend can't be
-#              screenshotted (grim needs wlroots' wlr-screencopy). See
-#              docs/ci/wayland-tier.md.
+#              screenshotted (grim needs wlroots' wlr-screencopy).
 #   * grim   — wlroots screenshot client; captures the compositor output.
 # The Qt wayland platform plugin itself needs NO package here — the aqt Qt
 # 6.11 linux_gcc_64 bundle already ships libqwayland.so + the xdg-shell
-# integration (verified in Phase 1), so setup-linux-build pulls it in with Qt.
+# integration, so setup-linux-build pulls it in with Qt.
 #
 # NOTE (ride-along, like PR #87): this layer is now on main and the
 # build-runner-image.yml workflow republishes ghcr.io/programmerq/trailer-runner

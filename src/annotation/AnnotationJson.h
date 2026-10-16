@@ -15,9 +15,6 @@ namespace trailer {
 // pressures, quads, text, imagePath, and the full AnnotationStyle
 // (stroke/fill colours, stroke width, font, dash, weight, zoom). Colours
 // are stored as [r,g,b,a] arrays so the exact ARGB survives.
-//
-// See docs/decision-records/2026-07-16-quit-and-keep-windows.md — the PDF
-// annotation-persistence refinement.
 QJsonObject annotationToJson(const Annotation &a);
 Annotation annotationFromJson(const QJsonObject &obj);
 

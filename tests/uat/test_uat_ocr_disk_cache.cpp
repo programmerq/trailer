@@ -1,26 +1,24 @@
-// UAT harness — Bounded on-disk OCR cache (ADR 0013 §G13.4).
+// UAT harness — Bounded on-disk OCR cache.
 //
 // These slots drive the REAL OcrController read-through / write-through
 // path (the same submitPage() MainWindow uses) against an injected,
-// temp-directory OcrDiskCache, proving the acceptance thresholds of the
-// backlog item docs/backlog/2026-07-15-bounded-ondisk-ocr-cache.md end to
-// end — not just at the cache-container level (that is covered by the unit
+// temp-directory OcrDiskCache, proving the content-hash keying end to end
+// — not just at the cache-container level (that is covered by the unit
 // test tests/test_ocr_disk_cache.cpp):
 //
 //   uat_ocrcache_010_reopenRestoresWithoutReOcr
-//       Threshold 1 / ADR G13.4(iii): after a page is recognized once and
-//       written through to disk, a reopen (in-memory store cleared)
-//       restores the text WITHOUT re-running OCR — the recognizer call
-//       count does not advance (deterministic 0-re-recognitions proxy).
+//       After a page is recognized once and written through to disk, a
+//       reopen (in-memory store cleared) restores the text WITHOUT
+//       re-running OCR — the recognizer call count does not advance
+//       (deterministic 0-re-recognitions proxy).
 //
 //   uat_ocrcache_020_dedupHitsChangedContentMisses
-//       Thresholds 1 + 3 / ADR G13.4(ii)(iii): the disk key is the content
-//       hash ALONE, so a *different document* whose page renders to
-//       identical pixels is served from disk (cross-doc dedup, no re-OCR),
-//       while a document whose pixels differ MISSES and re-OCRs. This is
-//       the invalidation-by-construction the cache relies on for external
-//       change (a changed file re-renders to a new hash and cannot be
-//       served stale).
+//       The disk key is the content hash ALONE, so a *different document*
+//       whose page renders to identical pixels is served from disk
+//       (cross-doc dedup, no re-OCR), while a document whose pixels differ
+//       MISSES and re-OCRs. This is the invalidation-by-construction the
+//       cache relies on for external change (a changed file re-renders to
+//       a new hash and cannot be served stale).
 
 #include "app/Application.h"
 #include "document/IDocument.h"

@@ -474,7 +474,7 @@ fi
 echo "    no external dylib references"
 
 # ---------------------------------------------------------------------
-# Verify the adaptive app icon landed (ADR 0009 Option A). Cheap
+# Verify the adaptive app icon landed (asset-catalog AppIcon). Cheap
 # build-integration check that runs only here / on the macos-14 runner:
 #   - Contents/Resources/Assets.car exists (actool's POST_BUILD step in
 #     CMakeLists.txt produced it during `cmake --build`),
@@ -515,24 +515,24 @@ else
 
     # Informational only — NEVER fails the build. The check above confirms
     # AppIcon exists in the compiled catalog; it does NOT confirm the dark
-    # luminosity variant survived compilation. docs/backlog/2026-07-17-
-    # adaptive-dock-icon-option-b.md's 2026-07-31 investigation found that
-    # actool's app-icon compile path can substitute its own generated icon
-    # in place of the source .xcassets bitmaps under conditions that are
-    # not fully documented — so "the source .xcassets has a dark variant"
-    # (true today, see resources/macos/Assets.xcassets) does not by itself
-    # guarantee the COMPILED Assets.car still carries it. This grep closes
-    # that gap cheaply: it surfaces what's actually in the shipped artifact
-    # in the build log, for the next real-Mac Dock-swap pass to cross-check
+    # luminosity variant survived compilation. The 2026-07-31 investigation
+    # (todo/2026-10-15-dock-icon-dark-mode) found that actool's app-icon compile path can
+    # substitute its own generated icon in place of the source .xcassets
+    # bitmaps under conditions that are not fully documented — so "the
+    # source .xcassets has a dark variant" (true today, see
+    # resources/macos/Assets.xcassets) does not by itself guarantee the
+    # COMPILED Assets.car still carries it. This grep closes that gap
+    # cheaply: it surfaces what's actually in the shipped artifact in the
+    # build log, for the next real-Mac Dock-swap pass to cross-check
     # against, without gating CI/local builds on a signal this script can't
     # fully interpret headlessly (assetutil's exact appearance-key spelling
-    # was not itself verified against real Tahoe output — see the backlog
-    # item). Deliberately not wired into the hard-fail checks above.
+    # was not itself verified against real Tahoe output). Deliberately not
+    # wired into the hard-fail checks above.
     if assetutil --info "$ASSETS_CAR" 2>/dev/null | grep -qi "dark\|luminosity"; then
         echo "    (info) compiled catalog also mentions a dark/luminosity marker"
     else
         echo "    (info) compiled catalog does NOT visibly mention dark/luminosity —"
-        echo "           see docs/backlog/2026-07-17-adaptive-dock-icon-option-b.md"
+        echo "           see todo/2026-10-15-dock-icon-dark-mode"
     fi
 fi
 

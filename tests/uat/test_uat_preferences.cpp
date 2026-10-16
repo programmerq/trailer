@@ -1,26 +1,24 @@
 // UAT harness — Preferences pane: live Theme control + tabs-grow-with-settings
 //
 // Drives PreferencesDialog (and, for the evidence shots, Application +
-// MainWindow) in-process under QT_QPA_PLATFORM=offscreen to lock two
-// polish-backlog rules:
+// MainWindow) in-process under QT_QPA_PLATFORM=offscreen to lock two rules:
 //
-//   • Theme live-wire (backlog 2026-07-12-theme-live-wire): the Theme
-//     control is ENABLED (no longer shown-but-disabled), and the obsolete
-//     "Not applied yet" helper label is gone. The live-apply path itself
-//     (colour scheme + icon re-tint) is asserted in the unit tier
+//   • Theme live-wire: the Theme control is ENABLED (no longer
+//     shown-but-disabled), and the obsolete "Not applied yet" helper label
+//     is gone. The live-apply path itself (colour scheme + icon re-tint) is
+//     asserted in the unit tier
 //     (tests/test_settings.cpp::colorSchemeMapping,
 //     tests/test_preferences.cpp::themeAppliesLiveThroughSignal); here we
 //     guard the surfaced control state.
-//   • Tabs grow with settings (backlog 2026-07-12-preferences-tabs-grow-
-//     with-settings): every VISIBLE Preferences tab carries at least one
-//     enabled, operable control — no empty/stub tabs (e.g. a Forms tab is
+//   • Tabs grow with settings: every VISIBLE Preferences tab carries at least
+//     one enabled, operable control — no empty/stub tabs (e.g. a Forms tab is
 //     not shown until a Forms setting is wired). The dialog already
 //     conforms by construction; this test is the regression lock so a
 //     future empty addTab() fails CI.
 //
-// When TRAILER_PREF_EVIDENCE_DIR is set, the harness also writes curated
-// offscreen grab() PNGs (the G2 evidence): the Preferences General tab with
-// the enabled Theme combo in light and dark, and the running app in light
+// When TRAILER_PREF_EVIDENCE_DIR is set, the harness also writes uncommitted
+// offscreen grab() PNGs there: the Preferences General tab with the
+// enabled Theme combo in light and dark, and the running app in light
 // (the default appearance) and dark (the new capability) — the same window
 // and document in both, i.e. the theme before/after pair.
 //
@@ -111,9 +109,8 @@ bool hasEnabledOperableControl(const QWidget *page) {
 // byte-identical). For the evidence shots we apply this palette explicitly
 // so the offscreen grab genuinely reaches the dark-rendered state real
 // users see — and, critically, so the themed-icon re-tint (the actual code
-// under test) has a dark palette to tint against. This is documented in the
-// PR as the sanctioned offscreen fallback for a state that cannot otherwise
-// be reached (AGENTS.md G2 capture-method note).
+// under test) has a dark palette to tint against. This is the offscreen
+// fallback for a state that cannot otherwise be reached.
 QPalette darkPalette() {
     QPalette p;
     const QColor window(0x2b, 0x2b, 0x2e);
@@ -215,10 +212,9 @@ void TestUatPreferences::uat_pref_020_everyVisibleTabHasEnabledOperableControl()
     }
 }
 
-// Updates pane (docs/decision-records/2026-07-30-nightly-auto-update-
-// channel.md): the status label + action button text/enabled-state track
+// Updates pane: the status label + action button text/enabled-state track
 // UpdateManager's state directly — this is the regression lock for that
-// wiring, independent of the curated G2 screenshots below. Uses
+// wiring, independent of the evidence screenshots below. Uses
 // debugForceStateForTesting (a documented test-only seam on UpdateManager)
 // so every state is reachable without a real network round-trip.
 void TestUatPreferences::uat_pref_030_updatesTabReflectsManagerState() {
@@ -238,14 +234,14 @@ void TestUatPreferences::uat_pref_030_updatesTabReflectsManagerState() {
     // A build configured without -DTRAILER_UPDATE_PUBKEY (every ordinary
     // local build, PR, and fork — see cmake/UpdatePublicKey.h.in) can
     // never verify a feed, so the button is disabled with a tooltip
-    // rather than offering a check that can only fail (G3). The label and
+    // rather than offering a check that can only fail. The label and
     // position are identical either way, which is what the rest of this
     // slot and UAT-UPD-003 pin.
     QCOMPARE(action->isEnabled(), Update::kUpdateChannelProvisioned);
     QCOMPARE(action->text(), QStringLiteral("Check Now"));
     if (!Update::kUpdateChannelProvisioned) {
         QVERIFY2(!action->toolTip().isEmpty(),
-                 "A disabled Check Now must say why (G3)");
+                 "A disabled Check Now must say why");
         // The remaining state transitions below all route through
         // refreshUpdatesStatus()'s no-key early return in this
         // configuration, so they cannot be exercised here.
@@ -280,8 +276,7 @@ void TestUatPreferences::uat_pref_030_updatesTabReflectsManagerState() {
 // trailer::documentSurroundColor() (util/DocumentSurroundColor.h), instead
 // of two independently-hand-picked palette roles that can drift apart —
 // and that derivation is LIVE (PR #105), re-run on a runtime theme change,
-// not fixed at open time. See DR
-// 2026-07-31-document-surround-colour-follows-base.
+// not fixed at open time.
 //
 // documentSurroundColor() is intentionally NOT "always ::Base": it prefers
 // ::Dark (a visibly recessed canvas behind a typically-white page — the
@@ -434,7 +429,7 @@ void TestUatPreferences::uat_xct_005_documentSurroundColourFollowsPaletteLive() 
     QApplication::processEvents();
 }
 
-// Curated G2 evidence (only when TRAILER_PREF_EVIDENCE_DIR is set): the
+// Uncommitted PNGs (only when TRAILER_PREF_EVIDENCE_DIR is set): the
 // Preferences General tab with the enabled Theme combo in light and dark,
 // and the running app in light (default appearance) and dark (new
 // capability) — same window and document, i.e. the theme before/after pair.
@@ -480,10 +475,9 @@ void TestUatPreferences::uat_pref_090_evidenceShots() {
     }
 
     // --- Updates pane: idle / checking / update-available / up-to-date /
-    // error (docs/decision-records/2026-07-30-nightly-auto-update-channel.md,
-    // G2 evidence for the new Updates row in DESIGN §6.13). One dialog
-    // instance, one UpdateManager driven through debugForceStateForTesting
-    // so every state is reachable deterministically offscreen. ---
+    // error. One dialog instance, one UpdateManager driven through
+    // debugForceStateForTesting so every state is reachable
+    // deterministically offscreen. ---
     {
         Settings s(m_scratch.filePath(QStringLiteral("pref090-updates.toml")));
         Update::UpdateManager mgr(s);

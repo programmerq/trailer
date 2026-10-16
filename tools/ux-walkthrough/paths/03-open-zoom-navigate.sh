@@ -14,7 +14,7 @@
 # HONEST PLATFORM BOUNDARY: Trailer has no cross-file "next/previous IMAGE"
 # navigation; next/previous is PAGE navigation, gated on pageCount>1
 # (src/ui/MainWindow.cpp updateActionStates). For a single image those
-# actions are correctly disabled (a G3 non-lying-control state). This path
+# actions are correctly disabled. This path
 # opens an image (per the spec) for the zoom half — the finding-#5 core —
 # and drives PageDown to show the single-page navigation state; multi-page
 # navigation is exercised by opening a PDF.

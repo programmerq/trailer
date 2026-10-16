@@ -12,10 +12,10 @@
 #   (a) proves the harness can put a real image on the X clipboard and read
 #       it back (the input half of new-from-clipboard), and
 #   (b) reproduces the EXACT observable outcome of Application::newFromClipboard
-#       — clipboard image -> temp PNG -> openFiles() — so persona (A) can judge
+#       — clipboard image -> temp PNG -> openFiles() — so a reviewer can judge
 #       the resulting document against the zoom/size oracle.
 # The ⌘N binding and the menu wiring themselves are macOS-only and are routed
-# to the owner real-Mac checklist (SKILL.md), not asserted here.
+# to a real-Mac check (todo/2026-10-15-real-desktop-checks), not asserted here.
 set -uo pipefail
 export PATH_NAME="new-from-clipboard"
 # shellcheck source=../lib/harness.sh
@@ -40,7 +40,7 @@ if [ "$CLIP_BYTES" -gt 0 ]; then
 else
     _fail "clipboard did not accept the image"
 fi
-boundary "Linux build has NO clipboard-consuming menu action (macOS-only, Application.cpp #ifdef Q_OS_MACOS). ⌘N/menu wiring -> owner real-Mac checklist."
+boundary "Linux build has NO clipboard-consuming menu action (macOS-only, Application.cpp #ifdef Q_OS_MACOS). ⌘N/menu wiring needs a real Mac (todo/2026-10-15-real-desktop-checks)."
 launch    # no file argument -> empty state
 shot
 

@@ -34,13 +34,13 @@ struct RecentEntry {
     int currentPage = -1;
     double zoomFactor = 0.0;
     int scrollY = 0;
-    // Legacy: persisted for back-compat with pre-Workstream-I
-    // recent.json files. The new sidebarMode field below is the
+    // Legacy: persisted for back-compat with recent.json files written
+    // before sidebarMode existed. The new sidebarMode field below is the
     // source of truth; sidebarVisible is derived from it on save
     // (false ↔ Hidden, true ↔ anything else) and only consulted on
     // load when sidebarMode is absent.
     bool sidebarVisible = true;
-    // Workstream I additions. Defaults represent "no captured state"
+    // Later additions. Defaults represent "no captured state"
     // so an entry written by an older Trailer still loads cleanly.
     ZoomMode zoomMode = ZoomMode::Custom;
     SidebarMode sidebarMode = SidebarMode::Hidden;
@@ -88,15 +88,15 @@ class RecentFiles {
     // Most-recent-first entries whose path currently exists on disk,
     // capped to `limit`. For native OS recents surfaces (the macOS Dock
     // icon menu / system Recent Documents list — see
-    // src/platform/DockRecents.h) that can't grey out or tooltip a dead
-    // entry the way Trailer's own File > Open Recent menu does (G3):
-    // offering a path Trailer already knows is gone would be a lying
-    // control in chrome Trailer doesn't render. Trailer's own in-app menu
-    // deliberately keeps missing entries as-is (entries()) — opening one
-    // surfaces a normal "file not found" error, which is an acceptable
-    // popup for a genuinely missing file, not a disabled-control case.
-    // Entries are already de-duplicated by add()'s own invariant, so no
-    // further de-dup happens here. `limit <= 0` returns an empty list.
+    // src/platform/DockRecents.h) that, unlike an in-app menu, can't grey
+    // out or tooltip a dead entry: offering a path Trailer already knows
+    // is gone would be a lying control in chrome Trailer doesn't render.
+    // Trailer's own in-app menu deliberately keeps missing entries as-is
+    // (entries()) — opening one surfaces a normal "file not found" error,
+    // which is an acceptable popup for a genuinely missing file, not a
+    // disabled-control case. Entries are already de-duplicated by add()'s
+    // own invariant, so no further de-dup happens here. `limit <= 0`
+    // returns an empty list.
     QList<RecentEntry> existingEntries(int limit) const;
 
     QList<RecentEntry> entries() const { return m_entries; }

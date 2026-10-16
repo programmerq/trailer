@@ -55,8 +55,8 @@ struct DocumentSnapshot {
     // dimensions" after a 504x375 JPEG-at-80%-zoom bug needed a separate
     // `mediainfo` run to diagnose) -----------------------------------
     // Natural pixel size for an Image document. Empty (QSize::isEmpty())
-    // when genuinely unknown — either the async decode (ADR 0008) hasn't
-    // produced even a header-size estimate yet, or the file failed to
+    // when genuinely unknown — either the async decode hasn't produced
+    // even a header-size estimate yet, or the file failed to
     // decode. Always empty for non-Image documents; PDFs report their page
     // size in POINTS below instead, deliberately kept in a separate field
     // so formatMarkdown can never print an ambiguous bare "612 x 792" that
@@ -103,9 +103,8 @@ struct DocumentSnapshot {
     // 365-page manual that mixes native and scanned pages. These two
     // fields are the per-page (not per-document) decomposition —
     // deliberately scoped to what is cheaply and reliably computable; see
-    // formatMarkdown for how they combine into a labeled inference, and
-    // docs/backlog/2026-07-31-pdf-text-render-mode-detection.md for the
-    // deeper (deferred) question these do NOT answer.
+    // formatMarkdown for how they combine into a labeled inference.
+    // todo/2026-10-15-problem-report-ocr-text: they can't yet tell visible text from an invisible OCR layer.
     //
     // IDocument::pageHasText() for the CURRENTLY DISPLAYED page: true iff
     // Qt's PDF text extraction (QPdfDocument::getAllText) returns

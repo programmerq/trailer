@@ -103,12 +103,11 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
     tabs->setObjectName(QStringLiteral("tabWidget"));
     // Tabs grow with settings: only add a tab once it has >=1 real, wired,
     // operable control — never an empty placeholder. Each addTab() below
-    // gates on that (General / Files / Machine Learning / Advanced all
+    // gates on that (General / Files / Machine Learning / Updates / Advanced all
     // carry live controls today; a Forms tab, for instance, waits until a
     // Forms setting is wired). The rule is locked by
     // tests/uat/test_uat_preferences.cpp
-    // (uat_pref_020_everyVisibleTabHasEnabledOperableControl) and noted in
-    // docs/CONVENTIONS.md §15.
+    // (uat_pref_020_everyVisibleTabHasEnabledOperableControl).
 
     // A labelled row whose field control sits next to a compact,
     // right-aligned revert icon so every row shares one right edge.
@@ -167,10 +166,9 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
         // Live control: the selection is applied app-wide on OK via
         // Application::applyTheme (System follows the OS; Light/Dark force
         // the scheme), so the combo is enabled and honest — no "not applied
-        // yet" note. Supersedes docs/decisions/0004 (see
-        // docs/decision-records/2026-07-20-theme-applies-live.md). Theme has
-        // no per-row revert control by design; reserve the reset-column
-        // width so its right edge lines up with the resettable rows below.
+        // yet" note. Theme has no per-row revert control by design; reserve
+        // the reset-column width so its right edge lines up with the
+        // resettable rows below.
         auto *themeField = new QWidget(page);
         auto *themeRow = new QHBoxLayout(themeField);
         themeRow->setContentsMargins(0, 0, 0, 0);
@@ -297,7 +295,7 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
         m_manageModelsButton->setEnabled(false); // enabled once a callback is set
         // Defensive: in the shipped path a callback is always wired, but if
         // one is never set the button stays disabled — explain why rather
-        // than presenting a dead control with no affordance (latent G3).
+        // than presenting a dead control with no affordance.
         m_manageModelsButton->setToolTip(
             tr("Model management is unavailable in this context."));
         connect(m_manageModelsButton, &QPushButton::clicked, this, [this]() {
@@ -310,15 +308,12 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
     }
 
     // ---- Updates -----------------------------------------------------
-    // See DESIGN.md §6.13 (Updates row added 2026-07-30) and
-    // docs/decision-records/2026-07-30-nightly-auto-update-channel.md.
-    // Auto-check defaults OFF (PHILOSOPHY: no new outbound network call
-    // without an explicit, off-by-default toggle); the channel and
-    // auto-check checkbox are ordinary batched-on-OK settings, but Check
-    // Now / Download & Install / Install & Relaunch are LIVE actions
-    // (like Manage Models…) that call straight into UpdateManager —
-    // wired via setUpdateManager(), disabled with an explanatory tooltip
-    // until then (G3).
+    // Auto-check defaults OFF: an update check is an outbound network
+    // call, so it is opt-in. The channel and auto-check checkbox are
+    // ordinary batched-on-OK settings, but Check Now / Download &
+    // Install / Install & Relaunch are LIVE actions (like Manage Models…)
+    // that call straight into UpdateManager — wired via
+    // setUpdateManager(), disabled with an explanatory tooltip until then.
     {
         auto *page = new QWidget(this);
         auto *form = new QFormLayout(page);
@@ -327,11 +322,9 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
         m_updatesChannelCombo->setObjectName(QStringLiteral("updatesChannelCombo"));
         m_updatesChannelCombo->addItem(tr("Nightly"), QStringLiteral("nightly"));
         m_updatesChannelCombo->addItem(tr("Stable"), QStringLiteral("stable"));
-        // Stable has no signed feed yet (release.yml doesn't publish one
-        // — only nightly.yml does today). Present-but-disabled rather
-        // than absent, so the control's shape doesn't need to change
-        // when the stable feed is wired (G3: the tooltip states why AND
-        // where the status lives).
+        // Stable has no signed feed yet (release.yml doesn't publish one;
+        // only nightly.yml does). todo/2026-10-15-disabled-placeholders removes this placeholder; todo/2026-10-15-stable-channel-unsigned
+        // publishes the stable feed.
         const auto *stableModel = m_updatesChannelCombo->model();
         const int stableIndex = m_updatesChannelCombo->findData(QStringLiteral("stable"));
         if (stableIndex >= 0) {
@@ -340,8 +333,7 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
             if (itemModel) {
                 if (QStandardItem *item = itemModel->item(stableIndex)) {
                     item->setEnabled(false);
-                    item->setToolTip(tr("Stable-channel updates aren't published yet — "
-                                        "see ROADMAP.md \"Signed-update channel\". "
+                    item->setToolTip(tr("Stable-channel updates aren't published yet. "
                                         "Nightly is available today."));
                 }
             }
@@ -384,16 +376,15 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
         m_updatesStatusLabel->setObjectName(QStringLiteral("updatesStatusLabel"));
         m_updatesStatusLabel->setWordWrap(true);
         // Reserve the label's tallest state so the Check Now button below
-        // it never moves as the status text changes (G10, spatial
-        // constancy). Without this the button sits one line higher while
-        // the status reads "Never checked." and drops as soon as a check
-        // starts ("Checking for updates…\nFetching: <url>"), i.e. it
-        // slides out from under the pointer at the exact moment the user
-        // has just clicked it. Three lines is the tallest any branch of
-        // refreshUpdatesStatus() produces (the no-signing-key message
-        // wraps to three at this dialog's minimum width); derived from
-        // the live font rather than a pixel literal so it holds at any
-        // text scale.
+        // it never moves as the status text changes. Without this the
+        // button sits one line higher while the status reads "Never
+        // checked." and drops as soon as a check starts ("Checking for
+        // updates…\nFetching: <url>"), i.e. it slides out from under the
+        // pointer at the exact moment the user has just clicked it. Three
+        // lines is the tallest any branch of refreshUpdatesStatus()
+        // produces (the "Checking…" text, once a long appcast URL wraps at
+        // this dialog's minimum width); derived from the live font rather
+        // than a pixel literal so it holds at any text scale.
         m_updatesStatusLabel->setMinimumHeight(
             m_updatesStatusLabel->fontMetrics().lineSpacing() * 3);
         m_updatesStatusLabel->setAlignment(Qt::AlignLeft | Qt::AlignTop);
@@ -431,7 +422,7 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
         auto *form = new QFormLayout(page);
 
         auto *note = new QLabel(
-            tr("Erase all Trailer settings, recent files, saved AutoFill cards, "
+            tr("Erase all Trailer settings, recent files, "
                "saved signatures and downloaded models, and return every "
                "preference to its default. This deletes real files on disk and "
                "cannot be undone."),
@@ -445,7 +436,7 @@ PreferencesDialog::PreferencesDialog(Settings &settings, QWidget *parent)
         m_resetAllButton->setEnabled(false); // enabled once a callback is set
         // Defensive: in the shipped path a callback is always wired, but if
         // one is never set the button stays disabled — explain why rather
-        // than presenting a dead control with no affordance (latent G3).
+        // than presenting a dead control with no affordance.
         m_resetAllButton->setToolTip(
             tr("Resetting all settings and data is unavailable in this context."));
         connect(m_resetAllButton, &QPushButton::clicked, this, [this]() {
@@ -511,10 +502,9 @@ void PreferencesDialog::refreshUpdatesStatus() {
     // No signing key compiled in (every ordinary local build, PR, and
     // fork — see cmake/UpdatePublicKey.h.in): this build can never
     // verify a feed. Say so and disable the button, rather than offering
-    // a "Check Now" that can only fail (G3). The button keeps its label
-    // and — thanks to the status label's reserved height above — its
-    // exact position, so this branch is a text-and-enabled-state change
-    // only (G10).
+    // a "Check Now" that can only fail. The button keeps its label and —
+    // thanks to the status label's reserved height above — its exact
+    // position, so this branch is a text-and-enabled-state change only.
     if (!Update::UpdateManager::isChannelProvisioned()) {
         // Kept to two lines at this dialog's MINIMUM width on purpose:
         // the label reserves three lines (see its construction above) and
@@ -542,8 +532,8 @@ void PreferencesDialog::refreshUpdatesStatus() {
     case State::Checking:
         // Discloses the exact URL about to be fetched, before the fetch
         // completes — same consent framing as ModelDownloader's
-        // show-the-URL-before-downloading dialog (AGENTS.md
-        // "Networking"). checkStarted (which sets lastCheckUrl) fires
+        // show-the-URL-before-downloading dialog (AGENTS.md, Hard
+        // constraints). checkStarted (which sets lastCheckUrl) fires
         // before UpdateChecker issues the actual GET, so this text is
         // in place before any bytes move.
         m_updatesStatusLabel->setText(

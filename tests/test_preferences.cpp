@@ -166,8 +166,7 @@ void TestPreferences::perFieldReset() {
     QCOMPARE(s2.autoSave(), false);  // still the mutated value
 }
 
-// The Theme control is now live-wired (docs/decision-records/
-// 2026-07-20-theme-applies-live.md, superseding docs/decisions/0004): the
+// The Theme control is live-wired (a choice applies without a restart): the
 // combo is enabled and the old "not applied yet" helper label is gone.
 void TestPreferences::themeControlEnabled() {
     QTemporaryDir dir;

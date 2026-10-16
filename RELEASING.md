@@ -1,15 +1,16 @@
 # Releasing Trailer
 
-Maintainer runbook for cutting a tagged Trailer release. The
-underlying *why* — what each workflow does, why tag-after-merge,
-why squash merges break the contract — lives in [README's "Release
-process" section](README.md#release-process). This doc is the
-operational checklist plus the recovery paths.
+Maintainer runbook for cutting a tagged release, plus dev builds, nightlies and the
+update-signing key. The shape: the heavy per-OS builds and the full UAT run only on a pull
+request labelled `release-candidate`. When that PR merges, `release-autotag.yml` tags its HEAD
+and `release-publish.yml` publishes the artifacts that run already built, without rebuilding,
+so the bytes users get are the bytes the PR tested. That is why the merge must keep the PR's
+HEAD commit (no squash).
 
 If you are an AI agent and were just asked to cut a release: stop
-and ask the maintainer. Releases involve pushing tags, publishing
+and ask the owner. Releases involve pushing tags, publishing
 to GitHub Releases, and committing to bytes users will install.
-The maintainer makes those calls.
+The owner makes those calls.
 
 ---
 
@@ -38,15 +39,15 @@ Pick the version number **at release time**, not in advance. Apply
 - **In 0.x**, a backward-incompatible change to user-visible
   behaviour, on-disk formats (settings, signature layout, recent-
   files schema, annotation persistence), the `IDocument`
-  interface, or the CLI surface bumps the **minor**. Until 1.0 we
-  permit that on minor bumps — see [PHILOSOPHY.md](PHILOSOPHY.md)
-  "What 1.0 means."
+  interface, or the CLI surface bumps the **minor**. Until 1.0 that
+  is allowed on any minor bump: "stable" is a goal, not a claim.
 - **Backward-compatible feature work** can also bump the minor in
   0.x, or sit alongside fixes in a patch — judgment call.
 - **Bugfix-only releases** bump the **patch**: `0.2.0 → 0.2.1`.
-- **1.0** is declared when on-disk formats and public APIs have
-  been stable for one or two minor cycles without thrash, *not* on
-  a calendar date. See PHILOSOPHY.md.
+- **1.0** is declared when PRODUCT.md's seven jobs and its
+  "Before 1.0, also" list pass, and on-disk formats, menus,
+  shortcuts and defaults have been stable for one or two minor
+  cycles without thrash, *not* on a calendar date.
 
 Don't plan toward a future version number ("ship X by 0.3.0") —
 let the version fall out of the diff.
@@ -157,7 +158,8 @@ before clicking.
 
 Open the Release in the GitHub UI and confirm:
 
-- All three platform artifacts are attached.
+- All six artifacts are attached: the Linux tarball, .deb and
+  .rpm, the Windows zip and .msi, and the macOS DMG.
 - The body shows the CHANGELOG section for this version (not the
   fallback boilerplate).
 - The macOS install command shows `Trailer.app` (Title Case) and
@@ -218,8 +220,10 @@ without cutting a tag.
   the run instead of a Release. The `build_linux` / `build_windows` /
   `build_macos` booleans pick which OSes to build — e.g. a mac-only
   dev build sets `build_macos` true and the other two false. (Adding
-  the `dev-build` label to a PR builds Linux + Windows; macOS is
-  dispatch-only because its runners bill at 10×.)
+  the `dev-build` label to a PR builds Linux and Windows. macOS is
+  dispatch-only because it runs on the owner's one self-hosted Mac,
+  which also hosts the checks that need real hardware, so PR labels
+  mustn't queue on it.)
 
 ---
 
@@ -229,23 +233,17 @@ without cutting a tag.
 (10:00 UTC daily) signal channel — distinct from both dev builds and a
 tagged release:
 
-- It runs the **full test suite** (unit tests **and** UAT, `ctest -L uat`)
-  on **all three OSes** every night: Linux native, Windows via the
-  existing Wine cross-build workers, and macOS on the owner's self-hosted
-  Apple Silicon runner (`[self-hosted, macOS, ARM64]`) — the same runner
-  `dev-build.yml`'s `dev-macos` job targets. macOS UAT and Windows UAT are
-  both **new** coverage nightly adds; neither runs anywhere else today.
-- **Partial success**: an OS lane's artifact is published only if that
-  lane's build **and** its gating tests pass. A lane failing does not
-  block the other two lanes' artifacts — the mac runner going offline for
-  hours is expected and never holds up Linux/Windows. One deliberate
-  exception: Windows' Wine UAT is **non-gating** (owner decision,
-  2026-07-24) — a real Windows CI runner doesn't exist yet, Wine is a
-  stand-in, and Wine UAT's own quirks (bootstrap run 30104846942 found
-  17/40 failures — see `docs/backlog/2026-07-24-wine-uat-failures-
-  triage.md`) shouldn't block a build+unit-green Windows artifact. The
-  Wine UAT pass count still surfaces, non-silently, as an informational
-  ⚠️ annotation on the release body's Windows row.
+- It runs the **full test suite** (unit tests **and** UAT) on **all
+  three OSes**, in parallel: Linux, Windows through the Wine
+  cross-build, and macOS on a hosted Apple Silicon runner
+  (`macos-14`).
+- **Partial success**: a lane's artifact is published only if its
+  build and its gating tests pass, and a failing lane never holds
+  back the others. Two UAT steps don't gate: Windows' Wine UAT
+  (Wine stands in for a real Windows runner, [CI tests Windows only under Wine, and most of CI guards process, not the product](todo/2026-10-15-ci-windows-only-under-wine.md)) and macOS UAT
+  ([The macOS UAT crashes in recognize-text on hosted runners](todo/2026-10-15-macos-uat-ocr-crash.md)). Their pass
+  counts still appear in the release body, and a final step turns
+  the run red when either is worse than the previous nightly's.
 - Each successful night is tagged `nightly-YYYYMMDD` (immutable, one per
   night, never rewritten) and published as a **prerelease**, with a
   per-OS ✅/❌ status table and a `scripts/release-notes.sh`-generated
@@ -258,19 +256,10 @@ tagged release:
   (`gh release delete`, no `--cleanup-tag`); the git tags themselves are
   never deleted, so `nightly-YYYYMMDD..HEAD` diffing and bisecting stay
   possible indefinitely.
-- A `nightly-date` job resolves today's UTC date and a concurrency key once,
-  before any lane starts, and every lane + the publish job carry a
-  job-level `concurrency:` keyed off it: same-day real runs (the schedule,
-  or a manual `dry_run:false` dispatch) serialize instead of double-booking
-  the single-instance mac runner; different days never contend, so one
-  night's stuck mac wait can't block the next.
-- Linux and Windows are serialized on the shared `trailer-k8s` pool
-  (Windows `needs:` Linux and waits for it to finish, success or not) —
-  running both simultaneously alongside a routine `ci.yml` PR-validate run
-  evicted pods and stalled the pool for ~90 minutes the first time this
-  ran (2026-07-24). Nightly has no latency requirement, so trading
-  parallelism for a safe peak footprint costs nothing. The self-hosted
-  macOS lane is unaffected and stays fully parallel.
+- A `nightly-date` job resolves the UTC date once, before any lane
+  starts. Real runs on the same day share one concurrency key per
+  lane, so a manual dispatch can't double-publish alongside the
+  scheduled run; different days never contend.
 - Nightly never touches `VERSION`, never tags a `v*` release, and does
   not modify `release.yml` / `release-publish.yml` / `release-autotag.yml`
   — it is purely additive.
@@ -279,6 +268,34 @@ tagged release:
   the Release, and the retention cleanup (previewed in the run's step
   summary instead). Pass `dry_run: false` to cut a real nightly on
   demand rather than waiting for the schedule.
+
+---
+
+## Update-signing key
+
+Every build trusts one ed25519 public key, embedded at build time and
+never fetched at runtime, so a compromised feed host can't name its own
+key.
+
+- The private key is the `TRAILER_UPDATE_SIGNING_KEY` GitHub Actions
+  secret: the base64 of a PEM made with
+  `openssl genpkey -algorithm ed25519 -out key.pem` (OpenSSL 3.x;
+  macOS's LibreSSL can't, see `scripts/find-openssl-ed25519.sh`), stored
+  as `base64 < key.pem | tr -d '\n'`. Keep a second copy in a password
+  manager: losing the key strands every installed build on its current
+  version.
+- `nightly.yml` derives the public key from that secret with
+  `scripts/derive-update-pubkey.sh --base64 -` and passes it to every
+  nightly lane as `-DTRAILER_UPDATE_PUBKEY`, so the trusted key and the
+  signing key can't disagree. Nothing is committed. A build without it
+  (local, PR, fork, and tagged releases until [The stable update channel isn't signed](todo/2026-10-15-stable-channel-unsigned.md)) has no update
+  channel, and Check for Updates is disabled with a tooltip. To make an update-capable local build:
+  `-DTRAILER_UPDATE_PUBKEY="$(scripts/derive-update-pubkey.sh key.pem)"`.
+- `nightly.yml` signs `appcast-nightly.json` with
+  `scripts/sign-update-feed.sh`. Without the secret that step warns and
+  skips, and the night ships with no feed.
+- Rotation isn't built. The plan: before switching keys, publish a
+  "new public key" entry signed by the old key.
 
 ---
 
@@ -293,7 +310,7 @@ tagged commit. Two common causes:
 - **A maintainer tagged a non-PR commit by hand** (e.g. `git tag
   v0.2.0` on `main` after the fact).
 
-Recovery, from the README:
+Recovery:
 
 ```sh
 gh workflow run Release --ref=<SHA>
@@ -332,10 +349,9 @@ gh release edit v0.1.0 --notes-file -  <<'EOF'
 EOF
 ```
 
-### CI minutes blew up
+### A release build keeps failing
 
-The release pipeline burns macOS minutes (10× Linux rate). If a
-build is failing and you keep pushing fixes:
+Each push to a labelled PR reruns the whole matrix. While you iterate:
 
 - Remove the `release-candidate` label between attempts to pause
   the heavy jobs; the `labeled` event re-triggers them on next
@@ -347,34 +363,18 @@ build is failing and you keep pushing fixes:
 
 ## Things to keep an eye on
 
-- **Auto-updater integration.** **Wired for the nightly channel**
-  (2026-07-30, see
-  [`docs/decision-records/2026-07-30-nightly-auto-update-channel.md`](docs/decision-records/2026-07-30-nightly-auto-update-channel.md)):
-  a custom checker (`src/update/`), not Sparkle, verifying an
-  ed25519-signed feed. `nightly.yml`'s "Build + sign nightly update
-  feed" step (right after "Create tag + GitHub Release") signs and
-  uploads `appcast-nightly.json` as a release asset on the same
-  nightly release. **The tagged-release path (`release.yml`) does
-  not do this yet** — the Preferences → Updates channel selector
-  shows "Stable" present-but-disabled until a signing step is added
-  here, mirroring nightly's, likely between (7) and (8) above. When
-  that lands: the same `scripts/sign-update-feed.sh` /
-  `scripts/build-nightly-appcast-payload.py` pattern applies (rename
-  or generalize the payload builder), and the private key secret
-  (`TRAILER_UPDATE_SIGNING_KEY`) needs to be available to
-  `release-publish.yml` as well as `nightly.yml`. Note the stable
-  lane will also need the public key threaded into its build the way
-  `nightly.yml` does it (derive once with
-  `scripts/derive-update-pubkey.sh`, pass `-DTRAILER_UPDATE_PUBKEY`
-  to every lane) — a release binary built without it ships with the
-  update channel compiled out.
+- **Stable update channel ([The stable update channel isn't signed](todo/2026-10-15-stable-channel-unsigned.md)).** Only `nightly.yml` signs a
+  feed (`appcast-nightly.json`, with `scripts/sign-update-feed.sh`).
+  The tagged-release path needs the same step, with
+  `scripts/build-nightly-appcast-payload.py` generalized, the
+  `TRAILER_UPDATE_SIGNING_KEY` secret available to
+  `release-publish.yml`, and the public key passed to every release
+  lane as above. Until then a release build has Check for Updates
+  disabled, and Preferences shows a disabled Stable choice ([The UI shows disabled placeholders](todo/2026-10-15-disabled-placeholders.md)).
 - **Notarized macOS builds.** Off the table indefinitely — Trailer
   is not in the Apple Developer Program. If that ever changes, a
   signing + notarization step plugs in between `make release` and
   the artifact upload in CI.
-- **Intel Mac binary.** When ML-disabled mode or a third-party
-  ONNX x86_64 build lands, the macOS artifact list grows by one
-  and `release-publish.yml`'s rename map needs the new entry.
 - **CHANGELOG drift.** If contributors forget to update
   `[Unreleased]`, `scripts/release-notes.sh v$PREV..HEAD` will
   surface what's missing — the script reads `git log`, not

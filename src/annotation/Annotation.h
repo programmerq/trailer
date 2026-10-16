@@ -25,9 +25,9 @@ enum class AnnotationTool {
     HighlightShape, // translucent filled rectangle (non-text)
     SpeechBubble,
     ZoomLens,
-    Signature, // drag-place a saved signature PNG (§6.4.3)
+    Signature, // drag-place a saved signature PNG
     Redaction, // paints over a region; flattened permanently on save
-    // SAM-driven segmentation tools (DESIGN §6.3.3 / §6.3.6).
+    // SAM-driven segmentation tools.
     // These do not produce an annotation in AnnotationStore; instead
     // they drive a live-preview mask on the overlay and commit a
     // pixel mutation via ImageDocument::replaceImage/cropToRect.
@@ -35,14 +35,12 @@ enum class AnnotationTool {
     // as the drawing tools.
     InstantAlpha, // single positive prompt; alpha-cut on release
     SmartLasso,   // multi-point prompt; crop-to-object on commit
-    // Direct-manipulation page crop (backlog
-    // 2026-07-15-crop-pages-direct-manipulation). Like the SAM tools
-    // above, this does NOT produce an annotation in AnnotationStore:
-    // it draws a page-anchored crop rectangle with a live dimmed
-    // preview and, on commit (Enter), emits AnnotationOverlay::
-    // cropCommitted(docRect, page) which MainWindow turns into a
-    // CropPageCommand. Appended at the end so existing ordinals are
-    // untouched.
+    // Direct-manipulation page crop. Like the SAM tools above, this does
+    // NOT produce an annotation in AnnotationStore: it draws a
+    // page-anchored crop rectangle with a live dimmed preview and, on
+    // commit (Enter), emits AnnotationOverlay::cropCommitted(docRect, page)
+    // which MainWindow turns into a CropPageCommand. Appended at the end
+    // so existing ordinals are untouched.
     CropRect,
 };
 

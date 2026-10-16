@@ -304,9 +304,9 @@ QImage TwoPageView::renderPageImage(int pageIndex) const {
     const double lh = pts.height() * m_zoom;
     // Render at pts x zoom x dpr DEVICE pixels, then stamp dpr so the image
     // occupies lw x lh LOGICAL pixels — crisp at HiDPI, identical logical
-    // geometry as 1x (record clause 4). Rendering at the logical size and
-    // letting the painter upscale by dpr would blur on Retina — the exact
-    // regression the dpr-matrix UAT guards.
+    // geometry as 1x. Rendering at the logical size and letting the painter
+    // upscale by dpr would blur on Retina — the exact regression the
+    // dpr-matrix UAT guards.
     const QSize devPx(std::max(1, static_cast<int>(std::ceil(lw * dpr))),
                       std::max(1, static_cast<int>(std::ceil(lh * dpr))));
     QPdfDocumentRenderOptions opts;
@@ -328,11 +328,10 @@ void TwoPageView::paintEvent(QPaintEvent *event) {
     // convention every mainstream PDF viewer follows against a typically-
     // white page — but falls back to ::Base whenever ::Dark would resolve
     // LIGHTER than it, which is the reported "grey that's too light in
-    // dark mode" bug: DR 2026-07-31-document-surround-colour-follows-base).
-    // Read live off the palette every paint (no cached/pinned colour), so a
-    // runtime theme flip (PR #105) needs no extra refresh plumbing here —
-    // unlike QPdfView, which pins the role and must be told to re-derive it
-    // (see PdfDocument::refreshViewPalette).
+    // dark mode" bug). Read live off the palette every paint (no
+    // cached/pinned colour), so a runtime theme flip needs no extra refresh
+    // plumbing here — unlike QPdfView, which pins the role and must be told
+    // to re-derive it (see PdfDocument::refreshViewPalette).
     painter.fillRect(event->rect(), documentSurroundColor(viewport()->palette()));
     if (!m_doc || m_spreads.empty() || m_doc->status() != QPdfDocument::Status::Ready)
         return;

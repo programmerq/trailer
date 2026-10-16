@@ -1,21 +1,21 @@
 // UAT harness — the two user-visible surfaces that change when a build
-// has no update-signing key (see
-// docs/decision-records/2026-08-02-update-pubkey-from-signing-secret.md):
+// has no update-signing key (configured without TRAILER_UPDATE_PUBKEY,
+// so it can't verify a signed update):
 //
 //   1. Help ▸ Check for Updates…  — present but DISABLED, with a tooltip
-//      saying why and where to go (G3).
+//      saying why and where to go.
 //   2. Preferences ▸ Updates      — the status line explains the build
 //      has no key; the action button keeps its place and label and is
-//      disabled with a tooltip (G3 + G10: nothing moves).
+//      disabled with a tooltip, so nothing moves.
 //
 // Both states are a compile-time property of the binary
 // (Update::kUpdateChannelProvisioned), so this file asserts whichever
 // state the build it was compiled into actually has, and each slot works
 // in both. Run the SAME binary from an unprovisioned build tree and from
-// one configured with -DTRAILER_UPDATE_PUBKEY=<hex> to produce the G2
-// pair.
+// one configured with -DTRAILER_UPDATE_PUBKEY=<hex> to produce the
+// before/after screenshot pair.
 //
-// When TRAILER_UPDATE_KEY_EVIDENCE_DIR is set it also writes curated
+// When TRAILER_UPDATE_KEY_EVIDENCE_DIR is set it also writes uncommitted
 // offscreen grab() PNGs, matching the TRAILER_PREF_EVIDENCE_DIR /
 // TRAILER_DEFERENCE_EVIDENCE_DIR convention used elsewhere in this suite
 // (no env var set => no files written, no assertions skipped).
@@ -67,7 +67,7 @@ QString evidenceDir() {
 }
 
 // Filenames carry the build's own state so the two runs that make up the
-// G2 pair cannot overwrite each other when pointed at one directory.
+// screenshot pair cannot overwrite each other when pointed at one directory.
 QString variant() {
     return Update::kUpdateChannelProvisioned ? QStringLiteral("with-key")
                                              : QStringLiteral("no-key");
@@ -106,8 +106,8 @@ void TestUatUpdateKeyEvidence::init() {
 }
 
 // UAT-UPD-001 — the menu item exists in BOTH states (never removed, so
-// nothing below it shifts: G10) and is enabled exactly when this build
-// can actually verify an update (G3).
+// nothing below it shifts) and is enabled exactly when this build can
+// actually verify an update.
 void TestUatUpdateKeyEvidence::uat_helpMenuCheckForUpdatesMatchesProvisioning() {
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
@@ -135,9 +135,9 @@ void TestUatUpdateKeyEvidence::uat_helpMenuCheckForUpdatesMatchesProvisioning() 
     QCOMPARE(check->isEnabled(), Update::kUpdateChannelProvisioned);
 
     if (!Update::kUpdateChannelProvisioned) {
-        // G3: disabled is not enough — it must say why, and where to go.
+        // Disabled is not enough — it must say why, and where to go.
         QVERIFY2(!check->toolTip().isEmpty(),
-                 "A disabled Check for Updates… must carry a tooltip explaining why (G3)");
+                 "A disabled Check for Updates… must carry a tooltip explaining why");
         QVERIFY(check->toolTip().contains(QStringLiteral("update-signing key")));
     }
 
@@ -160,7 +160,7 @@ void TestUatUpdateKeyEvidence::uat_helpMenuCheckForUpdatesMatchesProvisioning() 
 
 // UAT-UPD-002 — the Updates pane's action button keeps its place and its
 // label in both states; only its enabled state and the status text
-// differ (G10), and when disabled it explains itself (G3).
+// differ, and when disabled it explains itself.
 void TestUatUpdateKeyEvidence::uat_preferencesUpdatesPaneMatchesProvisioning() {
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app);
@@ -194,8 +194,8 @@ void TestUatUpdateKeyEvidence::uat_preferencesUpdatesPaneMatchesProvisioning() {
     QApplication::processEvents();
 }
 
-// UAT-UPD-003 — G10 (spatial constancy), asserted as geometry rather
-// than eyeballed from a screenshot, per that gate's evidence rule.
+// UAT-UPD-003 — the Check Now button must not move when the status text
+// changes, asserted as geometry rather than eyeballed from a screenshot.
 //
 // The Updates pane's status line legitimately varies in height: one line
 // for "Never checked.", two while a check is running ("Checking for
@@ -258,7 +258,7 @@ void TestUatUpdateKeyEvidence::uat_updatesButtonDoesNotMoveAsStatusTextChanges()
                 QVERIFY2(pos == reference,
                          qPrintable(QStringLiteral(
                              "Check Now moved from y=%1 to y=%2 at width %3 when the status "
-                             "text changed to \"%4\" (G10)")
+                             "text changed to \"%4\"")
                                         .arg(reference.y())
                                         .arg(pos.y())
                                         .arg(width)

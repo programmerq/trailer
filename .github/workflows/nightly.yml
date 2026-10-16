@@ -15,17 +15,14 @@
 #     fail the job (no `continue-on-error`) succeeded — partial-success
 #     semantics fall out of ordinary step `if: success()` with no extra
 #     pass/fail plumbing. TWO deliberate exceptions: Windows' "UAT suite
-#     (Wine)" step carries `continue-on-error: true` (owner decision,
-#     2026-07-24) — Wine UAT is informational, not gating, until a real
-#     Windows CI runner exists; see that step's comment and
-#     docs/backlog/2026-07-24-wine-uat-failures-triage.md. macOS's "UAT
-#     suite" step carries the same `continue-on-error: true` (owner
-#     decision, 2026-07-26) — the mac lane is brand new (PR #120/#121,
-#     2026-07-24) and its UAT has never once passed, so gating on it would
-#     withhold an otherwise-green macOS build indefinitely; see that step's
-#     comment and docs/backlog/2026-07-26-macos-uat-triage.md. Both lanes'
-#     real pass counts still surface, non-silently, in the release body's
-#     status table (never just dropped);
+#     (Wine)" step carries `continue-on-error: true` — Wine UAT is
+#     informational, not gating, until a real Windows CI runner exists
+#     (todo/2026-10-15-ci-windows-only-under-wine); see that step's comment. macOS's "UAT suite" step carries the
+#     same `continue-on-error: true` — its UAT has never once passed
+#     (todo/2026-10-15-macos-uat-ocr-crash), so gating on it would withhold an otherwise-green macOS build
+#     indefinitely; see that step's comment. Both lanes' real pass counts
+#     still surface, non-silently, in the release body's status table
+#     (never just dropped);
 #   - tags each successful night `nightly-YYYYMMDD` (immutable, one per
 #     night — never a rolling/force-moved tag) and carries a semi-automated
 #     "since last nightly" summary (scripts/release-notes.sh over the
@@ -130,16 +127,14 @@
 #     passing than last night is worse, more is better, equal is
 #     unchanged. The suite TOTAL is reported beside the verdict as a note
 #     ("+1 test added") but never affects it.
-#     This replaced a pass-RATIO comparison on 2026-08-02. The ratio axis
-#     reds a run as REGRESSED when a FAILING TEST IS ADDED and nothing
-#     actually regressed — which is precisely this repo's documented
-#     workflow (AGENTS.md "CI cadence": every confirmed defect lands as a
-#     regression guard, written red, before the fix). It produced a false
-#     REGRESSED on nightly-20260801's macOS lane (40/41 → 40/42, pass
-#     count flat). Absolute-count comparison has a narrower residual
-#     blind spot — a regression masked by a new passing test the same
-#     night — tracked in
-#     docs/backlog/2026-08-02-uat-ratchet-per-test-identity.md.
+#     This replaced a pass-RATIO comparison. The ratio axis reds a run as
+#     REGRESSED when a FAILING TEST IS ADDED and nothing actually
+#     regressed — which is exactly what happens when a confirmed defect's
+#     test lands red before its fix. It produced a false REGRESSED on
+#     nightly-20260801's macOS lane (40/41 → 40/42, pass count flat).
+#     Absolute-count comparison has a narrower residual blind spot — a
+#     regression masked by a new passing test the same night. todo/2026-10-15-uat-ratchet-counts: compare
+#     per-test identity instead.
 #   - Degrade gracefully, always: no previous release, no asset on it, an
 #     asset that fails to parse, or a previous night where the lane itself
 #     wasn't green — all collapse to `no_baseline`, which is never `worse`.
@@ -152,7 +147,7 @@
 #     immediately-previous nightly (a sliding window), not a historical
 #     high-water mark, so a long-standing, already-triaged bad count (e.g.
 #     Wine's steady ~21/40) reads as `same` and stays green night after
-#     night instead of alarming forever for a known, already-backlogged
+#     night instead of alarming forever for a known, already-tracked
 #     issue — the same reasoning that made these two lanes non-gating in
 #     the first place.
 #   - A lane going from present to ABSENT (job cancelled, runner
@@ -164,7 +159,7 @@
 #   - The release body's per-OS table states the comparison outcome in
 #     words (e.g. "unchanged vs nightly-20260728", "REGRESSED from 40/40")
 #     alongside the existing ✅/⚠️/🔥 count — the release stays the human-
-#     readable record, per G2's spirit.
+#     readable record.
 #
 # Retention: nightly-* releases (assets) older than ~6 months are deleted by
 # a cleanup step in nightly-publish (`gh release delete`, no `--cleanup-tag`
@@ -276,7 +271,7 @@ permissions:
 jobs:
   nightly-date:
     name: Resolve nightly date + run mode
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Was 2 when this job was pure shell (no checkout). Now does a
     # fetch-depth:0 checkout (needed for the skip-when-unchanged diff below)
     # — mirroring nightly-publish's identical checkout, which budgets 15 on
@@ -318,8 +313,7 @@ jobs:
         # committed in src/update/UpdatePublicKey.h, and it was a
         # throwaway dev key that no feed was ever signed with — every
         # binary shipped would have rejected every real signature.
-        # See docs/decision-records/2026-08-02-update-pubkey-from-
-        # signing-secret.md.
+        # See RELEASING.md → Update-signing key.
         #
         # WHY THIS JOB: the three build lanes need the key at CONFIGURE
         # time, and they all `needs:` this job, which is the earliest
@@ -455,7 +449,7 @@ jobs:
     # nightly (see the workflow header's "Skip-when-unchanged" section) —
     # this is the runner-time win the skip check exists for.
     if: needs.nightly-date.outputs.skip != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     concurrency:
       # Same-UTC-day REAL runs (scheduled + any manual dry_run:false
@@ -477,8 +471,8 @@ jobs:
       #
       # CTEST_PARALLEL_LEVEL stays 1 here, deliberately and unchanged.
       # This is the ONE lane that runs the full `ctest -L uat` tier, and
-      # two offscreen tests are known to fail only under CPU contention
-      # (docs/backlog/2026-08-03-load-sensitive-offscreen-test-races.md).
+      # two offscreen tests are flaky (test_perf_lazy_open, todo/2026-10-15-perf-tests-race, and uat
+      # ocr_ev_20, todo/2026-10-15-recognize-text-silent-on-nothing; see ci.yml's env).
       # A serial test tier is the whole reason the nightly Linux UAT
       # result is trustworthy enough to gate on; widening it to chase a
       # few minutes would trade a hard oracle for a flaky one.
@@ -524,7 +518,7 @@ jobs:
 
       - name: Unit tests
         working-directory: build
-        run: ctest -C Release --output-on-failure --label-exclude uat
+        run: ctest -C Release --output-on-failure --label-exclude 'uat|advisory'
         env:
           QT_QPA_PLATFORM: offscreen
 
@@ -546,7 +540,7 @@ jobs:
           set -euo pipefail
           mkdir -p dist/trailer-linux-x86_64
           cp build/trailer dist/trailer-linux-x86_64/
-          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+          cp LICENSE THIRD_PARTY_LICENSES.md PRODUCT.md README.md \
              dist/trailer-linux-x86_64/
           cp -r licenses/third-party dist/trailer-linux-x86_64/
           (cd dist && tar -czf nightly-trailer-linux-x86_64.tar.gz trailer-linux-x86_64)
@@ -579,7 +573,7 @@ jobs:
     # Skipped whenever nightly-date found no code change since the previous
     # nightly — see nightly-linux's comment above.
     if: needs.nightly-date.outputs.skip != 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # release.yml's windows-cross (build + bundle + unit tests only) budgets
     # 60. UAT adds a second full pass of Wine-emulated test binaries
     # (~2.5-3s startup each under Wine per ci.yml's own note) on top, so
@@ -590,8 +584,7 @@ jobs:
       cancel-in-progress: false
     env:
       # Build level 4 (one job per vCPU on a hosted runner); ctest level
-      # held at 2 rather than raised in lockstep — see ci.yml's env comment
-      # and docs/backlog/2026-08-03-load-sensitive-offscreen-test-races.md.
+      # held at 2 rather than raised in lockstep — see ci.yml's env comment.
       CMAKE_BUILD_PARALLEL_LEVEL: 4
       CTEST_PARALLEL_LEVEL: 2
     outputs:
@@ -645,7 +638,7 @@ jobs:
             bash scripts/build-windows.sh --in-container
           mkdir -p dist/trailer-windows-x86_64/imageformats
           cp "$QT_WIN_DIR"/plugins/imageformats/*.dll dist/trailer-windows-x86_64/imageformats/
-          cp LICENSE THIRD_PARTY_LICENSES.md PHILOSOPHY.md README.md \
+          cp LICENSE THIRD_PARTY_LICENSES.md PRODUCT.md README.md \
              dist/trailer-windows-x86_64/
           cp -r licenses/third-party dist/trailer-windows-x86_64/
 
@@ -677,7 +670,7 @@ jobs:
         # does NOT — this is the one addition nightly makes over CI/release.
         working-directory: build-win
         timeout-minutes: 30
-        run: ctest -C Release --label-exclude 'uat|perf' --output-on-failure
+        run: ctest -C Release --label-exclude 'uat|perf|known-bug|advisory' --output-on-failure
         env:
           WINEPREFIX: ${{ runner.temp }}/wineprefix
           WINEDEBUG: -all
@@ -693,20 +686,18 @@ jobs:
         # so running it under Wine too is a reasonable extension, not a
         # fight with a known hard blocker.
         #
-        # NON-GATING (owner decision, 2026-07-24): bootstrap run 30104846942
-        # found Wine unit tests fully green (57/57) but Wine UAT at 23/40 —
-        # tracked in docs/backlog/2026-07-24-wine-uat-failures-triage.md,
-        # not fixed here. Wine is a stand-in for Windows, not the platform
-        # Trailer ships to, so a UAT regression under Wine emulation
-        # specifically must not block a build+unit-green Windows artifact
-        # from publishing — this becomes a gating step again once a real
-        # Windows CI runner exists. `continue-on-error: true` masks this
-        # step's CONCLUSION to success (so the job's own `result`, and the
-        # `if: success()`-gated staging steps below, are unaffected by a
-        # Wine UAT failure), while the script still captures the REAL
-        # pass/total counts as step outputs (surfaced job-wide via
-        # `outputs:` above) so the count stays visible — informational,
-        # never silent — in nightly-publish's release-body status table.
+        # NON-GATING: bootstrap run 30104846942 found Wine unit tests fully
+        # green (57/57) but Wine UAT at 23/40. Wine is a stand-in for Windows,
+        # not the platform Trailer ships to, so a UAT regression under Wine
+        # emulation specifically must not block a build+unit-green Windows
+        # artifact from publishing. todo/2026-10-15-ci-windows-only-under-wine: gate on UAT from a real Windows runner
+        # instead. `continue-on-error: true` masks this step's CONCLUSION to
+        # success (so the job's own `result`, and the `if: success()`-gated
+        # staging steps below, are unaffected by a Wine UAT failure), while the
+        # script still captures the REAL pass/total counts as step outputs
+        # (surfaced job-wide via `outputs:` above) so the count stays visible —
+        # informational, never silent — in nightly-publish's release-body status
+        # table.
         id: wine_uat
         continue-on-error: true
         working-directory: build-win
@@ -717,9 +708,8 @@ jobs:
           # Shared with nightly-macos' "UAT suite" step — see
           # scripts/parse-ctest-uat-summary.sh for why this isn't a plain
           # "[0-9]+ tests failed" grep (that silently misreports a full
-          # pass as "count unavailable" the day this item's own goal — a
-          # clean Wine UAT run — is reached; fixed 2026-07-26, see
-          # docs/backlog/2026-07-24-wine-uat-failures-triage.md).
+          # pass as "count unavailable" the day a clean Wine UAT run is
+          # reached).
           eval "$(bash "$GITHUB_WORKSPACE/scripts/parse-ctest-uat-summary.sh" /tmp/wine-uat.log)"
           echo "passed=$PASSED" >> "$GITHUB_OUTPUT"
           echo "total=$TOTAL"   >> "$GITHUB_OUTPUT"
@@ -845,37 +835,29 @@ jobs:
         # macos.sh only builds/bundles/packages; `make test` on macOS is
         # an alias for the same script). This is net-new coverage.
         working-directory: build-macos
-        run: ctest -C Release --output-on-failure --label-exclude uat
+        run: ctest -C Release --output-on-failure --label-exclude 'uat|known-bug|advisory'
         env:
           QT_QPA_PLATFORM: offscreen
 
       - name: UAT suite
-        # NON-GATING (owner decision, 2026-07-26): this is the first time
-        # macOS UAT has ever run in this project (the mac lane itself only
-        # landed 2026-07-24 via PR #120/#121, and unit tests only started
-        # passing 2026-07-26 via PR #122/#123) — it has never once passed.
-        # Gating an otherwise-green macOS build on a suite that has never
-        # passed would withhold that build indefinitely, exactly the
-        # failure mode already ruled out for Wine UAT (2026-07-24, see
-        # nightly-windows' "UAT suite (Wine)" step and docs/backlog/2026-
-        # 07-24-wine-uat-failures-triage.md). Mirrors that step's mechanism
-        # exactly: `continue-on-error: true` masks this step's CONCLUSION
-        # to success (so the job's own `result` — and the `if:
-        # success()`-gated staging steps below — are unaffected by a macOS
-        # UAT failure), while the real pass/total counts are still
+        # NON-GATING: macOS UAT has never once passed, and gating an
+        # otherwise-green macOS build on a suite that has never passed would
+        # withhold that build indefinitely — the failure mode already ruled
+        # out for Wine UAT (see nightly-windows' "UAT suite (Wine)" step).
+        # Mirrors that step's mechanism exactly: `continue-on-error: true`
+        # masks this step's CONCLUSION to success (so the job's own `result` —
+        # and the `if: success()`-gated staging steps below — are unaffected
+        # by a macOS UAT failure), while the real pass/total counts are still
         # captured and surfaced, non-silently, via job outputs into
         # nightly-publish's release-body status table. A crash (e.g. the
-        # SegFault the bootstrap run for this triage found in
-        # test_uat_foundations) is categorically more serious than an
-        # ordinary assertion failure — ctest still emits a clean "N tests
-        # passed... out of M" summary line for a crashed run (it marks the
-        # crashing test FAILED and moves on), so the count alone would
-        # under-communicate it; the log is grepped separately for a crash
-        # signature and surfaced as its own flag rather than folded
-        # silently into the N/M count. Tracked in docs/backlog/2026-07-26-
-        # macos-uat-triage.md — which has full billing on the crash found
-        # by the bootstrap run for this change; becomes gating again once
-        # that item closes with the suite green.
+        # SegFault an early run found in test_uat_foundations) is
+        # categorically more serious than an ordinary assertion failure —
+        # ctest still emits a clean "N tests passed... out of M" summary line
+        # for a crashed run (it marks the crashing test FAILED and moves on),
+        # so the count alone would under-communicate it; the log is grepped
+        # separately for a crash signature and surfaced as its own flag rather
+        # than folded silently into the N/M count. Becomes gating once the
+        # suite is green (todo/2026-10-15-macos-uat-ocr-crash tracks the crash).
         id: macos_uat
         continue-on-error: true
         working-directory: build-macos
@@ -937,7 +919,7 @@ jobs:
     # red macOS lane (or an offline-VM timeout) NOT block the Linux/
     # Windows artifacts from shipping.
     if: always()
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     concurrency:
       group: nightly-publish-${{ needs.nightly-date.outputs.concurrency-key }}
@@ -1214,12 +1196,11 @@ jobs:
           }
 
           # Windows row carries an extra, NON-GATING annotation: Wine UAT's
-          # pass count (owner decision 2026-07-24 — see nightly-windows'
-          # "UAT suite (Wine)" step and docs/backlog/2026-07-24-wine-uat-
-          # failures-triage.md). A red Windows job result always means
-          # build/bundle/unit failed (Wine UAT can never cause that, per
-          # continue-on-error on that step), so the ❌ branch below never
-          # needs to reference the Wine UAT counts at all.
+          # pass count (see nightly-windows' "UAT suite (Wine)" step). A red
+          # Windows job result always means build/bundle/unit failed (Wine
+          # UAT can never cause that, per continue-on-error on that step), so
+          # the ❌ branch below never needs to reference the Wine UAT counts
+          # at all.
           WIN_PASSED=""
           WIN_TOTAL=""
           if [ "${{ needs.nightly-windows.result }}" = "success" ]; then
@@ -1231,7 +1212,7 @@ jobs:
             if [ -n "$WIN_TOTAL" ] && [ "$WIN_PASSED" = "$WIN_TOTAL" ]; then
               WIN_ROW="✅ build+unit+UAT (Wine UAT $WIN_PASSED/$WIN_TOTAL) — $WIN_COMPARE"
             elif [ -n "$WIN_TOTAL" ]; then
-              WIN_ROW="✅ build+unit, ⚠️ Wine UAT $WIN_PASSED/$WIN_TOTAL — $WIN_COMPARE — non-gating, see docs/backlog/2026-07-24-wine-uat-failures-triage.md"
+              WIN_ROW="✅ build+unit, ⚠️ Wine UAT $WIN_PASSED/$WIN_TOTAL — $WIN_COMPARE — non-gating (todo/2026-10-15-ci-windows-only-under-wine)"
             else
               WIN_ROW="✅ build+unit, ⚠️ Wine UAT count unavailable this run — $WIN_COMPARE"
             fi
@@ -1239,12 +1220,11 @@ jobs:
             WIN_ROW="❌ (${{ needs.nightly-windows.result }})"
           fi
 
-          # macOS row mirrors the Windows/Wine-UAT row exactly (owner
-          # decision 2026-07-26 — see nightly-macos's "UAT suite" step and
-          # docs/backlog/2026-07-26-macos-uat-triage.md), with one addition:
-          # a crash is called out explicitly (🔥) rather than folded into
-          # an ordinary N/M count, since a SegFault is a categorically more
-          # serious signal than a failing assertion.
+          # macOS row mirrors the Windows/Wine-UAT row exactly (see
+          # nightly-macos's "UAT suite" step), with one addition: a crash is
+          # called out explicitly (🔥) rather than folded into an ordinary N/M
+          # count, since a SegFault is a categorically more serious signal
+          # than a failing assertion.
           MAC_PASSED=""
           MAC_TOTAL=""
           MAC_CRASHED=""
@@ -1257,14 +1237,14 @@ jobs:
               "${{ steps.uat_compare.outputs.macos-suite-delta }}")"
             if [ "$MAC_CRASHED" = "true" ]; then
               if [ -n "$MAC_TOTAL" ]; then
-                MAC_ROW="✅ build+unit, 🔥 macOS UAT CRASHED ($MAC_PASSED/$MAC_TOTAL) — $MAC_COMPARE — informational, non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
+                MAC_ROW="✅ build+unit, 🔥 macOS UAT CRASHED ($MAC_PASSED/$MAC_TOTAL) — $MAC_COMPARE — informational, non-gating (todo/2026-10-15-macos-uat-ocr-crash)"
               else
-                MAC_ROW="✅ build+unit, 🔥 macOS UAT crashed (no count available this run) — $MAC_COMPARE — informational, non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
+                MAC_ROW="✅ build+unit, 🔥 macOS UAT crashed (no count available this run) — $MAC_COMPARE — informational, non-gating (todo/2026-10-15-macos-uat-ocr-crash)"
               fi
             elif [ -n "$MAC_TOTAL" ] && [ "$MAC_PASSED" = "$MAC_TOTAL" ]; then
               MAC_ROW="✅ build+unit+UAT ($MAC_PASSED/$MAC_TOTAL) — $MAC_COMPARE"
             elif [ -n "$MAC_TOTAL" ]; then
-              MAC_ROW="✅ build+unit, ⚠️ macOS UAT $MAC_PASSED/$MAC_TOTAL — $MAC_COMPARE — non-gating, see docs/backlog/2026-07-26-macos-uat-triage.md"
+              MAC_ROW="✅ build+unit, ⚠️ macOS UAT $MAC_PASSED/$MAC_TOTAL — $MAC_COMPARE — non-gating (todo/2026-10-15-macos-uat-ocr-crash)"
             else
               MAC_ROW="✅ build+unit, ⚠️ macOS UAT count unavailable this run — $MAC_COMPARE"
             fi
@@ -1274,11 +1254,11 @@ jobs:
 
           {
             echo "Automated nightly build of Trailer's \`main\` branch. Unsigned,"
-            echo "like dev-build.yml's artifacts — see PHILOSOPHY.md for what to"
-            echo "expect from a 0.x build. A lane below marked ❌ is NOT included;"
+            echo "like dev-build.yml's artifacts. As a 0.x build, settings and behaviour"
+            echo "can still change between versions. A lane below marked ❌ is NOT included;"
             echo "see its job log in this run for what failed. Windows' Wine UAT"
             echo "and macOS's UAT counts (⚠️/🔥) are informational only — neither"
-            echo "blocks the artifact; see each row's linked backlog item. The"
+            echo "blocks the artifact; see each row's todo/ entry. The"
             echo "'REGRESSED'/'IMPROVED'/'unchanged' clause is the UAT ratchet —"
             echo "see the workflow's header comment — and DOES gate the run's own"
             echo "pass/fail signal (never the artifact) when a lane regresses."
@@ -1374,9 +1354,8 @@ jobs:
           echo "Published nightly release $TAG"
 
       - name: Build + sign nightly update feed (appcast-nightly.json)
-        # The nightly channel's signed appcast — see
-        # docs/decision-records/2026-07-30-nightly-auto-update-channel.md
-        # and src/update/UpdateChecker.cpp. Reuses THIS job's existing
+        # The nightly channel's signed appcast, read by
+        # src/update/UpdateChecker.cpp. Reuses THIS job's existing
         # publishing surface: the feed is uploaded as an additional asset
         # on the SAME nightly release the step above just created/confirmed
         # (`gh release upload`), exactly like uat-summary.json already is —
@@ -1404,8 +1383,7 @@ jobs:
           # key is not stored anywhere — it is derived from this secret by
           # nightly-date's "Derive the update-channel public key" step and
           # compiled into that night's binaries, so the two cannot drift
-          # (docs/decision-records/2026-08-02-update-pubkey-from-signing-
-          # secret.md). Generate/store with:
+          # (RELEASING.md → Update-signing key). Generate/store with:
           #   openssl genpkey -algorithm ed25519 -out key.pem
           #   base64 -w0 key.pem   # -> the secret's value
           # Absent on a fork or before the owner
@@ -1423,7 +1401,7 @@ jobs:
             exit 0
           fi
           if [ -z "${TRAILER_UPDATE_SIGNING_KEY_B64:-}" ]; then
-            echo "::warning::TRAILER_UPDATE_SIGNING_KEY secret is not set — skipping the signed update feed for tonight. See docs/decision-records/2026-07-30-nightly-auto-update-channel.md for the exact key-generation and secret-storage commands."
+            echo "::warning::TRAILER_UPDATE_SIGNING_KEY secret is not set — skipping the signed update feed for tonight. See RELEASING.md \"Update-signing key\" for the key-generation and secret-storage commands."
             exit 0
           fi
           # "Create tag + GitHub Release" above may have exited early (its
@@ -1567,8 +1545,8 @@ jobs:
         # against previous nightly") judged a lane WORSE than the
         # immediately previous nightly's published result. Equal-or-better
         # (including `no_baseline`/`unknown` — never treated as a
-        # regression, see the script's header) stays green here, matching
-        # "the ratchet only tightens" (AGENTS.md). `always()` for the same
+        # regression, see the script's header) stays green here: the
+        # ratchet only tightens. `always()` for the same
         # reason as the step above: an unrelated earlier failure must not
         # silently skip this diagnostic. `skip != 'true'` is belt-and-
         # suspenders here — "Compare UAT results" never ran on a skip

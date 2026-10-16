@@ -16,8 +16,8 @@ namespace trailer {
 //                      a system-trusted surface, so the user's explicit
 //                      pick authorises the capture without a separate TCC
 //                      grant. Apple-only; gated behind the capture_backend
-//                      setting and only selected once validated on-device
-//                      (see ADR 0015 + the GPSC.2 smoke test).
+//                      setting and only selected once validated on-device.
+//                      todo/2026-10-15-real-desktop-checks: check the picker flow on a real Mac.
 //
 // API: this enum is serialised by its *string* mapping in settings.toml
 // (captureBackendToString / captureBackendFromString), never by ordinal —
@@ -90,7 +90,7 @@ PickerCaptureResult captureViaPickerToPng(const QString &outPngPath, bool wholeD
 //                 a client-side grab is blocked and grabWindow returns null.
 //   Unavailable — Wayland with no screenshot portal running. Capture cannot
 //                 succeed, so the caller must degrade honestly (disabled
-//                 control + tooltip, never a silent null result) per gate G3.
+//                 control + tooltip, never a silent null result).
 enum class LinuxScreenshotBackend {
     QScreenGrab,
     Portal,

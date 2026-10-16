@@ -42,6 +42,7 @@
 
 #include <cmath>
 #include <cstdio>
+#include <memory>
 
 using namespace trailer;
 
@@ -121,20 +122,19 @@ class TestImageScale : public QObject {
     void coordinateRoundTripInvertsAtDpr2();
     void resampleBranchRestampsDpr();
 
-    // 2026-07-31 owner dogfooding report: a fresh 504x375 image opened
-    // at a stale per-type "Custom 80%" zoom in a huge window. See DR
-    // 2026-07-31-per-type-restore-excludes-content-relative-state.
+    // A fresh 504x375 image opened at a stale per-type "Custom 80%" zoom in
+    // a huge window. The per-type default never captures or restores a
+    // Custom zoom or a window geometry: both belong to one document.
     void ordinaryOpenIgnoresPersistedCustomTypeDefaultZoom();
     void ordinaryOpenIgnoresPersistedTypeDefaultWindowGeometry();
     void closingAtCustomZoomDoesNotPoisonTypeDefault();
     void smallReportedImageNaturalFitIsActual_data();
     void smallReportedImageNaturalFitIsActual();
 
-    // 2026-08-02 owner dogfooding report: a pasted macOS *window*
-    // screenshot opened at a reported 100% but rendered 2x too large, and
-    // manual correction landed on 51% (blurry) because the ladder has no
-    // exact 1/dpr stop. See DR 2026-08-02-pasted-capture-scale-and-pixel-
-    // exact-zoom-stop.
+    // A pasted macOS *window* screenshot opened at a reported 100% but
+    // rendered 2x too large, and manual correction landed on 51% (blurry)
+    // because the ladder had no exact 1/dpr stop. The rules are in
+    // src/util/CaptureScale.h and src/document/ZoomStops.h.
     void pixelExactFactorIsImageDprOverScreenDpr_data();
     void pixelExactFactorIsImageDprOverScreenDpr();
     void zoomOutLadderStopsExactlyAtHalfOnA2xScreen();
@@ -392,8 +392,8 @@ void TestImageScale::ordinaryOpenKeepsFit() {
     // the existing fit-to-content-capped-at-100% default, NOT Actual.
     ImageDocument doc{QString()};
     doc.setImageForTest(makeDprImage(4000, 3000, 1.0), /*captureOrigin=*/false);
-    QWidget *view = doc.createView(nullptr);
-    auto *scroll = qobject_cast<QScrollArea *>(view);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(1200, 800);
     scroll->show();
@@ -401,7 +401,6 @@ void TestImageScale::ordinaryOpenKeepsFit() {
     // viewport. If it never settles under the offscreen platform the fit
     // is unobservable, so skip rather than crash/hang.
     if (!pumpUntil([&] { return scroll->viewport()->width() > 0; })) {
-        delete view;
         QSKIP("viewport does not settle under offscreen platform");
     }
     doc.triggerInitialZoomForTest();
@@ -411,8 +410,6 @@ void TestImageScale::ordinaryOpenKeepsFit() {
     QVERIFY2(doc.scaleFactor() < 1.0,
              qPrintable(QStringLiteral("ordinary large image should fit-shrink, scale=%1")
                             .arg(doc.scaleFactor())));
-
-    delete view;
 }
 
 void TestImageScale::smallImageResizeDoesNotUpscale() {
@@ -425,8 +422,8 @@ void TestImageScale::smallImageResizeDoesNotUpscale() {
     // viewport measured ~1360x815.
     ImageDocument doc{QString()};
     doc.setImageForTest(makeDprImage(600, 420, 1.0), /*captureOrigin=*/false);
-    QWidget *view = doc.createView(nullptr);
-    auto *scroll = qobject_cast<QScrollArea *>(view);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(1400, 900);
     scroll->show();
@@ -435,7 +432,6 @@ void TestImageScale::smallImageResizeDoesNotUpscale() {
     // fit can't measure it, so skip the unmeasurable path rather than
     // silently crash/hang under Wine.
     if (!pumpUntil([&] { return scroll->viewport()->width() > 0; })) {
-        delete view;
         QSKIP("viewport does not settle under offscreen platform");
     }
 
@@ -457,8 +453,6 @@ void TestImageScale::smallImageResizeDoesNotUpscale() {
                                        "resize, got %1")
                             .arg(doc.scaleFactor())));
     QCOMPARE(doc.zoomMode(), ZoomMode::Actual);
-
-    delete view;
 }
 
 void TestImageScale::readoutMatchesRenderAfterAsyncFit() {
@@ -493,11 +487,10 @@ void TestImageScale::readoutMatchesRenderAfterAsyncFit() {
     // so whether this test passed depended on both widths happening to
     // round to the same percentage (at 1975 px, 704/1975 = 35.65% and
     // 718/1975 = 36.35% both round to 36; at 2000 px, 35.2%/35.9% straddle
-    // 35.5% and don't). That was a real product bug (a "lying control"
-    // per PHILOSOPHY.md) masked by this fixture's dimensions, not merely a
-    // test artifact — caught when the self-hosted macOS runner's window
-    // geometry landed on a straddling pair of widths instead of an
-    // agreeing one (docs/backlog/2026-07-24-test-image-scale-macos-failure.md).
+    // 35.5% and don't). That was a real product bug (a lying control)
+    // masked by this fixture's dimensions, not merely a test artifact —
+    // caught when the self-hosted macOS runner's window geometry landed on
+    // a straddling pair of widths instead of an agreeing one.
     // Fixed at the source: reapplyFitMode() now calls notifyChanged() on
     // every rescale (src/document/ImageAdapter.cpp), so the readout always
     // tracks the CURRENT render scale regardless of how many measurement
@@ -593,23 +586,22 @@ void TestImageScale::reapplyFitModeNotifiesOnEveryRescale() {
     // the fix, only applyInitialFitZoom() called
     // capabilityNotifier()->notifyChanged() (the signal MainWindow's zoom
     // readout listens to); a LATER resize-driven re-fit changed
-    // scaleFactor() silently. That is a real product bug -- a "lying
-    // control" per PHILOSOPHY.md, since the status-bar zoom percentage
-    // could freeze at a stale value while the image kept rescaling
-    // underneath it -- not a quirk of any one test fixture's dimensions.
+    // scaleFactor() silently. That is a real product bug -- a lying
+    // control, since the status-bar zoom percentage could freeze at a stale
+    // value while the image kept rescaling underneath it -- not a quirk of
+    // any one test fixture's dimensions.
     // This test forces the exact shape of the race directly (two viewport
     // widths that give genuinely different fit scales) instead of relying
     // on incidental window-layout timing, so it holds on every platform,
     // independent of whatever the OS's real settle widths happen to be.
     ImageDocument doc{QString()};
     doc.setImageForTest(makeDprImage(4000, 3000, 1.0), /*captureOrigin=*/false);
-    QWidget *view = doc.createView(nullptr);
-    auto *scroll = qobject_cast<QScrollArea *>(view);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(1200, 800);
     scroll->show();
     if (!pumpUntil([&] { return scroll->viewport()->width() > 0; })) {
-        delete view;
         QSKIP("viewport does not settle under offscreen platform");
     }
 
@@ -645,8 +637,6 @@ void TestImageScale::reapplyFitModeNotifiesOnEveryRescale() {
                                        "render scale (%2) -- one source of truth")
                             .arg(scaleAtLastNotify)
                             .arg(doc.scaleFactor())));
-
-    delete view;
 }
 
 void TestImageScale::reapplyFitModeSkipsNotifyWhenScaleUnchanged() {
@@ -661,13 +651,12 @@ void TestImageScale::reapplyFitModeSkipsNotifyWhenScaleUnchanged() {
     // unconditionally regardless of whether the scale actually moved.
     ImageDocument doc{QString()};
     doc.setImageForTest(makeDprImage(4000, 3000, 1.0), /*captureOrigin=*/false);
-    QWidget *view = doc.createView(nullptr);
-    auto *scroll = qobject_cast<QScrollArea *>(view);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(1200, 800);
     scroll->show();
     if (!pumpUntil([&] { return scroll->viewport()->width() > 0; })) {
-        delete view;
         QSKIP("viewport does not settle under offscreen platform");
     }
 
@@ -686,8 +675,6 @@ void TestImageScale::reapplyFitModeSkipsNotifyWhenScaleUnchanged() {
     doc.reapplyFitMode();
 
     QCOMPARE(notifyCount, 0);
-
-    delete view;
 }
 
 void TestImageScale::applyInitialFitZoomForcesDecodeForCaptureOrigin() {
@@ -705,7 +692,7 @@ void TestImageScale::applyInitialFitZoomForcesDecodeForCaptureOrigin() {
     // NOT itself a repro of this path: it calls capDoc->image() (which
     // internally calls ensureDecoded()) before triggerInitialZoomForTest(),
     // so m_image is already non-null by the time this method runs there
-    // (a review-before-push finding on the first version of this fix).
+    // (found in review of the first version of this fix).
     // This test constructs the race this fix actually protects against
     // directly: no decode-forcing accessor is called before
     // triggerInitialZoomForTest().
@@ -741,8 +728,7 @@ void TestImageScale::applyInitialFitZoomForcesDecodeForCaptureOrigin() {
 
 void TestImageScale::applyZoomStateSentinelLeavesInitialFitUndecided() {
     // Direct regression for the applyZoomState() bug found while tracing
-    // the macOS-only pendingCaptureDprConsumedOncePerBatch failure
-    // (2026-07-26; see docs/backlog for the fuller mechanism). A
+    // the macOS-only pendingCaptureDprConsumedOncePerBatch failure. A
     // (Custom, 0.0) pair is RecentEntry / DocumentTypeDefault's "not
     // captured" sentinel (RecentEntry.h: "-1 / 0.0 sentinel values mean
     // 'not yet captured' -- the open path leaves the document at its
@@ -986,16 +972,15 @@ void TestImageScale::resampleBranchRestampsDpr() {
 }
 
 void TestImageScale::ordinaryOpenIgnoresPersistedCustomTypeDefaultZoom() {
-    // Direct regression for the reported bug (owner dogfooding,
-    // 2026-07-31): a fresh 504x375 JPEG opened at "Zoom: Custom (80%)"
-    // per the in-app Feedback Report, with 34 recent files -- an
-    // earlier, larger image's manual 80% zoom had become the per-type
-    // Image default and was blindly reapplied to this unrelated, much
-    // smaller image. A corroborating second report showed a DIFFERENT
-    // image landing at Custom (64%) -- confirming the value drifts with
-    // whatever the last-closed image happened to be at, not a frozen
-    // constant. See DR 2026-07-31-per-type-restore-excludes-content-
-    // relative-state.
+    // Direct regression for the reported bug: a fresh 504x375 JPEG
+    // opened at "Zoom: Custom (80%)" per the in-app Feedback Report, with
+    // 34 recent files -- an earlier, larger image's manual 80% zoom had
+    // become the per-type Image default and was blindly reapplied to this
+    // unrelated, much smaller image. A corroborating second report showed a
+    // DIFFERENT image landing at Custom (64%) -- confirming the value drifts
+    // with whatever the last-closed image happened to be at, not a frozen
+    // constant. A Custom zoom belongs to one document, so the per-type
+    // default never restores it.
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app != nullptr);
 
@@ -1020,7 +1005,7 @@ void TestImageScale::ordinaryOpenIgnoresPersistedCustomTypeDefaultZoom() {
     ImageDocument *doc = newestImageDoc(app);
     QVERIFY(doc != nullptr);
 
-    // Let the async initial fit land (staged open, ADR 0008). Under the
+    // Let the async initial fit land (staged open). Under the
     // pre-fix code this never resolves -- applyZoomState(Custom, 0.8)
     // strands the document at Custom forever -- so this pump times out
     // and the test fails there rather than at a wrong-value QCOMPARE.
@@ -1043,8 +1028,8 @@ void TestImageScale::ordinaryOpenIgnoresPersistedTypeDefaultWindowGeometry() {
     // previous, unrelated Image-type close's window geometry (simulating
     // a maximized/large-document session) was blindly restored,
     // clobbering applyInitialWindowSize()'s already-computed content-fit
-    // size. See DR 2026-07-31-per-type-restore-excludes-content-relative-
-    // state.
+    // size. Window geometry belongs to one document too, so the per-type
+    // default never restores it.
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app != nullptr);
 
@@ -1111,8 +1096,7 @@ void TestImageScale::closingAtCustomZoomDoesNotPoisonTypeDefault() {
     // the per-type default in the first place (symmetric with the
     // restore-side guard above) -- this is what actually produces the
     // "poisoned" state the other two tests simulate directly, in real
-    // usage. See DR 2026-07-31-per-type-restore-excludes-content-
-    // relative-state's write-side trace.
+    // usage.
     auto *app = qobject_cast<Application *>(qApp);
     QVERIFY(app != nullptr);
 
@@ -1181,13 +1165,12 @@ void TestImageScale::smallReportedImageNaturalFitIsActual() {
     // 504x375 DEVICE px at the given dpr -> logical size is 504/dpr x
     // 375/dpr, still comfortably smaller than any real viewport.
     doc.setImageForTest(makeDprImage(504, 375, dpr), /*captureOrigin=*/false);
-    QWidget *view = doc.createView(nullptr);
-    auto *scroll = qobject_cast<QScrollArea *>(view);
+    std::unique_ptr<QWidget> view(doc.createView(nullptr));
+    auto *scroll = qobject_cast<QScrollArea *>(view.get());
     QVERIFY(scroll != nullptr);
     scroll->resize(1400, 900);
     scroll->show();
     if (!pumpUntil([&] { return scroll->viewport()->width() > 0; })) {
-        delete view;
         QSKIP("viewport does not settle under offscreen platform");
     }
 
@@ -1197,8 +1180,6 @@ void TestImageScale::smallReportedImageNaturalFitIsActual() {
              qPrintable(QStringLiteral("dpr=%1: expected natural Actual Size (100%%), got %2%%")
                             .arg(dpr)
                             .arg(doc.scaleFactor() * 100.0)));
-
-    delete view;
 }
 
 // ---------------------------------------------------------------------------

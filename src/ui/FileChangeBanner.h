@@ -12,13 +12,11 @@ namespace trailer {
 //
 //   * Conflict — the file changed externally while we have unsaved edits.
 //     Offers [Reload (discard my edits)] / [Keep mine] / [Compare]. Compare is
-//     a disabled-with-tooltip placeholder (no diff view is built yet) so it is
-//     G3-honest rather than a lying control.
+//     a disabled-with-tooltip placeholder; no diff view exists (todo/2026-10-15-disabled-placeholders).
 //   * Deleted — the file was removed on disk. Offers [Save] (recreates it).
 //
 // A clean-doc external change is handled silently by an auto-reload and never
-// shows this banner (Preview-style, per the no-narration-dialogs taste rule).
-// See docs/decision-records/2026-07-19-external-file-change-handling.md.
+// shows this banner (Preview-style: nothing narrates what just happened).
 class FileChangeBanner : public QFrame {
     Q_OBJECT
 
@@ -37,13 +35,13 @@ class FileChangeBanner : public QFrame {
     QString messageText() const;
     bool reloadEnabled() const;
     bool keepMineEnabled() const;
-    bool compareEnabled() const; // must be false (G3 placeholder)
+    bool compareEnabled() const; // must be false (disabled placeholder)
     bool saveEnabled() const;
     QString compareTooltip() const;
     QString reloadText() const;
     QString keepMineText() const;
-    // The visually-weighted primary/default action of the conflict banner
-    // (CF-6). "Keep mine" is the default — it preserves the user's active work
+    // The visually-weighted primary/default action of the conflict banner.
+    // "Keep mine" is the default — it preserves the user's active work
     // and writes nothing until an explicit Save, the non-destructive-until-save
     // choice — while Reload (which discards edits) is secondary and Dismiss is
     // flat/passive.

@@ -1,8 +1,7 @@
 // UAT harness — page-changed signal replaces the former 150 ms polls.
 //
-// Backlog 2026-07-12-page-changed-signal-no-poll. Two consumers used to poll
-// IDocument::currentPage() on a timer because IDocument is not a QObject and
-// exposed no page-changed signal:
+// Two consumers used to poll IDocument::currentPage() on a timer because
+// IDocument is not a QObject and exposed no page-changed signal:
 //   (a) MainWindow's auto-OCR / large-doc "Recognize text" hint re-derivation
 //       (former m_ocrPagePoll, 150 ms), and
 //   (b) the Sidebar thumbnail page-sync (former m_pageSyncTimer, 120 ms).

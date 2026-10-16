@@ -1,14 +1,12 @@
 // UAT harness — Off-GUI-thread document open (UAT-VWR-100)
 //
-// Curated before/after grab() evidence for the placeholder-then-page open
-// flow introduced by the backlog item
-// docs/backlog/2026-07-15-offthread-pdf-open-placeholder.md (deferred (b) of
-// decision record 0006). The residual QPdfDocument::load runs on a worker
-// thread; until it settles the document view is an honest "Loading…"
-// placeholder, then it is replaced in place by the real page view.
+// Before/after grab() evidence for the placeholder-then-page open flow. The
+// residual QPdfDocument::load runs on a worker thread; until it settles the
+// document view is an honest "Loading…" placeholder, then it is replaced in
+// place by the real page view.
 //
 // Set TRAILER_OFFTHREAD_EVIDENCE_DIR to a directory to have this slot write
-// its before/after PNGs there (the G2 evidence). Otherwise it asserts the
+// its before/after PNGs there (not committed). Otherwise it asserts the
 // wired behaviour like any other uat slot. Runs across the HiDPI dpr matrix
 // {1, 1.5, 2} because open-at-logical-size is dpr-sensitive.
 

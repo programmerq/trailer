@@ -1,13 +1,12 @@
 // UAT harness — File-menu Information-Architecture redesign
 //
 // Drives Application + MainWindow in-process under
-// QT_QPA_PLATFORM=offscreen to exercise the File-menu IA redesign
-// (DR 2026-07-18-file-menu-acquire-ia):
+// QT_QPA_PLATFORM=offscreen to exercise the File-menu IA redesign:
 //   - ⌘N is "New from Clipboard" (the hottest acquire path), replacing
 //     the former standalone "New" (blank window) binding.
 //   - "Acquire" is dissolved into direct File-menu entries: a Screenshot
 //     submenu (Whole Screen / Window / Selected Area) plus visible-but-
-//     disabled Scanner / Camera placeholders with honest tooltips.
+//     disabled Scanner / Camera placeholders with honest tooltips (todo/2026-10-15-disabled-placeholders).
 //   - These create/acquire commands stay reachable whether or not a
 //     document window is key (the regression: they used to live only in
 //     the macOS no-window bar and vanished the moment a window became

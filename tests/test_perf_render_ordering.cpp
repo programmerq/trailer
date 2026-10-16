@@ -1,9 +1,9 @@
 // Structural performance test (a): render-before-full-read ordering.
 //
-// Invariant (docs/performance-budgets.md → "First-page render must not
-// block on a full-file read"): the first visible page must be renderable
-// from a partial/streamed read — the engine must never require the whole
-// file to be consumed before it can produce page 1.
+// Invariant: first-page render must not block on a full-file read. The
+// first visible page must be renderable from a partial/streamed read — the
+// engine must never require the whole file to be consumed before it can
+// produce page 1.
 //
 // This is a DETERMINISTIC, CI-safe STRUCTURAL assertion: it asserts a
 // COUNT/COVERAGE fact (bytes consumed at first render < whole file), never
@@ -46,8 +46,8 @@ class TestPerfRenderOrdering : public QObject {
 // The 1-page AcroForm corpus opens through the production adapter and
 // carries at least one interactive field. This is a structural
 // smoke-check that verifies the AcroForm reference file (a named part of
-// the corpus per docs/performance-budgets.md) is a valid, field-bearing
-// form the open path can consume — deterministic, no timing.
+// the corpus) is a valid, field-bearing form the open path can consume —
+// deterministic, no timing.
 void TestPerfRenderOrdering::acroFormCorpusOpensWithInteractiveField() {
     PdfAdapter adapter;
     auto doc = adapter.open(corpus(QStringLiteral("form_1page.pdf")));
@@ -113,8 +113,7 @@ void TestPerfRenderOrdering::firstPageRendersBeforeWholeFileConsumed() {
     // streamed-open wiring makes the progressive path observable.
     QSKIP("first-page-before-full-read not yet observable on this corpus: pdfium consumed "
           "100% of the small 20-page PDF before rendering page 0 (no progressive/linearized "
-          "partial-read path is exercised). Invariant tracked as a perf follow-up "
-          "(docs/performance-budgets.md 'First-page render must not block on a full-file read').");
+          "partial-read path is exercised). todo/2026-10-15-perf-tests-race tracks making it observable.");
 }
 
 QTEST_MAIN(TestPerfRenderOrdering)

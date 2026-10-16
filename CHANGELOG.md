@@ -3,9 +3,9 @@
 All notable user-facing changes to Trailer are recorded here. The
 format follows [Keep a Changelog 1.1.0](https://keepachangelog.com/en/1.1.0/);
 Trailer's `VERSION` follows [Semantic Versioning](https://semver.org/),
-with the 0.x caveats spelled out in [PHILOSOPHY.md](PHILOSOPHY.md) — until
-1.0, minor bumps may carry breaking changes to on-disk formats, settings,
-and the `IDocument` interface.
+with the 0.x caveats spelled out in [RELEASING.md](RELEASING.md#version-numbering)
+— until 1.0, minor bumps may carry breaking changes to on-disk formats,
+settings, and the `IDocument` interface.
 
 Each release section is sourced into the GitHub Release body at tag time
 by [`scripts/extract-changelog.sh`](scripts/extract-changelog.sh). Keep
@@ -17,6 +17,13 @@ entries terse and user-visible; CI / infrastructure churn lives in the
 ### Added
 
 ### Changed
+
+### Removed
+
+- **My Card and AutoFill.** The Forms ▸ AutoFill and My Card commands, the
+  card editor and the forms toolbar's AutoFill button are gone. A
+  `cards.toml` saved by an earlier version stays in Trailer's data folder
+  until Tools ▸ Reset Trailer Settings… erases it.
 
 ### Fixed
 
@@ -41,6 +48,17 @@ entries terse and user-visible; CI / infrastructure churn lives in the
   active.
 
 ### Infrastructure
+
+- **One tracker.** The design spec, philosophy, roadmap, decision records,
+  backlog folder, UAT spec docs and agent skills are replaced by
+  `PRODUCT.md` (what Trailer is and its rules), `AGENTS.md` (how to work
+  on the code) and `todo/`, one file per open item named for its date and
+  a short slug. A CI check fails if another tracking file appears.
+- **Known-bug tests.** Most open P0 bugs in `todo/`, and some others,
+  have a test that asserts the right behaviour and expects today's
+  failure (ctest label `known-bug`), so the fix turns it into a
+  regression test.
+- CI's hosted Linux runners are pinned to `ubuntu-24.04`.
 
 ## [0.3.0] - 2026-07-12
 

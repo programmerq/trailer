@@ -32,23 +32,18 @@ class MarkupToolbar : public QToolBar {
     // StrikeOut) on documents without a text layer, and the SAM tools
     // (Instant Alpha / Smart Lasso) on non-image documents or a blocked
     // model policy. `disabledTooltip` is required whenever `enabled` is
-    // false and states why the tool can't act right now (G3 — a control
-    // that can't act is disabled with a tooltip, never silently absent);
-    // it is ignored when `enabled` is true, since the action reverts to
-    // its plain label tooltip.
+    // false and states why the tool can't act right now (a control that
+    // can't act is disabled with a tooltip, never silently absent); it is
+    // ignored when `enabled` is true, since the action reverts to its
+    // plain label tooltip.
     //
-    // G10 (spatial constancy, AGENTS.md; SC-CRIT-2,
-    // docs/audit-2026-07-31-g10-deference.md) is why this disables rather
-    // than hides: every tool action keeps its on-screen slot regardless of
-    // document capability, so Redact / Stroke / Fill / Width / Dash never
-    // shift when the current document changes. This supersedes the prior
-    // hide-based design — see
-    // docs/decision-records/2026-08-01-markup-toolbar-disable-not-hide.md
-    // for why G10 (a later, accepted, binding gate) outweighs the earlier
-    // "hidden, not greyed" call for tool actions specifically. If the
-    // currently-active tool is disabled, the toolbar automatically falls
-    // back to Select so the overlay isn't stuck consuming click-drags for
-    // a tool the user can no longer engage.
+    // Disable, never hide: QToolBar collapses a hidden action's slot and
+    // shifts every action after it, so hiding would move Redact / Stroke /
+    // Fill / Width / Dash whenever the current document changes. Every tool
+    // action keeps its on-screen slot regardless of document capability.
+    // If the currently-active tool is disabled, the toolbar automatically
+    // falls back to Select so the overlay isn't stuck consuming click-drags
+    // for a tool the user can no longer engage.
     //
     // Because every action stays visible, a separator between two groups
     // is never left bounding an empty region — the "two adjacent dividers

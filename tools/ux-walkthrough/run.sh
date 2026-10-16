@@ -2,14 +2,10 @@
 # ---------------------------------------------------------------------------
 # ux-walkthrough drive harness — Tier-1 Linux/Xvfb runner.
 #
-# Drives the REAL built `trailer` binary through the four ux-walkthrough
-# golden paths under a REAL X server (Xvfb), capturing a screenshot after
-# every scripted step into a per-run artifact directory a review agent can
-# Read and judge with the persona (A) contract in
-# .claude/skills/ux-walkthrough/SKILL.md.
-#
-# This is the DRIVE + CAPTURE half. The judge (persona A) is a separate
-# skill that consumes the per-step bundles this produces.
+# Drives the REAL built `trailer` binary through the ux-walkthrough golden
+# paths under a REAL X server (Xvfb), capturing a screenshot after every
+# scripted step into a per-run artifact directory. Judge each step against
+# the expectations in tools/ux-walkthrough/README.md.
 #
 # USAGE
 #   tools/ux-walkthrough/run.sh [all|01|02|03|04|05|06|07|08|09 ...] [options]
@@ -24,7 +20,7 @@
 #     07  draw-zoom             (freehand draw -> zoom -> draw-over, #91)
 #     08  zoom-indicator        (zoom readout / steps / open-at-100%, #76/#80/#88)
 #     09  file-screenshot-direct (File -> Screenshot -> Whole Screen, dialogless, #86)
-#     10  empty-window-reuse    (CF-5 empty-window reuse / no-clobber, WM-driven)
+#     10  empty-window-reuse    (empty-window reuse / no-clobber, WM-driven)
 #     11  tools-screenshot-capture (Tools -> Take Screenshot capture + cancel, #77)
 #     12  discard-file-integrity (Discard leaves the backing file byte-identical, #90)
 #     13  quit-and-keep-basics  (quit prompt + Cancel keeps app alive, #78 Linux)
@@ -152,6 +148,6 @@ for key in "${SELECT[@]}"; do
 done
 
 echo "Artifacts under: $OUT_ROOT"
-echo "Judge them with persona (A) in .claude/skills/ux-walkthrough/SKILL.md;"
+echo "Judge them against tools/ux-walkthrough/README.md;"
 echo "each NN-*.png has a sibling NN-*.txt with its label + expected effect."
 exit "$rc_total"

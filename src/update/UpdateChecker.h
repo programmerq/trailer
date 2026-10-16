@@ -12,23 +12,20 @@ class QFile;
 namespace trailer::Update {
 
 // The ONE file in the update-channel feature that touches the network
-// (QNetworkAccessManager / QNetworkReply). Per AGENTS.md's networking
-// rule, every other file under src/update/ is pure parsing/verification/
-// orchestration with no network types in scope. Mirrors the shape of
-// src/ml/ModelDownloader.cpp, the repo's other sanctioned networking
-// file: one class, one QNetworkAccessManager, explicit signals for
-// progress/finished/failed, nothing implicit.
+// (QNetworkAccessManager / QNetworkReply). Per AGENTS.md "Hard constraints"
+// (exactly two outbound network paths), every other file under src/update/
+// is pure parsing/verification/orchestration with no network types in
+// scope. Mirrors the shape of src/ml/ModelDownloader.cpp, the other
+// sanctioned networking file: one class, one QNetworkAccessManager,
+// explicit signals for progress/finished/failed, nothing implicit.
 //
 // checkNow() does a two-step, fully public/unauthenticated GET chain
-// against the GitHub REST API (no token, no account, matches PHILOSOPHY
-// "no accounts"):
+// against the GitHub REST API (no token, no account):
 //   1. GET /repos/<owner>/<repo>/releases?per_page=10 — find the newest
 //      prerelease whose tag starts "nightly-".
 //   2. GET that release's "appcast-nightly.json" asset (published by
-//      nightly.yml, see docs/decision-records/2026-07-30-nightly-auto-
-//      update-channel.md) and hand the bytes to
-//      UpdateFeedParser::parseAndVerifyFeed BEFORE trusting anything in
-//      it.
+//      nightly.yml) and hand the bytes to
+//      UpdateFeedParser::parseAndVerifyFeed BEFORE trusting anything in it.
 //
 // Every outbound URL this class will fetch is disclosed to the caller
 // via requestingUrl() before the request fires, mirroring

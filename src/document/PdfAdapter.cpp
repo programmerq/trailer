@@ -110,7 +110,7 @@ class NavigablePdfView : public QPdfView {
     // TOP of the page you were on, not the exact line you were reading —
     // recovering the intra-page offset exactly would mean reimplementing
     // QPdfView's per-page rounding. That is a drop of a refinement inside
-    // a page the user is still on, not a substitution (G3), and it only
+    // a page the user is still on, not a substitution, and it only
     // ever happens on a resize that had already carried them off the page
     // entirely.
     //
@@ -295,22 +295,20 @@ void PdfDocument::setLoadDeviceFactoryForTesting(LoadDeviceFactory factory) {
 
 PdfDocument::PdfDocument(QString path)
     : m_path(std::move(path)), m_editor(std::make_shared<PdfEditor>()) {
-    // The residual synchronous open cost — QPdfDocument::load — is the last
-    // whole-file read that used to run on the GUI thread at open (backlog
-    // 2026-07-15-offthread-pdf-open-placeholder; deferred (b) of DR 0006). It
-    // now runs on a worker kicked here. The ctor does NOT block: m_doc stays
-    // null and m_valid/m_needsPassword stay unknown until a consumer forces the
-    // adopt via ensureDocLoaded() (pageCount / needsPassword / createView), at
-    // which point the file reads have already happened off the GUI thread.
+    // QPdfDocument::load (a whole-file read) runs on a worker kicked here, not
+    // on the GUI thread. The ctor does NOT block: m_doc stays null and
+    // m_valid/m_needsPassword stay unknown until a consumer forces the adopt
+    // via ensureDocLoaded() (pageCount / needsPassword / createView), at which
+    // point the file reads have already happened off the GUI thread.
     //
     // The qpdf processFile parse (m_editor->load) and the all-pages annotation
     // sweep (readAnnotations) also do NOT run here — they run on the separate
-    // startBackgroundLoad() worker (P0 startup-hang fix, #63); the sync
-    // edit/save paths fall back to an inline parse via ensureEditorLoaded().
+    // startBackgroundLoad() worker; the sync edit/save paths fall back to an
+    // inline parse via ensureEditorLoaded().
     startDocOpen();
     // Record the on-disk identity we opened so the save-time conflict guard
     // and the ExternalChangeMonitor can distinguish a later external write
-    // from our own (ADR 2026-07-19). Independent of the QPdfDocument load.
+    // from our own. Independent of the QPdfDocument load.
     captureFileBaseline();
 }
 
@@ -505,7 +503,7 @@ void PdfDocument::startBackgroundLoad() {
     QObject::connect(m_backgroundWatcher.get(), &QFutureWatcherBase::finished, m_doc.get(),
                      [this]() { onBackgroundLoadFinished(); });
     m_backgroundWatcher->setFuture(QtConcurrent::run([path, password]() -> BackgroundLoadResult {
-        // Option B (DR 0006): keep the annotation sweep on a THROWAWAY qpdf
+        // Keep the annotation sweep on a THROWAWAY qpdf
         // instance that is freed before we return, so the fully-resolved
         // ~GB annotation graph never sticks around in steady state — and
         // parse a SEPARATE, parse-only editor that we adopt as m_editor. Both
@@ -796,7 +794,7 @@ QWidget *PdfDocument::createView(QWidget *parent) {
     // Async path: the initial QPdfDocument open is genuinely still in flight
     // (e.g. createView called without a prior pageCount()). Return a container
     // showing an honest, self-describing "Loading…" placeholder — not a blank
-    // pane, not fake content (G3: it offers no control that cannot act) — and
+    // pane, not fake content (it offers no control that cannot act) — and
     // swap in the real view when the worker finishes (adoptDocOpenResult →
     // buildRealView). We deliberately do NOT force ensureDocLoaded() here: that
     // would re-block the very read the worker just took off the GUI thread.
@@ -999,8 +997,8 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
     // line count is tens, not thousands, so the per-hover cost is a
     // handful of QPolygonF allocations, not a hot loop over the whole
     // document. Revisit with a real (page, zoom)-keyed cache if profiling
-    // ever shows this on a dense multi-column page (PHILOSOPHY "frugal by
-    // construction": named trade, not an accidental one).
+    // ever shows this on a dense multi-column page (a named trade, not an
+    // accidental one).
     overlay->setPointOverTextProvider([this, pageOriginInView](QPointF viewPt, int page) -> bool {
         if (!m_view || !m_doc || page < 0)
             return false;
@@ -1050,7 +1048,7 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
                      QOverload<>::of(&QWidget::update));
     view->viewport()->installEventFilter(overlay);
 
-    // --- Selectable-text layer (Phase 6F / Workstream F) ---
+    // --- Selectable-text layer ---
     // Sits beneath the annotation overlay so user-drawn shapes paint
     // on top of any highlighted selection. Initially empty (no OCR
     // results); MainWindow's auto-OCR pump or the Recognize Text
@@ -1105,7 +1103,7 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
     QObject::connect(view, &QPdfView::zoomFactorChanged, textLayer,
                      QOverload<>::of(&QWidget::update));
 
-    // --- Form overlay (Phase 5) ---
+    // --- Form overlay ---
     auto *formOverlay = new FormOverlay(view->viewport());
     formOverlay->setDocumentToView([this, pageOriginInView](QPointF p, int page) {
         if (!m_view)
@@ -1122,8 +1120,8 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
     // The form overlay is populated lazily: at createView time the qpdf
     // editor is usually not yet loaded (deferred), so this seeds fields only
     // if it happens to be live already. The real population happens on demand
-    // in setFormFillingActive()/refreshFormView(), which force the editor
-    // load — so the initial empty overlay is expected and correct.
+    // in setFormFillingActive(), which forces the editor load — so the
+    // initial empty overlay is expected and correct.
     if (m_editor && m_editor->isValid()) {
         formOverlay->setFields(m_editor->readFormFields());
     }
@@ -1141,12 +1139,11 @@ QWidget *PdfDocument::buildRealView(QWidget *parent) {
     QObject::connect(formOverlay, &FormOverlay::fieldValueChanged, view,
                      [this](int id, const QString &value) { setFormFieldValue(id, value); });
 
-    // AUGMENT (decision record 2026-07-21-two-page-layout, D1-A): host the
-    // QPdfView surface and a custom TwoPageView in a QStackedWidget. Single and
-    // Continuous keep driving the QPdfView (index 0), unchanged; Two-Pages mode
-    // shows the TwoPageView (index 1). The zoom factor is SHARED — TwoPageView
-    // follows QPdfView::zoomFactorChanged — so the zoom-% readout stays truthful
-    // across all three modes (record clause 3).
+    // QPdfView has no two-up mode, so host it and a custom TwoPageView in a
+    // QStackedWidget. Single and Continuous keep driving the QPdfView (index
+    // 0), unchanged; Two-Pages mode shows the TwoPageView (index 1). The zoom
+    // factor is SHARED — TwoPageView follows QPdfView::zoomFactorChanged — so
+    // the same zoom % means the same page size in all three modes.
     auto *stack = new QStackedWidget(parent);
     stack->addWidget(view); // index 0: Single / Continuous
 
@@ -1213,15 +1210,13 @@ void PdfDocument::applyViewPalette(QPdfView *view) {
     // self-heals to match ImageDocument's QPalette::Base surround
     // (ImageAdapter.cpp) exactly, while the light-mode canvas — already
     // correct, and relied on by uat_vwr_079_zoomReadoutMatchesRenderScale's
-    // page-vs-canvas contrast measurement — is untouched. See
-    // DR 2026-07-31-document-surround-colour-follows-base and that
-    // header's comment for why ImageDocument itself is NOT switched to
-    // this helper. Recomputed here (not just at construction, from
-    // buildRealView) because setPalette() pins the role: Qt's
-    // QEvent::PaletteChange cascade on a live theme flip (PR #105) skips
-    // any role a widget explicitly set, so a stale pin would survive a
-    // theme change unless refreshViewPalette() (below) re-derives it and
-    // calls back in here.
+    // page-vs-canvas contrast measurement — is untouched. See that header's
+    // comment for why ImageDocument itself is NOT switched to this helper.
+    // Recomputed here (not just at construction, from buildRealView) because
+    // setPalette() pins the role: Qt's QEvent::PaletteChange cascade on a
+    // live theme flip skips any role a widget explicitly set, so a stale pin
+    // would survive a theme change unless refreshViewPalette() (below)
+    // re-derives it and calls back in here.
     //
     // Read from QApplication::palette(), NOT view->palette() — a widget's
     // OWN resolved palette updates only once Qt delivers the (POSTED, not
@@ -1287,12 +1282,11 @@ void PdfDocument::applyViewMode() {
         break;
     case ViewMode::TwoPages:
         // Two-up (facing) layout has no QPdfView::PageMode, so it renders
-        // through the custom TwoPageView (decision record
-        // 2026-07-21-two-page-layout, D1-A AUGMENT). Swap the stack to it.
+        // through the custom TwoPageView. Swap the stack to it.
         //
         // Zoom: a literal Custom/Actual zoom (a % the user chose, or "Actual
-        // Size") must mean the same physical page size in every mode (record
-        // clause 3), so it carries over unchanged. A FIT zoom mode is
+        // Size") must mean the same physical page size in every mode, so it
+        // carries over unchanged. A FIT zoom mode is
         // different: QPdfView's FitInView/FitToWidth factor is computed for a
         // SINGLE page, and blindly applying that same number to a two-page
         // spread overflows the viewport by roughly a whole page — the real
@@ -1405,7 +1399,7 @@ void PdfDocument::zoomFitWidth() {
     // per-page FitToWidth would overflow the viewport by a whole page. Route to
     // the spread-aware fit and apply it through the shared zoom path so the
     // zoom-% readout stays truthful; QPdfView keeps its own fit for the other
-    // two modes (record clause 3, G3: the visible surface actually fits).
+    // two modes, so the visible surface actually fits in every mode.
     if (m_viewMode == ViewMode::TwoPages && m_twoPageView) {
         applyZoomFactor(m_twoPageView->fitWidthZoom());
         return;
@@ -1752,7 +1746,7 @@ void PdfDocument::goToPage(int pageIndex) {
     // In Two-Pages mode the QPdfView is hidden, so also scroll the visible
     // TwoPageView to the spread holding this page — otherwise Previous/Next Page
     // and thumbnail-click navigation would silently move only the hidden view
-    // (an inert control, G3). The scroll fires TwoPageView::currentPageChanged,
+    // (an inert control). The scroll fires TwoPageView::currentPageChanged,
     // which updates m_twoPageCurrentPage — the value currentPage() reports in
     // this mode — so the current-page indicator stays in sync. (The
     // pageNavigator jump above keeps the hidden QPdfView consistent for when the
@@ -1808,10 +1802,10 @@ void PdfDocument::setSearchQuery(const QString &query) {
         m_provisionalSeedIndex = -1;
     } else {
         // Capture where the reader is now; the position-aware seed is the
-        // first match at/after this page (ADR 0006 — Option B). The actual
-        // index is computed once the model has rows, either synchronously
-        // just below (cached results) or from onSearchResultsPopulated as
-        // the async search streams matches in.
+        // first match at/after this page. The actual index is computed once
+        // the model has rows, either synchronously just below (cached
+        // results) or from onSearchResultsPopulated as the async search
+        // streams matches in.
         m_seedFromPage = currentPage();
         m_seedPending = true;
         m_provisionalSeedIndex = -1;
@@ -1856,8 +1850,8 @@ void PdfDocument::onSearchResultsPopulated() {
     // navigation. The raw ">= 0" test can't tell them apart: this handler
     // fires on every rowsInserted, and computing the seed against a
     // *partially* populated model can wrap to index 0 before the
-    // current-page rows arrive — the old guard then froze that provisional
-    // index for the rest of the populate (ADR 0006 R1). If the view's
+    // current-page rows arrive — a ">= 0" guard would then freeze that
+    // provisional index for the rest of the populate. If the view's
     // index differs from our last provisional push, the user drove
     // findNext/findPrevious mid-populate: freeze and respect it.
     const int viewIdx = m_view->currentSearchResultIndex();
@@ -2577,10 +2571,10 @@ std::optional<PdfDocument::SaveContext> PdfDocument::saveBeginQpdfPhase(const QS
         return std::nullopt;
     }
 
-    // Save-time conflict guard (ADR 2026-07-19): refuse to overwrite the
-    // baselined original if it changed under us and this isn't a deliberate
-    // "Keep mine" clobber. Runs before any bytes are written so no on-disk
-    // data is touched; the caller surfaces the conflict banner.
+    // Save-time conflict guard: refuse to overwrite the baselined original if
+    // it changed under us and this isn't a deliberate "Keep mine" clobber.
+    // Runs before any bytes are written so no on-disk data is touched; the
+    // caller surfaces the conflict banner.
     // Capture the force state BEFORE the guard consumes it so the commit
     // phase can honour a deliberate clobber during its own re-stat (F1).
     const bool forced = m_forceSaveOverExternalChange;
@@ -2730,7 +2724,7 @@ bool PdfDocument::saveCommitOnUi(const SaveContext &ctx) {
     m_undoLog.assign(m_pdfUndoStack.size(), UndoSource::PdfCommand);
     m_redoLog.assign(m_pdfRedoStack.size(), UndoSource::PdfCommand);
     // Refresh the external-change baseline to the bytes we just wrote so our
-    // own save never trips the conflict guard / monitor (ADR 2026-07-19).
+    // own save never trips the conflict guard / monitor.
     captureFileBaseline();
     return true;
 }
@@ -2842,18 +2836,6 @@ void PdfDocument::setFormFillingActive(bool active) {
             m_formOverlay->hide();
         }
     }
-}
-
-void PdfDocument::refreshFormView() {
-    // Re-push field values into whichever widgets the overlay has
-    // already built. Called after bulk writes (AutoFill) so the user
-    // sees the new values immediately. Does not change the overlay's
-    // visibility — if form-filling is off the refresh is a no-op until
-    // the user toggles it on.
-    ensureEditorLoaded();
-    if (!m_formOverlay || !m_editor || !m_editor->isValid())
-        return;
-    m_formOverlay->setFields(m_editor->readFormFields());
 }
 
 bool PdfDocument::exportWithPassword(const QString &destPath, const QString &password) {
