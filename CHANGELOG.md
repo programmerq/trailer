@@ -27,6 +27,14 @@ entries terse and user-visible; CI / infrastructure churn lives in the
 
 ### Fixed
 
+- **Dragging a tab no longer points commands at another document.** In a
+  window with tabs (images opened together share one), dragging a tab to a
+  new place left Save, Rotate, Undo, Export and the tab's close button acting
+  on the document that used to sit there, and clicking the tab renamed it
+  after that document. Every command now acts on the tab you selected.
+- **Select All acts on the tab you're looking at.** In a window with tabs,
+  Select All selected a hidden tab's marks and moved the keyboard there, so
+  a following Delete erased marks you couldn't see.
 - **View-mode switching now preserves the current page.** Switching between
   Single Page, Continuous, and Two Pages (Cmd-1/2/3) used to silently reset
   the visible page to the start of the document while the sidebar kept

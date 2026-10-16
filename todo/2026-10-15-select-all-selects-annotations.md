@@ -1,4 +1,4 @@
-# ⌘A selects annotations instead of text, and can act on a background tab
+# ⌘A selects annotations instead of text
 
 Priority: P1. Tags: `text`.
 
@@ -6,5 +6,6 @@ Priority: P1. Tags: `text`.
   - With focus on the page, ⌘A selects all text in the document and ⌘C copies it. This holds
     for native and OCR text, in Continuous, Single and Two Pages (decided: match Preview).
   - With focus in the thumbnails, ⌘A selects all pages.
-  - In a two-tab window, ⌘A acts only on the visible tab.
-- Src: `MainWindow.cpp:1570-1575` calls `findChild<AnnotationOverlay*>()->selectAll()`.
+  - In a two-tab window, ⌘A acts only on the visible tab (true for marks since 2026-10-16;
+    text Select All must keep it).
+- Src: Select All calls `AnnotationOverlay::selectAll()` on the visible tab's page (`MainWindow.cpp`, the Select All action); it selects marks, not text. The two-tab part was fixed on 2026-10-16.

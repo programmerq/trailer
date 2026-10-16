@@ -20,9 +20,11 @@ class DocumentView : public QTabWidget {
 
     IDocument *currentDocument() const;
 
-    // Iterate every document this view holds. The returned span is
-    // valid until the next addDocument / onTabCloseRequested call;
-    // callers must not retain the pointers across those operations.
+    // Iterate every document this view holds, in tab order: index i is
+    // the document tab i shows. A pointer is valid until the next
+    // addDocument / onTabCloseRequested call, and an index also goes stale
+    // when a tab moves; callers must not retain either across those
+    // operations.
     // Used by MainWindow's close prompt to walk the dirty docs and
     // by the auto-save timer to flush them all.
     int documentAt(int index, IDocument **out) const;
@@ -51,8 +53,13 @@ class DocumentView : public QTabWidget {
 
   private slots:
     void onTabCloseRequested(int index);
+    void onTabMoved(int from, int to);
 
   private:
+    // In tab order: m_documents[i] is the document tab i shows.
+    // currentDocument(), documentAt() and onTabCloseRequested() look
+    // documents up by tab index, so onTabMoved() reorders this vector
+    // whenever a tab moves (the user drags tabs).
     std::vector<std::unique_ptr<IDocument>> m_documents;
 
     // Set while onTabCloseRequested() is mid-removal. removeTab() fires
