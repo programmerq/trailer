@@ -899,6 +899,9 @@ void KnownBugsWindow::commandsActOnTheSelectedTabAfterDrag() {
                 [&](IDocument *doc, bool *) { closing << fileNameOf(doc); });
         QWidget *button = closeButton(dv->tabBar(), tab);
         QVERIFY(button);
+        // QTabBar moves a dragged tab's buttons on a later layout pass; until
+        // then the button sits over the other tab's, where no user sees it.
+        QTRY_VERIFY(dv->tabBar()->tabRect(tab).contains(button->geometry()));
         clickOn(button, button->rect().center());
         QCOMPARE(closing, QStringList{shown});
         QCOMPARE(mw->documentCount(), 1);
