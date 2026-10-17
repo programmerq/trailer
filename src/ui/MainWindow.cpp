@@ -1549,7 +1549,13 @@ void MainWindow::buildEditMenu(QMenu *editMenu) {
     m_selectAllAction = editMenu->addAction(tr("Select &All"));
     m_selectAllAction->setShortcut(QKeySequence::SelectAll);
     connect(m_selectAllAction, &QAction::triggered, this, [this]() {
-        if (auto *overlay = findChild<AnnotationOverlay *>()) {
+        // Search only the selected tab's page: every page holds its own
+        // overlay, and a window-wide findChild() returns the one on the page
+        // least recently raised (the hidden tab, in a two-tab window).
+        // selectAll() also takes keyboard focus, so a wrong overlay would
+        // then receive Delete.
+        QWidget *page = m_documentView->currentWidget();
+        if (auto *overlay = page ? page->findChild<AnnotationOverlay *>() : nullptr) {
             overlay->selectAll();
         }
     });

@@ -1,5 +1,9 @@
 #include "DocumentView.h"
 
+#include <QTabBar>
+
+#include <algorithm>
+
 namespace trailer {
 
 DocumentView::DocumentView(QWidget *parent) : QTabWidget(parent) {
@@ -13,6 +17,10 @@ DocumentView::DocumentView(QWidget *parent) : QTabWidget(parent) {
     // only appears when count() > 1.
     setTabBarAutoHide(true);
     connect(this, &QTabWidget::tabCloseRequested, this, &DocumentView::onTabCloseRequested);
+    // Tabs are movable (above): a drag reorders them, and QTabWidget moves
+    // each page with its tab. The documents must move too, or every lookup
+    // by tab index acts on whichever document used to sit there.
+    connect(tabBar(), &QTabBar::tabMoved, this, &DocumentView::onTabMoved);
     connect(this, &QTabWidget::currentChanged, this, [this](int) {
         if (QWidget *w = currentWidget()) {
             w->setFocus();
@@ -58,6 +66,23 @@ void DocumentView::addDocument(std::unique_ptr<IDocument> document) {
         setTabToolTip(index, tip);
     }
     setCurrentIndex(index);
+}
+
+void DocumentView::onTabMoved(int from, int to) {
+    const int count = documentCount();
+    if (from == to || from < 0 || to < 0 || from >= count || to >= count)
+        return;
+    // Same move QTabBar made: out of `from`, into `to`, the documents in
+    // between shifting one place toward `from`.
+    const auto first = m_documents.begin();
+    if (from < to)
+        std::rotate(first + from, first + from + 1, first + to + 1);
+    else
+        std::rotate(first + to, first + from, first + from + 1);
+    // No announcement: a move never changes which document is current. When
+    // it changes the current index, QTabBar emits currentChanged after
+    // tabMoved, and the handler in the constructor re-announces the same
+    // document, now found at its new index.
 }
 
 void DocumentView::onTabCloseRequested(int index) {

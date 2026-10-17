@@ -22,16 +22,20 @@
 #include <QApplication>
 #include <QClipboard>
 #include <QCryptographicHash>
+#include <QDialog>
 #include <QDir>
 #include <QFile>
+#include <QFileDialog>
 #include <QFileInfo>
 #include <QImage>
 #include <QLabel>
+#include <QLineEdit>
 #include <QPainter>
 #include <QPdfDocument>
 #include <QPdfSelection>
 #include <QPdfView>
 #include <QPdfWriter>
+#include <QPointer>
 #include <QProgressDialog>
 #include <QScreen>
 #include <QScrollBar>
@@ -41,12 +45,14 @@
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QTimeZone>
+#include <QTimer>
 #include <QToolBar>
 #include <QtTest/QtTest>
 
 #include <algorithm>
 #include <climits>
 #include <cstdlib>
+#include <utility>
 #include <vector>
 
 using namespace trailer;
@@ -291,16 +297,145 @@ bool settledCentreMarker(QWidget *vp, QRect *out) {
     return ok;
 }
 
-// The two-image fixture: alpha.png is red, bravo.png is blue.
-QString imageShown(QWidget *w) {
-    const QImage img = rendering(w);
-    const QColor c = img.pixelColor(img.rect().center());
-    if (c.red() > 200 && c.green() < 60 && c.blue() < 60)
+// The two-image fixture: alpha.png is red, bravo.png is blue, both 400×300.
+bool isAlphaRed(QRgb p) {
+    return qRed(p) > 200 && qGreen(p) < 60 && qBlue(p) < 60;
+}
+
+bool isBravoBlue(QRgb p) {
+    return qBlue(p) > 200 && qRed(p) < 60 && qGreen(p) < 60;
+}
+
+// Which fixture an image shows, judged by its centre pixel.
+QString fixtureIn(const QImage &img) {
+    if (img.isNull())
+        return {};
+    const QRgb c = img.pixel(img.rect().center());
+    if (isAlphaRed(c))
         return QStringLiteral("alpha.png");
-    if (c.blue() > 200 && c.red() < 60 && c.green() < 60)
+    if (isBravoBlue(c))
         return QStringLiteral("bravo.png");
     return {};
 }
+
+QString imageShown(QWidget *w) {
+    return fixtureIn(rendering(w));
+}
+
+// "portrait" or "landscape": the shape of the fixture image as rendered.
+QString orientationShown(QWidget *w) {
+    const QImage img = rendering(w);
+    int x0 = INT_MAX, y0 = INT_MAX, x1 = -1, y1 = -1;
+    for (int y = 0; y < img.height(); ++y) {
+        const auto *row = reinterpret_cast<const QRgb *>(img.constScanLine(y));
+        for (int x = 0; x < img.width(); ++x) {
+            if (isAlphaRed(row[x]) || isBravoBlue(row[x])) {
+                x0 = std::min(x0, x);
+                y0 = std::min(y0, y);
+                x1 = std::max(x1, x);
+                y1 = std::max(y1, y);
+            }
+        }
+    }
+    if (x1 < 0 || x1 - x0 == y1 - y0)
+        return {};
+    return y1 - y0 > x1 - x0 ? QStringLiteral("portrait") : QStringLiteral("landscape");
+}
+
+// Drags the first tab past the middle of the second with real mouse events,
+// the way a user reorders tabs. True once the first tab's page sits second.
+bool dragFirstTabToSecondPlace(DocumentView *dv) {
+    QTabBar *bar = dv->tabBar();
+    QWidget *firstPage = dv->widget(0);
+    QWidget *top = dv->window();
+    QWindow *win = top->windowHandle();
+    const QPoint from = bar->mapTo(top, bar->tabRect(0).center());
+    const QPoint to =
+        bar->mapTo(top, bar->tabRect(1).center() + QPoint(bar->tabRect(1).width() / 4, 0));
+    QTest::mousePress(win, Qt::LeftButton, Qt::NoModifier, from);
+    for (int step = 1; step <= 8; ++step)
+        QTest::mouseMove(win, from + (to - from) * step / 8);
+    QTest::mouseRelease(win, Qt::LeftButton, Qt::NoModifier, to);
+    return dv->widget(1) == firstPage;
+}
+
+// Clicks tab `index` and returns the fixture its page then shows, or an
+// empty string if the click didn't select that tab.
+QString selectTab(DocumentView *dv, int index) {
+    QTabBar *bar = dv->tabBar();
+    clickOn(bar, bar->tabRect(index).center());
+    if (dv->currentIndex() != index)
+        return {};
+    QString shown;
+    if (!QTest::qWaitFor([&] { return !(shown = imageShown(dv->currentWidget())).isEmpty(); }))
+        return {};
+    return shown;
+}
+
+QString fileNameOf(IDocument *doc) {
+    return doc ? QFileInfo(doc->filePath()).fileName() : QString();
+}
+
+// The window's document for `fileName`, found by name rather than by tab.
+IDocument *documentNamed(MainWindow *mw, const QString &fileName) {
+    for (int i = 0; i < mw->documentCount(); ++i) {
+        IDocument *doc = nullptr;
+        if (mw->documentAt(i, &doc) && fileNameOf(doc) == fileName)
+            return doc;
+    }
+    return nullptr;
+}
+
+// The close button on tab `index`: on the left in the macOS style, on the
+// right elsewhere.
+QWidget *closeButton(QTabBar *bar, int index) {
+    for (QTabBar::ButtonPosition side : {QTabBar::RightSide, QTabBar::LeftSide})
+        if (QWidget *button = bar->tabButton(index, side))
+            return button;
+    return nullptr;
+}
+
+// Clicks through the modals that open while it lives, as a user finishing
+// Export As would: OK on a plain dialog; on a file dialog, types `path` and
+// saves. Records the class of each modal it answered.
+class ModalAnswerer {
+  public:
+    explicit ModalAnswerer(QString path) : m_path(std::move(path)) {
+        m_timer.setInterval(10);
+        QObject::connect(&m_timer, &QTimer::timeout, [this] {
+            auto *dialog = qobject_cast<QDialog *>(QApplication::activeModalWidget());
+            if (m_answerPending || !dialog || !dialog->isVisible())
+                return;
+            m_answerPending = true;
+            m_answered << QString::fromLatin1(dialog->metaObject()->className());
+            // Answer from the event loop, not from inside this tick: an answer
+            // can open another modal (a replace prompt), and Qt doesn't re-enter
+            // a timer's slot, so this tick must return for the next one to come.
+            QTimer::singleShot(0, &m_timer, [this, guard = QPointer<QDialog>(dialog)] {
+                m_answerPending = false;
+                QDialog *open = guard.data();
+                if (!open)
+                    return;
+                if (m_answered.size() > 4) { // going round in circles: cancel, don't hang
+                    open->reject();
+                    return;
+                }
+                // selectFile() leaves a focused name field alone, so set it.
+                if (auto *name = open->findChild<QLineEdit *>(QStringLiteral("fileNameEdit")))
+                    name->setText(m_path);
+                open->accept();
+            });
+        });
+        m_timer.start();
+    }
+    QStringList answered() const { return m_answered; }
+
+  private:
+    QString m_path;
+    QTimer m_timer;
+    bool m_answerPending = false;
+    QStringList m_answered;
+};
 
 QString rectText(const QRectF &r) {
     return QStringLiteral("(%1,%2 %3x%4)")
@@ -471,6 +606,8 @@ class KnownBugsWindow : public QObject {
     void currentDocumentFollowsDraggedTab();
     void inspectorShowsMarkSelectedOnEitherTab_data();
     void inspectorShowsMarkSelectedOnEitherTab();
+    void commandsActOnTheSelectedTabAfterDrag_data();
+    void commandsActOnTheSelectedTabAfterDrag();
     void saveLeavesUneditedFileUntouched_data();
     void saveLeavesUneditedFileUntouched();
     void undoToSavedStateClearsDirtyMarker_data();
@@ -613,7 +750,9 @@ void KnownBugsWindow::rectangleAroundWordIsSavedAroundIt() {
                             .arg(reach, 0, 'f', 1)));
 }
 
-// todo/2026-10-15-dragged-tab-wrong-document: After a tab is dragged, commands act on the other document
+// Tabs are movable. After a move, every tab still maps to the document it
+// shows: the current document, the document at each index, the tab text, the
+// window title, and the tab that reopening an open file selects.
 void KnownBugsWindow::currentDocumentFollowsDraggedTab() {
     // Two images opened together share one tabbed window.
     const QString alpha = m_dir.filePath(QStringLiteral("alpha.png"));
@@ -626,26 +765,159 @@ void KnownBugsWindow::currentDocumentFollowsDraggedTab() {
     DocumentView *dv = documentView(mw);
     QTabBar *bar = dv->tabBar();
     QTRY_VERIFY(bar->isVisible());
-    QWidget *firstTab = dv->widget(0);
 
-    // Drag the first tab past the middle of the second.
-    QWindow *win = mw->windowHandle();
-    const QPoint from = bar->mapTo(mw, bar->tabRect(0).center());
-    const QPoint to =
-        bar->mapTo(mw, bar->tabRect(1).center() + QPoint(bar->tabRect(1).width() / 4, 0));
-    QTest::mousePress(win, Qt::LeftButton, Qt::NoModifier, from);
-    for (int step = 1; step <= 8; ++step)
-        QTest::mouseMove(win, from + (to - from) * step / 8);
-    QTest::mouseRelease(win, Qt::LeftButton, Qt::NoModifier, to);
-    QCOMPARE(dv->widget(1), firstTab);
+    // A drag moves the tab it grabs, which becomes the current tab.
+    QVERIFY(dragFirstTabToSecondPlace(dv));
+    QCOMPARE(dv->currentIndex(), 1);
+    QVERIFY2(mw->windowTitle().startsWith(QLatin1String("alpha.png")),
+             qPrintable(mw->windowTitle()));
+    for (int round = 0; round < 2; ++round) {
+        for (int i = 0; i < dv->count(); ++i) {
+            const QString shown = selectTab(dv, i);
+            QVERIFY(!shown.isEmpty());
+            QCOMPARE(fileNameOf(dv->currentDocument()), shown);
+            IDocument *doc = nullptr;
+            QVERIFY(mw->documentAt(i, &doc));
+            QCOMPARE(fileNameOf(doc), shown);
+            QCOMPARE(bar->tabText(i), shown);
+        }
+        if (round == 1)
+            break;
 
-    for (int i = 0; i < dv->count(); ++i) {
-        clickOn(bar, bar->tabRect(i).center());
-        QCOMPARE(dv->currentIndex(), i);
-        QString shown;
-        QTRY_VERIFY(!(shown = imageShown(dv->currentWidget())).isEmpty());
-        QEXPECT_FAIL("", "todo/2026-10-15-dragged-tab-wrong-document: the document list is not reordered with the tabs", Abort);
-        QCOMPARE(QFileInfo(dv->currentDocument()->filePath()).fileName(), shown);
+        // Opening a file that is already open selects the tab showing it.
+        for (const QString &path : {alpha, bravo}) {
+            theApp()->openFiles({path});
+            QTRY_COMPARE(imageShown(dv->currentWidget()), QFileInfo(path).fileName());
+        }
+
+        // A move of another tab shifts the current one (a style that selects
+        // on release, like macOS, does this mid-drag). bravo.png stays current.
+        QCOMPARE(dv->currentIndex(), 0);
+        bar->moveTab(1, 0);
+        QCOMPARE(dv->currentIndex(), 1);
+        QCOMPARE(imageShown(dv->currentWidget()), QStringLiteral("bravo.png"));
+        QVERIFY2(mw->windowTitle().startsWith(QLatin1String("bravo.png")),
+                 qPrintable(mw->windowTitle()));
+    }
+}
+
+void KnownBugsWindow::commandsActOnTheSelectedTabAfterDrag_data() {
+    QTest::addColumn<QString>("command");
+    QTest::addColumn<int>("tab");
+    for (const char *command : {"save", "rotate", "undo", "selectAll", "close", "export"})
+        for (int tab : {0, 1})
+            QTest::addRow("%s@%d", command, tab) << QString::fromLatin1(command) << tab;
+}
+
+// In a two-tab image window, after the first tab is dragged to second place,
+// Save, Rotate, ⌘Z, Select All, Close and Export act on the document of the
+// tab the user selected (`tab`), and leave the other document alone.
+void KnownBugsWindow::commandsActOnTheSelectedTabAfterDrag() {
+    QFETCH(QString, command);
+    QFETCH(int, tab);
+    const QDir dir(fixture(QString()));
+    QVERIFY(QDir().mkpath(dir.path()));
+    const QString alpha = dir.filePath(QStringLiteral("alpha.png"));
+    const QString bravo = dir.filePath(QStringLiteral("bravo.png"));
+    QVERIFY(writeImage(alpha, Qt::red));
+    QVERIFY(writeImage(bravo, Qt::blue));
+    MainWindow *mw = openWindow({alpha, bravo});
+    QVERIFY(mw);
+    DocumentView *dv = documentView(mw);
+    QTRY_VERIFY(dv->tabBar()->isVisible());
+
+    // Edits the commands need, made before the drag while each tab still
+    // maps to its own document.
+    if (command == QLatin1String("save") || command == QLatin1String("undo")) {
+        for (int i = 0; i < 2; ++i) {
+            QVERIFY(!selectTab(dv, i).isEmpty());
+            actionNamed(mw, QStringLiteral("action.tools.rotateRight"))->trigger();
+            QTRY_COMPARE(orientationShown(dv->currentWidget()), QStringLiteral("portrait"));
+        }
+    } else if (command == QLatin1String("selectAll")) {
+        actionNamed(mw, QStringLiteral("action.view.markupToolbar"))->trigger();
+        QAction *rectangle = markupTool(mw, QStringLiteral("Rectangle"));
+        QVERIFY(rectangle);
+        rectangle->trigger();
+        settle();
+        for (int i = 0; i < 2; ++i) {
+            QVERIFY(!selectTab(dv, i).isEmpty());
+            settle();
+            QWidget *surface = dv->currentWidget();
+            const QPoint c = surface->rect().center();
+            dragOn(surface, c - QPoint(40, 30), c + QPoint(40, 30));
+            IDocument *doc = dv->currentDocument();
+            QVERIFY(doc);
+            AnnotationStore *store = doc->annotations();
+            QVERIFY(store);
+            QCOMPARE(store->count(), 1);
+        }
+    }
+
+    QVERIFY(dragFirstTabToSecondPlace(dv));
+    const QString shown = selectTab(dv, tab);
+    QCOMPARE(shown, tab == 0 ? QStringLiteral("bravo.png") : QStringLiteral("alpha.png"));
+    const QString other = tab == 0 ? QStringLiteral("alpha.png") : QStringLiteral("bravo.png");
+
+    if (command == QLatin1String("save")) {
+        const QByteArray otherBytes = fileHash(dir.filePath(other));
+        actionNamed(mw, QStringLiteral("action.file.save"))->trigger();
+        QTRY_VERIFY(!saveInFlight(mw));
+        QCOMPARE(QImage(dir.filePath(shown)).size(), QSize(300, 400));
+        QCOMPARE(fileHash(dir.filePath(other)), otherBytes);
+    } else if (command == QLatin1String("rotate")) {
+        actionNamed(mw, QStringLiteral("action.tools.rotateRight"))->trigger();
+        QTRY_COMPARE(orientationShown(dv->currentWidget()), QStringLiteral("portrait"));
+        QCOMPARE(selectTab(dv, 1 - tab), other);
+        QTRY_COMPARE(orientationShown(dv->currentWidget()), QStringLiteral("landscape"));
+    } else if (command == QLatin1String("undo")) {
+        QTest::keySequence(mw->windowHandle(), QKeySequence::Undo);
+        QTRY_COMPARE(orientationShown(dv->currentWidget()), QStringLiteral("landscape"));
+        QCOMPARE(selectTab(dv, 1 - tab), other);
+        QTRY_COMPARE(orientationShown(dv->currentWidget()), QStringLiteral("portrait"));
+    } else if (command == QLatin1String("selectAll")) {
+        // ⌘A selects the visible page's marks and takes the keyboard, so
+        // Delete removes them; the hidden document keeps its mark.
+        auto *selected = dv->widget(tab)->findChild<AnnotationOverlay *>();
+        auto *background = dv->widget(1 - tab)->findChild<AnnotationOverlay *>();
+        QVERIFY(selected && background);
+        QVERIFY(selected->selectedAnnotationIds().empty());
+        QVERIFY(background->selectedAnnotationIds().empty());
+        QTest::keySequence(mw->windowHandle(), QKeySequence::SelectAll);
+        QCOMPARE(int(selected->selectedAnnotationIds().size()), 1);
+        QVERIFY(background->selectedAnnotationIds().empty());
+        QTest::keyClick(mw->windowHandle(), Qt::Key_Delete);
+        IDocument *shownDoc = documentNamed(mw, shown);
+        IDocument *otherDoc = documentNamed(mw, other);
+        QVERIFY(shownDoc && otherDoc);
+        QCOMPARE(shownDoc->annotations()->count(), 0);
+        QCOMPARE(otherDoc->annotations()->count(), 1);
+    } else if (command == QLatin1String("close")) {
+        QStringList closing;
+        QObject receiver;
+        connect(dv, &DocumentView::documentCloseRequested, &receiver,
+                [&](IDocument *doc, bool *) { closing << fileNameOf(doc); });
+        QWidget *button = closeButton(dv->tabBar(), tab);
+        QVERIFY(button);
+        // QTabBar moves a dragged tab's buttons on a later layout pass; until
+        // then the button sits over the other tab's, where no user sees it.
+        QTRY_VERIFY(dv->tabBar()->tabRect(tab).contains(button->geometry()));
+        clickOn(button, button->rect().center());
+        QCOMPARE(closing, QStringList{shown});
+        QCOMPARE(mw->documentCount(), 1);
+        QCOMPARE(fileNameOf(dv->currentDocument()), other);
+        QTRY_COMPARE(imageShown(dv->currentWidget()), other);
+    } else if (command == QLatin1String("export")) {
+        const QString target = dir.filePath(QStringLiteral("exported.png"));
+        ModalAnswerer answerer(target);
+        QAction *exportAs = actionTexted(mw, QStringLiteral("Export As…"));
+        QVERIFY(exportAs && exportAs->isEnabled());
+        exportAs->trigger();
+        QCOMPARE(answerer.answered(),
+                 QStringList({QStringLiteral("QDialog"), QStringLiteral("QFileDialog")}));
+        QCOMPARE(fixtureIn(QImage(target)), shown);
+    } else {
+        QFAIL(qPrintable(QStringLiteral("unknown command ") + command));
     }
 }
 

@@ -11,4 +11,4 @@ Priority: P1. Tags: `annotations`, `ocr`.
   two-tab window returns the hidden tab's layer, so the tab opened last is never connected and
   each tab switch connects the tab being left. The Instant Alpha and Smart Lasso handlers check
   the current document and return, so those tools do nothing rather than edit the other image
-  (inferred from the code). Found while fixing [After a tab is dragged, commands act on the other document](2026-10-15-dragged-tab-wrong-document.md).
+  (inferred from the code). Found while fixing the dragged-tab bug (after a tab drag, commands acted on the other document; fixed 2026-10-16).
